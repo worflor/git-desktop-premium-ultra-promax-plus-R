@@ -28,6 +28,9 @@ jobs:
       - name: Frontend typecheck
         run: npm run typecheck --workspace apps/desktop
 
+      - name: Pretext fixture gate
+        run: npm run pretext:fixtures --workspace apps/desktop
+
       - name: Frontend build
         run: npm run build --workspace apps/desktop
 

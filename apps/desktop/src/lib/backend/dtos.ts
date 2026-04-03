@@ -1,6 +1,7 @@
 export interface GitCapabilities {
   gitInstalled: boolean;
   gitVersion?: string;
+  gitExecutablePath?: string;
   supportsPartialClone: boolean;
   supportsSparseCheckout: boolean;
 }
@@ -23,6 +24,8 @@ export interface ForgeAdapter {
   id: string;
   available: boolean;
   version?: string;
+  authState?: string;
+  authMessage?: string;
 }
 
 export interface RemoteIntegrationData {
@@ -221,6 +224,24 @@ export interface AppSettingsData {
   sidebarPosition: "left" | "right" | string;
   utilityDrawerDefaultExpanded: boolean;
   utilityDrawerHeightPx: number;
+}
+
+export interface StartupReadinessCheckData {
+  id: string;
+  ok: boolean;
+  durationMs: number;
+  errorCode?: string;
+  message?: string;
+}
+
+export interface StartupReadinessSnapshotData {
+  requestId: string;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  ok: boolean;
+  degradedChecks: number;
+  checks: StartupReadinessCheckData[];
 }
 
 export interface IssueProviderData {

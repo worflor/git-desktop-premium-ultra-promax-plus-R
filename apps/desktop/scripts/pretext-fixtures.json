@@ -1,0 +1,57 @@
+[
+  {
+    "id": "tiny-baseline",
+    "description": "Small baseline diff with metadata, hunks, and mixed change kinds.",
+    "diff": "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,4 @@\n pub fn add(left: i32, right: i32) -> i32 {\n-    left + right\n+    let sum = left + right;\n+    sum\n }\n",
+    "expect": {
+      "defaultMode": "dom",
+      "containsKinds": ["meta", "hunk", "added", "deleted", "context"],
+      "changedLinesAtLeast": 3
+    }
+  },
+  {
+    "id": "unicode-bidi",
+    "description": "Mixed scripts and bidi markers to guard line-map determinism.",
+    "diff": "diff --git a/src/i18n.txt b/src/i18n.txt\nindex 3333333..4444444 100644\n--- a/src/i18n.txt\n+++ b/src/i18n.txt\n@@ -1,3 +1,4 @@\n-Hello world\n+Hello \u05e9\u05dc\u05d5\u05dd \u202Eabc\u202C\n+Notes: \u041f\u0440\u0438\u0432\u0435\u0442 \u4f60\u597d\n Context keeps baseline stable\n",
+    "expect": {
+      "defaultMode": "dom",
+      "containsKinds": ["meta", "hunk", "added", "deleted", "context"],
+      "changedLinesAtLeast": 3,
+      "requireBidiMarkers": true,
+      "requireMixedScripts": true
+    }
+  },
+  {
+    "id": "long-unbroken-line",
+    "description": "Long unbroken line fixture used to catch wrapping and cursor regressions.",
+    "diff": "diff --git a/src/long.txt b/src/long.txt\nindex 5555555..6666666 100644\n--- a/src/long.txt\n+++ b/src/long.txt\n@@ -1 +1 @@\n-short\n+{{LONG_LINE_2200}}\n",
+    "expect": {
+      "defaultMode": "dom",
+      "containsKinds": ["meta", "hunk", "added", "deleted"],
+      "changedLinesAtLeast": 2,
+      "minMaxLineChars": 2200
+    }
+  },
+  {
+    "id": "massive-render-threshold",
+    "description": "Large fixture that should trigger canvas policy in default mode selection.",
+    "diff": "diff --git a/src/massive.txt b/src/massive.txt\nindex 7777777..8888888 100644\n--- a/src/massive.txt\n+++ b/src/massive.txt\n@@ -0,0 +1,1705 @@\n{{REPEAT_ADDED_LINES_1705}}\n",
+    "expect": {
+      "defaultMode": "canvas",
+      "containsKinds": ["meta", "hunk", "added"],
+      "changedLinesAtLeast": 1705,
+      "lineCountAtLeast": 1710
+    }
+  },
+  {
+    "id": "mixed-line-endings",
+    "description": "Fixture with CRLF and LF to verify stable normalization behavior.",
+    "diff": "diff --git a/src/eol.txt b/src/eol.txt\r\nindex 9999999..aaaaaaa 100644\r\n--- a/src/eol.txt\r\n+++ b/src/eol.txt\r\n@@ -1,3 +1,3 @@\r\n-line one\r\n+line one updated\n context two\r\n",
+    "expect": {
+      "defaultMode": "dom",
+      "containsKinds": ["meta", "hunk", "added", "deleted", "context"],
+      "changedLinesAtLeast": 2,
+      "requireCrLf": true
+    }
+  }
+]

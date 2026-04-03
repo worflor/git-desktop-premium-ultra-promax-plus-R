@@ -845,7 +845,7 @@ pub fn list_stashes(repository_path: &str, limit: usize) -> Result<StashListData
     ensure_git_ready()?;
 
     let limit = limit.clamp(1, 500);
-    let args = vec![
+    let args = [
         "stash".to_string(),
         "list".to_string(),
         format!("-n{limit}"),
@@ -1036,7 +1036,7 @@ pub fn get_commit_detail(
         ));
     }
 
-    let meta_args = vec![
+    let meta_args = [
         "show".to_string(),
         "--no-patch".to_string(),
         "--date=iso-strict".to_string(),

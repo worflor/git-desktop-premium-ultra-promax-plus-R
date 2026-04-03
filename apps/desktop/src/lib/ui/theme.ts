@@ -125,36 +125,46 @@ const THEME_DEFINITIONS = [
   {
     id: "quanta",
     label: "Quanta",
-    description: "Balanced dark green-black palette with restrained glow.",
+    description: "Deep emerald obsidian with technical subatomic jitter and high-refraction glass.",
     shader: {
       mode: "glass",
-      blurPx: 11,
-      saturatePct: 126,
-      opacityScale: 1.04,
-      edgeIntensity: 0.4,
-      texture: "grain",
-      textureOpacity: 0.05,
-      motion: "snappy",
-      luminescence: 0.2,
-      parallaxStrength: 0.8
+      blurPx: 22,
+      saturatePct: 160,
+      opacityScale: 0.88,
+      edgeIntensity: 0.8,
+      texture: "scanlines",
+      textureOpacity: 0.06,
+      motion: "fluid",
+      luminescence: 0.5,
+      particles: "quantum",
+      parallaxStrength: 0.6,
+      geometry: {
+        letterSpacing: "0.02em"
+      }
     }
   },
   {
     id: "redshift",
     label: "Redshift",
-    description: "Crimson dusk glass for high-contrast focus work.",
+    description: "Deep cosmic garnet with Relativistic EM Wave oscillation and CMB background radiation.",
     shader: {
       mode: "glass",
-      blurPx: 12,
-      saturatePct: 136,
-      opacityScale: 1.06,
-      edgeIntensity: 0.55,
+      blurPx: 24,
+      saturatePct: 150,
+      opacityScale: 0.9,
+      edgeIntensity: 0.8,
       texture: "scanlines",
       textureOpacity: 0.08,
       motion: "fluid",
-      luminescence: 0.6,
+      luminescence: 0.45,
       particles: "embers",
-      parallaxStrength: 0.5
+      parallaxStrength: 0.7,
+      geometry: {
+        typography: "'JetBrains Mono', monospace",
+        letterSpacing: "normal",
+        radius: 0,
+        fontScale: 1
+      }
     }
   },
   {

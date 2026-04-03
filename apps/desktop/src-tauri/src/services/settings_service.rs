@@ -178,13 +178,10 @@ fn normalize_theme_id(value: &str) -> &'static str {
 
 fn find_supported_theme_id(value: &str) -> Option<&'static str> {
     let normalized = value.trim();
-    for theme_id in SUPPORTED_THEME_IDS {
-        if normalized.eq_ignore_ascii_case(theme_id) {
-            return Some(theme_id);
-        }
-    }
-
-    None
+    SUPPORTED_THEME_IDS
+        .iter()
+        .copied()
+        .find(|theme_id| normalized.eq_ignore_ascii_case(theme_id))
 }
 
 fn normalize_keybinding_profile(value: &str) -> &'static str {

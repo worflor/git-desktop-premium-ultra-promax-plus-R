@@ -34,18 +34,20 @@ struct StoredAiAuditEntry {
     created_at: String,
 }
 
-pub fn record_ai_audit_event(
-    event: &str,
-    provider_id: &str,
-    repository_path: &str,
-    diff_scope_path: Option<&str>,
-    prompt: &str,
-    output: &str,
-    ok: bool,
-    error_code: Option<&str>,
-) -> Result<(), AppError> {
-    let event = event.trim().to_ascii_lowercase();
-    let provider_id = provider_id.trim().to_ascii_lowercase();
+pub struct AiAuditEventInput<'a> {
+    pub event: &'a str,
+    pub provider_id: &'a str,
+    pub repository_path: &'a str,
+    pub diff_scope_path: Option<&'a str>,
+    pub prompt: &'a str,
+    pub output: &'a str,
+    pub ok: bool,
+    pub error_code: Option<&'a str>,
+}
+
+pub fn record_ai_audit_event(input: AiAuditEventInput<'_>) -> Result<(), AppError> {
+    let event = input.event.trim().to_ascii_lowercase();
+    let provider_id = input.provider_id.trim().to_ascii_lowercase();
     if event.is_empty() || provider_id.is_empty() {
         return Err(AppError::InvalidInput(
             "ai audit event and provider id are required".to_string(),
@@ -57,15 +59,16 @@ pub fn record_ai_audit_event(
         id: Uuid::new_v4().to_string(),
         event,
         provider_id,
-        repository_hint: repository_hint(repository_path),
-        diff_scope_path: diff_scope_path
+        repository_hint: repository_hint(input.repository_path),
+        diff_scope_path: input
+            .diff_scope_path
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(|value| value.to_string()),
-        prompt_preview: redact_sensitive_text(prompt, PREVIEW_CHAR_LIMIT),
-        output_preview: redact_sensitive_text(output, PREVIEW_CHAR_LIMIT),
-        ok,
-        error_code: error_code.map(|value| value.trim().to_string()),
+        prompt_preview: redact_sensitive_text(input.prompt, PREVIEW_CHAR_LIMIT),
+        output_preview: redact_sensitive_text(input.output, PREVIEW_CHAR_LIMIT),
+        ok: input.ok,
+        error_code: input.error_code.map(|value| value.trim().to_string()),
         created_at: now_iso8601_string(),
     });
 

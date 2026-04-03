@@ -106,13 +106,14 @@ Examples:
 57. start_ai_diff_review_job
 58. get_ai_diff_review_job
 59. cancel_ai_diff_review_job
-60. get_app_settings
-61. update_ai_guardrail
-62. update_telemetry_retention
-63. update_layout_preferences
-64. update_ui_preferences
-65. get_command_telemetry_snapshot
-66. clear_command_telemetry
+60. get_startup_readiness_snapshot
+61. get_app_settings
+62. update_ai_guardrail
+63. update_telemetry_retention
+64. update_layout_preferences
+65. update_ui_preferences
+66. get_command_telemetry_snapshot
+67. clear_command_telemetry
 
 Settings payload note:
 - update_layout_preferences uses `{ sidebarWidthPx, sidebarPosition, utilityDrawerDefaultExpanded, utilityDrawerHeightPx }`.
@@ -127,6 +128,14 @@ Telemetry payload note:
 
 Capability payload note:
 - get_git_capabilities now includes `gitExecutablePath` when the binary path can be resolved from host environment lookup (`where`/`which`).
+
+Forge payload note:
+- list_forge_adapters now includes contract-level GitLab and Bitbucket adapter entries (`gitlab-contract`, `bitbucket-contract`) in degraded mode alongside optional GitHub auth diagnostics.
+- get_repository_integration_matrix classifies GitHub/GitLab/Bitbucket remotes and emits host-specific local-mirror capability flags.
+
+Bootstrap payload note:
+- get_startup_readiness_snapshot accepts optional `{ refresh }` and returns the latest probe snapshot with per-check status, timings, and degraded-count metadata.
+- If no cached probe exists, backend runs a probe on demand before returning snapshot data.
 
 Diff payload note:
 - prepare_file_diff_chunks accepts `{ repositoryPath, path, staged?, contextLines?, chunkSizeBytes? }` and returns diff manifest metadata including hunk summaries.

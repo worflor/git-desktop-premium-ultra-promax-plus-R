@@ -360,6 +360,28 @@ pub struct CommandTelemetryMaintenanceData {
     pub sample_count: u32,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupReadinessCheckData {
+    pub id: String,
+    pub ok: bool,
+    pub duration_ms: u64,
+    pub error_code: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupReadinessSnapshotData {
+    pub request_id: String,
+    pub started_at: String,
+    pub completed_at: String,
+    pub duration_ms: u64,
+    pub ok: bool,
+    pub degraded_checks: u32,
+    pub checks: Vec<StartupReadinessCheckData>,
+}
+
 pub type PullRequestProviderData = IssueProviderData;
 pub type PullRequestProviderListData = IssueProviderListData;
 

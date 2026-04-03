@@ -47,6 +47,10 @@ Deliverables:
 - Pretext prepare/layout telemetry in diagnostics
 - Version bump checklist and canary benchmark pipeline
 
+Implementation status:
+- CI fixture gate now runs via `npm run pretext:fixtures --workspace apps/desktop`.
+- Fixture corpus is stored in `apps/desktop/scripts/pretext-fixtures.json` and includes unicode, bidi, long-line, massive payload, and mixed line-ending scenarios.
+
 Exit criteria:
 - Pretext upgrades are gated and repeatable
 

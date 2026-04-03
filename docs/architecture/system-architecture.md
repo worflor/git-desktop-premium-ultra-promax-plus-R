@@ -82,6 +82,7 @@ At startup and on demand, discover installed CLIs by:
 
 Implementation update (2026-04-03):
 - Backend now runs an asynchronous startup readiness probe that checks git capabilities, auth baseline, forge adapter availability, and AI provider discovery.
+- Probe snapshots are queryable through `get_startup_readiness_snapshot` with optional on-demand refresh.
 
 ### Adapter interface
 Each provider implements:
@@ -109,6 +110,7 @@ Each provider implements:
 ## Auth and Credentials
 - Primary auth path: system Git credential helper and SSH agent.
 - Optional host adapter auth status (for example gh auth state) augments diagnostics.
+- Forge adapter diagnostics include GitHub optional auth plus contract-level GitLab/Bitbucket degraded states.
 - Avoid handling plaintext credentials in app-managed storage.
 
 ## Error and Observability

@@ -10,7 +10,7 @@ export interface SurfaceMaterialShader {
   textureOpacity?: number;
   motion?: "snappy" | "fluid" | "elastic";
   luminescence?: number;
-  particles?: "none" | "stardust" | "embers" | "voxels" | "chalkdust" | "ethereal" | "void";
+  particles?: "none" | "stardust" | "embers" | "voxels" | "chalkdust" | "ethereal" | "void" | "quantum";
   parallaxStrength?: number;
   geometry?: {
     radius?: number; // base border radius scale
@@ -187,12 +187,14 @@ function generateProceduralTexture(shader: SurfaceMaterialShader, ambient: RgbaC
   return `url(data:image/svg+xml;base64,${btoa(svg)})`;
 }
 
-function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: RgbaColor | null): string {
+export type ParticlePayload = string | { near: string; mid: string; far: string; bg: string; };
+
+function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: RgbaColor | null): ParticlePayload {
   if (!shader.particles || shader.particles === "none") return "none";
 
   // Base physical dimensions. A large matrix repeats natively over the CSS viewport infinitely.
-  let svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000'>`;
-  const baseFill = ambient ? `rgba(${ambient.r},${ambient.g},${ambient.b},1)` : "white";
+  let svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' preserveAspectRatio='none'>`;
+  const baseFill = ambient ? toRgbaString({...ambient, a: 0.1}) : "rgba(255,255,255,0.1)";
 
   if (shader.particles === "stardust") {
     // Generate isolated geometric points pulsing slowly using embedded un-executed CSS rules
@@ -210,19 +212,43 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
       svg += `<circle cx='${x}' cy='${y}' r='${r}' class='star' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
     }
   } else if (shader.particles === "embers") {
-    // Emit vertically translating shards that fade mathematically over space
-    svg += `<style>
-      .ember { animation: float linear infinite; fill: ${baseFill}; }
-      @keyframes float { 0% { transform: translateY(1050px); opacity: 0;} 20% {opacity: 0.6;} 100% { transform: translateY(-50px); opacity: 0; } }
+    // Relativistic EM Wave Simulator v3: Performance-Optimized Silky Oscillation
+    // Specialized wave-path generator (Simplified for FPS)
+    const generateWave = (i: number, freq: number, amplitude: number, color: string, dur: number) => {
+      const w = (Math.abs(Math.cos(i * 44)) * 1.5 + 1).toFixed(1);
+      let d = `M 0 0 `;
+      // Fewer points (80px steps instead of 40px) for better performance
+      for (let x_pos = 0; x_pos <= 1200; x_pos += 80) {
+        const y_off = Math.sin(x_pos * freq + i) * amplitude;
+        d += `L ${y_off.toFixed(1)} ${x_pos} `;
+      }
+      return `<path d='${d}' fill='none' stroke='${color}' stroke-width='${w}' stroke-linecap='round' stroke-opacity='0' style='animation: waveFall ${dur}s linear infinite; animation-delay: ${(Math.sin(i*77)*-15).toFixed(1)}s; will-change: transform;' />`;
+    };
+
+    const style = `<style>
+      @keyframes waveFall { 
+        0% { transform: translateY(-400px) scaleY(1) translateZ(0); opacity: 0; }
+        15% { opacity: 0.5; }
+        100% { transform: translateY(1200px) scaleY(1.5) translateZ(0); opacity: 0; }
+      }
     </style>`;
-    // Deterministic spawn vectors
-    for (let i = 0; i < 20; i++) {
-      const x = (Math.sin(i * 678) * 500 + 500).toFixed(1);
-      const w = (Math.abs(Math.sin(i * 12)) * 3 + 1).toFixed(1);
-      const dur = (Math.abs(Math.sin(i * 88)) * 8 + 4).toFixed(1);
-      const del = (Math.abs(Math.sin(i * 99)) * 10).toFixed(1);
-      svg += `<rect x='${x}' y='0' width='${w}' height='${(parseFloat(w) * 3).toFixed(1)}' rx='1' class='ember' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
-    }
+
+    // Render 3 distinct spectral layers with reduced particle counts
+    const buildLayer = (count: number, freq: number, amp: number, color: string, speedBase: number) => {
+      let lSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' preserveAspectRatio='none'>${style}`;
+      for (let i = 0; i < count; i++) {
+        lSvg += generateWave(i, freq, amp, color, speedBase + Math.random() * 2);
+      }
+      lSvg += `</svg>`;
+      return typeof window !== 'undefined' ? `url(data:image/svg+xml;base64,${window.btoa(lSvg)})` : "";
+    };
+
+    const near = buildLayer(12, 0.05, 12, "#ff0044", 2.0);
+    const mid = buildLayer(8, 0.03, 8, "#880022", 4.0);
+    const far = buildLayer(6, 0.015, 4, "#3a0510", 7.0);
+    
+    // We Return the layered stack for CSS interpretation (Removed bg/noise/ugly grain)
+    return { near, mid, far, bg: "none" };
   } else if (shader.particles === "voxels") {
     // Large, rigid rotating cubes falling computationally
     svg += `<style>
@@ -305,6 +331,25 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
       const dur = (Math.abs(Math.cos(i * 66)) * 4 + 3).toFixed(1);
       const del = (Math.abs(Math.sin(i * 77)) * -5).toFixed(1);
       svg += `<line x1='${x}' y1='${y}' x2='${(+x + +w).toFixed(1)}' y2='${y}' stroke-width='1' class='glitch' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
+    }
+  } else if (shader.particles === "quantum") {
+    // Subatomic Quantum Engine: Luminous Orbs with 'Subatomic Shimmer' (Smooth breathing)
+    svg += `<style>
+      .quantum-orb { animation: breathe ease-in-out infinite alternate, quantumDrift linear infinite; fill: #00ff88; }
+      @keyframes breathe { 0% { transform: scale(0.6); opacity: 0.3; filter: brightness(1); } 100% { transform: scale(1.4); opacity: 0.8; filter: brightness(1.6); } }
+      @keyframes quantumDrift { 0% { transform: translate(0, 0); } 100% { transform: translate(40px, -40px); } }
+    </style>
+    <filter id='orbGlow'><feGaussianBlur in='SourceGraphic' stdDeviation='1'/></filter>`;
+    
+    // Smoothly pulsing subatomic orbs
+    for (let i = 0; i < 45; i++) {
+      const x = (Math.sin(i * 123) * 500 + 500).toFixed(1);
+      const y = (Math.cos(i * 456) * 500 + 500).toFixed(1);
+      const r = (Math.abs(Math.sin(i * 789)) * 1.5 + 0.5).toFixed(1); // Slightly larger for better visibility
+      const breathDur = (Math.abs(Math.sin(i * 11)) * 3 + 2).toFixed(1); // 2s - 5s slow breathe
+      const driftDur = (Math.abs(Math.cos(i * 22)) * 40 + 40).toFixed(1); // 40s - 80s slow drift
+      const del = (Math.abs(Math.sin(i * 33)) * -20).toFixed(1);
+      svg += `<circle cx='${x}' cy='${y}' r='${r}' filter='url(#orbGlow)' class='quantum-orb' style='animation-duration:${breathDur}s, ${driftDur}s;animation-delay:${del}s, ${del}s' />`;
     }
   }
 
@@ -418,7 +463,23 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
 
   // Render mathematical procedural textures directly over the CSS boundaries
   root.style.setProperty("--runtime-material-texture", generateProceduralTexture(shader, ambientColor));
-  root.style.setProperty("--runtime-material-particles", generateProceduralParticles(shader, ambientColor));
+  
+  const particles = generateProceduralParticles(shader, ambientColor);
+  if (typeof particles === "string") {
+    root.style.setProperty("--runtime-material-particles", particles);
+    root.style.removeProperty("--runtime-material-particles-near");
+    root.style.removeProperty("--runtime-material-particles-mid");
+    root.style.removeProperty("--runtime-material-particles-far");
+    root.style.removeProperty("--runtime-material-particles-bg");
+  } else {
+    // Narrowing for multi-layer particles
+    const layered = particles as { near: string; mid: string; far: string; bg: string; };
+    root.style.setProperty("--runtime-material-particles", "none");
+    root.style.setProperty("--runtime-material-particles-near", layered.near);
+    root.style.setProperty("--runtime-material-particles-mid", layered.mid);
+    root.style.setProperty("--runtime-material-particles-far", layered.far);
+    root.style.setProperty("--runtime-material-particles-bg", layered.bg);
+  }
 
   // Determine physical kinematic (motion) variables
   let ease = "cubic-bezier(0.2, 0, 0, 1)";

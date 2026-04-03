@@ -28,6 +28,7 @@ import type {
   RecentRepositoriesData,
   RepositoryIntegrationMatrix,
   RepositoryStatus,
+  StartupReadinessSnapshotData,
   SyncData,
   WorktreeListData,
   WorktreeOperationData
@@ -372,6 +373,12 @@ export function getAiDiffReviewJob(jobId: string): Promise<CommandResult<AiDiffR
 
 export function cancelAiDiffReviewJob(jobId: string): Promise<CommandResult<AiDiffReviewCancelData>> {
   return invokeCommand("cancel_ai_diff_review_job", { jobId });
+}
+
+export function getStartupReadinessSnapshot(
+  refresh = false
+): Promise<CommandResult<StartupReadinessSnapshotData>> {
+  return invokeCommand("get_startup_readiness_snapshot", { refresh });
 }
 
 export function getAppSettings(): Promise<CommandResult<AppSettingsData>> {

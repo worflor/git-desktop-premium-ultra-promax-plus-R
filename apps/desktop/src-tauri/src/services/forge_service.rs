@@ -6,6 +6,11 @@ use crate::models::git::{
 };
 use crate::services::git_provider;
 
+const ADAPTER_ID_LOCAL_CORE: &str = "local-core";
+const ADAPTER_ID_GITHUB_GH: &str = "github-gh";
+const ADAPTER_ID_GITLAB_CONTRACT: &str = "gitlab-contract";
+const ADAPTER_ID_BITBUCKET_CONTRACT: &str = "bitbucket-contract";
+
 pub struct GithubCliAuthStatus {
     pub available: bool,
     pub authenticated: bool,
@@ -15,7 +20,7 @@ pub struct GithubCliAuthStatus {
 
 fn local_core_adapter() -> ForgeAdapter {
     ForgeAdapter {
-        id: "local-core".to_string(),
+        id: ADAPTER_ID_LOCAL_CORE.to_string(),
         available: true,
         version: Some("built-in".to_string()),
         auth_state: Some("n/a".to_string()),
@@ -26,7 +31,7 @@ fn local_core_adapter() -> ForgeAdapter {
 fn detect_gh() -> ForgeAdapter {
     let status = get_github_cli_auth_status();
     ForgeAdapter {
-        id: "github-gh".to_string(),
+        id: ADAPTER_ID_GITHUB_GH.to_string(),
         available: status.available,
         version: status.version,
         auth_state: Some(if status.authenticated {
@@ -38,6 +43,30 @@ fn detect_gh() -> ForgeAdapter {
         }),
         auth_message: Some(status.message),
     }
+}
+
+fn contract_only_adapter(id: &str, message: &str) -> ForgeAdapter {
+    ForgeAdapter {
+        id: id.to_string(),
+        available: false,
+        version: Some("contract-only".to_string()),
+        auth_state: Some("degraded".to_string()),
+        auth_message: Some(message.to_string()),
+    }
+}
+
+fn gitlab_contract_adapter() -> ForgeAdapter {
+    contract_only_adapter(
+        ADAPTER_ID_GITLAB_CONTRACT,
+        "GitLab adapter contract is declared; API/token integration is not enabled in this build.",
+    )
+}
+
+fn bitbucket_contract_adapter() -> ForgeAdapter {
+    contract_only_adapter(
+        ADAPTER_ID_BITBUCKET_CONTRACT,
+        "Bitbucket adapter contract is declared; API/token integration is not enabled in this build.",
+    )
 }
 
 pub fn get_github_cli_auth_status() -> GithubCliAuthStatus {
@@ -105,7 +134,12 @@ pub fn get_github_cli_auth_status() -> GithubCliAuthStatus {
 pub fn list_forge_adapters() -> Result<ForgeAdapterList, AppError> {
     let github = detect_gh();
     Ok(ForgeAdapterList {
-        adapters: vec![local_core_adapter(), github],
+        adapters: vec![
+            local_core_adapter(),
+            github,
+            gitlab_contract_adapter(),
+            bitbucket_contract_adapter(),
+        ],
     })
 }
 
@@ -115,6 +149,8 @@ pub fn get_repository_integration_matrix(
     let remote_output = git_provider::run_git(Some(repository_path), &["remote", "-v"])?;
     let github_adapter = detect_gh();
     let github_auth = get_github_cli_auth_status();
+    let gitlab_adapter = gitlab_contract_adapter();
+    let bitbucket_adapter = bitbucket_contract_adapter();
     let mut remotes = Vec::<RemoteIntegrationData>::new();
     let mut seen = std::collections::HashSet::<String>::new();
 
@@ -136,12 +172,26 @@ pub fn get_repository_integration_matrix(
 
         let host_kind = detect_host_kind(&url);
         let (adapter_id, adapter_available) = match host_kind.as_str() {
-            "github" => (Some("github-gh".to_string()), github_adapter.available),
+            "github" => (
+                Some(ADAPTER_ID_GITHUB_GH.to_string()),
+                github_adapter.available,
+            ),
+            "gitlab" => (
+                Some(ADAPTER_ID_GITLAB_CONTRACT.to_string()),
+                gitlab_adapter.available,
+            ),
+            "bitbucket" => (
+                Some(ADAPTER_ID_BITBUCKET_CONTRACT.to_string()),
+                bitbucket_adapter.available,
+            ),
             _ => (None, false),
         };
 
         let mut capability_summary = vec!["core.git.fetch-pull-push".to_string()];
-        let offline_supported = matches!(host_kind.as_str(), "local" | "github");
+        let offline_supported = matches!(
+            host_kind.as_str(),
+            "local" | "github" | "gitlab" | "bitbucket"
+        );
         if offline_supported {
             capability_summary.push("local.offline-ready".to_string());
         }
@@ -159,6 +209,26 @@ pub fn get_repository_integration_matrix(
             } else {
                 capability_summary
                     .push("github.optional-adapter.unavailable.local-mirror-active".to_string());
+            }
+        }
+        if host_kind == "gitlab" {
+            capability_summary.push("gitlab.remote.detected".to_string());
+            capability_summary.push("gitlab.issues.local-mirror".to_string());
+            capability_summary.push("gitlab.merge-requests.local-mirror".to_string());
+            if gitlab_adapter.available {
+                capability_summary.push("gitlab.optional-adapter.available".to_string());
+            } else {
+                capability_summary.push("gitlab.optional-adapter.contract-only".to_string());
+            }
+        }
+        if host_kind == "bitbucket" {
+            capability_summary.push("bitbucket.remote.detected".to_string());
+            capability_summary.push("bitbucket.issues.local-mirror".to_string());
+            capability_summary.push("bitbucket.pull-requests.local-mirror".to_string());
+            if bitbucket_adapter.available {
+                capability_summary.push("bitbucket.optional-adapter.available".to_string());
+            } else {
+                capability_summary.push("bitbucket.optional-adapter.contract-only".to_string());
             }
         }
 
@@ -182,6 +252,10 @@ pub fn get_repository_integration_matrix(
             "local.pull-requests.offline".to_string(),
             "github.issues.local-mirror".to_string(),
             "github.pull-requests.local-mirror".to_string(),
+            "gitlab.issues.local-mirror".to_string(),
+            "gitlab.merge-requests.local-mirror".to_string(),
+            "bitbucket.issues.local-mirror".to_string(),
+            "bitbucket.pull-requests.local-mirror".to_string(),
             "local.telemetry.only".to_string(),
         ],
         remotes,
@@ -206,6 +280,12 @@ fn detect_host_kind(url: &str) -> String {
     if normalized.contains("github.com") {
         return "github".to_string();
     }
+    if normalized.contains("gitlab.com") {
+        return "gitlab".to_string();
+    }
+    if normalized.contains("bitbucket.org") {
+        return "bitbucket".to_string();
+    }
     if normalized.starts_with("file://")
         || normalized.starts_with("/")
         || normalized.starts_with("./")
@@ -219,11 +299,22 @@ fn detect_host_kind(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_host_kind, first_non_empty_line, list_forge_adapters};
+    use super::{
+        detect_host_kind, first_non_empty_line, list_forge_adapters, ADAPTER_ID_BITBUCKET_CONTRACT,
+        ADAPTER_ID_GITLAB_CONTRACT,
+    };
 
     #[test]
-    fn detect_host_kind_classifies_github_and_local_paths() {
+    fn detect_host_kind_classifies_supported_hosts() {
         assert_eq!(detect_host_kind("git@github.com:owner/repo.git"), "github");
+        assert_eq!(
+            detect_host_kind("https://gitlab.com/group/project.git"),
+            "gitlab"
+        );
+        assert_eq!(
+            detect_host_kind("ssh://git@bitbucket.org/team/repo.git"),
+            "bitbucket"
+        );
         assert_eq!(detect_host_kind("file:///tmp/repo"), "local");
         assert_eq!(detect_host_kind("../relative/repo"), "local");
         assert_eq!(detect_host_kind("ssh://example.com/repo.git"), "generic");
@@ -249,5 +340,14 @@ mod tests {
 
         assert!(local_core.available);
         assert_eq!(local_core.version.as_deref(), Some("built-in"));
+
+        assert!(adapters
+            .adapters
+            .iter()
+            .any(|adapter| adapter.id == ADAPTER_ID_GITLAB_CONTRACT));
+        assert!(adapters
+            .adapters
+            .iter()
+            .any(|adapter| adapter.id == ADAPTER_ID_BITBUCKET_CONTRACT));
     }
 }

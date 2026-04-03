@@ -72,6 +72,7 @@ fn main() {
             commands::start_ai_diff_review_job,
             commands::get_ai_diff_review_job,
             commands::cancel_ai_diff_review_job,
+            commands::get_startup_readiness_snapshot,
             commands::get_app_settings,
             commands::update_ai_guardrail,
             commands::update_telemetry_retention,

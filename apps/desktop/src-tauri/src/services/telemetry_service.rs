@@ -243,7 +243,7 @@ fn percentile(sorted_durations: &[u64], percentile: u8) -> u64 {
     }
 
     let scaled = (sorted_durations.len() as u128) * (percentile as u128);
-    let rank = ((scaled + 99) / 100) as usize;
+    let rank = scaled.div_ceil(100) as usize;
     let index = rank.saturating_sub(1).min(sorted_durations.len() - 1);
     sorted_durations[index]
 }

@@ -103,16 +103,16 @@ pub fn run_diff_review(
         .as_ref()
         .err()
         .map(|error| error.to_command_error().code);
-    let _ = ai_audit_service::record_ai_audit_event(
-        "review.run",
+    let _ = ai_audit_service::record_ai_audit_event(ai_audit_service::AiAuditEventInput {
+        event: "review.run",
         provider_id,
         repository_path,
         diff_scope_path,
         prompt,
-        &response,
-        result.is_ok(),
-        error_code.as_deref(),
-    );
+        output: &response,
+        ok: result.is_ok(),
+        error_code: error_code.as_deref(),
+    });
 
     result?;
 
@@ -165,16 +165,16 @@ pub fn start_diff_review_job(
         jobs.insert(job_id.clone(), Arc::clone(&record));
     }
 
-    let _ = ai_audit_service::record_ai_audit_event(
-        "review.job.start",
+    let _ = ai_audit_service::record_ai_audit_event(ai_audit_service::AiAuditEventInput {
+        event: "review.job.start",
         provider_id,
         repository_path,
         diff_scope_path,
         prompt,
-        "",
-        true,
-        None,
-    );
+        output: "",
+        ok: true,
+        error_code: None,
+    });
 
     spawn_review_worker(
         record,
@@ -251,16 +251,16 @@ pub fn cancel_diff_review_job(
     record.status = AiReviewJobState::Canceled;
     record.output.push_str("\nReview canceled by user.\n");
 
-    let _ = ai_audit_service::record_ai_audit_event(
-        "review.job.cancel",
-        &record.provider_id,
-        &record.repository_path,
-        record.diff_scope_path.as_deref(),
-        &record.prompt,
-        &record.output,
-        false,
-        Some("ai.job_canceled"),
-    );
+    let _ = ai_audit_service::record_ai_audit_event(ai_audit_service::AiAuditEventInput {
+        event: "review.job.cancel",
+        provider_id: &record.provider_id,
+        repository_path: &record.repository_path,
+        diff_scope_path: record.diff_scope_path.as_deref(),
+        prompt: &record.prompt,
+        output: &record.output,
+        ok: false,
+        error_code: Some("ai.job_canceled"),
+    });
 
     Ok(AiDiffReviewCancelData {
         job_id: job_id.to_string(),
@@ -304,16 +304,17 @@ fn spawn_review_worker(
         if let Ok(mut job) = record.lock() {
             if job.status == AiReviewJobState::Canceled || cancel_flag.load(Ordering::Relaxed) {
                 job.status = AiReviewJobState::Canceled;
-                let _ = ai_audit_service::record_ai_audit_event(
-                    "review.job.finish",
-                    &job.provider_id,
-                    &job.repository_path,
-                    job.diff_scope_path.as_deref(),
-                    &job.prompt,
-                    &job.output,
-                    false,
-                    Some("ai.job_canceled"),
-                );
+                let _ =
+                    ai_audit_service::record_ai_audit_event(ai_audit_service::AiAuditEventInput {
+                        event: "review.job.finish",
+                        provider_id: &job.provider_id,
+                        repository_path: &job.repository_path,
+                        diff_scope_path: job.diff_scope_path.as_deref(),
+                        prompt: &job.prompt,
+                        output: &job.output,
+                        ok: false,
+                        error_code: Some("ai.job_canceled"),
+                    });
                 return;
             }
 
@@ -329,16 +330,16 @@ fn spawn_review_worker(
                 }
             };
 
-            let _ = ai_audit_service::record_ai_audit_event(
-                "review.job.finish",
-                &job.provider_id,
-                &job.repository_path,
-                job.diff_scope_path.as_deref(),
-                &job.prompt,
-                &job.output,
-                audit_ok,
-                audit_error_code.as_deref(),
-            );
+            let _ = ai_audit_service::record_ai_audit_event(ai_audit_service::AiAuditEventInput {
+                event: "review.job.finish",
+                provider_id: &job.provider_id,
+                repository_path: &job.repository_path,
+                diff_scope_path: job.diff_scope_path.as_deref(),
+                prompt: &job.prompt,
+                output: &job.output,
+                ok: audit_ok,
+                error_code: audit_error_code.as_deref(),
+            });
         }
     });
 }
@@ -638,49 +639,47 @@ where
 fn build_provider_attempts(prompt: &str, diff: &str) -> Vec<ProviderAttempt> {
     let inline_prompt = build_inline_prompt(prompt, diff);
     let stdin_payload = build_stdin_payload(prompt, diff);
-    let mut attempts = Vec::new();
-
-    attempts.push(ProviderAttempt {
-        name: "prompt --prompt",
-        args: vec!["--prompt".to_string(), inline_prompt.clone()],
-        stdin_payload: None,
-    });
-    attempts.push(ProviderAttempt {
-        name: "prompt -p",
-        args: vec!["-p".to_string(), inline_prompt.clone()],
-        stdin_payload: None,
-    });
-    attempts.push(ProviderAttempt {
-        name: "prompt --print",
-        args: vec!["--print".to_string(), inline_prompt.clone()],
-        stdin_payload: None,
-    });
-    attempts.push(ProviderAttempt {
-        name: "exec --prompt",
-        args: vec![
-            "exec".to_string(),
-            "--prompt".to_string(),
-            inline_prompt.clone(),
-        ],
-        stdin_payload: None,
-    });
-    attempts.push(ProviderAttempt {
-        name: "chat --prompt",
-        args: vec!["chat".to_string(), "--prompt".to_string(), inline_prompt],
-        stdin_payload: None,
-    });
-    attempts.push(ProviderAttempt {
-        name: "stdin default",
-        args: Vec::new(),
-        stdin_payload: Some(stdin_payload.clone()),
-    });
-    attempts.push(ProviderAttempt {
-        name: "stdin --stdin",
-        args: vec!["--stdin".to_string()],
-        stdin_payload: Some(stdin_payload),
-    });
-
-    attempts
+    vec![
+        ProviderAttempt {
+            name: "prompt --prompt",
+            args: vec!["--prompt".to_string(), inline_prompt.clone()],
+            stdin_payload: None,
+        },
+        ProviderAttempt {
+            name: "prompt -p",
+            args: vec!["-p".to_string(), inline_prompt.clone()],
+            stdin_payload: None,
+        },
+        ProviderAttempt {
+            name: "prompt --print",
+            args: vec!["--print".to_string(), inline_prompt.clone()],
+            stdin_payload: None,
+        },
+        ProviderAttempt {
+            name: "exec --prompt",
+            args: vec![
+                "exec".to_string(),
+                "--prompt".to_string(),
+                inline_prompt.clone(),
+            ],
+            stdin_payload: None,
+        },
+        ProviderAttempt {
+            name: "chat --prompt",
+            args: vec!["chat".to_string(), "--prompt".to_string(), inline_prompt],
+            stdin_payload: None,
+        },
+        ProviderAttempt {
+            name: "stdin default",
+            args: Vec::new(),
+            stdin_payload: Some(stdin_payload.clone()),
+        },
+        ProviderAttempt {
+            name: "stdin --stdin",
+            args: vec!["--stdin".to_string()],
+            stdin_payload: Some(stdin_payload),
+        },
+    ]
 }
 
 fn build_inline_prompt(prompt: &str, diff: &str) -> String {
