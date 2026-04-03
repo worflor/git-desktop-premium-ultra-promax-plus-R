@@ -2,8 +2,8 @@ import { applySurfaceMaterial, type SurfaceMaterialShader } from "@/lib/ui/surfa
 
 const THEME_IDS = [
   "halo",
-  "petrichor",
   "nightwalker",
+  "petrichor",
   "aether",
   "helix",
   "quanta",
@@ -39,29 +39,14 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 1.5,
       particles: "ethereal",
-      parallaxStrength: 0.4,
+      parallaxStrength: 0,
+      interaction: "caustic",
       geometry: {
         radius: 12,
         typography: "'Playfair Display', serif",
         fontScale: 1.12,
         letterSpacing: "0.035em"
       }
-    }
-  },
-  {
-    id: "petrichor",
-    label: "Petrichor",
-    description: "Misty cool light mode tuned for daytime readability.",
-    shader: {
-      mode: "solid",
-      blurPx: 0,
-      saturatePct: 100,
-      opacityScale: 1.1,
-      edgeIntensity: 0,
-      texture: "none",
-      motion: "elastic",
-      luminescence: 0.1,
-      parallaxStrength: 0.3
     }
   },
   {
@@ -78,13 +63,30 @@ const THEME_DEFINITIONS = [
       motion: "snappy",
       luminescence: 0.2,
       particles: "void",
-      parallaxStrength: 0.4,
+      parallaxStrength: 0,
+      interaction: "etch",
       geometry: {
         radius: 0,
         typography: "'JetBrains Mono', monospace",
         fontScale: 0.95,
         letterSpacing: "-0.01em"
       }
+    }
+  },
+  {
+    id: "petrichor",
+    label: "Petrichor",
+    description: "Misty cool light mode tuned for daytime readability.",
+    shader: {
+      mode: "solid",
+      blurPx: 0,
+      saturatePct: 100,
+      opacityScale: 1.1,
+      edgeIntensity: 0,
+      texture: "none",
+      motion: "elastic",
+      luminescence: 0.1,
+      parallaxStrength: 0
     }
   },
   {
@@ -102,7 +104,8 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.4,
       particles: "stardust",
-      parallaxStrength: 0.5
+      parallaxStrength: 0,
+      interaction: "warp"
     }
   },
   {
@@ -119,7 +122,7 @@ const THEME_DEFINITIONS = [
       textureOpacity: 0.15,
       motion: "snappy",
       luminescence: 0.1,
-      parallaxStrength: 0.1
+      parallaxStrength: 0
     }
   },
   {
@@ -137,7 +140,8 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.5,
       particles: "quantum",
-      parallaxStrength: 0.6,
+      parallaxStrength: 0,
+      interaction: "vibration",
       geometry: {
         letterSpacing: "0.02em"
       }
@@ -158,7 +162,8 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.45,
       particles: "embers",
-      parallaxStrength: 0.7,
+      parallaxStrength: 0,
+      interaction: "vibration",
       geometry: {
         typography: "'JetBrains Mono', monospace",
         letterSpacing: "normal",
@@ -182,7 +187,8 @@ const THEME_DEFINITIONS = [
       motion: "snappy",
       luminescence: 0.1,
       particles: "chalkdust",
-      parallaxStrength: 0.1,
+      parallaxStrength: 0,
+      interaction: "chalk",
       geometry: {
         radius: 2,
         typography: "'Lora', serif",
@@ -205,7 +211,7 @@ const THEME_DEFINITIONS = [
       motion: "snappy",
       luminescence: 0.4,
       particles: "voxels",
-      parallaxStrength: 0.2,
+      parallaxStrength: 0,
       geometry: {
         radius: 0,
         pixelated: true,

@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "pretext:fixtures": "node scripts/pretext-fixture-gate.mjs",
+    "pretext:canary": "node scripts/pretext-canary-benchmark.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },

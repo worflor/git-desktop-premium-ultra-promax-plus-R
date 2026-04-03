@@ -31,12 +31,22 @@ jobs:
       - name: Pretext fixture gate
         run: npm run pretext:fixtures --workspace apps/desktop
 
+      - name: Pretext canary benchmark
+        run: npm run pretext:canary --workspace apps/desktop
+
       - name: Frontend build
         run: npm run build --workspace apps/desktop
 
       - name: Git compatibility fixture suite
         working-directory: apps/desktop/src-tauri
         run: cargo test fixture_ -- --nocapture
+
+      - name: Backend performance budget gate
+        working-directory: apps/desktop/src-tauri
+        env:
+          GDPU_STATUS_P95_BUDGET_MS: "2500"
+          GDPU_DIFF_PREPARE_P95_BUDGET_MS: "2500"
+        run: cargo test perf_budget_ -- --nocapture
 
       - name: Backend formatting check
         working-directory: apps/desktop/src-tauri

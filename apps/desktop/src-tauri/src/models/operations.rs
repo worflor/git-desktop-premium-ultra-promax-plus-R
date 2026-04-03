@@ -79,6 +79,16 @@ pub struct FileDiffManifestData {
     pub additions: u32,
     pub deletions: u32,
     pub hunk_count: u32,
+    pub renderer_mode: String,
+    pub mode_threshold_max_changed_lines: u32,
+    pub mode_threshold_max_payload_bytes: u32,
+    pub pretext_version: String,
+    pub pretext_prepare_ms: u64,
+    pub pretext_layout_ms: u64,
+    pub fallback_activated: bool,
+    pub fallback_reason: Option<String>,
+    pub visual_row_count: u32,
+    pub layout_cache_key: String,
     pub hunks: Vec<DiffHunkData>,
 }
 

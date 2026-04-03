@@ -1381,6 +1381,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::time::Instant;
 
     use uuid::Uuid;
 
@@ -1614,6 +1615,26 @@ mod tests {
         }
 
         (additions, deletions, files_changed)
+    }
+
+    fn percentile_duration_ms(values: &[u128], percentile: u8) -> u128 {
+        if values.is_empty() {
+            return 0;
+        }
+
+        let mut sorted = values.to_vec();
+        sorted.sort_unstable();
+        let scaled = (sorted.len() as u128) * (percentile as u128);
+        let rank = scaled.div_ceil(100) as usize;
+        let index = rank.saturating_sub(1).min(sorted.len() - 1);
+        sorted[index]
+    }
+
+    fn perf_budget_from_env(name: &str) -> Option<u128> {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.trim().parse::<u128>().ok())
+            .filter(|value| *value >= 1)
     }
 
     #[test]
@@ -1977,5 +1998,41 @@ mod tests {
             .worktrees
             .iter()
             .any(|item| item.branch.as_deref() == Some(branch_name)));
+    }
+
+    #[test]
+    fn perf_budget_status_p95_within_threshold() {
+        let fixture = FixtureRepo::new("status-perf-budget");
+        write_repo_file(fixture.path(), "tracked.txt", "base\n");
+        commit_all(fixture.path(), "base commit");
+        write_repo_file(fixture.path(), "tracked.txt", "base\nnext\n");
+
+        let Some(budget_ms) = perf_budget_from_env("GDPU_STATUS_P95_BUDGET_MS") else {
+            eprintln!("skipping status perf budget test: GDPU_STATUS_P95_BUDGET_MS is not set");
+            return;
+        };
+
+        // Warm the path before sampling to reduce one-time setup variance.
+        for _ in 0..3 {
+            let _ = get_repository_status(fixture.path_str())
+                .expect("expected status warm-up call to succeed");
+        }
+
+        let mut durations_ms = Vec::<u128>::new();
+        for _ in 0..20 {
+            let started_at = Instant::now();
+            let _ = get_repository_status(fixture.path_str())
+                .expect("expected status benchmark call to succeed");
+            durations_ms.push(started_at.elapsed().as_millis());
+        }
+
+        let p95_ms = percentile_duration_ms(&durations_ms, 95);
+        assert!(
+            p95_ms <= budget_ms,
+            "status p95 exceeded budget: p95={}ms budget={}ms samples={:?}",
+            p95_ms,
+            budget_ms,
+            durations_ms
+        );
     }
 }

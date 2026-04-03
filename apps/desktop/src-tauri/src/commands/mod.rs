@@ -674,6 +674,9 @@ pub fn prepare_file_diff_chunks(
     staged: Option<bool>,
     context_lines: Option<u32>,
     chunk_size_bytes: Option<u32>,
+    layout_width_px: Option<u32>,
+    font_profile: Option<String>,
+    line_height_px: Option<u32>,
     state: State<'_, AppState>,
 ) -> CommandResult<FileDiffManifestData> {
     let started_at = Instant::now();
@@ -690,6 +693,9 @@ pub fn prepare_file_diff_chunks(
         staged,
         context_lines,
         Some(chunk_size),
+        layout_width_px,
+        font_profile.as_deref(),
+        line_height_px,
     ) {
         Ok(data) => command_ok("prepare_file_diff_chunks", started_at, &state, data),
         Err(error) => map_error_with_command("prepare_file_diff_chunks", started_at, &state, error),

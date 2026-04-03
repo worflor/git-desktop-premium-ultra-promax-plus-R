@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::errors::AppError;
 use crate::models::repository::OpenRepositoryData;
 use crate::runtime::state::AppState;
+use crate::services::storage_paths;
 
 const RECENTS_FILE_NAME: &str = "recent_repositories.json";
 
@@ -41,10 +42,7 @@ pub fn persist_recent_repositories(items: &[String]) -> Result<(), AppError> {
 }
 
 fn recents_file_path() -> Result<PathBuf, AppError> {
-    let appdata = std::env::var("APPDATA").map_err(|_| {
-        AppError::Internal("APPDATA environment variable is unavailable".to_string())
-    })?;
-    Ok(PathBuf::from(appdata).join("gdpu").join(RECENTS_FILE_NAME))
+    Ok(storage_paths::gdpu_data_dir()?.join(RECENTS_FILE_NAME))
 }
 
 pub fn open_repository(

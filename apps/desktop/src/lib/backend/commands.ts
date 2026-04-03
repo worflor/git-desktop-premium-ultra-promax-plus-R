@@ -14,7 +14,9 @@ import type {
   CommitHistoryData,
   ConflictResolutionData,
   ConflictStateData,
+  FileDiffChunkData,
   FileDiffData,
+  FileDiffManifestData,
   ForgeAdapter,
   GitCapabilities,
   IssueProviderListData,
@@ -172,6 +174,37 @@ export function getFileDiff(
     staged,
     contextLines
   });
+}
+
+export function prepareFileDiffChunks(
+  repositoryPath: string,
+  path: string,
+  options?: {
+    staged?: boolean;
+    contextLines?: number;
+    chunkSizeBytes?: number;
+    layoutWidthPx?: number;
+    fontProfile?: string;
+    lineHeightPx?: number;
+  }
+): Promise<CommandResult<FileDiffManifestData>> {
+  return invokeCommand("prepare_file_diff_chunks", {
+    repositoryPath,
+    path,
+    staged: options?.staged,
+    contextLines: options?.contextLines,
+    chunkSizeBytes: options?.chunkSizeBytes,
+    layoutWidthPx: options?.layoutWidthPx,
+    fontProfile: options?.fontProfile,
+    lineHeightPx: options?.lineHeightPx
+  });
+}
+
+export function getFileDiffChunk(
+  diffId: string,
+  chunkIndex: number
+): Promise<CommandResult<FileDiffChunkData>> {
+  return invokeCommand("get_file_diff_chunk", { diffId, chunkIndex });
 }
 
 export function fetchRemote(

@@ -32,6 +32,8 @@ pub enum AppError {
     AiProviderUnavailable(String),
     #[error("ai process failed: {0}")]
     AiProcessFailed(String),
+    #[error("ai guardrail blocked operation: {0}")]
+    AiGuardrailViolation(String),
 }
 
 impl AppError {
@@ -51,6 +53,7 @@ impl AppError {
             AppError::DiffTooLarge { .. } => "diff.too_large",
             AppError::AiProviderUnavailable(_) => "ai.provider_unavailable",
             AppError::AiProcessFailed(_) => "ai.process_failed",
+            AppError::AiGuardrailViolation(_) => "ai.guardrail_blocked",
         };
 
         CommandError {
@@ -112,5 +115,12 @@ mod tests {
     fn command_error_uses_contract_ai_provider_code() {
         let command_error = AppError::AiProviderUnavailable("codex".to_string()).to_command_error();
         assert_eq!(command_error.code, "ai.provider_unavailable");
+    }
+
+    #[test]
+    fn command_error_uses_contract_ai_guardrail_code() {
+        let command_error =
+            AppError::AiGuardrailViolation("read-only policy".to_string()).to_command_error();
+        assert_eq!(command_error.code, "ai.guardrail_blocked");
     }
 }

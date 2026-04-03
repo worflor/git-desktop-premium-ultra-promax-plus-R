@@ -106,6 +106,51 @@ export interface FileDiffData {
   diffText: string;
 }
 
+export interface DiffHunkData {
+  hunkIndex: number;
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  addedLines: number;
+  deletedLines: number;
+}
+
+export interface FileDiffManifestData {
+  diffId: string;
+  path: string;
+  staged: boolean;
+  contextLines: number;
+  chunkSizeBytes: number;
+  chunkCount: number;
+  totalBytes: number;
+  totalLines: number;
+  changedLines: number;
+  additions: number;
+  deletions: number;
+  hunkCount: number;
+  rendererMode: "dom" | "canvas" | "fallback" | string;
+  modeThresholdMaxChangedLines: number;
+  modeThresholdMaxPayloadBytes: number;
+  pretextVersion: string;
+  pretextPrepareMs: number;
+  pretextLayoutMs: number;
+  fallbackActivated: boolean;
+  fallbackReason?: string;
+  visualRowCount: number;
+  layoutCacheKey: string;
+  hunks: DiffHunkData[];
+}
+
+export interface FileDiffChunkData {
+  diffId: string;
+  chunkIndex: number;
+  chunkCount: number;
+  hasMore: boolean;
+  chunkText: string;
+}
+
 export interface BranchInfo {
   name: string;
   current: boolean;

@@ -15,7 +15,7 @@ use crate::models::operations::{
     AiDiffReviewJobStartData, AiProviderListData, AiProviderStatus,
 };
 use crate::runtime::state::{AiReviewJobRecord, AiReviewJobState, AppState, SharedAiReviewJob};
-use crate::services::{ai_audit_service, git_provider};
+use crate::services::{ai_audit_service, git_provider, settings_service};
 
 const PROVIDER_BINARIES: [(&str, &str); 4] = [
     ("codex", "codex"),
@@ -84,6 +84,21 @@ pub fn run_diff_review(
     prompt: &str,
     diff_scope_path: Option<&str>,
 ) -> Result<AiDiffReviewData, AppError> {
+    if let Err(error) = enforce_guardrail_for_review(prompt) {
+        let code = error.to_command_error().code;
+        let _ = ai_audit_service::record_ai_audit_event(ai_audit_service::AiAuditEventInput {
+            event: "review.guardrail.blocked",
+            provider_id,
+            repository_path,
+            diff_scope_path,
+            prompt,
+            output: "",
+            ok: false,
+            error_code: Some(code.as_str()),
+        });
+        return Err(error);
+    }
+
     validate_review_input(provider_id, repository_path)?;
 
     let cancel = AtomicBool::new(false);
@@ -129,6 +144,21 @@ pub fn start_diff_review_job(
     prompt: &str,
     diff_scope_path: Option<&str>,
 ) -> Result<AiDiffReviewJobStartData, AppError> {
+    if let Err(error) = enforce_guardrail_for_review(prompt) {
+        let code = error.to_command_error().code;
+        let _ = ai_audit_service::record_ai_audit_event(ai_audit_service::AiAuditEventInput {
+            event: "review.guardrail.blocked",
+            provider_id,
+            repository_path,
+            diff_scope_path,
+            prompt,
+            output: "",
+            ok: false,
+            error_code: Some(code.as_str()),
+        });
+        return Err(error);
+    }
+
     validate_review_input(provider_id, repository_path)?;
 
     let job_id = Uuid::new_v4().to_string();
@@ -360,6 +390,48 @@ fn validate_review_input(provider_id: &str, repository_path: &str) -> Result<(),
     }
 
     Ok(())
+}
+
+fn enforce_guardrail_for_review(prompt: &str) -> Result<(), AppError> {
+    let (guardrail_profile, ai_read_only_default) = match settings_service::get_settings() {
+        Ok(settings) => (settings.guardrail_profile, settings.ai_read_only_default),
+        Err(_) => ("Balanced".to_string(), true),
+    };
+
+    if !ai_read_only_default {
+        return Ok(());
+    }
+
+    if prompt_requests_write_action(prompt) {
+        return Err(AppError::AiGuardrailViolation(format!(
+            "{} profile enforces read-only AI reviews; remove write/execute instructions from prompt",
+            guardrail_profile
+        )));
+    }
+
+    Ok(())
+}
+
+fn prompt_requests_write_action(prompt: &str) -> bool {
+    let normalized = prompt.to_ascii_lowercase();
+    let write_intent_markers = [
+        "apply patch",
+        "write file",
+        "edit file",
+        "modify file",
+        "create file",
+        "delete file",
+        "run command",
+        "execute command",
+        "execute shell",
+        "git commit",
+        "git push",
+        "rewrite this file",
+    ];
+
+    write_intent_markers
+        .iter()
+        .any(|marker| normalized.contains(marker))
 }
 
 fn run_review_pipeline<F>(
@@ -967,7 +1039,8 @@ mod tests {
     use crate::errors::AppError;
 
     use super::{
-        build_inline_prompt, build_provider_attempts, build_stdin_payload, known_binary_candidates,
+        build_inline_prompt, build_provider_attempts, build_stdin_payload,
+        enforce_guardrail_for_review, known_binary_candidates, prompt_requests_write_action,
         provider_binary_name, push_candidate, validate_review_input, MAX_INLINE_DIFF_CHARS,
         MAX_STDIN_DIFF_CHARS, PROVIDER_BINARIES,
     };
@@ -1056,5 +1129,21 @@ mod tests {
         let large_stdin_diff = "y".repeat(MAX_STDIN_DIFF_CHARS + 64);
         let stdin_payload = build_stdin_payload("prompt", &large_stdin_diff);
         assert!(stdin_payload.contains("truncated to"));
+    }
+
+    #[test]
+    fn guardrail_write_intent_detection_matches_expected_markers() {
+        assert!(prompt_requests_write_action(
+            "Please apply patch to write file and then git commit"
+        ));
+        assert!(!prompt_requests_write_action(
+            "Review this diff and highlight regressions"
+        ));
+    }
+
+    #[test]
+    fn enforce_guardrail_blocks_write_intent_prompts() {
+        let result = enforce_guardrail_for_review("execute command and write file changes");
+        assert!(result.is_err());
     }
 }

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::errors::AppError;
-use crate::services::settings_service;
+use crate::services::{settings_service, storage_paths};
 
 const OPERATION_LOG_FILE_NAME: &str = "operation_events.jsonl";
 const DEFAULT_RETENTION_DAYS: u32 = 30;
@@ -417,12 +417,7 @@ fn persist_events(events: &[StoredOperationEvent]) -> Result<(), AppError> {
 }
 
 fn operation_log_file_path() -> Result<PathBuf, AppError> {
-    let appdata = std::env::var("APPDATA").map_err(|_| {
-        AppError::Internal("APPDATA environment variable is unavailable".to_string())
-    })?;
-    Ok(PathBuf::from(appdata)
-        .join("gdpu")
-        .join(OPERATION_LOG_FILE_NAME))
+    Ok(storage_paths::gdpu_data_dir()?.join(OPERATION_LOG_FILE_NAME))
 }
 
 fn compute_serialized_size(event: &StoredOperationEvent) -> usize {

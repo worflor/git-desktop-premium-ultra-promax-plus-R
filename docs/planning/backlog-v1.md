@@ -72,6 +72,9 @@ Acceptance criteria:
 - Scroll remains responsive at 10k+ lines
 - Render timing is instrumented
 - Pretext prepare/layout timings are tracked separately
+Implementation update (2026-04-03):
+- Backend diff manifest now includes renderer mode metadata and Pretext telemetry fields (`pretextVersion`, `pretextPrepareMs`, `pretextLayoutMs`, fallback activation metadata, visual row counts, and layout cache keying inputs).
+- Diff prepare telemetry now records dedicated samples for pretext prepare/layout durations and fallback activations.
 
 ### C-3 Pretext + canvas threshold path (P1)
 Acceptance criteria:
@@ -85,6 +88,9 @@ Acceptance criteria:
 - CI runs Pretext correctness fixtures (unicode, bidi, long-line)
 - Upgrade checklist exists for Pretext version bumps
 - Emergency fallback activation rate is observable and < 0.1% in internal dogfooding
+Implementation update (2026-04-03):
+- CI now runs both fixture correctness gate (`pretext:fixtures`) and canary benchmark gate (`pretext:canary`).
+- Version bump checklist is codified in `docs/planning/pretext-version-bump-checklist.md`.
 
 ## EPIC D - Sync Workflow
 ### D-1 Fetch/pull/push operations (P1)
@@ -143,7 +149,7 @@ Acceptance criteria:
 - Prompt and output metadata is logged locally
 - Sensitive content redaction strategy is documented
 Implementation update (2026-04-03):
-- Backend now persists a local AI audit trail (`APPDATA/gdpu/ai_review_audit.jsonl`) with retention limits.
+- Backend now persists a local AI audit trail under the app data root (`gdpu/ai_review_audit.jsonl`) with retention limits.
 - Prompt/output previews are redacted and truncated before persistence.
 - New command `get_ai_audit_entries` exposes audit metadata for diagnostics and future UI surfacing.
 
@@ -155,6 +161,8 @@ Acceptance criteria:
 Implementation update (2026-04-03):
 - Backend guardrail mapping now defaults a value of `0.5` to the Balanced profile.
 - Regression test added to enforce Balanced default behavior for new installs.
+- AI review execution now enforces read-only guardrails and blocks write-intent prompts with contract error code `ai.guardrail_blocked`.
+- Guardrail-blocked attempts are recorded in the backend AI audit trail for diagnostics visibility.
 
 ## EPIC F - Reliability and Performance
 ### F-1 Command latency instrumentation (P0)
@@ -181,6 +189,7 @@ Implementation update (2026-04-03):
 - Retention policy is applied by both age and size, keeping newest samples within configured bounds.
 - Malformed telemetry lines are safely ignored to preserve crash-resistant diagnostics reads.
 - Backend exposes a telemetry-clear maintenance command for deterministic diagnostics reset.
+- Backend persistence paths now resolve cross-platform data roots (Windows/macOS/Linux/XDG) with a shared storage-path resolver and optional `GDPU_DATA_DIR` override.
 
 ## EPIC H - UX Interaction Model
 ### H-1 Single compact density policy (P1)
@@ -204,6 +213,7 @@ Implementation update (2026-04-03):
 - CI now includes a dedicated fixture test step via `cargo test fixture_ -- --nocapture`.
 - Additional backend unit coverage now validates diff chunk parsing/chunking behavior, AI audit redaction/retention behavior, forge/AI adapter contract invariants, and transient git retry classification.
 - Fixture parity coverage now also validates stash lifecycle parity and worktree create/remove behavior against direct git CLI outputs.
+- Performance budget tests now gate command status p95 and diff prepare p95 latency (`cargo test perf_budget_ -- --nocapture`).
 
 ### Advanced Git Workflow Expansion (P1)
 Acceptance criteria:

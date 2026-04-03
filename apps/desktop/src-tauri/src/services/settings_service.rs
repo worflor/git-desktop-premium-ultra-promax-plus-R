@@ -5,14 +5,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::AppError;
 use crate::models::settings::AppSettingsData;
+use crate::services::storage_paths;
 
 const SETTINGS_FILE_NAME: &str = "settings.json";
 const SIDEBAR_WIDTH_MIN_PX: u32 = 220;
 const SIDEBAR_WIDTH_MAX_PX: u32 = 520;
 const UTILITY_DRAWER_HEIGHT_MIN_PX: u32 = 120;
 const UTILITY_DRAWER_HEIGHT_MAX_PX: u32 = 420;
-const SUPPORTED_THEME_IDS: [&str; 6] =
-    ["aether", "helix", "quanta", "petrichor", "redshift", "halo"];
+const SUPPORTED_THEME_IDS: [&str; 9] = [
+    "aether",
+    "helix",
+    "quanta",
+    "petrichor",
+    "redshift",
+    "halo",
+    "nightwalker",
+    "blackboard",
+    "crafty",
+];
 const DEFAULT_THEME_ID: &str = "aether";
 const DEFAULT_KEYBINDING_PROFILE: &str = "classic";
 
@@ -224,10 +234,7 @@ fn persist_settings(settings: &StoredSettings) -> Result<(), AppError> {
 }
 
 fn settings_file_path() -> Result<PathBuf, AppError> {
-    let appdata = std::env::var("APPDATA").map_err(|_| {
-        AppError::Internal("APPDATA environment variable is unavailable".to_string())
-    })?;
-    Ok(PathBuf::from(appdata).join("gdpu").join(SETTINGS_FILE_NAME))
+    Ok(storage_paths::gdpu_data_dir()?.join(SETTINGS_FILE_NAME))
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::errors::AppError;
 use crate::models::operations::{DiffHunkData, FileDiffChunkData, FileDiffManifestData};
 use crate::runtime::state::{AppState, DiffPayloadRecord};
-use crate::services::{git_provider, logging_service, telemetry_service};
+use crate::services::{git_provider, logging_service, pretext_service, telemetry_service};
 
 const DEFAULT_CHUNK_SIZE_BYTES: usize = 64 * 1024;
 const MIN_CHUNK_SIZE_BYTES: usize = 4 * 1024;
@@ -13,6 +13,8 @@ const MAX_CHUNK_SIZE_BYTES: usize = 512 * 1024;
 const MAX_DIFF_BYTES: usize = 20 * 1024 * 1024;
 const DIFF_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_RETAINED_DIFFS: usize = 24;
+const DEFAULT_MODE_A_MAX_CHANGED_LINES: u32 = 15_000;
+const DEFAULT_MODE_A_MAX_PAYLOAD_BYTES: usize = 3 * 1024 * 1024;
 
 pub fn prepare_file_diff_chunks(
     state: &AppState,
@@ -21,6 +23,9 @@ pub fn prepare_file_diff_chunks(
     staged: bool,
     context_lines: usize,
     chunk_size_bytes: Option<usize>,
+    layout_width_px: Option<u32>,
+    font_profile: Option<&str>,
+    line_height_px: Option<u32>,
 ) -> Result<FileDiffManifestData, AppError> {
     let started_at = Instant::now();
     let request_id = logging_service::current_request_context();
@@ -44,6 +49,23 @@ pub fn prepare_file_diff_chunks(
         let chunks = split_text_chunks(&diff_text, chunk_size);
         let diff_id = Uuid::new_v4().to_string();
 
+        let layout_options = pretext_service::LayoutOptions::from_command_inputs(
+            layout_width_px,
+            font_profile,
+            line_height_px,
+        );
+        let layout = pretext_service::prepare_layout(&diff_id, &diff_text, &layout_options);
+
+        let mode_threshold_max_changed_lines = mode_a_max_changed_lines();
+        let mode_threshold_max_payload_bytes = mode_a_max_payload_bytes();
+        let renderer_mode = select_renderer_mode(
+            additions.saturating_add(deletions),
+            total_bytes,
+            layout.fallback_activated,
+            mode_threshold_max_changed_lines,
+            mode_threshold_max_payload_bytes,
+        );
+
         let manifest = FileDiffManifestData {
             diff_id: diff_id.clone(),
             path: path.trim().to_string(),
@@ -57,6 +79,16 @@ pub fn prepare_file_diff_chunks(
             additions,
             deletions,
             hunk_count: hunks.len() as u32,
+            renderer_mode,
+            mode_threshold_max_changed_lines,
+            mode_threshold_max_payload_bytes: mode_threshold_max_payload_bytes as u32,
+            pretext_version: layout.pretext_version,
+            pretext_prepare_ms: layout.prepare_ms,
+            pretext_layout_ms: layout.layout_ms,
+            fallback_activated: layout.fallback_activated,
+            fallback_reason: layout.fallback_reason,
+            visual_row_count: layout.visual_row_count,
+            layout_cache_key: layout.layout_cache_key,
             hunks,
         };
 
@@ -85,8 +117,17 @@ pub fn prepare_file_diff_chunks(
     let mut error_code = None::<String>;
     let message = match &result {
         Ok(manifest) => Some(format!(
-            "renderer_mode=backend-chunking payload_bytes={} changed_lines={} hunk_count={} chunk_count={}",
-            manifest.total_bytes, manifest.changed_lines, manifest.hunk_count, manifest.chunk_count
+            "renderer_mode={} payload_bytes={} changed_lines={} hunk_count={} chunk_count={} pretext_version={} prepare_ms={} layout_ms={} fallback_activated={} visual_rows={}",
+            manifest.renderer_mode,
+            manifest.total_bytes,
+            manifest.changed_lines,
+            manifest.hunk_count,
+            manifest.chunk_count,
+            manifest.pretext_version,
+            manifest.pretext_prepare_ms,
+            manifest.pretext_layout_ms,
+            manifest.fallback_activated,
+            manifest.visual_row_count
         )),
         Err(error) => {
             error_code = Some(error.to_command_error().code);
@@ -102,6 +143,33 @@ pub fn prepare_file_diff_chunks(
         duration_ms,
         error_code.as_deref(),
     );
+
+    if let Ok(manifest) = &result {
+        let _ = telemetry_service::record_command_sample(
+            "diff",
+            "diff.pretext.prepare",
+            true,
+            manifest.pretext_prepare_ms,
+            None,
+        );
+        let _ = telemetry_service::record_command_sample(
+            "diff",
+            "diff.pretext.layout",
+            true,
+            manifest.pretext_layout_ms,
+            None,
+        );
+        if manifest.fallback_activated {
+            let _ = telemetry_service::record_command_sample(
+                "diff",
+                "diff.pretext.fallback",
+                false,
+                duration_ms,
+                Some("diff.pretext_fallback"),
+            );
+        }
+    }
+
     let _ = logging_service::record_operation_span(
         "diff",
         "diff.prepare_file_chunks",
@@ -213,6 +281,40 @@ fn trim_diff_payloads(payloads: &mut std::collections::HashMap<String, DiffPaylo
     for (diff_id, _) in records.into_iter().take(drop_count) {
         payloads.remove(&diff_id);
     }
+}
+
+fn mode_a_max_changed_lines() -> u32 {
+    std::env::var("GDPU_DIFF_MODE_A_MAX_CHANGED_LINES")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|value| *value >= 100)
+        .unwrap_or(DEFAULT_MODE_A_MAX_CHANGED_LINES)
+}
+
+fn mode_a_max_payload_bytes() -> usize {
+    std::env::var("GDPU_DIFF_MODE_A_MAX_PAYLOAD_BYTES")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value >= 64 * 1024)
+        .unwrap_or(DEFAULT_MODE_A_MAX_PAYLOAD_BYTES)
+}
+
+fn select_renderer_mode(
+    changed_lines: u32,
+    payload_bytes: usize,
+    fallback_activated: bool,
+    mode_a_max_changed_lines: u32,
+    mode_a_max_payload_bytes: usize,
+) -> String {
+    if fallback_activated {
+        return "fallback".to_string();
+    }
+
+    if changed_lines < mode_a_max_changed_lines && payload_bytes < mode_a_max_payload_bytes {
+        return "dom".to_string();
+    }
+
+    "canvas".to_string()
 }
 
 fn split_text_chunks(value: &str, chunk_size: usize) -> Vec<String> {
@@ -378,7 +480,107 @@ fn parse_hunk_range(value: &str, prefix: char) -> Option<(u32, u32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_changed_lines, parse_hunks, split_text_chunks};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    use uuid::Uuid;
+
+    use crate::runtime::state::AppState;
+
+    use super::{
+        count_changed_lines, get_file_diff_chunk, parse_hunks, prepare_file_diff_chunks,
+        split_text_chunks, MAX_RETAINED_DIFFS,
+    };
+
+    struct FixtureRepo {
+        path: PathBuf,
+    }
+
+    impl FixtureRepo {
+        fn new(name: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("gdpu-diff-fixture-{name}-{}", Uuid::new_v4()));
+            fs::create_dir_all(&path).expect("failed to create fixture directory");
+
+            run_fixture_git(&path, &["init", "-b", "main"]);
+            run_fixture_git(&path, &["config", "user.name", "Fixture User"]);
+            run_fixture_git(&path, &["config", "user.email", "fixture@example.com"]);
+            run_fixture_git(&path, &["config", "commit.gpgsign", "false"]);
+
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+
+        fn path_str(&self) -> &str {
+            self.path
+                .to_str()
+                .expect("fixture path should be valid utf-8")
+        }
+    }
+
+    impl Drop for FixtureRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn run_fixture_git(repository_path: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repository_path)
+            .output()
+            .expect("failed to execute git command for fixture");
+
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        assert!(
+            output.status.success(),
+            "git command failed for args {:?}\nstdout:\n{}\nstderr:\n{}",
+            args,
+            stdout,
+            stderr
+        );
+
+        stdout
+    }
+
+    fn write_repo_file(repository_path: &Path, relative_path: &str, contents: &str) {
+        let full_path = repository_path.join(relative_path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent).expect("failed to create fixture parent directories");
+        }
+        fs::write(full_path, contents).expect("failed to write fixture file");
+    }
+
+    fn commit_all(repository_path: &Path, message: &str) {
+        run_fixture_git(repository_path, &["add", "--all"]);
+        run_fixture_git(repository_path, &["commit", "-m", message]);
+    }
+
+    fn percentile_duration_ms(values: &[u128], percentile: u8) -> u128 {
+        if values.is_empty() {
+            return 0;
+        }
+
+        let mut sorted = values.to_vec();
+        sorted.sort_unstable();
+        let scaled = (sorted.len() as u128) * (percentile as u128);
+        let rank = scaled.div_ceil(100) as usize;
+        let index = rank.saturating_sub(1).min(sorted.len() - 1);
+        sorted[index]
+    }
+
+    fn perf_budget_from_env(name: &str) -> Option<u128> {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.trim().parse::<u128>().ok())
+            .filter(|value| *value >= 1)
+    }
 
     #[test]
     fn split_text_chunks_preserves_text_and_limits_chunk_size() {
@@ -417,5 +619,160 @@ mod tests {
         assert_eq!(hunks[1].new_lines, 1);
         assert_eq!(hunks[1].added_lines, 1);
         assert_eq!(hunks[1].deleted_lines, 1);
+    }
+
+    #[test]
+    fn diff_cache_retrieval_respects_expiry_pruning() {
+        let fixture = FixtureRepo::new("cache-expiry");
+        write_repo_file(
+            fixture.path(),
+            "src/app.rs",
+            "fn main() {\n    println!(\"base\");\n}\n",
+        );
+        commit_all(fixture.path(), "base commit");
+
+        write_repo_file(
+            fixture.path(),
+            "src/app.rs",
+            "fn main() {\n    println!(\"updated\");\n}\n",
+        );
+
+        let state = AppState::default();
+        let manifest = prepare_file_diff_chunks(
+            &state,
+            fixture.path_str(),
+            "src/app.rs",
+            false,
+            3,
+            Some(16 * 1024),
+            None,
+            None,
+            None,
+        )
+        .expect("expected diff manifest generation to succeed");
+
+        {
+            let mut payloads = state
+                .diff_payloads
+                .lock()
+                .expect("expected diff payload lock to be available");
+            let record = payloads
+                .get_mut(&manifest.diff_id)
+                .expect("expected payload record for manifest id");
+            record.expires_at = Instant::now() - Duration::from_secs(1);
+        }
+
+        let error = get_file_diff_chunk(&state, manifest.diff_id.as_str(), 0)
+            .expect_err("expected expired payload to be pruned before chunk retrieval");
+        assert!(error.to_string().contains("unknown diff id"));
+    }
+
+    #[test]
+    fn diff_cache_evicts_oldest_records_when_capacity_exceeded() {
+        let fixture = FixtureRepo::new("cache-eviction");
+        write_repo_file(fixture.path(), "src/cache.txt", "base\n");
+        commit_all(fixture.path(), "base commit");
+
+        let state = AppState::default();
+        let mut first_diff_id = None::<String>;
+
+        for index in 0..(MAX_RETAINED_DIFFS + 4) {
+            write_repo_file(
+                fixture.path(),
+                "src/cache.txt",
+                format!("base\nupdate-{index}\n").as_str(),
+            );
+            let manifest = prepare_file_diff_chunks(
+                &state,
+                fixture.path_str(),
+                "src/cache.txt",
+                false,
+                3,
+                Some(8 * 1024),
+                None,
+                None,
+                None,
+            )
+            .expect("expected diff manifest generation to succeed");
+
+            if first_diff_id.is_none() {
+                first_diff_id = Some(manifest.diff_id.clone());
+            }
+        }
+
+        let payloads = state
+            .diff_payloads
+            .lock()
+            .expect("expected diff payload lock to be available");
+        assert!(payloads.len() <= MAX_RETAINED_DIFFS);
+
+        let oldest = first_diff_id.expect("expected first diff id to exist");
+        assert!(
+            !payloads.contains_key(oldest.as_str()),
+            "oldest payload should be evicted after capacity limit"
+        );
+    }
+
+    #[test]
+    fn perf_budget_diff_prepare_p95_within_threshold() {
+        let fixture = FixtureRepo::new("prepare-perf-budget");
+        write_repo_file(fixture.path(), "src/large.txt", "base\n");
+        commit_all(fixture.path(), "base commit");
+
+        let large_payload = (0..7000)
+            .map(|index| format!("line-{index:05} = {}", "x".repeat(48)))
+            .collect::<Vec<String>>()
+            .join("\n");
+        write_repo_file(fixture.path(), "src/large.txt", large_payload.as_str());
+
+        let state = AppState::default();
+        let Some(budget_ms) = perf_budget_from_env("GDPU_DIFF_PREPARE_P95_BUDGET_MS") else {
+            eprintln!(
+                "skipping diff prepare perf budget test: GDPU_DIFF_PREPARE_P95_BUDGET_MS is not set"
+            );
+            return;
+        };
+
+        for _ in 0..3 {
+            let _ = prepare_file_diff_chunks(
+                &state,
+                fixture.path_str(),
+                "src/large.txt",
+                false,
+                3,
+                Some(64 * 1024),
+                Some(1080),
+                Some("ui-mono-13"),
+                Some(18),
+            )
+            .expect("expected warm-up diff preparation to succeed");
+        }
+
+        let mut durations_ms = Vec::<u128>::new();
+        for _ in 0..20 {
+            let started_at = Instant::now();
+            let _ = prepare_file_diff_chunks(
+                &state,
+                fixture.path_str(),
+                "src/large.txt",
+                false,
+                3,
+                Some(64 * 1024),
+                Some(1080),
+                Some("ui-mono-13"),
+                Some(18),
+            )
+            .expect("expected diff preparation benchmark call to succeed");
+            durations_ms.push(started_at.elapsed().as_millis());
+        }
+
+        let p95_ms = percentile_duration_ms(&durations_ms, 95);
+        assert!(
+            p95_ms <= budget_ms,
+            "diff prepare p95 exceeded budget: p95={}ms budget={}ms samples={:?}",
+            p95_ms,
+            budget_ms,
+            durations_ms
+        );
     }
 }

@@ -12,7 +12,7 @@ use crate::errors::AppError;
 use crate::models::operations::{
     CommandTelemetrySampleData, CommandTelemetrySnapshotData, CommandTelemetrySummaryData,
 };
-use crate::services::settings_service;
+use crate::services::{settings_service, storage_paths};
 
 const TELEMETRY_FILE_NAME: &str = "command_telemetry.jsonl";
 const DEFAULT_RETENTION_DAYS: u32 = 30;
@@ -377,12 +377,7 @@ fn persist_samples(samples: &[StoredCommandTelemetrySample]) -> Result<(), AppEr
 }
 
 fn telemetry_file_path() -> Result<PathBuf, AppError> {
-    let appdata = std::env::var("APPDATA").map_err(|_| {
-        AppError::Internal("APPDATA environment variable is unavailable".to_string())
-    })?;
-    Ok(PathBuf::from(appdata)
-        .join("gdpu")
-        .join(TELEMETRY_FILE_NAME))
+    Ok(storage_paths::gdpu_data_dir()?.join(TELEMETRY_FILE_NAME))
 }
 
 fn to_sample_data(sample: &StoredCommandTelemetrySample) -> CommandTelemetrySampleData {

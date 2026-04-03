@@ -53,23 +53,26 @@ ul, ol { list-style: none; padding: 0; }
   min-height: 0;
   overflow: hidden;
   position: relative;
-  background:
-    radial-gradient(
-      ellipse at calc(50% + var(--cursor-x, 0) * 15% * var(--runtime-parallax-strength, 0)) calc(50% + var(--cursor-y, 0) * 15% * var(--runtime-parallax-strength, 0)),
-      rgba(var(--theme-ambient-rgb), calc(var(--theme-ambient-strength) * 0.5)),
-      transparent 50%
-    ),
-    var(--app-background);
+  background: var(--app-background);
+  --gutter-mask: linear-gradient(90deg, 
+    white var(--sidebar-width), 
+    rgba(255, 255, 255, 0.1) var(--sidebar-width),
+    rgba(255, 255, 255, 0.1) calc(100% - 300px), 
+    white calc(100% - 300px)
+  );
 }
 
 .app-shell-root::before {
   content: "";
   position: absolute;
-  inset: -100px; /* Overscan for parallax drift */
+  inset: 0;
   pointer-events: none;
   z-index: 0;
   
-  /* Layered EM Spectrum Stack */
+  /* Structural Awareness: Focus particles where they make technical sense */
+  -webkit-mask-image: var(--gutter-mask);
+  mask-image: var(--gutter-mask);
+  opacity: 0.6;
   background-image: 
     var(--runtime-material-particles-near, none),
     var(--runtime-material-particles-mid, none),
@@ -78,7 +81,7 @@ ul, ol { list-style: none; padding: 0; }
     var(--runtime-material-particles, none);
     
   background-repeat: repeat;
-  background-size: 100% 100%, 100% 100%, 100% 100%, 400px 400px, 100% 100%;
+  background-size: 800px 800px, 1200px 1200px, 1600px 1600px, 400px 400px, 1000px 1000px;
 
   /* Parallax Delta Mapping */
   transform: translate(
@@ -94,7 +97,41 @@ ul, ol { list-style: none; padding: 0; }
     center,
     center;
 
-  transition: transform var(--runtime-duration, 0.2s) var(--runtime-ease, ease-out);
+  transition: 
+    transform var(--runtime-duration, 0.2s) var(--runtime-ease, ease-out),
+    opacity 0.4s ease,
+    filter 0.4s ease;
+}
+
+/* Universal Reactivity: The UI fuels the Void */
+.app-shell-root:has(.primary-btn:hover, .workspace-mode-btn:hover, .workspace-view-tab:hover) ::before {
+  opacity: 0.95 !important;
+  filter: brightness(1.6) saturate(1.2) !important;
+}
+
+/* ── Nightwalker Reactive Void (Digital Guttering) ───────── */
+[data-theme="nightwalker"] .app-shell-root::before {
+  /* Mask out the main content area to focus rain in the functional areas */
+  -webkit-mask-image: linear-gradient(90deg, 
+    white var(--sidebar-width), 
+    rgba(255, 255, 255, 0.2) var(--sidebar-width),
+    rgba(255, 255, 255, 0.2) calc(100% - 300px), 
+    white calc(100% - 300px)
+  );
+  mask-image: linear-gradient(90deg, 
+    white var(--sidebar-width), 
+    rgba(255, 255, 255, 0.2) var(--sidebar-width),
+    rgba(255, 255, 255, 0.2) calc(100% - 300px), 
+    white calc(100% - 300px)
+  );
+  opacity: 0.5;
+}
+
+/* Blackboard is purely monolithic - much deeper muting for focus with proximity reveal */
+[data-theme="blackboard"] .app-shell-root::before {
+  opacity: 0.15;
+  -webkit-mask-image: radial-gradient(circle at var(--cursor-x) var(--cursor-y), white 0%, transparent 60%);
+  mask-image: radial-gradient(circle at var(--cursor-x) var(--cursor-y), white 0%, transparent 60%);
 }
 
 .app-shell-root::after {
@@ -1490,11 +1527,106 @@ ul, ol { list-style: none; padding: 0; }
   backdrop-filter: blur(48px) saturate(180%);
 }
 
-@keyframes spectralShift {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+@keyframes interaction-vibration {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(var(--interaction-jitter, 0.5px), var(--interaction-jitter, 0.5px)); }
+  50% { transform: translate(0, 0); }
+  75% { transform: translate(calc(var(--interaction-jitter, 0.5px) * -1), var(--interaction-jitter, 0.5px)); }
+  100% { transform: translate(0, 0); }
 }
 
-[data-theme="redshift"] ::-webkit-scrollbar-thumb {
-  border: 1px solid rgba(255, 0, 68, 0.1);
+@keyframes interaction-caustic-rot {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+@keyframes interaction-vibration {
+  from { mask-position: 0 0; -webkit-mask-position: 0 0; }
+  to { mask-position: 100% 100%; -webkit-mask-position: 100% 100%; }
+}
+
+[data-interaction="vibration"] .primary-btn:hover,
+[data-interaction="vibration"] .workspace-mode-btn:hover,
+[data-interaction="vibration"] .workspace-view-tab:hover {
+  mask-image: var(--interaction-interference);
+  -webkit-mask-image: var(--interaction-interference);
+  mask-size: 200% 200%;
+  -webkit-mask-size: 200% 200%;
+  animation: interaction-vibration var(--runtime-vibration-speed, 0.2s) infinite linear;
+}
+
+[data-interaction="caustic"] .primary-btn:hover,
+[data-interaction="caustic"] .workspace-mode-btn:hover,
+[data-interaction="caustic"] .workspace-view-tab:hover {
+  overflow: hidden;
+}
+
+[data-interaction="caustic"] .primary-btn:hover::after,
+[data-interaction="caustic"] .workspace-mode-btn:hover::after,
+[data-interaction="caustic"] .workspace-view-tab:hover::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  background: var(--interaction-caustic);
+  background-size: 200% 100%;
+  mix-blend-mode: soft-light;
+  animation: interaction-caustic-rot 4s infinite linear;
+  pointer-events: none;
+}
+
+/* ── Primary UI Material Override ── */
+
+.primary-btn,
+.mode-toggle,
+.workspace-mode-btn,
+.workspace-view-tab {
+  position: relative;
+  isolation: isolate;
+}
+
+.primary-btn:hover,
+.mode-toggle:hover,
+.workspace-mode-btn:hover,
+.workspace-view-tab:hover {
+  box-shadow: none !important;
+}
+
+[data-theme="redshift"] .primary-btn:hover,
+[data-theme="redshift"] .workspace-mode-btn:hover {
+  --runtime-vibration-speed: 0.08s; /* Doppler shift acceleration */
+  background: var(--interaction-interference), var(--btn-hover-bg);
+}
+
+[data-theme="nightwalker"] .primary-btn:hover,
+[data-theme="nightwalker"] .workspace-mode-btn:hover {
+  box-shadow: var(--interaction-etch-offset) var(--interaction-etch-offset) 0 var(--interaction-glow) !important;
+  transform: translate(calc(var(--interaction-etch-offset) * -0.5), calc(var(--interaction-etch-offset) * -0.5));
+}
+
+[data-theme="aether"] .primary-btn:hover,
+[data-theme="aether"] .workspace-mode-btn:hover {
+  transform: scale(var(--interaction-warp-scale, 1.05));
+  backdrop-filter: blur(24px) saturate(140%);
+  transition: transform 0.4s cubic-bezier(0.2, 0, 0, 1), backdrop-filter 0.4s;
+}
+
+[data-theme="blackboard"] .primary-btn:hover {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 8px var(--interaction-glow) !important;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="blackboard"] .workspace-mode-btn:hover,
+[data-theme="blackboard"] .workspace-view-tab:hover {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: none !important; /* No hover glow on mini buttons */
+  background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="blackboard"] .primary-btn:active,
+[data-theme="blackboard"] .workspace-mode-btn:active {
+  transform: scale(0.97);
+  transition: transform 0.1s;
 }

@@ -48,15 +48,12 @@
   --radius-sm: 10px;
   --radius-md: 14px;
   --radius-lg: 18px;
-  --shadow-elev: 0 14px 30px rgba(2, 6, 12, 0.46);
+  --shadow-elev: 0 14px 30px rgba(0, 0, 0, 0.6);
 
-  --theme-ambient-rgb: 120, 153, 255;
-  --theme-ambient-strength: 0.16;
-  --theme-spark-opacity: 0.13;
-  --theme-spark-speed-ms: 24s;
-  --status-online-rgb: 87, 206, 159;
+  /* ── Interaction Signatures (Base) ── */
+  --interaction-glow: rgba(120, 153, 255, 0.12);
+  --interaction-warp-scale: 1.05;
 
-  /* ── Component Overrides ── */
   --btn-bg: rgba(var(--chrome-accent-rgb), 0.08);
   --btn-hover-bg: rgba(var(--chrome-accent-rgb), 0.18);
   --btn-border: rgba(var(--chrome-border-rgb), 0.25);
@@ -305,9 +302,10 @@
   --btn-hover-bg: #120609;
   --btn-border: #220b12;
   --btn-text: #ff0044;
-  --btn-shadow: 
-    inset 0 1px 0 rgba(255, 255, 255, 0.02),
-    0 2px 8px rgba(0, 0, 0, 0.4);
+  --btn-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  
+  --interaction-interference: repeating-linear-gradient(90deg, rgba(255, 0, 68, 0.4) 0, rgba(255, 0, 68, 0.4) 1px, transparent 1px, transparent 4px);
+  --interaction-glow: rgba(255, 0, 68, 0.15);
   
   --secondary-btn-bg: rgba(10, 4, 6, 0.5);
   --secondary-btn-hover-bg: rgba(20, 8, 12, 0.7);
@@ -384,8 +382,10 @@
   --btn-border: #ebdfcc;
   --btn-text: #4d453b;
   --btn-active-transform: translateY(1px);
-  --btn-shadow: 0 4px 10px rgba(184, 134, 11, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 1.0);
+  --btn-shadow: inset 0 1px 0 rgba(255, 255, 255, 1.0);
+
+  --interaction-caustic: conic-gradient(from 0deg at 50% 50%, rgba(212, 175, 55, 0) 0%, rgba(212, 175, 55, 0.3) 50%, rgba(212, 175, 55, 0) 100%);
+  --interaction-glow: rgba(212, 175, 55, 0.08);
 
   --secondary-btn-bg: rgba(255, 255, 255, 0.5);
   --secondary-btn-hover-bg: rgba(255, 255, 255, 0.8);
@@ -509,14 +509,10 @@
   --danger-overlay: rgba(255, 120, 150, 0.1);
 
   --glass-backdrop-filter: blur(0px) saturate(100%);
-  --shadow-elev: 0 0 1px 1px rgba(255, 255, 255, 0.2),
-    /* Tight solid chalk core bleed */
-    inset 0 0 1px 1px rgba(255, 255, 255, 0.2),
-    0 0 5px 2px rgba(255, 255, 255, 0.08),
-    /* Wide fuzzy dust halo */
-    inset 0 0 5px 2px rgba(255, 255, 255, 0.08),
-    0 4px 15px rgba(255, 255, 255, 0.04);
-  /* Downward settling dust */
+  --shadow-elev: none;
+  
+  --interaction-glow: rgba(255, 255, 255, 0.15);
+  --interaction-chalk-jitter: 0px;
 
   --theme-ambient-rgb: 240, 245, 250;
   --theme-ambient-strength: 0.08;
@@ -678,9 +674,10 @@
   --btn-border: #333336;
   --btn-text: #00f0ff;
   --btn-active-transform: translate(0, 1px) scale(0.99);
-  --btn-shadow: 0 0 0 1px rgba(0, 240, 255, 0.1);
-  
-  --secondary-btn-bg: rgba(20, 20, 24, 0.5);
+  --btn-shadow: none;
+
+  --interaction-etch-offset: 2.5px;
+  --interaction-glow: rgba(0, 240, 255, 0.1);
   --secondary-btn-hover-bg: rgba(30, 30, 35, 0.8);
   --secondary-btn-border: #28282c;
 

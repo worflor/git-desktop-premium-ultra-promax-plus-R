@@ -138,9 +138,10 @@ Bootstrap payload note:
 - If no cached probe exists, backend runs a probe on demand before returning snapshot data.
 
 Diff payload note:
-- prepare_file_diff_chunks accepts `{ repositoryPath, path, staged?, contextLines?, chunkSizeBytes? }` and returns diff manifest metadata including hunk summaries.
+- prepare_file_diff_chunks accepts `{ repositoryPath, path, staged?, contextLines?, chunkSizeBytes?, layoutWidthPx?, fontProfile?, lineHeightPx? }` and returns diff manifest metadata including hunk summaries.
 - get_file_diff_chunk accepts `{ diffId, chunkIndex }` and returns chunk text plus pagination metadata.
 - Diff chunk payloads are cached ephemerally in backend memory and can expire.
+- Diff manifest payload now includes renderer mode selection metadata, mode thresholds, and Pretext layout telemetry fields (`pretextVersion`, `pretextPrepareMs`, `pretextLayoutMs`, `fallbackActivated`, `fallbackReason`, `visualRowCount`, `layoutCacheKey`).
 
 Branch/Stash payload note:
 - set_branch_upstream returns explicit tracking metadata `{ repositoryPath, branchName, upstream, operation }`.
@@ -154,6 +155,7 @@ Advanced git workflow payload note:
 AI payload note:
 - list_ai_providers includes provider discovery diagnostics: `{ resolvedBinary?, detectionSource?, healthCheck }`.
 - get_ai_audit_entries returns locally persisted redacted prompt/output previews for backend AI actions.
+- run_ai_diff_review and start_ai_diff_review_job enforce read-only guardrails; write-intent prompts return `ai.guardrail_blocked`.
 
 ## DTO Guidelines
 - Use explicit, named fields; avoid tuple-like arrays.

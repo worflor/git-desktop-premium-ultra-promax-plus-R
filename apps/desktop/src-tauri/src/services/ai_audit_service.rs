@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::errors::AppError;
 use crate::models::operations::{AiAuditEntryData, AiAuditListData};
+use crate::services::storage_paths;
 
 const AI_AUDIT_FILE_NAME: &str = "ai_review_audit.jsonl";
 const MAX_AUDIT_ENTRIES: usize = 5_000;
@@ -274,12 +275,7 @@ fn persist_entries(entries: &[StoredAiAuditEntry]) -> Result<(), AppError> {
 }
 
 fn ai_audit_file_path() -> Result<std::path::PathBuf, AppError> {
-    let appdata = std::env::var("APPDATA").map_err(|_| {
-        AppError::Internal("APPDATA environment variable is unavailable".to_string())
-    })?;
-    Ok(std::path::PathBuf::from(appdata)
-        .join("gdpu")
-        .join(AI_AUDIT_FILE_NAME))
+    Ok(storage_paths::gdpu_data_dir()?.join(AI_AUDIT_FILE_NAME))
 }
 
 fn to_data(entry: StoredAiAuditEntry) -> AiAuditEntryData {

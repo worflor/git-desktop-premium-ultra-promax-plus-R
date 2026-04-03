@@ -12,6 +12,7 @@ export interface SurfaceMaterialShader {
   luminescence?: number;
   particles?: "none" | "stardust" | "embers" | "voxels" | "chalkdust" | "ethereal" | "void" | "quantum";
   parallaxStrength?: number;
+  interaction?: "none" | "vibration" | "caustic" | "etch" | "warp" | "chalk";
   geometry?: {
     radius?: number; // base border radius scale
     pixelated?: boolean; // toggle nearest-neighbor and disable anti-aliasing
@@ -314,24 +315,17 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
     </style>`;
     
     // Falling digital drops (Vertical 1px lines)
-    for (let i = 0; i < 40; i++) {
-      const x = (Math.sin(i * 777) * 500 + 500).toFixed(1);
+    for (let i = 0; i < 60; i++) {
+      const x = (Math.random() * 1000).toFixed(1);
       const w = 1;
-      const h = (Math.abs(Math.sin(i * 11)) * 40 + 20).toFixed(1);
-      const dur = (Math.abs(Math.sin(i * 33)) * 0.8 + 0.6).toFixed(1); // Fast 0.6s - 1.4s
-      const del = (Math.abs(Math.cos(i * 44)) * -2).toFixed(1);
+      const h = (Math.random() * 40 + 20).toFixed(1);
+      const dur = (Math.random() * 0.8 + 0.6).toFixed(1); // Fast 0.6s - 1.4s
+      const del = (Math.random() * -3).toFixed(1);
       svg += `<rect x='${x}' y='0' width='${w}' height='${h}' class='rain' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
     }
 
-    // Horizontal glitch fragments
-    for (let i = 0; i < 15; i++) {
-      const x = (Math.sin(i * 999) * 450 + 500).toFixed(1);
-      const y = (Math.cos(i * 22) * 450 + 500).toFixed(1);
-      const w = (Math.abs(Math.sin(i * 55)) * 100 + 30).toFixed(1);
-      const dur = (Math.abs(Math.cos(i * 66)) * 4 + 3).toFixed(1);
-      const del = (Math.abs(Math.sin(i * 77)) * -5).toFixed(1);
-      svg += `<line x1='${x}' y1='${y}' x2='${(+x + +w).toFixed(1)}' y2='${y}' stroke-width='1' class='glitch' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
-    }
+    // Digital Guttering: Rain intensity is spatially aware via CSS masks.
+    // Floating Signal fragments removed to focus on atmospheric rain density.
   } else if (shader.particles === "quantum") {
     // Subatomic Quantum Engine: Luminous Orbs with 'Subatomic Shimmer' (Smooth breathing)
     svg += `<style>
@@ -479,6 +473,28 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
     root.style.setProperty("--runtime-material-particles-mid", layered.mid);
     root.style.setProperty("--runtime-material-particles-far", layered.far);
     root.style.setProperty("--runtime-material-particles-bg", layered.bg);
+  }
+  
+  // Interaction Logic: The Math of Tactile Feedback
+  const interaction = shader.interaction ?? "none";
+  root.style.setProperty("--runtime-interaction-signature", interaction);
+  document.documentElement.setAttribute("data-interaction", interaction);
+  
+  if (interaction === "vibration") {
+    // High-frequency interference pattern speed (DPR balanced)
+    root.style.setProperty("--runtime-vibration-speed", "0.2s");
+  } else if (interaction === "caustic") {
+    // Rotational speed of the prismatic caustic leak
+    root.style.setProperty("--runtime-caustic-speed", "3s");
+  } else if (interaction === "etch") {
+    // Mechanical shift offset
+    root.style.setProperty("--runtime-etch-offset", "1px");
+  } else if (interaction === "warp") {
+    // Scale and distortion intensity
+    root.style.setProperty("--runtime-warp-scale", "1.05");
+  } else if (interaction === "chalk") {
+    // Jitter frequency for blackboard
+    root.style.setProperty("--runtime-chalk-jitter", "8ms");
   }
 
   // Determine physical kinematic (motion) variables
