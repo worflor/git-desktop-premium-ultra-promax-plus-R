@@ -519,3 +519,85 @@
   --scrollbar-hover: rgba(255, 255, 255, 0.4);
   --selection-bg: rgba(255, 255, 255, 0.25);
 }
+
+[data-theme="nightwalker"] {
+  --color-scheme: dark;
+  --app-background: linear-gradient(180deg, #050505 0%, #0d0d0f 100%);
+
+  --bg-0: #080808;
+  --bg-1: #0c0c0e;
+  --bg-2: #141416;
+  --bg-3: #1a1a1c;
+
+  --surface-0: rgba(10, 10, 12, 0.85);
+  --surface-1: rgba(15, 15, 18, 0.92);
+  --surface-2: rgba(20, 20, 24, 0.98);
+  --surface-accent: rgba(0, 240, 255, 0.15);
+
+  --text-strong: #ffffff;
+  --text-normal: #cccccc;
+  --text-muted: #777777;
+  --text-faint: #444444;
+
+  --state-added: #00ffaa;
+  --state-modified: #00f0ff;
+  --state-deleted: #ff3333;
+  --state-conflicted: #ff7700;
+  --state-staged: #00ff88;
+  --state-unstaged: #666666;
+
+  --focus-ring: #00f0ff;
+  --accent-bright: #00f0ff;
+  --event-start-tone: #888888;
+  --chrome-border-rgb: 40, 40, 45;
+  --chrome-accent-rgb: 0, 240, 255;
+  --danger-rgb: 255, 51, 51;
+  --danger-panel-start-rgb: 40, 10, 10;
+  --danger-panel-end-rgb: 30, 5, 5;
+  --danger-copy-strong: #ffcccc;
+  --danger-copy-muted: #ff9999;
+
+  --panel-overlay: rgba(0, 0, 0, 0.6);
+  --panel-overlay-strong: rgba(0, 0, 0, 0.8);
+  --input-overlay: rgba(0, 240, 255, 0.05);
+  --diff-overlay: rgba(0, 0, 0, 0.4);
+  --danger-overlay: rgba(50, 0, 0, 0.3);
+  --glass-backdrop-filter: blur(8px) saturate(200%);
+  --shadow-elev: 0 8px 32px rgba(0, 0, 0, 0.8),
+                 0 0 1px rgba(255, 255, 255, 0.1);
+
+  --theme-ambient-rgb: 0, 240, 255;
+  --theme-ambient-strength: 0.05;
+  --theme-spark-opacity: 0.6;
+  --theme-spark-speed-ms: 8s;
+  --status-online-rgb: 0, 255, 170;
+
+  /* ── Component Overrides ── */
+  --btn-bg: #1a1a1c;
+  --btn-hover-bg: #252528;
+  --btn-border: #333336;
+  --btn-text: #00f0ff;
+  --btn-active-transform: translate(0, 1px) scale(0.99);
+  --btn-shadow: 0 0 0 1px rgba(0, 240, 255, 0.1);
+  
+  --secondary-btn-bg: rgba(20, 20, 24, 0.5);
+  --secondary-btn-hover-bg: rgba(30, 30, 35, 0.8);
+  --secondary-btn-border: #28282c;
+
+  --input-bg: #050505;
+  --input-border: #28282c;
+  --input-focus-border: #00f0ff;
+
+  --slider-track: #1a1a1c;
+  --slider-thumb: #00f0ff;
+  --slider-thumb-border: #050505;
+
+  --item-hover-bg: rgba(0, 240, 255, 0.03);
+  --item-active-bg: rgba(0, 240, 255, 0.08);
+  --item-active-border: #00f0ff;
+  --row-bg: rgba(10, 10, 12, 0.4);
+
+  --scrollbar-thumb: #28282c;
+  --scrollbar-hover: #333336;
+  --selection-bg: rgba(0, 240, 255, 0.2);
+}

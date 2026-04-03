@@ -10,7 +10,7 @@ export interface SurfaceMaterialShader {
   textureOpacity?: number;
   motion?: "snappy" | "fluid" | "elastic";
   luminescence?: number;
-  particles?: "none" | "stardust" | "embers" | "voxels" | "chalkdust" | "ethereal";
+  particles?: "none" | "stardust" | "embers" | "voxels" | "chalkdust" | "ethereal" | "void";
   parallaxStrength?: number;
   geometry?: {
     radius?: number; // base border radius scale
@@ -278,39 +278,33 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
 
       svg += `<path d="${d}" class="chalk-line chalk-filter" stroke="${color}" stroke-width="${strokeW}" pathLength="100" stroke-dasharray="100" style="animation-duration:${dur}s;animation-delay:${del}s;" />`;
     }
-  } else if (shader.particles === "ethereal") {
-    // Divine Ethereal Engine v2: Slow drift clouds + Shimmering Celestial Sparks
+  } else if (shader.particles === "void") {
+    // Abyssal Void Engine: Fast-falling Digital Rain + Glitch Fragments
     svg += `<style>
-      .cloud { animation: drift linear infinite; fill: ${baseFill}; opacity: 0; }
-      .spark { animation: ascend ease-in-out infinite; fill: #f3e5ab; opacity: 0; }
-      .spark-shimmer { animation: shimmer ease-in-out infinite alternate; }
-      @keyframes drift { 0% { transform: translate(-150px, 0); opacity: 0; } 15% { opacity: 0.10; } 85% { opacity: 0.10; } 100% { transform: translate(1150px, 30px); opacity: 0; } }
-      @keyframes ascend { 0% { transform: translateY(1050px) scale(0); opacity: 0; } 40% { opacity: 0.7; } 100% { transform: translateY(-50px) scale(1.4); opacity: 0; } }
-      @keyframes shimmer { 0% { transform: scale(0.8); filter: brightness(1); } 100% { transform: scale(1.2); filter: brightness(1.8); } }
-    </style>
-    <filter id='cloudBlur'><feGaussianBlur in='SourceGraphic' stdDeviation='50'/></filter>`;
+      .rain { animation: drop linear infinite; fill: #00f0ff; opacity: 0; }
+      .glitch { animation: glitchStroke steps(2) infinite; stroke: #cccccc; opacity: 0; }
+      @keyframes drop { 0% { transform: translateY(-100px) scaleY(0.5); opacity: 0; } 10% { opacity: 0.8; } 90% { opacity: 0.8; } 100% { transform: translateY(1100px) scaleY(2); opacity: 0; } }
+      @keyframes glitchStroke { 0% { transform: translate(0, 0); opacity: 0; } 5% { opacity: 1; transform: translate(20px, 0); } 10% { opacity: 0; transform: translate(-20px, 10px); } 100% { opacity: 0; } }
+    </style>`;
     
-    // Large ambient clouds (procedural blobs) - Slower and softer
-    for (let i = 0; i < 5; i++) {
-      const cx = (Math.sin(i * 99) * 400 + 400).toFixed(1);
-      const cy = (Math.cos(i * 11) * 300 + 300).toFixed(1);
-      const rx = (Math.abs(Math.sin(i * 77)) * 240 + 200).toFixed(1);
-      const ry = (Math.abs(Math.cos(i * 88)) * 120 + 100).toFixed(1);
-      const dur = (Math.abs(Math.sin(i * 22)) * 80 + 140).toFixed(1); // 140s - 220s for ultra-slow drift
-      const del = (Math.abs(Math.cos(i * 33)) * -100).toFixed(1);
-      svg += `<ellipse cx='${cx}' cy='${cy}' rx='${rx}' ry='${ry}' filter='url(#cloudBlur)' class='cloud' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
+    // Falling digital drops (Vertical 1px lines)
+    for (let i = 0; i < 40; i++) {
+      const x = (Math.sin(i * 777) * 500 + 500).toFixed(1);
+      const w = 1;
+      const h = (Math.abs(Math.sin(i * 11)) * 40 + 20).toFixed(1);
+      const dur = (Math.abs(Math.sin(i * 33)) * 0.8 + 0.6).toFixed(1); // Fast 0.6s - 1.4s
+      const del = (Math.abs(Math.cos(i * 44)) * -2).toFixed(1);
+      svg += `<rect x='${x}' y='0' width='${w}' height='${h}' class='rain' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
     }
 
-    // Rising golden divine sparks - Shivering in the light
-    for (let i = 0; i < 20; i++) {
-      const x = (Math.sin(i * 555) * 500 + 500).toFixed(1);
-      const r = (Math.abs(Math.sin(i * 44)) * 1.2 + 0.4).toFixed(1);
-      const dur = (Math.abs(Math.sin(i * 66)) * 15 + 12).toFixed(1);
-      const del = (Math.abs(Math.sin(i * 77)) * 25).toFixed(1);
-      const shimDur = (Math.abs(Math.sin(i * 88)) * 2 + 1.5).toFixed(1);
-      svg += `<g class='spark' style='animation-duration:${dur}s;animation-delay:${del}s'>
-        <circle cx='${x}' cy='0' r='${r}' class='spark-shimmer' style='animation-duration:${shimDur}s' />
-      </g>`;
+    // Horizontal glitch fragments
+    for (let i = 0; i < 15; i++) {
+      const x = (Math.sin(i * 999) * 450 + 500).toFixed(1);
+      const y = (Math.cos(i * 22) * 450 + 500).toFixed(1);
+      const w = (Math.abs(Math.sin(i * 55)) * 100 + 30).toFixed(1);
+      const dur = (Math.abs(Math.cos(i * 66)) * 4 + 3).toFixed(1);
+      const del = (Math.abs(Math.sin(i * 77)) * -5).toFixed(1);
+      svg += `<line x1='${x}' y1='${y}' x2='${(+x + +w).toFixed(1)}' y2='${y}' stroke-width='1' class='glitch' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
     }
   }
 

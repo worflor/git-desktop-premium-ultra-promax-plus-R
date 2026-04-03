@@ -1,6 +1,16 @@
 import { applySurfaceMaterial, type SurfaceMaterialShader } from "@/lib/ui/surfaceMaterial";
 
-const THEME_IDS = ["aether", "helix", "quanta", "petrichor", "redshift", "halo", "crafty", "blackboard"] as const;
+const THEME_IDS = [
+  "halo",
+  "petrichor",
+  "nightwalker",
+  "aether",
+  "helix",
+  "quanta",
+  "redshift",
+  "blackboard",
+  "crafty"
+] as const;
 
 export type ThemeId = (typeof THEME_IDS)[number];
 
@@ -15,6 +25,68 @@ interface ThemeDefinition extends ThemeOption {
 }
 
 const THEME_DEFINITIONS = [
+  {
+    id: "halo",
+    label: "Halo",
+    description: "Angelic white gold with ethereal clouds and divine radiance.",
+    shader: {
+      mode: "glass",
+      blurPx: 32,
+      saturatePct: 125,
+      opacityScale: 0.75,
+      edgeIntensity: 1.2,
+      texture: "none",
+      motion: "fluid",
+      luminescence: 1.5,
+      particles: "ethereal",
+      parallaxStrength: 0.4,
+      geometry: {
+        radius: 12,
+        typography: "'Playfair Display', serif",
+        fontScale: 1.12,
+        letterSpacing: "0.035em"
+      }
+    }
+  },
+  {
+    id: "petrichor",
+    label: "Petrichor",
+    description: "Misty cool light mode tuned for daytime readability.",
+    shader: {
+      mode: "solid",
+      blurPx: 0,
+      saturatePct: 100,
+      opacityScale: 1.1,
+      edgeIntensity: 0,
+      texture: "none",
+      motion: "elastic",
+      luminescence: 0.1,
+      parallaxStrength: 0.3
+    }
+  },
+  {
+    id: "nightwalker",
+    label: "Nightwalker",
+    description: "Abyssal obsidian brutalism. The silent, technical shadow of the Halo.",
+    shader: {
+      mode: "glass",
+      blurPx: 8,
+      saturatePct: 200,
+      opacityScale: 0.85,
+      edgeIntensity: 1.5,
+      texture: "none",
+      motion: "snappy",
+      luminescence: 0.2,
+      particles: "void",
+      parallaxStrength: 0.4,
+      geometry: {
+        radius: 0,
+        typography: "'JetBrains Mono', monospace",
+        fontScale: 0.95,
+        letterSpacing: "-0.01em"
+      }
+    }
+  },
   {
     id: "aether",
     label: "Aether",
@@ -68,22 +140,6 @@ const THEME_DEFINITIONS = [
     }
   },
   {
-    id: "petrichor",
-    label: "Petrichor",
-    description: "Misty cool light mode tuned for daytime readability.",
-    shader: {
-      mode: "solid",
-      blurPx: 0,
-      saturatePct: 100,
-      opacityScale: 1.1,
-      edgeIntensity: 0,
-      texture: "none",
-      motion: "elastic",
-      luminescence: 0.1,
-      parallaxStrength: 0.3
-    }
-  },
-  {
     id: "redshift",
     label: "Redshift",
     description: "Crimson dusk glass for high-contrast focus work.",
@@ -102,25 +158,25 @@ const THEME_DEFINITIONS = [
     }
   },
   {
-    id: "halo",
-    label: "Halo",
-    description: "Angelic white gold with ethereal clouds and divine radiance.",
+    id: "blackboard",
+    label: "Blackboard",
+    description: "Raw slate geometry with physical chalk typographical rendering.",
     shader: {
-      mode: "glass",
-      blurPx: 32,
-      saturatePct: 125,
-      opacityScale: 0.75,
-      edgeIntensity: 1.2,
-      texture: "none",
-      motion: "fluid",
-      luminescence: 1.5,
-      particles: "ethereal",
-      parallaxStrength: 0.4,
+      mode: "solid",
+      blurPx: 0,
+      saturatePct: 100,
+      opacityScale: 1.0,
+      edgeIntensity: 1.0,
+      texture: "grain",
+      textureOpacity: 0.15,
+      motion: "snappy",
+      luminescence: 0.1,
+      particles: "chalkdust",
+      parallaxStrength: 0.1,
       geometry: {
-        radius: 12,
-        typography: "'Playfair Display', serif",
-        fontScale: 1.12,
-        letterSpacing: "0.035em"
+        radius: 2,
+        typography: "'Lora', serif",
+        fontScale: 1.05
       }
     }
   },
@@ -144,29 +200,6 @@ const THEME_DEFINITIONS = [
         radius: 0,
         pixelated: true,
         typography: "'VT323', monospace"
-      }
-    }
-  },
-  {
-    id: "blackboard",
-    label: "Blackboard",
-    description: "Raw slate geometry with physical chalk typographical rendering.",
-    shader: {
-      mode: "solid",
-      blurPx: 0,
-      saturatePct: 100,
-      opacityScale: 1.0,
-      edgeIntensity: 1.0,
-      texture: "grain",
-      textureOpacity: 0.15,
-      motion: "snappy",
-      luminescence: 0.1,
-      particles: "chalkdust",
-      parallaxStrength: 0.1,
-      geometry: {
-        radius: 2,
-        typography: "'Lora', serif",
-        fontScale: 1.05
       }
     }
   }
