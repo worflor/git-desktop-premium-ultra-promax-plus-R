@@ -7,7 +7,7 @@ import { StatusPill } from "@/components/primitives/StatusPill";
 import { DiffShell } from "@/features/diff/DiffShell";
 import {
   createCommit,
-  getFileDiff,
+  prepareFileDiffChunks,
   getRepositoryStatus,
   stagePaths,
   unstagePaths
@@ -35,7 +35,7 @@ export function ChangesPage(props: ChangesPageProps = {}) {
     return getRepositoryStatus(path);
   });
 
-  const [diffResult] = createResource(
+  const [diffManifestResult] = createResource(
     () => {
       const repo = activeRepo();
       const path = selectedDiffPath();
@@ -45,7 +45,15 @@ export function ChangesPage(props: ChangesPageProps = {}) {
 
       return { repo, path };
     },
-    async (input) => getFileDiff(input.repo, input.path, false, 3)
+    async (input) =>
+      prepareFileDiffChunks(input.repo, input.path, {
+        staged: false,
+        contextLines: 3,
+        chunkSizeBytes: 64 * 1024,
+        layoutWidthPx: 1080,
+        fontProfile: "ui-mono-13",
+        lineHeightPx: 18
+      })
   );
 
   const selectedCount = () => selectedPaths().length;
@@ -203,20 +211,30 @@ export function ChangesPage(props: ChangesPageProps = {}) {
         </section>
       </Show>
 
-      <Show when={diffResult.loading}>
+      <Show when={diffManifestResult.loading}>
         <LoadingStateSkeleton />
       </Show>
 
-      <Show when={diffResult.latest && !diffResult.latest.ok}>
+      <Show when={diffManifestResult.latest && !diffManifestResult.latest.ok}>
         <ErrorStateCard
           title="Diff load failed"
-          body={diffResult.latest && !diffResult.latest.ok ? diffResult.latest.error.message : "Unknown error"}
+          body={
+            diffManifestResult.latest && !diffManifestResult.latest.ok
+              ? diffManifestResult.latest.error.message
+              : "Unknown error"
+          }
         />
       </Show>
 
       <DiffShell
         filePath={selectedDiffPath() ?? undefined}
-        diffText={diffResult.latest?.ok ? diffResult.latest.data.diffText : undefined}
+        manifest={diffManifestResult.latest?.ok ? diffManifestResult.latest.data : undefined}
+        loading={diffManifestResult.loading}
+        error={
+          diffManifestResult.latest && !diffManifestResult.latest.ok
+            ? diffManifestResult.latest.error.message
+            : null
+        }
       />
     </div>
   );

@@ -3,6 +3,8 @@ mod cli;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::errors::AppError;
 use crate::models::git::GitCapabilities;
@@ -17,6 +19,12 @@ pub use cli::run_git;
 
 const MIN_GIT_MAJOR: u32 = 2;
 const MIN_GIT_MINOR: u32 = 39;
+const GIT_READY_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Debug, Clone, Copy)]
+struct GitReadyCacheEntry {
+    checked_at: Instant,
+}
 
 pub fn detect_capabilities() -> Result<GitCapabilities, AppError> {
     let output = run_git(None, &["--version"])?;
@@ -72,9 +80,30 @@ fn first_non_empty_line(payload: &[u8]) -> Option<String> {
 }
 
 fn ensure_git_ready() -> Result<(), AppError> {
+    if let Ok(cache) = git_ready_cache().lock() {
+        if let Some(entry) = cache.as_ref() {
+            if entry.checked_at.elapsed() < GIT_READY_CACHE_TTL {
+                return Ok(());
+            }
+        }
+    }
+
     let output = run_git(None, &["--version"])?;
     let version = output.stdout.trim().strip_prefix("git version ");
-    ensure_minimum_version(version)
+    ensure_minimum_version(version)?;
+
+    if let Ok(mut cache) = git_ready_cache().lock() {
+        *cache = Some(GitReadyCacheEntry {
+            checked_at: Instant::now(),
+        });
+    }
+
+    Ok(())
+}
+
+fn git_ready_cache() -> &'static Mutex<Option<GitReadyCacheEntry>> {
+    static CACHE: OnceLock<Mutex<Option<GitReadyCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
 }
 
 fn ensure_minimum_version(version: Option<&str>) -> Result<(), AppError> {

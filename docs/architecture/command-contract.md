@@ -119,7 +119,7 @@ Settings payload note:
 - update_layout_preferences uses `{ sidebarWidthPx, sidebarPosition, utilityDrawerDefaultExpanded, utilityDrawerHeightPx }`.
 - sidebarPosition accepts `left` or `right`.
 - update_ui_preferences uses `{ themeId, keybindingProfile }`.
-- themeId accepts `aether`, `helix`, `quanta`, `petrichor`, `redshift`, or `halo`; keybindingProfile accepts `classic` or `compact`.
+- themeId accepts `aether`, `helix`, `quanta`, `petrichor`, `redshift`, `halo`, `nightwalker`, `blackboard`, or `crafty`; keybindingProfile accepts `classic` or `compact`.
 
 Telemetry payload note:
 - get_command_telemetry_snapshot accepts optional `{ recentLimit }` and returns aggregated p50/p95 summaries plus recent samples.

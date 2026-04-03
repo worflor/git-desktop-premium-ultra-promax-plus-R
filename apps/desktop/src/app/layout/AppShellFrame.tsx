@@ -4,7 +4,6 @@ import { CommandRecoveryBanner } from "@/app/layout/CommandRecoveryBanner";
 import { useLayoutPreferences } from "@/app/layout/LayoutPreferencesContext";
 import { SidebarRail } from "@/app/layout/SidebarRail";
 import { PanelResizer } from "@/app/layout/PanelResizer";
-import { TitlebarStrip } from "@/app/layout/TitlebarStrip";
 import { UtilityDrawer } from "@/app/layout/UtilityDrawer";
 import { resolveNavigationHotkey } from "@/lib/ui/keybindings";
 
@@ -99,7 +98,6 @@ export function AppShellFrame(props: AppShellFrameProps) {
 
   return (
     <div class="app-shell-root">
-      <TitlebarStrip />
       <CommandRecoveryBanner />
       <div class="app-shell-grid sidebar-left" style={shellGridStyle()}>
         <SidebarRail />

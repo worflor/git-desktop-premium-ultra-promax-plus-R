@@ -82,6 +82,9 @@ Acceptance criteria:
 - Canvas path supports line numbers and hunk boundaries
 - Users can still copy visible text lines
 - Canvas path reuses Pretext cursor and line-range metadata
+Implementation update (2026-04-03):
+- Changes workflow now opens chunked backend diff manifests (`prepare_file_diff_chunks`) and incremental chunk retrieval (`get_file_diff_chunk`) instead of loading full payloads eagerly.
+- Diff canvas mode now renders line numbers and hunk boundaries with virtualized drawing, supports jump-to-hunk navigation using backend hunk metadata, and includes explicit copy-visible-lines behavior.
 
 ### C-4 Pretext hardening and upgrade gates (P1)
 Acceptance criteria:
@@ -91,6 +94,7 @@ Acceptance criteria:
 Implementation update (2026-04-03):
 - CI now runs both fixture correctness gate (`pretext:fixtures`) and canary benchmark gate (`pretext:canary`).
 - Version bump checklist is codified in `docs/planning/pretext-version-bump-checklist.md`.
+- Canary benchmark now emits fallback activation telemetry and enforces a configurable fallback-rate threshold budget.
 
 ## EPIC D - Sync Workflow
 ### D-1 Fetch/pull/push operations (P1)

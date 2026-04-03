@@ -159,15 +159,17 @@ pub fn prepare_file_diff_chunks(
             manifest.pretext_layout_ms,
             None,
         );
-        if manifest.fallback_activated {
-            let _ = telemetry_service::record_command_sample(
-                "diff",
-                "diff.pretext.fallback",
-                false,
-                duration_ms,
-                Some("diff.pretext_fallback"),
-            );
-        }
+        let _ = telemetry_service::record_command_sample(
+            "diff",
+            "diff.pretext.fallback",
+            !manifest.fallback_activated,
+            duration_ms,
+            if manifest.fallback_activated {
+                Some("diff.pretext_fallback")
+            } else {
+                None
+            },
+        );
     }
 
     let _ = logging_service::record_operation_span(

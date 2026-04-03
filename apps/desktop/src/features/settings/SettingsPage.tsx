@@ -12,6 +12,12 @@ import {
   subscribeCommandLatencyReport
 } from "@/lib/telemetry/commandLatency";
 import {
+  clearDiffRenderMetricsReport,
+  getDiffRenderMetricsReport,
+  setDiffRenderMetricsRetentionPolicy,
+  subscribeDiffRenderMetricsReport
+} from "@/lib/telemetry/diffRenderMetrics";
+import {
   getNavigationBindings,
   KEYBINDING_PROFILE_OPTIONS
 } from "@/lib/ui/keybindings";
@@ -26,13 +32,20 @@ export function SettingsPage() {
   const [actionMessage, setActionMessage] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [latencyReport, setLatencyReport] = createSignal(getCommandLatencyReport());
+  const [diffRenderReport, setDiffRenderReport] = createSignal(getDiffRenderMetricsReport());
 
   onMount(() => {
-    const unsubscribe = subscribeCommandLatencyReport((report) => {
+    const unsubscribeCommandLatency = subscribeCommandLatencyReport((report) => {
       setLatencyReport(report);
     });
+    const unsubscribeDiffRender = subscribeDiffRenderMetricsReport((report) => {
+      setDiffRenderReport(report);
+    });
 
-    onCleanup(unsubscribe);
+    onCleanup(() => {
+      unsubscribeCommandLatency();
+      unsubscribeDiffRender();
+    });
   });
 
   createEffect(() => {
@@ -45,6 +58,7 @@ export function SettingsPage() {
     setRetentionDays(settings.data.telemetryRetentionDays);
     setRetentionMb(settings.data.telemetryRetentionMb);
     setCommandLatencyRetentionPolicy(settings.data.telemetryRetentionDays, settings.data.telemetryRetentionMb);
+    setDiffRenderMetricsRetentionPolicy(settings.data.telemetryRetentionDays, settings.data.telemetryRetentionMb);
   });
 
   const activeThemeLabel = () =>
@@ -188,9 +202,9 @@ export function SettingsPage() {
 
           <article class="state-card">
             <h3>Interface Calibration</h3>
-            <p class="section-summary">Theme and shortcut architecture.</p>
+            <p class="section-summary">Theme and aesthetic architecture.</p>
             <div class="layout-control-field">
-              <span>Theme</span>
+              <span>Primary Engine</span>
               <select
                 class="path-input"
                 value={layout.themeId()}
@@ -205,39 +219,46 @@ export function SettingsPage() {
                 ))}
               </select>
             </div>
-
-            <div class="layout-control-field" style="margin-top: 8px;">
-              <span>Keybinding profile</span>
-              <select
-                class="path-input"
-                value={layout.keybindingProfile()}
-                onChange={(event) => {
-                  layout.setKeybindingProfile(event.currentTarget.value);
-                  void layout.persistUiPreferences();
-                }}
-                aria-label="Keybinding profile"
-              >
-                {KEYBINDING_PROFILE_OPTIONS.map((option) => (
-                  <option value={option.id}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <label class="layout-checkbox-field" style="margin-top: 8px;">
-              <input
-                type="checkbox"
-                checked={layout.utilityDrawerExpanded()}
-                onChange={(event) => {
-                  layout.setUtilityDrawerExpanded(event.currentTarget.checked);
-                  void layout.persistLayoutPreferences();
-                }}
-              />
-              <span>Auto-expand logs</span>
-            </label>
+            
+            <p class="theme-description-yappery" style="margin-top: 12px; font-size: 11px; color: var(--text-muted); font-style: italic; border-left: 2px solid rgba(var(--chrome-border-rgb), 0.2); padding-left: 8px;">
+              {THEME_OPTIONS.find(t => t.id === layout.themeId())?.description}
+            </p>
           </article>
 
           <article class="state-card state-card-wide">
-            <h3>Navigation Guide</h3>
+            <h3>Navigation & Surface Guide</h3>
+            <p class="section-summary">Keyboard architecture and interface behavior.</p>
+            
+            <div class="layout-control-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.1);">
+              <div class="layout-control-field">
+                <span>Keybinding profile</span>
+                <select
+                  class="path-input"
+                  value={layout.keybindingProfile()}
+                  onChange={(event) => {
+                    layout.setKeybindingProfile(event.currentTarget.value);
+                    void layout.persistUiPreferences();
+                  }}
+                  aria-label="Keybinding profile"
+                >
+                  {KEYBINDING_PROFILE_OPTIONS.map((option) => (
+                    <option value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <label class="layout-checkbox-field" style="display: flex; align-items: center; gap: 8px;">
+                <input
+                  type="checkbox"
+                  checked={layout.utilityDrawerExpanded()}
+                  onChange={(event) => {
+                    layout.setUtilityDrawerExpanded(event.currentTarget.checked);
+                    void layout.persistLayoutPreferences();
+                  }}
+                />
+                <span>Auto-expand logs</span>
+              </label>
+            </div>
             <p class="section-summary">Core shortcuts for the active profile.</p>
             <div class="keybinding-preview-card">
               <ul class="keybinding-preview-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
@@ -301,6 +322,49 @@ export function SettingsPage() {
                   ))}
                 </ul>
               </details>
+            </Show>
+          </article>
+
+          <article class="state-card state-card-wide">
+            <h3>Diff Render Diagnostics</h3>
+            <p class="section-summary">First-paint, sustained scroll FPS, memory, and fallback-rate telemetry.</p>
+            <p>
+              Sessions: {diffRenderReport().totalSessions} | Fallbacks: {diffRenderReport().fallbackCount} | Fallback rate: {(diffRenderReport().fallbackRate * 100).toFixed(2)}%
+            </p>
+            <p>
+              First paint p95: {diffRenderReport().firstPaintP95Ms.toFixed(2)} ms | Scroll FPS p50: {diffRenderReport().scrollFpsP50.toFixed(2)} | Memory p95: {diffRenderReport().memoryP95Mb.toFixed(2)} MB
+            </p>
+
+            <div class="inline-actions">
+              <button class="primary-btn" onClick={() => setDiffRenderReport(getDiffRenderMetricsReport())}>
+                Refresh Diff Metrics
+              </button>
+              <button
+                class="primary-btn"
+                disabled={diffRenderReport().totalSessions === 0}
+                onClick={() => clearDiffRenderMetricsReport()}
+              >
+                Clear Diff Metrics
+              </button>
+            </div>
+
+            <Show
+              when={diffRenderReport().modeSummaries.length > 0}
+              fallback={<p>No diff render sessions captured yet. Open and scroll file diffs to populate this panel.</p>}
+            >
+              <div class="telemetry-summary-list">
+                {diffRenderReport().modeSummaries.map((summary) => (
+                  <div class="telemetry-summary-row">
+                    <div class="telemetry-summary-command">mode {summary.rendererMode}</div>
+                    <div class="telemetry-summary-metrics">
+                      first-paint p50/p95 {summary.firstPaintP50Ms.toFixed(2)}/{summary.firstPaintP95Ms.toFixed(2)} ms | scroll p50/p95 {summary.scrollFpsP50.toFixed(2)}/{summary.scrollFpsP95.toFixed(2)} fps
+                    </div>
+                    <div class="telemetry-summary-meta">
+                      sessions {summary.sessionCount} | fallback rate {(summary.fallbackRate * 100).toFixed(2)}% | memory p50/p95 {summary.memoryP50Mb.toFixed(2)}/{summary.memoryP95Mb.toFixed(2)} MB
+                    </div>
+                  </div>
+                ))}
+              </div>
             </Show>
           </article>
         </section>

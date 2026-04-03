@@ -264,46 +264,48 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
       svg += `<rect x='${x}' y='0' width='${s}' height='${s}' class='voxel' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
     }
   } else if (shader.particles === "chalkdust") {
-    // Eldritch Mathematical Geometry: Lissajous Harmonic Resonance
-    const chalkColors = [baseFill, baseFill, "rgba(255, 130, 140, 0.8)", "rgba(150, 210, 255, 0.8)", "rgba(255, 220, 120, 0.8)"];
+    // Augmented Eldritch Geometry: Lissajous Harmonic Resonance with Physical Variability
+    const chalkColors = [baseFill, baseFill, "rgba(255, 130, 140, 0.6)", "rgba(150, 210, 255, 0.6)", "rgba(255, 220, 120, 0.6)"];
     
     svg += `<style>
       .chalk-line { fill: none; stroke-linecap: round; stroke-linejoin: round; opacity: 0; animation: mathplot linear infinite backwards; }
       @keyframes mathplot {
-        0% { stroke-dashoffset: 100; opacity: 0; }
-        0.1% { stroke-dashoffset: 100; opacity: 0.4; }
-        40% { stroke-dashoffset: 0; opacity: 0.4; }
-        80% { stroke-dashoffset: 0; opacity: 0.4; }
-        95% { stroke-dashoffset: 0; opacity: 0; }
+        0% { stroke-dashoffset: 200; opacity: 0; }
+        5% { opacity: 0.4; }
+        90% { opacity: 0.4; }
         100% { stroke-dashoffset: 0; opacity: 0; }
       }
-      .chalk-filter { filter: url(#rough); opacity: 0.5; }
+      .chalk-filter { filter: url(#rough); }
     </style>
-    <filter id="rough"><feTurbulence type="fractalNoise" baseFrequency="0.4" numOctaves="3" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="3" xChannelSelector="R" yChannelSelector="G"/></filter>`;
+    <filter id="rough"><feTurbulence type="fractalNoise" baseFrequency="0.5" numOctaves="3" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="2.5" xChannelSelector="R" yChannelSelector="G"/></filter>`;
     
-    // Generate complex spirographic harmonic waveforms
-    for (let i = 1; i <= 4; i++) {
-      const cx = Math.sin(i * 1.5) * 500 + 500;
-      const cy = Math.cos(i * 2.5) * 400 + 500;
+    // Generate 8-Layer Spectral Harmonic Synthesis
+    for (let i = 1; i <= 8; i++) {
+      const cx = (Math.sin(i * 1.5) * 450 + 500).toFixed(1);
+      const cy = (Math.cos(i * 2.5) * 400 + 500).toFixed(1);
       
-      const a = Math.round(Math.abs(Math.sin(i * 3)) * 4 + 1); // Harmonic frequency X
-      const b = Math.round(Math.abs(Math.cos(i * 4)) * 4 + 1); // Harmonic frequency Y
-      const delta = Math.PI / i;
-      const radius = Math.abs(Math.sin(i * 5)) * 150 + 100;
+      const a = Math.round(Math.abs(Math.sin(i * 3)) * 4 + 1); // Harmonic X
+      const b = Math.round(Math.abs(Math.cos(i * 4)) * 3 + 2); // Harmonic Y
+      const delta = (Math.PI / i) * 1.5;
+      const radius = (Math.abs(Math.sin(i * 5)) * 120 + 80).toFixed(1);
       
       let d = "";
-      for (let t = 0; t <= Math.PI * 2.0; t += 0.05) {
-        const x = (Math.sin(a * t + delta) * radius + cx).toFixed(1);
-        const y = (Math.sin(b * t) * radius + cy).toFixed(1);
+      const steps = 140;
+      for (let t = 0; t <= Math.PI * 2.1; t += (Math.PI * 2 / steps)) {
+        // Amplitude Modulation: Subtle high-frequency jitter (Smart Math)
+        const jitter = (Math.sin(t * 40 + i) * 2.5);
+        const x = (Math.sin(a * t + delta) * (+radius + jitter) + +cx).toFixed(1);
+        const y = (Math.sin(b * t) * (+radius + jitter) + +cy).toFixed(1);
         d += t === 0 ? `M ${x} ${y} ` : `L ${x} ${y} `;
       }
       
-      const dur = (Math.abs(Math.sin(i * 88)) * 60 + 60).toFixed(1); // 60s - 120s
-      const del = (Math.abs(Math.sin(i * 55)) * 30).toFixed(1); 
-      const strokeW = (Math.abs(Math.sin(i * 33)) * 1.5 + 1.0).toFixed(1);
+      const dur = (Math.abs(Math.sin(i * 88)) * 40 + 50).toFixed(1);
+      const del = (Math.abs(Math.sin(i * 55)) * -60).toFixed(1); 
+      const strokeW = (i <= 4) ? (Math.random() * 1 + 0.8).toFixed(1) : (Math.random() * 0.5 + 0.3).toFixed(1);
       const color = chalkColors[i % chalkColors.length];
+      const skip = (i % 3 === 0) ? `${Math.random()*40+10} ${Math.random()*20+5}` : "none";
 
-      svg += `<path d="${d}" class="chalk-line chalk-filter" stroke="${color}" stroke-width="${strokeW}" pathLength="100" stroke-dasharray="100" style="animation-duration:${dur}s;animation-delay:${del}s;" />`;
+      svg += `<path d="${d}" class="chalk-line chalk-filter" stroke="${color}" stroke-width="${strokeW}" pathLength="200" stroke-dasharray="200" style="animation-duration:${dur}s;animation-delay:${del}s;stroke-dasharray:${skip === 'none' ? '200' : skip}" />`;
     }
   } else if (shader.particles === "void") {
     // Abyssal Void Engine: Fast-falling Digital Rain + Glitch Fragments

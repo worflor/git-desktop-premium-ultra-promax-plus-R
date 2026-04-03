@@ -52,6 +52,9 @@ Implementation status:
 - Fixture corpus is stored in `apps/desktop/scripts/pretext-fixtures.json` and includes unicode, bidi, long-line, massive payload, and mixed line-ending scenarios.
 - CI canary benchmark now runs via `npm run pretext:canary --workspace apps/desktop`.
 - Version bump governance checklist is documented in `docs/planning/pretext-version-bump-checklist.md`.
+- Diff UI now consumes backend chunked manifests/chunks for incremental transfer and render-mode aware loading.
+- Canvas diff mode now uses backend hunk metadata for jump-to-hunk navigation and line-range rendering.
+- Canary benchmark now reports fallback activation rate and enforces a configurable fallback-rate threshold budget.
 
 Exit criteria:
 - Pretext upgrades are gated and repeatable
