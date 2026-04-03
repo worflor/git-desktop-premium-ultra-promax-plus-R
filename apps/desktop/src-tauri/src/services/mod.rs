@@ -9,4 +9,5 @@ pub mod local_store;
 pub mod pull_request_service;
 pub mod repository_service;
 pub mod settings_service;
+pub mod telemetry_service;
 

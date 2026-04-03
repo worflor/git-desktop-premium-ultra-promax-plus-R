@@ -1,4 +1,4 @@
-import { createEffect, createResource, createSignal, Show } from "solid-js";
+import { createResource, createSignal, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
@@ -9,7 +9,6 @@ import {
   createCommit,
   getFileDiff,
   getRepositoryStatus,
-  openRepository,
   stagePaths,
   unstagePaths
 } from "@/lib/backend/commands";
@@ -20,9 +19,6 @@ interface ChangesPageProps {
 
 export function ChangesPage(props: ChangesPageProps = {}) {
   const repository = useRepositoryContext();
-  const [repositoryPath, setRepositoryPath] = createSignal(repository.activeRepositoryPath() ?? "");
-  const [activeRepo, setActiveRepo] = createSignal<string | null>(repository.activeRepositoryPath());
-  const [openError, setOpenError] = createSignal<string | null>(null);
   const [selectedPaths, setSelectedPaths] = createSignal<string[]>([]);
   const [commitMessage, setCommitMessage] = createSignal("");
   const [actionMessage, setActionMessage] = createSignal<string | null>(null);
@@ -30,15 +26,7 @@ export function ChangesPage(props: ChangesPageProps = {}) {
   const [selectedDiffPath, setSelectedDiffPath] = createSignal<string | null>(null);
   const [actionRunning, setActionRunning] = createSignal(false);
 
-  createEffect(() => {
-    const sharedPath = repository.activeRepositoryPath();
-    if (!sharedPath || sharedPath === activeRepo()) {
-      return;
-    }
-
-    setActiveRepo(sharedPath);
-    setRepositoryPath(sharedPath);
-  });
+  const activeRepo = () => repository.activeRepositoryPath();
 
   const [statusResult, { refetch }] = createResource(activeRepo, async (path) => {
     if (!path) {
@@ -60,32 +48,7 @@ export function ChangesPage(props: ChangesPageProps = {}) {
     async (input) => getFileDiff(input.repo, input.path, false, 3)
   );
 
-  const onOpenRepository = async () => {
-    setOpenError(null);
-    const path = repositoryPath().trim();
-    if (!path) {
-      setOpenError("Repository path is required.");
-      return;
-    }
-
-    const result = await openRepository(path);
-    if (!result.ok) {
-      setOpenError(result.error.message);
-      return;
-    }
-
-    setSelectedPaths([]);
-    setSelectedDiffPath(null);
-    setActionError(null);
-    setActionMessage(null);
-    setActiveRepo(result.data.repositoryPath);
-    repository.setActiveRepositoryPath(result.data.repositoryPath);
-    void refetch();
-  };
-
   const selectedCount = () => selectedPaths().length;
-  const fileCount = () =>
-    statusResult.latest?.ok ? statusResult.latest.data.files.length : 0;
   const stagedFileCount = () =>
     statusResult.latest?.ok
       ? statusResult.latest.data.files.filter((file) => file.staged.trim().length > 0).length
@@ -155,41 +118,6 @@ export function ChangesPage(props: ChangesPageProps = {}) {
 
   return (
     <div class={`feature-page ${props.embedded ? "is-embedded" : ""}`}>
-      <Show when={!props.embedded}>
-        <>
-          <header class="feature-header">
-            <div class="feature-header-main">
-              <h1 class="feature-title">Changes</h1>
-            </div>
-            <div class="feature-header-meta">
-              <span class="feature-meta-pill">{activeRepo() ? "Repository connected" : "No repository"}</span>
-              <span class="feature-meta-pill">{statusResult.latest?.ok ? `${fileCount()} files` : "No snapshot"}</span>
-            </div>
-          </header>
-
-          <section class="feature-toolbar">
-            <input
-              class="path-input"
-              placeholder="C:/dev/your-repository"
-              value={repositoryPath()}
-              onInput={(event) => setRepositoryPath(event.currentTarget.value)}
-            />
-            <button class="primary-btn" onClick={onOpenRepository}>
-              Open Repository
-            </button>
-          </section>
-        </>
-      </Show>
-
-      <Show when={!activeRepo()}>
-        <EmptyStateCard
-          title="Open a repository"
-          body="Select a local path."
-        />
-      </Show>
-
-      <Show when={openError()}>{(message) => <ErrorStateCard title="Cannot open repository" body={message()} />}</Show>
-
       <Show when={statusResult.loading}>
         <LoadingStateSkeleton />
       </Show>
@@ -215,14 +143,14 @@ export function ChangesPage(props: ChangesPageProps = {}) {
               onClick={() => void runPathOperation("stage")}
               disabled={selectedCount() === 0 || actionRunning()}
             >
-              Stage Selected
+              Stage
             </button>
             <button
               class="primary-btn"
               onClick={() => void runPathOperation("unstage")}
               disabled={selectedCount() === 0 || actionRunning()}
             >
-              Unstage Selected
+              Unstage
             </button>
             <span>{actionRunning() ? "Running..." : `${selectedCount()} selected`}</span>
           </div>
@@ -254,6 +182,11 @@ export function ChangesPage(props: ChangesPageProps = {}) {
               placeholder="Commit message"
               value={commitMessage()}
               onInput={(event) => setCommitMessage(event.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                  void onCommit();
+                }
+              }}
             />
             <button class="primary-btn" onClick={() => void onCommit()}>
               {actionRunning() ? "Committing..." : "Commit"}

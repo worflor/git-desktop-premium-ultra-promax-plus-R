@@ -14,10 +14,8 @@ import {
 const DISPLAY_LIMIT = 24;
 const KEYBOARD_STEP_PX = 16;
 const SNAP_STEP_PX = 8;
-const DRAWER_HEADER_HEIGHT_PX = 40;
-const DRAWER_BODY_VERTICAL_PADDING_PX = 20;
-const DRAWER_EMPTY_STATE_HEIGHT_PX = 44;
-const DRAWER_ROW_HEIGHT_PX = 34;
+const DRAWER_HEADER_HEIGHT_PX = 32;
+const DRAWER_ROW_HEIGHT_PX = 24;
 
 function snapToGrid(value: number): number {
   return Math.round(value / SNAP_STEP_PX) * SNAP_STEP_PX;
@@ -44,7 +42,7 @@ export function UtilityDrawer() {
       return timestamp;
     }
 
-    return parsed.toLocaleTimeString();
+    return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
   const isExpanded = () => layout.utilityDrawerExpanded();
@@ -107,20 +105,15 @@ export function UtilityDrawer() {
   const effectiveDrawerHeightPx = () => {
     const preferredHeight = layout.utilityDrawerHeightPx();
     const visibleRowCount = Math.min(events().length, DISPLAY_LIMIT);
-    const contentHeight =
-      DRAWER_HEADER_HEIGHT_PX +
-      DRAWER_BODY_VERTICAL_PADDING_PX +
-      (visibleRowCount > 0 ? visibleRowCount * DRAWER_ROW_HEIGHT_PX : DRAWER_EMPTY_STATE_HEIGHT_PX);
+    const contentHeight = DRAWER_HEADER_HEIGHT_PX + 12 + (visibleRowCount > 0 ? visibleRowCount * DRAWER_ROW_HEIGHT_PX : 30);
 
-    // Keep large history views possible, but collapse obvious dead space for tiny event lists.
     if (visibleRowCount <= 4) {
       return Math.max(
         UTILITY_DRAWER_HEIGHT_MIN_PX,
         Math.min(preferredHeight, snapToGrid(contentHeight))
       );
     }
-
-    return preferredHeight;
+    return Math.max(UTILITY_DRAWER_HEIGHT_MIN_PX, preferredHeight);
   };
 
   const drawerStyle = () => (isExpanded() ? `height: ${effectiveDrawerHeightPx()}px;` : undefined);
@@ -152,7 +145,7 @@ export function UtilityDrawer() {
           aria-expanded={isExpanded()}
           aria-controls="utility-drawer-events"
         >
-          {isExpanded() ? "Hide Logs" : "Show Logs"}
+          {isExpanded() ? "Hide Logs" : "Logs"}
         </button>
         <span>Command Log ({events().length})</span>
         <button
@@ -172,7 +165,7 @@ export function UtilityDrawer() {
                 <li class={`utility-event-row event-${event.type}`}>
                   <span class="utility-event-time">{formatEventTime(event.at)}</span>
                   <span class="utility-event-type">{event.type.toUpperCase()}</span>
-                  <span class="utility-event-command">{event.command}</span>
+                  <span class="utility-event-command" title={event.command}>{event.command}</span>
                   <Show when={event.errorCode}>
                     {(errorCode) => <span class="utility-event-error">{errorCode()}</span>}
                   </Show>

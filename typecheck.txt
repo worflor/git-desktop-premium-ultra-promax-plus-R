@@ -1,0 +1,19 @@
+apps/desktop/src/app/layout/SidebarRail.tsx(101,33): error TS2322: Type '14' is not assignable to type '20 | 16 | 24 | 12 | undefined'.
+apps/desktop/src/app/layout/SidebarRail.tsx(159,31): error TS2322: Type '14' is not assignable to type '20 | 16 | 24 | 12 | undefined'.
+apps/desktop/src/app/layout/TitlebarStrip.tsx(2,1): error TS6133: 'Icon' is declared but its value is never read.
+apps/desktop/src/components/composite/EmptyStateCard.tsx(1,10): error TS6133: 'createSignal' is declared but its value is never read.
+apps/desktop/src/components/composite/EmptyStateCard.tsx(15,57): error TS2322: Type '{ name: IconName; size: 24; tone: "muted"; style: string; }' is not assignable to type 'IntrinsicAttributes & IconProps'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & IconProps'.
+apps/desktop/src/components/composite/ErrorStateCard.tsx(11,60): error TS2322: Type '{ name: "status-conflict"; size: 16; tone: "danger"; style: string; }' is not assignable to type 'IntrinsicAttributes & IconProps'.
+  Property 'style' does not exist on type 'IntrinsicAttributes & IconProps'.
+apps/desktop/src/features/branches/BranchesPage.tsx(3,1): error TS6133: 'EmptyStateCard' is declared but its value is never read.
+apps/desktop/src/features/branches/BranchesPage.tsx(114,70): error TS2339: Property 'isHead' does not exist on type 'BranchInfo'.
+apps/desktop/src/features/branches/BranchesPage.tsx(115,45): error TS2339: Property 'isHead' does not exist on type 'BranchInfo'.
+apps/desktop/src/features/branches/BranchesPage.tsx(125,38): error TS2339: Property 'isHead' does not exist on type 'BranchInfo'.
+apps/desktop/src/features/branches/BranchesPage.tsx(128,29): error TS2339: Property 'isHead' does not exist on type 'BranchInfo'.
+apps/desktop/src/features/changes/ChangesPage.tsx(52,9): error TS6133: 'fileCount' is declared but its value is never read.
+apps/desktop/src/features/history/HistoryPage.tsx(27,25): error TS6133: 'refetchHistory' is declared but its value is never read.
+apps/desktop/src/features/sync/SyncPage.tsx(5,31): error TS2305: Module '"@/lib/backend/commands"' has no exported member 'runSync'.
+apps/desktop/src/features/sync/SyncPage.tsx(76,69): error TS2339: Property 'remoteUpstream' does not exist on type 'RepositoryStatus'.
+apps/desktop/src/features/sync/SyncPage.tsx(82,71): error TS2339: Property 'commitsAhead' does not exist on type 'RepositoryStatus'.
+apps/desktop/src/features/sync/SyncPage.tsx(84,71): error TS2339: Property 'commitsBehind' does not exist on type 'RepositoryStatus'.

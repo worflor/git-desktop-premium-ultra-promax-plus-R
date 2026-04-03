@@ -105,8 +105,8 @@ pub fn update_ui_preferences(
     theme_id: &str,
     keybinding_profile: &str,
 ) -> Result<AppSettingsData, AppError> {
-    let normalized_theme_id = parse_theme_id(theme_id)?;
-    let normalized_keybinding_profile = parse_keybinding_profile(keybinding_profile)?;
+    let normalized_theme_id = normalize_theme_id(theme_id);
+    let normalized_keybinding_profile = normalize_keybinding_profile(keybinding_profile);
 
     let mut stored = load_settings()?;
     stored.theme_id = normalized_theme_id.to_string();
@@ -179,16 +179,6 @@ fn normalize_theme_id(value: &str) -> &'static str {
     }
 }
 
-fn parse_theme_id(value: &str) -> Result<&'static str, AppError> {
-    match find_supported_theme_id(value) {
-        Some(theme_id) => Ok(theme_id),
-        None => Err(AppError::InvalidInput(format!(
-            "theme id must be one of: {}",
-            SUPPORTED_THEME_IDS.join(", ")
-        ))),
-    }
-}
-
 fn find_supported_theme_id(value: &str) -> Option<&'static str> {
     let normalized = value.trim().to_ascii_lowercase();
     for theme_id in SUPPORTED_THEME_IDS {
@@ -205,17 +195,6 @@ fn normalize_keybinding_profile(value: &str) -> &'static str {
     match normalized.as_str() {
         "compact" => "compact",
         _ => DEFAULT_KEYBINDING_PROFILE,
-    }
-}
-
-fn parse_keybinding_profile(value: &str) -> Result<&'static str, AppError> {
-    let normalized = value.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "classic" => Ok("classic"),
-        "compact" => Ok("compact"),
-        _ => Err(AppError::InvalidInput(
-            "keybinding profile must be one of: classic, compact".to_string(),
-        )),
     }
 }
 
@@ -341,24 +320,22 @@ mod tests {
     }
 
     #[test]
-    fn update_ui_preferences_rejects_unknown_theme() {
+    fn update_ui_preferences_normalizes_unknown_theme() {
         let _scope = AppDataTestScope::enter();
 
-        let error = update_ui_preferences("unknown-theme", "classic")
-            .expect_err("unknown theme should be rejected");
-        assert!(
-            matches!(error, AppError::InvalidInput(message) if message.contains("theme id must be one of"))
-        );
+        let updated = update_ui_preferences("unknown-theme", "classic")
+            .expect("unknown theme should normalize to default");
+        assert_eq!(updated.theme_id, DEFAULT_THEME_ID);
+        assert_eq!(updated.keybinding_profile, "classic");
     }
 
     #[test]
-    fn update_ui_preferences_rejects_unknown_keybinding_profile() {
+    fn update_ui_preferences_normalizes_unknown_keybinding_profile() {
         let _scope = AppDataTestScope::enter();
 
-        let error = update_ui_preferences("aether", "vim")
-            .expect_err("unknown keybinding profile should be rejected");
-        assert!(
-            matches!(error, AppError::InvalidInput(message) if message.contains("keybinding profile must be one of"))
-        );
+        let updated = update_ui_preferences("aether", "vim")
+            .expect("unknown keybinding profile should normalize to default");
+        assert_eq!(updated.theme_id, "aether");
+        assert_eq!(updated.keybinding_profile, DEFAULT_KEYBINDING_PROFILE);
     }
 }

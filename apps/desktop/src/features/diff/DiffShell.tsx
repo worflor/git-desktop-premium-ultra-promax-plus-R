@@ -65,7 +65,7 @@ export function DiffShell(props: DiffShellProps) {
   return (
     <section class="diff-shell" data-render-mode={mode()}>
       <header class="diff-header">
-        <h2>Diff {props.filePath ? `- ${props.filePath}` : ""}</h2>
+        <h2>{props.filePath ? props.filePath : "No file selected"}</h2>
         <div class="diff-controls">
           <button class={`mode-toggle ${mode() === "dom" ? "is-active" : ""}`} onClick={() => setMode("dom")}>
             DOM
@@ -78,7 +78,7 @@ export function DiffShell(props: DiffShellProps) {
           </button>
           <input
             class="diff-search"
-            placeholder="Search in diff"
+            placeholder="Search diff..."
             aria-label="Search in diff"
             value={searchTerm()}
             onInput={(event) => setSearchTerm(event.currentTarget.value)}
@@ -87,7 +87,7 @@ export function DiffShell(props: DiffShellProps) {
       </header>
       <div class="diff-viewport">
         {normalizedDiff().trim().length === 0 ? (
-          <div class="diff-viewport-dom">Select a changed file to load diff output.</div>
+          <div class="diff-viewport-dom">Select a changed file to view its diff.</div>
         ) : mode() === "dom" ? (
           <div class="diff-viewport-dom">
             {visibleLines().map((entry) => (

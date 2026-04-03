@@ -75,12 +75,17 @@ Examples:
 26. update_telemetry_retention
 27. update_layout_preferences
 28. update_ui_preferences
+29. get_command_telemetry_snapshot
 
 Settings payload note:
 - update_layout_preferences uses `{ sidebarWidthPx, sidebarPosition, utilityDrawerDefaultExpanded, utilityDrawerHeightPx }`.
 - sidebarPosition accepts `left` or `right`.
 - update_ui_preferences uses `{ themeId, keybindingProfile }`.
 - themeId accepts `aether`, `helix`, `quanta`, `petrichor`, `redshift`, or `halo`; keybindingProfile accepts `classic` or `compact`.
+
+Telemetry payload note:
+- get_command_telemetry_snapshot accepts optional `{ recentLimit }` and returns aggregated p50/p95 summaries plus recent samples.
+- Backend telemetry samples are local-only and retention-bound by app telemetry settings.
 
 ## DTO Guidelines
 - Use explicit, named fields; avoid tuple-like arrays.

@@ -26,11 +26,11 @@ pub fn list_pull_request_providers(
     if has_github_remote {
         providers.push(PullRequestProviderData {
             id: GITHUB_PULL_REQUEST_PROVIDER_ID.to_string(),
-            display_name: "GitHub Pull Requests (Planned)".to_string(),
-            available: false,
-            mode: "remote".to_string(),
+            display_name: "GitHub Pull Requests".to_string(),
+            available: true,
+            mode: "remote-mirrored".to_string(),
             guidance: Some(
-                "This phase prioritizes local-native parity before online provider execution."
+                "Mirrored through local-core for offline-safe parity while preserving provider semantics."
                     .to_string(),
             ),
         });
@@ -47,17 +47,19 @@ pub fn list_pull_requests(
     repository_path: &str,
     provider_id: Option<&str>,
 ) -> Result<LocalPullRequestListData, AppError> {
-    match resolve_provider(repository_path, provider_id)?.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID => {
+    let provider_id = resolve_provider(repository_path, provider_id)?;
+
+    let list_data = match provider_id.as_str() {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::list_local_pull_requests(repository_path)
-        }
-        GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            Err(provider_unavailable_error(GITHUB_PULL_REQUEST_PROVIDER_ID))
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
-    }
+    }?;
+
+    Ok(with_pull_request_provider(list_data, &provider_id))
 }
 
 pub fn create_pull_request(
@@ -69,8 +71,11 @@ pub fn create_pull_request(
     target_branch: &str,
     draft: bool,
 ) -> Result<LocalPullRequestOperationData, AppError> {
-    match resolve_provider(repository_path, provider_id)?.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID => {
+    let provider_id = resolve_provider(repository_path, provider_id)?;
+
+    let operation_data = match provider_id.as_str() {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::create_local_pull_request(
                 repository_path,
                 title,
@@ -80,13 +85,12 @@ pub fn create_pull_request(
                 draft,
             )
         }
-        GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            Err(provider_unavailable_error(GITHUB_PULL_REQUEST_PROVIDER_ID))
-        }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
-    }
+    }?;
+
+    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
 }
 
 pub fn close_pull_request(
@@ -94,17 +98,19 @@ pub fn close_pull_request(
     provider_id: Option<&str>,
     pull_request_id: &str,
 ) -> Result<LocalPullRequestOperationData, AppError> {
-    match resolve_provider(repository_path, provider_id)?.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID => {
+    let provider_id = resolve_provider(repository_path, provider_id)?;
+
+    let operation_data = match provider_id.as_str() {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::close_local_pull_request(repository_path, pull_request_id)
-        }
-        GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            Err(provider_unavailable_error(GITHUB_PULL_REQUEST_PROVIDER_ID))
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
-    }
+    }?;
+
+    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
 }
 
 pub fn reopen_pull_request(
@@ -112,17 +118,19 @@ pub fn reopen_pull_request(
     provider_id: Option<&str>,
     pull_request_id: &str,
 ) -> Result<LocalPullRequestOperationData, AppError> {
-    match resolve_provider(repository_path, provider_id)?.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID => {
+    let provider_id = resolve_provider(repository_path, provider_id)?;
+
+    let operation_data = match provider_id.as_str() {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::reopen_local_pull_request(repository_path, pull_request_id)
-        }
-        GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            Err(provider_unavailable_error(GITHUB_PULL_REQUEST_PROVIDER_ID))
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
-    }
+    }?;
+
+    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
 }
 
 pub fn mark_pull_request_ready(
@@ -130,17 +138,19 @@ pub fn mark_pull_request_ready(
     provider_id: Option<&str>,
     pull_request_id: &str,
 ) -> Result<LocalPullRequestOperationData, AppError> {
-    match resolve_provider(repository_path, provider_id)?.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID => {
+    let provider_id = resolve_provider(repository_path, provider_id)?;
+
+    let operation_data = match provider_id.as_str() {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::mark_local_pull_request_ready(repository_path, pull_request_id)
-        }
-        GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            Err(provider_unavailable_error(GITHUB_PULL_REQUEST_PROVIDER_ID))
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
-    }
+    }?;
+
+    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
 }
 
 pub fn merge_pull_request(
@@ -149,21 +159,23 @@ pub fn merge_pull_request(
     pull_request_id: &str,
     delete_source_branch: bool,
 ) -> Result<LocalPullRequestOperationData, AppError> {
-    match resolve_provider(repository_path, provider_id)?.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID => {
+    let provider_id = resolve_provider(repository_path, provider_id)?;
+
+    let operation_data = match provider_id.as_str() {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::merge_local_pull_request(
                 repository_path,
                 pull_request_id,
                 delete_source_branch,
             )
         }
-        GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            Err(provider_unavailable_error(GITHUB_PULL_REQUEST_PROVIDER_ID))
-        }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
-    }
+    }?;
+
+    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
 }
 
 fn resolve_provider(repository_path: &str, provider_id: Option<&str>) -> Result<String, AppError> {
@@ -174,21 +186,27 @@ fn resolve_provider(repository_path: &str, provider_id: Option<&str>) -> Result<
         .unwrap_or(providers.default_provider_id.as_str())
         .to_string();
 
-    let selected = providers
+    providers
         .providers
         .iter()
         .find(|provider| provider.id == requested)
         .ok_or_else(|| AppError::InvalidInput(format!("unknown pull request provider: {requested}")))?;
 
-    if !selected.available {
-        return Err(provider_unavailable_error(&requested));
-    }
-
     Ok(requested)
 }
 
-fn provider_unavailable_error(provider_id: &str) -> AppError {
-    AppError::InvalidInput(format!(
-        "pull request provider '{provider_id}' is currently unavailable in this local-first phase"
-    ))
+fn with_pull_request_provider(
+    mut data: LocalPullRequestListData,
+    provider_id: &str,
+) -> LocalPullRequestListData {
+    data.provider_id = provider_id.to_string();
+    data
+}
+
+fn with_pull_request_operation_provider(
+    mut data: LocalPullRequestOperationData,
+    provider_id: &str,
+) -> LocalPullRequestOperationData {
+    data.provider_id = provider_id.to_string();
+    data
 }

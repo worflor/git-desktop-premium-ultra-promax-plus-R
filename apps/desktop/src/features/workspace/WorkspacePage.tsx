@@ -1,46 +1,37 @@
 import {
   createMemo,
-  For,
   Match,
   Show,
   Switch
 } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
+import { Icon } from "@/components/icons/Icon";
 import { BranchesPage } from "@/features/branches/BranchesPage";
 import { ChangesPage } from "@/features/changes/ChangesPage";
 import { HistoryPage } from "@/features/history/HistoryPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SyncPage } from "@/features/sync/SyncPage";
 
-type WorkspaceMenuId = "changes" | "history" | "branches" | "sync";
+type WorkspaceMode = "changes" | "history" | "branches" | "sync";
 
-interface WorkspaceMenu {
-  id: WorkspaceMenuId;
-  label: string;
-  route: `/${WorkspaceMenuId}`;
+interface ModeEntry {
+  id: WorkspaceMode;
+  icon: "changes" | "history" | "branches" | "sync";
+  route: `/${WorkspaceMode}`;
 }
 
-const WORKSPACE_MENUS: readonly WorkspaceMenu[] = [
-  { id: "changes", label: "Changes", route: "/changes" },
-  { id: "history", label: "History", route: "/history" },
-  { id: "branches", label: "Branches", route: "/branches" },
-  { id: "sync", label: "Sync", route: "/sync" }
+const MODES: readonly ModeEntry[] = [
+  { id: "changes", icon: "changes", route: "/changes" },
+  { id: "history", icon: "history", route: "/history" },
+  { id: "branches", icon: "branches", route: "/branches" },
+  { id: "sync", icon: "sync", route: "/sync" },
 ];
 
-function resolvePanelFromPath(pathname: string): WorkspaceMenuId {
-  if (pathname.startsWith("/history")) {
-    return "history";
-  }
-
-  if (pathname.startsWith("/branches")) {
-    return "branches";
-  }
-
-  if (pathname.startsWith("/sync")) {
-    return "sync";
-  }
-
+function resolveModeFromPath(pathname: string): WorkspaceMode {
+  if (pathname.startsWith("/history")) return "history";
+  if (pathname.startsWith("/branches")) return "branches";
+  if (pathname.startsWith("/sync")) return "sync";
   return "changes";
 }
 
@@ -49,24 +40,11 @@ export function WorkspacePage() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const repositoryLabel = createMemo(() => {
-    const path = repository.activeRepositoryPath();
-    if (!path) {
-      return "No repo";
-    }
+  const activeMode = createMemo(() => resolveModeFromPath(location.pathname));
 
-    const segments = path.replace(/\\/g, "/").split("/").filter(Boolean);
-    return segments[segments.length - 1] ?? path;
-  });
-
-  const activePanel = createMemo(() => resolvePanelFromPath(location.pathname));
-
-  const onSelectPanel = (menu: WorkspaceMenu) => {
-    if (location.pathname === menu.route) {
-      return;
-    }
-
-    void navigate(menu.route);
+  const onSelectMode = (entry: ModeEntry) => {
+    if (location.pathname === entry.route) return;
+    void navigate(entry.route);
   };
 
   const isSettingsOpen = createMemo(() => {
@@ -76,96 +54,81 @@ export function WorkspacePage() {
 
   const setSettingsPanel = (open: boolean) => {
     const searchParams = new URLSearchParams(location.search);
-
     if (open) {
       searchParams.set("panel", "settings");
     } else {
       searchParams.delete("panel");
     }
-
     const nextQuery = searchParams.toString();
     const nextHref = nextQuery.length > 0 ? `${location.pathname}?${nextQuery}` : location.pathname;
     const currentHref = `${location.pathname}${location.search}`;
-
-    if (nextHref === currentHref) {
-      return;
-    }
-
+    if (nextHref === currentHref) return;
     void navigate(nextHref);
   };
 
-  const activePanelLabel = createMemo(() => {
-    const current = activePanel();
-    const match = WORKSPACE_MENUS.find((menu) => menu.id === current);
-    return match?.label ?? "Changes";
-  });
-
   return (
-    <div class="feature-page workspace-shell">
-      <header class="workspace-topbar state-card">
+    <div class="workspace-shell">
+      {/* ── Topbar: mode icons + repo context ── */}
+      <div class="workspace-topbar">
         <div class="workspace-topbar-copy">
-          <p class="workspace-kicker">Repository Workspace</p>
-          <h1 class="workspace-repo-name" title={repository.activeRepositoryPath() ?? ""}>
-            {repositoryLabel()}
-          </h1>
-          <p class="workspace-repo-path">{repository.activeRepositoryPath() ?? "Open a repository from the left rail."}</p>
+          <Show when={repository.activeRepositoryPath()} fallback={
+            <span class="workspace-repo-name" style="opacity:0.5">No project open</span>
+          }>
+            {(path) => {
+              const segments = path().replace(/\\/g, "/").split("/").filter(Boolean);
+              const name = segments[segments.length - 1] ?? path();
+              return <span class="workspace-repo-name" title={path()}>{name}</span>;
+            }}
+          </Show>
         </div>
 
-        <nav class="workspace-view-tabs" aria-label="Workspace views">
-          <For each={WORKSPACE_MENUS}>
-            {(menu) => (
-              <button
-                type="button"
-                class={`workspace-view-tab ${activePanel() === menu.id ? "is-active" : ""}`}
-                aria-current={activePanel() === menu.id ? "page" : undefined}
-                onClick={() => onSelectPanel(menu)}
-              >
-                {menu.label}
-              </button>
-            )}
-          </For>
-          <button
-            type="button"
-            class={`workspace-view-tab ${isSettingsOpen() ? "is-active" : ""}`}
-            aria-current={isSettingsOpen() ? "page" : undefined}
-            onClick={() => setSettingsPanel(!isSettingsOpen())}
-          >
-            Settings
-          </button>
-        </nav>
-      </header>
+        <div class="workspace-mode-nav">
+          {MODES.map((entry) => (
+            <button
+              class={`workspace-mode-btn ${activeMode() === entry.id ? "is-active" : ""}`}
+              onClick={() => onSelectMode(entry)}
+              title={entry.id}
+              aria-current={activeMode() === entry.id ? "page" : undefined}
+            >
+              <Icon name={entry.icon} size={16} />
+            </button>
+          ))}
+        </div>
+      </div>
 
-      <section class="workspace-content state-card">
-        <p class="workspace-active-view-label">{activePanelLabel()}</p>
+      {/* ── Content surface ── */}
+      <div class="workspace-content">
         <div class="workspace-content-panel">
           <Show when={!repository.activeRepositoryPath()}>
-            <p class="workspace-empty-inline-hint">No repository selected yet. Use the left sidebar to open one.</p>
+            <div class="workspace-empty-inline-hint">
+              Open a project from the sidebar to get started.
+            </div>
           </Show>
           <Switch>
-            <Match when={activePanel() === "changes"}>
+            <Match when={activeMode() === "changes"}>
               <ChangesPage embedded />
             </Match>
-            <Match when={activePanel() === "history"}>
+            <Match when={activeMode() === "history"}>
               <HistoryPage embedded />
             </Match>
-            <Match when={activePanel() === "branches"}>
+            <Match when={activeMode() === "branches"}>
               <BranchesPage embedded />
             </Match>
-            <Match when={activePanel() === "sync"}>
+            <Match when={activeMode() === "sync"}>
               <SyncPage embedded />
             </Match>
           </Switch>
         </div>
-      </section>
+      </div>
 
+      {/* ── Settings slide overlay ── */}
       <div class={`settings-slide-layer ${isSettingsOpen() ? "is-open" : ""}`} aria-hidden={!isSettingsOpen()}>
         <button
           type="button"
           class="settings-slide-backdrop"
-          aria-label="Close settings panel"
+          aria-label="Close settings"
           onClick={() => setSettingsPanel(false)}
         />
-
         <section class="settings-slide-panel" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title">
           <header class="settings-slide-header">
             <h2 id="settings-panel-title">Settings</h2>
@@ -173,7 +136,6 @@ export function WorkspacePage() {
               Close
             </button>
           </header>
-
           <div class="settings-slide-body">
             <SettingsPage />
           </div>

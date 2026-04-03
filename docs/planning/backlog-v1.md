@@ -134,12 +134,21 @@ Acceptance criteria:
 Acceptance criteria:
 - p50/p95 duration captured per command
 - Diagnostics view can display recent operation timings
+Implementation update (2026-04-03):
+- Backend now records system Git command telemetry samples with command label, duration, success/failure status, and mapped error code.
+- Critical command endpoints (stage, unstage, commit, fetch, pull, push) now emit backend telemetry samples with command-level success/failure classification.
+- Rolling retention policy is enforced in backend storage using configured telemetry days/MB caps from app settings.
+- Backend telemetry snapshot command now returns aggregated p50/p95 summaries and recent samples for diagnostics tooling.
 
 ### F-4 Local telemetry retention policy (P1)
 Acceptance criteria:
 - Telemetry remains local-only by default
 - Rolling log retention supports configurable time and size caps
 - Default retention policy is safe against disk bloat
+Implementation update (2026-04-03):
+- Backend telemetry storage is local-only and persisted under APPDATA/gdpu.
+- Retention policy is applied by both age and size, keeping newest samples within configured bounds.
+- Malformed telemetry lines are safely ignored to preserve crash-resistant diagnostics reads.
 
 ## EPIC H - UX Interaction Model
 ### H-1 Single compact density policy (P1)

@@ -71,15 +71,18 @@ pub fn get_repository_integration_matrix(
         };
 
         let mut capability_summary = vec!["core.git.fetch-pull-push".to_string()];
-        let offline_supported = host_kind == "local";
+        let offline_supported = matches!(host_kind.as_str(), "local" | "github");
         if offline_supported {
             capability_summary.push("local.offline-ready".to_string());
         }
         if host_kind == "github" {
+            capability_summary.push("github.remote.detected".to_string());
+            capability_summary.push("github.issues.local-mirror".to_string());
+            capability_summary.push("github.pull-requests.local-mirror".to_string());
             if github_adapter.available {
                 capability_summary.push("github.optional-adapter.available".to_string());
             } else {
-                capability_summary.push("github.optional-adapter.unavailable".to_string());
+                capability_summary.push("github.optional-adapter.unavailable.local-mirror-active".to_string());
             }
         }
 
@@ -101,6 +104,8 @@ pub fn get_repository_integration_matrix(
             "core.git.read-write".to_string(),
             "local.issues.offline".to_string(),
             "local.pull-requests.offline".to_string(),
+            "github.issues.local-mirror".to_string(),
+            "github.pull-requests.local-mirror".to_string(),
             "local.telemetry.only".to_string(),
         ],
         remotes,

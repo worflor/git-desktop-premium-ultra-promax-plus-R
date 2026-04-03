@@ -20,6 +20,7 @@ struct StoredLocalIssue {
     state: String,
     created_at: String,
     updated_at: String,
+    closed_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -73,6 +74,7 @@ pub fn create_local_issue(
         state: "open".to_string(),
         created_at: now.clone(),
         updated_at: now,
+        closed_at: None,
     };
 
     let mut issue_set = load_issue_set(repository_path)?;
@@ -121,8 +123,14 @@ fn set_local_issue_state(
         .find(|issue| issue.id == issue_id)
         .ok_or_else(|| AppError::InvalidInput(format!("unknown issue id: {issue_id}")))?;
 
+    let now = local_store::now_iso8601_string();
     target.state = state.to_string();
-    target.updated_at = local_store::now_iso8601_string();
+    target.updated_at = now.clone();
+    target.closed_at = if state.eq_ignore_ascii_case("closed") {
+        Some(now)
+    } else {
+        None
+    };
     let updated = target.clone();
 
     persist_issue_set(repository_path, &issue_set)?;
@@ -159,6 +167,14 @@ fn load_issue_set(repository_path: &str) -> Result<StoredLocalIssueSet, AppError
         if issue.updated_at != normalized_updated_at {
             issue.updated_at = normalized_updated_at;
             normalized = true;
+        }
+
+        if let Some(closed_at) = issue.closed_at.as_mut() {
+            let normalized_closed_at = local_store::normalize_timestamp(closed_at);
+            if *closed_at != normalized_closed_at {
+                *closed_at = normalized_closed_at;
+                normalized = true;
+            }
         }
     }
 
@@ -197,6 +213,7 @@ fn to_data(issue: StoredLocalIssue) -> LocalIssueData {
         state: issue.state,
         created_at: issue.created_at,
         updated_at: issue.updated_at,
+        closed_at: issue.closed_at,
     }
 }
 

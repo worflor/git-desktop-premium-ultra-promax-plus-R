@@ -13,15 +13,9 @@ interface AppShellFrameProps {
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-
+  if (!(target instanceof HTMLElement)) return false;
   const tagName = target.tagName.toLowerCase();
-  if (tagName === "input" || tagName === "textarea" || tagName === "select") {
-    return true;
-  }
-
+  if (tagName === "input" || tagName === "textarea" || tagName === "select") return true;
   return target.isContentEditable;
 }
 
@@ -29,15 +23,12 @@ export function AppShellFrame(props: AppShellFrameProps) {
   const layout = useLayoutPreferences();
   const navigate = useNavigate();
 
-  const shellGridClass = () => "app-shell-grid sidebar-left";
   const shellGridStyle = () => `--sidebar-width: ${layout.sidebarWidthPx()}px;`;
 
   createEffect(() => {
-    if (layout.sidebarPosition() === "left") {
-      return;
+    if (layout.sidebarPosition() !== "left") {
+      layout.setSidebarPosition("left");
     }
-
-    layout.setSidebarPosition("left");
   });
 
   onMount(() => {
@@ -60,13 +51,8 @@ export function AppShellFrame(props: AppShellFrameProps) {
     };
 
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) {
-        return;
-      }
-
-      if (isEditableTarget(event.target)) {
-        return;
-      }
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isEditableTarget(event.target)) return;
 
       const outcome = resolveNavigationHotkey(
         layout.keybindingProfile(),
@@ -81,19 +67,14 @@ export function AppShellFrame(props: AppShellFrameProps) {
         clearPrefixTimer();
       }
 
-      if (!outcome.consumed) {
-        return;
-      }
-
+      if (!outcome.consumed) return;
       event.preventDefault();
-
       if (outcome.route) {
         void navigate(outcome.route);
       }
     };
 
     window.addEventListener("keydown", onWindowKeyDown);
-
     onCleanup(() => {
       clearPrefixTimer();
       window.removeEventListener("keydown", onWindowKeyDown);
@@ -104,7 +85,7 @@ export function AppShellFrame(props: AppShellFrameProps) {
     <div class="app-shell-root">
       <TitlebarStrip />
       <CommandRecoveryBanner />
-      <div class={shellGridClass()} style={shellGridStyle()}>
+      <div class="app-shell-grid sidebar-left" style={shellGridStyle()}>
         <SidebarRail />
         <PanelResizer />
         <main class="main-panel">{props.children}</main>

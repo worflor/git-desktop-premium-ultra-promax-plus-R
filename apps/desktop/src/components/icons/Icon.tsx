@@ -7,6 +7,7 @@ interface IconProps {
   tone?: "normal" | "muted" | "accent" | "danger";
   title?: string;
   class?: string;
+  style?: string | JSX.CSSProperties;
 }
 
 export function Icon(props: IconProps): JSX.Element {

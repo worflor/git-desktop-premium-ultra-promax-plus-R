@@ -188,6 +188,7 @@ pub struct LocalIssueData {
     pub state: String,
     pub created_at: String,
     pub updated_at: String,
+    pub closed_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -239,6 +240,40 @@ pub struct LocalPullRequestOperationData {
     pub provider_id: String,
     pub operation: String,
     pub pull_request: LocalPullRequestData,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandTelemetrySampleData {
+    pub id: String,
+    pub scope: String,
+    pub command: String,
+    pub ok: bool,
+    pub error_code: Option<String>,
+    pub duration_ms: u64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandTelemetrySummaryData {
+    pub scope: String,
+    pub command: String,
+    pub sample_count: u32,
+    pub failure_count: u32,
+    pub p50_ms: u64,
+    pub p95_ms: u64,
+    pub last_duration_ms: u64,
+    pub last_seen_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandTelemetrySnapshotData {
+    pub generated_at: String,
+    pub sample_count: u32,
+    pub summaries: Vec<CommandTelemetrySummaryData>,
+    pub recent_samples: Vec<CommandTelemetrySampleData>,
 }
 
 pub type PullRequestProviderData = IssueProviderData;

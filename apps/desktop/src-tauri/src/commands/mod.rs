@@ -12,6 +12,7 @@ use crate::models::git::{
 use crate::models::operations::{
     AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData, AiDiffReviewJobStartData,
     AiProviderListData, BranchListData, BranchOperationData, CommitData, CommitDetailData,
+    CommandTelemetrySnapshotData,
     CommitHistoryData, ConflictResolutionData, ConflictStateData, FileDiffData,
     IssueProviderListData, LocalIssueListData, LocalIssueOperationData, LocalPullRequestListData,
     LocalPullRequestOperationData, PathOperationData, PullRequestProviderListData, SyncData,
@@ -22,7 +23,7 @@ use crate::models::settings::AppSettingsData;
 use crate::runtime::state::AppState;
 use crate::services::{
     ai_service, auth_service, forge_service, git_provider, issue_service, pull_request_service,
-    repository_service, settings_service,
+    repository_service, settings_service, telemetry_service,
 };
 
 fn response_meta(started_at: Instant, state: &State<'_, AppState>) -> ResponseMeta {
@@ -39,6 +40,42 @@ fn map_error<T: Serialize>(
     error: AppError,
 ) -> CommandResult<T> {
     CommandResult::error(error.to_command_error(), response_meta(started_at, state))
+}
+
+fn command_ok<T: Serialize>(
+    command_name: &str,
+    started_at: Instant,
+    state: &State<'_, AppState>,
+    data: T,
+) -> CommandResult<T> {
+    let meta = response_meta(started_at, state);
+    let _ = telemetry_service::record_command_sample(
+        "command",
+        command_name,
+        true,
+        meta.duration_ms,
+        None,
+    );
+    CommandResult::ok(data, meta)
+}
+
+fn map_error_with_command<T: Serialize>(
+    command_name: &str,
+    started_at: Instant,
+    state: &State<'_, AppState>,
+    error: AppError,
+) -> CommandResult<T> {
+    let command_error = error.to_command_error();
+    let meta = response_meta(started_at, state);
+    let _ = telemetry_service::record_command_sample(
+        "command",
+        command_name,
+        false,
+        meta.duration_ms,
+        Some(command_error.code.as_str()),
+    );
+
+    CommandResult::error(command_error, meta)
 }
 
 #[tauri::command]
@@ -335,15 +372,17 @@ pub fn stage_paths(
     let started_at = Instant::now();
 
     match git_provider::stage_paths(&repository_path, &paths) {
-        Ok(_) => CommandResult::ok(
+        Ok(_) => command_ok(
+            "stage_paths",
+            started_at,
+            &state,
             PathOperationData {
                 repository_path,
                 operation: "stage".to_string(),
                 affected_paths: paths,
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("stage_paths", started_at, &state, error),
     }
 }
 
@@ -356,15 +395,17 @@ pub fn unstage_paths(
     let started_at = Instant::now();
 
     match git_provider::unstage_paths(&repository_path, &paths) {
-        Ok(_) => CommandResult::ok(
+        Ok(_) => command_ok(
+            "unstage_paths",
+            started_at,
+            &state,
             PathOperationData {
                 repository_path,
                 operation: "unstage".to_string(),
                 affected_paths: paths,
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("unstage_paths", started_at, &state, error),
     }
 }
 
@@ -388,8 +429,8 @@ pub fn create_commit(
         });
 
     match result {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("create_commit", started_at, &state, data),
+        Err(error) => map_error_with_command("create_commit", started_at, &state, error),
     }
 }
 
@@ -425,16 +466,18 @@ pub fn fetch_remote(
     let prune = prune.unwrap_or(false);
 
     match git_provider::fetch_remote(&repository_path, remote.as_deref(), prune) {
-        Ok(output) => CommandResult::ok(
+        Ok(output) => command_ok(
+            "fetch_remote",
+            started_at,
+            &state,
             SyncData {
                 operation: "fetch".to_string(),
                 remote: remote.unwrap_or_else(|| "default".to_string()),
                 branch: None,
                 output,
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("fetch_remote", started_at, &state, error),
     }
 }
 
@@ -450,16 +493,18 @@ pub fn pull_remote(
     let rebase = rebase.unwrap_or(false);
 
     match git_provider::pull_remote(&repository_path, remote.as_deref(), branch.as_deref(), rebase) {
-        Ok(output) => CommandResult::ok(
+        Ok(output) => command_ok(
+            "pull_remote",
+            started_at,
+            &state,
             SyncData {
                 operation: "pull".to_string(),
                 remote: remote.unwrap_or_else(|| "default".to_string()),
                 branch,
                 output,
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("pull_remote", started_at, &state, error),
     }
 }
 
@@ -480,16 +525,18 @@ pub fn push_remote(
         branch.as_deref(),
         force_with_lease,
     ) {
-        Ok(output) => CommandResult::ok(
+        Ok(output) => command_ok(
+            "push_remote",
+            started_at,
+            &state,
             SyncData {
                 operation: "push".to_string(),
                 remote: remote.unwrap_or_else(|| "default".to_string()),
                 branch,
                 output,
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("push_remote", started_at, &state, error),
     }
 }
 
@@ -889,5 +936,23 @@ pub fn update_ui_preferences(
     match settings_service::update_ui_preferences(&theme_id, &keybinding_profile) {
         Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
         Err(error) => map_error(started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn get_command_telemetry_snapshot(
+    recent_limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> CommandResult<CommandTelemetrySnapshotData> {
+    let started_at = Instant::now();
+    let recent_limit = recent_limit
+        .unwrap_or(200)
+        .clamp(1, 1_000) as usize;
+
+    match telemetry_service::get_command_telemetry_snapshot(Some(recent_limit)) {
+        Ok(data) => command_ok("get_command_telemetry_snapshot", started_at, &state, data),
+        Err(error) => {
+            map_error_with_command("get_command_telemetry_snapshot", started_at, &state, error)
+        }
     }
 }

@@ -3,7 +3,7 @@ import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
-import { getCommitDetail, listCommitHistory, openRepository } from "@/lib/backend/commands";
+import { getCommitDetail, listCommitHistory } from "@/lib/backend/commands";
 
 interface HistoryPageProps {
   embedded?: boolean;
@@ -11,21 +11,10 @@ interface HistoryPageProps {
 
 export function HistoryPage(props: HistoryPageProps = {}) {
   const repository = useRepositoryContext();
-  const [repositoryPath, setRepositoryPath] = createSignal(repository.activeRepositoryPath() ?? "");
-  const [activeRepo, setActiveRepo] = createSignal<string | null>(repository.activeRepositoryPath());
   const [historyLimitInput, setHistoryLimitInput] = createSignal("50");
   const [selectedCommitHash, setSelectedCommitHash] = createSignal<string | null>(null);
-  const [openError, setOpenError] = createSignal<string | null>(null);
 
-  createEffect(() => {
-    const sharedPath = repository.activeRepositoryPath();
-    if (!sharedPath || sharedPath === activeRepo()) {
-      return;
-    }
-
-    setActiveRepo(sharedPath);
-    setRepositoryPath(sharedPath);
-  });
+  const activeRepo = () => repository.activeRepositoryPath();
 
   const parsedLimit = () => {
     const parsed = Number.parseInt(historyLimitInput().trim(), 10);
@@ -35,7 +24,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     return Math.min(Math.max(parsed, 1), 500);
   };
 
-  const [historyResult, { refetch: refetchHistory }] = createResource(
+  const [historyResult] = createResource(
     () => {
       const repositoryPath = activeRepo();
       if (!repositoryPath) {
@@ -81,75 +70,11 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     }
   });
 
-  const onOpenRepository = async () => {
-    const path = repositoryPath().trim();
-    setOpenError(null);
-
-    if (!path) {
-      setOpenError("Repository path is required.");
-      return;
-    }
-
-    const result = await openRepository(path);
-    if (!result.ok) {
-      setOpenError(result.error.message);
-      return;
-    }
-
-    setActiveRepo(result.data.repositoryPath);
-    repository.setActiveRepositoryPath(result.data.repositoryPath);
-    setSelectedCommitHash(null);
-    void refetchHistory();
-  };
-
   return (
     <div class={`feature-page ${props.embedded ? "is-embedded" : ""}`}>
-      <Show when={!props.embedded}>
-        <>
-          <header class="feature-header">
-            <div class="feature-header-main">
-              <h1 class="feature-title">History</h1>
-            </div>
-            <div class="feature-header-meta">
-              <span class="feature-meta-pill">{activeRepo() ? "Repository connected" : "No repository"}</span>
-              <span class="feature-meta-pill">Limit {parsedLimit()}</span>
-            </div>
-          </header>
-
-          <section class="feature-toolbar">
-            <input
-              class="path-input"
-              placeholder="C:/dev/your-repository"
-              value={repositoryPath()}
-              onInput={(event) => setRepositoryPath(event.currentTarget.value)}
-            />
-            <input
-              class="path-input history-limit-input"
-              value={historyLimitInput()}
-              placeholder="History limit"
-              onInput={(event) => setHistoryLimitInput(event.currentTarget.value)}
-              aria-label="History limit"
-            />
-            <button class="primary-btn" onClick={() => void onOpenRepository()}>
-              Open Repository
-            </button>
-            <button class="primary-btn" disabled={!activeRepo()} onClick={() => void refetchHistory()}>
-              Refresh
-            </button>
-          </section>
-        </>
-      </Show>
-
-      <Show when={!activeRepo()}>
-        <EmptyStateCard
-          title="Open a repository"
-          body="Select a local path."
-        />
-      </Show>
-
-      <Show when={openError()}>
-        {(message) => <ErrorStateCard title="Cannot open repository" body={message()} />}
-      </Show>
+      <span class="section-summary">
+        Viewing last {parsedLimit()} commits.
+      </span>
 
       <Show when={historyResult.loading}>
         <LoadingStateSkeleton />
@@ -167,9 +92,44 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       </Show>
 
       <Show when={historyResult.latest?.ok && historyResult.latest.data.entries.length > 0}>
+        {/* We can use topology visualization natively for the timeline */}
+        <section class="topology-canvas" style="margin-bottom: 8px;">
+          <svg class="topology-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+             {/* Dummy spatial representation */}
+             <path d="M 10,30 L 1000,30" class="topology-link" />
+             {historyResult.latest?.ok &&
+                historyResult.latest.data.entries.map((entry, index, arr) => {
+                  if (index > 10) return null; // cap at 10 items for the spatial representation
+                  const spacing = 1000 / Math.min(10, arr.length);
+                  const x = 20 + index * spacing;
+                  const isActive = selectedCommitHash() === entry.commitHash;
+                  return (
+                    <circle 
+                      cx={x} cy={30} r={isActive ? 5 : 3.5} 
+                      class={`topology-node ${isActive ? "is-active" : ""}`}
+                      onClick={() => setSelectedCommitHash(entry.commitHash)}
+                    >
+                      <title>{entry.shortHash}: {entry.subject}</title>
+                    </circle>
+                  )
+                })}
+          </svg>
+        </section>
+
         <section class="history-layout">
           <article class="state-card timeline-pane">
-            <h3>Commit Timeline</h3>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <h3>Commit Timeline</h3>
+              <input
+                class="path-input history-limit-input"
+                style="max-width: 80px; padding: 2px 6px; font-size: 10px;"
+                value={historyLimitInput()}
+                placeholder="Limit"
+                onInput={(event) => setHistoryLimitInput(event.currentTarget.value)}
+                aria-label="History limit"
+              />
+            </div>
+            
             <ul class="timeline-list">
               {historyResult.latest?.ok &&
                 historyResult.latest.data.entries.map((entry) => (
@@ -209,28 +169,23 @@ export function HistoryPage(props: HistoryPageProps = {}) {
             <Show when={commitDetailResult.latest?.ok}>
               <>
                 <h3>{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.subject : ""}</h3>
-                <p>
-                  {commitDetailResult.latest?.ok ? commitDetailResult.latest.data.shortHash : ""} by{" "}
+                <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
+                  <span class="file-path">{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.shortHash : ""}</span> by{" "}
                   {commitDetailResult.latest?.ok ? commitDetailResult.latest.data.authorName : ""} on{" "}
                   {commitDetailResult.latest?.ok ? commitDetailResult.latest.data.authoredAt : ""}
-                </p>
-                <p>
-                  Files changed: {commitDetailResult.latest?.ok ? commitDetailResult.latest.data.filesChanged : 0} |
-                  Additions: {commitDetailResult.latest?.ok ? commitDetailResult.latest.data.additions : 0} |
-                  Deletions: {commitDetailResult.latest?.ok ? commitDetailResult.latest.data.deletions : 0}
                 </p>
 
                 <Show when={commitDetailResult.latest?.ok && commitDetailResult.latest.data.body.length > 0}>
                   <pre class="sync-output">{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.body : ""}</pre>
                 </Show>
 
-                <div class="commit-file-stats">
+                <div class="commit-file-stats" style="margin-top: 12px;">
                   {commitDetailResult.latest?.ok &&
                     commitDetailResult.latest.data.files.map((file) => (
                       <div class="commit-file-row">
                         <span class="file-path">{file.path}</span>
-                        <span>+{file.additions}</span>
-                        <span>-{file.deletions}</span>
+                        <span style="color: var(--state-added)">+{file.additions}</span>
+                        <span style="color: var(--state-deleted)">-{file.deletions}</span>
                       </div>
                     ))}
                 </div>
