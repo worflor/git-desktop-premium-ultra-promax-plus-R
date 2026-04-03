@@ -6,12 +6,18 @@ export interface SurfaceMaterialShader {
   saturatePct: number;
   opacityScale: number;
   edgeIntensity: number;
-  texture?: "none" | "grain" | "scanlines";
+  texture?: "none" | "grain" | "scanlines" | "pixels" | "chalkdust";
   textureOpacity?: number;
   motion?: "snappy" | "fluid" | "elastic";
   luminescence?: number;
-  particles?: "none" | "stardust" | "embers";
+  particles?: "none" | "stardust" | "embers" | "voxels" | "chalkdust";
   parallaxStrength?: number;
+  geometry?: {
+    radius?: number; // base border radius scale
+    pixelated?: boolean; // toggle nearest-neighbor and disable anti-aliasing
+    typography?: string; // inject a custom font family
+    fontScale?: number; // scaling factor for fonts that naturally render small
+  };
 }
 
 interface RgbaColor {
@@ -138,13 +144,14 @@ function toRgbaString(color: RgbaColor): string {
   return `rgba(${Math.round(color.r)}, ${Math.round(color.g)}, ${Math.round(color.b)}, ${color.a.toFixed(3)})`;
 }
 
-function generateProceduralTexture(shader: SurfaceMaterialShader): string {
+function generateProceduralTexture(shader: SurfaceMaterialShader, ambient: RgbaColor | null): string {
   const intensity = clamp(shader.textureOpacity ?? 0, 0, 1);
   if (intensity === 0 || !shader.texture || shader.texture === "none") return "none";
 
   // We construct mathematical SVG matrices directly in string memory to avoid loading payload assets.
   // Circle XIX insists on eliminating I/O bottleneck; Base64 generative matrices execute inside the layout layer.
   let svg = "";
+  const baseFill = ambient ? `rgba(${ambient.r},${ambient.g},${ambient.b},1)` : "black";
   if (shader.texture === "grain") {
     // High-frequency fractional noise produces a tactile, matte paper/film grain surface
     svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'>
@@ -158,6 +165,21 @@ function generateProceduralTexture(shader: SurfaceMaterialShader): string {
     svg = `<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'>
       <rect width='4' height='2' fill='black' opacity='${intensity.toFixed(2)}'/>
     </svg>`;
+  } else if (shader.texture === "pixels") {
+    // A 16x16 mosaic block generation mimicking Minecraft dirt/stone patterns using actual color arrays
+    svg = `<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'>`;
+    const darkLuma = ambient ? `rgba(${ambient.r > 20 ? ambient.r - 20 : 0}, ${ambient.g > 20 ? ambient.g - 20 : 0}, ${ambient.b > 20 ? ambient.b - 20 : 0}, 1)` : "black";
+    // First, fill base
+    svg += `<rect width='16' height='16' fill='${baseFill}' opacity='${(intensity * 0.5).toFixed(2)}'/>`;
+    for (let x = 0; x < 16; x += 4) {
+      for (let y = 0; y < 16; y += 4) {
+        const noiseType = Math.abs(Math.sin(x * 12.3 + y * 4.5));
+        if (noiseType > 0.5) {
+          svg += `<rect x='${x}' y='${y}' width='4' height='4' fill='${darkLuma}' opacity='${intensity.toFixed(2)}'/>`;
+        }
+      }
+    }
+    svg += `</svg>`;
   }
 
   // Btoa executes in highly-optimized engine C++ code, transforming raw markup to a CSS background payload.
@@ -166,7 +188,7 @@ function generateProceduralTexture(shader: SurfaceMaterialShader): string {
 
 function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: RgbaColor | null): string {
   if (!shader.particles || shader.particles === "none") return "none";
-  
+
   // Base physical dimensions. A large matrix repeats natively over the CSS viewport infinitely.
   let svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000'>`;
   const baseFill = ambient ? `rgba(${ambient.r},${ambient.g},${ambient.b},1)` : "white";
@@ -179,12 +201,12 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
     </style>`;
     // Deterministic random generation for physical stars
     for (let i = 0; i < 40; i++) {
-        const x = (Math.sin(i * 123) * 500 + 500).toFixed(1);
-        const y = (Math.cos(i * 321) * 500 + 500).toFixed(1);
-        const r = (Math.abs(Math.sin(i * 21)) * 1.5 + 0.5).toFixed(1);
-        const dur = (Math.abs(Math.sin(i * 44)) * 3 + 2).toFixed(1);
-        const del = (Math.abs(Math.sin(i * 55)) * 4).toFixed(1);
-        svg += `<circle cx='${x}' cy='${y}' r='${r}' class='star' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
+      const x = (Math.sin(i * 123) * 500 + 500).toFixed(1);
+      const y = (Math.cos(i * 321) * 500 + 500).toFixed(1);
+      const r = (Math.abs(Math.sin(i * 21)) * 1.5 + 0.5).toFixed(1);
+      const dur = (Math.abs(Math.sin(i * 44)) * 3 + 2).toFixed(1);
+      const del = (Math.abs(Math.sin(i * 55)) * 4).toFixed(1);
+      svg += `<circle cx='${x}' cy='${y}' r='${r}' class='star' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
     }
   } else if (shader.particles === "embers") {
     // Emit vertically translating shards that fade mathematically over space
@@ -194,11 +216,66 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
     </style>`;
     // Deterministic spawn vectors
     for (let i = 0; i < 20; i++) {
-        const x = (Math.sin(i * 678) * 500 + 500).toFixed(1);
-        const w = (Math.abs(Math.sin(i * 12)) * 3 + 1).toFixed(1);
-        const dur = (Math.abs(Math.sin(i * 88)) * 8 + 4).toFixed(1);
-        const del = (Math.abs(Math.sin(i * 99)) * 10).toFixed(1);
-        svg += `<rect x='${x}' y='0' width='${w}' height='${(parseFloat(w)*3).toFixed(1)}' rx='1' class='ember' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
+      const x = (Math.sin(i * 678) * 500 + 500).toFixed(1);
+      const w = (Math.abs(Math.sin(i * 12)) * 3 + 1).toFixed(1);
+      const dur = (Math.abs(Math.sin(i * 88)) * 8 + 4).toFixed(1);
+      const del = (Math.abs(Math.sin(i * 99)) * 10).toFixed(1);
+      svg += `<rect x='${x}' y='0' width='${w}' height='${(parseFloat(w) * 3).toFixed(1)}' rx='1' class='ember' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
+    }
+  } else if (shader.particles === "voxels") {
+    // Large, rigid rotating cubes falling computationally
+    svg += `<style>
+      .voxel { animation: drop linear infinite; fill: ${baseFill}; transform-origin: center; }
+      @keyframes drop { 0% { transform: translateY(-100px) rotate(0deg); opacity: 0;} 10% {opacity: 0.3;} 90% {opacity: 0.3;} 100% { transform: translateY(1100px) rotate(360deg); opacity: 0; } }
+    </style>`;
+    for (let i = 0; i < 15; i++) {
+      const x = (Math.sin(i * 444) * 500 + 500).toFixed(1);
+      const s = (Math.abs(Math.sin(i * 33)) * 20 + 10).toFixed(1);
+      const dur = (Math.abs(Math.sin(i * 22)) * 15 + 10).toFixed(1);
+      const del = (Math.abs(Math.sin(i * 11)) * 15).toFixed(1);
+      svg += `<rect x='${x}' y='0' width='${s}' height='${s}' class='voxel' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
+    }
+  } else if (shader.particles === "chalkdust") {
+    // Eldritch Mathematical Geometry: Lissajous Harmonic Resonance
+    const chalkColors = [baseFill, baseFill, "rgba(255, 130, 140, 0.8)", "rgba(150, 210, 255, 0.8)", "rgba(255, 220, 120, 0.8)"];
+    
+    svg += `<style>
+      .chalk-line { fill: none; stroke-linecap: round; stroke-linejoin: round; opacity: 0; animation: mathplot linear infinite backwards; }
+      @keyframes mathplot {
+        0% { stroke-dashoffset: 100; opacity: 0; }
+        0.1% { stroke-dashoffset: 100; opacity: 0.4; }
+        40% { stroke-dashoffset: 0; opacity: 0.4; }
+        80% { stroke-dashoffset: 0; opacity: 0.4; }
+        95% { stroke-dashoffset: 0; opacity: 0; }
+        100% { stroke-dashoffset: 0; opacity: 0; }
+      }
+      .chalk-filter { filter: url(#rough); opacity: 0.5; }
+    </style>
+    <filter id="rough"><feTurbulence type="fractalNoise" baseFrequency="0.4" numOctaves="3" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="3" xChannelSelector="R" yChannelSelector="G"/></filter>`;
+    
+    // Generate complex spirographic harmonic waveforms
+    for (let i = 1; i <= 4; i++) {
+      const cx = Math.sin(i * 1.5) * 500 + 500;
+      const cy = Math.cos(i * 2.5) * 400 + 500;
+      
+      const a = Math.round(Math.abs(Math.sin(i * 3)) * 4 + 1); // Harmonic frequency X
+      const b = Math.round(Math.abs(Math.cos(i * 4)) * 4 + 1); // Harmonic frequency Y
+      const delta = Math.PI / i;
+      const radius = Math.abs(Math.sin(i * 5)) * 150 + 100;
+      
+      let d = "";
+      for (let t = 0; t <= Math.PI * 2.0; t += 0.05) {
+        const x = (Math.sin(a * t + delta) * radius + cx).toFixed(1);
+        const y = (Math.sin(b * t) * radius + cy).toFixed(1);
+        d += t === 0 ? `M ${x} ${y} ` : `L ${x} ${y} `;
+      }
+      
+      const dur = (Math.abs(Math.sin(i * 88)) * 60 + 60).toFixed(1); // 60s - 120s
+      const del = (Math.abs(Math.sin(i * 55)) * 30).toFixed(1); 
+      const strokeW = (Math.abs(Math.sin(i * 33)) * 1.5 + 1.0).toFixed(1);
+      const color = chalkColors[i % chalkColors.length];
+
+      svg += `<path d="${d}" class="chalk-line chalk-filter" stroke="${color}" stroke-width="${strokeW}" pathLength="100" stroke-dasharray="100" style="animation-duration:${dur}s;animation-delay:${del}s;" />`;
     }
   }
   svg += `</svg>`;
@@ -310,7 +387,7 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
   const ambientColor = rawAmbient ? parseCssColor(`rgb(${rawAmbient})`) : null;
 
   // Render mathematical procedural textures directly over the CSS boundaries
-  root.style.setProperty("--runtime-material-texture", generateProceduralTexture(shader));
+  root.style.setProperty("--runtime-material-texture", generateProceduralTexture(shader, ambientColor));
   root.style.setProperty("--runtime-material-particles", generateProceduralParticles(shader, ambientColor));
 
   // Determine physical kinematic (motion) variables
@@ -323,6 +400,30 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
   root.style.setProperty("--runtime-duration", duration);
   root.style.setProperty("--runtime-parallax-strength", (shader.parallaxStrength ?? 0.5).toString());
 
+  // Geometric Parameters Mapping
+  const radiusBase = shader.geometry?.radius ?? 8;
+  root.style.setProperty("--runtime-radius", `${radiusBase}px`);
+
+  if (shader.geometry?.pixelated) {
+    root.style.setProperty("--runtime-image-render", "pixelated");
+    root.style.setProperty("--runtime-font-smooth", "none");
+  } else {
+    root.style.setProperty("--runtime-image-render", "auto");
+    root.style.setProperty("--runtime-font-smooth", "antialiased");
+  }
+
+  if (shader.geometry?.typography) {
+    root.style.setProperty("--runtime-font-family", shader.geometry.typography);
+  } else {
+    root.style.removeProperty("--runtime-font-family");
+  }
+
+  if (shader.geometry?.fontScale) {
+    root.style.setProperty("--runtime-font-scale", shader.geometry.fontScale.toString());
+  } else {
+    root.style.removeProperty("--runtime-font-scale");
+  }
+
   if (ambientColor) {
     // Generate unified cell-shading artifacts using bitshift halving for the hard shadow
     const shadowR = ambientColor.r >> 1;
@@ -330,12 +431,12 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
     const shadowB = ambientColor.b >> 1;
     root.style.setProperty("--runtime-cell-shadow", `rgba(${shadowR}, ${shadowG}, ${shadowB}, 0.45)`);
     root.style.setProperty("--runtime-rim-light", `rgba(${ambientColor.r}, ${ambientColor.g}, ${ambientColor.b}, ${clamp(runtime.alphaScale * 0.35, 0.05, 0.8)})`);
-    
+
     // Scale the luminescence multiplier through algorithmic box-shadow interpolation
     const lum = clamp(shader.luminescence ?? 1.0, 0, 3.0);
     const glowRadius = 12 * Math.max(1, lum);
-    const glowAlpha  = clamp((ambientColor.a ?? 1) * 0.2 * lum, 0, 0.8);
-    const hardAlpha  = clamp(0.15 * lum, 0, 1.0);
+    const glowAlpha = clamp((ambientColor.a ?? 1) * 0.2 * lum, 0, 0.8);
+    const hardAlpha = clamp(0.15 * lum, 0, 1.0);
     // Combine an expanded blurred aura with a sharp inner halo (Circle XIX dictates rendering multiple scales iteratively)
     root.style.setProperty("--runtime-glow-shadow", `0 0 ${glowRadius.toFixed(1)}px rgba(${ambientColor.r}, ${ambientColor.g}, ${ambientColor.b}, ${glowAlpha.toFixed(2)}), 0 0 2px rgba(${ambientColor.r}, ${ambientColor.g}, ${ambientColor.b}, ${hardAlpha.toFixed(2)})`);
   } else {

@@ -35,6 +35,10 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: cargo test fixture_ -- --nocapture
 
+      - name: Backend formatting check
+        working-directory: apps/desktop/src-tauri
+        run: cargo fmt --all -- --check
+
       - name: Backend test suite
         working-directory: apps/desktop/src-tauri
         run: cargo test -- --nocapture

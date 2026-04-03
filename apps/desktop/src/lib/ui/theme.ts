@@ -1,6 +1,6 @@
 import { applySurfaceMaterial, type SurfaceMaterialShader } from "@/lib/ui/surfaceMaterial";
 
-const THEME_IDS = ["aether", "helix", "quanta", "petrichor", "redshift", "halo"] as const;
+const THEME_IDS = ["aether", "helix", "quanta", "petrichor", "redshift", "halo", "crafty", "blackboard"] as const;
 
 export type ThemeId = (typeof THEME_IDS)[number];
 
@@ -117,6 +117,52 @@ const THEME_DEFINITIONS = [
       luminescence: 0.8,
       particles: "stardust",
       parallaxStrength: 0.6
+    }
+  },
+  {
+    id: "crafty",
+    label: "Crafty",
+    description: "Voxel-based rendering with sharp geometry and pixel-perfect textures.",
+    shader: {
+      mode: "solid",
+      blurPx: 0,
+      saturatePct: 150,
+      opacityScale: 1.0,
+      edgeIntensity: 0.8,
+      texture: "pixels",
+      textureOpacity: 0.15,
+      motion: "snappy",
+      luminescence: 0.4,
+      particles: "voxels",
+      parallaxStrength: 0.2,
+      geometry: {
+        radius: 0,
+        pixelated: true,
+        typography: "'VT323', monospace"
+      }
+    }
+  },
+  {
+    id: "blackboard",
+    label: "Blackboard",
+    description: "Raw slate geometry with physical chalk typographical rendering.",
+    shader: {
+      mode: "solid",
+      blurPx: 0,
+      saturatePct: 100,
+      opacityScale: 1.0,
+      edgeIntensity: 1.0,
+      texture: "grain",
+      textureOpacity: 0.15,
+      motion: "snappy",
+      luminescence: 0.1,
+      particles: "chalkdust",
+      parallaxStrength: 0.1,
+      geometry: {
+        radius: 2,
+        typography: "'Lora', serif",
+        fontScale: 1.05
+      }
     }
   }
 ] as const satisfies readonly ThemeDefinition[];

@@ -1,13 +1,15 @@
+pub mod ai_audit_service;
 pub mod ai_service;
 pub mod auth_service;
+pub mod diff_service;
 pub mod forge_service;
 pub mod git_provider;
 pub mod issue_service;
 pub mod local_issue_service;
 pub mod local_pull_request_service;
 pub mod local_store;
+pub mod logging_service;
 pub mod pull_request_service;
 pub mod repository_service;
 pub mod settings_service;
 pub mod telemetry_service;
-

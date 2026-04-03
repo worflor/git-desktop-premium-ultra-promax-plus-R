@@ -14,6 +14,8 @@ pub struct GitCapabilities {
 pub struct AuthStatus {
     pub ssh_agent_available: bool,
     pub credential_helper_configured: bool,
+    pub github_cli_available: bool,
+    pub github_cli_authenticated: bool,
     pub diagnostics: Vec<String>,
     pub remote_diagnostics: Vec<RemoteAuthDiagnostic>,
 }
@@ -32,6 +34,8 @@ pub struct ForgeAdapter {
     pub id: String,
     pub available: bool,
     pub version: Option<String>,
+    pub auth_state: Option<String>,
+    pub auth_message: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

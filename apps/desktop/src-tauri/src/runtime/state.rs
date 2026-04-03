@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use crate::models::operations::FileDiffManifestData;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiReviewJobState {
@@ -35,13 +38,25 @@ pub struct AiReviewJobRecord {
     pub output: String,
     pub error: Option<String>,
     pub cancel_flag: Arc<AtomicBool>,
+    pub provider_id: String,
+    pub repository_path: String,
+    pub diff_scope_path: Option<String>,
+    pub prompt: String,
 }
 
 pub type SharedAiReviewJob = Arc<Mutex<AiReviewJobRecord>>;
 
+pub struct DiffPayloadRecord {
+    pub created_at: Instant,
+    pub expires_at: Instant,
+    pub manifest: FileDiffManifestData,
+    pub chunks: Vec<String>,
+}
+
 pub struct AppState {
     pub recent_repositories: Mutex<Vec<String>>,
     pub ai_review_jobs: Mutex<HashMap<String, SharedAiReviewJob>>,
+    pub diff_payloads: Mutex<HashMap<String, DiffPayloadRecord>>,
     pub contract_version: String,
 }
 
@@ -50,6 +65,7 @@ impl Default for AppState {
         Self {
             recent_repositories: Mutex::new(Vec::new()),
             ai_review_jobs: Mutex::new(HashMap::new()),
+            diff_payloads: Mutex::new(HashMap::new()),
             contract_version: "v0".to_string(),
         }
     }

@@ -58,6 +58,10 @@ Acceptance criteria:
 - Line additions/deletions render accurately
 - Basic search-in-file diff works
 - Pretext-derived line mapping is used for row, hunk, and cursor navigation
+Implementation update (2026-04-03):
+- Backend now exposes chunked diff APIs via `prepare_file_diff_chunks` and `get_file_diff_chunk` with hunk metadata and size/line counters.
+- Diff payload caching and expiry are now implemented in backend runtime state for incremental transfer to UI.
+- Oversized diff payloads now return a typed `diff.too_large` contract error.
 
 ### C-2 Pretext + virtualized DOM baseline (P1)
 Acceptance criteria:
@@ -85,12 +89,18 @@ Acceptance criteria:
 - User can fetch, pull, push for current branch
 - Auth failures return clear guidance
 - Operation states (running/success/fail) are visible
+Implementation update (2026-04-03):
+- Backend git command execution now applies transient retry handling for network-class operations (`fetch`, `pull`, `push`, `ls-remote`, `remote`) when failures match retryable network signatures.
+- Retry attempts emit structured backend lifecycle retry events for diagnostics.
 
 ### D-2 Auth diagnostics baseline (P1)
 Acceptance criteria:
 - Detects SSH and credential helper readiness
 - Shows per-remote auth diagnostics with suggested fixes
 - Does not require app-managed plaintext credential storage
+Implementation update (2026-04-03):
+- Backend auth status now includes GitHub CLI availability/authentication diagnostics.
+- Per-remote guidance now includes GitHub-specific remediation when `gh` is installed but unauthenticated.
 
 ## EPIC G - Forge Adapters (Optional Enhancements)
 ### G-1 Forge adapter capability model (P1)
@@ -103,6 +113,9 @@ Acceptance criteria:
 - Detects gh availability and login status
 - Exposes GitHub-specific enhancements without blocking core workflows
 - Degraded path uses remote URL handoff when adapter unavailable
+Implementation update (2026-04-03):
+- Forge adapter diagnostics now probe `gh auth status` and expose adapter auth state metadata.
+- Repository integration matrix now emits GitHub capability signals for authenticated vs unauthenticated optional adapter paths.
 
 ## EPIC E - AI Assist
 ### E-1 Provider detection (P1)
@@ -110,6 +123,9 @@ Acceptance criteria:
 - Detects installed Codex/Claude/Gemini/OpenCode CLIs
 - Shows availability state and basic diagnostics
 - Degraded mode does not break app if no provider exists
+Implementation update (2026-04-03):
+- AI provider discovery now returns resolved binary command, detection source, and health-check status.
+- Detection now includes PATH plus known install path probes to improve Windows and non-PATH discovery.
 
 ### E-2 Diff review stream panel (P1)
 Acceptance criteria:
@@ -122,12 +138,19 @@ Acceptance criteria:
 - User can pick from baseline templates
 - Prompt and output metadata is logged locally
 - Sensitive content redaction strategy is documented
+Implementation update (2026-04-03):
+- Backend now persists a local AI audit trail (`APPDATA/gdpu/ai_review_audit.jsonl`) with retention limits.
+- Prompt/output previews are redacted and truncated before persistence.
+- New command `get_ai_audit_entries` exposes audit metadata for diagnostics and future UI surfacing.
 
 ### E-4 AI guardrail slider model (P1)
 Acceptance criteria:
 - Slider maps continuous value to Loose/Balanced/Strict/Paranoid profiles
 - Default profile is Balanced for new installs
 - Read-only AI actions remain default in base workflows
+Implementation update (2026-04-03):
+- Backend guardrail mapping now defaults a value of `0.5` to the Balanced profile.
+- Regression test added to enforce Balanced default behavior for new installs.
 
 ## EPIC F - Reliability and Performance
 ### F-1 Command latency instrumentation (P0)
@@ -136,10 +159,11 @@ Acceptance criteria:
 - Diagnostics view can display recent operation timings
 Implementation update (2026-04-03):
 - Backend now records system Git command telemetry samples with command label, duration, success/failure status, and mapped error code.
-- Critical command endpoints (stage, unstage, commit, fetch, pull, push) now emit backend telemetry samples with command-level success/failure classification.
+- All tauri command endpoints now emit backend telemetry samples with command-level success/failure classification.
 - Rolling retention policy is enforced in backend storage using configured telemetry days/MB caps from app settings.
 - Backend telemetry snapshot command now returns aggregated p50/p95 summaries and recent samples for diagnostics tooling.
 - Backend settings updates for telemetry retention now trigger immediate retention enforcement in backend storage.
+- Backend now persists structured operation lifecycle events (`start`, `success`, `failure`, `retry`) with request correlation IDs for command and git scopes.
 
 ### F-4 Local telemetry retention policy (P1)
 Acceptance criteria:
@@ -172,6 +196,16 @@ Acceptance criteria:
 Implementation update (2026-04-03):
 - Backend fixture parity tests now cover status stage/unstage, branch listing, commit history/detail, and merge-conflict detection/abort against direct git CLI outputs.
 - CI now includes a dedicated fixture test step via `cargo test fixture_ -- --nocapture`.
+- Additional backend unit coverage now validates diff chunk parsing/chunking behavior, AI audit redaction/retention behavior, forge/AI adapter contract invariants, and transient git retry classification.
+
+### Advanced Git Workflow Expansion (P1)
+Acceptance criteria:
+- Rebase and cherry-pick flows are available as explicit command APIs.
+- Continue/abort operations exist as operation-specific command variants.
+- Conflict-oriented workflows remain compatible with existing generic conflict commands.
+Implementation update (2026-04-03):
+- Backend now exposes `start_rebase`, `continue_rebase`, `abort_rebase`, `start_cherry_pick`, `continue_cherry_pick`, and `abort_cherry_pick` commands.
+- Existing generic conflict commands remain available for merge/rebase/cherry-pick/revert fallback behavior.
 
 ### F-3 Crash-safe and recoverable UX states (P1)
 Acceptance criteria:

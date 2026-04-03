@@ -11,14 +11,8 @@ const SIDEBAR_WIDTH_MIN_PX: u32 = 220;
 const SIDEBAR_WIDTH_MAX_PX: u32 = 520;
 const UTILITY_DRAWER_HEIGHT_MIN_PX: u32 = 120;
 const UTILITY_DRAWER_HEIGHT_MAX_PX: u32 = 420;
-const SUPPORTED_THEME_IDS: [&str; 6] = [
-    "aether",
-    "helix",
-    "quanta",
-    "petrichor",
-    "redshift",
-    "halo",
-];
+const SUPPORTED_THEME_IDS: [&str; 6] =
+    ["aether", "helix", "quanta", "petrichor", "redshift", "halo"];
 const DEFAULT_THEME_ID: &str = "aether";
 const DEFAULT_KEYBINDING_PROFILE: &str = "classic";
 
@@ -136,7 +130,7 @@ fn guardrail_profile(value: f32) -> &'static str {
     if value < 0.25 {
         return "Loose";
     }
-    if value < 0.5 {
+    if value <= 0.5 {
         return "Balanced";
     }
     if value < 0.75 {
@@ -221,8 +215,9 @@ fn persist_settings(settings: &StoredSettings) -> Result<(), AppError> {
         .parent()
         .ok_or_else(|| AppError::Internal("settings storage path is invalid".to_string()))?;
 
-    fs::create_dir_all(parent)
-        .map_err(|error| AppError::Internal(format!("failed to create settings directory: {error}")))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        AppError::Internal(format!("failed to create settings directory: {error}"))
+    })?;
 
     let payload = serde_json::to_string_pretty(settings)
         .map_err(|error| AppError::Internal(format!("failed to serialize settings: {error}")))?;
@@ -232,8 +227,9 @@ fn persist_settings(settings: &StoredSettings) -> Result<(), AppError> {
 }
 
 fn settings_file_path() -> Result<PathBuf, AppError> {
-    let appdata = std::env::var("APPDATA")
-        .map_err(|_| AppError::Internal("APPDATA environment variable is unavailable".to_string()))?;
+    let appdata = std::env::var("APPDATA").map_err(|_| {
+        AppError::Internal("APPDATA environment variable is unavailable".to_string())
+    })?;
     Ok(PathBuf::from(appdata).join("gdpu").join(SETTINGS_FILE_NAME))
 }
 
@@ -341,5 +337,13 @@ mod tests {
             .expect("unknown keybinding profile should normalize to default");
         assert_eq!(updated.theme_id, "aether");
         assert_eq!(updated.keybinding_profile, DEFAULT_KEYBINDING_PROFILE);
+    }
+
+    #[test]
+    fn default_guardrail_profile_is_balanced() {
+        let _scope = AppDataTestScope::enter();
+
+        let loaded = get_settings().expect("loading default settings should succeed");
+        assert_eq!(loaded.guardrail_profile, "Balanced");
     }
 }

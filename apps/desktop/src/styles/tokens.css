@@ -311,3 +311,89 @@
   --theme-spark-speed-ms: 24s;
   --status-online-rgb: 93, 216, 170;
 }
+
+[data-theme="crafty"] {
+  --base-hue: 25;
+  --base-sat: 20%;
+  
+  --app-background: #17110e;
+  --surface-0: #29211c;
+  --surface-1: #3f342d;
+  --surface-2: #4c4038;
+  --surface-3: #584c44;
+  --surface-glass: rgba(41, 33, 28, 0.95);
+  --bg-0: #1c1511;
+  --bg-1: #241c17;
+
+  --text-normal: #c6c6c6;
+  --text-strong: #ffffff;
+  --text-muted: #8b8079;
+  --text-faint: #635851;
+
+  --chrome-border-rgb: 16, 9, 6;
+  --chrome-accent-rgb: 85, 175, 65;
+  --danger-rgb: 232, 60, 60;
+  --warning-rgb: 235, 160, 45;
+  --success-rgb: 85, 175, 65;
+  --accent-bright: #70d655;
+
+  --panel-overlay: rgba(23, 17, 14, 0.8);
+  --panel-overlay-strong: rgba(16, 9, 6, 0.9);
+  --input-overlay: rgba(28, 21, 17, 0.9);
+  --diff-overlay: rgba(23, 17, 14, 0.9);
+  --danger-overlay: rgba(90, 20, 20, 0.85);
+
+  --glass-backdrop-filter: blur(0px) saturate(100%);
+  --shadow-elev: 0 10px 0px rgba(0, 0, 0, 0.8);
+
+  --theme-ambient-rgb: 85, 175, 65;
+  --theme-ambient-strength: 0.2;
+  --theme-spark-opacity: 0;
+  --theme-spark-speed-ms: 10s;
+  --status-online-rgb: 85, 175, 65;
+}
+
+[data-theme="blackboard"] {
+  --base-hue: 0;
+  --base-sat: 0%;
+  
+  --app-background: #141416;
+  --surface-0: #141416;
+  --surface-1: #141416;
+  --surface-2: #141416;
+  --surface-3: #141416;
+  --surface-glass: rgba(20, 20, 22, 0.85);
+  --bg-0: #141416;
+  --bg-1: #141416;
+
+  --text-normal: #e6e6eb;
+  --text-strong: #ffffff;
+  --text-muted: #9ba0a5;
+  --text-faint: #5f6368;
+
+  --chrome-border-rgb: 220, 220, 225;
+  --chrome-accent-rgb: 150, 210, 255;
+  --danger-rgb: 255, 130, 140;
+  --warning-rgb: 255, 220, 120;
+  --success-rgb: 150, 210, 255;
+  --accent-bright: #ffffff;
+
+  --panel-overlay: rgba(255, 255, 255, 0.05);
+  --panel-overlay-strong: rgba(255, 255, 255, 0.09);
+  --input-overlay: transparent;
+  --diff-overlay: transparent;
+  --danger-overlay: rgba(255, 120, 150, 0.1);
+
+  --glass-backdrop-filter: blur(0px) saturate(100%);
+  --shadow-elev: 0 0 1px 1px rgba(255, 255, 255, 0.2), /* Tight solid chalk core bleed */
+                 inset 0 0 1px 1px rgba(255, 255, 255, 0.2),
+                 0 0 5px 2px rgba(255, 255, 255, 0.08), /* Wide fuzzy dust halo */
+                 inset 0 0 5px 2px rgba(255, 255, 255, 0.08),
+                 0 4px 15px rgba(255, 255, 255, 0.04); /* Downward settling dust */
+
+  --theme-ambient-rgb: 240, 245, 250;
+  --theme-ambient-strength: 0.08;
+  --theme-spark-opacity: 0.3;
+  --theme-spark-speed-ms: 12s;
+  --status-online-rgb: 150, 210, 255;
+}

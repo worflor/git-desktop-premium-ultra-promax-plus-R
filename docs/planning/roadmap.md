@@ -28,30 +28,18 @@ Exit criteria:
 
 ## Phase 2 - Performance and Stability (Week 5-7)
 Deliverables:
-- Large-diff detection and Pretext-driven canvas rendering path
-- Renderer benchmark harness and telemetry dashboards for Pretext layout hot paths
-- Pretext accuracy and upgrade gate automation in CI
-- Profiling instrumentation and perf dashboards/logging
-- Robust error handling and retries around system Git operations
-- Regression test suite with large synthetic repos
 
 Exit criteria:
-- Meets initial perf budgets on target hardware
-- Handles 10k+ changed lines without unusable UI jank
-- Renderer mode selection is deterministic and validated on fixtures
-- Pretext layout correctness passes unicode/bidi/long-line fixture corpus
+Implementation update (2026-04-03):
+- Backend diff chunking/hunk metadata APIs are implemented and covered by parsing/chunking unit tests.
 
 ## Phase 3 - AI Assist Layer (Week 8-10)
 Deliverables:
-- Provider detection for Codex/Claude/Gemini/OpenCode
-- Streaming AI review panel for selected files/hunks
-- Prompt templates (review, summarize, risky changes)
-- Audit trail for AI interactions
-- Guardrail slider (0.0 to 1.0) mapped to Loose/Balanced/Strict/Paranoid profiles
 
 Exit criteria:
-- AI results stream reliably from at least one provider
-- AI failure states are understandable and recoverable
+Implementation update (2026-04-03):
+- Backend now exposes first-class rebase/cherry-pick command workflows (start/continue/abort variants).
+- Backend git execution now emits lifecycle events and transient retry diagnostics for network-class sync operations.
 
 ## Phase 4 - Advanced Git and UX Polish (Week 11-14)
 Deliverables:

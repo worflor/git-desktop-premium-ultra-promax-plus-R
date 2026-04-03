@@ -88,10 +88,8 @@ pub fn get_command_telemetry_snapshot(
             .clamp(1, MAX_RECENT_LIMIT);
 
         let recent_start = samples.len().saturating_sub(limit);
-        let recent_samples: Vec<CommandTelemetrySampleData> = samples[recent_start..]
-            .iter()
-            .map(to_sample_data)
-            .collect();
+        let recent_samples: Vec<CommandTelemetrySampleData> =
+            samples[recent_start..].iter().map(to_sample_data).collect();
 
         Ok(CommandTelemetrySnapshotData {
             generated_at: now_iso8601_string(),
@@ -124,7 +122,9 @@ pub fn clear_command_samples() -> Result<u32, AppError> {
     })
 }
 
-fn with_telemetry_io_lock<T>(operation: impl FnOnce() -> Result<T, AppError>) -> Result<T, AppError> {
+fn with_telemetry_io_lock<T>(
+    operation: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
     let guard = telemetry_io_lock()
         .lock()
         .map_err(|_| AppError::Internal("telemetry storage lock is poisoned".to_string()))?;
@@ -248,7 +248,10 @@ fn percentile(sorted_durations: &[u64], percentile: u8) -> u64 {
     sorted_durations[index]
 }
 
-fn apply_retention_policy(samples: &mut Vec<StoredCommandTelemetrySample>, policy: RetentionPolicy) -> bool {
+fn apply_retention_policy(
+    samples: &mut Vec<StoredCommandTelemetrySample>,
+    policy: RetentionPolicy,
+) -> bool {
     let mut changed = false;
     let cutoff = Utc::now() - Duration::days(policy.max_age_days as i64);
     let cutoff_rfc3339 = cutoff.to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -318,18 +321,14 @@ fn load_samples() -> Result<Vec<StoredCommandTelemetrySample>, AppError> {
     }
 
     let file = File::open(path).map_err(|error| {
-        AppError::Internal(format!(
-            "failed to read telemetry storage file: {error}"
-        ))
+        AppError::Internal(format!("failed to read telemetry storage file: {error}"))
     })?;
     let reader = BufReader::new(file);
 
     let mut samples = Vec::new();
     for line in reader.lines() {
         let line = line.map_err(|error| {
-            AppError::Internal(format!(
-                "failed to read telemetry storage file: {error}"
-            ))
+            AppError::Internal(format!("failed to read telemetry storage file: {error}"))
         })?;
 
         let trimmed = line.trim();
@@ -359,9 +358,7 @@ fn persist_samples(samples: &[StoredCommandTelemetrySample]) -> Result<(), AppEr
     })?;
 
     let file = File::create(path).map_err(|error| {
-        AppError::Internal(format!(
-            "failed to persist telemetry storage file: {error}"
-        ))
+        AppError::Internal(format!("failed to persist telemetry storage file: {error}"))
     })?;
     let mut writer = BufWriter::new(file);
 
@@ -370,22 +367,19 @@ fn persist_samples(samples: &[StoredCommandTelemetrySample]) -> Result<(), AppEr
             AppError::Internal(format!("failed to serialize telemetry sample: {error}"))
         })?;
         writer.write_all(b"\n").map_err(|error| {
-            AppError::Internal(format!(
-                "failed to persist telemetry storage file: {error}"
-            ))
+            AppError::Internal(format!("failed to persist telemetry storage file: {error}"))
         })?;
     }
 
     writer.flush().map_err(|error| {
-        AppError::Internal(format!(
-            "failed to persist telemetry storage file: {error}"
-        ))
+        AppError::Internal(format!("failed to persist telemetry storage file: {error}"))
     })
 }
 
 fn telemetry_file_path() -> Result<PathBuf, AppError> {
-    let appdata = std::env::var("APPDATA")
-        .map_err(|_| AppError::Internal("APPDATA environment variable is unavailable".to_string()))?;
+    let appdata = std::env::var("APPDATA").map_err(|_| {
+        AppError::Internal("APPDATA environment variable is unavailable".to_string())
+    })?;
     Ok(PathBuf::from(appdata)
         .join("gdpu")
         .join(TELEMETRY_FILE_NAME))
@@ -410,12 +404,17 @@ fn now_iso8601_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_retention_policy, compute_serialized_size, now_iso8601_string, percentile, summarize_samples,
-        RetentionPolicy, StoredCommandTelemetrySample,
+        apply_retention_policy, compute_serialized_size, now_iso8601_string, percentile,
+        summarize_samples, RetentionPolicy, StoredCommandTelemetrySample,
     };
     use chrono::{Duration, SecondsFormat, Utc};
 
-    fn sample(command: &str, duration_ms: u64, ok: bool, created_at: String) -> StoredCommandTelemetrySample {
+    fn sample(
+        command: &str,
+        duration_ms: u64,
+        ok: bool,
+        created_at: String,
+    ) -> StoredCommandTelemetrySample {
         let mut sample = StoredCommandTelemetrySample {
             id: format!("sample-{command}-{duration_ms}"),
             scope: "backend".to_string(),

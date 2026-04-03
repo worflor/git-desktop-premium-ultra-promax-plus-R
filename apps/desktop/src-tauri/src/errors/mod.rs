@@ -20,6 +20,18 @@ pub enum AppError {
     InvalidInput(String),
     #[error("unsupported git version: found {found}, requires {minimum}+")]
     UnsupportedGitVersion { found: String, minimum: String },
+    #[error("git authentication is required: {0}")]
+    AuthRequired(String),
+    #[error("credential helper is unavailable")]
+    AuthHelperUnavailable,
+    #[error("forge adapter is unavailable: {0}")]
+    ForgeAdapterUnavailable(String),
+    #[error("diff payload is too large: {bytes} bytes exceeds {max_bytes} bytes")]
+    DiffTooLarge { bytes: u64, max_bytes: u64 },
+    #[error("ai provider is unavailable: {0}")]
+    AiProviderUnavailable(String),
+    #[error("ai process failed: {0}")]
+    AiProcessFailed(String),
 }
 
 impl AppError {
@@ -33,13 +45,25 @@ impl AppError {
             AppError::Internal(_) => "runtime.internal_error",
             AppError::InvalidInput(_) => "validation.invalid_input",
             AppError::UnsupportedGitVersion { .. } => "git.unsupported_version",
+            AppError::AuthRequired(_) => "git.auth_required",
+            AppError::AuthHelperUnavailable => "auth.helper_unavailable",
+            AppError::ForgeAdapterUnavailable(_) => "forge.adapter_unavailable",
+            AppError::DiffTooLarge { .. } => "diff.too_large",
+            AppError::AiProviderUnavailable(_) => "ai.provider_unavailable",
+            AppError::AiProcessFailed(_) => "ai.process_failed",
         };
 
         CommandError {
             code: code.to_string(),
             message: self.to_string(),
             details: None,
-            retryable: matches!(self, AppError::CommandExecution(_) | AppError::Internal(_)),
+            retryable: matches!(
+                self,
+                AppError::CommandExecution(_)
+                    | AppError::Internal(_)
+                    | AppError::AuthRequired(_)
+                    | AppError::AiProcessFailed(_)
+            ),
         }
     }
 }
@@ -79,8 +103,14 @@ mod tests {
 
     #[test]
     fn command_error_uses_conflict_code_for_git_conflicts() {
-        let command_error = AppError::GitCommand("CONFLICT (add/add)".to_string()).to_command_error();
+        let command_error =
+            AppError::GitCommand("CONFLICT (add/add)".to_string()).to_command_error();
         assert_eq!(command_error.code, "git.conflict_detected");
     }
-}
 
+    #[test]
+    fn command_error_uses_contract_ai_provider_code() {
+        let command_error = AppError::AiProviderUnavailable("codex".to_string()).to_command_error();
+        assert_eq!(command_error.code, "ai.provider_unavailable");
+    }
+}

@@ -13,10 +13,15 @@ pub fn list_issue_providers(repository_path: &str) -> Result<IssueProviderListDa
         display_name: "Local Offline Issues".to_string(),
         available: true,
         mode: "offline".to_string(),
-        guidance: Some("Stored in .git/gdpu/local_issues.json for local-first workflows.".to_string()),
+        guidance: Some(
+            "Stored in .git/gdpu/local_issues.json for local-first workflows.".to_string(),
+        ),
     }];
 
-    let has_github_remote = integration.remotes.iter().any(|remote| remote.host_kind == "github");
+    let has_github_remote = integration
+        .remotes
+        .iter()
+        .any(|remote| remote.host_kind == "github");
     if has_github_remote {
         providers.push(IssueProviderData {
             id: GITHUB_ISSUE_PROVIDER_ID.to_string(),
@@ -120,6 +125,17 @@ fn resolve_provider(repository_path: &str, provider_id: Option<&str>) -> Result<
         .filter(|value| !value.is_empty())
         .unwrap_or(providers.default_provider_id.as_str())
         .to_string();
+
+    if requested == GITHUB_ISSUE_PROVIDER_ID
+        && !providers
+            .providers
+            .iter()
+            .any(|provider| provider.id == GITHUB_ISSUE_PROVIDER_ID)
+    {
+        return Err(AppError::ForgeAdapterUnavailable(
+            GITHUB_ISSUE_PROVIDER_ID.to_string(),
+        ));
+    }
 
     providers
         .providers

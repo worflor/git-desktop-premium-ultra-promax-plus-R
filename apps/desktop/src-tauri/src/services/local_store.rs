@@ -23,7 +23,9 @@ pub fn ensure_git_repository(repository_path: &str) -> Result<PathBuf, AppError>
 
 pub fn gdpu_store_file_path(repository_path: &str, file_name: &str) -> Result<PathBuf, AppError> {
     if file_name.trim().is_empty() {
-        return Err(AppError::Internal("local store file name is required".to_string()));
+        return Err(AppError::Internal(
+            "local store file name is required".to_string(),
+        ));
     }
 
     let _ = ensure_git_repository(repository_path)?;
@@ -57,7 +59,8 @@ pub fn normalize_timestamp(value: &str) -> String {
 }
 
 fn resolve_git_dir_path(repository_path: &str) -> Result<PathBuf, AppError> {
-    let output = git_provider::run_git(Some(repository_path), &["rev-parse", "--absolute-git-dir"])?;
+    let output =
+        git_provider::run_git(Some(repository_path), &["rev-parse", "--absolute-git-dir"])?;
     let git_dir = output.stdout.trim();
     if git_dir.is_empty() {
         return Err(AppError::Internal(

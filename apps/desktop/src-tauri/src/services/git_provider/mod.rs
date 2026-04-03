@@ -7,8 +7,8 @@ use crate::errors::AppError;
 use crate::models::git::GitCapabilities;
 use crate::models::operations::{
     BranchInfoData, BranchListData, CommitDetailData, CommitFileStatData, CommitHistoryData,
-    CommitHistoryEntryData, ConflictResolutionData, ConflictStateData, WorktreeData,
-    WorktreeListData,
+    CommitHistoryEntryData, ConflictResolutionData, ConflictStateData, StashEntryData,
+    StashListData, StashOperationData, WorktreeData, WorktreeListData,
 };
 use crate::models::repository::{RepositoryStatusData, RepositoryStatusFile};
 
@@ -90,7 +90,12 @@ pub fn get_repository_status(repository_path: &str) -> Result<RepositoryStatusDa
 
     let output = run_git(
         Some(repository_path),
-        &["status", "--porcelain=2", "--branch", "--untracked-files=all"],
+        &[
+            "status",
+            "--porcelain=2",
+            "--branch",
+            "--untracked-files=all",
+        ],
     )?;
 
     let mut branch = "detached".to_string();
@@ -107,10 +112,16 @@ pub fn get_repository_status(repository_path: &str) -> Result<RepositoryStatusDa
 
         if let Some(value) = line.strip_prefix("# branch.ab ") {
             for part in value.split_whitespace() {
-                if let Some(parsed) = part.strip_prefix('+').and_then(|num| num.parse::<u32>().ok()) {
+                if let Some(parsed) = part
+                    .strip_prefix('+')
+                    .and_then(|num| num.parse::<u32>().ok())
+                {
                     ahead = parsed;
                 }
-                if let Some(parsed) = part.strip_prefix('-').and_then(|num| num.parse::<u32>().ok()) {
+                if let Some(parsed) = part
+                    .strip_prefix('-')
+                    .and_then(|num| num.parse::<u32>().ok())
+                {
                     behind = parsed;
                 }
             }
@@ -270,7 +281,11 @@ pub fn get_file_diff(
     Ok(output.stdout)
 }
 
-pub fn fetch_remote(repository_path: &str, remote: Option<&str>, prune: bool) -> Result<String, AppError> {
+pub fn fetch_remote(
+    repository_path: &str,
+    remote: Option<&str>,
+    prune: bool,
+) -> Result<String, AppError> {
     ensure_git_ready()?;
 
     let mut args: Vec<&str> = vec!["fetch"];
@@ -341,6 +356,93 @@ pub fn push_remote(
     }
 
     Ok(output.stdout)
+}
+
+pub fn start_rebase(
+    repository_path: &str,
+    onto_ref: &str,
+) -> Result<ConflictResolutionData, AppError> {
+    ensure_git_ready()?;
+
+    let onto_ref = onto_ref.trim();
+    if onto_ref.is_empty() {
+        return Err(AppError::InvalidInput(
+            "onto ref is required to start rebase".to_string(),
+        ));
+    }
+
+    let output = run_git(Some(repository_path), &["rebase", onto_ref])?;
+    let resolved_output = if output.stdout.is_empty() {
+        format!("rebase start completed onto {onto_ref}")
+    } else {
+        output.stdout
+    };
+
+    Ok(ConflictResolutionData {
+        repository_path: repository_path.to_string(),
+        operation: "rebase".to_string(),
+        action: "start".to_string(),
+        output: resolved_output,
+    })
+}
+
+pub fn continue_rebase(repository_path: &str) -> Result<ConflictResolutionData, AppError> {
+    continue_conflict_resolution(repository_path, Some("rebase"))
+}
+
+pub fn abort_rebase(repository_path: &str) -> Result<ConflictResolutionData, AppError> {
+    abort_conflict_resolution(repository_path, Some("rebase"))
+}
+
+pub fn start_cherry_pick(
+    repository_path: &str,
+    commit_ref: &str,
+    mainline: Option<u32>,
+) -> Result<ConflictResolutionData, AppError> {
+    ensure_git_ready()?;
+
+    let commit_ref = commit_ref.trim();
+    if commit_ref.is_empty() {
+        return Err(AppError::InvalidInput(
+            "commit ref is required to start cherry-pick".to_string(),
+        ));
+    }
+
+    let mut args = vec!["cherry-pick".to_string()];
+    if let Some(mainline) = mainline {
+        if mainline == 0 {
+            return Err(AppError::InvalidInput(
+                "mainline parent must be >= 1 for cherry-pick".to_string(),
+            ));
+        }
+
+        args.push("-m".to_string());
+        args.push(mainline.to_string());
+    }
+    args.push(commit_ref.to_string());
+
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_git(Some(repository_path), &refs)?;
+    let resolved_output = if output.stdout.is_empty() {
+        format!("cherry-pick start completed for {commit_ref}")
+    } else {
+        output.stdout
+    };
+
+    Ok(ConflictResolutionData {
+        repository_path: repository_path.to_string(),
+        operation: "cherry-pick".to_string(),
+        action: "start".to_string(),
+        output: resolved_output,
+    })
+}
+
+pub fn continue_cherry_pick(repository_path: &str) -> Result<ConflictResolutionData, AppError> {
+    continue_conflict_resolution(repository_path, Some("cherry-pick"))
+}
+
+pub fn abort_cherry_pick(repository_path: &str) -> Result<ConflictResolutionData, AppError> {
+    abort_conflict_resolution(repository_path, Some("cherry-pick"))
 }
 
 pub fn get_conflict_state(repository_path: &str) -> Result<ConflictStateData, AppError> {
@@ -645,7 +747,11 @@ pub fn checkout_branch(repository_path: &str, branch_name: &str) -> Result<(), A
     Ok(())
 }
 
-pub fn delete_branch(repository_path: &str, branch_name: &str, force: bool) -> Result<(), AppError> {
+pub fn delete_branch(
+    repository_path: &str,
+    branch_name: &str,
+    force: bool,
+) -> Result<(), AppError> {
     ensure_git_ready()?;
 
     let branch_name = branch_name.trim();
@@ -659,6 +765,178 @@ pub fn delete_branch(repository_path: &str, branch_name: &str, force: bool) -> R
     let args = ["branch", mode, branch_name];
     run_git(Some(repository_path), &args)?;
     Ok(())
+}
+
+pub fn rename_branch(
+    repository_path: &str,
+    old_branch_name: &str,
+    new_branch_name: &str,
+) -> Result<(), AppError> {
+    ensure_git_ready()?;
+
+    let old_branch_name = old_branch_name.trim();
+    let new_branch_name = new_branch_name.trim();
+    if old_branch_name.is_empty() || new_branch_name.is_empty() {
+        return Err(AppError::InvalidInput(
+            "old and new branch names are required for rename operation".to_string(),
+        ));
+    }
+    if old_branch_name == new_branch_name {
+        return Err(AppError::InvalidInput(
+            "old and new branch names must differ".to_string(),
+        ));
+    }
+
+    run_git(
+        Some(repository_path),
+        &["branch", "-m", old_branch_name, new_branch_name],
+    )?;
+    Ok(())
+}
+
+pub fn set_branch_upstream(
+    repository_path: &str,
+    branch_name: &str,
+    upstream_ref: &str,
+) -> Result<(), AppError> {
+    ensure_git_ready()?;
+
+    let branch_name = branch_name.trim();
+    let upstream_ref = upstream_ref.trim();
+    if branch_name.is_empty() || upstream_ref.is_empty() {
+        return Err(AppError::InvalidInput(
+            "branch name and upstream ref are required for tracking operation".to_string(),
+        ));
+    }
+
+    run_git(
+        Some(repository_path),
+        &["branch", "--set-upstream-to", upstream_ref, branch_name],
+    )?;
+    Ok(())
+}
+
+pub fn list_stashes(repository_path: &str, limit: usize) -> Result<StashListData, AppError> {
+    ensure_git_ready()?;
+
+    let limit = limit.clamp(1, 500);
+    let args = vec![
+        "stash".to_string(),
+        "list".to_string(),
+        format!("-n{limit}"),
+        "--format=%gd%x1f%gs".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_git(Some(repository_path), &refs)?;
+
+    let mut entries = Vec::<StashEntryData>::new();
+    for row in output.stdout.lines() {
+        let trimmed = row.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut fields = trimmed.splitn(2, '\x1f');
+        let stash_ref = fields.next().unwrap_or_default().trim().to_string();
+        let summary_raw = fields.next().unwrap_or_default().trim();
+        if stash_ref.is_empty() {
+            continue;
+        }
+
+        let (branch, summary) = parse_stash_branch_and_summary(summary_raw);
+        entries.push(StashEntryData {
+            stash_ref,
+            branch,
+            summary,
+        });
+    }
+
+    Ok(StashListData {
+        repository_path: repository_path.to_string(),
+        entries,
+    })
+}
+
+pub fn create_stash(
+    repository_path: &str,
+    message: Option<&str>,
+    include_untracked: bool,
+) -> Result<StashOperationData, AppError> {
+    ensure_git_ready()?;
+
+    let mut args = vec!["stash".to_string(), "push".to_string()];
+    if include_untracked {
+        args.push("--include-untracked".to_string());
+    }
+    if let Some(message) = message.and_then(trimmed_non_empty) {
+        args.push("-m".to_string());
+        args.push(message.to_string());
+    }
+
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_git(Some(repository_path), &refs)?;
+
+    Ok(StashOperationData {
+        repository_path: repository_path.to_string(),
+        operation: "create".to_string(),
+        stash_ref: resolve_latest_stash_ref(repository_path),
+        output: if output.stdout.is_empty() {
+            "Stash created".to_string()
+        } else {
+            output.stdout
+        },
+    })
+}
+
+pub fn pop_stash(
+    repository_path: &str,
+    stash_ref: Option<&str>,
+) -> Result<StashOperationData, AppError> {
+    ensure_git_ready()?;
+
+    let mut args = vec!["stash", "pop"];
+    if let Some(value) = stash_ref.and_then(trimmed_non_empty) {
+        args.push(value);
+    }
+
+    let output = run_git(Some(repository_path), &args)?;
+
+    Ok(StashOperationData {
+        repository_path: repository_path.to_string(),
+        operation: "pop".to_string(),
+        stash_ref: stash_ref
+            .and_then(trimmed_non_empty)
+            .map(|value| value.to_string()),
+        output: if output.stdout.is_empty() {
+            "Stash popped".to_string()
+        } else {
+            output.stdout
+        },
+    })
+}
+
+pub fn drop_stash(repository_path: &str, stash_ref: &str) -> Result<StashOperationData, AppError> {
+    ensure_git_ready()?;
+
+    let stash_ref = stash_ref.trim();
+    if stash_ref.is_empty() {
+        return Err(AppError::InvalidInput(
+            "stash ref is required for drop operation".to_string(),
+        ));
+    }
+
+    let output = run_git(Some(repository_path), &["stash", "drop", stash_ref])?;
+
+    Ok(StashOperationData {
+        repository_path: repository_path.to_string(),
+        operation: "drop".to_string(),
+        stash_ref: Some(stash_ref.to_string()),
+        output: if output.stdout.is_empty() {
+            "Stash dropped".to_string()
+        } else {
+            output.stdout
+        },
+    })
 }
 
 pub fn list_commit_history(
@@ -720,7 +998,10 @@ pub fn list_commit_history(
     Ok(CommitHistoryData { entries })
 }
 
-pub fn get_commit_detail(repository_path: &str, commit_hash: &str) -> Result<CommitDetailData, AppError> {
+pub fn get_commit_detail(
+    repository_path: &str,
+    commit_hash: &str,
+) -> Result<CommitDetailData, AppError> {
     ensure_git_ready()?;
 
     let commit_hash = commit_hash.trim();
@@ -865,6 +1146,40 @@ fn parse_numstat_count(value: &str) -> u32 {
     value.parse::<u32>().unwrap_or(0)
 }
 
+fn parse_stash_branch_and_summary(raw_summary: &str) -> (Option<String>, String) {
+    let summary = raw_summary.trim();
+    if let Some(rest) = summary.strip_prefix("On ") {
+        if let Some((branch, message)) = rest.split_once(':') {
+            return (Some(branch.trim().to_string()), message.trim().to_string());
+        }
+    }
+
+    if let Some(rest) = summary.strip_prefix("WIP on ") {
+        if let Some((branch, message)) = rest.split_once(':') {
+            return (Some(branch.trim().to_string()), message.trim().to_string());
+        }
+    }
+
+    (None, summary.to_string())
+}
+
+fn resolve_latest_stash_ref(repository_path: &str) -> Option<String> {
+    run_git(
+        Some(repository_path),
+        &["stash", "list", "-n1", "--format=%gd"],
+    )
+    .ok()
+    .and_then(|output| {
+        output
+            .stdout
+            .lines()
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+    })
+}
+
 fn list_conflicted_files(repository_path: &str) -> Result<Vec<String>, AppError> {
     let output = run_git(
         Some(repository_path),
@@ -876,7 +1191,12 @@ fn list_conflicted_files(repository_path: &str) -> Result<Vec<String>, AppError>
 
     for line in output.stdout.lines() {
         if line.starts_with("u ") {
-            let path = line.split_whitespace().last().unwrap_or_default().trim().to_string();
+            let path = line
+                .split_whitespace()
+                .last()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
             if !path.is_empty() && seen.insert(path.clone()) {
                 conflicted_files.push(path);
             }
@@ -1040,9 +1360,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        abort_conflict_resolution, build_conflict_guidance, conflict_action_args, get_commit_detail,
-        get_conflict_state, get_repository_status, list_branches, list_commit_history,
-        normalize_conflict_operation, stage_paths, unstage_paths,
+        abort_conflict_resolution, build_conflict_guidance, conflict_action_args,
+        get_commit_detail, get_conflict_state, get_repository_status, list_branches,
+        list_commit_history, normalize_conflict_operation, stage_paths, start_cherry_pick,
+        start_rebase, unstage_paths,
     };
 
     struct FixtureRepo {
@@ -1084,14 +1405,15 @@ mod tests {
         assert!(
             success,
             "git command failed for args {:?}\nstdout:\n{}\nstderr:\n{}",
-            args,
-            stdout,
-            stderr
+            args, stdout, stderr
         );
         stdout
     }
 
-    fn run_fixture_git_with_status(repository_path: &Path, args: &[&str]) -> (bool, String, String) {
+    fn run_fixture_git_with_status(
+        repository_path: &Path,
+        args: &[&str],
+    ) -> (bool, String, String) {
         let output = Command::new("git")
             .args(args)
             .current_dir(repository_path)
@@ -1169,7 +1491,12 @@ mod tests {
     fn git_status_snapshot(repository_path: &Path) -> (String, HashMap<String, String>) {
         let output = run_fixture_git(
             repository_path,
-            &["status", "--porcelain=2", "--branch", "--untracked-files=all"],
+            &[
+                "status",
+                "--porcelain=2",
+                "--branch",
+                "--untracked-files=all",
+            ],
         );
 
         let mut branch = "detached".to_string();
@@ -1267,7 +1594,10 @@ mod tests {
     fn normalizes_supported_conflict_operations() {
         assert_eq!(normalize_conflict_operation("merge"), Some("merge"));
         assert_eq!(normalize_conflict_operation(" REBASE "), Some("rebase"));
-        assert_eq!(normalize_conflict_operation("cherry-pick"), Some("cherry-pick"));
+        assert_eq!(
+            normalize_conflict_operation("cherry-pick"),
+            Some("cherry-pick")
+        );
         assert_eq!(normalize_conflict_operation("revert"), Some("revert"));
     }
 
@@ -1285,14 +1615,42 @@ mod tests {
     #[test]
     fn merge_guidance_mentions_continue_and_abort() {
         let guidance = build_conflict_guidance(Some("merge"), true);
-        assert!(guidance.iter().any(|line| line.contains("git merge --continue")));
-        assert!(guidance.iter().any(|line| line.contains("git merge --abort")));
+        assert!(guidance
+            .iter()
+            .any(|line| line.contains("git merge --continue")));
+        assert!(guidance
+            .iter()
+            .any(|line| line.contains("git merge --abort")));
     }
 
     #[test]
     fn no_conflict_guidance_reports_clean_state() {
         let guidance = build_conflict_guidance(None, false);
         assert_eq!(guidance, vec!["No conflicts detected.".to_string()]);
+    }
+
+    #[test]
+    fn start_rebase_requires_non_empty_onto_ref() {
+        let fixture = FixtureRepo::new("rebase-validate");
+        let error = start_rebase(fixture.path_str(), "  ")
+            .expect_err("expected invalid input for blank rebase onto ref");
+        assert!(error.to_string().contains("onto ref is required"));
+    }
+
+    #[test]
+    fn start_cherry_pick_requires_non_empty_commit_ref() {
+        let fixture = FixtureRepo::new("cherry-pick-validate");
+        let error = start_cherry_pick(fixture.path_str(), "", None)
+            .expect_err("expected invalid input for blank cherry-pick commit ref");
+        assert!(error.to_string().contains("commit ref is required"));
+    }
+
+    #[test]
+    fn start_cherry_pick_rejects_zero_mainline_parent() {
+        let fixture = FixtureRepo::new("cherry-pick-mainline");
+        let error = start_cherry_pick(fixture.path_str(), "deadbeef", Some(0))
+            .expect_err("expected invalid input for zero cherry-pick mainline parent");
+        assert!(error.to_string().contains("mainline parent must be >= 1"));
     }
 
     #[test]
@@ -1388,17 +1746,24 @@ mod tests {
         commit_all(fixture.path(), "second commit");
 
         let head_hash = run_fixture_git(fixture.path(), &["rev-parse", "HEAD"]);
-        let detail =
-            get_commit_detail(fixture.path_str(), &head_hash).expect("expected commit detail result");
+        let detail = get_commit_detail(fixture.path_str(), &head_hash)
+            .expect("expected commit detail result");
         let history = list_commit_history(fixture.path_str(), 10, None)
             .expect("expected commit history result");
 
         let expected_subject = run_fixture_git(
             fixture.path(),
-            &["show", "--no-patch", "--pretty=format:%s", head_hash.as_str()],
+            &[
+                "show",
+                "--no-patch",
+                "--pretty=format:%s",
+                head_hash.as_str(),
+            ],
         );
-        let expected_numstat =
-            run_fixture_git(fixture.path(), &["show", "--numstat", "--format=", head_hash.as_str()]);
+        let expected_numstat = run_fixture_git(
+            fixture.path(),
+            &["show", "--numstat", "--format=", head_hash.as_str()],
+        );
         let expected_log = run_fixture_git(
             fixture.path(),
             &[
@@ -1457,7 +1822,8 @@ mod tests {
         write_repo_file(fixture.path(), "conflict.txt", "main line\n");
         commit_all(fixture.path(), "main edit");
 
-        let merge_attempt = run_fixture_git_with_status(fixture.path(), &["merge", "feature/conflict"]);
+        let merge_attempt =
+            run_fixture_git_with_status(fixture.path(), &["merge", "feature/conflict"]);
         assert!(
             !merge_attempt.0,
             "expected merge to fail with conflict, but it succeeded"
@@ -1468,10 +1834,8 @@ mod tests {
         assert!(conflict_state.in_conflict);
         assert_eq!(conflict_state.operation.as_deref(), Some("merge"));
 
-        let expected_files_output = run_fixture_git(
-            fixture.path(),
-            &["diff", "--name-only", "--diff-filter=U"],
-        );
+        let expected_files_output =
+            run_fixture_git(fixture.path(), &["diff", "--name-only", "--diff-filter=U"]);
         let mut expected_files = expected_files_output
             .lines()
             .map(|line| line.trim().to_string())

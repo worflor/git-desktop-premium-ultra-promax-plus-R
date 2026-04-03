@@ -75,22 +75,23 @@ pub fn create_pull_request(
 
     let operation_data = match provider_id.as_str() {
         local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
-        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            local_pull_request_service::create_local_pull_request(
-                repository_path,
-                title,
-                description,
-                source_branch,
-                target_branch,
-                draft,
-            )
-        }
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => local_pull_request_service::create_local_pull_request(
+            repository_path,
+            title,
+            description,
+            source_branch,
+            target_branch,
+            draft,
+        ),
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
     }?;
 
-    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
+    Ok(with_pull_request_operation_provider(
+        operation_data,
+        &provider_id,
+    ))
 }
 
 pub fn close_pull_request(
@@ -110,7 +111,10 @@ pub fn close_pull_request(
         ))),
     }?;
 
-    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
+    Ok(with_pull_request_operation_provider(
+        operation_data,
+        &provider_id,
+    ))
 }
 
 pub fn reopen_pull_request(
@@ -130,7 +134,10 @@ pub fn reopen_pull_request(
         ))),
     }?;
 
-    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
+    Ok(with_pull_request_operation_provider(
+        operation_data,
+        &provider_id,
+    ))
 }
 
 pub fn mark_pull_request_ready(
@@ -143,14 +150,20 @@ pub fn mark_pull_request_ready(
     let operation_data = match provider_id.as_str() {
         local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
         | GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            local_pull_request_service::mark_local_pull_request_ready(repository_path, pull_request_id)
+            local_pull_request_service::mark_local_pull_request_ready(
+                repository_path,
+                pull_request_id,
+            )
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
     }?;
 
-    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
+    Ok(with_pull_request_operation_provider(
+        operation_data,
+        &provider_id,
+    ))
 }
 
 pub fn merge_pull_request(
@@ -163,19 +176,20 @@ pub fn merge_pull_request(
 
     let operation_data = match provider_id.as_str() {
         local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
-        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            local_pull_request_service::merge_local_pull_request(
-                repository_path,
-                pull_request_id,
-                delete_source_branch,
-            )
-        }
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => local_pull_request_service::merge_local_pull_request(
+            repository_path,
+            pull_request_id,
+            delete_source_branch,
+        ),
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
     }?;
 
-    Ok(with_pull_request_operation_provider(operation_data, &provider_id))
+    Ok(with_pull_request_operation_provider(
+        operation_data,
+        &provider_id,
+    ))
 }
 
 fn resolve_provider(repository_path: &str, provider_id: Option<&str>) -> Result<String, AppError> {
@@ -186,11 +200,24 @@ fn resolve_provider(repository_path: &str, provider_id: Option<&str>) -> Result<
         .unwrap_or(providers.default_provider_id.as_str())
         .to_string();
 
+    if requested == GITHUB_PULL_REQUEST_PROVIDER_ID
+        && !providers
+            .providers
+            .iter()
+            .any(|provider| provider.id == GITHUB_PULL_REQUEST_PROVIDER_ID)
+    {
+        return Err(AppError::ForgeAdapterUnavailable(
+            GITHUB_PULL_REQUEST_PROVIDER_ID.to_string(),
+        ));
+    }
+
     providers
         .providers
         .iter()
         .find(|provider| provider.id == requested)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown pull request provider: {requested}")))?;
+        .ok_or_else(|| {
+            AppError::InvalidInput(format!("unknown pull request provider: {requested}"))
+        })?;
 
     Ok(requested)
 }

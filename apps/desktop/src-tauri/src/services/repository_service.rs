@@ -23,12 +23,14 @@ pub fn load_recent_repositories() -> Vec<String> {
 
 pub fn persist_recent_repositories(items: &[String]) -> Result<(), AppError> {
     let path = recents_file_path()?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::Internal("recent repository storage path is invalid".to_string()))?;
+    let parent = path.parent().ok_or_else(|| {
+        AppError::Internal("recent repository storage path is invalid".to_string())
+    })?;
 
     fs::create_dir_all(parent).map_err(|error| {
-        AppError::Internal(format!("failed to create recent repository storage: {error}"))
+        AppError::Internal(format!(
+            "failed to create recent repository storage: {error}"
+        ))
     })?;
 
     let payload = serde_json::to_string_pretty(items)
@@ -39,20 +41,25 @@ pub fn persist_recent_repositories(items: &[String]) -> Result<(), AppError> {
 }
 
 fn recents_file_path() -> Result<PathBuf, AppError> {
-    let appdata = std::env::var("APPDATA")
-        .map_err(|_| AppError::Internal("APPDATA environment variable is unavailable".to_string()))?;
+    let appdata = std::env::var("APPDATA").map_err(|_| {
+        AppError::Internal("APPDATA environment variable is unavailable".to_string())
+    })?;
     Ok(PathBuf::from(appdata).join("gdpu").join(RECENTS_FILE_NAME))
 }
 
-pub fn open_repository(state: &AppState, repository_path: &str) -> Result<OpenRepositoryData, AppError> {
+pub fn open_repository(
+    state: &AppState,
+    repository_path: &str,
+) -> Result<OpenRepositoryData, AppError> {
     let input_path = Path::new(repository_path);
 
     if !input_path.exists() {
         return Err(AppError::RepositoryPathMissing);
     }
 
-    let normalized_path = fs::canonicalize(input_path)
-        .map_err(|error| AppError::Internal(format!("failed to normalize repository path: {error}")))?;
+    let normalized_path = fs::canonicalize(input_path).map_err(|error| {
+        AppError::Internal(format!("failed to normalize repository path: {error}"))
+    })?;
     let normalized_path = normalized_path.to_string_lossy().to_string();
 
     let path = Path::new(&normalized_path);
@@ -63,10 +70,9 @@ pub fn open_repository(state: &AppState, repository_path: &str) -> Result<OpenRe
     }
 
     {
-        let mut recent = state
-            .recent_repositories
-            .lock()
-            .map_err(|_| AppError::Internal("failed to acquire recent repositories lock".to_string()))?;
+        let mut recent = state.recent_repositories.lock().map_err(|_| {
+            AppError::Internal("failed to acquire recent repositories lock".to_string())
+        })?;
 
         if recent.is_empty() {
             *recent = load_recent_repositories();

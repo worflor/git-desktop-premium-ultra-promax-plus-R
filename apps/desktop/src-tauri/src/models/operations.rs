@@ -51,6 +51,47 @@ pub struct FileDiffData {
     pub diff_text: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffHunkData {
+    pub hunk_index: u32,
+    pub header: String,
+    pub old_start: u32,
+    pub old_lines: u32,
+    pub new_start: u32,
+    pub new_lines: u32,
+    pub added_lines: u32,
+    pub deleted_lines: u32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiffManifestData {
+    pub diff_id: String,
+    pub path: String,
+    pub staged: bool,
+    pub context_lines: u32,
+    pub chunk_size_bytes: u32,
+    pub chunk_count: u32,
+    pub total_bytes: u32,
+    pub total_lines: u32,
+    pub changed_lines: u32,
+    pub additions: u32,
+    pub deletions: u32,
+    pub hunk_count: u32,
+    pub hunks: Vec<DiffHunkData>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiffChunkData {
+    pub diff_id: String,
+    pub chunk_index: u32,
+    pub chunk_count: u32,
+    pub has_more: bool,
+    pub chunk_text: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchInfoData {
@@ -73,6 +114,15 @@ pub struct BranchListData {
 pub struct BranchOperationData {
     pub repository_path: String,
     pub branch_name: String,
+    pub operation: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchTrackingOperationData {
+    pub repository_path: String,
+    pub branch_name: String,
+    pub upstream: String,
     pub operation: String,
 }
 
@@ -123,6 +173,9 @@ pub struct AiProviderStatus {
     pub id: String,
     pub available: bool,
     pub binary: String,
+    pub resolved_binary: Option<String>,
+    pub detection_source: Option<String>,
+    pub health_check: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -159,6 +212,29 @@ pub struct AiDiffReviewJobData {
 pub struct AiDiffReviewCancelData {
     pub job_id: String,
     pub canceled: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAuditEntryData {
+    pub id: String,
+    pub event: String,
+    pub provider_id: String,
+    pub repository_hint: String,
+    pub diff_scope_path: Option<String>,
+    pub prompt_preview: String,
+    pub output_preview: String,
+    pub ok: bool,
+    pub error_code: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAuditListData {
+    pub generated_at: String,
+    pub sample_count: u32,
+    pub entries: Vec<AiAuditEntryData>,
 }
 
 #[derive(Debug, Serialize)]
@@ -313,4 +389,28 @@ pub struct WorktreeOperationData {
     pub operation: String,
     pub worktree_path: String,
     pub branch_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StashEntryData {
+    pub stash_ref: String,
+    pub branch: Option<String>,
+    pub summary: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StashListData {
+    pub repository_path: String,
+    pub entries: Vec<StashEntryData>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StashOperationData {
+    pub repository_path: String,
+    pub operation: String,
+    pub stash_ref: Option<String>,
+    pub output: String,
 }

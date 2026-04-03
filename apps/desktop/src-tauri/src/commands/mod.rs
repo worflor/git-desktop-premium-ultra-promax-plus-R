@@ -10,20 +10,21 @@ use crate::models::git::{
     AuthStatus, ForgeAdapterList, GitCapabilities, RepositoryIntegrationMatrix,
 };
 use crate::models::operations::{
-    AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData, AiDiffReviewJobStartData,
-    AiProviderListData, BranchListData, BranchOperationData, CommitData, CommitDetailData,
-    CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData,
-    CommitHistoryData, ConflictResolutionData, ConflictStateData, FileDiffData,
-    IssueProviderListData, LocalIssueListData, LocalIssueOperationData, LocalPullRequestListData,
-    LocalPullRequestOperationData, PathOperationData, PullRequestProviderListData, SyncData,
-    WorktreeListData, WorktreeOperationData,
+    AiAuditListData, AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData,
+    AiDiffReviewJobStartData, AiProviderListData, BranchListData, BranchOperationData,
+    BranchTrackingOperationData, CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData,
+    CommitData, CommitDetailData, CommitHistoryData, ConflictResolutionData, ConflictStateData,
+    FileDiffChunkData, FileDiffData, FileDiffManifestData, IssueProviderListData,
+    LocalIssueListData, LocalIssueOperationData, LocalPullRequestListData,
+    LocalPullRequestOperationData, PathOperationData, PullRequestProviderListData, StashListData,
+    StashOperationData, SyncData, WorktreeListData, WorktreeOperationData,
 };
 use crate::models::repository::{OpenRepositoryData, RecentRepositoriesData, RepositoryStatusData};
 use crate::models::settings::AppSettingsData;
 use crate::runtime::state::AppState;
 use crate::services::{
-    ai_service, auth_service, forge_service, git_provider, issue_service, pull_request_service,
-    repository_service, settings_service, telemetry_service,
+    ai_service, auth_service, diff_service, forge_service, git_provider, issue_service,
+    logging_service, pull_request_service, repository_service, settings_service, telemetry_service,
 };
 
 fn response_meta(started_at: Instant, state: &State<'_, AppState>) -> ResponseMeta {
@@ -34,14 +35,6 @@ fn response_meta(started_at: Instant, state: &State<'_, AppState>) -> ResponseMe
     }
 }
 
-fn map_error<T: Serialize>(
-    started_at: Instant,
-    state: &State<'_, AppState>,
-    error: AppError,
-) -> CommandResult<T> {
-    CommandResult::error(error.to_command_error(), response_meta(started_at, state))
-}
-
 fn command_ok<T: Serialize>(
     command_name: &str,
     started_at: Instant,
@@ -49,6 +42,15 @@ fn command_ok<T: Serialize>(
     data: T,
 ) -> CommandResult<T> {
     let meta = response_meta(started_at, state);
+    let _ = logging_service::record_operation_span(
+        "command",
+        command_name,
+        Some(meta.request_id.as_str()),
+        started_at,
+        true,
+        None,
+        None,
+    );
     let _ = telemetry_service::record_command_sample(
         "command",
         command_name,
@@ -66,30 +68,46 @@ fn map_error_with_command<T: Serialize>(
     error: AppError,
 ) -> CommandResult<T> {
     let command_error = error.to_command_error();
+    let error_code = command_error.code.clone();
+    let error_message = command_error.message.clone();
     let meta = response_meta(started_at, state);
+    let _ = logging_service::record_operation_span(
+        "command",
+        command_name,
+        Some(meta.request_id.as_str()),
+        started_at,
+        false,
+        Some(error_code.as_str()),
+        Some(error_message.as_str()),
+    );
     let _ = telemetry_service::record_command_sample(
         "command",
         command_name,
         false,
         meta.duration_ms,
-        Some(command_error.code.as_str()),
+        Some(error_code.as_str()),
     );
 
     CommandResult::error(command_error, meta)
 }
 
 #[tauri::command]
-pub fn open_repository(repository_path: String, state: State<'_, AppState>) -> CommandResult<OpenRepositoryData> {
+pub fn open_repository(
+    repository_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<OpenRepositoryData> {
     let started_at = Instant::now();
 
     match repository_service::open_repository(&state, &repository_path) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("open_repository", started_at, &state, data),
+        Err(error) => map_error_with_command("open_repository", started_at, &state, error),
     }
 }
 
 #[tauri::command]
-pub fn list_recent_repositories(state: State<'_, AppState>) -> CommandResult<RecentRepositoriesData> {
+pub fn list_recent_repositories(
+    state: State<'_, AppState>,
+) -> CommandResult<RecentRepositoriesData> {
     let started_at = Instant::now();
 
     let mut repositories = state
@@ -105,9 +123,11 @@ pub fn list_recent_repositories(state: State<'_, AppState>) -> CommandResult<Rec
         }
     }
 
-    CommandResult::ok(
+    command_ok(
+        "list_recent_repositories",
+        started_at,
+        &state,
         RecentRepositoriesData { repositories },
-        response_meta(started_at, &state),
     )
 }
 
@@ -116,8 +136,8 @@ pub fn get_git_capabilities(state: State<'_, AppState>) -> CommandResult<GitCapa
     let started_at = Instant::now();
 
     match git_provider::detect_capabilities() {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("get_git_capabilities", started_at, &state, data),
+        Err(error) => map_error_with_command("get_git_capabilities", started_at, &state, error),
     }
 }
 
@@ -126,8 +146,8 @@ pub fn get_auth_status(state: State<'_, AppState>) -> CommandResult<AuthStatus> 
     let started_at = Instant::now();
 
     match auth_service::get_auth_status(None) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("get_auth_status", started_at, &state, data),
+        Err(error) => map_error_with_command("get_auth_status", started_at, &state, error),
     }
 }
 
@@ -139,8 +159,10 @@ pub fn get_repository_auth_status(
     let started_at = Instant::now();
 
     match auth_service::get_auth_status(Some(&repository_path)) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("get_repository_auth_status", started_at, &state, data),
+        Err(error) => {
+            map_error_with_command("get_repository_auth_status", started_at, &state, error)
+        }
     }
 }
 
@@ -149,8 +171,8 @@ pub fn list_forge_adapters(state: State<'_, AppState>) -> CommandResult<ForgeAda
     let started_at = Instant::now();
 
     match forge_service::list_forge_adapters() {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("list_forge_adapters", started_at, &state, data),
+        Err(error) => map_error_with_command("list_forge_adapters", started_at, &state, error),
     }
 }
 
@@ -162,8 +184,18 @@ pub fn get_repository_integration_matrix(
     let started_at = Instant::now();
 
     match forge_service::get_repository_integration_matrix(&repository_path) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok(
+            "get_repository_integration_matrix",
+            started_at,
+            &state,
+            data,
+        ),
+        Err(error) => map_error_with_command(
+            "get_repository_integration_matrix",
+            started_at,
+            &state,
+            error,
+        ),
     }
 }
 
@@ -175,8 +207,8 @@ pub fn get_repository_status(
     let started_at = Instant::now();
 
     match git_provider::get_repository_status(&repository_path) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("get_repository_status", started_at, &state, data),
+        Err(error) => map_error_with_command("get_repository_status", started_at, &state, error),
     }
 }
 
@@ -188,8 +220,8 @@ pub fn list_branches(
     let started_at = Instant::now();
 
     match git_provider::list_branches(&repository_path) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("list_branches", started_at, &state, data),
+        Err(error) => map_error_with_command("list_branches", started_at, &state, error),
     }
 }
 
@@ -203,15 +235,17 @@ pub fn create_branch(
     let started_at = Instant::now();
 
     match git_provider::create_branch(&repository_path, &branch_name, from_ref.as_deref()) {
-        Ok(_) => CommandResult::ok(
+        Ok(_) => command_ok(
+            "create_branch",
+            started_at,
+            &state,
             BranchOperationData {
                 repository_path,
                 branch_name,
                 operation: "create".to_string(),
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("create_branch", started_at, &state, error),
     }
 }
 
@@ -224,15 +258,17 @@ pub fn checkout_branch(
     let started_at = Instant::now();
 
     match git_provider::checkout_branch(&repository_path, &branch_name) {
-        Ok(_) => CommandResult::ok(
+        Ok(_) => command_ok(
+            "checkout_branch",
+            started_at,
+            &state,
             BranchOperationData {
                 repository_path,
                 branch_name,
                 operation: "checkout".to_string(),
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("checkout_branch", started_at, &state, error),
     }
 }
 
@@ -247,7 +283,10 @@ pub fn delete_branch(
     let force = force.unwrap_or(false);
 
     match git_provider::delete_branch(&repository_path, &branch_name, force) {
-        Ok(_) => CommandResult::ok(
+        Ok(_) => command_ok(
+            "delete_branch",
+            started_at,
+            &state,
             BranchOperationData {
                 repository_path,
                 branch_name,
@@ -257,9 +296,116 @@ pub fn delete_branch(
                     "delete".to_string()
                 },
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("delete_branch", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn rename_branch(
+    repository_path: String,
+    old_branch_name: String,
+    new_branch_name: String,
+    state: State<'_, AppState>,
+) -> CommandResult<BranchOperationData> {
+    let started_at = Instant::now();
+
+    match git_provider::rename_branch(&repository_path, &old_branch_name, &new_branch_name) {
+        Ok(_) => command_ok(
+            "rename_branch",
+            started_at,
+            &state,
+            BranchOperationData {
+                repository_path,
+                branch_name: new_branch_name,
+                operation: "rename".to_string(),
+            },
+        ),
+        Err(error) => map_error_with_command("rename_branch", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn set_branch_upstream(
+    repository_path: String,
+    branch_name: String,
+    upstream: String,
+    state: State<'_, AppState>,
+) -> CommandResult<BranchTrackingOperationData> {
+    let started_at = Instant::now();
+
+    match git_provider::set_branch_upstream(&repository_path, &branch_name, &upstream) {
+        Ok(_) => command_ok(
+            "set_branch_upstream",
+            started_at,
+            &state,
+            BranchTrackingOperationData {
+                repository_path,
+                branch_name,
+                upstream,
+                operation: "track".to_string(),
+            },
+        ),
+        Err(error) => map_error_with_command("set_branch_upstream", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn list_stashes(
+    repository_path: String,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> CommandResult<StashListData> {
+    let started_at = Instant::now();
+    let limit = limit.unwrap_or(50).clamp(1, 500) as usize;
+
+    match git_provider::list_stashes(&repository_path, limit) {
+        Ok(data) => command_ok("list_stashes", started_at, &state, data),
+        Err(error) => map_error_with_command("list_stashes", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn create_stash(
+    repository_path: String,
+    message: Option<String>,
+    include_untracked: Option<bool>,
+    state: State<'_, AppState>,
+) -> CommandResult<StashOperationData> {
+    let started_at = Instant::now();
+    let include_untracked = include_untracked.unwrap_or(false);
+
+    match git_provider::create_stash(&repository_path, message.as_deref(), include_untracked) {
+        Ok(data) => command_ok("create_stash", started_at, &state, data),
+        Err(error) => map_error_with_command("create_stash", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn pop_stash(
+    repository_path: String,
+    stash_ref: Option<String>,
+    state: State<'_, AppState>,
+) -> CommandResult<StashOperationData> {
+    let started_at = Instant::now();
+
+    match git_provider::pop_stash(&repository_path, stash_ref.as_deref()) {
+        Ok(data) => command_ok("pop_stash", started_at, &state, data),
+        Err(error) => map_error_with_command("pop_stash", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn drop_stash(
+    repository_path: String,
+    stash_ref: String,
+    state: State<'_, AppState>,
+) -> CommandResult<StashOperationData> {
+    let started_at = Instant::now();
+
+    match git_provider::drop_stash(&repository_path, &stash_ref) {
+        Ok(data) => command_ok("drop_stash", started_at, &state, data),
+        Err(error) => map_error_with_command("drop_stash", started_at, &state, error),
     }
 }
 
@@ -271,8 +417,8 @@ pub fn list_worktrees(
     let started_at = Instant::now();
 
     match git_provider::list_worktrees(&repository_path) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("list_worktrees", started_at, &state, data),
+        Err(error) => map_error_with_command("list_worktrees", started_at, &state, error),
     }
 }
 
@@ -292,16 +438,18 @@ pub fn create_worktree(
         &branch_name,
         start_point.as_deref(),
     ) {
-        Ok(_) => CommandResult::ok(
+        Ok(_) => command_ok(
+            "create_worktree",
+            started_at,
+            &state,
             WorktreeOperationData {
                 repository_path,
                 operation: "create".to_string(),
                 worktree_path,
                 branch_name: Some(branch_name),
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("create_worktree", started_at, &state, error),
     }
 }
 
@@ -316,7 +464,10 @@ pub fn remove_worktree(
     let force = force.unwrap_or(false);
 
     match git_provider::remove_worktree(&repository_path, &worktree_path, force) {
-        Ok(_) => CommandResult::ok(
+        Ok(_) => command_ok(
+            "remove_worktree",
+            started_at,
+            &state,
             WorktreeOperationData {
                 repository_path,
                 operation: if force {
@@ -327,9 +478,8 @@ pub fn remove_worktree(
                 worktree_path,
                 branch_name: None,
             },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("remove_worktree", started_at, &state, error),
     }
 }
 
@@ -344,8 +494,8 @@ pub fn list_commit_history(
     let limit = limit.unwrap_or(50).clamp(1, 500) as usize;
 
     match git_provider::list_commit_history(&repository_path, limit, branch.as_deref()) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("list_commit_history", started_at, &state, data),
+        Err(error) => map_error_with_command("list_commit_history", started_at, &state, error),
     }
 }
 
@@ -358,8 +508,8 @@ pub fn get_commit_detail(
     let started_at = Instant::now();
 
     match git_provider::get_commit_detail(&repository_path, &commit_hash) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("get_commit_detail", started_at, &state, data),
+        Err(error) => map_error_with_command("get_commit_detail", started_at, &state, error),
     }
 }
 
@@ -419,14 +569,15 @@ pub fn create_commit(
 ) -> CommandResult<CommitData> {
     let started_at = Instant::now();
 
-    let result = git_provider::create_commit(&repository_path, &message, amend, signoff)
-        .and_then(|summary| {
+    let result = git_provider::create_commit(&repository_path, &message, amend, signoff).and_then(
+        |summary| {
             git_provider::get_head_commit_hash(&repository_path).map(|commit_hash| CommitData {
                 repository_path: repository_path.clone(),
                 commit_hash,
                 summary,
             })
-        });
+        },
+    );
 
     match result {
         Ok(data) => command_ok("create_commit", started_at, &state, data),
@@ -447,11 +598,54 @@ pub fn get_file_diff(
     let context_lines = context_lines.unwrap_or(3).clamp(0, 30) as usize;
 
     match git_provider::get_file_diff(&repository_path, &path, staged, context_lines) {
-        Ok(diff_text) => CommandResult::ok(
+        Ok(diff_text) => command_ok(
+            "get_file_diff",
+            started_at,
+            &state,
             FileDiffData { path, diff_text },
-            response_meta(started_at, &state),
         ),
-        Err(error) => map_error(started_at, &state, error),
+        Err(error) => map_error_with_command("get_file_diff", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn prepare_file_diff_chunks(
+    repository_path: String,
+    path: String,
+    staged: Option<bool>,
+    context_lines: Option<u32>,
+    chunk_size_bytes: Option<u32>,
+    state: State<'_, AppState>,
+) -> CommandResult<FileDiffManifestData> {
+    let started_at = Instant::now();
+    let staged = staged.unwrap_or(false);
+    let context_lines = context_lines.unwrap_or(3).clamp(0, 30) as usize;
+    let chunk_size = chunk_size_bytes.unwrap_or((64 * 1024) as u32) as usize;
+
+    match diff_service::prepare_file_diff_chunks(
+        &state,
+        &repository_path,
+        &path,
+        staged,
+        context_lines,
+        Some(chunk_size),
+    ) {
+        Ok(data) => command_ok("prepare_file_diff_chunks", started_at, &state, data),
+        Err(error) => map_error_with_command("prepare_file_diff_chunks", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn get_file_diff_chunk(
+    diff_id: String,
+    chunk_index: u32,
+    state: State<'_, AppState>,
+) -> CommandResult<FileDiffChunkData> {
+    let started_at = Instant::now();
+
+    match diff_service::get_file_diff_chunk(&state, &diff_id, chunk_index as usize) {
+        Ok(data) => command_ok("get_file_diff_chunk", started_at, &state, data),
+        Err(error) => map_error_with_command("get_file_diff_chunk", started_at, &state, error),
     }
 }
 
@@ -492,7 +686,12 @@ pub fn pull_remote(
     let started_at = Instant::now();
     let rebase = rebase.unwrap_or(false);
 
-    match git_provider::pull_remote(&repository_path, remote.as_deref(), branch.as_deref(), rebase) {
+    match git_provider::pull_remote(
+        &repository_path,
+        remote.as_deref(),
+        branch.as_deref(),
+        rebase,
+    ) {
         Ok(output) => command_ok(
             "pull_remote",
             started_at,
@@ -541,6 +740,87 @@ pub fn push_remote(
 }
 
 #[tauri::command]
+pub fn start_rebase(
+    repository_path: String,
+    onto_ref: String,
+    state: State<'_, AppState>,
+) -> CommandResult<ConflictResolutionData> {
+    let started_at = Instant::now();
+
+    match git_provider::start_rebase(&repository_path, &onto_ref) {
+        Ok(data) => command_ok("start_rebase", started_at, &state, data),
+        Err(error) => map_error_with_command("start_rebase", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn continue_rebase(
+    repository_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<ConflictResolutionData> {
+    let started_at = Instant::now();
+
+    match git_provider::continue_rebase(&repository_path) {
+        Ok(data) => command_ok("continue_rebase", started_at, &state, data),
+        Err(error) => map_error_with_command("continue_rebase", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn abort_rebase(
+    repository_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<ConflictResolutionData> {
+    let started_at = Instant::now();
+
+    match git_provider::abort_rebase(&repository_path) {
+        Ok(data) => command_ok("abort_rebase", started_at, &state, data),
+        Err(error) => map_error_with_command("abort_rebase", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn start_cherry_pick(
+    repository_path: String,
+    commit_ref: String,
+    mainline: Option<u32>,
+    state: State<'_, AppState>,
+) -> CommandResult<ConflictResolutionData> {
+    let started_at = Instant::now();
+
+    match git_provider::start_cherry_pick(&repository_path, &commit_ref, mainline) {
+        Ok(data) => command_ok("start_cherry_pick", started_at, &state, data),
+        Err(error) => map_error_with_command("start_cherry_pick", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn continue_cherry_pick(
+    repository_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<ConflictResolutionData> {
+    let started_at = Instant::now();
+
+    match git_provider::continue_cherry_pick(&repository_path) {
+        Ok(data) => command_ok("continue_cherry_pick", started_at, &state, data),
+        Err(error) => map_error_with_command("continue_cherry_pick", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn abort_cherry_pick(
+    repository_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<ConflictResolutionData> {
+    let started_at = Instant::now();
+
+    match git_provider::abort_cherry_pick(&repository_path) {
+        Ok(data) => command_ok("abort_cherry_pick", started_at, &state, data),
+        Err(error) => map_error_with_command("abort_cherry_pick", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
 pub fn get_conflict_state(
     repository_path: String,
     state: State<'_, AppState>,
@@ -548,8 +828,8 @@ pub fn get_conflict_state(
     let started_at = Instant::now();
 
     match git_provider::get_conflict_state(&repository_path) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("get_conflict_state", started_at, &state, data),
+        Err(error) => map_error_with_command("get_conflict_state", started_at, &state, error),
     }
 }
 
@@ -562,8 +842,10 @@ pub fn continue_conflict_resolution(
     let started_at = Instant::now();
 
     match git_provider::continue_conflict_resolution(&repository_path, operation.as_deref()) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("continue_conflict_resolution", started_at, &state, data),
+        Err(error) => {
+            map_error_with_command("continue_conflict_resolution", started_at, &state, error)
+        }
     }
 }
 
@@ -576,8 +858,10 @@ pub fn abort_conflict_resolution(
     let started_at = Instant::now();
 
     match git_provider::abort_conflict_resolution(&repository_path, operation.as_deref()) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("abort_conflict_resolution", started_at, &state, data),
+        Err(error) => {
+            map_error_with_command("abort_conflict_resolution", started_at, &state, error)
+        }
     }
 }
 
@@ -589,8 +873,8 @@ pub fn list_issue_providers(
     let started_at = Instant::now();
 
     match issue_service::list_issue_providers(&repository_path) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("list_issue_providers", started_at, &state, data),
+        Err(error) => map_error_with_command("list_issue_providers", started_at, &state, error),
     }
 }
 
@@ -603,8 +887,8 @@ pub fn list_local_issues(
     let started_at = Instant::now();
 
     match issue_service::list_issues(&repository_path, provider_id.as_deref()) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("list_local_issues", started_at, &state, data),
+        Err(error) => map_error_with_command("list_local_issues", started_at, &state, error),
     }
 }
 
@@ -616,8 +900,10 @@ pub fn list_pull_request_providers(
     let started_at = Instant::now();
 
     match pull_request_service::list_pull_request_providers(&repository_path) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("list_pull_request_providers", started_at, &state, data),
+        Err(error) => {
+            map_error_with_command("list_pull_request_providers", started_at, &state, error)
+        }
     }
 }
 
@@ -630,8 +916,8 @@ pub fn list_pull_requests(
     let started_at = Instant::now();
 
     match pull_request_service::list_pull_requests(&repository_path, provider_id.as_deref()) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("list_pull_requests", started_at, &state, data),
+        Err(error) => map_error_with_command("list_pull_requests", started_at, &state, error),
     }
 }
 
@@ -658,8 +944,8 @@ pub fn create_pull_request(
         &target_branch,
         draft,
     ) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("create_pull_request", started_at, &state, data),
+        Err(error) => map_error_with_command("create_pull_request", started_at, &state, error),
     }
 }
 
@@ -677,8 +963,8 @@ pub fn close_pull_request(
         provider_id.as_deref(),
         &pull_request_id,
     ) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("close_pull_request", started_at, &state, data),
+        Err(error) => map_error_with_command("close_pull_request", started_at, &state, error),
     }
 }
 
@@ -696,8 +982,8 @@ pub fn reopen_pull_request(
         provider_id.as_deref(),
         &pull_request_id,
     ) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("reopen_pull_request", started_at, &state, data),
+        Err(error) => map_error_with_command("reopen_pull_request", started_at, &state, error),
     }
 }
 
@@ -715,8 +1001,8 @@ pub fn mark_pull_request_ready(
         provider_id.as_deref(),
         &pull_request_id,
     ) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("mark_pull_request_ready", started_at, &state, data),
+        Err(error) => map_error_with_command("mark_pull_request_ready", started_at, &state, error),
     }
 }
 
@@ -737,8 +1023,8 @@ pub fn merge_pull_request(
         &pull_request_id,
         delete_source_branch,
     ) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("merge_pull_request", started_at, &state, data),
+        Err(error) => map_error_with_command("merge_pull_request", started_at, &state, error),
     }
 }
 
@@ -753,8 +1039,8 @@ pub fn create_local_issue(
     let started_at = Instant::now();
 
     match issue_service::create_issue(&repository_path, provider_id.as_deref(), &title, &body) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("create_local_issue", started_at, &state, data),
+        Err(error) => map_error_with_command("create_local_issue", started_at, &state, error),
     }
 }
 
@@ -768,8 +1054,8 @@ pub fn close_local_issue(
     let started_at = Instant::now();
 
     match issue_service::close_issue(&repository_path, provider_id.as_deref(), &issue_id) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("close_local_issue", started_at, &state, data),
+        Err(error) => map_error_with_command("close_local_issue", started_at, &state, error),
     }
 }
 
@@ -783,8 +1069,8 @@ pub fn reopen_local_issue(
     let started_at = Instant::now();
 
     match issue_service::reopen_issue(&repository_path, provider_id.as_deref(), &issue_id) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("reopen_local_issue", started_at, &state, data),
+        Err(error) => map_error_with_command("reopen_local_issue", started_at, &state, error),
     }
 }
 
@@ -793,8 +1079,22 @@ pub fn list_ai_providers(state: State<'_, AppState>) -> CommandResult<AiProvider
     let started_at = Instant::now();
 
     match ai_service::list_providers() {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("list_ai_providers", started_at, &state, data),
+        Err(error) => map_error_with_command("list_ai_providers", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn get_ai_audit_entries(
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> CommandResult<AiAuditListData> {
+    let started_at = Instant::now();
+    let limit = limit.unwrap_or(200).clamp(1, 1_000) as usize;
+
+    match ai_service::get_audit_entries(Some(limit)) {
+        Ok(data) => command_ok("get_ai_audit_entries", started_at, &state, data),
+        Err(error) => map_error_with_command("get_ai_audit_entries", started_at, &state, error),
     }
 }
 
@@ -814,8 +1114,8 @@ pub fn run_ai_diff_review(
         &prompt,
         diff_scope_path.as_deref(),
     ) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("run_ai_diff_review", started_at, &state, data),
+        Err(error) => map_error_with_command("run_ai_diff_review", started_at, &state, error),
     }
 }
 
@@ -836,8 +1136,8 @@ pub fn start_ai_diff_review_job(
         &prompt,
         diff_scope_path.as_deref(),
     ) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("start_ai_diff_review_job", started_at, &state, data),
+        Err(error) => map_error_with_command("start_ai_diff_review_job", started_at, &state, error),
     }
 }
 
@@ -849,8 +1149,8 @@ pub fn get_ai_diff_review_job(
     let started_at = Instant::now();
 
     match ai_service::get_diff_review_job(&state, &job_id) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("get_ai_diff_review_job", started_at, &state, data),
+        Err(error) => map_error_with_command("get_ai_diff_review_job", started_at, &state, error),
     }
 }
 
@@ -862,8 +1162,10 @@ pub fn cancel_ai_diff_review_job(
     let started_at = Instant::now();
 
     match ai_service::cancel_diff_review_job(&state, &job_id) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("cancel_ai_diff_review_job", started_at, &state, data),
+        Err(error) => {
+            map_error_with_command("cancel_ai_diff_review_job", started_at, &state, error)
+        }
     }
 }
 
@@ -952,9 +1254,7 @@ pub fn get_command_telemetry_snapshot(
     state: State<'_, AppState>,
 ) -> CommandResult<CommandTelemetrySnapshotData> {
     let started_at = Instant::now();
-    let recent_limit = recent_limit
-        .unwrap_or(200)
-        .clamp(1, 1_000) as usize;
+    let recent_limit = recent_limit.unwrap_or(200).clamp(1, 1_000) as usize;
 
     match telemetry_service::get_command_telemetry_snapshot(Some(recent_limit)) {
         Ok(data) => command_ok("get_command_telemetry_snapshot", started_at, &state, data),
@@ -981,8 +1281,6 @@ pub fn clear_command_telemetry(
                 sample_count: 0,
             },
         ),
-        Err(error) => {
-            map_error_with_command("clear_command_telemetry", started_at, &state, error)
-        }
+        Err(error) => map_error_with_command("clear_command_telemetry", started_at, &state, error),
     }
 }

@@ -35,7 +35,9 @@ struct StoredLocalPullRequestSet {
     pull_requests: Vec<StoredLocalPullRequest>,
 }
 
-pub fn list_local_pull_requests(repository_path: &str) -> Result<LocalPullRequestListData, AppError> {
+pub fn list_local_pull_requests(
+    repository_path: &str,
+) -> Result<LocalPullRequestListData, AppError> {
     local_store::ensure_git_repository(repository_path)?;
 
     let mut pull_requests: Vec<LocalPullRequestData> = load_pull_request_set(repository_path)?
@@ -166,7 +168,9 @@ pub fn mark_local_pull_request_ready(
         .pull_requests
         .iter_mut()
         .find(|item| item.id == pull_request_id)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown pull request id: {pull_request_id}")))?;
+        .ok_or_else(|| {
+            AppError::InvalidInput(format!("unknown pull request id: {pull_request_id}"))
+        })?;
 
     if pull_request.state != "open" {
         return Err(AppError::InvalidInput(
@@ -215,7 +219,9 @@ pub fn merge_local_pull_request(
         .pull_requests
         .iter_mut()
         .find(|item| item.id == pull_request_id)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown pull request id: {pull_request_id}")))?;
+        .ok_or_else(|| {
+            AppError::InvalidInput(format!("unknown pull request id: {pull_request_id}"))
+        })?;
 
     if pull_request.state != "open" {
         return Err(AppError::InvalidInput(
@@ -268,7 +274,10 @@ pub fn merge_local_pull_request(
     if let Err(error) = merge_result {
         let _ = git_provider::run_git(Some(repository_path), &["merge", "--abort"]);
         if original_branch != target_branch {
-            let _ = git_provider::run_git(Some(repository_path), &["checkout", original_branch.as_str()]);
+            let _ = git_provider::run_git(
+                Some(repository_path),
+                &["checkout", original_branch.as_str()],
+            );
         }
         return Err(error);
     }
@@ -295,7 +304,10 @@ pub fn merge_local_pull_request(
     persist_pull_request_set(repository_path, &pr_set)?;
 
     if restore_branch != target_branch {
-        let _ = git_provider::run_git(Some(repository_path), &["checkout", restore_branch.as_str()]);
+        let _ = git_provider::run_git(
+            Some(repository_path),
+            &["checkout", restore_branch.as_str()],
+        );
     }
 
     Ok(LocalPullRequestOperationData {
@@ -326,7 +338,9 @@ fn update_pull_request_state(
         .pull_requests
         .iter_mut()
         .find(|item| item.id == pull_request_id)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown pull request id: {pull_request_id}")))?;
+        .ok_or_else(|| {
+            AppError::InvalidInput(format!("unknown pull request id: {pull_request_id}"))
+        })?;
 
     match new_state {
         "closed" => {
@@ -382,12 +396,17 @@ fn ensure_clean_worktree(repository_path: &str) -> Result<(), AppError> {
 fn verify_branch_exists(repository_path: &str, branch_name: &str) -> Result<(), AppError> {
     let branch_name = branch_name.trim();
     if branch_name.is_empty() {
-        return Err(AppError::InvalidInput("branch name is required".to_string()));
+        return Err(AppError::InvalidInput(
+            "branch name is required".to_string(),
+        ));
     }
 
     let full_ref = format!("refs/heads/{branch_name}");
-    git_provider::run_git(Some(repository_path), &["rev-parse", "--verify", full_ref.as_str()])
-        .map(|_| ())
+    git_provider::run_git(
+        Some(repository_path),
+        &["rev-parse", "--verify", full_ref.as_str()],
+    )
+    .map(|_| ())
 }
 
 fn state_rank(state: &str, draft: bool) -> u8 {
@@ -406,11 +425,14 @@ fn load_pull_request_set(repository_path: &str) -> Result<StoredLocalPullRequest
         return Ok(StoredLocalPullRequestSet::default());
     }
 
-    let payload = fs::read_to_string(path)
-        .map_err(|error| AppError::Internal(format!("failed to read local pull requests: {error}")))?;
+    let payload = fs::read_to_string(path).map_err(|error| {
+        AppError::Internal(format!("failed to read local pull requests: {error}"))
+    })?;
 
     let mut pull_request_set = serde_json::from_str::<StoredLocalPullRequestSet>(&payload)
-        .map_err(|error| AppError::Internal(format!("failed to parse local pull requests: {error}")))?;
+        .map_err(|error| {
+            AppError::Internal(format!("failed to parse local pull requests: {error}"))
+        })?;
 
     let mut normalized = false;
     for pull_request in &mut pull_request_set.pull_requests {
@@ -455,9 +477,9 @@ fn persist_pull_request_set(
     pull_request_set: &StoredLocalPullRequestSet,
 ) -> Result<(), AppError> {
     let path = local_store::gdpu_store_file_path(repository_path, PULL_REQUESTS_FILE_NAME)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| AppError::Internal("local pull request storage path is invalid".to_string()))?;
+    let parent = path.parent().ok_or_else(|| {
+        AppError::Internal("local pull request storage path is invalid".to_string())
+    })?;
 
     fs::create_dir_all(parent).map_err(|error| {
         AppError::Internal(format!(
@@ -469,8 +491,9 @@ fn persist_pull_request_set(
         AppError::Internal(format!("failed to serialize local pull requests: {error}"))
     })?;
 
-    fs::write(path, payload)
-        .map_err(|error| AppError::Internal(format!("failed to persist local pull requests: {error}")))
+    fs::write(path, payload).map_err(|error| {
+        AppError::Internal(format!("failed to persist local pull requests: {error}"))
+    })
 }
 
 fn to_data(pull_request: StoredLocalPullRequest) -> LocalPullRequestData {

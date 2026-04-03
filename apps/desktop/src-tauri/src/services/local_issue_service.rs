@@ -185,17 +185,22 @@ fn load_issue_set(repository_path: &str) -> Result<StoredLocalIssueSet, AppError
     Ok(issue_set)
 }
 
-fn persist_issue_set(repository_path: &str, issue_set: &StoredLocalIssueSet) -> Result<(), AppError> {
+fn persist_issue_set(
+    repository_path: &str,
+    issue_set: &StoredLocalIssueSet,
+) -> Result<(), AppError> {
     let path = local_issues_file_path(repository_path)?;
     let parent = path
         .parent()
         .ok_or_else(|| AppError::Internal("local issue storage path is invalid".to_string()))?;
 
-    fs::create_dir_all(parent)
-        .map_err(|error| AppError::Internal(format!("failed to create local issue directory: {error}")))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        AppError::Internal(format!("failed to create local issue directory: {error}"))
+    })?;
 
-    let payload = serde_json::to_string_pretty(issue_set)
-        .map_err(|error| AppError::Internal(format!("failed to serialize local issues: {error}")))?;
+    let payload = serde_json::to_string_pretty(issue_set).map_err(|error| {
+        AppError::Internal(format!("failed to serialize local issues: {error}"))
+    })?;
 
     fs::write(path, payload)
         .map_err(|error| AppError::Internal(format!("failed to persist local issues: {error}")))
@@ -216,4 +221,3 @@ fn to_data(issue: StoredLocalIssue) -> LocalIssueData {
         closed_at: issue.closed_at,
     }
 }
-

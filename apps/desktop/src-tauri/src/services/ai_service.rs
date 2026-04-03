@@ -11,11 +11,11 @@ use uuid::Uuid;
 
 use crate::errors::AppError;
 use crate::models::operations::{
-    AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData, AiDiffReviewJobStartData,
-    AiProviderListData, AiProviderStatus,
+    AiAuditListData, AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData,
+    AiDiffReviewJobStartData, AiProviderListData, AiProviderStatus,
 };
 use crate::runtime::state::{AiReviewJobRecord, AiReviewJobState, AppState, SharedAiReviewJob};
-use crate::services::git_provider;
+use crate::services::{ai_audit_service, git_provider};
 
 const PROVIDER_BINARIES: [(&str, &str); 4] = [
     ("codex", "codex"),
@@ -45,17 +45,37 @@ struct StreamChunk {
     text: String,
 }
 
+#[derive(Clone)]
+struct ProviderResolution {
+    command: String,
+    source: String,
+    health_check: String,
+}
+
 pub fn list_providers() -> Result<AiProviderListData, AppError> {
     let providers = PROVIDER_BINARIES
         .into_iter()
-        .map(|(id, binary)| AiProviderStatus {
-            id: id.to_string(),
-            available: detect_binary(binary),
-            binary: binary.to_string(),
+        .map(|(id, binary)| {
+            let resolution = resolve_provider(id);
+            AiProviderStatus {
+                id: id.to_string(),
+                available: resolution.is_some(),
+                binary: binary.to_string(),
+                resolved_binary: resolution.as_ref().map(|value| value.command.clone()),
+                detection_source: resolution.as_ref().map(|value| value.source.clone()),
+                health_check: resolution
+                    .as_ref()
+                    .map(|value| value.health_check.clone())
+                    .unwrap_or_else(|| "unavailable".to_string()),
+            }
         })
         .collect();
 
     Ok(AiProviderListData { providers })
+}
+
+pub fn get_audit_entries(limit: Option<usize>) -> Result<AiAuditListData, AppError> {
+    ai_audit_service::get_ai_audit_entries(limit)
 }
 
 pub fn run_diff_review(
@@ -68,9 +88,33 @@ pub fn run_diff_review(
 
     let cancel = AtomicBool::new(false);
     let mut response = String::new();
-    run_review_pipeline(provider_id, repository_path, prompt, diff_scope_path, &cancel, |chunk| {
-        response.push_str(chunk);
-    })?;
+    let result = run_review_pipeline(
+        provider_id,
+        repository_path,
+        prompt,
+        diff_scope_path,
+        &cancel,
+        |chunk| {
+            response.push_str(chunk);
+        },
+    );
+
+    let error_code = result
+        .as_ref()
+        .err()
+        .map(|error| error.to_command_error().code);
+    let _ = ai_audit_service::record_ai_audit_event(
+        "review.run",
+        provider_id,
+        repository_path,
+        diff_scope_path,
+        prompt,
+        &response,
+        result.is_ok(),
+        error_code.as_deref(),
+    );
+
+    result?;
 
     Ok(AiDiffReviewData {
         provider_id: provider_id.to_string(),
@@ -93,6 +137,10 @@ pub fn start_diff_review_job(
         output: String::new(),
         error: None,
         cancel_flag: Arc::new(AtomicBool::new(false)),
+        provider_id: provider_id.to_string(),
+        repository_path: repository_path.to_string(),
+        diff_scope_path: diff_scope_path.map(|value| value.to_string()),
+        prompt: prompt.to_string(),
     }));
 
     {
@@ -117,6 +165,17 @@ pub fn start_diff_review_job(
         jobs.insert(job_id.clone(), Arc::clone(&record));
     }
 
+    let _ = ai_audit_service::record_ai_audit_event(
+        "review.job.start",
+        provider_id,
+        repository_path,
+        diff_scope_path,
+        prompt,
+        "",
+        true,
+        None,
+    );
+
     spawn_review_worker(
         record,
         provider_id.to_string(),
@@ -128,7 +187,10 @@ pub fn start_diff_review_job(
     Ok(AiDiffReviewJobStartData { job_id })
 }
 
-pub fn get_diff_review_job(state: &AppState, job_id: &str) -> Result<AiDiffReviewJobData, AppError> {
+pub fn get_diff_review_job(
+    state: &AppState,
+    job_id: &str,
+) -> Result<AiDiffReviewJobData, AppError> {
     if job_id.trim().is_empty() {
         return Err(AppError::InvalidInput("job id is required".to_string()));
     }
@@ -189,6 +251,17 @@ pub fn cancel_diff_review_job(
     record.status = AiReviewJobState::Canceled;
     record.output.push_str("\nReview canceled by user.\n");
 
+    let _ = ai_audit_service::record_ai_audit_event(
+        "review.job.cancel",
+        &record.provider_id,
+        &record.repository_path,
+        record.diff_scope_path.as_deref(),
+        &record.prompt,
+        &record.output,
+        false,
+        Some("ai.job_canceled"),
+    );
+
     Ok(AiDiffReviewCancelData {
         job_id: job_id.to_string(),
         canceled: true,
@@ -231,18 +304,41 @@ fn spawn_review_worker(
         if let Ok(mut job) = record.lock() {
             if job.status == AiReviewJobState::Canceled || cancel_flag.load(Ordering::Relaxed) {
                 job.status = AiReviewJobState::Canceled;
+                let _ = ai_audit_service::record_ai_audit_event(
+                    "review.job.finish",
+                    &job.provider_id,
+                    &job.repository_path,
+                    job.diff_scope_path.as_deref(),
+                    &job.prompt,
+                    &job.output,
+                    false,
+                    Some("ai.job_canceled"),
+                );
                 return;
             }
 
-            match result {
+            let (audit_ok, audit_error_code) = match result {
                 Ok(()) => {
                     job.status = AiReviewJobState::Completed;
+                    (true, None)
                 }
                 Err(error) => {
                     job.status = AiReviewJobState::Failed;
                     job.error = Some(error.to_string());
+                    (false, Some(error.to_command_error().code))
                 }
-            }
+            };
+
+            let _ = ai_audit_service::record_ai_audit_event(
+                "review.job.finish",
+                &job.provider_id,
+                &job.repository_path,
+                job.diff_scope_path.as_deref(),
+                &job.prompt,
+                &job.output,
+                audit_ok,
+                audit_error_code.as_deref(),
+            );
         }
     });
 }
@@ -253,11 +349,13 @@ fn validate_review_input(provider_id: &str, repository_path: &str) -> Result<(),
     }
 
     if provider_id.trim().is_empty() {
-        return Err(AppError::InvalidInput("provider id is required".to_string()));
+        return Err(AppError::InvalidInput(
+            "provider id is required".to_string(),
+        ));
     }
 
-    if resolve_provider_binary(provider_id).is_none() {
-        return Err(AppError::InvalidInput(format!("unknown ai provider: {provider_id}")));
+    if provider_binary_name(provider_id).is_none() {
+        return Err(AppError::AiProviderUnavailable(provider_id.to_string()));
     }
 
     Ok(())
@@ -274,8 +372,8 @@ fn run_review_pipeline<F>(
 where
     F: FnMut(&str),
 {
-    let binary = resolve_provider_binary(provider_id)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown ai provider: {provider_id}")))?;
+    let binary = provider_binary_name(provider_id)
+        .ok_or_else(|| AppError::AiProviderUnavailable(provider_id.to_string()))?;
     let normalized_scope_path = diff_scope_path.and_then(trimmed_non_empty);
     let diff = collect_diff(repository_path, normalized_scope_path)?;
 
@@ -287,9 +385,14 @@ where
         return Err(cancel_error());
     }
 
-    if detect_binary(binary) {
+    if let Some(resolution) = resolve_provider(provider_id) {
+        emit(&format!(
+            "Resolved provider binary '{}' via {} ({}).\n",
+            resolution.command, resolution.source, resolution.health_check
+        ));
+
         match run_provider_review(
-            binary,
+            &resolution.command,
             repository_path,
             prompt,
             &diff,
@@ -356,7 +459,10 @@ where
             return Err(cancel_error());
         }
 
-        emit(&format!("Running provider adapter attempt: {}\n", attempt.name));
+        emit(&format!(
+            "Running provider adapter attempt: {}\n",
+            attempt.name
+        ));
         match execute_provider_attempt(binary, repository_path, &attempt, cancel_flag, emit) {
             Ok(true) => {
                 emit("Provider review completed.\n");
@@ -401,14 +507,14 @@ where
         command.stdin(Stdio::null());
     }
 
-    let mut child = command
-        .spawn()
-        .map_err(|error| AppError::CommandExecution(format!("failed to start provider process: {error}")))?;
+    let mut child = command.spawn().map_err(|error| {
+        AppError::AiProcessFailed(format!("failed to start provider process: {error}"))
+    })?;
 
     if let Some(payload) = &attempt.stdin_payload {
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(payload.as_bytes()).map_err(|error| {
-                AppError::CommandExecution(format!("failed to write provider input: {error}"))
+                AppError::AiProcessFailed(format!("failed to write provider input: {error}"))
             })?;
         }
     }
@@ -458,7 +564,7 @@ where
 
         if let Some(status) = child
             .try_wait()
-            .map_err(|error| AppError::CommandExecution(format!("provider wait failed: {error}")))?
+            .map_err(|error| AppError::AiProcessFailed(format!("provider wait failed: {error}")))?
         {
             let drain_until = Instant::now() + Duration::from_millis(200);
             while Instant::now() < drain_until {
@@ -560,11 +666,7 @@ fn build_provider_attempts(prompt: &str, diff: &str) -> Vec<ProviderAttempt> {
     });
     attempts.push(ProviderAttempt {
         name: "chat --prompt",
-        args: vec![
-            "chat".to_string(),
-            "--prompt".to_string(),
-            inline_prompt,
-        ],
+        args: vec!["chat".to_string(), "--prompt".to_string(), inline_prompt],
         stdin_payload: None,
     });
     attempts.push(ProviderAttempt {
@@ -621,7 +723,6 @@ fn run_fallback_review<F>(
 where
     F: FnMut(&str),
 {
-
     let mut changed_files = 0_u32;
     let mut additions = 0_u32;
     let mut deletions = 0_u32;
@@ -658,7 +759,9 @@ where
     }
 
     let mut chunks = Vec::new();
-    chunks.push(format!("AI review started with provider '{provider_id}'.\n"));
+    chunks.push(format!(
+        "AI review started with provider '{provider_id}'.\n"
+    ));
     chunks.push(format!(
         "Fallback mode active for provider binary '{binary}'.\n"
     ));
@@ -714,17 +817,216 @@ fn trimmed_non_empty(value: &str) -> Option<&str> {
     Some(trimmed)
 }
 
-fn resolve_provider_binary(provider_id: &str) -> Option<&'static str> {
+fn provider_binary_name(provider_id: &str) -> Option<&'static str> {
     PROVIDER_BINARIES
         .into_iter()
         .find(|(id, _)| *id == provider_id)
         .map(|(_, binary)| binary)
 }
 
-fn detect_binary(binary: &str) -> bool {
-    Command::new(binary)
-        .arg("--version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+fn resolve_provider(provider_id: &str) -> Option<ProviderResolution> {
+    let binary = provider_binary_name(provider_id)?;
+    resolve_provider_command(binary)
+}
+
+fn resolve_provider_command(binary: &str) -> Option<ProviderResolution> {
+    let candidates = known_binary_candidates(binary);
+    for (command, source) in candidates {
+        if let Some(health_check) = probe_binary_health(command.as_str()) {
+            return Some(ProviderResolution {
+                command,
+                source,
+                health_check,
+            });
+        }
+    }
+
+    None
+}
+
+fn known_binary_candidates(binary: &str) -> Vec<(String, String)> {
+    let mut candidates = Vec::<(String, String)>::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+
+    push_candidate(
+        &mut candidates,
+        &mut seen,
+        binary.to_string(),
+        "PATH".to_string(),
+    );
+
+    if cfg!(target_os = "windows") {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let npm_dir = std::path::Path::new(&appdata).join("npm");
+            for suffix in ["", ".cmd", ".exe"] {
+                let command = npm_dir
+                    .join(format!("{binary}{suffix}"))
+                    .to_string_lossy()
+                    .to_string();
+                push_candidate(
+                    &mut candidates,
+                    &mut seen,
+                    command,
+                    "APPDATA/npm".to_string(),
+                );
+            }
+        }
+
+        if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+            let command = std::path::Path::new(&local_appdata)
+                .join("Programs")
+                .join(binary)
+                .join(format!("{binary}.exe"))
+                .to_string_lossy()
+                .to_string();
+            push_candidate(
+                &mut candidates,
+                &mut seen,
+                command,
+                "LOCALAPPDATA/Programs".to_string(),
+            );
+        }
+
+        if let Ok(user_profile) = std::env::var("USERPROFILE") {
+            let local_bin = std::path::Path::new(&user_profile)
+                .join(".local")
+                .join("bin");
+            for suffix in ["", ".exe"] {
+                let command = local_bin
+                    .join(format!("{binary}{suffix}"))
+                    .to_string_lossy()
+                    .to_string();
+                push_candidate(
+                    &mut candidates,
+                    &mut seen,
+                    command,
+                    "USERPROFILE/.local/bin".to_string(),
+                );
+            }
+        }
+    } else {
+        for base in [
+            "/usr/local/bin",
+            "/usr/bin",
+            "/opt/homebrew/bin",
+            "/opt/bin",
+        ] {
+            let command = std::path::Path::new(base)
+                .join(binary)
+                .to_string_lossy()
+                .to_string();
+            push_candidate(
+                &mut candidates,
+                &mut seen,
+                command,
+                format!("known-path:{base}"),
+            );
+        }
+    }
+
+    candidates
+}
+
+fn push_candidate(
+    candidates: &mut Vec<(String, String)>,
+    seen: &mut std::collections::HashSet<String>,
+    command: String,
+    source: String,
+) {
+    if command.trim().is_empty() {
+        return;
+    }
+
+    let key = command.to_ascii_lowercase();
+    if seen.insert(key) {
+        candidates.push((command, source));
+    }
+}
+
+fn probe_binary_health(command: &str) -> Option<String> {
+    const HEALTH_CHECKS: [&[&str]; 4] = [&["--version"], &["version"], &["-v"], &["--help"]];
+
+    for args in HEALTH_CHECKS {
+        let result = Command::new(command).args(args).output();
+        if let Ok(output) = result {
+            if output.status.success() {
+                return Some(format!("ok({})", args.join(" ")));
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::fs;
+
+    use uuid::Uuid;
+
+    use crate::errors::AppError;
+
+    use super::{
+        known_binary_candidates, provider_binary_name, push_candidate, validate_review_input,
+        PROVIDER_BINARIES,
+    };
+
+    #[test]
+    fn provider_binary_name_maps_all_supported_provider_ids() {
+        for (provider_id, expected_binary) in PROVIDER_BINARIES {
+            assert_eq!(provider_binary_name(provider_id), Some(expected_binary));
+        }
+
+        assert_eq!(provider_binary_name("unknown-provider"), None);
+    }
+
+    #[test]
+    fn known_binary_candidates_includes_path_candidate_first() {
+        let candidates = known_binary_candidates("codex");
+        assert!(!candidates.is_empty());
+        assert_eq!(candidates[0].0, "codex");
+        assert_eq!(candidates[0].1, "PATH");
+    }
+
+    #[test]
+    fn push_candidate_deduplicates_case_insensitive_commands() {
+        let mut candidates = Vec::<(String, String)>::new();
+        let mut seen = HashSet::<String>::new();
+
+        push_candidate(
+            &mut candidates,
+            &mut seen,
+            "CodeX".to_string(),
+            "PATH".to_string(),
+        );
+        push_candidate(
+            &mut candidates,
+            &mut seen,
+            "codex".to_string(),
+            "APPDATA/npm".to_string(),
+        );
+
+        assert_eq!(candidates.len(), 1);
+    }
+
+    #[test]
+    fn validate_review_input_returns_provider_unavailable_for_unknown_provider() {
+        let temp = std::env::temp_dir().join(format!("gdpu-ai-validate-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp).expect("temp directory should be creatable");
+
+        let result = validate_review_input(
+            "unknown-provider",
+            temp.to_str().expect("temp path should be valid utf-8"),
+        );
+
+        match result {
+            Err(AppError::AiProviderUnavailable(provider_id)) => {
+                assert_eq!(provider_id, "unknown-provider")
+            }
+            other => panic!("expected AiProviderUnavailable error, got {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(temp);
+    }
 }
