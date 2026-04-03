@@ -147,16 +147,29 @@ Acceptance criteria:
 - App ships with one compact density mode only
 - Theme switching is supported without density mode switching
 - Panel resizing and rearranging are supported in compact mode
+Implementation update (2026-04-03):
+- Sidebar rail now supports drag and keyboard resizing with persisted width bounds.
+- Sidebar can be rearranged to either left or right position through layout preferences.
+- Utility drawer default expansion and height are now persisted and support drag/keyboard resize in shell.
+- Theme switching now supports Aether, Helix, Quanta, Petrichor, Redshift, and Halo themes without changing compact density policy.
+- Keybinding profiles now support Classic chord navigation and Compact single-stroke navigation with global route hotkeys.
 
 ### F-2 Compatibility fixture suite (P1)
 Acceptance criteria:
 - Key operations compared against git CLI fixture expectations
 - CI runs fixtures and reports diffs clearly
+Implementation update (2026-04-03):
+- Backend fixture parity tests now cover status stage/unstage, branch listing, commit history/detail, and merge-conflict detection/abort against direct git CLI outputs.
+- CI now includes a dedicated fixture test step via `cargo test fixture_ -- --nocapture`.
 
 ### F-3 Crash-safe and recoverable UX states (P1)
 Acceptance criteria:
 - No workflow dead ends after command failure
 - Retry paths available for major operations
+Implementation update (2026-04-03):
+- Frontend command client now tracks recoverable command failures and exposes global retry APIs for the last failed command.
+- Shell now renders a recovery banner with retry and dismiss controls, preventing dead-end error states after command failures.
+- Utility drawer now shows rolling command lifecycle events (start/success/failure/retry) for major workflows.
 
 ## Suggested Sprint 1 Scope (2 Weeks)
 - A-0

@@ -82,7 +82,7 @@ Define the implementation structure before coding so AI agents can add files pre
 - forge_provider: optional host adapters and capability matrix.
 - auth: helper and SSH diagnostics, readiness reporting.
 - diff: patch metadata/chunking and renderer payload shaping.
-- ai: provider discovery, streaming process control, audit events.
+- ai: provider discovery, job process control, incremental output capture, audit events.
 - telemetry: structured events, performance spans, local retention manager.
 
 ## Frontend Feature Boundaries
@@ -91,7 +91,7 @@ Define the implementation structure before coding so AI agents can add files pre
 - diff: pretext adapter, render mode orchestration, search and navigation.
 - history: commit list and details.
 - sync: fetch/pull/push state and diagnostics.
-- ai: provider health, read-only actions, streamed output.
+- ai: provider health, read-only actions, job output polling.
 - settings: themes, panels, keybindings, guardrail slider.
 
 ## File Naming Conventions

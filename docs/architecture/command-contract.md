@@ -51,17 +51,36 @@ Examples:
 2. list_recent_repositories
 3. get_git_capabilities
 4. get_auth_status
-5. list_forge_adapters
-6. get_repository_status
-7. stage_paths
-8. unstage_paths
-9. create_commit
-10. get_file_diff
-11. fetch_remote
-12. pull_remote
-13. push_remote
-14. list_ai_providers
-15. run_ai_diff_review
+5. get_repository_auth_status
+6. list_forge_adapters
+7. get_repository_integration_matrix
+8. get_repository_status
+9. stage_paths
+10. unstage_paths
+11. create_commit
+12. get_file_diff
+13. fetch_remote
+14. pull_remote
+15. push_remote
+16. list_ai_providers
+17. run_ai_diff_review
+18. start_ai_diff_review_job
+19. get_ai_diff_review_job
+20. cancel_ai_diff_review_job
+21. get_conflict_state
+22. continue_conflict_resolution
+23. abort_conflict_resolution
+24. get_app_settings
+25. update_ai_guardrail
+26. update_telemetry_retention
+27. update_layout_preferences
+28. update_ui_preferences
+
+Settings payload note:
+- update_layout_preferences uses `{ sidebarWidthPx, sidebarPosition, utilityDrawerDefaultExpanded, utilityDrawerHeightPx }`.
+- sidebarPosition accepts `left` or `right`.
+- update_ui_preferences uses `{ themeId, keybindingProfile }`.
+- themeId accepts `aether`, `helix`, `quanta`, `petrichor`, `redshift`, or `halo`; keybindingProfile accepts `classic` or `compact`.
 
 ## DTO Guidelines
 - Use explicit, named fields; avoid tuple-like arrays.
@@ -69,17 +88,22 @@ Examples:
 - Keep path fields normalized to absolute internal form in backend, convert to display-safe paths in UI.
 - Do not include secrets in DTOs.
 
-## Streaming Commands
-For long-running operations (AI, large diff prep):
-- return immediate ack with requestId
-- stream progress events via Tauri event channel
-- support cancellation by requestId
+## Long-Running Commands
+For long-running operations (for example AI review jobs):
+- start command returns immediate ack with requestId and jobId
+- UI polls a get_*_job command by jobId until done=true
+- output is incremental and append-only in job.output
+- cancellation is command-based via cancel_*_job(jobId)
 
-Event naming convention:
-- op.progress
-- op.chunk
-- op.completed
-- op.failed
+Standard job status values:
+- queued
+- running
+- completed
+- failed
+- canceled
+
+Note:
+- Tauri event-channel streaming is not part of V0 command behavior.
 
 ## Observability Requirements
 Every command must:

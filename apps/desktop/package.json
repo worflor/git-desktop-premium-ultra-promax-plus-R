@@ -1,0 +1,24 @@
+{
+  "name": "@gdpu/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "@solidjs/router": "^0.15.3",
+    "@tauri-apps/api": "^2.5.0",
+    "solid-js": "^1.9.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^5.4.19",
+    "vite-plugin-solid": "^2.11.8"
+  }
+}

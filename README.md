@@ -66,3 +66,32 @@ Phase strategy:
 
 ## Current Status
 Project initialized with planning and architecture docs. Pretext is committed as core diff-layout engine and implementation scaffold is next.
+
+## Implementation Status
+- Monorepo scaffold created under `apps/desktop`.
+- Solid + TypeScript UI shell with route skeleton (`/changes`, `/history`, `/branches`, `/sync`, `/settings`) is implemented.
+- Typed command contract client is wired from UI to Tauri command names.
+- Rust backend command layer is implemented for repository open/recents, status and commit flow, branch/worktree flow, sync operations, conflict state/continue/abort, local issue and pull-request models, and AI review job lifecycle.
+- Sync and Settings UX now include conflict controls, auth/integration diagnostics, and local command latency diagnostics with retention controls.
+- Crash-safe recovery UX now includes global retry for recoverable command failures and a utility drawer with command lifecycle logs (start/success/failure/retry).
+- Reliability hardening now includes Git CLI fixture-parity tests for key operations and CI execution coverage in `.github/workflows/desktop-ci.yml`.
+- Compact density layout controls now persist sidebar width/position and utility drawer default expansion/height, including shell drag-resize interactions.
+- Theme and keybinding customization now persist in settings with app-wide live theme application (Aether, Helix, Quanta, Petrichor, Redshift, Halo) and global profile-driven route hotkeys.
+- Custom icon registry and animation-ready icon wrappers are in place.
+
+## Bootstrap
+```bash
+npm install
+npm run typecheck --workspace apps/desktop
+npm run build --workspace apps/desktop
+```
+
+## Run Desktop Dev Mode
+```bash
+npm run tauri:dev --workspace apps/desktop
+```
+
+## Windows Rust Tooling Note
+For Tauri Rust builds on Windows, install one of the following:
+- Visual Studio Build Tools with C++ workload (for MSVC linker `link.exe`), or
+- GNU binutils with `dlltool.exe` available in `PATH`.

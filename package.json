@@ -1,0 +1,17 @@
+{
+  "name": "git-desktop-premium-ultra-promax-plus-r",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cross-platform Git desktop client with Pretext-first diff rendering and local AI adapters.",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace apps/desktop",
+    "build": "npm run build --workspace apps/desktop",
+    "typecheck": "npm run typecheck --workspace apps/desktop"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

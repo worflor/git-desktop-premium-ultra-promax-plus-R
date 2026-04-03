@@ -1,0 +1,114 @@
+@keyframes ani-sync-spin-frames {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ani-ai-pulse-frames {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.97);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 0.6;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes ani-conflict-alert-frames {
+  0% {
+    filter: drop-shadow(0 0 0 rgba(255, 106, 61, 0.1));
+  }
+  50% {
+    filter: drop-shadow(0 0 6px rgba(255, 106, 61, 0.45));
+  }
+  100% {
+    filter: drop-shadow(0 0 0 rgba(255, 106, 61, 0.1));
+  }
+}
+
+@keyframes ani-success-pop-frames {
+  0% {
+    transform: scale(0.84);
+    opacity: 0.8;
+  }
+  60% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 0% 0;
+  }
+  to {
+    background-position: 180% 0;
+  }
+}
+
+.ani-sync-spin {
+  animation-name: ani-sync-spin-frames;
+  animation-duration: 1.4s;
+  animation-timing-function: linear;
+}
+
+.ani-ai-pulse {
+  animation-name: ani-ai-pulse-frames;
+  animation-duration: 0.9s;
+  animation-timing-function: ease-in-out;
+}
+
+.ani-conflict-alert {
+  animation-name: ani-conflict-alert-frames;
+  animation-duration: 1.1s;
+  animation-timing-function: ease-in-out;
+}
+
+.ani-success-pop {
+  animation-name: ani-success-pop-frames;
+  animation-duration: 220ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+.ani-loop {
+  animation-iteration-count: infinite;
+}
+
+.ani-once {
+  animation-iteration-count: 1;
+}
+
+.ani-intensity-low {
+  animation-duration: calc(var(--ani-duration, 1s) * 1.35);
+}
+
+.ani-intensity-medium {
+  animation-duration: var(--ani-duration, 1s);
+}
+
+.ani-intensity-high {
+  animation-duration: calc(var(--ani-duration, 1s) * 0.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animated-icon,
+  .loading-skeleton-row {
+    animation: none;
+  }
+}
+
+.ani-reduced-motion {
+  animation: none !important;
+}

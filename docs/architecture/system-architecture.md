@@ -19,7 +19,7 @@
 - sync_service: fetch/pull/push/auth workflows
 - merge_rebase_service: conflict state, continue/abort flows
 - diff_service: diff computation, hunk metadata, pagination/chunking
-- ai_service: provider discovery, prompt assembly, streaming output
+- ai_service: provider discovery, prompt assembly, job execution, incremental output capture
 - settings_service: per-user/per-repo settings
 
 ## Frontend Domains (Solid)
@@ -29,7 +29,7 @@
 - diff-view: file tree, hunk navigator, renderer surface
 - history: commit graph and detail view
 - sync: remote status, fetch/pull/push controls
-- ai-panel: review controls, prompt templates, stream output
+- ai-panel: review controls, prompt templates, job polling output
 - settings: providers, keybindings, UI density/theme
 
 ## Command Contract
@@ -85,8 +85,13 @@ Each provider implements:
 - name()
 - is_available()
 - build_command(prompt, context)
-- stream_response(callback)
+- execute_process_with_incremental_output(callback)
 - parse_error(stderr)
+
+### Delivery model
+- Long-running review uses job commands: start -> poll -> cancel.
+- Polling reads incremental output snapshots until terminal status.
+- V0 does not require Tauri event-channel streaming.
 
 ### Safety and trust
 - Default to read-only AI operations
