@@ -76,6 +76,7 @@ Examples:
 27. update_layout_preferences
 28. update_ui_preferences
 29. get_command_telemetry_snapshot
+30. clear_command_telemetry
 
 Settings payload note:
 - update_layout_preferences uses `{ sidebarWidthPx, sidebarPosition, utilityDrawerDefaultExpanded, utilityDrawerHeightPx }`.
@@ -85,6 +86,7 @@ Settings payload note:
 
 Telemetry payload note:
 - get_command_telemetry_snapshot accepts optional `{ recentLimit }` and returns aggregated p50/p95 summaries plus recent samples.
+- clear_command_telemetry deletes persisted telemetry samples and returns operation metadata.
 - Backend telemetry samples are local-only and retention-bound by app telemetry settings.
 
 ## DTO Guidelines

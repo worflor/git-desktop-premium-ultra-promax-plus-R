@@ -276,6 +276,14 @@ pub struct CommandTelemetrySnapshotData {
     pub recent_samples: Vec<CommandTelemetrySampleData>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandTelemetryMaintenanceData {
+    pub operation: String,
+    pub affected_samples: u32,
+    pub sample_count: u32,
+}
+
 pub type PullRequestProviderData = IssueProviderData;
 pub type PullRequestProviderListData = IssueProviderListData;
 

@@ -12,7 +12,7 @@ use crate::models::git::{
 use crate::models::operations::{
     AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData, AiDiffReviewJobStartData,
     AiProviderListData, BranchListData, BranchOperationData, CommitData, CommitDetailData,
-    CommandTelemetrySnapshotData,
+    CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData,
     CommitHistoryData, ConflictResolutionData, ConflictStateData, FileDiffData,
     IssueProviderListData, LocalIssueListData, LocalIssueOperationData, LocalPullRequestListData,
     LocalPullRequestOperationData, PathOperationData, PullRequestProviderListData, SyncData,
@@ -872,8 +872,8 @@ pub fn get_app_settings(state: State<'_, AppState>) -> CommandResult<AppSettings
     let started_at = Instant::now();
 
     match settings_service::get_settings() {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("get_app_settings", started_at, &state, data),
+        Err(error) => map_error_with_command("get_app_settings", started_at, &state, error),
     }
 }
 
@@ -885,8 +885,8 @@ pub fn update_ai_guardrail(
     let started_at = Instant::now();
 
     match settings_service::update_guardrail(guardrail_value) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("update_ai_guardrail", started_at, &state, data),
+        Err(error) => map_error_with_command("update_ai_guardrail", started_at, &state, error),
     }
 }
 
@@ -899,8 +899,13 @@ pub fn update_telemetry_retention(
     let started_at = Instant::now();
 
     match settings_service::update_telemetry_retention(retention_days, retention_mb) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => {
+            let _ = telemetry_service::enforce_retention_policy();
+            command_ok("update_telemetry_retention", started_at, &state, data)
+        }
+        Err(error) => {
+            map_error_with_command("update_telemetry_retention", started_at, &state, error)
+        }
     }
 }
 
@@ -920,8 +925,10 @@ pub fn update_layout_preferences(
         utility_drawer_default_expanded,
         utility_drawer_height_px,
     ) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("update_layout_preferences", started_at, &state, data),
+        Err(error) => {
+            map_error_with_command("update_layout_preferences", started_at, &state, error)
+        }
     }
 }
 
@@ -934,8 +941,8 @@ pub fn update_ui_preferences(
     let started_at = Instant::now();
 
     match settings_service::update_ui_preferences(&theme_id, &keybinding_profile) {
-        Ok(data) => CommandResult::ok(data, response_meta(started_at, &state)),
-        Err(error) => map_error(started_at, &state, error),
+        Ok(data) => command_ok("update_ui_preferences", started_at, &state, data),
+        Err(error) => map_error_with_command("update_ui_preferences", started_at, &state, error),
     }
 }
 
@@ -953,6 +960,29 @@ pub fn get_command_telemetry_snapshot(
         Ok(data) => command_ok("get_command_telemetry_snapshot", started_at, &state, data),
         Err(error) => {
             map_error_with_command("get_command_telemetry_snapshot", started_at, &state, error)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn clear_command_telemetry(
+    state: State<'_, AppState>,
+) -> CommandResult<CommandTelemetryMaintenanceData> {
+    let started_at = Instant::now();
+
+    match telemetry_service::clear_command_samples() {
+        Ok(affected_samples) => command_ok(
+            "clear_command_telemetry",
+            started_at,
+            &state,
+            CommandTelemetryMaintenanceData {
+                operation: "clear".to_string(),
+                affected_samples,
+                sample_count: 0,
+            },
+        ),
+        Err(error) => {
+            map_error_with_command("clear_command_telemetry", started_at, &state, error)
         }
     }
 }

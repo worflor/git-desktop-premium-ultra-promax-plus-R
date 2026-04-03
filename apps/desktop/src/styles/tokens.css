@@ -270,9 +270,9 @@
   --bg-2: #172833;
   --bg-3: #203846;
 
-  --surface-0: rgba(10, 19, 26, 0.82);
-  --surface-1: rgba(14, 26, 35, 0.88);
-  --surface-2: rgba(20, 36, 46, 0.92);
+  --surface-0: rgba(10, 19, 26, 0.60);
+  --surface-1: rgba(14, 26, 35, 0.70);
+  --surface-2: rgba(20, 36, 46, 0.75);
   --surface-accent: rgba(118, 224, 220, 0.18);
 
   --text-strong: #e9f6f8;
@@ -297,12 +297,12 @@
   --danger-copy-strong: #ffe2e1;
   --danger-copy-muted: #f5c6c5;
 
-  --panel-overlay: rgba(8, 16, 23, 0.7);
-  --panel-overlay-strong: rgba(10, 18, 26, 0.8);
+  --panel-overlay: rgba(8, 16, 23, 0.6);
+  --panel-overlay-strong: rgba(10, 18, 26, 0.65);
   --input-overlay: rgba(8, 15, 22, 0.84);
   --diff-overlay: rgba(7, 13, 19, 0.86);
   --danger-overlay: rgba(61, 28, 32, 0.84);
-  --glass-backdrop-filter: blur(18px) saturate(138%);
+  --glass-backdrop-filter: blur(24px) saturate(160%);
   --shadow-elev: 0 18px 36px rgba(2, 8, 13, 0.5);
 
   --theme-ambient-rgb: 113, 220, 216;

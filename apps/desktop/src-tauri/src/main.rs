@@ -59,7 +59,8 @@ fn main() {
             commands::update_telemetry_retention,
             commands::update_layout_preferences,
             commands::update_ui_preferences,
-            commands::get_command_telemetry_snapshot
+            commands::get_command_telemetry_snapshot,
+            commands::clear_command_telemetry
         ])
         .run(tauri::generate_context!())
         .expect("failed to run tauri application");

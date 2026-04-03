@@ -139,6 +139,7 @@ Implementation update (2026-04-03):
 - Critical command endpoints (stage, unstage, commit, fetch, pull, push) now emit backend telemetry samples with command-level success/failure classification.
 - Rolling retention policy is enforced in backend storage using configured telemetry days/MB caps from app settings.
 - Backend telemetry snapshot command now returns aggregated p50/p95 summaries and recent samples for diagnostics tooling.
+- Backend settings updates for telemetry retention now trigger immediate retention enforcement in backend storage.
 
 ### F-4 Local telemetry retention policy (P1)
 Acceptance criteria:
@@ -149,6 +150,7 @@ Implementation update (2026-04-03):
 - Backend telemetry storage is local-only and persisted under APPDATA/gdpu.
 - Retention policy is applied by both age and size, keeping newest samples within configured bounds.
 - Malformed telemetry lines are safely ignored to preserve crash-resistant diagnostics reads.
+- Backend exposes a telemetry-clear maintenance command for deterministic diagnostics reset.
 
 ## EPIC H - UX Interaction Model
 ### H-1 Single compact density policy (P1)

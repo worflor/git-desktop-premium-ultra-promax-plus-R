@@ -24,7 +24,13 @@ const THEME_DEFINITIONS = [
       blurPx: 14,
       saturatePct: 132,
       opacityScale: 0.98,
-      edgeIntensity: 0.62
+      edgeIntensity: 0.62,
+      texture: "scanlines",
+      textureOpacity: 0.03,
+      motion: "fluid",
+      luminescence: 0.4,
+      particles: "stardust",
+      parallaxStrength: 0.5
     }
   },
   {
@@ -36,7 +42,12 @@ const THEME_DEFINITIONS = [
       blurPx: 0,
       saturatePct: 100,
       opacityScale: 1.14,
-      edgeIntensity: 0
+      edgeIntensity: 0,
+      texture: "grain",
+      textureOpacity: 0.15,
+      motion: "snappy",
+      luminescence: 0.1,
+      parallaxStrength: 0.1
     }
   },
   {
@@ -48,7 +59,12 @@ const THEME_DEFINITIONS = [
       blurPx: 11,
       saturatePct: 126,
       opacityScale: 1.04,
-      edgeIntensity: 0.4
+      edgeIntensity: 0.4,
+      texture: "grain",
+      textureOpacity: 0.05,
+      motion: "snappy",
+      luminescence: 0.2,
+      parallaxStrength: 0.8
     }
   },
   {
@@ -60,7 +76,11 @@ const THEME_DEFINITIONS = [
       blurPx: 0,
       saturatePct: 100,
       opacityScale: 1.1,
-      edgeIntensity: 0
+      edgeIntensity: 0,
+      texture: "none",
+      motion: "elastic",
+      luminescence: 0.1,
+      parallaxStrength: 0.3
     }
   },
   {
@@ -72,19 +92,31 @@ const THEME_DEFINITIONS = [
       blurPx: 12,
       saturatePct: 136,
       opacityScale: 1.06,
-      edgeIntensity: 0.55
+      edgeIntensity: 0.55,
+      texture: "scanlines",
+      textureOpacity: 0.08,
+      motion: "fluid",
+      luminescence: 0.6,
+      particles: "embers",
+      parallaxStrength: 0.5
     }
   },
   {
     id: "halo",
     label: "Halo",
-    description: "Ultra-glass dark mode with luminous mint-cyan edges.",
+    description: "Ultra-glass dark mode with highly luminous mint-cyan edges.",
     shader: {
       mode: "glass",
-      blurPx: 18,
-      saturatePct: 145,
-      opacityScale: 0.94,
-      edgeIntensity: 0.78
+      blurPx: 24,
+      saturatePct: 160,
+      opacityScale: 0.82,
+      edgeIntensity: 0.95,
+      texture: "grain",
+      textureOpacity: 0.06,
+      motion: "elastic",
+      luminescence: 0.8,
+      particles: "stardust",
+      parallaxStrength: 0.6
     }
   }
 ] as const satisfies readonly ThemeDefinition[];

@@ -74,10 +74,26 @@ export function AppShellFrame(props: AppShellFrameProps) {
       }
     };
 
+    let animationFrameId: number;
+    const onWindowMouseMove = (event: MouseEvent) => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      animationFrameId = requestAnimationFrame(() => {
+        // Map cursor coordinates gracefully from [-1.0, 1.0] across the total monitor viewport
+        const x = ((event.clientX / window.innerWidth) - 0.5) * 2;
+        const y = ((event.clientY / window.innerHeight) - 0.5) * 2;
+        document.documentElement.style.setProperty("--cursor-x", x.toFixed(3));
+        document.documentElement.style.setProperty("--cursor-y", y.toFixed(3));
+      });
+    };
+
     window.addEventListener("keydown", onWindowKeyDown);
+    window.addEventListener("mousemove", onWindowMouseMove, { passive: true });
+    
     onCleanup(() => {
       clearPrefixTimer();
       window.removeEventListener("keydown", onWindowKeyDown);
+      window.removeEventListener("mousemove", onWindowMouseMove);
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
     });
   });
 

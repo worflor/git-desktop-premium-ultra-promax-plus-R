@@ -162,14 +162,17 @@ fn normalize_sidebar_position(value: &str) -> &'static str {
 }
 
 fn parse_sidebar_position(value: &str) -> Result<&'static str, AppError> {
-    let normalized = value.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "left" => Ok("left"),
-        "right" => Ok("right"),
-        _ => Err(AppError::InvalidInput(
-            "sidebar position must be 'left' or 'right'".to_string(),
-        )),
+    let normalized = value.trim();
+    if normalized.eq_ignore_ascii_case("left") {
+        return Ok("left");
     }
+    if normalized.eq_ignore_ascii_case("right") {
+        return Ok("right");
+    }
+
+    Err(AppError::InvalidInput(
+        "sidebar position must be 'left' or 'right'".to_string(),
+    ))
 }
 
 fn normalize_theme_id(value: &str) -> &'static str {
@@ -180,9 +183,9 @@ fn normalize_theme_id(value: &str) -> &'static str {
 }
 
 fn find_supported_theme_id(value: &str) -> Option<&'static str> {
-    let normalized = value.trim().to_ascii_lowercase();
+    let normalized = value.trim();
     for theme_id in SUPPORTED_THEME_IDS {
-        if normalized == theme_id {
+        if normalized.eq_ignore_ascii_case(theme_id) {
             return Some(theme_id);
         }
     }
@@ -191,11 +194,12 @@ fn find_supported_theme_id(value: &str) -> Option<&'static str> {
 }
 
 fn normalize_keybinding_profile(value: &str) -> &'static str {
-    let normalized = value.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "compact" => "compact",
-        _ => DEFAULT_KEYBINDING_PROFILE,
+    let normalized = value.trim();
+    if normalized.eq_ignore_ascii_case("compact") {
+        return "compact";
     }
+
+    DEFAULT_KEYBINDING_PROFILE
 }
 
 fn load_settings() -> Result<StoredSettings, AppError> {
