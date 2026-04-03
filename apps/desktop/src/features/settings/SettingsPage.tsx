@@ -167,6 +167,7 @@ export function SettingsPage() {
             </p>
             <input
               type="range"
+              class="theme-slider"
               min="0"
               max="1"
               step="0.01"

@@ -46,3 +46,7 @@ jobs:
       - name: Backend compile check
         working-directory: apps/desktop/src-tauri
         run: cargo check
+
+      - name: Backend clippy check
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets

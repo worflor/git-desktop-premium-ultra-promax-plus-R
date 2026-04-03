@@ -55,6 +55,33 @@
   --theme-spark-opacity: 0.13;
   --theme-spark-speed-ms: 24s;
   --status-online-rgb: 87, 206, 159;
+
+  /* ── Component Overrides ── */
+  --btn-bg: rgba(var(--chrome-accent-rgb), 0.08);
+  --btn-hover-bg: rgba(var(--chrome-accent-rgb), 0.18);
+  --btn-border: rgba(var(--chrome-border-rgb), 0.25);
+  --btn-text: var(--text-normal);
+  --btn-active-transform: translate(1px, 1px);
+  
+  --input-bg: rgba(var(--chrome-border-rgb), 0.06);
+  --input-border: rgba(var(--chrome-border-rgb), 0.25);
+  --input-focus-border: rgba(var(--chrome-accent-rgb), 0.5);
+
+  --slider-track: rgba(var(--chrome-border-rgb), 0.2);
+  --slider-thumb: var(--accent-bright);
+  --slider-thumb-border: transparent;
+
+  --secondary-btn-bg: transparent;
+  --secondary-btn-hover-bg: rgba(var(--chrome-border-rgb), 0.12);
+  --secondary-btn-border: rgba(var(--chrome-border-rgb), 0.25);
+  --item-hover-bg: rgba(var(--chrome-border-rgb), 0.1);
+  --item-active-bg: rgba(var(--chrome-accent-rgb), 0.12);
+  --item-active-border: rgba(var(--chrome-accent-rgb), 0.3);
+  --row-bg: rgba(var(--chrome-border-rgb), 0.06);
+
+  --scrollbar-thumb: rgba(var(--chrome-border-rgb), 0.25);
+  --scrollbar-hover: rgba(var(--chrome-border-rgb), 0.45);
+  --selection-bg: rgba(var(--chrome-accent-rgb), 0.3);
 }
 
 :root[data-theme="helix"] {
@@ -106,6 +133,11 @@
   --theme-spark-opacity: 0.06;
   --theme-spark-speed-ms: 34s;
   --status-online-rgb: 61, 146, 102;
+
+  --btn-bg: rgba(var(--chrome-accent-rgb), 0.12);
+  --btn-hover-bg: rgba(var(--chrome-accent-rgb), 0.22);
+  --btn-border: rgba(var(--chrome-border-rgb), 0.4);
+  --input-bg: rgba(var(--chrome-border-rgb), 0.08);
 }
 
 :root[data-theme="quanta"] {
@@ -351,6 +383,33 @@
   --theme-spark-opacity: 0;
   --theme-spark-speed-ms: 10s;
   --status-online-rgb: 85, 175, 65;
+
+  --btn-bg: #8b5a2b;
+  --btn-hover-bg: #a06d3d;
+  --btn-border: #3d2918;
+  --btn-text: #ffffff;
+  --btn-active-transform: translate(0, 4px);
+  --btn-shadow: inset -4px -4px 0px 0px #3d2918, inset 4px 4px 0px 0px #eec486;
+  
+  --input-bg: #1c1511;
+  --input-border: #584c44;
+  --input-focus-border: #70d655;
+
+  --slider-track: #1c1511;
+  --slider-thumb: #55af41;
+  --slider-thumb-border: #3d2918;
+
+  --secondary-btn-bg: #29211c;
+  --secondary-btn-hover-bg: #3f342d;
+  --secondary-btn-border: #100906;
+  --item-hover-bg: #3f342d;
+  --item-active-bg: #4c4038;
+  --item-active-border: #70d655;
+  --row-bg: #1c1511;
+
+  --scrollbar-thumb: #3d2918;
+  --scrollbar-hover: #584c44;
+  --selection-bg: rgba(112, 214, 85, 0.4);
 }
 
 [data-theme="blackboard"] {
@@ -396,4 +455,30 @@
   --theme-spark-opacity: 0.3;
   --theme-spark-speed-ms: 12s;
   --status-online-rgb: 150, 210, 255;
+
+  --btn-bg: transparent;
+  --btn-hover-bg: rgba(255, 255, 255, 0.08);
+  --btn-border: rgba(255, 255, 255, 0.4);
+  --btn-active-transform: translate(0px, 0px);
+  --btn-shadow: var(--shadow-elev);
+
+  --input-bg: transparent;
+  --input-border: rgba(255, 255, 255, 0.3);
+  --input-focus-border: var(--accent-bright);
+
+  --slider-track: rgba(255, 255, 255, 0.15);
+  --slider-thumb: #ffffff;
+  --slider-thumb-border: #ffffff;
+
+  --secondary-btn-bg: transparent;
+  --secondary-btn-hover-bg: rgba(255, 255, 255, 0.05);
+  --secondary-btn-border: rgba(255, 255, 255, 0.2);
+  --item-hover-bg: rgba(255, 255, 255, 0.05);
+  --item-active-bg: rgba(150, 210, 255, 0.1);
+  --item-active-border: rgba(150, 210, 255, 0.4);
+  --row-bg: transparent;
+
+  --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --scrollbar-hover: rgba(255, 255, 255, 0.4);
+  --selection-bg: rgba(255, 255, 255, 0.25);
 }
