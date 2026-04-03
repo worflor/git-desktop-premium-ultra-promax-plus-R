@@ -18,6 +18,9 @@ Acceptance criteria:
 - Enforces minimum supported Git version (2.39+)
 - Missing Git state returns actionable setup guidance
 - Command wrapper returns structured stdout/stderr/error envelopes
+Implementation update (2026-04-03):
+- Backend startup now runs an asynchronous readiness probe for git capabilities, auth baseline, forge adapters, and AI providers with structured bootstrap spans.
+- Git capability payload now includes resolved executable path diagnostics when host lookup succeeds.
 
 ### A-2 Repository open and recents (P0)
 Acceptance criteria:
@@ -126,6 +129,7 @@ Acceptance criteria:
 Implementation update (2026-04-03):
 - AI provider discovery now returns resolved binary command, detection source, and health-check status.
 - Detection now includes PATH plus known install path probes to improve Windows and non-PATH discovery.
+- Provider adapter contract tests now validate attempt strategy generation and truncation guarantees for bounded prompt/diff payload construction.
 
 ### E-2 Diff review stream panel (P1)
 Acceptance criteria:
@@ -164,6 +168,8 @@ Implementation update (2026-04-03):
 - Backend telemetry snapshot command now returns aggregated p50/p95 summaries and recent samples for diagnostics tooling.
 - Backend settings updates for telemetry retention now trigger immediate retention enforcement in backend storage.
 - Backend now persists structured operation lifecycle events (`start`, `success`, `failure`, `retry`) with request correlation IDs for command and git scopes.
+- Command handlers now set request context before service execution so nested spans and git command spans preserve command-level correlation IDs.
+- Diff chunk preparation and chunk retrieval now emit diff-scoped telemetry samples and span messages with payload/chunk metrics.
 
 ### F-4 Local telemetry retention policy (P1)
 Acceptance criteria:
@@ -197,6 +203,7 @@ Implementation update (2026-04-03):
 - Backend fixture parity tests now cover status stage/unstage, branch listing, commit history/detail, and merge-conflict detection/abort against direct git CLI outputs.
 - CI now includes a dedicated fixture test step via `cargo test fixture_ -- --nocapture`.
 - Additional backend unit coverage now validates diff chunk parsing/chunking behavior, AI audit redaction/retention behavior, forge/AI adapter contract invariants, and transient git retry classification.
+- Fixture parity coverage now also validates stash lifecycle parity and worktree create/remove behavior against direct git CLI outputs.
 
 ### Advanced Git Workflow Expansion (P1)
 Acceptance criteria:

@@ -2,6 +2,7 @@ mod cli;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::process::Command;
 
 use crate::errors::AppError;
 use crate::models::git::GitCapabilities;
@@ -41,9 +42,33 @@ pub fn detect_capabilities() -> Result<GitCapabilities, AppError> {
     Ok(GitCapabilities {
         git_installed: true,
         git_version: version,
+        git_executable_path: resolve_git_executable_path(),
         supports_partial_clone,
         supports_sparse_checkout,
     })
+}
+
+fn resolve_git_executable_path() -> Option<String> {
+    let lookup = if cfg!(target_os = "windows") {
+        Command::new("where").arg("git").output()
+    } else {
+        Command::new("which").arg("git").output()
+    }
+    .ok()?;
+
+    if !lookup.status.success() {
+        return None;
+    }
+
+    first_non_empty_line(&lookup.stdout)
+}
+
+fn first_non_empty_line(payload: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(payload)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.to_string())
 }
 
 fn ensure_git_ready() -> Result<(), AppError> {
@@ -1360,9 +1385,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        abort_conflict_resolution, build_conflict_guidance, conflict_action_args,
-        get_commit_detail, get_conflict_state, get_repository_status, list_branches,
-        list_commit_history, normalize_conflict_operation, stage_paths, start_cherry_pick,
+        abort_conflict_resolution, build_conflict_guidance, conflict_action_args, create_stash,
+        create_worktree, drop_stash, get_commit_detail, get_conflict_state, get_repository_status,
+        list_branches, list_commit_history, list_stashes, list_worktrees,
+        normalize_conflict_operation, remove_worktree, stage_paths, start_cherry_pick,
         start_rebase, unstage_paths,
     };
 
@@ -1854,5 +1880,102 @@ mod tests {
             get_conflict_state(fixture.path_str()).expect("expected post-abort conflict state");
         assert!(!post_state.in_conflict);
         assert!(post_state.operation.is_none());
+    }
+
+    #[test]
+    fn fixture_stash_lifecycle_matches_git_cli() {
+        let fixture = FixtureRepo::new("stash-lifecycle");
+        write_repo_file(fixture.path(), "tracked.txt", "base\n");
+        commit_all(fixture.path(), "base commit");
+
+        write_repo_file(fixture.path(), "tracked.txt", "base\nnext\n");
+        write_repo_file(fixture.path(), "notes/untracked.txt", "draft\n");
+
+        let stash = create_stash(fixture.path_str(), Some("fixture stash"), true)
+            .expect("expected stash creation to succeed");
+        assert_eq!(stash.operation, "create");
+        let stash_ref = stash
+            .stash_ref
+            .clone()
+            .expect("created stash should return a stash ref");
+
+        let provider_list =
+            list_stashes(fixture.path_str(), 20).expect("expected provider stash list to succeed");
+        let expected_list_output = run_fixture_git(
+            fixture.path(),
+            &["stash", "list", "-n20", "--format=%gd%x1f%gs"],
+        );
+
+        let expected_refs = expected_list_output
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                let stash_ref = trimmed.split('\x1f').next().unwrap_or_default().trim();
+                if stash_ref.is_empty() {
+                    return None;
+                }
+                Some(stash_ref.to_string())
+            })
+            .collect::<Vec<String>>();
+
+        let provider_refs = provider_list
+            .entries
+            .iter()
+            .map(|entry| entry.stash_ref.clone())
+            .collect::<Vec<String>>();
+        assert_eq!(provider_refs, expected_refs);
+
+        drop_stash(fixture.path_str(), stash_ref.as_str()).expect("expected stash drop to succeed");
+
+        let post_drop = list_stashes(fixture.path_str(), 20)
+            .expect("expected provider stash list after drop to succeed");
+        assert!(post_drop.entries.is_empty());
+    }
+
+    #[test]
+    fn fixture_worktree_create_remove_matches_git_cli() {
+        let fixture = FixtureRepo::new("worktree-lifecycle");
+        write_repo_file(fixture.path(), "tracked.txt", "base\n");
+        commit_all(fixture.path(), "base commit");
+
+        let worktree_path = std::env::temp_dir()
+            .join(format!("gdpu-worktree-{}", Uuid::new_v4()))
+            .to_string_lossy()
+            .to_string();
+        let branch_name = "feature/worktree";
+
+        let baseline_list =
+            list_worktrees(fixture.path_str()).expect("expected baseline worktree list to succeed");
+        let baseline_count = baseline_list.worktrees.len();
+
+        create_worktree(
+            fixture.path_str(),
+            worktree_path.as_str(),
+            branch_name,
+            Some("main"),
+        )
+        .expect("expected worktree creation to succeed");
+
+        let provider_list =
+            list_worktrees(fixture.path_str()).expect("expected provider worktree list to succeed");
+        assert!(provider_list.worktrees.len() >= baseline_count.saturating_add(1));
+        assert!(provider_list
+            .worktrees
+            .iter()
+            .any(|item| item.branch.as_deref() == Some(branch_name)));
+
+        remove_worktree(fixture.path_str(), worktree_path.as_str(), true)
+            .expect("expected worktree removal to succeed");
+
+        let post_remove = list_worktrees(fixture.path_str())
+            .expect("expected provider worktree list after remove to succeed");
+        assert!(post_remove.worktrees.len() <= provider_list.worktrees.len());
+        assert!(!post_remove
+            .worktrees
+            .iter()
+            .any(|item| item.branch.as_deref() == Some(branch_name)));
     }
 }

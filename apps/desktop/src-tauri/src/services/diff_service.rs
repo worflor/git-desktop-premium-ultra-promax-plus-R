@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::errors::AppError;
 use crate::models::operations::{DiffHunkData, FileDiffChunkData, FileDiffManifestData};
 use crate::runtime::state::{AppState, DiffPayloadRecord};
-use crate::services::git_provider;
+use crate::services::{git_provider, logging_service, telemetry_service};
 
 const DEFAULT_CHUNK_SIZE_BYTES: usize = 64 * 1024;
 const MIN_CHUNK_SIZE_BYTES: usize = 4 * 1024;
@@ -22,60 +22,97 @@ pub fn prepare_file_diff_chunks(
     context_lines: usize,
     chunk_size_bytes: Option<usize>,
 ) -> Result<FileDiffManifestData, AppError> {
-    let chunk_size = chunk_size_bytes
-        .unwrap_or(DEFAULT_CHUNK_SIZE_BYTES)
-        .clamp(MIN_CHUNK_SIZE_BYTES, MAX_CHUNK_SIZE_BYTES);
+    let started_at = Instant::now();
+    let request_id = logging_service::current_request_context();
 
-    let diff_text = git_provider::get_file_diff(repository_path, path, staged, context_lines)?;
-    let total_bytes = diff_text.len();
-    if total_bytes > MAX_DIFF_BYTES {
-        return Err(AppError::DiffTooLarge {
-            bytes: total_bytes as u64,
-            max_bytes: MAX_DIFF_BYTES as u64,
-        });
-    }
+    let result = (|| {
+        let chunk_size = chunk_size_bytes
+            .unwrap_or(DEFAULT_CHUNK_SIZE_BYTES)
+            .clamp(MIN_CHUNK_SIZE_BYTES, MAX_CHUNK_SIZE_BYTES);
 
-    let hunks = parse_hunks(&diff_text);
-    let (additions, deletions) = count_changed_lines(&diff_text);
-    let chunks = split_text_chunks(&diff_text, chunk_size);
-    let diff_id = Uuid::new_v4().to_string();
+        let diff_text = git_provider::get_file_diff(repository_path, path, staged, context_lines)?;
+        let total_bytes = diff_text.len();
+        if total_bytes > MAX_DIFF_BYTES {
+            return Err(AppError::DiffTooLarge {
+                bytes: total_bytes as u64,
+                max_bytes: MAX_DIFF_BYTES as u64,
+            });
+        }
 
-    let manifest = FileDiffManifestData {
-        diff_id: diff_id.clone(),
-        path: path.trim().to_string(),
-        staged,
-        context_lines: context_lines as u32,
-        chunk_size_bytes: chunk_size as u32,
-        chunk_count: chunks.len() as u32,
-        total_bytes: total_bytes as u32,
-        total_lines: diff_text.lines().count() as u32,
-        changed_lines: additions.saturating_add(deletions),
-        additions,
-        deletions,
-        hunk_count: hunks.len() as u32,
-        hunks,
+        let hunks = parse_hunks(&diff_text);
+        let (additions, deletions) = count_changed_lines(&diff_text);
+        let chunks = split_text_chunks(&diff_text, chunk_size);
+        let diff_id = Uuid::new_v4().to_string();
+
+        let manifest = FileDiffManifestData {
+            diff_id: diff_id.clone(),
+            path: path.trim().to_string(),
+            staged,
+            context_lines: context_lines as u32,
+            chunk_size_bytes: chunk_size as u32,
+            chunk_count: chunks.len() as u32,
+            total_bytes: total_bytes as u32,
+            total_lines: diff_text.lines().count() as u32,
+            changed_lines: additions.saturating_add(deletions),
+            additions,
+            deletions,
+            hunk_count: hunks.len() as u32,
+            hunks,
+        };
+
+        let now = Instant::now();
+        let mut payloads = state
+            .diff_payloads
+            .lock()
+            .map_err(|_| AppError::Internal("failed to lock diff payload cache".to_string()))?;
+
+        prune_diff_payloads(&mut payloads, now);
+        payloads.insert(
+            diff_id,
+            DiffPayloadRecord {
+                created_at: now,
+                expires_at: now + DIFF_CACHE_TTL,
+                manifest: manifest.clone(),
+                chunks,
+            },
+        );
+
+        trim_diff_payloads(&mut payloads);
+
+        Ok(manifest)
+    })();
+
+    let mut error_code = None::<String>;
+    let message = match &result {
+        Ok(manifest) => Some(format!(
+            "renderer_mode=backend-chunking payload_bytes={} changed_lines={} hunk_count={} chunk_count={}",
+            manifest.total_bytes, manifest.changed_lines, manifest.hunk_count, manifest.chunk_count
+        )),
+        Err(error) => {
+            error_code = Some(error.to_command_error().code);
+            Some(error.to_string())
+        }
     };
 
-    let now = Instant::now();
-    let mut payloads = state
-        .diff_payloads
-        .lock()
-        .map_err(|_| AppError::Internal("failed to lock diff payload cache".to_string()))?;
-
-    prune_diff_payloads(&mut payloads, now);
-    payloads.insert(
-        diff_id,
-        DiffPayloadRecord {
-            created_at: now,
-            expires_at: now + DIFF_CACHE_TTL,
-            manifest: manifest.clone(),
-            chunks,
-        },
+    let duration_ms = started_at.elapsed().as_millis() as u64;
+    let _ = telemetry_service::record_command_sample(
+        "diff",
+        "diff.prepare_file_chunks",
+        result.is_ok(),
+        duration_ms,
+        error_code.as_deref(),
+    );
+    let _ = logging_service::record_operation_span(
+        "diff",
+        "diff.prepare_file_chunks",
+        request_id.as_deref(),
+        started_at,
+        result.is_ok(),
+        error_code.as_deref(),
+        message.as_deref(),
     );
 
-    trim_diff_payloads(&mut payloads);
-
-    Ok(manifest)
+    result
 }
 
 pub fn get_file_diff_chunk(
@@ -83,38 +120,75 @@ pub fn get_file_diff_chunk(
     diff_id: &str,
     chunk_index: usize,
 ) -> Result<FileDiffChunkData, AppError> {
-    let diff_id = diff_id.trim();
-    if diff_id.is_empty() {
-        return Err(AppError::InvalidInput(
-            "diff id is required for chunk retrieval".to_string(),
-        ));
-    }
+    let started_at = Instant::now();
+    let request_id = logging_service::current_request_context();
 
-    let now = Instant::now();
-    let mut payloads = state
-        .diff_payloads
-        .lock()
-        .map_err(|_| AppError::Internal("failed to lock diff payload cache".to_string()))?;
+    let result = (|| {
+        let diff_id = diff_id.trim();
+        if diff_id.is_empty() {
+            return Err(AppError::InvalidInput(
+                "diff id is required for chunk retrieval".to_string(),
+            ));
+        }
 
-    prune_diff_payloads(&mut payloads, now);
+        let now = Instant::now();
+        let mut payloads = state
+            .diff_payloads
+            .lock()
+            .map_err(|_| AppError::Internal("failed to lock diff payload cache".to_string()))?;
 
-    let record = payloads
-        .get(diff_id)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown diff id: {diff_id}")))?;
+        prune_diff_payloads(&mut payloads, now);
 
-    if chunk_index >= record.chunks.len() {
-        return Err(AppError::InvalidInput(format!(
-            "chunk index {chunk_index} is out of range for diff {diff_id}"
-        )));
-    }
+        let record = payloads
+            .get(diff_id)
+            .ok_or_else(|| AppError::InvalidInput(format!("unknown diff id: {diff_id}")))?;
 
-    Ok(FileDiffChunkData {
-        diff_id: diff_id.to_string(),
-        chunk_index: chunk_index as u32,
-        chunk_count: record.manifest.chunk_count,
-        has_more: chunk_index + 1 < record.chunks.len(),
-        chunk_text: record.chunks[chunk_index].clone(),
-    })
+        if chunk_index >= record.chunks.len() {
+            return Err(AppError::InvalidInput(format!(
+                "chunk index {chunk_index} is out of range for diff {diff_id}"
+            )));
+        }
+
+        Ok(FileDiffChunkData {
+            diff_id: diff_id.to_string(),
+            chunk_index: chunk_index as u32,
+            chunk_count: record.manifest.chunk_count,
+            has_more: chunk_index + 1 < record.chunks.len(),
+            chunk_text: record.chunks[chunk_index].clone(),
+        })
+    })();
+
+    let mut error_code = None::<String>;
+    let message = match &result {
+        Ok(chunk) => Some(format!(
+            "renderer_mode=backend-chunking chunk_index={} chunk_count={} has_more={}",
+            chunk.chunk_index, chunk.chunk_count, chunk.has_more
+        )),
+        Err(error) => {
+            error_code = Some(error.to_command_error().code);
+            Some(error.to_string())
+        }
+    };
+
+    let duration_ms = started_at.elapsed().as_millis() as u64;
+    let _ = telemetry_service::record_command_sample(
+        "diff",
+        "diff.get_file_chunk",
+        result.is_ok(),
+        duration_ms,
+        error_code.as_deref(),
+    );
+    let _ = logging_service::record_operation_span(
+        "diff",
+        "diff.get_file_chunk",
+        request_id.as_deref(),
+        started_at,
+        result.is_ok(),
+        error_code.as_deref(),
+        message.as_deref(),
+    );
+
+    result
 }
 
 fn prune_diff_payloads(

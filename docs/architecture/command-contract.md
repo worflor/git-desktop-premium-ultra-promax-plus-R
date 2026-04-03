@@ -125,6 +125,9 @@ Telemetry payload note:
 - clear_command_telemetry deletes persisted telemetry samples and returns operation metadata.
 - Backend telemetry samples are local-only and retention-bound by app telemetry settings.
 
+Capability payload note:
+- get_git_capabilities now includes `gitExecutablePath` when the binary path can be resolved from host environment lookup (`where`/`which`).
+
 Diff payload note:
 - prepare_file_diff_chunks accepts `{ repositoryPath, path, staged?, contextLines?, chunkSizeBytes? }` and returns diff manifest metadata including hunk summaries.
 - get_file_diff_chunk accepts `{ diffId, chunkIndex }` and returns chunk text plus pagination metadata.
@@ -176,3 +179,5 @@ Implementation update (2026-04-03):
 - All tauri command handlers now use telemetry-aware success/error wrappers that emit command-level duration and outcome samples.
 - Backend now persists structured operation lifecycle events (`start`, `success`, `failure`, `retry`) with correlation IDs in local rolling storage.
 - System Git command execution now includes transient retry events for network-class operations (`fetch`, `pull`, `push`, `ls-remote`, `remote`) when failures match retryable network signatures.
+- Command handlers now initialize per-request correlation context at command entry, so nested service/git spans share the same requestId lineage.
+- Diff chunk manifest/chunk retrieval now emits backend diff telemetry spans with payload and chunk metadata (`renderer_mode=backend-chunking`).

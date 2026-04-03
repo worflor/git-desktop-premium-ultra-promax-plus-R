@@ -5,6 +5,7 @@ use serde::Serialize;
 pub struct GitCapabilities {
     pub git_installed: bool,
     pub git_version: Option<String>,
+    pub git_executable_path: Option<String>,
     pub supports_partial_clone: bool,
     pub supports_sparse_checkout: bool,
 }

@@ -15,6 +15,7 @@ use crate::services::settings_service;
 const OPERATION_LOG_FILE_NAME: &str = "operation_events.jsonl";
 const DEFAULT_RETENTION_DAYS: u32 = 30;
 const DEFAULT_RETENTION_MB: u32 = 64;
+const LOG_MESSAGE_CHAR_LIMIT: usize = 1_200;
 
 thread_local! {
     static REQUEST_CONTEXT: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -55,6 +56,20 @@ pub fn with_request_context<T>(request_id: &str, operation: impl FnOnce() -> T) 
         *current = previous;
     });
     result
+}
+
+pub fn set_request_context(request_id: &str) {
+    REQUEST_CONTEXT.with(|context| {
+        let mut current = context.borrow_mut();
+        *current = Some(request_id.to_string());
+    });
+}
+
+pub fn clear_request_context() {
+    REQUEST_CONTEXT.with(|context| {
+        let mut current = context.borrow_mut();
+        *current = None;
+    });
 }
 
 pub fn current_request_context() -> Option<String> {
@@ -120,10 +135,7 @@ pub fn record_operation_span(
         ok: Some(ok),
         duration_ms: Some(duration_ms),
         error_code: error_code.map(|value| value.trim().to_string()),
-        message: message
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| value.to_string()),
+        message: message.and_then(sanitize_log_message),
         attempt: None,
         created_at: finished_at.to_rfc3339_opts(SecondsFormat::Secs, true),
         serialized_len: 0,
@@ -160,7 +172,7 @@ pub fn record_retry_event(
         ok: None,
         duration_ms: None,
         error_code: error_code.map(|value| value.trim().to_string()),
-        message: Some(message.trim().to_string()),
+        message: sanitize_log_message(message),
         attempt: Some(attempt),
         created_at: now_iso8601_string(),
         serialized_len: 0,
@@ -219,6 +231,72 @@ fn normalize_ascii_label(value: &str) -> String {
     }
 
     trimmed.to_ascii_lowercase()
+}
+
+fn sanitize_log_message(value: &str) -> Option<String> {
+    let clipped = truncate_chars(value.trim(), LOG_MESSAGE_CHAR_LIMIT);
+    if clipped.is_empty() {
+        return None;
+    }
+
+    let redacted = clipped
+        .lines()
+        .map(redact_log_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if redacted.trim().is_empty() {
+        return None;
+    }
+
+    Some(redacted)
+}
+
+fn redact_log_line(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+
+    if let Some(index) = lower.find("bearer ") {
+        return format!("{}Bearer [REDACTED]", &line[..index]);
+    }
+
+    for separator in [':', '='] {
+        if let Some(index) = line.find(separator) {
+            let key = line[..index].trim().to_ascii_lowercase();
+            if key.contains("token")
+                || key.contains("secret")
+                || key.contains("password")
+                || key.contains("api_key")
+                || key.contains("apikey")
+                || key.contains("authorization")
+            {
+                return format!("{}{} [REDACTED]", &line[..index], separator);
+            }
+        }
+    }
+
+    let mut redacted = line.to_string();
+    for marker in ["ghp_", "gho_", "ghu_", "ghs_", "sk-"] {
+        if let Some(index) = lower.find(marker) {
+            redacted.replace_range(index.., "[REDACTED]");
+            break;
+        }
+    }
+
+    redacted
+}
+
+fn truncate_chars(value: &str, limit: usize) -> String {
+    if value.is_empty() {
+        return String::new();
+    }
+
+    let mut iter = value.chars();
+    let truncated: String = iter.by_ref().take(limit).collect();
+    if iter.next().is_some() {
+        return format!("{truncated}\n[...truncated to {limit} chars...]");
+    }
+
+    truncated
 }
 
 fn append_events(events: &[StoredOperationEvent]) -> Result<(), AppError> {
@@ -361,4 +439,29 @@ fn parse_iso8601(value: &str) -> Option<DateTime<Utc>> {
 
 fn now_iso8601_string() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sanitize_log_message, truncate_chars};
+
+    #[test]
+    fn sanitize_log_message_redacts_secret_shapes() {
+        let sanitized = sanitize_log_message("Authorization: bearer abc\napi_key=12345\nghp_x")
+            .expect("sanitized text should be present");
+
+        assert!(
+            sanitized.contains("Authorization: [REDACTED]")
+                || sanitized.contains("Bearer [REDACTED]")
+        );
+        assert!(sanitized.contains("api_key= [REDACTED]"));
+        assert!(sanitized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn truncate_chars_marks_clipped_messages() {
+        let truncated = truncate_chars("abcdefgh", 4);
+        assert!(truncated.starts_with("abcd"));
+        assert!(truncated.contains("truncated to 4 chars"));
+    }
 }

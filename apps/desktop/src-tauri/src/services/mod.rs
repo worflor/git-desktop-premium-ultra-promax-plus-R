@@ -1,6 +1,7 @@
 pub mod ai_audit_service;
 pub mod ai_service;
 pub mod auth_service;
+pub mod bootstrap_service;
 pub mod diff_service;
 pub mod forge_service;
 pub mod git_provider;

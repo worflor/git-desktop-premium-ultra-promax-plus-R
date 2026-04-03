@@ -80,6 +80,9 @@ At startup and on demand, discover installed CLIs by:
 - Known install paths (OS-specific)
 - Health-check commands
 
+Implementation update (2026-04-03):
+- Backend now runs an asynchronous startup readiness probe that checks git capabilities, auth baseline, forge adapter availability, and AI provider discovery.
+
 ### Adapter interface
 Each provider implements:
 - name()
@@ -112,6 +115,10 @@ Each provider implements:
 - Structured logs (info/warn/error) with correlation IDs
 - Perf spans around key operations (status, diff, sync, AI request)
 - User-visible diagnostics page for provider and repo health
+
+Implementation update (2026-04-03):
+- Command handlers now initialize correlation context before service execution so nested command/service/git spans share request lineage.
+- Persisted operation log messages now apply sensitive-token redaction and bounded truncation before storage.
 
 ## Performance Budgets
 - Command round-trip p95: <= 50ms for status metadata

@@ -50,9 +50,10 @@ Behavior:
 ## Capability Detection
 At startup and in diagnostics:
 1. Detect system Git availability and version.
-2. Detect credential helper/SSH readiness.
-3. Detect optional forge CLIs and auth status.
-4. Publish capability matrix to UI.
+2. Resolve Git executable path when possible (`where`/`which`) for diagnostics transparency.
+3. Detect credential helper/SSH readiness.
+4. Detect optional forge CLIs and auth status.
+5. Publish capability matrix to UI.
 
 ## Failure and Fallback
 - If forge adapter is unavailable, core Git remains fully functional.

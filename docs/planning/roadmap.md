@@ -12,6 +12,8 @@ Deliverables:
 Exit criteria:
 - App launches cross-platform in dev mode
 - One repo can be opened and inspected
+Implementation update (2026-04-03):
+- Backend now performs asynchronous startup readiness probing (git capabilities, auth baseline, forge adapters, AI providers) and records bootstrap lifecycle spans for diagnostics.
 
 ## Phase 1 - Core Loop MVP (Week 2-4)
 Deliverables:
@@ -32,6 +34,7 @@ Deliverables:
 Exit criteria:
 Implementation update (2026-04-03):
 - Backend diff chunking/hunk metadata APIs are implemented and covered by parsing/chunking unit tests.
+- Backend diff chunk APIs now emit diff-scoped telemetry samples and span metadata to support renderer-path diagnostics.
 
 ## Phase 3 - AI Assist Layer (Week 8-10)
 Deliverables:

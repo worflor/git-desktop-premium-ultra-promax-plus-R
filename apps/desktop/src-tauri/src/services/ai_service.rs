@@ -968,8 +968,9 @@ mod tests {
     use crate::errors::AppError;
 
     use super::{
-        known_binary_candidates, provider_binary_name, push_candidate, validate_review_input,
-        PROVIDER_BINARIES,
+        build_inline_prompt, build_provider_attempts, build_stdin_payload, known_binary_candidates,
+        provider_binary_name, push_candidate, validate_review_input, MAX_INLINE_DIFF_CHARS,
+        MAX_STDIN_DIFF_CHARS, PROVIDER_BINARIES,
     };
 
     #[test]
@@ -1028,5 +1029,33 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn build_provider_attempts_exposes_expected_contract_strategies() {
+        let attempts = build_provider_attempts("review prompt", "diff body");
+
+        assert!(attempts.len() >= 7);
+        assert_eq!(attempts[0].name, "prompt --prompt");
+        assert!(attempts
+            .iter()
+            .any(|attempt| attempt.stdin_payload.is_some()));
+        assert!(attempts.iter().any(|attempt| {
+            attempt
+                .args
+                .iter()
+                .any(|arg| arg.eq_ignore_ascii_case("--stdin"))
+        }));
+    }
+
+    #[test]
+    fn prompt_builders_clip_large_diff_payloads() {
+        let large_inline_diff = "x".repeat(MAX_INLINE_DIFF_CHARS + 32);
+        let inline_prompt = build_inline_prompt("prompt", &large_inline_diff);
+        assert!(inline_prompt.contains("truncated to"));
+
+        let large_stdin_diff = "y".repeat(MAX_STDIN_DIFF_CHARS + 64);
+        let stdin_payload = build_stdin_payload("prompt", &large_stdin_diff);
+        assert!(stdin_payload.contains("truncated to"));
     }
 }

@@ -104,19 +104,24 @@ const THEME_DEFINITIONS = [
   {
     id: "halo",
     label: "Halo",
-    description: "Ultra-glass dark mode with highly luminous mint-cyan edges.",
+    description: "Angelic white gold with ethereal clouds and divine radiance.",
     shader: {
       mode: "glass",
-      blurPx: 24,
-      saturatePct: 160,
-      opacityScale: 0.82,
-      edgeIntensity: 0.95,
-      texture: "grain",
-      textureOpacity: 0.06,
-      motion: "elastic",
-      luminescence: 0.8,
-      particles: "stardust",
-      parallaxStrength: 0.6
+      blurPx: 32,
+      saturatePct: 125,
+      opacityScale: 0.75,
+      edgeIntensity: 1.2,
+      texture: "none",
+      motion: "fluid",
+      luminescence: 1.5,
+      particles: "ethereal",
+      parallaxStrength: 0.4,
+      geometry: {
+        radius: 12,
+        typography: "'Playfair Display', serif",
+        fontScale: 1.12,
+        letterSpacing: "0.035em"
+      }
     }
   },
   {

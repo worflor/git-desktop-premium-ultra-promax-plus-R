@@ -10,13 +10,14 @@ export interface SurfaceMaterialShader {
   textureOpacity?: number;
   motion?: "snappy" | "fluid" | "elastic";
   luminescence?: number;
-  particles?: "none" | "stardust" | "embers" | "voxels" | "chalkdust";
+  particles?: "none" | "stardust" | "embers" | "voxels" | "chalkdust" | "ethereal";
   parallaxStrength?: number;
   geometry?: {
     radius?: number; // base border radius scale
     pixelated?: boolean; // toggle nearest-neighbor and disable anti-aliasing
     typography?: string; // inject a custom font family
     fontScale?: number; // scaling factor for fonts that naturally render small
+    letterSpacing?: string; // custom kerning for high-end feel
   };
 }
 
@@ -277,7 +278,42 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
 
       svg += `<path d="${d}" class="chalk-line chalk-filter" stroke="${color}" stroke-width="${strokeW}" pathLength="100" stroke-dasharray="100" style="animation-duration:${dur}s;animation-delay:${del}s;" />`;
     }
+  } else if (shader.particles === "ethereal") {
+    // Divine Ethereal Engine v2: Slow drift clouds + Shimmering Celestial Sparks
+    svg += `<style>
+      .cloud { animation: drift linear infinite; fill: ${baseFill}; opacity: 0; }
+      .spark { animation: ascend ease-in-out infinite; fill: #f3e5ab; opacity: 0; }
+      .spark-shimmer { animation: shimmer ease-in-out infinite alternate; }
+      @keyframes drift { 0% { transform: translate(-150px, 0); opacity: 0; } 15% { opacity: 0.10; } 85% { opacity: 0.10; } 100% { transform: translate(1150px, 30px); opacity: 0; } }
+      @keyframes ascend { 0% { transform: translateY(1050px) scale(0); opacity: 0; } 40% { opacity: 0.7; } 100% { transform: translateY(-50px) scale(1.4); opacity: 0; } }
+      @keyframes shimmer { 0% { transform: scale(0.8); filter: brightness(1); } 100% { transform: scale(1.2); filter: brightness(1.8); } }
+    </style>
+    <filter id='cloudBlur'><feGaussianBlur in='SourceGraphic' stdDeviation='50'/></filter>`;
+    
+    // Large ambient clouds (procedural blobs) - Slower and softer
+    for (let i = 0; i < 5; i++) {
+      const cx = (Math.sin(i * 99) * 400 + 400).toFixed(1);
+      const cy = (Math.cos(i * 11) * 300 + 300).toFixed(1);
+      const rx = (Math.abs(Math.sin(i * 77)) * 240 + 200).toFixed(1);
+      const ry = (Math.abs(Math.cos(i * 88)) * 120 + 100).toFixed(1);
+      const dur = (Math.abs(Math.sin(i * 22)) * 80 + 140).toFixed(1); // 140s - 220s for ultra-slow drift
+      const del = (Math.abs(Math.cos(i * 33)) * -100).toFixed(1);
+      svg += `<ellipse cx='${cx}' cy='${cy}' rx='${rx}' ry='${ry}' filter='url(#cloudBlur)' class='cloud' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
+    }
+
+    // Rising golden divine sparks - Shivering in the light
+    for (let i = 0; i < 20; i++) {
+      const x = (Math.sin(i * 555) * 500 + 500).toFixed(1);
+      const r = (Math.abs(Math.sin(i * 44)) * 1.2 + 0.4).toFixed(1);
+      const dur = (Math.abs(Math.sin(i * 66)) * 15 + 12).toFixed(1);
+      const del = (Math.abs(Math.sin(i * 77)) * 25).toFixed(1);
+      const shimDur = (Math.abs(Math.sin(i * 88)) * 2 + 1.5).toFixed(1);
+      svg += `<g class='spark' style='animation-duration:${dur}s;animation-delay:${del}s'>
+        <circle cx='${x}' cy='0' r='${r}' class='spark-shimmer' style='animation-duration:${shimDur}s' />
+      </g>`;
+    }
   }
+
   svg += `</svg>`;
   return `url(data:image/svg+xml;base64,${btoa(svg)})`;
 }
@@ -424,13 +460,22 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
     root.style.removeProperty("--runtime-font-scale");
   }
 
+  if (shader.geometry?.letterSpacing) {
+    root.style.setProperty("--runtime-letter-spacing", shader.geometry.letterSpacing);
+  } else {
+    root.style.removeProperty("--runtime-letter-spacing");
+  }
+
   if (ambientColor) {
     // Generate unified cell-shading artifacts using bitshift halving for the hard shadow
     const shadowR = ambientColor.r >> 1;
     const shadowG = ambientColor.g >> 1;
     const shadowB = ambientColor.b >> 1;
     root.style.setProperty("--runtime-cell-shadow", `rgba(${shadowR}, ${shadowG}, ${shadowB}, 0.45)`);
-    root.style.setProperty("--runtime-rim-light", `rgba(${ambientColor.r}, ${ambientColor.g}, ${ambientColor.b}, ${clamp(runtime.alphaScale * 0.35, 0.05, 0.8)})`);
+    
+    // Clean Rim Light: Restoring pure, high-transparency edge definition
+    const rimAlpha = clamp(runtime.alphaScale * 0.35, 0.05, 0.8);
+    root.style.setProperty("--runtime-rim-light", `rgba(${ambientColor.r}, ${ambientColor.g}, ${ambientColor.b}, ${rimAlpha.toFixed(2)})`);
 
     // Scale the luminescence multiplier through algorithmic box-shadow interpolation
     const lum = clamp(shader.luminescence ?? 1.0, 0, 3.0);

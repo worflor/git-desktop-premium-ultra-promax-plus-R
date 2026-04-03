@@ -5,8 +5,11 @@ mod runtime;
 mod services;
 
 use runtime::state::AppState;
+use services::bootstrap_service;
 
 fn main() {
+    std::thread::spawn(bootstrap_service::run_startup_readiness_probe);
+
     tauri::Builder::default()
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![

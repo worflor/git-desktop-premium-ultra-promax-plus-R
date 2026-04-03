@@ -28,8 +28,10 @@ use crate::services::{
 };
 
 fn response_meta(started_at: Instant, state: &State<'_, AppState>) -> ResponseMeta {
+    let request_id =
+        logging_service::current_request_context().unwrap_or_else(|| Uuid::new_v4().to_string());
     ResponseMeta {
-        request_id: Uuid::new_v4().to_string(),
+        request_id,
         duration_ms: started_at.elapsed().as_millis() as u64,
         version: state.contract_version.clone(),
     }
@@ -58,6 +60,7 @@ fn command_ok<T: Serialize>(
         meta.duration_ms,
         None,
     );
+    logging_service::clear_request_context();
     CommandResult::ok(data, meta)
 }
 
@@ -87,7 +90,7 @@ fn map_error_with_command<T: Serialize>(
         meta.duration_ms,
         Some(error_code.as_str()),
     );
-
+    logging_service::clear_request_context();
     CommandResult::error(command_error, meta)
 }
 
@@ -97,6 +100,8 @@ pub fn open_repository(
     state: State<'_, AppState>,
 ) -> CommandResult<OpenRepositoryData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match repository_service::open_repository(&state, &repository_path) {
         Ok(data) => command_ok("open_repository", started_at, &state, data),
@@ -109,6 +114,8 @@ pub fn list_recent_repositories(
     state: State<'_, AppState>,
 ) -> CommandResult<RecentRepositoriesData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     let mut repositories = state
         .recent_repositories
@@ -134,6 +141,8 @@ pub fn list_recent_repositories(
 #[tauri::command]
 pub fn get_git_capabilities(state: State<'_, AppState>) -> CommandResult<GitCapabilities> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::detect_capabilities() {
         Ok(data) => command_ok("get_git_capabilities", started_at, &state, data),
@@ -144,6 +153,8 @@ pub fn get_git_capabilities(state: State<'_, AppState>) -> CommandResult<GitCapa
 #[tauri::command]
 pub fn get_auth_status(state: State<'_, AppState>) -> CommandResult<AuthStatus> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match auth_service::get_auth_status(None) {
         Ok(data) => command_ok("get_auth_status", started_at, &state, data),
@@ -157,6 +168,8 @@ pub fn get_repository_auth_status(
     state: State<'_, AppState>,
 ) -> CommandResult<AuthStatus> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match auth_service::get_auth_status(Some(&repository_path)) {
         Ok(data) => command_ok("get_repository_auth_status", started_at, &state, data),
@@ -169,6 +182,8 @@ pub fn get_repository_auth_status(
 #[tauri::command]
 pub fn list_forge_adapters(state: State<'_, AppState>) -> CommandResult<ForgeAdapterList> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match forge_service::list_forge_adapters() {
         Ok(data) => command_ok("list_forge_adapters", started_at, &state, data),
@@ -182,6 +197,8 @@ pub fn get_repository_integration_matrix(
     state: State<'_, AppState>,
 ) -> CommandResult<RepositoryIntegrationMatrix> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match forge_service::get_repository_integration_matrix(&repository_path) {
         Ok(data) => command_ok(
@@ -205,6 +222,8 @@ pub fn get_repository_status(
     state: State<'_, AppState>,
 ) -> CommandResult<RepositoryStatusData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::get_repository_status(&repository_path) {
         Ok(data) => command_ok("get_repository_status", started_at, &state, data),
@@ -218,6 +237,8 @@ pub fn list_branches(
     state: State<'_, AppState>,
 ) -> CommandResult<BranchListData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::list_branches(&repository_path) {
         Ok(data) => command_ok("list_branches", started_at, &state, data),
@@ -233,6 +254,8 @@ pub fn create_branch(
     state: State<'_, AppState>,
 ) -> CommandResult<BranchOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::create_branch(&repository_path, &branch_name, from_ref.as_deref()) {
         Ok(_) => command_ok(
@@ -256,6 +279,8 @@ pub fn checkout_branch(
     state: State<'_, AppState>,
 ) -> CommandResult<BranchOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::checkout_branch(&repository_path, &branch_name) {
         Ok(_) => command_ok(
@@ -280,6 +305,8 @@ pub fn delete_branch(
     state: State<'_, AppState>,
 ) -> CommandResult<BranchOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let force = force.unwrap_or(false);
 
     match git_provider::delete_branch(&repository_path, &branch_name, force) {
@@ -309,6 +336,8 @@ pub fn rename_branch(
     state: State<'_, AppState>,
 ) -> CommandResult<BranchOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::rename_branch(&repository_path, &old_branch_name, &new_branch_name) {
         Ok(_) => command_ok(
@@ -333,6 +362,8 @@ pub fn set_branch_upstream(
     state: State<'_, AppState>,
 ) -> CommandResult<BranchTrackingOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::set_branch_upstream(&repository_path, &branch_name, &upstream) {
         Ok(_) => command_ok(
@@ -357,6 +388,8 @@ pub fn list_stashes(
     state: State<'_, AppState>,
 ) -> CommandResult<StashListData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let limit = limit.unwrap_or(50).clamp(1, 500) as usize;
 
     match git_provider::list_stashes(&repository_path, limit) {
@@ -373,6 +406,8 @@ pub fn create_stash(
     state: State<'_, AppState>,
 ) -> CommandResult<StashOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let include_untracked = include_untracked.unwrap_or(false);
 
     match git_provider::create_stash(&repository_path, message.as_deref(), include_untracked) {
@@ -388,6 +423,8 @@ pub fn pop_stash(
     state: State<'_, AppState>,
 ) -> CommandResult<StashOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::pop_stash(&repository_path, stash_ref.as_deref()) {
         Ok(data) => command_ok("pop_stash", started_at, &state, data),
@@ -402,6 +439,8 @@ pub fn drop_stash(
     state: State<'_, AppState>,
 ) -> CommandResult<StashOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::drop_stash(&repository_path, &stash_ref) {
         Ok(data) => command_ok("drop_stash", started_at, &state, data),
@@ -415,6 +454,8 @@ pub fn list_worktrees(
     state: State<'_, AppState>,
 ) -> CommandResult<WorktreeListData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::list_worktrees(&repository_path) {
         Ok(data) => command_ok("list_worktrees", started_at, &state, data),
@@ -431,6 +472,8 @@ pub fn create_worktree(
     state: State<'_, AppState>,
 ) -> CommandResult<WorktreeOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::create_worktree(
         &repository_path,
@@ -461,6 +504,8 @@ pub fn remove_worktree(
     state: State<'_, AppState>,
 ) -> CommandResult<WorktreeOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let force = force.unwrap_or(false);
 
     match git_provider::remove_worktree(&repository_path, &worktree_path, force) {
@@ -491,6 +536,8 @@ pub fn list_commit_history(
     state: State<'_, AppState>,
 ) -> CommandResult<CommitHistoryData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let limit = limit.unwrap_or(50).clamp(1, 500) as usize;
 
     match git_provider::list_commit_history(&repository_path, limit, branch.as_deref()) {
@@ -506,6 +553,8 @@ pub fn get_commit_detail(
     state: State<'_, AppState>,
 ) -> CommandResult<CommitDetailData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::get_commit_detail(&repository_path, &commit_hash) {
         Ok(data) => command_ok("get_commit_detail", started_at, &state, data),
@@ -520,6 +569,8 @@ pub fn stage_paths(
     state: State<'_, AppState>,
 ) -> CommandResult<PathOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::stage_paths(&repository_path, &paths) {
         Ok(_) => command_ok(
@@ -543,6 +594,8 @@ pub fn unstage_paths(
     state: State<'_, AppState>,
 ) -> CommandResult<PathOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::unstage_paths(&repository_path, &paths) {
         Ok(_) => command_ok(
@@ -568,6 +621,8 @@ pub fn create_commit(
     state: State<'_, AppState>,
 ) -> CommandResult<CommitData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     let result = git_provider::create_commit(&repository_path, &message, amend, signoff).and_then(
         |summary| {
@@ -594,6 +649,8 @@ pub fn get_file_diff(
     state: State<'_, AppState>,
 ) -> CommandResult<FileDiffData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let staged = staged.unwrap_or(false);
     let context_lines = context_lines.unwrap_or(3).clamp(0, 30) as usize;
 
@@ -618,6 +675,8 @@ pub fn prepare_file_diff_chunks(
     state: State<'_, AppState>,
 ) -> CommandResult<FileDiffManifestData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let staged = staged.unwrap_or(false);
     let context_lines = context_lines.unwrap_or(3).clamp(0, 30) as usize;
     let chunk_size = chunk_size_bytes.unwrap_or((64 * 1024) as u32) as usize;
@@ -642,6 +701,8 @@ pub fn get_file_diff_chunk(
     state: State<'_, AppState>,
 ) -> CommandResult<FileDiffChunkData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match diff_service::get_file_diff_chunk(&state, &diff_id, chunk_index as usize) {
         Ok(data) => command_ok("get_file_diff_chunk", started_at, &state, data),
@@ -657,6 +718,8 @@ pub fn fetch_remote(
     state: State<'_, AppState>,
 ) -> CommandResult<SyncData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let prune = prune.unwrap_or(false);
 
     match git_provider::fetch_remote(&repository_path, remote.as_deref(), prune) {
@@ -684,6 +747,8 @@ pub fn pull_remote(
     state: State<'_, AppState>,
 ) -> CommandResult<SyncData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let rebase = rebase.unwrap_or(false);
 
     match git_provider::pull_remote(
@@ -716,6 +781,8 @@ pub fn push_remote(
     state: State<'_, AppState>,
 ) -> CommandResult<SyncData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let force_with_lease = force_with_lease.unwrap_or(false);
 
     match git_provider::push_remote(
@@ -746,6 +813,8 @@ pub fn start_rebase(
     state: State<'_, AppState>,
 ) -> CommandResult<ConflictResolutionData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::start_rebase(&repository_path, &onto_ref) {
         Ok(data) => command_ok("start_rebase", started_at, &state, data),
@@ -759,6 +828,8 @@ pub fn continue_rebase(
     state: State<'_, AppState>,
 ) -> CommandResult<ConflictResolutionData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::continue_rebase(&repository_path) {
         Ok(data) => command_ok("continue_rebase", started_at, &state, data),
@@ -772,6 +843,8 @@ pub fn abort_rebase(
     state: State<'_, AppState>,
 ) -> CommandResult<ConflictResolutionData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::abort_rebase(&repository_path) {
         Ok(data) => command_ok("abort_rebase", started_at, &state, data),
@@ -787,6 +860,8 @@ pub fn start_cherry_pick(
     state: State<'_, AppState>,
 ) -> CommandResult<ConflictResolutionData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::start_cherry_pick(&repository_path, &commit_ref, mainline) {
         Ok(data) => command_ok("start_cherry_pick", started_at, &state, data),
@@ -800,6 +875,8 @@ pub fn continue_cherry_pick(
     state: State<'_, AppState>,
 ) -> CommandResult<ConflictResolutionData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::continue_cherry_pick(&repository_path) {
         Ok(data) => command_ok("continue_cherry_pick", started_at, &state, data),
@@ -813,6 +890,8 @@ pub fn abort_cherry_pick(
     state: State<'_, AppState>,
 ) -> CommandResult<ConflictResolutionData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::abort_cherry_pick(&repository_path) {
         Ok(data) => command_ok("abort_cherry_pick", started_at, &state, data),
@@ -826,6 +905,8 @@ pub fn get_conflict_state(
     state: State<'_, AppState>,
 ) -> CommandResult<ConflictStateData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::get_conflict_state(&repository_path) {
         Ok(data) => command_ok("get_conflict_state", started_at, &state, data),
@@ -840,6 +921,8 @@ pub fn continue_conflict_resolution(
     state: State<'_, AppState>,
 ) -> CommandResult<ConflictResolutionData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::continue_conflict_resolution(&repository_path, operation.as_deref()) {
         Ok(data) => command_ok("continue_conflict_resolution", started_at, &state, data),
@@ -856,6 +939,8 @@ pub fn abort_conflict_resolution(
     state: State<'_, AppState>,
 ) -> CommandResult<ConflictResolutionData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match git_provider::abort_conflict_resolution(&repository_path, operation.as_deref()) {
         Ok(data) => command_ok("abort_conflict_resolution", started_at, &state, data),
@@ -871,6 +956,8 @@ pub fn list_issue_providers(
     state: State<'_, AppState>,
 ) -> CommandResult<IssueProviderListData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match issue_service::list_issue_providers(&repository_path) {
         Ok(data) => command_ok("list_issue_providers", started_at, &state, data),
@@ -885,6 +972,8 @@ pub fn list_local_issues(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalIssueListData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match issue_service::list_issues(&repository_path, provider_id.as_deref()) {
         Ok(data) => command_ok("list_local_issues", started_at, &state, data),
@@ -898,6 +987,8 @@ pub fn list_pull_request_providers(
     state: State<'_, AppState>,
 ) -> CommandResult<PullRequestProviderListData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match pull_request_service::list_pull_request_providers(&repository_path) {
         Ok(data) => command_ok("list_pull_request_providers", started_at, &state, data),
@@ -914,6 +1005,8 @@ pub fn list_pull_requests(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalPullRequestListData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match pull_request_service::list_pull_requests(&repository_path, provider_id.as_deref()) {
         Ok(data) => command_ok("list_pull_requests", started_at, &state, data),
@@ -933,6 +1026,8 @@ pub fn create_pull_request(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalPullRequestOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let draft = draft.unwrap_or(false);
 
     match pull_request_service::create_pull_request(
@@ -957,6 +1052,8 @@ pub fn close_pull_request(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalPullRequestOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match pull_request_service::close_pull_request(
         &repository_path,
@@ -976,6 +1073,8 @@ pub fn reopen_pull_request(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalPullRequestOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match pull_request_service::reopen_pull_request(
         &repository_path,
@@ -995,6 +1094,8 @@ pub fn mark_pull_request_ready(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalPullRequestOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match pull_request_service::mark_pull_request_ready(
         &repository_path,
@@ -1015,6 +1116,8 @@ pub fn merge_pull_request(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalPullRequestOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let delete_source_branch = delete_source_branch.unwrap_or(false);
 
     match pull_request_service::merge_pull_request(
@@ -1037,6 +1140,8 @@ pub fn create_local_issue(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalIssueOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match issue_service::create_issue(&repository_path, provider_id.as_deref(), &title, &body) {
         Ok(data) => command_ok("create_local_issue", started_at, &state, data),
@@ -1052,6 +1157,8 @@ pub fn close_local_issue(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalIssueOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match issue_service::close_issue(&repository_path, provider_id.as_deref(), &issue_id) {
         Ok(data) => command_ok("close_local_issue", started_at, &state, data),
@@ -1067,6 +1174,8 @@ pub fn reopen_local_issue(
     state: State<'_, AppState>,
 ) -> CommandResult<LocalIssueOperationData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match issue_service::reopen_issue(&repository_path, provider_id.as_deref(), &issue_id) {
         Ok(data) => command_ok("reopen_local_issue", started_at, &state, data),
@@ -1077,6 +1186,8 @@ pub fn reopen_local_issue(
 #[tauri::command]
 pub fn list_ai_providers(state: State<'_, AppState>) -> CommandResult<AiProviderListData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match ai_service::list_providers() {
         Ok(data) => command_ok("list_ai_providers", started_at, &state, data),
@@ -1090,6 +1201,8 @@ pub fn get_ai_audit_entries(
     state: State<'_, AppState>,
 ) -> CommandResult<AiAuditListData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let limit = limit.unwrap_or(200).clamp(1, 1_000) as usize;
 
     match ai_service::get_audit_entries(Some(limit)) {
@@ -1107,6 +1220,8 @@ pub fn run_ai_diff_review(
     state: State<'_, AppState>,
 ) -> CommandResult<AiDiffReviewData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match ai_service::run_diff_review(
         &provider_id,
@@ -1128,6 +1243,8 @@ pub fn start_ai_diff_review_job(
     state: State<'_, AppState>,
 ) -> CommandResult<AiDiffReviewJobStartData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match ai_service::start_diff_review_job(
         &state,
@@ -1147,6 +1264,8 @@ pub fn get_ai_diff_review_job(
     state: State<'_, AppState>,
 ) -> CommandResult<AiDiffReviewJobData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match ai_service::get_diff_review_job(&state, &job_id) {
         Ok(data) => command_ok("get_ai_diff_review_job", started_at, &state, data),
@@ -1160,6 +1279,8 @@ pub fn cancel_ai_diff_review_job(
     state: State<'_, AppState>,
 ) -> CommandResult<AiDiffReviewCancelData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match ai_service::cancel_diff_review_job(&state, &job_id) {
         Ok(data) => command_ok("cancel_ai_diff_review_job", started_at, &state, data),
@@ -1172,6 +1293,8 @@ pub fn cancel_ai_diff_review_job(
 #[tauri::command]
 pub fn get_app_settings(state: State<'_, AppState>) -> CommandResult<AppSettingsData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match settings_service::get_settings() {
         Ok(data) => command_ok("get_app_settings", started_at, &state, data),
@@ -1185,6 +1308,8 @@ pub fn update_ai_guardrail(
     state: State<'_, AppState>,
 ) -> CommandResult<AppSettingsData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match settings_service::update_guardrail(guardrail_value) {
         Ok(data) => command_ok("update_ai_guardrail", started_at, &state, data),
@@ -1199,6 +1324,8 @@ pub fn update_telemetry_retention(
     state: State<'_, AppState>,
 ) -> CommandResult<AppSettingsData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match settings_service::update_telemetry_retention(retention_days, retention_mb) {
         Ok(data) => {
@@ -1220,6 +1347,8 @@ pub fn update_layout_preferences(
     state: State<'_, AppState>,
 ) -> CommandResult<AppSettingsData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match settings_service::update_layout_preferences(
         sidebar_width_px,
@@ -1241,6 +1370,8 @@ pub fn update_ui_preferences(
     state: State<'_, AppState>,
 ) -> CommandResult<AppSettingsData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match settings_service::update_ui_preferences(&theme_id, &keybinding_profile) {
         Ok(data) => command_ok("update_ui_preferences", started_at, &state, data),
@@ -1254,6 +1385,8 @@ pub fn get_command_telemetry_snapshot(
     state: State<'_, AppState>,
 ) -> CommandResult<CommandTelemetrySnapshotData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
     let recent_limit = recent_limit.unwrap_or(200).clamp(1, 1_000) as usize;
 
     match telemetry_service::get_command_telemetry_snapshot(Some(recent_limit)) {
@@ -1269,6 +1402,8 @@ pub fn clear_command_telemetry(
     state: State<'_, AppState>,
 ) -> CommandResult<CommandTelemetryMaintenanceData> {
     let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
 
     match telemetry_service::clear_command_samples() {
         Ok(affected_samples) => command_ok(
