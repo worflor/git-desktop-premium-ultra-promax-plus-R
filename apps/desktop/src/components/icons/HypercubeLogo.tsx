@@ -116,7 +116,18 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
         x *= fov4D; y *= fov4D; z *= fov4D;
         const fov3D = 1 / (3.6 - z);
         x *= fov3D; y *= fov3D;
-        return { x: (x * scale) + sVal/2 + (useWarp ? wrp.x : 0), y: (y * scale) + sVal/2 + (useWarp ? wrp.y : 0), z, w };
+
+        // GEOMETRIC MELD: Vertices reach out to warp center
+        const meldStrength = useWarp ? (near * 0.45) : 0;
+        let px = (x * scale) + sVal/2 + (useWarp ? wrp.x : 0);
+        let py = (y * scale) + sVal/2 + (useWarp ? wrp.y : 0);
+        
+        if (useWarp && near > 0.5) {
+           px += (wrp.x * meldStrength);
+           py += (wrp.y * meldStrength);
+        }
+
+        return { x: px, y: py, z, w };
       });
     };
     return { main: solve(0, 0, true), home: solve(-0.2, 0.04, false) };
@@ -130,15 +141,34 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
     const d = Math.sqrt(dx*dx + dy*dy);
     batch(() => {
       setTilt({ x: dx/size(), y: dy/size() });
-      setIsNear(Math.max(0, 1 - d/(size()*3)));
+      const near = Math.max(0, 1 - d/(size()*3));
+      setIsNear(near);
+
       if (isDragging()) {
         const threshold = size() * 2.2; 
         const sigmaFactor = size() * 0.3;
         const sigma = 1 / (1 + Math.exp(-(d - threshold) / sigmaFactor)); 
         const f = 0.01 + sigma * 0.99;
         setWarp({ x: dx * f, y: dy * f, vx: 0, vy: 0 });
+
+        // Global Broadcast for Hyper-Interaction
+        const root = document.documentElement;
+        root.setAttribute("data-hyper-active", "true");
+        root.style.setProperty("--hyper-drag-x", `${e.clientX}px`);
+        root.style.setProperty("--hyper-drag-y", `${e.clientY}px`);
+        root.style.setProperty("--hyper-drag-intensity", (near + (d > threshold ? 1 : 0)).toFixed(2));
       }
     });
+  };
+
+  const handleRelease = (e: PointerEvent) => {
+    setIsDragging(false);
+    svgRef?.releasePointerCapture(e.pointerId);
+    
+    // Clear Broadcast
+    const root = document.documentElement;
+    root.setAttribute("data-hyper-active", "false");
+    root.style.setProperty("--hyper-drag-intensity", "0");
   };
 
   const mainP = () => projectedData().main;
@@ -153,8 +183,14 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
       style={{ overflow: "visible", cursor: isDragging() ? "grabbing" : "pointer", "touch-action": "none", "user-select": "none", "-webkit-user-select": "none" }}
       onPointerMove={handlePointer}
       onPointerDown={(e) => { e.preventDefault(); setIsDragging(true); svgRef?.setPointerCapture(e.pointerId); }}
-      onPointerUp={(e) => { setIsDragging(false); svgRef?.releasePointerCapture(e.pointerId); }}
-      onPointerLeave={() => { setIsNear(0); if (!isDragging()) setTilt({ x: 0, y: 0 }); }}
+      onPointerUp={handleRelease}
+      onPointerLeave={() => { 
+        setIsNear(0); 
+        if (!isDragging()) {
+          setTilt({ x: 0, y: 0 });
+          document.documentElement.style.setProperty("--hyper-drag-intensity", "0");
+        }
+      }}
     >
       <rect width="100%" height="100%" fill="transparent" />
       <defs>

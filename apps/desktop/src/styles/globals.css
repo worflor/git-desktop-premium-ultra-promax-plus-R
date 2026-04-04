@@ -98,6 +98,74 @@ ol {
       white calc(100% - 300px));
 }
 
+/* ☢️ Universal Hyper-Reactive Manifold ☢️ */
+/* ☢️ Universal Hyper-Reactive Manifold ☢️ */
+.hyper-reactive {
+  transition: transform 0.2s cubic-bezier(0.2, 0.2, 0, 1), 
+              filter 0.3s ease-out, 
+              clip-path 0.3s ease,
+              box-shadow 0.3s ease,
+              outline 0.15s ease;
+  outline: 1px solid transparent;
+  outline-offset: 0px;
+  position: relative;
+}
+
+[data-hyper-active="true"] .hyper-reactive {
+  filter: url(#hyper-prism);
+  clip-path: polygon(10% 0%, 90% 0%, 100% 10%, 100% 90%, 90% 100%, 10% 100%, 0% 90%, 0% 10%);
+  transform: perspective(1200px) 
+             scale(calc(1 + var(--hyper-drag-intensity, 0) * 0.05)) 
+             translateZ(calc(var(--hyper-drag-intensity, 0) * 15px))
+             rotateX(calc(var(--hyper-drag-intensity, 0) * -12deg))
+             rotateY(calc(var(--hyper-drag-intensity, 0) * 12deg));
+  outline: 1px solid var(--hyper-chromatic-1);
+  outline-offset: calc(1px + var(--hyper-drag-intensity, 0) * 5px);
+  z-index: 100;
+}
+
+/* The 'Meld' Stretch: Geometric Fusion Echo */
+[data-hyper-active="true"] .hyper-reactive::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border: 1.5px solid var(--hyper-chromatic-2);
+  opacity: calc(var(--hyper-drag-intensity, 0) * 0.5);
+  transform: rotate3d(1, 1, 0, calc(var(--hyper-drag-intensity, 0) * 45deg))
+             scale(calc(1 + var(--hyper-drag-intensity, 0) * 0.15));
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease;
+  pointer-events: none;
+  clip-path: polygon(10% 0%, 90% 0%, 100% 10%, 100% 90%, 90% 100%, 10% 100%, 0% 90%, 0% 10%);
+}
+
+/* Active State Amplification: Clean Standard Mode */
+.hyper-reactive.active,
+.hyper-reactive[data-selected="true"] {
+  outline: 1px solid color-mix(in srgb, var(--hyper-chromatic-1), transparent 50%);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--hyper-chromatic-1), transparent 80%);
+}
+
+[data-hyper-active="true"] .hyper-reactive.active {
+  box-shadow: 
+    0 24px 48px rgba(0, 0, 0, 0.5),
+    0 0 calc(var(--hyper-drag-intensity, 0) * 30px) var(--hyper-chromatic-1);
+}
+
+/* 🌊 Global Hyper-Layering Fix 🌊 */
+[data-hyper-active="true"] .sidebar-brand-lockup,
+[data-hyper-active="true"] .workspace-topbar-brand,
+[data-hyper-active="true"] .brand-lockup-icon {
+  z-index: 9999999 !important;
+  position: relative !important;
+  overflow: visible !important;
+}
+
+[data-hyper-active="true"] .sidebar,
+[data-hyper-active="true"] .workspace-topbar {
+  overflow: visible !important;
+  z-index: 1000 ; /* Ensure it's above content but below the logo itself */
+}
+
 .parallax-backdrop {
   position: absolute;
   inset: 0;

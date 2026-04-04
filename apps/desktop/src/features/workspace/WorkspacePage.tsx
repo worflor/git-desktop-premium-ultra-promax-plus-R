@@ -116,7 +116,7 @@ export function WorkspacePage() {
         <div class="workspace-mode-nav">
           {MODES.map((entry) => (
             <button
-              class={`workspace-mode-btn ${activeMode() === entry.id ? "is-active" : ""}`}
+              class={`workspace-mode-btn hyper-reactive ${activeMode() === entry.id ? "is-active active" : ""}`}
               onClick={() => onSelectMode(entry)}
               title={entry.id}
               aria-current={activeMode() === entry.id ? "page" : undefined}
@@ -125,7 +125,7 @@ export function WorkspacePage() {
             </button>
           ))}
           <button
-            class={`workspace-mode-btn workspace-settings-btn ${isSettingsOpen() ? "is-active" : ""}`}
+            class={`workspace-mode-btn workspace-settings-btn hyper-reactive ${isSettingsOpen() ? "is-active active" : ""}`}
             type="button"
             title="settings"
             aria-label={isSettingsOpen() ? "Close settings" : "Open settings"}
@@ -170,7 +170,7 @@ export function WorkspacePage() {
         <section class="settings-slide-panel" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title">
           <header class="settings-slide-header">
             <h2 id="settings-panel-title">Settings</h2>
-            <button type="button" class="settings-slide-close" onClick={() => setSettingsPanel(false)}>
+            <button type="button" class="settings-slide-close hyper-reactive" onClick={() => setSettingsPanel(false)}>
               Close
             </button>
           </header>
