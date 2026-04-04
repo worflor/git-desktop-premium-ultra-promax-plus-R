@@ -236,6 +236,27 @@ export interface AiProviderListData {
   providers: AiProviderStatus[];
 }
 
+export interface AiModelOptionData {
+  value: string;
+  modelId: string;
+  providerId: string;
+  providerSymbol: string;
+  planName?: string;
+  label: string;
+  description: string;
+}
+
+export interface AiModelCategoryData {
+  id: string;
+  label: string;
+  description?: string;
+  models: AiModelOptionData[];
+}
+
+export interface AiModelOptionListData {
+  categories: AiModelCategoryData[];
+}
+
 export interface AiDiffReviewData {
   providerId: string;
   response: string;

@@ -4,6 +4,7 @@ import type {
   AiDiffReviewData,
   AiDiffReviewJobData,
   AiDiffReviewJobStartData,
+  AiModelOptionListData,
   AiProviderListData,
   AppSettingsData,
   AppUpdateCheckData,
@@ -372,6 +373,10 @@ export function mergePullRequest(
 
 export function listAiProviders(): Promise<CommandResult<AiProviderListData>> {
   return invokeCommand("list_ai_providers", {});
+}
+
+export function listAiModelOptions(): Promise<CommandResult<AiModelOptionListData>> {
+  return invokeCommand("list_ai_model_options", {});
 }
 
 export function runAiDiffReview(

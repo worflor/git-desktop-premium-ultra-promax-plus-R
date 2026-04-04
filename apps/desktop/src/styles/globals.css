@@ -2666,6 +2666,30 @@ ol {
   border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.12);
 }
 
+.settings-model-pair-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.settings-model-field {
+  margin-bottom: 0;
+}
+
+.settings-model-field > span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.settings-model-empty {
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
 .settings-shortcuts-summary {
   margin-bottom: 8px;
   font-size: 0.85rem;

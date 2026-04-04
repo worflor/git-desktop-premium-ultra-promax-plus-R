@@ -197,6 +197,33 @@ pub struct AiProviderListData {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiModelOptionData {
+    pub value: String,
+    pub model_id: String,
+    pub provider_id: String,
+    pub provider_symbol: String,
+    pub plan_name: Option<String>,
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelCategoryData {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub models: Vec<AiModelOptionData>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelOptionListData {
+    pub categories: Vec<AiModelCategoryData>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiDiffReviewData {
     pub provider_id: String,
     pub response: String,

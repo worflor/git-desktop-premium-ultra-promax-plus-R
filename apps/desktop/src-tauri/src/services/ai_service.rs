@@ -14,7 +14,8 @@ use uuid::Uuid;
 use crate::errors::AppError;
 use crate::models::operations::{
     AiAuditListData, AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData,
-    AiDiffReviewJobStartData, AiProviderListData, AiProviderStatus,
+    AiDiffReviewJobStartData, AiModelCategoryData, AiModelOptionData, AiModelOptionListData,
+    AiProviderListData, AiProviderStatus,
 };
 use crate::runtime::state::{AiReviewJobRecord, AiReviewJobState, AppState, SharedAiReviewJob};
 use crate::services::{ai_audit_service, git_provider, settings_service};
@@ -25,6 +26,40 @@ const PROVIDER_BINARIES: [(&str, &str, ProviderKind); 4] = [
     ("gemini", "npx", ProviderKind::Gemini),
     ("opencode", "opencode", ProviderKind::OpenCode),
 ];
+const CODEX_KNOWN_MODELS: [&str; 6] = [
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2-codex",
+    "gpt-5.2",
+];
+const GEMINI_KNOWN_MODELS: [&str; 5] = [
+    "gemini-auto",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+];
+const DEFAULT_MODEL_CATEGORY_CONFIG: [ModelCategoryTemplate; 2] = [
+    ModelCategoryTemplate {
+        id: "quality",
+        label: "Quality model",
+        description: Some("Higher quality reasoning-first models"),
+        hint_tokens: &[
+            "opus", "sonnet", "pro", "gpt-5", "o1", "o3", "reason", "max",
+        ],
+    },
+    ModelCategoryTemplate {
+        id: "fast",
+        label: "Fast model",
+        description: Some("Lower-latency throughput-first models"),
+        hint_tokens: &[
+            "mini", "flash", "haiku", "spark", "nano", "free", "instant", "auto",
+        ],
+    },
+];
+const MODEL_CATEGORY_CONFIG_ENV: &str = "GDPU_AI_MODEL_CATEGORIES";
 const MAX_RETAINED_JOBS: usize = 64;
 const MAX_PROVIDER_RUNTIME: Duration = Duration::from_secs(90);
 const MAX_STDIN_DIFF_CHARS: usize = 120_000;
@@ -39,7 +74,7 @@ struct CliProviderAdapter {
     kind: ProviderKind,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ProviderKind {
     Codex,
     Claude,
@@ -135,6 +170,42 @@ struct ProviderAvailability {
     auth: ProviderAuthStatus,
 }
 
+struct ProviderModelDiscovery {
+    models: Vec<String>,
+}
+
+struct ProviderModelCollection {
+    provider_id: String,
+    provider_kind: ProviderKind,
+    plan_name: Option<String>,
+    models: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+struct ModelCategoryTemplate {
+    id: &'static str,
+    label: &'static str,
+    description: Option<&'static str>,
+    hint_tokens: &'static [&'static str],
+}
+
+#[derive(Clone)]
+struct ModelCategoryDefinition {
+    id: String,
+    label: String,
+    description: Option<String>,
+    hint_tokens: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelCategoryConfigInput {
+    id: String,
+    label: Option<String>,
+    description: Option<String>,
+    hint_tokens: Option<Vec<String>>,
+}
+
 #[derive(Clone)]
 struct ProviderResolutionCacheEntry {
     checked_at: Instant,
@@ -165,6 +236,75 @@ pub fn list_providers() -> Result<AiProviderListData, AppError> {
         .collect();
 
     Ok(AiProviderListData { providers })
+}
+
+pub fn list_model_options() -> Result<AiModelOptionListData, AppError> {
+    let categories = model_category_definitions();
+    let providers = discover_ready_provider_models();
+
+    let direct_provider_model_keys = providers
+        .iter()
+        .filter(|provider| provider.provider_kind != ProviderKind::OpenCode)
+        .flat_map(|provider| {
+            provider
+                .models
+                .iter()
+                .map(|model_id| normalize_model_key(model_id.as_str()))
+        })
+        .collect::<std::collections::HashSet<String>>();
+
+    let mut category_payload = Vec::<AiModelCategoryData>::new();
+
+    for category in categories {
+        let mut models = Vec::<AiModelOptionData>::new();
+        let mut seen = std::collections::HashSet::<String>::new();
+
+        for provider in &providers {
+            let provider_models = if provider.provider_kind == ProviderKind::OpenCode {
+                provider
+                    .models
+                    .iter()
+                    .filter(|model_id| {
+                        !direct_provider_model_keys
+                            .contains(normalize_model_key(model_id.as_str()).as_str())
+                    })
+                    .cloned()
+                    .collect::<Vec<String>>()
+            } else {
+                provider.models.clone()
+            };
+
+            let ranked_models = rank_models_for_category(
+                provider_models.as_slice(),
+                category.hint_tokens.as_slice(),
+            );
+
+            for model_id in ranked_models {
+                let key = normalize_model_key(model_id.as_str());
+                if !seen.insert(key) {
+                    continue;
+                }
+
+                models.push(build_model_option(
+                    provider.provider_id.as_str(),
+                    provider.provider_kind,
+                    provider.plan_name.clone(),
+                    model_id.as_str(),
+                ));
+            }
+        }
+
+        category_payload.push(AiModelCategoryData {
+            id: category.id,
+            label: category.label,
+            description: category.description,
+            models,
+        });
+    }
+
+    Ok(AiModelOptionListData {
+        categories: category_payload,
+    })
 }
 
 pub fn get_audit_entries(limit: Option<usize>) -> Result<AiAuditListData, AppError> {
@@ -1634,6 +1774,342 @@ fn user_home_dir() -> Option<PathBuf> {
 fn read_json_file(path: &Path) -> Option<Value> {
     let payload = fs::read_to_string(path).ok()?;
     serde_json::from_str::<Value>(&payload).ok()
+}
+
+fn discover_provider_models(
+    adapter: &CliProviderAdapter,
+    resolution: Option<&ProviderResolution>,
+) -> Option<ProviderModelDiscovery> {
+    match adapter.kind() {
+        ProviderKind::Codex => discover_codex_models(),
+        ProviderKind::Claude => discover_claude_models(),
+        ProviderKind::Gemini => discover_gemini_models(),
+        ProviderKind::OpenCode => discover_opencode_models(resolution),
+    }
+}
+
+fn discover_codex_models() -> Option<ProviderModelDiscovery> {
+    let mut models = Vec::<String>::new();
+
+    if let Some(configured) = discover_codex_config_model() {
+        models.push(configured);
+    }
+
+    for known in CODEX_KNOWN_MODELS {
+        if !models.iter().any(|value| value.eq_ignore_ascii_case(known)) {
+            models.push(known.to_string());
+        }
+    }
+
+    if models.is_empty() {
+        return None;
+    }
+
+    Some(ProviderModelDiscovery { models })
+}
+
+fn discover_codex_config_model() -> Option<String> {
+    let config_path = if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        PathBuf::from(codex_home).join("config.toml")
+    } else {
+        user_home_dir()?.join(".codex").join("config.toml")
+    };
+
+    let payload = fs::read_to_string(config_path).ok()?;
+    for line in payload.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            break;
+        }
+        if !trimmed.starts_with("model") {
+            continue;
+        }
+
+        let Some((_, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let normalized = value.trim().trim_matches('"').trim_matches('\'').trim();
+        if !normalized.is_empty() {
+            return Some(normalized.to_string());
+        }
+    }
+
+    None
+}
+
+fn discover_claude_models() -> Option<ProviderModelDiscovery> {
+    let home_dir = user_home_dir()?;
+    let credentials_path = home_dir.join(".claude").join(".credentials.json");
+    let credentials = read_json_file(credentials_path.as_path())?;
+    let token = credentials
+        .get("claudeAiOauth")
+        .and_then(|oauth| oauth.get("accessToken"))
+        .and_then(Value::as_str)?;
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .ok()?;
+    let response = client
+        .get("https://api.anthropic.com/v1/models?limit=100")
+        .header("x-api-key", token)
+        .header("anthropic-version", "2023-06-01")
+        .send()
+        .ok()?;
+
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let payload = response.json::<Value>().ok()?;
+    let data = payload.get("data")?.as_array()?;
+    let mut models = Vec::<String>::new();
+
+    for model in data {
+        if let Some(id) = model.get("id").and_then(Value::as_str) {
+            if !id.trim().is_empty() {
+                models.push(id.to_string());
+            }
+        }
+    }
+
+    models.sort_by(|left, right| {
+        let left_latest = !has_yyyymmdd_suffix(left.as_str());
+        let right_latest = !has_yyyymmdd_suffix(right.as_str());
+        if left_latest != right_latest {
+            return right_latest.cmp(&left_latest);
+        }
+        right.cmp(left)
+    });
+
+    if models.is_empty() {
+        return None;
+    }
+
+    Some(ProviderModelDiscovery { models })
+}
+
+fn discover_gemini_models() -> Option<ProviderModelDiscovery> {
+    let models = GEMINI_KNOWN_MODELS
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<String>>();
+    if models.is_empty() {
+        return None;
+    }
+    Some(ProviderModelDiscovery { models })
+}
+
+fn discover_opencode_models(resolution: Option<&ProviderResolution>) -> Option<ProviderModelDiscovery> {
+    let command = resolution
+        .map(|entry| entry.command.clone())
+        .unwrap_or_else(|| "opencode".to_string());
+
+    let output = Command::new(command).arg("models").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(output.stdout.as_slice());
+    let mut models = Vec::<String>::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.contains('/') {
+            models.push(trimmed.to_string());
+        }
+    }
+
+    if models.is_empty() {
+        return None;
+    }
+
+    Some(ProviderModelDiscovery { models })
+}
+
+fn has_yyyymmdd_suffix(value: &str) -> bool {
+    if value.len() < 9 {
+        return false;
+    }
+
+    let suffix = &value[value.len() - 8..];
+    value.as_bytes()[value.len() - 9] == b'-' && suffix.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn model_category_definitions() -> Vec<ModelCategoryDefinition> {
+    if let Some(configured) = configured_model_category_definitions() {
+        if !configured.is_empty() {
+            return configured;
+        }
+    }
+
+    DEFAULT_MODEL_CATEGORY_CONFIG
+        .iter()
+        .map(|entry| ModelCategoryDefinition {
+            id: entry.id.to_string(),
+            label: entry.label.to_string(),
+            description: entry.description.map(|value| value.to_string()),
+            hint_tokens: entry.hint_tokens.iter().map(|value| value.to_string()).collect(),
+        })
+        .collect()
+}
+
+fn configured_model_category_definitions() -> Option<Vec<ModelCategoryDefinition>> {
+    let raw = std::env::var(MODEL_CATEGORY_CONFIG_ENV).ok()?;
+    let parsed = serde_json::from_str::<Vec<ModelCategoryConfigInput>>(&raw).ok()?;
+    let categories = parsed
+        .into_iter()
+        .filter_map(|entry| {
+            let id = entry.id.trim().to_ascii_lowercase();
+            if id.is_empty() {
+                return None;
+            }
+
+            let fallback_label = id
+                .split(['-', '_'])
+                .filter(|segment| !segment.is_empty())
+                .map(humanize_label)
+                .collect::<Vec<String>>()
+                .join(" ");
+            let label = entry
+                .label
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| fallback_label.clone());
+
+            let hint_tokens = entry
+                .hint_tokens
+                .unwrap_or_default()
+                .into_iter()
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<String>>();
+
+            Some(ModelCategoryDefinition {
+                id,
+                label,
+                description: entry
+                    .description
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                hint_tokens,
+            })
+        })
+        .collect::<Vec<ModelCategoryDefinition>>();
+
+    if categories.is_empty() {
+        return None;
+    }
+
+    Some(categories)
+}
+
+fn discover_ready_provider_models() -> Vec<ProviderModelCollection> {
+    let mut collections = Vec::<ProviderModelCollection>::new();
+
+    for provider_id in ["claude", "codex", "gemini", "opencode"] {
+        let Some(adapter) = provider_adapter(provider_id) else {
+            continue;
+        };
+        let availability = inspect_provider(&adapter);
+        if !availability.ready {
+            continue;
+        }
+
+        let Some(discovery) = discover_provider_models(&adapter, availability.resolution.as_ref()) else {
+            continue;
+        };
+        if discovery.models.is_empty() {
+            continue;
+        }
+
+        collections.push(ProviderModelCollection {
+            provider_id: adapter.id().to_string(),
+            provider_kind: adapter.kind(),
+            plan_name: availability.auth.plan_name.clone(),
+            models: discovery.models,
+        });
+    }
+
+    collections
+}
+
+fn rank_models_for_category(models: &[String], hint_tokens: &[String]) -> Vec<String> {
+    let mut prioritized = Vec::<String>::new();
+    let mut remaining = Vec::<String>::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+
+    for model in models {
+        let key = normalize_model_key(model.as_str());
+        if !seen.insert(key) {
+            continue;
+        }
+
+        if model_matches_any_hint(model.as_str(), hint_tokens) {
+            prioritized.push(model.clone());
+        } else {
+            remaining.push(model.clone());
+        }
+    }
+
+    prioritized.extend(remaining);
+    if prioritized.is_empty() {
+        return models.to_vec();
+    }
+
+    prioritized
+}
+
+fn model_matches_any_hint(model_id: &str, hint_tokens: &[String]) -> bool {
+    if hint_tokens.is_empty() {
+        return true;
+    }
+
+    let normalized = model_id.to_ascii_lowercase();
+    hint_tokens.iter().any(|hint| normalized.contains(hint.as_str()))
+}
+
+fn normalize_model_key(model_id: &str) -> String {
+    let bare = model_id.split('/').next_back().unwrap_or(model_id);
+    bare
+        .replace('.', "-")
+        .replace('_', "-")
+        .to_ascii_lowercase()
+}
+
+fn provider_symbol(kind: ProviderKind) -> &'static str {
+    match kind {
+        ProviderKind::Claude => "✦",
+        ProviderKind::Codex => "✶",
+        ProviderKind::Gemini => "✧",
+        ProviderKind::OpenCode => "◈",
+    }
+}
+
+fn build_model_option(
+    provider_id: &str,
+    kind: ProviderKind,
+    plan_name: Option<String>,
+    model_id: &str,
+) -> AiModelOptionData {
+    let provider_symbol = provider_symbol(kind).to_string();
+    let label = format!("{provider_symbol} {model_id}");
+    let description = match plan_name.as_deref() {
+        Some(plan) => format!("{plan} via {provider_id}"),
+        None => format!("via {provider_id}"),
+    };
+
+    AiModelOptionData {
+        value: format!("{provider_id}:{model_id}"),
+        model_id: model_id.to_string(),
+        provider_id: provider_id.to_string(),
+        provider_symbol,
+        plan_name,
+        label,
+        description,
+    }
 }
 
 fn resolve_provider_command(binary: &str) -> Option<ProviderResolution> {

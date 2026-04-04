@@ -11,7 +11,8 @@ use crate::models::git::{
 };
 use crate::models::operations::{
     AiAuditListData, AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData,
-    AiDiffReviewJobStartData, AiProviderListData, AppUpdateCheckData, AppUpdateInstallData,
+    AiDiffReviewJobStartData, AiModelOptionListData, AiProviderListData, AppUpdateCheckData,
+    AppUpdateInstallData,
     BranchListData, BranchOperationData, BranchTrackingOperationData,
     CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData, CommitData, CommitDetailData,
     CommitHistoryData, ConflictResolutionData, ConflictStateData, FileDiffChunkData, FileDiffData,
@@ -1209,6 +1210,18 @@ pub fn list_ai_providers(state: State<'_, AppState>) -> CommandResult<AiProvider
     match ai_service::list_providers() {
         Ok(data) => command_ok("list_ai_providers", started_at, &state, data),
         Err(error) => map_error_with_command("list_ai_providers", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn list_ai_model_options(state: State<'_, AppState>) -> CommandResult<AiModelOptionListData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match ai_service::list_model_options() {
+        Ok(data) => command_ok("list_ai_model_options", started_at, &state, data),
+        Err(error) => map_error_with_command("list_ai_model_options", started_at, &state, error),
     }
 }
 

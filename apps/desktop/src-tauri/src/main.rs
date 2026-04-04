@@ -68,6 +68,7 @@ fn main() {
             commands::close_local_issue,
             commands::reopen_local_issue,
             commands::list_ai_providers,
+            commands::list_ai_model_options,
             commands::get_ai_audit_entries,
             commands::run_ai_diff_review,
             commands::start_ai_diff_review_job,

@@ -1,4 +1,4 @@
-import { createEffect, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
 import {
   useLayoutPreferences
 } from "@/app/layout/LayoutPreferencesContext";
@@ -8,6 +8,7 @@ import {
   checkForAppUpdate,
   getAppSettings,
   installAppUpdate,
+  listAiModelOptions,
   listAiProviders,
   updateAiGuardrail,
   updateCrashReporting,
@@ -32,7 +33,7 @@ import {
   KEYBINDING_PROFILE_OPTIONS
 } from "@/lib/ui/keybindings";
 import { THEME_OPTIONS } from "@/lib/ui/theme";
-import { Select } from "@/components/primitives/Select";
+import { Select, type SelectOption } from "@/components/primitives/Select";
 
 const GUARDRAIL_STAGE_VALUES = [0.125, 0.375, 0.625, 0.875] as const;
 const GUARDRAIL_STAGE_META = [
@@ -63,10 +64,21 @@ function guardrailDisplayLabelFromProfile(profile: string): string {
   return profile;
 }
 
+const MODEL_CATEGORY_STORAGE_PREFIX = "gdpu.ai.category.";
+
+function modelCategoryStorageKey(categoryId: string): string {
+  return `${MODEL_CATEGORY_STORAGE_PREFIX}${categoryId}`;
+}
+
+function buildEmptyCategoryMessage(categoryLabel: string): string {
+  return `No ${categoryLabel.toLowerCase()} models from detected providers.`;
+}
+
 export function SettingsPage() {
   const layout = useLayoutPreferences();
   const [settingsResult] = createResource(() => getAppSettings());
   const [aiProvidersResult, { refetch: refetchAiProviders }] = createResource(() => listAiProviders());
+  const [aiModelOptionsResult, { refetch: refetchAiModelOptions }] = createResource(() => listAiModelOptions());
   const [settingsInitialized, setSettingsInitialized] = createSignal(false);
   const [guardrailValue, setGuardrailValue] = createSignal(0.5);
   const [guardrailStage, setGuardrailStage] = createSignal(guardrailStageFromValue(0.5));
@@ -78,6 +90,8 @@ export function SettingsPage() {
   const [updateActionBusy, setUpdateActionBusy] = createSignal(false);
   const [actionMessage, setActionMessage] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
+  const [modelSelections, setModelSelections] = createSignal<Record<string, string>>({});
+  const [modelSelectionInitialized, setModelSelectionInitialized] = createSignal(false);
   const [latencyReport, setLatencyReport] = createSignal(getCommandLatencyReport());
   const [diffRenderReport, setDiffRenderReport] = createSignal(getDiffRenderMetricsReport());
   const [topCardsCompact, setTopCardsCompact] = createSignal(false);
@@ -179,6 +193,10 @@ export function SettingsPage() {
   };
 
   onMount(() => {
+    setModelSelectionInitialized(true);
+  });
+
+  onMount(() => {
     const unsubscribeCommandLatency = subscribeCommandLatencyReport((report) => {
       setLatencyReport(report);
     });
@@ -270,6 +288,102 @@ export function SettingsPage() {
 
   const guardrailSliderStyle = () =>
     `--guardrail-fill-percent: ${guardrailSliderFillPercent()}; --guardrail-stage-color: ${guardrailSliderColor()};`;
+
+  const modelCategoryFields = createMemo(() => {
+    if (!aiModelOptionsResult.latest?.ok) {
+      return [];
+    }
+
+    return aiModelOptionsResult.latest.data.categories.map((category) => ({
+      id: category.id,
+      label: category.label,
+      ariaLabel: category.label,
+      emptyMessage: buildEmptyCategoryMessage(category.label),
+      options: category.models.map<SelectOption>((model) => ({
+        id: model.value,
+        label: model.label,
+        description: model.description
+      }))
+    }));
+  });
+
+  const modelValueByCategory = (categoryId: string) => modelSelections()[categoryId] ?? "";
+
+  const setModelValueByCategory = (categoryId: string, value: string) => {
+    setModelSelections((current) => ({
+      ...current,
+      [categoryId]: value
+    }));
+  };
+
+  createEffect(() => {
+    const categories = modelCategoryFields();
+    if (categories.length === 0) {
+      setModelSelections({});
+      return;
+    }
+
+    setModelSelections((current) => {
+      const next: Record<string, string> = {};
+
+      for (const category of categories) {
+        const allowedValues = new Set(category.options.map((option) => option.id));
+        const currentValue = current[category.id] ?? "";
+        const storedValue =
+          typeof window === "undefined"
+            ? ""
+            : (window.localStorage.getItem(modelCategoryStorageKey(category.id)) ?? "");
+
+        let resolvedValue = currentValue || storedValue;
+        if (!resolvedValue || !allowedValues.has(resolvedValue)) {
+          resolvedValue = category.options.at(0)?.id ?? "";
+        }
+
+        next[category.id] = resolvedValue;
+      }
+
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+      const changed =
+        currentKeys.length !== nextKeys.length ||
+        nextKeys.some((key) => (current[key] ?? "") !== (next[key] ?? ""));
+
+      return changed ? next : current;
+    });
+  });
+
+  createEffect(() => {
+    if (!modelSelectionInitialized() || typeof window === "undefined") {
+      return;
+    }
+
+    const categories = modelCategoryFields();
+    const selections = modelSelections();
+    const activeCategoryIds = new Set(categories.map((category) => category.id));
+
+    for (const category of categories) {
+      const value = selections[category.id] ?? "";
+      const storageKey = modelCategoryStorageKey(category.id);
+
+      if (value) {
+        window.localStorage.setItem(storageKey, value);
+      } else {
+        window.localStorage.removeItem(storageKey);
+      }
+    }
+
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const storageKey = window.localStorage.key(index);
+      if (!storageKey || !storageKey.startsWith(MODEL_CATEGORY_STORAGE_PREFIX)) {
+        continue;
+      }
+
+      const categoryId = storageKey.slice(MODEL_CATEGORY_STORAGE_PREFIX.length);
+      if (!activeCategoryIds.has(categoryId)) {
+        window.localStorage.removeItem(storageKey);
+      }
+    }
+  });
 
   const onSaveGuardrail = async () => {
     setActionError(null);
@@ -575,7 +689,7 @@ export function SettingsPage() {
               </ul>
             </div>
 
-            <h4 class="settings-nav-subtitle">Behavioral Dynamics</h4>
+            <h4 class="settings-nav-subtitle">Behavioural Dynamics</h4>
             <label class="layout-checkbox-field settings-nav-checkbox">
               <input
                 type="checkbox"
@@ -588,12 +702,35 @@ export function SettingsPage() {
               <span>Auto-expand operation logs</span>
             </label>
 
+            <div class="settings-model-pair-grid">
+              {modelCategoryFields().map((field) => (
+                <div class="layout-control-field settings-model-field">
+                  <span>{field.label}</span>
+                  <Show
+                    when={field.options.length > 0}
+                    fallback={<p class="settings-model-empty">{field.emptyMessage}</p>}
+                  >
+                    <Select
+                      value={modelValueByCategory(field.id)}
+                      options={field.options}
+                      onChange={(value) => {
+                        setModelValueByCategory(field.id, value);
+                      }}
+                      ariaLabel={field.ariaLabel}
+                    />
+                  </Show>
+                </div>
+              ))}
+            </div>
+
             <div class="settings-sub-header">
               <h4 class="settings-nav-subtitle">AI CLIs</h4>
               <button
                 class="ghost-btn"
                 style="font-size: 0.72rem; padding: 4px 10px; min-height: 24px; border-radius: 4px;"
-                onClick={() => void refetchAiProviders()}
+                onClick={() => {
+                  void Promise.all([refetchAiProviders(), refetchAiModelOptions()]);
+                }}
               >
                 Refresh Providers
               </button>
