@@ -176,10 +176,13 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
       let layer = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' preserveAspectRatio='none'>`;
       for (let i = 0; i < count; i++) {
         const phase = i + seed;
-        const x = (Math.sin(phase * 127.31) * 500 + 500).toFixed(1);
-        const y = (Math.cos(phase * 311.17) * 500 + 500).toFixed(1);
+        const x = (Math.sin(phase * 127.31) * 480 + 500 + Math.sin(phase * 3.17) * 20).toFixed(1);
+        const y = (Math.cos(phase * 311.17) * 480 + 500 + Math.cos(phase * 2.83) * 16).toFixed(1);
         const r = (Math.abs(Math.sin(phase * 29.13)) * radiusScale + 0.35).toFixed(2);
         const glow = (alpha * (0.42 + Math.abs(Math.sin(phase * 5.17)) * 0.58)).toFixed(3);
+        const halo = (Number(r) * 1.9).toFixed(2);
+        const tint = i % 11 === 0 ? "rgba(182,130,255" : "rgba(120,180,255";
+        layer += `<circle cx='${x}' cy='${y}' r='${halo}' fill='${tint},${(Number(glow) * 0.18).toFixed(3)})' />`;
         layer += `<circle cx='${x}' cy='${y}' r='${r}' fill='rgba(255,255,255,${glow})' />`;
       }
       layer += `</svg>`;
@@ -187,10 +190,10 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
     };
 
     return {
-      near: buildLayer(20, 0.7, 1.4, 1.7),
-      mid: buildLayer(16, 0.46, 1.1, 31.2),
-      far: buildLayer(12, 0.32, 0.9, 57.8),
-      bg: buildLayer(9, 0.2, 0.65, 89.4)
+      near: buildLayer(14, 0.78, 1.65, 1.7),
+      mid: buildLayer(20, 0.48, 1.04, 31.2),
+      far: buildLayer(28, 0.29, 0.66, 57.8),
+      bg: buildLayer(34, 0.14, 0.46, 89.4)
     };
   } else if (shader.particles === "embers") {
     svg += `<style>.near-wave { stroke: rgba(0, 240, 255, 0.4); animation: propagate 6s linear infinite; stroke-width: 1.2; } .mid-wave { stroke: rgba(255, 20, 50, 0.3); animation: propagate 12s linear infinite; stroke-width: 0.8; } .far-wave { stroke: rgba(100, 10, 20, 0.2); animation: propagate 24s linear infinite; stroke-width: 0.5; } @keyframes propagate { 0% { transform: translateX(-100%) scaleY(1); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateX(100%) scaleY(1.2); opacity: 0; } } .cmb-scintilla { fill: rgba(255, 255, 255, 0.3); opacity: 0; animation: flicker 5s ease-in-out infinite; } @keyframes flicker { 0%, 100% { opacity: 0; transform: scale(0.8); } 50% { opacity: 0.5; transform: scale(1.1); } }</style>`;
@@ -265,28 +268,53 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
       svg += `<rect x='${x}' y='0' width='1' height='${h}' class='rain' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
     }
   } else if (shader.particles === "quantum") {
-    const buildOrbLayer = (count: number, alpha: number, radiusScale: number, seed: number): string => {
+    const buildOrbLayer = (
+      count: number,
+      alpha: number,
+      radiusScale: number,
+      seed: number,
+      orbitStride: number,
+      orbitRadius: number
+    ): string => {
       let layer = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' preserveAspectRatio='none'>`;
+      const cx = (Math.sin(seed * 1.97) * 150 + 500).toFixed(1);
+      const cy = (Math.cos(seed * 2.41) * 140 + 500).toFixed(1);
+      const centerX = Number(cx);
+      const centerY = Number(cy);
+
+      const voidRadius = (58 + radiusScale * 18).toFixed(1);
+      const rimRadius = (90 + radiusScale * 24).toFixed(1);
+      layer += `<circle cx='${cx}' cy='${cy}' r='${voidRadius}' fill='rgba(3,8,10,${(alpha * 0.18).toFixed(3)})' />`;
+      layer += `<circle cx='${cx}' cy='${cy}' r='${rimRadius}' fill='none' stroke='rgba(0,255,185,${(alpha * 0.14).toFixed(3)})' stroke-width='1.1' />`;
+
       for (let i = 0; i < count; i++) {
         const phase = i + seed;
-        const x = (Math.sin(phase * 91.13) * 500 + 500).toFixed(1);
-        const y = (Math.cos(phase * 241.77) * 500 + 500).toFixed(1);
+        let x = (Math.sin(phase * 91.13) * 500 + 500).toFixed(1);
+        let y = (Math.cos(phase * 241.77) * 500 + 500).toFixed(1);
+        if (i % orbitStride === 0) {
+          const angle = phase * 2.11;
+          const orbit = orbitRadius + Math.sin(phase * 3.09) * (orbitRadius * 0.34);
+          x = (centerX + Math.cos(angle) * orbit).toFixed(1);
+          y = (centerY + Math.sin(angle) * orbit).toFixed(1);
+        }
         const r = (Math.abs(Math.sin(phase * 17.91)) * radiusScale + 0.55).toFixed(2);
         const coreAlpha = (alpha * (0.56 + Math.abs(Math.sin(phase * 3.71)) * 0.44)).toFixed(3);
         const haloAlpha = (alpha * 0.36).toFixed(3);
         const haloRadius = (Number(r) * 2.4).toFixed(2);
-        layer += `<circle cx='${x}' cy='${y}' r='${haloRadius}' fill='rgba(0,255,170,${haloAlpha})' />`;
-        layer += `<circle cx='${x}' cy='${y}' r='${r}' fill='rgba(80,255,210,${coreAlpha})' />`;
+        const coreColor = i % 11 === 0 ? "rgba(158,108,255" : "rgba(80,255,210";
+        const haloColor = i % 3 === 0 ? "rgba(120,255,234" : "rgba(0,255,170";
+        layer += `<circle cx='${x}' cy='${y}' r='${haloRadius}' fill='${haloColor},${haloAlpha})' />`;
+        layer += `<circle cx='${x}' cy='${y}' r='${r}' fill='${coreColor},${coreAlpha})' />`;
       }
       layer += `</svg>`;
       return `url(data:image/svg+xml;base64,${btoa(layer)})`;
     };
 
     return {
-      near: buildOrbLayer(24, 0.6, 1.2, 3.2),
-      mid: buildOrbLayer(18, 0.45, 1.0, 21.4),
-      far: buildOrbLayer(14, 0.3, 0.85, 47.6),
-      bg: buildOrbLayer(10, 0.2, 0.7, 72.9)
+      near: buildOrbLayer(26, 0.62, 1.22, 3.2, 2, 170),
+      mid: buildOrbLayer(20, 0.48, 1.0, 21.4, 3, 215),
+      far: buildOrbLayer(14, 0.33, 0.84, 47.6, 4, 255),
+      bg: buildOrbLayer(10, 0.22, 0.7, 72.9, 5, 290)
     };
   }
 

@@ -1387,7 +1387,7 @@ export function SettingsPage() {
             </div>
 
             <div class="settings-sub-header">
-              <h4 class="settings-nav-subtitle">AI CLIs</h4>
+              <h4 class="settings-nav-subtitle">CLI Piggybacking</h4>
               <button
                 class="ghost-btn"
                 style="font-size: 0.72rem; padding: 4px 10px; min-height: 24px; border-radius: 4px;"

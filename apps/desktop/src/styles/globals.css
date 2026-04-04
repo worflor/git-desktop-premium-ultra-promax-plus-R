@@ -191,16 +191,31 @@ ol {
     calc(-1px * var(--window-screen-y, 0) * var(--theme-parallax-pin-strength, 0)), 
     0);
   will-change: transform;
+  --theme-parallax-near-mult: 1;
+  --theme-parallax-mid-mult: 1;
+  --theme-parallax-far-mult: 1;
+  --theme-parallax-bg-mult: 0.35;
+  --theme-parallax-theme-mult: 1;
 }
 
 [data-theme="aether"] .parallax-backdrop {
-  --theme-parallax-pin-strength: 0.42;
-  --theme-parallax-mouse-strength: 0.64;
+  --theme-parallax-pin-strength: 0.4;
+  --theme-parallax-mouse-strength: 0.66;
+  --theme-parallax-near-mult: 1.14;
+  --theme-parallax-mid-mult: 0.9;
+  --theme-parallax-far-mult: 0.62;
+  --theme-parallax-bg-mult: 0.28;
+  --theme-parallax-theme-mult: 0.94;
 }
 
 [data-theme="quanta"] .parallax-backdrop {
   --theme-parallax-pin-strength: 0.34;
-  --theme-parallax-mouse-strength: 0.52;
+  --theme-parallax-mouse-strength: 0.55;
+  --theme-parallax-near-mult: 0.96;
+  --theme-parallax-mid-mult: 0.78;
+  --theme-parallax-far-mult: 0.52;
+  --theme-parallax-bg-mult: 0.22;
+  --theme-parallax-theme-mult: 1.08;
 }
 
 .parallax-layer {
@@ -216,60 +231,79 @@ ol {
   opacity: 0.6;
 }
 
-[data-theme="aether"] .layer-near,
+[data-theme="aether"] .layer-near {
+  background-size: 1120px 1120px;
+}
+
 [data-theme="quanta"] .layer-near {
-  background-size: 1040px 1040px;
+  background-size: 900px 900px;
 }
 
-[data-theme="aether"] .layer-mid,
+[data-theme="aether"] .layer-mid {
+  background-size: 1540px 1540px;
+}
+
 [data-theme="quanta"] .layer-mid {
-  background-size: 1460px 1460px;
+  background-size: 1320px 1320px;
 }
 
-[data-theme="aether"] .layer-far,
+[data-theme="aether"] .layer-far {
+  background-size: 1940px 1940px;
+}
+
 [data-theme="quanta"] .layer-far {
-  background-size: 1840px 1840px;
+  background-size: 1700px 1700px;
 }
 
-[data-theme="aether"] .layer-bg,
+[data-theme="aether"] .layer-bg {
+  background-size: 560px 560px;
+  opacity: 0.4;
+}
+
 [data-theme="quanta"] .layer-bg {
-  background-size: 520px 520px;
-  opacity: 0.42;
+  background-size: 460px 460px;
+  opacity: 0.46;
 }
 
-/* Child-Planes: Mouse Parallel is now gated by theme-strength */
+/* Child-Planes: Mouse Parallel is gated by theme multipliers for identity. */
 .layer-near {
   background-image: var(--runtime-material-particles-near, none);
-  background-size: 800px 800px;
-  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.05 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 
-                         calc(var(--monitor-mouse-y, 0) * 0.05 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 0);
+  background-size: 1040px 1040px;
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.055 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-near-mult, 1) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.055 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-near-mult, 1) * 1px), 0);
   will-change: transform;
 }
 
 .layer-mid {
   background-image: var(--runtime-material-particles-mid, none);
   background-size: 1200px 1200px;
-  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 
-                         calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 0);
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.032 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-mid-mult, 1) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.032 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-mid-mult, 1) * 1px), 0);
+  will-change: transform;
 }
 
 .layer-far {
   background-image: var(--runtime-material-particles-far, none);
   background-size: 1600px 1600px;
-  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.015 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 
-                         calc(var(--monitor-mouse-y, 0) * 0.015 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 0);
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.016 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-far-mult, 1) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.016 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-far-mult, 1) * 1px), 0);
+  will-change: transform;
 }
 
 .layer-bg {
   background-image: var(--runtime-material-particles-bg, none);
   background-size: 400px 400px;
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.009 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-bg-mult, 0.35) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.009 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-bg-mult, 0.35) * 1px), 0);
+  will-change: transform;
 }
 
 .layer-theme {
   background-image: var(--runtime-material-particles, none);
   background-size: 1000px 1000px;
-  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 
-                         calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 0);
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-theme-mult, 1) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * var(--theme-parallax-theme-mult, 1) * 1px), 0);
+  will-change: transform;
 }
 
 [data-theme="blackboard"] .layer-theme {
@@ -2706,7 +2740,7 @@ ol {
 }
 
 .settings-nav-checkbox {
-  margin-bottom: 18px;
+  margin-bottom: 0;
   padding-bottom: 12px;
   border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.12);
 }

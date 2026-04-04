@@ -121,7 +121,7 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.4,
       particles: "stardust",
-      parallaxStrength: 0.2,
+      parallaxStrength: 0.26,
       interaction: "warp"
     }
   },
@@ -140,7 +140,7 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.5,
       particles: "quantum",
-      parallaxStrength: 0.24,
+      parallaxStrength: 0.3,
       interaction: "vibration",
       geometry: {
         letterSpacing: "0.02em"
