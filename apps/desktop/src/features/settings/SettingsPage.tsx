@@ -89,7 +89,7 @@ export function SettingsPage() {
     );
 
     const measureScenario = (shrinkFactor: number, sidePadding: number) => {
-      const guardrailStatus = `Active profile: ${guardrailProfile} | Read-only: ${String(readOnlyDefault)}`;
+      const guardrailStatus = `${guardrailProfile} | Read-only: ${String(readOnlyDefault)}`;
 
       const guardrailTextWidth = Math.max(
         measureTextWidth(context, headingFont, "Guardrails"),
@@ -104,9 +104,8 @@ export function SettingsPage() {
       );
 
       const interfaceTextWidth = Math.max(
-        measureTextWidth(context, headingFont, "Interface Calibration"),
-        measureTextWidth(context, bodyFont, "Theme and aesthetic architecture."),
-        measureTextWidth(context, bodyFont, "Primary Engine")
+        measureTextWidth(context, headingFont, "Theme"),
+        measureTextWidth(context, bodyFont, "Theme and aesthetic architecture.")
       );
 
       const guardrailRequired = Math.max(Math.ceil(guardrailTextWidth * shrinkFactor + sidePadding), 146);
@@ -405,7 +404,7 @@ export function SettingsPage() {
               <h3>Guardrails</h3>
               <p class="section-summary">Automated action assertion and safety thresholds.</p>
               <p class="settings-fit-line">
-                Active profile: {settingsResult.latest?.ok ? settingsResult.latest.data.guardrailProfile : "Balanced"} |
+                {settingsResult.latest?.ok ? settingsResult.latest.data.guardrailProfile : "Balanced"} |
                 Read-only: {String(settingsResult.latest?.ok ? settingsResult.latest.data.aiReadOnlyDefault : true)}
               </p>
               <input
@@ -461,10 +460,9 @@ export function SettingsPage() {
             </article>
 
             <article ref={calibrationCardRef} class="state-card settings-top-card">
-              <h3>Interface Calibration</h3>
+              <h3>Theme</h3>
               <p class="section-summary">Theme and aesthetic architecture.</p>
               <div class="layout-control-field">
-                <span>Primary Engine</span>
                 <select
                   class="path-input"
                   value={layout.themeId()}
@@ -519,7 +517,7 @@ export function SettingsPage() {
             </label>
             <p class="section-summary">Core shortcuts for the active profile.</p>
             <div class="keybinding-preview-card">
-              <ul class="keybinding-preview-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
+              <ul class="keybinding-preview-list settings-keybinding-grid">
                 {getNavigationBindings(layout.keybindingProfile()).map((binding) => (
                   <li class="keybinding-preview-row">
                     <span>{binding.label}</span>
@@ -682,7 +680,7 @@ export function SettingsPage() {
 
             <Show when={updateCheckResult()}>
               {(status) => (
-                <div style="margin-top: 12px; font-size: 12px; color: var(--text-muted); border-top: 1px solid rgba(var(--chrome-border-rgb), 0.2); padding-top: 10px;">
+                <div class="settings-update-status">
                   <p>Last checked: {formatTimestamp(status().checkedAt)}</p>
                   <p>Current version: {status().currentVersion}</p>
                   <Show when={status().updateAvailable} fallback={<p>No update available for the selected channel.</p>}>

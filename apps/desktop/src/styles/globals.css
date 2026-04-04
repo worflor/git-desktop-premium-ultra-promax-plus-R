@@ -1392,6 +1392,22 @@ ul, ol { list-style: none; padding: 0; }
 .settings-grid { display: grid; gap: 10px; }
 .settings-grid .state-card-wide { grid-column: 1 / -1; }
 
+.settings-grid .state-card {
+  min-width: 0;
+}
+
+.settings-grid .state-card h3,
+.settings-grid .state-card p,
+.settings-grid .layout-control-field span,
+.settings-grid .layout-checkbox-field span,
+.settings-grid .telemetry-summary-command,
+.settings-grid .telemetry-summary-metrics,
+.settings-grid .telemetry-summary-meta,
+.settings-grid .telemetry-recent-list li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .settings-top-row {
   grid-column: 1 / -1;
   width: 100%;
@@ -1410,9 +1426,9 @@ ul, ol { list-style: none; padding: 0; }
 .settings-top-row .settings-fit-line {
   margin: 0;
   min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .settings-top-row .settings-retention-grid {
@@ -1428,10 +1444,9 @@ ul, ol { list-style: none; padding: 0; }
   font-size: 11px;
   font-style: italic;
   line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .settings-top-row.is-compact {
@@ -1500,9 +1515,39 @@ ul, ol { list-style: none; padding: 0; }
 
 .keybinding-preview-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 8px;
+}
+
+.keybinding-preview-row > span:first-child {
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.keybinding-preview-row > .shortcut-hint {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.settings-keybinding-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.settings-update-status {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-top: 1px solid rgba(var(--chrome-border-rgb), 0.2);
+  padding-top: 10px;
+}
+
+.settings-update-status p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* ── Telemetry ───────────────────────────────────────────── */
