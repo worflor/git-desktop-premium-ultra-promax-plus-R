@@ -963,6 +963,29 @@ ul, ol { list-style: none; padding: 0; }
   cursor: not-allowed;
 }
 
+.ghost-btn {
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 100ms, color 100ms, border-color 100ms;
+}
+
+.ghost-btn:hover {
+  background: var(--secondary-btn-hover-bg);
+  border-color: rgba(var(--chrome-border-rgb), 0.16);
+  color: var(--text-normal);
+}
+
+.ghost-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ── Custom Theme Slider ── */
 .theme-slider {
   -webkit-appearance: none;
@@ -1485,6 +1508,34 @@ ul, ol { list-style: none; padding: 0; }
   font-size: 10px;
 }
 
+.settings-meta-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(var(--chrome-border-rgb), 0.12);
+}
+
+.settings-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settings-meta-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.settings-meta-value {
+  font-size: 11px;
+  color: var(--text-normal);
+}
+
 .settings-top-row.is-ultra-compact .path-input {
   padding: 5px 8px;
   font-size: 11px;
@@ -1615,11 +1666,41 @@ ul, ol { list-style: none; padding: 0; }
 .telemetry-summary-list { display: flex; flex-direction: column; gap: 6px; }
 
 .telemetry-summary-row {
-  display: grid;
-  gap: 3px;
-  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
   border-radius: 6px;
   background: var(--row-bg);
+  border: 1px solid rgba(var(--chrome-border-rgb), 0.08);
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+
+.telemetry-grid-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.telemetry-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+}
+
+.telemetry-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-strong);
 }
 
 .telemetry-summary-command { color: var(--text-strong); font-family: var(--font-mono); font-size: 12px; }

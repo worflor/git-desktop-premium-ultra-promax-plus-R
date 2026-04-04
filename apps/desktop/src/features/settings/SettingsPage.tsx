@@ -89,7 +89,7 @@ export function SettingsPage() {
     );
 
     const measureScenario = (shrinkFactor: number, sidePadding: number) => {
-      const guardrailStatus = `${guardrailProfile} | Read-only: ${String(readOnlyDefault)}`;
+      const guardrailStatus = `${guardrailProfile} | Read-only: ${readOnlyDefault ? "Enabled" : "Disabled"}`;
 
       const guardrailTextWidth = Math.max(
         measureTextWidth(context, headingFont, "Guardrails"),
@@ -405,7 +405,7 @@ export function SettingsPage() {
               <p class="section-summary">Automated action assertion and safety thresholds.</p>
               <p class="settings-fit-line">
                 {settingsResult.latest?.ok ? settingsResult.latest.data.guardrailProfile : "Balanced"} |
-                Read-only: {String(settingsResult.latest?.ok ? settingsResult.latest.data.aiReadOnlyDefault : true)}
+                Read-only: {settingsResult.latest?.ok && settingsResult.latest.data.aiReadOnlyDefault ? "Enabled" : "Disabled"}
               </p>
               <input
                 type="range"
@@ -534,24 +534,24 @@ export function SettingsPage() {
             </div>
           </article>
 
-          <article class="state-card state-card-wide">
-            <h3>Command Diagnostics</h3>
-            <p class="section-summary">Latency trends and operation logs.</p>
-            <p>
-              Captured samples: {latencyReport().totalSamples} across {latencyReport().commandCount} command(s).
-            </p>
-            <div class="inline-actions">
-              <button class="primary-btn" onClick={() => setLatencyReport(getCommandLatencyReport())}>
-                Refresh Snapshot
-              </button>
-              <button
-                class="primary-btn"
-                disabled={latencyReport().totalSamples === 0}
-                onClick={() => clearCommandLatencyReport()}
-              >
-                Clear Samples
-              </button>
-            </div>
+            <article class="state-card state-card-wide">
+              <h3>Command Diagnostics</h3>
+              <p class="section-summary">Latency trends and operation logs.</p>
+              <p class="section-summary" style="margin-bottom: 12px;">
+                {latencyReport().totalSamples} samples · {latencyReport().commandCount} unique commands
+              </p>
+              <div class="inline-actions">
+                <button class="ghost-btn" onClick={() => setLatencyReport(getCommandLatencyReport())}>
+                  Refresh Snapshot
+                </button>
+                <button
+                  class="ghost-btn"
+                  disabled={latencyReport().totalSamples === 0}
+                  onClick={() => clearCommandLatencyReport()}
+                >
+                  Clear Samples
+                </button>
+              </div>
 
             <Show
               when={latencyReport().summaries.length > 0}
@@ -561,11 +561,19 @@ export function SettingsPage() {
                 {latencyReport().summaries.slice(0, 10).map((summary) => (
                   <div class="telemetry-summary-row">
                     <div class="telemetry-summary-command">{summary.command}</div>
-                    <div class="telemetry-summary-metrics">
-                      p50 {summary.p50Ms.toFixed(2)} ms | p95 {summary.p95Ms.toFixed(2)} ms | avg {summary.avgMs.toFixed(2)} ms
-                    </div>
-                    <div class="telemetry-summary-meta">
-                      success {summary.successCount}/{summary.count} | range {summary.minMs.toFixed(2)}-{summary.maxMs.toFixed(2)} ms
+                    <div class="telemetry-grid">
+                      <div class="telemetry-grid-item">
+                        <span class="telemetry-label">p50</span>
+                        <span class="telemetry-value">{summary.p50Ms.toFixed(1)}ms</span>
+                      </div>
+                      <div class="telemetry-grid-item">
+                        <span class="telemetry-label">Reliability</span>
+                        <span class="telemetry-value">{Math.round((summary.successCount / summary.count) * 100)}%</span>
+                      </div>
+                      <div class="telemetry-grid-item">
+                        <span class="telemetry-label">Range</span>
+                        <span class="telemetry-value">{Math.round(summary.minMs)}–{Math.round(summary.maxMs)}ms</span>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -587,28 +595,25 @@ export function SettingsPage() {
             </Show>
           </article>
 
-          <article class="state-card state-card-wide">
-            <h3>Diff Render Diagnostics</h3>
-            <p class="section-summary">First-paint, sustained scroll FPS, memory, and fallback-rate telemetry.</p>
-            <p>
-              Sessions: {diffRenderReport().totalSessions} | Fallbacks: {diffRenderReport().fallbackCount} | Fallback rate: {(diffRenderReport().fallbackRate * 100).toFixed(2)}%
-            </p>
-            <p>
-              First paint p95: {diffRenderReport().firstPaintP95Ms.toFixed(2)} ms | Scroll FPS p50: {diffRenderReport().scrollFpsP50.toFixed(2)} | Memory p95: {diffRenderReport().memoryP95Mb.toFixed(2)} MB
-            </p>
+            <article class="state-card state-card-wide">
+              <h3>Diff Render Diagnostics</h3>
+              <p class="section-summary">First-paint, sustained scroll FPS, memory, and fallback-rate telemetry.</p>
+              <p class="section-summary" style="margin-bottom: 12px;">
+                {diffRenderReport().totalSessions} sessions · stability {((1 - diffRenderReport().fallbackRate) * 100).toFixed(0)}%
+              </p>
 
-            <div class="inline-actions">
-              <button class="primary-btn" onClick={() => setDiffRenderReport(getDiffRenderMetricsReport())}>
-                Refresh Diff Metrics
-              </button>
-              <button
-                class="primary-btn"
-                disabled={diffRenderReport().totalSessions === 0}
-                onClick={() => clearDiffRenderMetricsReport()}
-              >
-                Clear Diff Metrics
-              </button>
-            </div>
+              <div class="inline-actions">
+                <button class="ghost-btn" onClick={() => setDiffRenderReport(getDiffRenderMetricsReport())}>
+                  Refresh Diff Metrics
+                </button>
+                <button
+                  class="ghost-btn"
+                  disabled={diffRenderReport().totalSessions === 0}
+                  onClick={() => clearDiffRenderMetricsReport()}
+                >
+                  Clear Diff Metrics
+                </button>
+              </div>
 
             <Show
               when={diffRenderReport().modeSummaries.length > 0}
@@ -617,12 +622,20 @@ export function SettingsPage() {
               <div class="telemetry-summary-list">
                 {diffRenderReport().modeSummaries.map((summary) => (
                   <div class="telemetry-summary-row">
-                    <div class="telemetry-summary-command">mode {summary.rendererMode}</div>
-                    <div class="telemetry-summary-metrics">
-                      first-paint p50/p95 {summary.firstPaintP50Ms.toFixed(2)}/{summary.firstPaintP95Ms.toFixed(2)} ms | scroll p50/p95 {summary.scrollFpsP50.toFixed(2)}/{summary.scrollFpsP95.toFixed(2)} fps
-                    </div>
-                    <div class="telemetry-summary-meta">
-                      sessions {summary.sessionCount} | fallback rate {(summary.fallbackRate * 100).toFixed(2)}% | memory p50/p95 {summary.memoryP50Mb.toFixed(2)}/{summary.memoryP95Mb.toFixed(2)} MB
+                    <div class="telemetry-summary-command">Renderer: {summary.rendererMode}</div>
+                    <div class="telemetry-grid">
+                      <div class="telemetry-grid-item">
+                        <span class="telemetry-label">First Paint</span>
+                        <span class="telemetry-value">{summary.firstPaintP50Ms.toFixed(0)}ms</span>
+                      </div>
+                      <div class="telemetry-grid-item">
+                        <span class="telemetry-label">Scroll p50</span>
+                        <span class="telemetry-value">{summary.scrollFpsP50.toFixed(0)}fps</span>
+                      </div>
+                      <div class="telemetry-grid-item">
+                        <span class="telemetry-label">Memory p95</span>
+                        <span class="telemetry-value">{summary.memoryP95Mb.toFixed(0)}MB</span>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -660,7 +673,7 @@ export function SettingsPage() {
                   void onSaveCrashReporting(enabled);
                 }}
               />
-              <span>Enable local crash-report artifacts</span>
+              <span>Capture local crash diagnostics</span>
             </label>
 
             <div class="inline-actions" style="margin-top: 12px;">
@@ -686,14 +699,20 @@ export function SettingsPage() {
 
             <Show when={updateCheckResult()}>
               {(status) => (
-                <div class="settings-update-status">
-                  <p>Last checked: {formatTimestamp(status().checkedAt)}</p>
-                  <p>Current version: {status().currentVersion}</p>
-                  <Show when={status().updateAvailable} fallback={<p>No update available for the selected channel.</p>}>
-                    <p>Available version: {status().latestVersion ?? "unknown"}</p>
-                    <Show when={status().endpoint}>
-                      {(endpoint) => <p>Endpoint: {endpoint()}</p>}
-                    </Show>
+                <div class="settings-meta-row">
+                  <div class="settings-meta-item">
+                    <span class="settings-meta-label">Last Checked</span>
+                    <span class="settings-meta-value">{formatTimestamp(status().checkedAt)}</span>
+                  </div>
+                  <div class="settings-meta-item">
+                    <span class="settings-meta-label">Current Version</span>
+                    <span class="settings-meta-value">{status().currentVersion}</span>
+                  </div>
+                  <Show when={status().updateAvailable}>
+                    <div class="settings-meta-item">
+                      <span class="settings-meta-label">Available</span>
+                      <span class="settings-meta-value">{status().latestVersion ?? "unknown"}</span>
+                    </div>
                   </Show>
                 </div>
               )}
