@@ -140,7 +140,7 @@ export function WorkspacePage() {
         <div class="workspace-content-panel">
           <Show when={!repository.activeRepositoryPath()}>
             <div class="workspace-empty-inline-hint">
-              Open a project from the sidebar to get started.
+              Open a project to get started.
             </div>
           </Show>
           <Suspense fallback={<LoadingStateSkeleton />}>

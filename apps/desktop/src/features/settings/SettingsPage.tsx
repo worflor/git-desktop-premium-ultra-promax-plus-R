@@ -46,6 +46,102 @@ export function SettingsPage() {
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [latencyReport, setLatencyReport] = createSignal(getCommandLatencyReport());
   const [diffRenderReport, setDiffRenderReport] = createSignal(getDiffRenderMetricsReport());
+  const [topCardsCompact, setTopCardsCompact] = createSignal(false);
+  const [topCardsUltraCompact, setTopCardsUltraCompact] = createSignal(false);
+
+  let topCardsRowRef: HTMLDivElement | undefined;
+  let guardrailsCardRef: HTMLElement | undefined;
+  let calibrationCardRef: HTMLElement | undefined;
+
+  const measureTextWidth = (context: CanvasRenderingContext2D, font: string, value: string) => {
+    context.font = font;
+    return Math.ceil(context.measureText(value).width);
+  };
+
+  const recalculateTopCardDensity = () => {
+    if (!topCardsRowRef || typeof document === "undefined") {
+      return;
+    }
+
+    const context = document.createElement("canvas").getContext("2d");
+    if (!context) {
+      return;
+    }
+
+    const sampleCard = guardrailsCardRef ?? calibrationCardRef;
+    if (!sampleCard) {
+      return;
+    }
+
+    const cardStyle = getComputedStyle(sampleCard);
+    const headingStyle = getComputedStyle(sampleCard.querySelector("h3") ?? sampleCard);
+    const controlSource = calibrationCardRef?.querySelector(".path-input") ?? sampleCard;
+    const controlStyle = getComputedStyle(controlSource);
+
+    const bodyFont = cardStyle.font;
+    const headingFont = headingStyle.font;
+    const controlFont = controlStyle.font;
+    const guardrailProfile = settingsResult.latest?.ok ? settingsResult.latest.data.guardrailProfile : "Balanced";
+    const readOnlyDefault = settingsResult.latest?.ok ? settingsResult.latest.data.aiReadOnlyDefault : true;
+    const maxThemeLabelWidth = THEME_OPTIONS.reduce(
+      (maxWidth, option) => Math.max(maxWidth, measureTextWidth(context, controlFont, option.label)),
+      0
+    );
+
+    const measureScenario = (shrinkFactor: number, sidePadding: number) => {
+      const guardrailStatus = `Active profile: ${guardrailProfile} | Read-only: ${String(readOnlyDefault)}`;
+
+      const guardrailTextWidth = Math.max(
+        measureTextWidth(context, headingFont, "Guardrails"),
+        measureTextWidth(context, bodyFont, "Automated action assertion and safety thresholds."),
+        measureTextWidth(context, bodyFont, guardrailStatus)
+      );
+
+      const telemetryTextWidth = Math.max(
+        measureTextWidth(context, headingFont, "Local Telemetry"),
+        measureTextWidth(context, bodyFont, "Diagnostic retention and performance logs."),
+        measureTextWidth(context, bodyFont, "Data remains local-only.")
+      );
+
+      const interfaceTextWidth = Math.max(
+        measureTextWidth(context, headingFont, "Interface Calibration"),
+        measureTextWidth(context, bodyFont, "Theme and aesthetic architecture."),
+        measureTextWidth(context, bodyFont, "Primary Engine")
+      );
+
+      const guardrailRequired = Math.max(Math.ceil(guardrailTextWidth * shrinkFactor + sidePadding), 146);
+      const telemetryRequired = Math.max(Math.ceil(telemetryTextWidth * shrinkFactor + sidePadding), 168);
+      const interfaceRequired = Math.max(
+        Math.ceil(interfaceTextWidth * shrinkFactor + sidePadding),
+        Math.ceil(maxThemeLabelWidth * shrinkFactor + (sidePadding + 30))
+      );
+
+      return Math.max(guardrailRequired, telemetryRequired, interfaceRequired);
+    };
+
+    const normalRequired = measureScenario(1, 22);
+    const compactRequired = measureScenario(0.93, 18);
+
+    const rowStyle = getComputedStyle(topCardsRowRef);
+    const gapSource = rowStyle.columnGap === "normal" ? rowStyle.gap : rowStyle.columnGap;
+    const gap = Number.parseFloat(gapSource) || 10;
+    const availablePerCard = (topCardsRowRef.clientWidth - gap * 2) / 3;
+
+    if (availablePerCard >= normalRequired) {
+      setTopCardsCompact(false);
+      setTopCardsUltraCompact(false);
+      return;
+    }
+
+    if (availablePerCard >= compactRequired) {
+      setTopCardsCompact(true);
+      setTopCardsUltraCompact(false);
+      return;
+    }
+
+    setTopCardsCompact(true);
+    setTopCardsUltraCompact(true);
+  };
 
   onMount(() => {
     const unsubscribeCommandLatency = subscribeCommandLatencyReport((report) => {
@@ -59,6 +155,46 @@ export function SettingsPage() {
       unsubscribeCommandLatency();
       unsubscribeDiffRender();
     });
+  });
+
+  onMount(() => {
+    recalculateTopCardDensity();
+
+    if (!topCardsRowRef) {
+      return;
+    }
+
+    if (typeof ResizeObserver !== "undefined") {
+      const resizeObserver = new ResizeObserver(() => {
+        recalculateTopCardDensity();
+      });
+
+      resizeObserver.observe(topCardsRowRef);
+
+      onCleanup(() => {
+        resizeObserver.disconnect();
+      });
+
+      return;
+    }
+
+    const onResize = () => {
+      recalculateTopCardDensity();
+    };
+
+    window.addEventListener("resize", onResize);
+    onCleanup(() => {
+      window.removeEventListener("resize", onResize);
+    });
+  });
+
+  createEffect(() => {
+    settingsResult.latest;
+    layout.themeId();
+
+    setTimeout(() => {
+      recalculateTopCardDensity();
+    }, 0);
   });
 
   createEffect(() => {
@@ -257,90 +393,96 @@ export function SettingsPage() {
 
       <Show when={settingsResult.latest?.ok}>
         <section class="info-grid settings-grid">
-          <article class="state-card">
-            <h3>Guardrails</h3>
-            <p class="section-summary">Automated action assertion and safety thresholds.</p>
-            <p>
-              Active profile: {settingsResult.latest?.ok ? settingsResult.latest.data.guardrailProfile : "Balanced"} |
-              Read-only: {String(settingsResult.latest?.ok ? settingsResult.latest.data.aiReadOnlyDefault : true)}
-            </p>
-            <input
-              type="range"
-              class="theme-slider"
-              min="0"
-              max="1"
-              step="0.01"
-              value={guardrailValue()}
-              onInput={(event) => {
-                setGuardrailValue(Number.parseFloat(event.currentTarget.value));
-              }}
-              onChange={() => {
-                void onSaveGuardrail();
-              }}
-            />
-          </article>
-
-          <article class="state-card">
-            <h3>Local Telemetry</h3>
-            <p class="section-summary">Diagnostic retention and performance logs.</p>
-            <p>Data remains local-only.</p>
-            <div class="sync-grid">
+          <div
+            ref={topCardsRowRef}
+            class="settings-top-row"
+            classList={{
+              "is-compact": topCardsCompact(),
+              "is-ultra-compact": topCardsUltraCompact()
+            }}
+          >
+            <article ref={guardrailsCardRef} class="state-card settings-top-card">
+              <h3>Guardrails</h3>
+              <p class="section-summary">Automated action assertion and safety thresholds.</p>
+              <p class="settings-fit-line">
+                Active profile: {settingsResult.latest?.ok ? settingsResult.latest.data.guardrailProfile : "Balanced"} |
+                Read-only: {String(settingsResult.latest?.ok ? settingsResult.latest.data.aiReadOnlyDefault : true)}
+              </p>
               <input
-                class="path-input"
-                type="number"
-                min="1"
-                max="365"
-                value={retentionDays()}
+                type="range"
+                class="theme-slider"
+                min="0"
+                max="1"
+                step="0.01"
+                value={guardrailValue()}
                 onInput={(event) => {
-                  setRetentionDays(Number.parseInt(event.currentTarget.value, 10) || 1);
+                  setGuardrailValue(Number.parseFloat(event.currentTarget.value));
                 }}
-                onBlur={() => {
-                  void onSaveRetention();
+                onChange={() => {
+                  void onSaveGuardrail();
                 }}
-                aria-label="Retention days"
               />
-              <input
-                class="path-input"
-                type="number"
-                min="16"
-                max="4096"
-                value={retentionMb()}
-                onInput={(event) => {
-                  setRetentionMb(Number.parseInt(event.currentTarget.value, 10) || 16);
-                }}
-                onBlur={() => {
-                  void onSaveRetention();
-                }}
-                aria-label="Retention max MB"
-              />
-            </div>
-          </article>
+            </article>
 
+            <article class="state-card settings-top-card">
+              <h3>Local Telemetry</h3>
+              <p class="section-summary">Diagnostic retention and performance logs.</p>
+              <p class="settings-fit-line">Data remains local-only.</p>
+              <div class="sync-grid settings-retention-grid">
+                <input
+                  class="path-input"
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={retentionDays()}
+                  onInput={(event) => {
+                    setRetentionDays(Number.parseInt(event.currentTarget.value, 10) || 1);
+                  }}
+                  onBlur={() => {
+                    void onSaveRetention();
+                  }}
+                  aria-label="Retention days"
+                />
+                <input
+                  class="path-input"
+                  type="number"
+                  min="16"
+                  max="4096"
+                  value={retentionMb()}
+                  onInput={(event) => {
+                    setRetentionMb(Number.parseInt(event.currentTarget.value, 10) || 16);
+                  }}
+                  onBlur={() => {
+                    void onSaveRetention();
+                  }}
+                  aria-label="Retention max MB"
+                />
+              </div>
+            </article>
 
-          <article class="state-card">
-            <h3>Interface Calibration</h3>
-            <p class="section-summary">Theme and aesthetic architecture.</p>
-            <div class="layout-control-field">
-              <span>Primary Engine</span>
-              <select
-                class="path-input"
-                value={layout.themeId()}
-                onChange={(event) => {
-                  layout.setThemeId(event.currentTarget.value);
-                  void layout.persistUiPreferences();
-                }}
-                aria-label="Theme"
-              >
-                {THEME_OPTIONS.map((option) => (
-                  <option value={option.id}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-            
-            <p class="theme-description-yappery" style="margin-top: 12px; font-size: 11px; color: var(--text-muted); font-style: italic; border-left: 2px solid rgba(var(--chrome-border-rgb), 0.2); padding-left: 8px;">
-              {THEME_OPTIONS.find(t => t.id === layout.themeId())?.description}
-            </p>
-          </article>
+            <article ref={calibrationCardRef} class="state-card settings-top-card">
+              <h3>Interface Calibration</h3>
+              <p class="section-summary">Theme and aesthetic architecture.</p>
+              <div class="layout-control-field">
+                <span>Primary Engine</span>
+                <select
+                  class="path-input"
+                  value={layout.themeId()}
+                  onChange={(event) => {
+                    layout.setThemeId(event.currentTarget.value);
+                    void layout.persistUiPreferences();
+                  }}
+                  aria-label="Theme"
+                >
+                  {THEME_OPTIONS.map((option) => (
+                    <option value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <p class="theme-description-yappery">{THEME_OPTIONS.find((t) => t.id === layout.themeId())?.description}</p>
+            </article>
+          </div>
 
           <article class="state-card state-card-wide">
             <h3>Navigation & Surface Guide</h3>
