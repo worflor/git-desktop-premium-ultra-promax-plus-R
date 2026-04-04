@@ -39,7 +39,7 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 1.5,
       particles: "ethereal",
-      parallaxStrength: 0,
+      parallaxStrength: 0.25,
       interaction: "caustic",
       geometry: {
         radius: 12,
@@ -187,7 +187,7 @@ const THEME_DEFINITIONS = [
       motion: "snappy",
       luminescence: 0.1,
       particles: "chalkdust",
-      parallaxStrength: 0,
+      parallaxStrength: 0.2,
       interaction: "chalk",
       geometry: {
         radius: 2,
@@ -211,7 +211,7 @@ const THEME_DEFINITIONS = [
       motion: "snappy",
       luminescence: 0.4,
       particles: "voxels",
-      parallaxStrength: 0,
+      parallaxStrength: 0.3,
       geometry: {
         radius: 0,
         pixelated: true,

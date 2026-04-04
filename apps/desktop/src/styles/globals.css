@@ -109,16 +109,25 @@ ol {
   -webkit-mask-image: var(--gutter-mask);
   mask-image: var(--gutter-mask);
 
-  /* Mother-Plane: Handles the massive window-pinning shift once for all children */
-  transform: translate3d(calc(-1px * var(--window-screen-x, 0)), calc(-1px * var(--window-screen-y, 0)), 0);
+  /* Mother-Plane: Only shifts for Starry themes (monitor-pinning) */
+  transform: translate3d(
+    calc(-1px * var(--window-screen-x, 0) * var(--theme-parallax-pin-strength, 0)), 
+    calc(-1px * var(--window-screen-y, 0) * var(--theme-parallax-pin-strength, 0)), 
+    0);
   will-change: transform;
+}
+
+[data-theme="aether"] .parallax-backdrop,
+[data-theme="quanta"] .parallax-backdrop {
+  --theme-parallax-pin-strength: 1;
+  --theme-parallax-mouse-strength: 1; /* Exclusively enable mouse depth for stars */
 }
 
 .parallax-layer {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 4000px; /* Celestial overscan */
+  width: 4000px;
   height: 4000px;
   margin-left: -2000px;
   margin-top: -2000px;
@@ -127,40 +136,48 @@ ol {
   opacity: 0.6;
 }
 
-/* Child-Planes: Handle only incremental mouse parallax (Ultra-Lightweight) */
+/* Child-Planes: Mouse Parallel is now gated by theme-strength */
 .layer-near {
   background-image: var(--runtime-material-particles-near, none);
   background-size: 800px 800px;
-  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.05 * var(--runtime-parallax-strength, 1) * 1px), 
-                         calc(var(--monitor-mouse-y, 0) * 0.05 * var(--runtime-parallax-strength, 1) * 1px), 0);
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.05 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.05 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 0);
   will-change: transform;
 }
 
 .layer-mid {
   background-image: var(--runtime-material-particles-mid, none);
   background-size: 1200px 1200px;
-  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.03 * var(--runtime-parallax-strength, 1) * 1px), 
-                         calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * 1px), 0);
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 0);
 }
 
 .layer-far {
   background-image: var(--runtime-material-particles-far, none);
   background-size: 1600px 1600px;
-  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.015 * var(--runtime-parallax-strength, 1) * 1px), 
-                         calc(var(--monitor-mouse-y, 0) * 0.015 * var(--runtime-parallax-strength, 1) * 1px), 0);
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.015 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.015 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 0);
 }
 
 .layer-bg {
   background-image: var(--runtime-material-particles-bg, none);
   background-size: 400px 400px;
-  /* Stationary background: No extra mouse transform needed */
 }
 
 .layer-theme {
   background-image: var(--runtime-material-particles, none);
   background-size: 1000px 1000px;
-  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.03 * var(--runtime-parallax-strength, 1) * 1px), 
-                         calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * 1px), 0);
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 0);
+}
+
+/* ── Utility Drawer Collision Fix ── */
+.utility-drawer {
+  pointer-events: none !important;
+}
+
+.utility-drawer > * {
+  pointer-events: auto !important;
 }
 
 [data-theme="nightwalker"] .parallax-backdrop {
@@ -1957,6 +1974,14 @@ ol {
   min-width: 0;
   display: grid;
   gap: 6px;
+  position: relative;
+  z-index: 0;
+  transform: none;
+  overflow: clip;
+}
+
+.settings-top-row .settings-top-card:focus-within {
+  z-index: 1;
 }
 
 .settings-top-row .settings-fit-line {
