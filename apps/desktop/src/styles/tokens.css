@@ -11,10 +11,10 @@
   --bg-2: #151b27;
   --bg-3: #1f2634;
 
-  --surface-0: rgba(11, 15, 22, 0.86);
-  --surface-1: rgba(16, 22, 31, 0.9);
-  --surface-2: rgba(21, 29, 41, 0.94);
-  --surface-accent: rgba(118, 147, 255, 0.16);
+  --surface-0: rgba(11, 15, 22, 0.74);
+  --surface-1: rgba(16, 22, 31, 0.78);
+  --surface-2: rgba(21, 29, 41, 0.82);
+  --surface-accent: rgba(118, 147, 255, 0.12);
 
   --text-strong: #f1f4fa;
   --text-normal: #cfd7e7;
@@ -43,7 +43,7 @@
   --input-overlay: rgba(10, 14, 21, 0.86);
   --diff-overlay: rgba(9, 13, 20, 0.88);
   --danger-overlay: rgba(59, 24, 29, 0.86);
-  --glass-backdrop-filter: blur(10px) saturate(108%);
+  --glass-backdrop-filter: blur(16px) saturate(114%);
 
   --radius-sm: 10px;
   --radius-md: 14px;
@@ -159,9 +159,9 @@
   --bg-2: #1b382f;
   --bg-3: #285145;
 
-  --surface-0: rgba(12, 27, 22, 0.84);
-  --surface-1: rgba(19, 41, 34, 0.9);
-  --surface-2: rgba(31, 63, 53, 0.92);
+  --surface-0: rgba(12, 27, 22, 0.61);
+  --surface-1: rgba(19, 41, 34, 0.67);
+  --surface-2: rgba(31, 63, 53, 0.69);
   --surface-accent: rgba(83, 190, 143, 0.2);
 
   --text-strong: #e6f2ed;
@@ -186,11 +186,11 @@
   --danger-copy-strong: #ffd8d5;
   --danger-copy-muted: #efc3c0;
 
-  --panel-overlay: rgba(10, 23, 18, 0.7);
-  --panel-overlay-strong: rgba(11, 26, 20, 0.74);
-  --input-overlay: rgba(9, 20, 16, 0.7);
-  --diff-overlay: rgba(7, 14, 12, 0.82);
-  --danger-overlay: rgba(58, 20, 22, 0.84);
+  --panel-overlay: rgba(10, 23, 18, 0.5);
+  --panel-overlay-strong: rgba(11, 26, 20, 0.54);
+  --input-overlay: rgba(9, 20, 16, 0.5);
+  --diff-overlay: rgba(7, 14, 12, 0.62);
+  --danger-overlay: rgba(58, 20, 22, 0.64);
   --glass-backdrop-filter: blur(13px) saturate(128%);
   --shadow-elev: 0 18px 38px rgba(0, 0, 0, 0.35);
 
@@ -601,9 +601,9 @@
   --bg-2: #0a120d;
   --bg-3: #121d15;
 
-  --surface-0: rgba(3, 8, 5, 0.88);
-  --surface-1: rgba(6, 14, 9, 0.92);
-  --surface-2: rgba(10, 20, 14, 0.96);
+  --surface-0: rgba(3, 8, 5, 0.65);
+  --surface-1: rgba(6, 14, 9, 0.69);
+  --surface-2: rgba(10, 20, 14, 0.73);
   --surface-accent: rgba(0, 255, 136, 0.12);
 
   --text-strong: #f0fff4;
@@ -625,11 +625,11 @@
   --chrome-accent-rgb: 0, 255, 136;
   --danger-rgb: 255, 74, 74;
 
-  --panel-overlay: rgba(2, 5, 4, 0.75);
-  --panel-overlay-strong: rgba(3, 7, 6, 0.85);
-  --input-overlay: rgba(0, 255, 136, 0.04);
-  --diff-overlay: rgba(0, 0, 0, 0.5);
-  --danger-overlay: rgba(40, 5, 5, 0.3);
+  --panel-overlay: rgba(2, 5, 4, 0.55);
+  --panel-overlay-strong: rgba(3, 7, 6, 0.65);
+  --input-overlay: rgba(0, 255, 136, 0.02);
+  --diff-overlay: rgba(0, 0, 0, 0.3);
+  --danger-overlay: rgba(40, 5, 5, 0.1);
   --glass-backdrop-filter: blur(14px) saturate(132%);
   --shadow-elev: 0 12px 40px rgba(0, 0, 0, 0.7),
                  0 0 1px rgba(0, 255, 136, 0.15);
