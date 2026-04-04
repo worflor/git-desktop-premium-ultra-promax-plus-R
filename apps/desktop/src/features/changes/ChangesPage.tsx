@@ -38,7 +38,13 @@ export function ChangesPage(props: ChangesPageProps = {}) {
   const [displayedDiffManifest, setDisplayedDiffManifest] = createSignal<FileDiffManifestData | null>(null);
   const [displayedDiffPath, setDisplayedDiffPath] = createSignal<string | null>(null);
   const [diffError, setDiffError] = createSignal<string | null>(null);
+  const [isDraggingSelection, setIsDraggingSelection] = createSignal(false);
   let previousRepositoryPath: string | null | undefined;
+  let dragCandidatePath: string | null = null;
+  let dragCandidatePoint: { x: number; y: number } | null = null;
+  let dragSelectionMode: "select" | "deselect" | null = null;
+  let dragVisitedPaths = new Set<string>();
+  let suppressNextClick = false;
 
   const activeRepo = () => repository.activeRepositoryPath();
   const diffCacheKey = (repo: string, path: string) => `${repo}::${path}`;
@@ -240,12 +246,84 @@ export function ChangesPage(props: ChangesPageProps = {}) {
   });
 
   onMount(() => {
+    const applyDragSelection = (path: string, mode: "select" | "deselect") => {
+      setSelectedPaths((current) => {
+        const isSelected = current.includes(path);
+        if (mode === "select") {
+          return isSelected ? current : [...current, path];
+        }
+        return isSelected ? current.filter((value) => value !== path) : current;
+      });
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.buttons !== 1 || !dragCandidatePath || !dragCandidatePoint) {
+        return;
+      }
+
+      const distance = Math.max(
+        Math.abs(event.clientX - dragCandidatePoint.x),
+        Math.abs(event.clientY - dragCandidatePoint.y)
+      );
+
+      if (!isDraggingSelection() && distance >= 4) {
+        dragSelectionMode = selectedPaths().includes(dragCandidatePath) ? "deselect" : "select";
+        dragVisitedPaths.clear();
+        setIsDraggingSelection(true);
+        suppressNextClick = true;
+        if (dragSelectionMode) {
+          applyDragSelection(dragCandidatePath, dragSelectionMode);
+          dragVisitedPaths.add(dragCandidatePath);
+        }
+      }
+
+      if (!isDraggingSelection()) {
+        return;
+      }
+
+      const element = document.elementFromPoint(event.clientX, event.clientY);
+      const row = element instanceof Element ? element.closest("[data-status-path]") : null;
+      const path = row?.getAttribute("data-status-path");
+      if (path && dragSelectionMode && !dragVisitedPaths.has(path)) {
+        applyDragSelection(path, dragSelectionMode);
+        dragVisitedPaths.add(path);
+      }
+    };
+
+    const handlePointerUp = () => {
+      dragCandidatePath = null;
+      dragCandidatePoint = null;
+      dragSelectionMode = null;
+      dragVisitedPaths.clear();
+      setIsDraggingSelection(false);
+    };
+
+    const handleClickCapture = (event: MouseEvent) => {
+      if (!suppressNextClick) {
+        return;
+      }
+
+      suppressNextClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    window.addEventListener("click", handleClickCapture, true);
     requestAnimationFrame(() => {
       recordUiTiming({
         event: "changes.page.first-paint",
         phase: "mount",
         durationMs: performance.now() - mountedAt
       });
+    });
+    onCleanup(() => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+      window.removeEventListener("click", handleClickCapture, true);
     });
   });
 
@@ -267,6 +345,18 @@ export function ChangesPage(props: ChangesPageProps = {}) {
       }
       return current.filter((value) => value !== path);
     });
+  };
+
+  const beginRowSelection = (event: PointerEvent, path: string) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    dragCandidatePath = path;
+    dragCandidatePoint = { x: event.clientX, y: event.clientY };
+    dragSelectionMode = null;
+    dragVisitedPaths.clear();
+    setIsDraggingSelection(false);
   };
 
   const runPathOperation = async (operation: "stage" | "unstage") => {
@@ -396,7 +486,12 @@ export function ChangesPage(props: ChangesPageProps = {}) {
             <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px;">
               {statusData() &&
                 statusData()!.files.map((file) => (
-                  <li class={`status-row ${selectedDiffPath() === file.path ? 'is-selected' : ''}`} style={`padding: 4px 6px; border-radius: 4px; background: ${selectedDiffPath() === file.path ? 'rgba(var(--chrome-border-rgb), 0.1)' : 'transparent'}; display: flex; align-items: center; gap: 6px;`}>
+                  <li
+                    class={`status-row ${selectedDiffPath() === file.path ? 'is-selected' : ''}`}
+                    data-status-path={file.path}
+                    style={`padding: 4px 6px; border-radius: 4px; background: ${selectedDiffPath() === file.path ? 'rgba(var(--chrome-border-rgb), 0.1)' : 'transparent'}; display: flex; align-items: center; gap: 6px; user-select: none;`}
+                    onPointerDown={(event) => beginRowSelection(event, file.path)}
+                  >
                     <input
                       type="checkbox"
                       class="custom-checkbox"
