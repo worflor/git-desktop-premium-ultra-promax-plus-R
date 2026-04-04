@@ -169,6 +169,7 @@ export function ChangesPage(props: ChangesPageProps = {}) {
                   <label class="file-toggle">
                     <input
                       type="checkbox"
+                      class="custom-checkbox"
                       checked={selectedPaths().includes(file.path)}
                       onChange={(event) => togglePathSelection(file.path, event.currentTarget.checked)}
                     />

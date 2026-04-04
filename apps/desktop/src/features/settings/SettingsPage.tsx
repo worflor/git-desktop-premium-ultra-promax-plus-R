@@ -64,7 +64,8 @@ function guardrailDisplayLabelFromProfile(profile: string): string {
 
 export function SettingsPage() {
   const layout = useLayoutPreferences();
-  const [settingsResult, { refetch }] = createResource(() => getAppSettings());
+  const [settingsResult] = createResource(() => getAppSettings());
+  const [settingsInitialized, setSettingsInitialized] = createSignal(false);
   const [guardrailValue, setGuardrailValue] = createSignal(0.5);
   const [guardrailStage, setGuardrailStage] = createSignal(guardrailStageFromValue(0.5));
   const [retentionDays, setRetentionDays] = createSignal(30);
@@ -112,21 +113,22 @@ export function SettingsPage() {
     const bodyFont = cardStyle.font;
     const headingFont = headingStyle.font;
     const controlFont = controlStyle.font;
-    const guardrailProfile = settingsResult.latest?.ok ? settingsResult.latest.data.guardrailProfile : "Balanced";
-    const guardrailDisplayProfile = guardrailDisplayLabelFromProfile(guardrailProfile);
-    const readOnlyDefault = settingsResult.latest?.ok ? settingsResult.latest.data.aiReadOnlyDefault : true;
+    const guardrailStatusSamples = GUARDRAIL_STAGE_META.map(
+      (stage) => `${stage.phrase} | Read-only: Disabled`
+    );
+    const maxGuardrailStatusWidth = Math.max(
+      ...guardrailStatusSamples.map((sample) => measureTextWidth(context, bodyFont, sample))
+    );
     const maxThemeLabelWidth = THEME_OPTIONS.reduce(
       (maxWidth, option) => Math.max(maxWidth, measureTextWidth(context, controlFont, option.label)),
       0
     );
 
     const measureScenario = (shrinkFactor: number, sidePadding: number) => {
-      const guardrailStatus = `${guardrailDisplayProfile} | Read-only: ${readOnlyDefault ? "Enabled" : "Disabled"}`;
-
       const guardrailTextWidth = Math.max(
         measureTextWidth(context, headingFont, "Guardrails"),
         measureTextWidth(context, bodyFont, "Automated action assertion and safety thresholds."),
-        measureTextWidth(context, bodyFont, guardrailStatus)
+        maxGuardrailStatusWidth
       );
 
       const telemetryTextWidth = Math.max(
@@ -220,7 +222,11 @@ export function SettingsPage() {
   });
 
   createEffect(() => {
-    settingsResult.latest;
+    const latest = settingsResult.latest;
+    if (latest) {
+      setSettingsInitialized(true);
+    }
+
     layout.themeId();
 
     setTimeout(() => {
@@ -265,7 +271,6 @@ export function SettingsPage() {
 
   const onSaveGuardrail = async () => {
     setActionError(null);
-    setActionMessage(null);
 
     const result = await updateAiGuardrail(guardrailValue());
 
@@ -277,12 +282,10 @@ export function SettingsPage() {
     setGuardrailValue(result.data.guardrailValue);
     setGuardrailStage(guardrailStageFromValue(result.data.guardrailValue));
     setActionMessage(`Saved guardrail profile: ${guardrailDisplayLabelFromProfile(result.data.guardrailProfile)}.`);
-    void refetch();
   };
 
   const onSaveRetention = async () => {
     setActionError(null);
-    setActionMessage(null);
 
     const result = await updateTelemetryRetention(retentionDays(), retentionMb());
 
@@ -296,12 +299,10 @@ export function SettingsPage() {
     setActionMessage(
       `Saved retention policy: ${result.data.telemetryRetentionDays} days / ${result.data.telemetryRetentionMb} MB.`
     );
-    void refetch();
   };
 
   const onSaveUpdateChannel = async (channel: "stable" | "beta") => {
     setActionError(null);
-    setActionMessage(null);
 
     const result = await updateUpdateChannel(channel);
 
@@ -313,12 +314,10 @@ export function SettingsPage() {
     setUpdateChannel(result.data.updateChannel === "beta" ? "beta" : "stable");
     setUpdateCheckResult(null);
     setActionMessage(`Saved update channel: ${result.data.updateChannel}.`);
-    void refetch();
   };
 
   const onSaveCrashReporting = async (enabled: boolean) => {
     setActionError(null);
-    setActionMessage(null);
 
     const result = await updateCrashReporting(enabled);
 
@@ -331,12 +330,10 @@ export function SettingsPage() {
     setActionMessage(
       `Crash reporting ${result.data.crashReportingEnabled ? "enabled" : "disabled"}.`
     );
-    void refetch();
   };
 
   const onCheckForUpdates = async () => {
     setActionError(null);
-    setActionMessage(null);
     setUpdateActionBusy(true);
 
     try {
@@ -362,7 +359,6 @@ export function SettingsPage() {
 
   const onInstallUpdate = async () => {
     setActionError(null);
-    setActionMessage(null);
     setUpdateActionBusy(true);
 
     try {
@@ -410,7 +406,7 @@ export function SettingsPage() {
   };
 
   return (
-    <div class="feature-page">
+    <div class="feature-page settings-page">
       <header class="feature-header">
         <div class="feature-header-main">
           <p class="feature-kicker">Workspace Preferences</p>
@@ -424,7 +420,7 @@ export function SettingsPage() {
         </div>
       </header>
 
-      <Show when={settingsResult.loading}>
+      <Show when={settingsResult.loading && !settingsInitialized()}>
         <LoadingStateSkeleton />
       </Show>
 
@@ -776,17 +772,18 @@ export function SettingsPage() {
         </section>
       </Show>
 
-      <Show when={actionMessage()}>
-        {(message) => (
-          <section class="state-card">
-            <p>{message()}</p>
-          </section>
-        )}
-      </Show>
-
-      <Show when={actionError()}>
-        {(message) => <ErrorStateCard title="Settings update failed" body={message()} />}
-      </Show>
+      <section class="settings-feedback-slot" aria-live="polite">
+        <Show
+          when={actionError()}
+          fallback={
+            <Show when={actionMessage()}>
+              {(message) => <p class="settings-feedback-text" title={message()}>{message()}</p>}
+            </Show>
+          }
+        >
+          {(message) => <p class="settings-feedback-text is-error" title={message()}>{message()}</p>}
+        </Show>
+      </section>
     </div>
   );
 }
