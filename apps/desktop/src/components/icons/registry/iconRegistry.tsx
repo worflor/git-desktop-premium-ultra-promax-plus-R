@@ -23,11 +23,13 @@ const stroke = {
 
 export const iconRegistry: Record<IconName, JSX.Element> = {
   "app-logo": (
-    <>
-      <path {...stroke} d="M3 5.5L8 2l5 3.5v5L8 14l-5-3.5z" />
-      <path {...stroke} d="M8 2v12" />
-      <path {...stroke} d="M3 5.5l5 3 5-3" />
-    </>
+    <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+      {/* Static snapshot of the Hypercube */}
+      <path d="M4 4l8 0l0 8l-8 0z" opacity="0.4" />
+      <path d="M6 6l4 0l0 4l-4 0z" />
+      <path d="M4 4l2 2M12 4l-2 2M4 12l2-2M12 12l-2-2" />
+      <path d="M8 2v12M2 8h12" stroke-dasharray="0.5 1.5" stroke-opacity="0.3" />
+    </g>
   ),
   changes: (
     <>

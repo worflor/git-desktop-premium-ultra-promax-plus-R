@@ -502,7 +502,6 @@ export function SettingsPage() {
             <article class="state-card settings-top-card">
               <h3>Local Telemetry</h3>
               <p class="section-summary">Diagnostic retention and performance logs.</p>
-              <p class="settings-fit-line">Data remains local-only.</p>
               <div class="sync-grid settings-retention-grid">
                 <div class="input-with-unit">
                   <input
@@ -539,6 +538,7 @@ export function SettingsPage() {
                   <span class="unit">MB</span>
                 </div>
               </div>
+              <p class="settings-fit-line">Data remains local-only.</p>
             </article>
           </div>
 

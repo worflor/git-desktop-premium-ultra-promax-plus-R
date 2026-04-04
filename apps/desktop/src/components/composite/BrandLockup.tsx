@@ -1,4 +1,4 @@
-import { Icon } from "@/components/icons/Icon";
+import { HypercubeLogo } from "@/components/icons/HypercubeLogo";
 
 interface BrandLockupProps {
   class?: string;
@@ -7,7 +7,7 @@ interface BrandLockupProps {
 export function BrandLockup(props: BrandLockupProps) {
   return (
     <div class={`sidebar-brand-lockup ${props.class ?? ""}`}>
-      <Icon name="app-logo" size={20} class="brand-lockup-icon" style="color: var(--text-strong);" />
+      <HypercubeLogo size={24} class="brand-lockup-icon" />
       <div class="sidebar-wordmark">
         <span class="sidebar-wordmark-main">Git</span>
         <span class="sidebar-wordmark-stage">Dev</span>
