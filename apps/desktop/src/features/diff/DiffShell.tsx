@@ -6,6 +6,15 @@ import {
   onMount,
   Show
 } from "solid-js";
+import {
+  layoutNextLine,
+  layoutWithLines,
+  prepareWithSegments,
+  walkLineRanges,
+  type LayoutCursor,
+  type LayoutLineRange,
+  type PreparedTextWithSegments
+} from "@chenglou/pretext";
 
 import type { FileDiffManifestData } from "@/lib/backend/dtos";
 import { getFileDiffChunk } from "@/lib/backend/commands";
@@ -27,9 +36,17 @@ interface ParsedDiffLine {
   number: number;
 }
 
+interface IndexedPretextLine {
+  number: number;
+  start: LayoutCursor;
+  end: LayoutCursor;
+}
+
 const LINE_HEIGHT_PX = 18;
 const CANVAS_OVERSCAN_LINES = 12;
 const CANVAS_LINE_NUMBER_GUTTER_PX = 56;
+const PRETEXT_FONT_PROFILE_FALLBACK = "13px Menlo, Consolas, monospace";
+const PRETEXT_TEXT_PADDING_PX = 16;
 
 interface RgbColor {
   r: number;
@@ -141,6 +158,72 @@ function withAlpha(sourceColor: string, alpha: number, fallback = "rgba(0, 0, 0,
   return `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${safeAlpha.toFixed(3)})`;
 }
 
+function resolvePretextFontProfile(element: HTMLElement | undefined): string {
+  if (!element || typeof window === "undefined") {
+    return PRETEXT_FONT_PROFILE_FALLBACK;
+  }
+
+  const style = getComputedStyle(element);
+  const family = style.fontFamily.trim();
+  const size = style.fontSize.trim();
+  const weight = style.fontWeight.trim();
+
+  const resolvedSize = size.length > 0 ? size : "13px";
+  const resolvedFamily = family.length > 0 ? family : "Menlo, Consolas, monospace";
+  const resolvedWeight =
+    weight.length > 0 && weight !== "normal" && weight !== "400" ? `${weight} ` : "";
+
+  return `${resolvedWeight}${resolvedSize} ${resolvedFamily}`;
+}
+
+function parseDiffLinesWithPretext(
+  prepared: PreparedTextWithSegments,
+  layoutWidthPx: number
+): ParsedDiffLine[] {
+  const wrappedWidth = Math.max(
+    layoutWidthPx - CANVAS_LINE_NUMBER_GUTTER_PX - PRETEXT_TEXT_PADDING_PX,
+    64
+  );
+
+  const layoutResult = layoutWithLines(prepared, wrappedWidth, LINE_HEIGHT_PX) as {
+    lines?: Array<{
+      text?: string;
+      start?: {
+        graphemeIndex?: number;
+      };
+    }>;
+  };
+
+  const layoutLines = Array.isArray(layoutResult.lines) ? layoutResult.lines : [];
+  const parsed: ParsedDiffLine[] = [];
+  let previousKind: LineKind = "context";
+
+  for (let index = 0; index < layoutLines.length; index += 1) {
+    const currentLine = layoutLines[index];
+    if (!currentLine) {
+      continue;
+    }
+
+    const text = typeof currentLine.text === "string" ? currentLine.text : "";
+    const graphemeIndex =
+      typeof currentLine.start?.graphemeIndex === "number"
+        ? currentLine.start.graphemeIndex
+        : 0;
+    const isContinuation = graphemeIndex > 0;
+    const kind: LineKind = isContinuation ? previousKind : detectLineKind(text);
+
+    parsed.push({
+      line: text,
+      kind,
+      number: index + 1
+    });
+
+    previousKind = kind;
+  }
+
+  return parsed;
+}
+
 function estimateMemoryMb(value: string): number {
   const bytes = new TextEncoder().encode(value).length;
   return bytes / (1024 * 1024);
@@ -165,6 +248,8 @@ export function DiffShell(props: DiffShellProps) {
   const [chunkError, setChunkError] = createSignal<string | null>(null);
   const [copyMessage, setCopyMessage] = createSignal<string | null>(null);
   const [selectedHunkIndex, setSelectedHunkIndex] = createSignal<number>(-1);
+  const [layoutWidthPx, setLayoutWidthPx] = createSignal(1080);
+  const [pretextFontProfile, setPretextFontProfile] = createSignal(PRETEXT_FONT_PROFILE_FALLBACK);
 
   let viewportElement: HTMLDivElement | undefined;
   let canvasElement: HTMLCanvasElement | undefined;
@@ -175,6 +260,8 @@ export function DiffShell(props: DiffShellProps) {
   let sessionFlushed = false;
   let lastScrollAt = 0;
   let scrollFpsSamples: number[] = [];
+  let scheduledDrawFrameId: number | null = null;
+  let canvasLineCache = new Map<number, ParsedDiffLine>();
 
   const manifest = createMemo(() => props.manifest);
   const hasManifest = createMemo(() => Boolean(manifest()));
@@ -190,18 +277,49 @@ export function DiffShell(props: DiffShellProps) {
   });
 
   const loadedDiffText = createMemo(() => loadedChunks().join(""));
+  const isSearchActive = createMemo(() => searchTerm().trim().length > 0);
+  const wrappedLayoutWidthPx = createMemo(() =>
+    Math.max(layoutWidthPx() - CANVAS_LINE_NUMBER_GUTTER_PX - PRETEXT_TEXT_PADDING_PX, 64)
+  );
 
-  const parsedLines = createMemo<ParsedDiffLine[]>(() => {
+  const preparedDiffText = createMemo<PreparedTextWithSegments | null>(() => {
     const diffText = loadedDiffText();
     if (diffText.length === 0) {
+      return null;
+    }
+
+    return prepareWithSegments(diffText, pretextFontProfile(), {
+      whiteSpace: "pre-wrap"
+    });
+  });
+
+  const indexedPretextLines = createMemo<IndexedPretextLine[]>(() => {
+    const prepared = preparedDiffText();
+    if (!prepared) {
       return [];
     }
 
-    return diffText.split("\n").map((line, index) => ({
-      line,
-      kind: detectLineKind(line),
-      number: index + 1
-    }));
+    const indexedLines: IndexedPretextLine[] = [];
+    walkLineRanges(prepared, wrappedLayoutWidthPx(), (line: LayoutLineRange) => {
+      indexedLines.push({
+        number: indexedLines.length + 1,
+        start: { ...line.start },
+        end: { ...line.end }
+      });
+    });
+
+    return indexedLines;
+  });
+
+  const shouldMaterializeAllLines = createMemo(() => mode() === "dom" || isSearchActive());
+
+  const parsedLines = createMemo<ParsedDiffLine[]>(() => {
+    const prepared = preparedDiffText();
+    if (!prepared || !shouldMaterializeAllLines()) {
+      return [];
+    }
+
+    return parseDiffLinesWithPretext(prepared, layoutWidthPx());
   });
 
   const visibleLines = createMemo(() => {
@@ -234,8 +352,47 @@ export function DiffShell(props: DiffShellProps) {
   });
 
   const canvasVirtualHeight = createMemo(() => {
-    return Math.max(visibleLines().length * LINE_HEIGHT_PX, LINE_HEIGHT_PX);
+    const totalLineCount = isSearchActive() ? visibleLines().length : indexedPretextLines().length;
+    return Math.max(totalLineCount * LINE_HEIGHT_PX, LINE_HEIGHT_PX);
   });
+
+  function resolveIndexedCanvasLine(lineIndex: number): ParsedDiffLine | null {
+    if (lineIndex < 0) {
+      return null;
+    }
+
+    const cached = canvasLineCache.get(lineIndex);
+    if (cached) {
+      return cached;
+    }
+
+    const prepared = preparedDiffText();
+    const indexedLine = indexedPretextLines()[lineIndex];
+    if (!prepared || !indexedLine) {
+      return null;
+    }
+
+    const materialized = layoutNextLine(prepared, indexedLine.start, wrappedLayoutWidthPx());
+    if (!materialized) {
+      return null;
+    }
+
+    const lineText = typeof materialized.text === "string" ? materialized.text : "";
+    let lineKind: LineKind;
+    if (indexedLine.start.graphemeIndex > 0) {
+      lineKind = resolveIndexedCanvasLine(lineIndex - 1)?.kind ?? detectLineKind(lineText);
+    } else {
+      lineKind = detectLineKind(lineText);
+    }
+
+    const parsedLine: ParsedDiffLine = {
+      line: lineText,
+      kind: lineKind,
+      number: indexedLine.number
+    };
+    canvasLineCache.set(lineIndex, parsedLine);
+    return parsedLine;
+  }
 
   async function loadNextChunk(): Promise<void> {
     const currentManifest = manifest();
@@ -297,7 +454,18 @@ export function DiffShell(props: DiffShellProps) {
 
     const targetScrollTop = Math.max((lineNumber - 1) * LINE_HEIGHT_PX - LINE_HEIGHT_PX * 2, 0);
     viewportElement.scrollTop = targetScrollTop;
-    requestAnimationFrame(() => drawCanvasViewport());
+    requestCanvasDraw();
+  }
+
+  function requestCanvasDraw(): void {
+    if (scheduledDrawFrameId !== null) {
+      return;
+    }
+
+    scheduledDrawFrameId = requestAnimationFrame(() => {
+      scheduledDrawFrameId = null;
+      drawCanvasViewport();
+    });
   }
 
   async function copyVisibleCanvasLines(): Promise<void> {
@@ -315,10 +483,23 @@ export function DiffShell(props: DiffShellProps) {
       1
     );
 
-    const content = visibleLines()
-      .slice(startIndex, startIndex + visibleCount)
-      .map((entry) => entry.line)
-      .join("\n");
+    let content = "";
+    if (isSearchActive()) {
+      content = visibleLines()
+        .slice(startIndex, startIndex + visibleCount)
+        .map((entry) => entry.line)
+        .join("\n");
+    } else {
+      const entries: string[] = [];
+      const maxLine = Math.min(startIndex + visibleCount, indexedPretextLines().length);
+      for (let lineIndex = startIndex; lineIndex < maxLine; lineIndex += 1) {
+        const entry = resolveIndexedCanvasLine(lineIndex);
+        if (entry) {
+          entries.push(entry.line);
+        }
+      }
+      content = entries.join("\n");
+    }
 
     if (content.trim().length === 0) {
       setCopyMessage("No visible canvas lines available to copy.");
@@ -338,8 +519,11 @@ export function DiffShell(props: DiffShellProps) {
       return;
     }
 
-    const lines = visibleLines();
-    if (lines.length === 0) {
+    const searchMode = isSearchActive();
+    const indexedLines = indexedPretextLines();
+    const searchLines = visibleLines();
+    const totalLineCount = searchMode ? searchLines.length : indexedLines.length;
+    if (totalLineCount === 0) {
       return;
     }
 
@@ -350,12 +534,12 @@ export function DiffShell(props: DiffShellProps) {
     const visibleCount =
       Math.ceil(viewportElement.clientHeight / LINE_HEIGHT_PX) +
       CANVAS_OVERSCAN_LINES * 2;
-    const endLine = Math.min(startLine + visibleCount, lines.length);
-    const slice = lines.slice(startLine, endLine);
+    const endLine = Math.min(startLine + visibleCount, totalLineCount);
+    const sliceSize = Math.max(endLine - startLine, 1);
 
     const pixelRatio = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
     const width = Math.max(viewportElement.clientWidth - 16, 320);
-    const height = Math.max(slice.length * LINE_HEIGHT_PX, LINE_HEIGHT_PX);
+    const height = Math.max(sliceSize * LINE_HEIGHT_PX, LINE_HEIGHT_PX);
 
     canvasElement.width = Math.floor(width * pixelRatio);
     canvasElement.height = Math.floor(height * pixelRatio);
@@ -382,8 +566,11 @@ export function DiffShell(props: DiffShellProps) {
     const lineNumberFill = withAlpha(rootStyles.getPropertyValue("--text-muted"), 0.76);
     const lineTextFill = withAlpha(rootStyles.getPropertyValue("--text-strong"), 0.94);
 
-    for (let index = 0; index < slice.length; index += 1) {
-      const entry = slice[index];
+    for (let index = 0; index < sliceSize; index += 1) {
+      const lineIndex = startLine + index;
+      const entry = searchMode
+        ? searchLines[lineIndex]
+        : resolveIndexedCanvasLine(lineIndex);
       if (!entry) {
         continue;
       }
@@ -430,7 +617,7 @@ export function DiffShell(props: DiffShellProps) {
       void loadNextChunk();
     }
 
-    drawCanvasViewport();
+    requestCanvasDraw();
   }
 
   createEffect(() => {
@@ -469,13 +656,25 @@ export function DiffShell(props: DiffShellProps) {
   });
 
   createEffect(() => {
+    preparedDiffText();
+    wrappedLayoutWidthPx();
+    indexedPretextLines();
+    canvasLineCache.clear();
+  });
+
+  createEffect(() => {
     const lineCount = parsedLines().length;
-    if (!manifest() || lineCount === 0 || sessionFirstPaintMs !== null) {
+    const pretextLineCount = indexedPretextLines().length;
+    const measuredLineCount = shouldMaterializeAllLines() ? lineCount : pretextLineCount;
+    if (!manifest() || measuredLineCount === 0 || sessionFirstPaintMs !== null) {
       return;
     }
 
     requestAnimationFrame(() => {
-      if (!manifest() || parsedLines().length === 0 || sessionFirstPaintMs !== null) {
+      const currentLineCount = shouldMaterializeAllLines()
+        ? parsedLines().length
+        : indexedPretextLines().length;
+      if (!manifest() || currentLineCount === 0 || sessionFirstPaintMs !== null) {
         return;
       }
       sessionFirstPaintMs = Math.max(performance.now() - sessionStartedAt, 0);
@@ -485,7 +684,8 @@ export function DiffShell(props: DiffShellProps) {
   createEffect(() => {
     mode();
     visibleLines();
-    requestAnimationFrame(() => drawCanvasViewport());
+    indexedPretextLines();
+    requestCanvasDraw();
   });
 
   onMount(() => {
@@ -493,10 +693,17 @@ export function DiffShell(props: DiffShellProps) {
       return;
     }
 
+    setPretextFontProfile(resolvePretextFontProfile(viewportElement));
+    setLayoutWidthPx(Math.max(viewportElement.clientWidth, 320));
+
     let resizeObserver: ResizeObserver | undefined;
     if (typeof ResizeObserver !== "undefined") {
       resizeObserver = new ResizeObserver(() => {
-        requestAnimationFrame(() => drawCanvasViewport());
+        if (viewportElement) {
+          setPretextFontProfile(resolvePretextFontProfile(viewportElement));
+          setLayoutWidthPx(Math.max(viewportElement.clientWidth, 320));
+        }
+        requestCanvasDraw();
       });
       resizeObserver.observe(viewportElement);
     }
@@ -504,7 +711,10 @@ export function DiffShell(props: DiffShellProps) {
     let themeObserver: MutationObserver | undefined;
     if (typeof MutationObserver !== "undefined") {
       themeObserver = new MutationObserver(() => {
-        requestAnimationFrame(() => drawCanvasViewport());
+        if (viewportElement) {
+          setPretextFontProfile(resolvePretextFontProfile(viewportElement));
+        }
+        requestCanvasDraw();
       });
       themeObserver.observe(document.documentElement, {
         attributes: true,
@@ -515,6 +725,10 @@ export function DiffShell(props: DiffShellProps) {
     onCleanup(() => {
       resizeObserver?.disconnect();
       themeObserver?.disconnect();
+      if (scheduledDrawFrameId !== null) {
+        cancelAnimationFrame(scheduledDrawFrameId);
+        scheduledDrawFrameId = null;
+      }
     });
   });
 
@@ -542,7 +756,7 @@ export function DiffShell(props: DiffShellProps) {
             Canvas
           </button>
 
-          <Show when={mode() === "canvas" && parsedLines().length > 0}>
+          <Show when={mode() === "canvas" && (isSearchActive() ? visibleLines().length : indexedPretextLines().length) > 0}>
             <button class="mode-toggle" onClick={() => void copyVisibleCanvasLines()}>
               Copy Visible
             </button>
@@ -620,7 +834,11 @@ export function DiffShell(props: DiffShellProps) {
 
         <Show when={!props.loading && !props.error && !chunkError() && manifest()}>
           <Show
-            when={parsedLines().length > 0 || hasMoreChunks()}
+            when={
+              (mode() === "canvas"
+                ? (isSearchActive() ? visibleLines().length : indexedPretextLines().length)
+                : parsedLines().length) > 0 || hasMoreChunks()
+            }
             fallback={<div class="diff-viewport-dom">No line-level changes detected for this file.</div>}
           >
             <Show

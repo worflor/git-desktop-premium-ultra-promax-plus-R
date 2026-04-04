@@ -1,5 +1,6 @@
 import process from "node:process";
 import { createRequire } from "node:module";
+import { createInterface } from "node:readline";
 
 import { createCanvas } from "canvas";
 import { layout, prepare } from "@chenglou/pretext";
@@ -19,28 +20,13 @@ function durationMs(startNs) {
   return Number(process.hrtime.bigint() - startNs) / 1_000_000;
 }
 
-async function readStdinJson() {
-  const chunks = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
-  }
-
-  const raw = chunks.join("").trim();
-  if (!raw) {
-    throw new Error("Missing JSON request payload on stdin.");
-  }
-
-  return JSON.parse(raw);
-}
-
 function assertFinitePositive(name, value, min) {
   if (!Number.isFinite(value) || value < min) {
     throw new Error(`${name} must be a finite number >= ${min}`);
   }
 }
 
-async function main() {
-  const request = await readStdinJson();
+function processRequest(request) {
   const text = typeof request.text === "string" ? request.text : "";
   const widthPx = Number(request.widthPx);
   const lineHeightPx = Number(request.lineHeightPx);
@@ -68,7 +54,36 @@ async function main() {
     height: layoutResult.height
   };
 
-  process.stdout.write(JSON.stringify(response));
+  return response;
+}
+
+async function main() {
+  const input = createInterface({
+    input: process.stdin,
+    crlfDelay: Infinity,
+    terminal: false
+  });
+
+  for await (const rawLine of input) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    let response;
+    try {
+      const request = JSON.parse(line);
+      response = processRequest(request);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      response = {
+        ok: false,
+        error: message
+      };
+    }
+
+    process.stdout.write(`${JSON.stringify(response)}\n`);
+  }
 }
 
 main().catch((error) => {

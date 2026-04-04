@@ -50,7 +50,7 @@ export function ChangesPage(props: ChangesPageProps = {}) {
       prepareFileDiffChunks(input.repo, input.path, {
         staged: false,
         contextLines: 3,
-        chunkSizeBytes: 64 * 1024,
+        chunkSizeBytes: 256 * 1024,
         layoutWidthPx: 1080,
         fontProfile: "ui-mono-13",
         lineHeightPx: 18
@@ -161,13 +161,13 @@ export function ChangesPage(props: ChangesPageProps = {}) {
       <Show when={statusResult.latest?.ok && statusResult.latest.data.files.length > 0}>
         <div style="width: 280px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid rgba(var(--chrome-border-rgb), 0.15); background: var(--surface-1);">
           <section class="status-list" style="flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px;">
-            <div class="status-list-head" style="margin-bottom: 4px;">
+            <div class="status-list-head" style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
               <div>
-                <h2 style="font-size: 13px; margin: 0;">Changes</h2>
+                <h2 style="font-size: 12px; margin: 0; font-weight: 700; color: var(--text-strong); text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85;">Changes</h2>
               </div>
-              <div class="status-chip-stack" style="gap: 4px;">
-                <span class="feature-meta-pill" style="font-size: 10px; padding: 0 4px;">{stagedFileCount()} S</span>
-                <span class="feature-meta-pill" style="font-size: 10px; padding: 0 4px;">{unstagedFileCount()} U</span>
+              <div class="status-chip-stack" style="display: flex; gap: 4px;">
+                <span class="feature-meta-pill" style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--hypercube-positive) 15%, transparent); color: var(--hypercube-positive); border: 1px solid color-mix(in srgb, var(--hypercube-positive) 25%, transparent); font-weight: 700; font-family: var(--font-mono);">{stagedFileCount()} S</span>
+                <span class="feature-meta-pill" style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--hypercube-negative) 15%, transparent); color: var(--hypercube-negative); border: 1px solid color-mix(in srgb, var(--hypercube-negative) 25%, transparent); font-weight: 700; font-family: var(--font-mono);">{unstagedFileCount()} U</span>
               </div>
             </div>
             
@@ -206,8 +206,8 @@ export function ChangesPage(props: ChangesPageProps = {}) {
                        <span style="opacity: 0.5; font-size: 10px; margin-left: 4px; font-family: var(--font-mono);">{file.path.substring(0, file.path.lastIndexOf('/'))}</span>
                     </button>
                     <div class="status-tags" style="gap: 2px; display: flex; flex-shrink: 0;">
-                      <Show when={file.staged.trim().length > 0}><span style="color: var(--state-added); font-size: 10px; font-weight: bold; width: 12px; text-align: center;">S</span></Show>
-                      <Show when={file.unstaged.trim().length > 0}><span style="color: var(--state-modified); font-size: 10px; font-weight: bold; width: 12px; text-align: center;">U</span></Show>
+                      <Show when={file.staged.trim().length > 0}><span style="color: var(--hypercube-positive); font-size: 10px; font-weight: 800; width: 12px; text-align: center; font-family: var(--font-mono);">S</span></Show>
+                      <Show when={file.unstaged.trim().length > 0}><span style="color: var(--hypercube-negative); font-size: 10px; font-weight: 800; width: 12px; text-align: center; font-family: var(--font-mono);">U</span></Show>
                     </div>
                   </li>
                 ))}

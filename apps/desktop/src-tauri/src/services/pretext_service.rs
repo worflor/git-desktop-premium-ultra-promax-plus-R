@@ -1,9 +1,9 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -13,7 +13,12 @@ const PRETEXT_LAYOUT_VERSION: &str = "pretext-runtime-adapter-v2";
 const PRETEXT_RUNTIME_SCRIPT_PATH: &str = "../scripts/pretext-layout-runtime.mjs";
 const DEFAULT_LAYOUT_WIDTH_PX: u32 = 1080;
 const DEFAULT_LINE_HEIGHT_PX: u32 = 18;
+#[cfg(target_os = "windows")]
+const DEFAULT_FONT_PROFILE: &str = "13px Consolas";
+#[cfg(target_os = "macos")]
 const DEFAULT_FONT_PROFILE: &str = "13px Menlo";
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+const DEFAULT_FONT_PROFILE: &str = "13px DejaVu Sans Mono";
 const MIN_LAYOUT_WIDTH_PX: u32 = 320;
 const MAX_LAYOUT_WIDTH_PX: u32 = 4096;
 const MIN_LINE_HEIGHT_PX: u32 = 12;
@@ -74,6 +79,12 @@ struct RuntimeLayoutSnapshot {
     visual_row_count: u32,
 }
 
+struct PretextRuntimeWorker {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeLayoutRequest<'a> {
@@ -87,10 +98,11 @@ struct RuntimeLayoutRequest<'a> {
 #[serde(rename_all = "camelCase")]
 struct RuntimeLayoutResponse {
     ok: bool,
-    pretext_version: String,
-    prepare_ms: f64,
-    layout_ms: f64,
-    line_count: u32,
+    pretext_version: Option<String>,
+    prepare_ms: Option<f64>,
+    layout_ms: Option<f64>,
+    line_count: Option<u32>,
+    error: Option<String>,
 }
 
 pub fn prepare_layout(diff_id: &str, payload: &str, options: &LayoutOptions) -> LayoutSnapshot {
@@ -219,63 +231,135 @@ fn run_pretext_runtime(
         font_profile: options.font_profile.as_str(),
     };
 
-    let request_payload = serde_json::to_vec(&request)
+    let request_payload = serde_json::to_string(&request)
         .map_err(|error| format!("failed to serialize pretext runtime request: {error}"))?;
 
+    let response = invoke_pretext_runtime_worker(script_path.as_path(), request_payload.as_str())
+        .map_err(|error| {
+            runtime_unavailable_reason_set(error.clone());
+            error
+        })?;
+
+    if !response.ok {
+        let reason = response
+            .error
+            .unwrap_or_else(|| "pretext runtime response marked as not ok".to_string());
+        runtime_unavailable_reason_set(reason.clone());
+        return Err(reason);
+    }
+
+    let pretext_version = response.pretext_version.ok_or_else(|| {
+        let reason = "pretext runtime response missing pretextVersion".to_string();
+        runtime_unavailable_reason_set(reason.clone());
+        reason
+    })?;
+
+    Ok(RuntimeLayoutSnapshot {
+        pretext_version: format!("pretext@{pretext_version}"),
+        prepare_ms: f64_to_u64_ms(response.prepare_ms.unwrap_or(0.0)),
+        layout_ms: f64_to_u64_ms(response.layout_ms.unwrap_or(0.0)),
+        visual_row_count: response.line_count.unwrap_or(1).max(1),
+    })
+}
+
+fn invoke_pretext_runtime_worker(
+    script_path: &std::path::Path,
+    request_payload: &str,
+) -> Result<RuntimeLayoutResponse, String> {
+    let mut worker_slot = pretext_runtime_worker_store()
+        .lock()
+        .map_err(|_| "failed to lock pretext runtime worker".to_string())?;
+
+    if worker_slot.is_none() {
+        *worker_slot = Some(spawn_pretext_runtime_worker(script_path)?);
+    }
+
+    let response_line_result = {
+        let worker = worker_slot
+            .as_mut()
+            .ok_or_else(|| "pretext runtime worker unavailable".to_string())?;
+
+        worker
+            .stdin
+            .write_all(request_payload.as_bytes())
+            .map_err(|error| format!("failed to write pretext runtime request: {error}"))
+            .and_then(|_| {
+                worker
+                    .stdin
+                    .write_all(b"\n")
+                    .map_err(|error| format!("failed to finalize pretext runtime request: {error}"))
+            })
+            .and_then(|_| {
+                worker
+                    .stdin
+                    .flush()
+                    .map_err(|error| format!("failed to flush pretext runtime request: {error}"))
+            })
+            .and_then(|_| {
+                let mut line = String::new();
+                let byte_count = worker
+                    .stdout
+                    .read_line(&mut line)
+                    .map_err(|error| format!("failed to read pretext runtime response: {error}"))?;
+
+                if byte_count == 0 {
+                    return Err("pretext runtime worker closed stdout".to_string());
+                }
+
+                Ok(line)
+            })
+    };
+
+    let response_line = match response_line_result {
+        Ok(line) => line,
+        Err(error) => {
+            discard_pretext_runtime_worker(&mut worker_slot);
+            return Err(error);
+        }
+    };
+
+    let response_text = response_line.trim();
+    if response_text.is_empty() {
+        discard_pretext_runtime_worker(&mut worker_slot);
+        return Err("pretext runtime worker returned empty response".to_string());
+    }
+
+    serde_json::from_str::<RuntimeLayoutResponse>(response_text).map_err(|error| {
+        discard_pretext_runtime_worker(&mut worker_slot);
+        format!("failed to parse pretext runtime response: {error}")
+    })
+}
+
+fn spawn_pretext_runtime_worker(script_path: &std::path::Path) -> Result<PretextRuntimeWorker, String> {
     let mut child = Command::new("node")
         .arg(script_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
-        .map_err(|error| {
-            let reason = format!("failed to spawn pretext runtime process: {error}");
-            runtime_unavailable_reason_set(reason.clone());
-            reason
-        })?;
+        .map_err(|error| format!("failed to spawn pretext runtime process: {error}"))?;
 
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(&request_payload)
-            .map_err(|error| format!("failed to write pretext runtime request: {error}"))?;
-    }
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "failed to capture pretext runtime stdin".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "failed to capture pretext runtime stdout".to_string())?;
 
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("failed to execute pretext runtime process: {error}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
-        let reason = if detail.is_empty() {
-            "pretext runtime process failed without diagnostics".to_string()
-        } else {
-            format!("pretext runtime process failed: {detail}")
-        };
-        runtime_unavailable_reason_set(reason.clone());
-        return Err(reason);
-    }
-
-    let response: RuntimeLayoutResponse =
-        serde_json::from_slice(&output.stdout).map_err(|error| {
-            let reason = format!("failed to parse pretext runtime response: {error}");
-            runtime_unavailable_reason_set(reason.clone());
-            reason
-        })?;
-
-    if !response.ok {
-        let reason = "pretext runtime response marked as not ok".to_string();
-        runtime_unavailable_reason_set(reason.clone());
-        return Err(reason);
-    }
-
-    Ok(RuntimeLayoutSnapshot {
-        pretext_version: format!("pretext@{}", response.pretext_version),
-        prepare_ms: f64_to_u64_ms(response.prepare_ms),
-        layout_ms: f64_to_u64_ms(response.layout_ms),
-        visual_row_count: response.line_count.max(1),
+    Ok(PretextRuntimeWorker {
+        child,
+        stdin,
+        stdout: BufReader::new(stdout),
     })
+}
+
+fn discard_pretext_runtime_worker(slot: &mut Option<PretextRuntimeWorker>) {
+    if let Some(mut worker) = slot.take() {
+        let _ = worker.child.kill();
+        let _ = worker.child.wait();
+    }
 }
 
 fn f64_to_u64_ms(value: f64) -> u64 {
@@ -340,6 +424,11 @@ fn runtime_layout_cache() -> &'static Mutex<HashMap<String, RuntimeLayoutSnapsho
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn pretext_runtime_worker_store() -> &'static Mutex<Option<PretextRuntimeWorker>> {
+    static WORKER: OnceLock<Mutex<Option<PretextRuntimeWorker>>> = OnceLock::new();
+    WORKER.get_or_init(|| Mutex::new(None))
+}
+
 fn runtime_unavailable_reason_get() -> Option<String> {
     runtime_unavailable_reason_store()
         .lock()
@@ -399,10 +488,25 @@ fn resolve_font_profile(value: &str) -> String {
         .strip_prefix("ui-mono-")
         .and_then(|item| item.parse::<u32>().ok())
     {
-        return format!("{size}px Menlo");
+        return format!("{size}px {}", default_monospace_family());
     }
 
     DEFAULT_FONT_PROFILE.to_string()
+}
+
+fn default_monospace_family() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "Consolas"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "Menlo"
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        "DejaVu Sans Mono"
+    }
 }
 
 fn estimate_visual_rows(lines: &[&str], width_px: u32) -> u32 {
