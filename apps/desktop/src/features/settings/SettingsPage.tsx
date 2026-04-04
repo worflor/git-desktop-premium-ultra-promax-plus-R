@@ -481,6 +481,24 @@ export function SettingsPage() {
               </div>
             </article>
 
+            <article ref={calibrationCardRef} class="state-card settings-top-card">
+              <h3>Theme</h3>
+              <p class="section-summary">Theme and aesthetic architecture.</p>
+              <div class="layout-control-field">
+                <Select
+                  value={layout.themeId()}
+                  options={THEME_OPTIONS}
+                  onChange={(id) => {
+                    layout.setThemeId(id);
+                    void layout.persistUiPreferences();
+                  }}
+                  ariaLabel="Theme"
+                />
+              </div>
+
+              <p class="theme-description-yappery">{THEME_OPTIONS.find((t) => t.id === layout.themeId())?.description}</p>
+            </article>
+
             <article class="state-card settings-top-card">
               <h3>Local Telemetry</h3>
               <p class="section-summary">Diagnostic retention and performance logs.</p>
@@ -521,24 +539,6 @@ export function SettingsPage() {
                   <span class="unit">MB</span>
                 </div>
               </div>
-            </article>
-
-            <article ref={calibrationCardRef} class="state-card settings-top-card">
-              <h3>Theme</h3>
-              <p class="section-summary">Theme and aesthetic architecture.</p>
-              <div class="layout-control-field">
-                <Select
-                  value={layout.themeId()}
-                  options={THEME_OPTIONS}
-                  onChange={(id) => {
-                    layout.setThemeId(id);
-                    void layout.persistUiPreferences();
-                  }}
-                  ariaLabel="Theme"
-                />
-              </div>
-
-              <p class="theme-description-yappery">{THEME_OPTIONS.find((t) => t.id === layout.themeId())?.description}</p>
             </article>
           </div>
 

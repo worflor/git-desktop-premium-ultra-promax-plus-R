@@ -100,58 +100,70 @@ ol {
       white calc(100% - 300px));
 }
 
-.app-shell-root::before {
-  content: "";
+.parallax-backdrop {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   pointer-events: none;
   z-index: 0;
-
-  /* Structural Awareness: Focus particles where they make technical sense */
   -webkit-mask-image: var(--gutter-mask);
   mask-image: var(--gutter-mask);
-  opacity: 0.6;
-  background-image:
-    var(--runtime-material-particles-near, none),
-    var(--runtime-material-particles-mid, none),
-    var(--runtime-material-particles-far, none),
-    var(--runtime-material-particles-bg, none),
-    var(--runtime-material-particles, none);
 
-  background-repeat: repeat;
-  background-size: 800px 800px, 1200px 1200px, 1600px 1600px, 400px 400px, 1000px 1000px;
-
-  /* Parallax Delta Mapping */
-  transform: translate(calc(var(--cursor-x, 0) * 40px * var(--runtime-parallax-strength, 0.5)),
-      calc(var(--cursor-y, 0) * 40px * var(--runtime-parallax-strength, 0.5)));
-
-  /* Individual layer offsets are simulated via background-position since they share the pseudo-element */
-  background-position:
-    calc(50% + var(--cursor-x, 0) * 30px * var(--runtime-parallax-strength, 0.5)) calc(50% + var(--cursor-y, 0) * 30px * var(--runtime-parallax-strength, 0.5)),
-    calc(50% + var(--cursor-x, 0) * 15px * var(--runtime-parallax-strength, 0.5)) calc(50% + var(--cursor-y, 0) * 15px * var(--runtime-parallax-strength, 0.5)),
-    calc(50% + var(--cursor-x, 0) * 5px * var(--runtime-parallax-strength, 0.5)) calc(50% + var(--cursor-y, 0) * 5px * var(--runtime-parallax-strength, 0.5)),
-    center,
-    center;
-
-  transition:
-    transform var(--runtime-duration, 0.2s) var(--runtime-ease, ease-out),
-    opacity 0.4s ease,
-    filter 0.4s ease;
+  /* Mother-Plane: Handles the massive window-pinning shift once for all children */
+  transform: translate3d(calc(-1px * var(--window-screen-x, 0)), calc(-1px * var(--window-screen-y, 0)), 0);
+  will-change: transform;
 }
 
-/* ── Nightwalker Reactive Void (Digital Guttering) ───────── */
-[data-theme="nightwalker"] .app-shell-root::before {
-  /* Mask out the main content area to focus rain in the functional areas */
-  -webkit-mask-image: linear-gradient(90deg,
-      white var(--sidebar-width),
-      rgba(255, 255, 255, 0.2) var(--sidebar-width),
-      rgba(255, 255, 255, 0.2) calc(100% - 300px),
-      white calc(100% - 300px));
-  mask-image: linear-gradient(90deg,
-      white var(--sidebar-width),
-      rgba(255, 255, 255, 0.2) var(--sidebar-width),
-      rgba(255, 255, 255, 0.2) calc(100% - 300px),
-      white calc(100% - 300px));
+.parallax-layer {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4000px; /* Celestial overscan */
+  height: 4000px;
+  margin-left: -2000px;
+  margin-top: -2000px;
+  background-repeat: repeat;
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+/* Child-Planes: Handle only incremental mouse parallax (Ultra-Lightweight) */
+.layer-near {
+  background-image: var(--runtime-material-particles-near, none);
+  background-size: 800px 800px;
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.05 * var(--runtime-parallax-strength, 1) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.05 * var(--runtime-parallax-strength, 1) * 1px), 0);
+  will-change: transform;
+}
+
+.layer-mid {
+  background-image: var(--runtime-material-particles-mid, none);
+  background-size: 1200px 1200px;
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.03 * var(--runtime-parallax-strength, 1) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * 1px), 0);
+}
+
+.layer-far {
+  background-image: var(--runtime-material-particles-far, none);
+  background-size: 1600px 1600px;
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.015 * var(--runtime-parallax-strength, 1) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.015 * var(--runtime-parallax-strength, 1) * 1px), 0);
+}
+
+.layer-bg {
+  background-image: var(--runtime-material-particles-bg, none);
+  background-size: 400px 400px;
+  /* Stationary background: No extra mouse transform needed */
+}
+
+.layer-theme {
+  background-image: var(--runtime-material-particles, none);
+  background-size: 1000px 1000px;
+  transform: translate3d(calc(var(--monitor-mouse-x, 0) * 0.03 * var(--runtime-parallax-strength, 1) * 1px), 
+                         calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * 1px), 0);
+}
+
+[data-theme="nightwalker"] .parallax-backdrop {
   opacity: 0.5;
 }
 

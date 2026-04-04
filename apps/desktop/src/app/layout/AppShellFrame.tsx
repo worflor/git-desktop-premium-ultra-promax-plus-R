@@ -77,31 +77,57 @@ export function AppShellFrame(props: AppShellFrameProps) {
       }
     };
 
-    let animationFrameId: number;
+    let tickerId: number;
+    let lastX = 0, lastY = 0;
+
+    const runTicker = () => {
+      // High-performance polling of window coordinates for realtime pinning
+      // Using a unified ticker ensures window and mouse stay in sync at monitor refresh rate
+      const root = document.documentElement;
+      
+      // Update window position (Crucial for smooth window dragging)
+      root.style.setProperty("--window-screen-x", window.screenX.toString());
+      root.style.setProperty("--window-screen-y", window.screenY.toString());
+
+      tickerId = requestAnimationFrame(runTicker);
+    };
+
     const onWindowMouseMove = (event: MouseEvent) => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      animationFrameId = requestAnimationFrame(() => {
-        // Map cursor coordinates gracefully from [-1.0, 1.0] across the total monitor viewport
-        const x = ((event.clientX / window.innerWidth) - 0.5) * 2;
-        const y = ((event.clientY / window.innerHeight) - 0.5) * 2;
-        document.documentElement.style.setProperty("--cursor-x", x.toFixed(3));
-        document.documentElement.style.setProperty("--cursor-y", y.toFixed(3));
-      });
+      // Only inject mouse variables on change to reduce CSS-OM overhead
+      if (event.screenX === lastX && event.screenY === lastY) return;
+      lastX = event.screenX;
+      lastY = event.screenY;
+
+      const root = document.documentElement;
+      root.style.setProperty("--monitor-mouse-x", lastX.toString());
+      root.style.setProperty("--monitor-mouse-y", lastY.toString());
     };
 
     window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("mousemove", onWindowMouseMove, { passive: true });
     
+    // Start the realtime pinning engine
+    tickerId = requestAnimationFrame(runTicker);
+    
     onCleanup(() => {
       clearPrefixTimer();
+      cancelAnimationFrame(tickerId);
       window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("mousemove", onWindowMouseMove);
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
     });
   });
 
   return (
     <div class={shellRootClass()}>
+      {/* GPU-Accelerated Celestial Backdrop */}
+      <div class="parallax-backdrop">
+        <div class="parallax-layer layer-bg" />
+        <div class="parallax-layer layer-far" />
+        <div class="parallax-layer layer-mid" />
+        <div class="parallax-layer layer-near" />
+        <div class="parallax-layer layer-theme" />
+      </div>
+
       <CommandRecoveryBanner />
       <div class="app-shell-grid sidebar-left" style={shellGridStyle()}>
         <SidebarRail />

@@ -63,7 +63,7 @@ const THEME_DEFINITIONS = [
       motion: "snappy",
       luminescence: 0.2,
       particles: "void",
-      parallaxStrength: 0,
+      parallaxStrength: 0.3,
       interaction: "etch",
       geometry: {
         radius: 0,
@@ -121,7 +121,7 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.4,
       particles: "stardust",
-      parallaxStrength: 0,
+      parallaxStrength: 0.3,
       interaction: "warp"
     }
   },
@@ -140,7 +140,7 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.5,
       particles: "quantum",
-      parallaxStrength: 0,
+      parallaxStrength: 0.4,
       interaction: "vibration",
       geometry: {
         letterSpacing: "0.02em"
@@ -162,7 +162,7 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.45,
       particles: "embers",
-      parallaxStrength: 0,
+      parallaxStrength: 0.35,
       interaction: "none",
       geometry: {
         typography: "'JetBrains Mono', monospace",
