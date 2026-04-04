@@ -3,7 +3,6 @@ import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
-import { StatusPill } from "@/components/primitives/StatusPill";
 import { DiffShell } from "@/features/diff/DiffShell";
 import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 import {
@@ -137,70 +136,89 @@ export function ChangesPage(props: ChangesPageProps = {}) {
   };
 
   return (
-    <div class={`feature-page ${props.embedded ? "is-embedded" : ""}`}>
+    <div class={`feature-page ${props.embedded ? "is-embedded" : ""}`} style="display: flex; height: 100%; overflow: hidden; gap: 0;">
+      <Show when={!activeRepo()}>
+        <div style="padding: 16px; width: 100%; display: flex; align-items: center; justify-content: center;">
+          <EmptyStateCard
+            title="No repository selected"
+            body="Add or open a repository from Projects to view and manage file changes."
+          />
+        </div>
+      </Show>
+
       <Show when={statusResult.loading}>
-        <LoadingStateSkeleton />
+        <div style="padding: 16px; width: 100%;">
+          <LoadingStateSkeleton />
+        </div>
       </Show>
 
       <Show when={statusResult.latest?.ok && statusResult.latest.data.files.length === 0}>
-        <EmptyStateCard title="Working tree is clean" body="No unstaged or staged changes detected." />
+        <div style="padding: 16px; width: 100%; display: flex; align-items: center; justify-content: center;">
+          <EmptyStateCard title="Working tree is clean" body="No unstaged or staged changes detected." />
+        </div>
       </Show>
 
       <Show when={statusResult.latest?.ok && statusResult.latest.data.files.length > 0}>
-        <section class="status-list">
-          <div class="status-list-head">
-            <div>
-              <h2>Changed Files</h2>
+        <div style="width: 280px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid rgba(var(--chrome-border-rgb), 0.15); background: var(--surface-1);">
+          <section class="status-list" style="flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px;">
+            <div class="status-list-head" style="margin-bottom: 4px;">
+              <div>
+                <h2 style="font-size: 13px; margin: 0;">Changes</h2>
+              </div>
+              <div class="status-chip-stack" style="gap: 4px;">
+                <span class="feature-meta-pill" style="font-size: 10px; padding: 0 4px;">{stagedFileCount()} S</span>
+                <span class="feature-meta-pill" style="font-size: 10px; padding: 0 4px;">{unstagedFileCount()} U</span>
+              </div>
             </div>
-            <div class="status-chip-stack">
-              <span class="feature-meta-pill">Staged {stagedFileCount()}</span>
-              <span class="feature-meta-pill">Unstaged {unstagedFileCount()}</span>
+            
+            <div class="inline-actions" style="gap: 4px; margin-bottom: 8px;">
+              <button
+                class="primary-btn"
+                style="flex: 1; min-height: 24px; font-size: 11px;"
+                onClick={() => void runPathOperation("stage")}
+                disabled={selectedCount() === 0 || actionRunning()}
+              >
+                Stage
+              </button>
+              <button
+                class="primary-btn"
+                style="flex: 1; min-height: 24px; font-size: 11px;"
+                onClick={() => void runPathOperation("unstage")}
+                disabled={selectedCount() === 0 || actionRunning()}
+              >
+                Unstage
+              </button>
             </div>
-          </div>
-          <div class="inline-actions">
-            <button
-              class="primary-btn"
-              onClick={() => void runPathOperation("stage")}
-              disabled={selectedCount() === 0 || actionRunning()}
-            >
-              Stage
-            </button>
-            <button
-              class="primary-btn"
-              onClick={() => void runPathOperation("unstage")}
-              disabled={selectedCount() === 0 || actionRunning()}
-            >
-              Unstage
-            </button>
-            <span>{actionRunning() ? "Running..." : `${selectedCount()} selected`}</span>
-          </div>
-          <ul>
-            {statusResult.latest?.ok &&
-              statusResult.latest.data.files.map((file) => (
-                <li class="status-row">
-                  <label class="file-toggle">
+            
+            <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px;">
+              {statusResult.latest?.ok &&
+                statusResult.latest.data.files.map((file) => (
+                  <li class={`status-row ${selectedDiffPath() === file.path ? 'is-selected' : ''}`} style={`padding: 4px 6px; border-radius: 4px; background: ${selectedDiffPath() === file.path ? 'rgba(var(--chrome-border-rgb), 0.1)' : 'transparent'}; display: flex; align-items: center; gap: 6px;`}>
                     <input
                       type="checkbox"
                       class="custom-checkbox"
+                      style="width: 14px; height: 14px; margin: 0; flex-shrink: 0;"
                       checked={selectedPaths().includes(file.path)}
                       onChange={(event) => togglePathSelection(file.path, event.currentTarget.checked)}
                     />
-                    <button class="file-link-btn" onClick={() => setSelectedDiffPath(file.path)}>
-                      <span class="file-path">{file.path}</span>
+                    <button class="file-link-btn" style="flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; padding: 0; background: transparent; border: none; cursor: pointer; color: var(--text-normal);" onClick={() => setSelectedDiffPath(file.path)}>
+                       <span class="file-path" style="font-family: var(--font-sans);">{file.path.split('/').pop()}</span>
+                       <span style="opacity: 0.5; font-size: 10px; margin-left: 4px; font-family: var(--font-mono);">{file.path.substring(0, file.path.lastIndexOf('/'))}</span>
                     </button>
-                  </label>
-                  <div class="status-tags">
-                    <StatusPill label={`Staged: ${file.staged}`} state="staged" />
-                    <StatusPill label={`Unstaged: ${file.unstaged}`} state="unstaged" />
-                  </div>
-                </li>
-              ))}
-          </ul>
+                    <div class="status-tags" style="gap: 2px; display: flex; flex-shrink: 0;">
+                      <Show when={file.staged.trim().length > 0}><span style="color: var(--state-added); font-size: 10px; font-weight: bold; width: 12px; text-align: center;">S</span></Show>
+                      <Show when={file.unstaged.trim().length > 0}><span style="color: var(--state-modified); font-size: 10px; font-weight: bold; width: 12px; text-align: center;">U</span></Show>
+                    </div>
+                  </li>
+                ))}
+            </ul>
+          </section>
 
-          <div class="inline-actions commit-bar">
+          <div style="padding: 12px; border-top: 1px solid rgba(var(--chrome-border-rgb), 0.15); background: var(--surface-0); display: flex; flex-direction: column; gap: 8px;">
             <input
               class="path-input"
-              placeholder="Commit message"
+              placeholder="Commit message..."
+              style="width: 100%; font-size: 12px; padding: 6px 8px;"
               value={commitMessage()}
               onInput={(event) => setCommitMessage(event.currentTarget.value)}
               onKeyDown={(e) => {
@@ -209,46 +227,49 @@ export function ChangesPage(props: ChangesPageProps = {}) {
                 }
               }}
             />
-            <button class="primary-btn" onClick={() => void onCommit()}>
-              {actionRunning() ? "Committing..." : "Commit"}
+            <button class="primary-btn" style="width: 100%; min-height: 28px; font-size: 12px; font-weight: 600;" onClick={() => void onCommit()}>
+              {actionRunning()
+                ? "Committing..."
+                : "Commit to " + (statusResult.latest?.ok ? statusResult.latest.data.branch || "HEAD" : "HEAD")}
             </button>
+            <Show when={actionMessage()}>
+              {(message) => <div style="font-size: 11px; color: var(--state-added);">{message()}</div>}
+            </Show>
+            <Show when={actionError()}>
+              {(message) => <div style="font-size: 11px; color: var(--state-conflicted);">{message()}</div>}
+            </Show>
           </div>
-
-          <Show when={actionMessage()}>
-            {(message) => <section class="state-card"><p>{message()}</p></section>}
+        </div>
+        
+        <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--surface-0);">
+          <Show when={!selectedDiffPath()}>
+            <div style="flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 13px;">
+              Select a file to view its diff
+            </div>
           </Show>
-
-          <Show when={actionError()}>
-            {(message) => <ErrorStateCard title="Changes action failed" body={message()} />}
+          <Show when={selectedDiffPath()}>
+            <Show when={diffManifestResult.loading}>
+              <div style="padding: 16px;"><LoadingStateSkeleton /></div>
+            </Show>
+            <Show when={diffManifestResult.latest && !diffManifestResult.latest.ok}>
+              <div style="padding: 16px;">
+                <ErrorStateCard
+                  title="Diff load failed"
+                  body={diffManifestResult.latest && !diffManifestResult.latest.ok ? diffManifestResult.latest.error.message : "Unknown error"}
+                />
+              </div>
+            </Show>
+            <div style="flex: 1; overflow-y: auto;">
+              <DiffShell
+                filePath={selectedDiffPath() ?? undefined}
+                manifest={diffManifestResult.latest?.ok ? diffManifestResult.latest.data : undefined}
+                loading={diffManifestResult.loading}
+                error={diffManifestResult.latest && !diffManifestResult.latest.ok ? diffManifestResult.latest.error.message : null}
+              />
+            </div>
           </Show>
-        </section>
+        </div>
       </Show>
-
-      <Show when={diffManifestResult.loading}>
-        <LoadingStateSkeleton />
-      </Show>
-
-      <Show when={diffManifestResult.latest && !diffManifestResult.latest.ok}>
-        <ErrorStateCard
-          title="Diff load failed"
-          body={
-            diffManifestResult.latest && !diffManifestResult.latest.ok
-              ? diffManifestResult.latest.error.message
-              : "Unknown error"
-          }
-        />
-      </Show>
-
-      <DiffShell
-        filePath={selectedDiffPath() ?? undefined}
-        manifest={diffManifestResult.latest?.ok ? diffManifestResult.latest.data : undefined}
-        loading={diffManifestResult.loading}
-        error={
-          diffManifestResult.latest && !diffManifestResult.latest.ok
-            ? diffManifestResult.latest.error.message
-            : null
-        }
-      />
     </div>
   );
 }

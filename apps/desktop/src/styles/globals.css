@@ -752,7 +752,7 @@ ol {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   padding: 8px 12px 8px 2px;
   border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.12);
@@ -778,6 +778,7 @@ ol {
 
 .workspace-topbar-brand {
   flex: 0 0 auto;
+  flex-shrink: 0;
   gap: 8px;
 }
 
@@ -817,7 +818,8 @@ ol {
   display: flex;
   align-items: center;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 2px;
 }
@@ -1999,13 +2001,13 @@ ol {
 }
 
 .diff-line-added {
-  background: rgba(var(--chrome-border-rgb), 0.04);
-  color: var(--state-added);
+  background: color-mix(in srgb, var(--hypercube-positive) 12%, transparent);
+  color: var(--hypercube-positive);
 }
 
 .diff-line-deleted {
-  background: rgba(var(--danger-rgb), 0.06);
-  color: var(--state-deleted);
+  background: color-mix(in srgb, var(--hypercube-negative) 12%, transparent);
+  color: var(--hypercube-negative);
 }
 
 .diff-line-hunk {

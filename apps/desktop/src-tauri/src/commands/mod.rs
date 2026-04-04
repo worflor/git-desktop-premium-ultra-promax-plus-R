@@ -21,7 +21,9 @@ use crate::models::operations::{
     PullRequestProviderListData, StartupReadinessSnapshotData, StashListData,
     StashOperationData, SyncData, WorktreeListData, WorktreeOperationData,
 };
-use crate::models::repository::{OpenRepositoryData, RecentRepositoriesData, RepositoryStatusData};
+use crate::models::repository::{
+    OpenRepositoryData, PickRepositoryDirectoryData, RecentRepositoriesData, RepositoryStatusData,
+};
 use crate::models::settings::AppSettingsData;
 use crate::runtime::state::AppState;
 use crate::services::{
@@ -110,6 +112,23 @@ pub fn open_repository(
         Ok(data) => command_ok("open_repository", started_at, &state, data),
         Err(error) => map_error_with_command("open_repository", started_at, &state, error),
     }
+}
+
+#[tauri::command(async)]
+pub fn pick_repository_directory(
+    state: State<'_, AppState>,
+) -> CommandResult<PickRepositoryDirectoryData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    let repository_path = repository_service::pick_repository_directory();
+    command_ok(
+        "pick_repository_directory",
+        started_at,
+        &state,
+        PickRepositoryDirectoryData { repository_path },
+    )
 }
 
 #[tauri::command(async)]

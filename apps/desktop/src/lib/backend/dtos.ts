@@ -63,6 +63,10 @@ export interface OpenRepositoryData {
   isValidGitRepository: boolean;
 }
 
+export interface PickRepositoryDirectoryData {
+  repositoryPath: string | null;
+}
+
 export interface RecentRepositoriesData {
   repositories: string[];
 }

@@ -2,7 +2,7 @@ import { createEffect, createMemo, createResource, createSignal, For, onMount, S
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { BrandLockup } from "@/components/composite/BrandLockup";
 import { Icon } from "@/components/icons/Icon";
-import { listRecentRepositories, openRepository } from "@/lib/backend/commands";
+import { listRecentRepositories, openRepository, pickRepositoryDirectory } from "@/lib/backend/commands";
 
 function normalizePath(value: string): string {
   return value.replace(/\\/g, "/").toLowerCase();
@@ -62,16 +62,51 @@ export function SidebarRail() {
     return normalizePath(path) === normalizePath(active);
   };
 
+  const tryPickRepositoryDirectory = async (): Promise<string | null> => {
+    const picked = await pickRepositoryDirectory();
+    if (!picked.ok) {
+      setRepositoryError(picked.error.message);
+      return null;
+    }
+
+    return picked.data.repositoryPath;
+  };
+
+  const isPathFallbackError = (code: string) => code === "repo.not_found" || code === "repo.open_failed";
+
   const onOpenRepository = async (rawPath?: string) => {
-    const path = (rawPath ?? pathInput()).trim();
+    const isManualOpen = typeof rawPath !== "string";
+    let path = (rawPath ?? pathInput()).trim();
+
+    if (!path && isManualOpen) {
+      const selected = await tryPickRepositoryDirectory();
+      if (!selected) {
+        return;
+      }
+      path = selected;
+      setPathInput(selected);
+    }
+
     if (!path) {
       setRepositoryError("Path required.");
       return;
     }
+
     setRepositoryError(null);
     setOpenRunning(true);
-    const result = await openRepository(path);
+    let result = await openRepository(path);
+
+    if (!result.ok && isManualOpen && isPathFallbackError(result.error.code)) {
+      const selected = await tryPickRepositoryDirectory();
+      if (selected) {
+        path = selected;
+        setPathInput(selected);
+        result = await openRepository(selected);
+      }
+    }
+
     setOpenRunning(false);
+
     if (!result.ok) {
       setRepositoryError(result.error.message);
       return;

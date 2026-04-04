@@ -86,6 +86,8 @@
   --hyper-chromatic-1: #ff00ff;
   --hyper-chromatic-2: #00ffff;
   --hyper-core-color: #ffffff;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }
 
 :root[data-theme="helix"] {

@@ -29,6 +29,7 @@ import type {
   LocalPullRequestListData,
   LocalPullRequestOperationData,
   OpenRepositoryData,
+  PickRepositoryDirectoryData,
   PathOperationData,
   PullRequestProviderListData,
   RecentRepositoriesData,
@@ -43,6 +44,10 @@ import { invokeCommand } from "@/lib/backend/client";
 
 export function openRepository(repositoryPath: string): Promise<CommandResult<OpenRepositoryData>> {
   return invokeCommand("open_repository", { repositoryPath });
+}
+
+export function pickRepositoryDirectory(): Promise<CommandResult<PickRepositoryDirectoryData>> {
+  return invokeCommand("pick_repository_directory", {});
 }
 
 export function listRecentRepositories(): Promise<CommandResult<RecentRepositoriesData>> {
@@ -193,14 +198,16 @@ export function prepareFileDiffChunks(
   }
 ): Promise<CommandResult<FileDiffManifestData>> {
   return invokeCommand("prepare_file_diff_chunks", {
-    repositoryPath,
-    path,
-    staged: options?.staged,
-    contextLines: options?.contextLines,
-    chunkSizeBytes: options?.chunkSizeBytes,
-    layoutWidthPx: options?.layoutWidthPx,
-    fontProfile: options?.fontProfile,
-    lineHeightPx: options?.lineHeightPx
+    request: {
+      repositoryPath,
+      path,
+      staged: options?.staged,
+      contextLines: options?.contextLines,
+      chunkSizeBytes: options?.chunkSizeBytes,
+      layoutWidthPx: options?.layoutWidthPx,
+      fontProfile: options?.fontProfile,
+      lineHeightPx: options?.lineHeightPx
+    }
   });
 }
 

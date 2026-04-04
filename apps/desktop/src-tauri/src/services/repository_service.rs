@@ -8,6 +8,13 @@ use crate::services::storage_paths;
 
 const RECENTS_FILE_NAME: &str = "recent_repositories.json";
 
+pub fn pick_repository_directory() -> Option<String> {
+    rfd::FileDialog::new()
+        .set_title("Select repository folder")
+        .pick_folder()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
 pub fn load_recent_repositories() -> Vec<String> {
     let path = match recents_file_path() {
         Ok(path) => path,

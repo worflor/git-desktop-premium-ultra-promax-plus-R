@@ -31,6 +31,12 @@ const LINE_HEIGHT_PX = 18;
 const CANVAS_OVERSCAN_LINES = 12;
 const CANVAS_LINE_NUMBER_GUTTER_PX = 56;
 
+interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
 function detectLineKind(line: string): LineKind {
   if (line.startsWith("@@")) {
     return "hunk";
@@ -55,6 +61,84 @@ function detectLineKind(line: string): LineKind {
 
 function resolveInitialMode(manifest: FileDiffManifestData | undefined): RenderMode {
   return manifest?.rendererMode === "canvas" ? "canvas" : "dom";
+}
+
+function clampChannel(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function parseCssRgbColor(value: string): RgbColor | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.startsWith("#")) {
+    let hex = trimmed.slice(1);
+    if (hex.length === 3 || hex.length === 4) {
+      hex = hex
+        .split("")
+        .map((segment) => segment + segment)
+        .join("");
+    }
+    if (hex.length !== 6 && hex.length !== 8) {
+      return null;
+    }
+
+    const r = Number.parseInt(hex.slice(0, 2), 16);
+    const g = Number.parseInt(hex.slice(2, 4), 16);
+    const b = Number.parseInt(hex.slice(4, 6), 16);
+    if (![r, g, b].every((segment) => Number.isFinite(segment))) {
+      return null;
+    }
+
+    return {
+      r: clampChannel(r),
+      g: clampChannel(g),
+      b: clampChannel(b)
+    };
+  }
+
+  const rgbMatch = trimmed.match(/^rgba?\(([^)]+)\)$/i);
+  if (!rgbMatch || !rgbMatch[1]) {
+    return null;
+  }
+
+  const channels = rgbMatch[1]
+    .replace(/\//g, ",")
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  if (channels.length < 3) {
+    return null;
+  }
+
+  const r = Number.parseFloat(channels[0] ?? "0");
+  const g = Number.parseFloat(channels[1] ?? "0");
+  const b = Number.parseFloat(channels[2] ?? "0");
+  if (![r, g, b].every((segment) => Number.isFinite(segment))) {
+    return null;
+  }
+
+  return {
+    r: clampChannel(r),
+    g: clampChannel(g),
+    b: clampChannel(b)
+  };
+}
+
+function withAlpha(sourceColor: string, alpha: number, fallback = "rgba(0, 0, 0, 0)"): string {
+  const parsed = parseCssRgbColor(sourceColor);
+  if (!parsed) {
+    return fallback;
+  }
+
+  const safeAlpha = Math.max(0, Math.min(1, alpha));
+  return `rgba(${parsed.r}, ${parsed.g}, ${parsed.b}, ${safeAlpha.toFixed(3)})`;
 }
 
 function estimateMemoryMb(value: string): number {
@@ -85,6 +169,7 @@ export function DiffShell(props: DiffShellProps) {
   let viewportElement: HTMLDivElement | undefined;
   let canvasElement: HTMLCanvasElement | undefined;
   let sessionManifest: FileDiffManifestData | null = null;
+  let sessionDiffId: string | null = null;
   let sessionStartedAt = 0;
   let sessionFirstPaintMs: number | null = null;
   let sessionFlushed = false;
@@ -288,6 +373,15 @@ export function DiffShell(props: DiffShellProps) {
     context.font = "12px var(--font-mono)";
     context.textBaseline = "middle";
 
+    const rootStyles = getComputedStyle(document.documentElement);
+    const hypercubePositive = rootStyles.getPropertyValue("--hypercube-positive");
+    const hypercubeNegative = rootStyles.getPropertyValue("--hypercube-negative");
+    const addedFill = withAlpha(hypercubePositive, 0.16);
+    const deletedFill = withAlpha(hypercubeNegative, 0.16);
+    const hunkFill = withAlpha(hypercubePositive, 0.1);
+    const lineNumberFill = withAlpha(rootStyles.getPropertyValue("--text-muted"), 0.76);
+    const lineTextFill = withAlpha(rootStyles.getPropertyValue("--text-strong"), 0.94);
+
     for (let index = 0; index < slice.length; index += 1) {
       const entry = slice[index];
       if (!entry) {
@@ -296,20 +390,20 @@ export function DiffShell(props: DiffShellProps) {
       const y = index * LINE_HEIGHT_PX;
 
       if (entry.kind === "added") {
-        context.fillStyle = "rgba(77, 153, 77, 0.12)";
+        context.fillStyle = addedFill;
         context.fillRect(0, y, width, LINE_HEIGHT_PX);
       } else if (entry.kind === "deleted") {
-        context.fillStyle = "rgba(194, 77, 77, 0.12)";
+        context.fillStyle = deletedFill;
         context.fillRect(0, y, width, LINE_HEIGHT_PX);
       } else if (entry.kind === "hunk") {
-        context.fillStyle = "rgba(97, 126, 255, 0.14)";
+        context.fillStyle = hunkFill;
         context.fillRect(0, y, width, LINE_HEIGHT_PX);
       }
 
-      context.fillStyle = "rgba(255, 255, 255, 0.42)";
+      context.fillStyle = lineNumberFill;
       context.fillText(String(entry.number), 6, y + LINE_HEIGHT_PX / 2);
 
-      context.fillStyle = "rgba(255, 255, 255, 0.88)";
+      context.fillStyle = lineTextFill;
       context.fillText(entry.line || " ", CANVAS_LINE_NUMBER_GUTTER_PX, y + LINE_HEIGHT_PX / 2);
     }
   }
@@ -341,10 +435,17 @@ export function DiffShell(props: DiffShellProps) {
 
   createEffect(() => {
     const currentManifest = manifest();
-    if (sessionManifest && sessionManifest.diffId !== currentManifest?.diffId) {
+    const currentDiffId = currentManifest?.diffId ?? null;
+
+    if (sessionDiffId === currentDiffId) {
+      return;
+    }
+
+    if (sessionManifest && sessionManifest.diffId !== currentDiffId) {
       flushRenderMetrics(sessionManifest);
     }
 
+    sessionDiffId = currentDiffId;
     sessionManifest = currentManifest ?? null;
     sessionStartedAt = performance.now();
     sessionFirstPaintMs = null;
@@ -388,17 +489,32 @@ export function DiffShell(props: DiffShellProps) {
   });
 
   onMount(() => {
-    if (!viewportElement || typeof ResizeObserver === "undefined") {
+    if (!viewportElement) {
       return;
     }
 
-    const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(() => drawCanvasViewport());
-    });
-    resizeObserver.observe(viewportElement);
+    let resizeObserver: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        requestAnimationFrame(() => drawCanvasViewport());
+      });
+      resizeObserver.observe(viewportElement);
+    }
+
+    let themeObserver: MutationObserver | undefined;
+    if (typeof MutationObserver !== "undefined") {
+      themeObserver = new MutationObserver(() => {
+        requestAnimationFrame(() => drawCanvasViewport());
+      });
+      themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["data-theme", "style"]
+      });
+    }
 
     onCleanup(() => {
-      resizeObserver.disconnect();
+      resizeObserver?.disconnect();
+      themeObserver?.disconnect();
     });
   });
 

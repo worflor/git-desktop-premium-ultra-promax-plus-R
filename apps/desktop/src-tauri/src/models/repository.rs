@@ -8,6 +8,12 @@ pub struct OpenRepositoryData {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickRepositoryDirectoryData {
+    pub repository_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct RecentRepositoriesData {
     pub repositories: Vec<String>,
 }

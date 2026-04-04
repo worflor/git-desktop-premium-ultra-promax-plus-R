@@ -15,6 +15,7 @@ fn main() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::open_repository,
+            commands::pick_repository_directory,
             commands::list_recent_repositories,
             commands::get_git_capabilities,
             commands::get_auth_status,
