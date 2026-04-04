@@ -488,14 +488,14 @@ export function SettingsPage() {
             </article>
           </div>
 
-          <article class="state-card state-card-wide">
-            <h3>Navigation & Surface Guide</h3>
+          <article class="state-card state-card-wide settings-nav-dynamics-card">
+            <h3>Navigation and Dynamics</h3>
             <p class="section-summary">Keyboard architecture and interface behavior.</p>
             
-            <div class="layout-control-field" style="margin-bottom: 24px;">
-              <span>Keybinding profile</span>
+            <div class="layout-control-field settings-nav-profile-field">
+              <span class="settings-nav-profile-label">Keybinding profile</span>
               <select
-                class="path-input"
+                class="path-input settings-keybinding-select"
                 value={layout.keybindingProfile()}
                 onChange={(event) => {
                   layout.setKeybindingProfile(event.currentTarget.value);
@@ -509,8 +509,8 @@ export function SettingsPage() {
               </select>
             </div>
 
-            <h4 style="margin-bottom: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); opacity: 0.8;">Behavioral Dynamics</h4>
-            <label class="layout-checkbox-field" style="display: flex; align-items: center; gap: 8px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.1);">
+            <h4 class="settings-nav-subtitle">Behavioral Dynamics</h4>
+            <label class="layout-checkbox-field settings-nav-checkbox">
               <input
                 type="checkbox"
                 checked={layout.utilityDrawerExpanded()}
@@ -521,7 +521,7 @@ export function SettingsPage() {
               />
               <span>Auto-expand operation logs</span>
             </label>
-            <p class="section-summary">Core shortcuts for the active profile.</p>
+            <p class="section-summary settings-shortcuts-summary">Core shortcuts for the active profile.</p>
             <div class="keybinding-preview-card">
               <ul class="keybinding-preview-list settings-keybinding-grid">
                 {getNavigationBindings(layout.keybindingProfile()).map((binding) => (

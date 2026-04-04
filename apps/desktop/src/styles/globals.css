@@ -1537,27 +1537,29 @@ ul, ol { list-style: none; padding: 0; }
 .keybinding-preview-list { display: flex; flex-direction: column; gap: 4px; }
 
 .keybinding-preview-row {
-  display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(var(--chrome-border-rgb), 0.16);
+  border-radius: 6px;
+  background: rgba(var(--chrome-border-rgb), 0.06);
 }
 
 .keybinding-preview-row > span:first-child {
   min-width: 0;
-  flex: 1 1 160px;
+  font-weight: 600;
 }
 
 .keybinding-preview-row > .shortcut-hint {
-  flex: 0 0 auto;
-  margin-left: auto;
+  justify-self: end;
 }
 
 .settings-keybinding-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
 }
 
 .settings-update-status {
@@ -1571,6 +1573,41 @@ ul, ol { list-style: none; padding: 0; }
 .settings-update-status p {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.settings-nav-profile-field {
+  margin-bottom: 20px;
+}
+
+.settings-nav-profile-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.settings-keybinding-select {
+  font-family: var(--runtime-font-family, var(--font-sans));
+  font-weight: 600;
+}
+
+.settings-nav-subtitle {
+  margin-bottom: 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+.settings-nav-checkbox {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.12);
+}
+
+.settings-shortcuts-summary {
+  margin-bottom: 8px;
 }
 
 /* ── Telemetry ───────────────────────────────────────────── */
@@ -1622,7 +1659,14 @@ ul, ol { list-style: none; padding: 0; }
   justify-content: center;
   padding: 2px 5px;
   border: 1px solid var(--secondary-btn-border);
-  border-bottom-width: 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(var(--chrome-border-rgb), 0.16);
+  border-radius: 6px;
+  background: rgba(var(--chrome-border-rgb), 0.06);
   border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 10px;
