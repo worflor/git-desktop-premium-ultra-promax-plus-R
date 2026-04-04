@@ -1,10 +1,7 @@
 import {
-  createSignal,
   createMemo,
   lazy,
   Match,
-  onCleanup,
-  onMount,
   Show,
   Suspense,
   Switch
@@ -14,6 +11,7 @@ import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { BrandLockup } from "@/components/composite/BrandLockup";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { Icon } from "@/components/icons/Icon";
+import { useCompactLayoutMode } from "@/lib/ui/layoutMode";
 
 type WorkspaceMode = "changes" | "history" | "branches" | "sync";
 
@@ -55,8 +53,6 @@ const SettingsPage = lazy(async () => {
   return { default: module.SettingsPage };
 });
 
-const COMPACT_BREAKPOINT_PX = 960;
-
 function resolveModeFromPath(pathname: string): WorkspaceMode {
   if (pathname.startsWith("/history")) return "history";
   if (pathname.startsWith("/branches")) return "branches";
@@ -68,21 +64,7 @@ export function WorkspacePage() {
   const repository = useRepositoryContext();
   const location = useLocation();
   const navigate = useNavigate();
-  const [isCompactLayout, setIsCompactLayout] = createSignal(
-    typeof window !== "undefined" ? window.innerWidth <= COMPACT_BREAKPOINT_PX : false
-  );
-
-  onMount(() => {
-    const syncCompactMode = () => {
-      setIsCompactLayout(window.innerWidth <= COMPACT_BREAKPOINT_PX);
-    };
-
-    syncCompactMode();
-    window.addEventListener("resize", syncCompactMode, { passive: true });
-    onCleanup(() => {
-      window.removeEventListener("resize", syncCompactMode);
-    });
-  });
+  const isCompactLayout = useCompactLayoutMode();
 
   const activeMode = createMemo(() => resolveModeFromPath(location.pathname));
 

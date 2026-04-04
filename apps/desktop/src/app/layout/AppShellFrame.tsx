@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { createEffect, onCleanup, onMount, type JSX } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { CommandRecoveryBanner } from "@/app/layout/CommandRecoveryBanner";
 import { useLayoutPreferences } from "@/app/layout/LayoutPreferencesContext";
@@ -6,12 +6,11 @@ import { SidebarRail } from "@/app/layout/SidebarRail";
 import { PanelResizer } from "@/app/layout/PanelResizer";
 import { UtilityDrawer } from "@/app/layout/UtilityDrawer";
 import { resolveNavigationHotkey } from "@/lib/ui/keybindings";
+import { useCompactLayoutMode } from "@/lib/ui/layoutMode";
 
 interface AppShellFrameProps {
   children?: JSX.Element;
 }
-
-const COMPACT_BREAKPOINT_PX = 960;
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -23,12 +22,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function AppShellFrame(props: AppShellFrameProps) {
   const layout = useLayoutPreferences();
   const navigate = useNavigate();
-  const [isCompact, setIsCompact] = createSignal(
-    typeof window !== "undefined" ? window.innerWidth <= COMPACT_BREAKPOINT_PX : false
-  );
+  const isCompactLayout = useCompactLayoutMode();
 
   const shellGridStyle = () => `--sidebar-width: ${layout.sidebarWidthPx()}px;`;
-  const shellRootClass = () => (isCompact() ? "app-shell-root is-compact" : "app-shell-root is-full");
+  const shellRootClass = () =>
+    isCompactLayout() ? "app-shell-root is-compact" : "app-shell-root is-full";
 
   createEffect(() => {
     if (layout.sidebarPosition() !== "left") {
@@ -39,11 +37,6 @@ export function AppShellFrame(props: AppShellFrameProps) {
   onMount(() => {
     let awaitingPrefix = false;
     let prefixTimerId: number | undefined;
-    const syncLayoutMode = () => {
-      setIsCompact(window.innerWidth <= COMPACT_BREAKPOINT_PX);
-    };
-
-    syncLayoutMode();
 
     const clearPrefixTimer = () => {
       if (prefixTimerId !== undefined) {
@@ -98,13 +91,11 @@ export function AppShellFrame(props: AppShellFrameProps) {
 
     window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("mousemove", onWindowMouseMove, { passive: true });
-    window.addEventListener("resize", syncLayoutMode, { passive: true });
     
     onCleanup(() => {
       clearPrefixTimer();
       window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("mousemove", onWindowMouseMove);
-      window.removeEventListener("resize", syncLayoutMode);
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
     });
   });

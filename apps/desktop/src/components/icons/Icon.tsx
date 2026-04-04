@@ -17,6 +17,7 @@ export function Icon(props: IconProps): JSX.Element {
   return (
     <svg
       class={`icon ${toneClass()} ${props.class ?? ""}`.trim()}
+      style={props.style}
       width={size()}
       height={size()}
       viewBox="0 0 16 16"
