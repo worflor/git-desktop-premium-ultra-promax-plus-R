@@ -8,8 +8,8 @@ use crate::models::settings::AppSettingsData;
 use crate::services::storage_paths;
 
 const SETTINGS_FILE_NAME: &str = "settings.json";
-const SIDEBAR_WIDTH_MIN_PX: u32 = 220;
-const SIDEBAR_WIDTH_MAX_PX: u32 = 520;
+const SIDEBAR_WIDTH_MIN_PX: u32 = 140;
+const SIDEBAR_WIDTH_MAX_PX: u32 = 380;
 const UTILITY_DRAWER_HEIGHT_MIN_PX: u32 = 120;
 const UTILITY_DRAWER_HEIGHT_MAX_PX: u32 = 420;
 const SUPPORTED_THEME_IDS: [&str; 9] = [
@@ -55,7 +55,7 @@ impl Default for StoredSettings {
             crash_reporting_enabled: false,
             theme_id: DEFAULT_THEME_ID.to_string(),
             keybinding_profile: DEFAULT_KEYBINDING_PROFILE.to_string(),
-            sidebar_width_px: 280,
+            sidebar_width_px: 188,
             sidebar_position: "left".to_string(),
             utility_drawer_default_expanded: false,
             utility_drawer_height_px: 180,

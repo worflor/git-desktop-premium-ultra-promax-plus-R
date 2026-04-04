@@ -713,14 +713,13 @@ ol {
 /* ── Panel Resizer ───────────────────────────────────────── */
 
 .panel-resizer {
+  justify-self: center;
+  width: 9px;
+  margin-inline: -4px;
+  z-index: 3;
   cursor: col-resize;
-  background: rgba(var(--chrome-border-rgb), 0.14);
-  transition: background 120ms;
-}
-
-.panel-resizer:hover,
-.panel-resizer:focus-visible {
-  background: rgba(var(--chrome-accent-rgb), 0.5);
+  background: transparent;
+  box-shadow: none;
 }
 
 /* ── Main Panel ──────────────────────────────────────────── */

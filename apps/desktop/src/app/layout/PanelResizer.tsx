@@ -1,5 +1,6 @@
 import { onCleanup } from "solid-js";
 import {
+  SIDEBAR_WIDTH_DEFAULT_PX,
   SIDEBAR_WIDTH_MAX_PX,
   SIDEBAR_WIDTH_MIN_PX,
   useLayoutPreferences
@@ -7,9 +8,18 @@ import {
 
 const KEYBOARD_STEP_PX = 16;
 const SNAP_STEP_PX = 8;
+const SNAP_TO_DEFAULT_THRESHOLD_PX = 8;
 
 function snapToGrid(value: number): number {
   return Math.round(value / SNAP_STEP_PX) * SNAP_STEP_PX;
+}
+
+function snapSidebarWidth(value: number): number {
+  const snapped = snapToGrid(value);
+  if (Math.abs(snapped - SIDEBAR_WIDTH_DEFAULT_PX) <= SNAP_TO_DEFAULT_THRESHOLD_PX) {
+    return SIDEBAR_WIDTH_DEFAULT_PX;
+  }
+  return snapped;
 }
 
 export function PanelResizer() {
@@ -42,6 +52,11 @@ export function PanelResizer() {
     };
 
     const onPointerUp = () => {
+      const currentWidth = layout.sidebarWidthPx();
+      const snappedWidth = snapSidebarWidth(currentWidth);
+      if (snappedWidth !== currentWidth) {
+        layout.setSidebarWidthPx(snappedWidth);
+      }
       stopDragging();
       void layout.persistLayoutPreferences();
     };
@@ -65,7 +80,7 @@ export function PanelResizer() {
     event.preventDefault();
     const step = event.key === "ArrowRight" ? KEYBOARD_STEP_PX : -KEYBOARD_STEP_PX;
     const signedStep = layout.sidebarPosition() === "left" ? step : -step;
-    layout.setSidebarWidthPx(snapToGrid(layout.sidebarWidthPx() + signedStep));
+    layout.setSidebarWidthPx(snapSidebarWidth(layout.sidebarWidthPx() + signedStep));
     void layout.persistLayoutPreferences();
   };
 

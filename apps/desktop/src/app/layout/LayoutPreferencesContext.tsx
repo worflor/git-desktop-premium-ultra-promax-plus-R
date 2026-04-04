@@ -5,6 +5,7 @@ import { normalizeKeybindingProfile, type KeybindingProfile } from "@/lib/ui/key
 
 export const SIDEBAR_WIDTH_MIN_PX = 140;
 export const SIDEBAR_WIDTH_MAX_PX = 380;
+export const SIDEBAR_WIDTH_DEFAULT_PX = 188;
 export const UTILITY_DRAWER_HEIGHT_MIN_PX = 120;
 export const UTILITY_DRAWER_HEIGHT_MAX_PX = 280;
 
@@ -43,7 +44,7 @@ function clampInteger(value: number, min: number, max: number, fallback: number)
 }
 
 function clampSidebarWidthPx(value: number): number {
-  return clampInteger(value, SIDEBAR_WIDTH_MIN_PX, SIDEBAR_WIDTH_MAX_PX, 188);
+  return clampInteger(value, SIDEBAR_WIDTH_MIN_PX, SIDEBAR_WIDTH_MAX_PX, SIDEBAR_WIDTH_DEFAULT_PX);
 }
 
 function clampUtilityDrawerHeightPx(value: number): number {
@@ -130,7 +131,7 @@ export function LayoutPreferencesProvider(props: ParentProps) {
     normalizeKeybindingProfile(cachedSettings?.keybindingProfile ?? "classic")
   );
   const [sidebarWidthPx, setSidebarWidthPxSignal] = createSignal(
-    clampSidebarWidthPx(cachedSettings?.sidebarWidthPx ?? 188)
+    clampSidebarWidthPx(cachedSettings?.sidebarWidthPx ?? SIDEBAR_WIDTH_DEFAULT_PX)
   );
   const [sidebarPosition, setSidebarPositionSignal] = createSignal<SidebarPosition>(
     normalizeSidebarPosition(cachedSettings?.sidebarPosition ?? "left")
