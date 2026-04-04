@@ -211,9 +211,9 @@ export function HistoryPage(props: HistoryPageProps = {}) {
                         </div>
                         <span style="color: var(--text-normal); font-weight: 500;">{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.authorName : ""}</span>
                       </div>
-                      <span style="opacity: 0.5;">â€¢</span>
+                      <span style="opacity: 0.5;">|</span>
                       <span>{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.authoredAt : ""}</span>
-                      <span style="opacity: 0.5;">â€¢</span>
+                      <span style="opacity: 0.5;">|</span>
                       <span style="font-family: var(--font-mono); background: rgba(var(--chrome-border-rgb), 0.1); padding: 2px 6px; border-radius: 4px;">{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.shortHash : ""}</span>
                     </div>
                   </div>
