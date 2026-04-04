@@ -99,7 +99,6 @@ ol {
 }
 
 /* ☢️ Universal Hyper-Reactive Manifold ☢️ */
-/* ☢️ Universal Hyper-Reactive Manifold ☢️ */
 .hyper-reactive {
   transition: transform 0.2s cubic-bezier(0.2, 0.2, 0, 1), 
               filter 0.3s ease-out, 
@@ -121,7 +120,7 @@ ol {
              rotateY(calc(var(--hyper-drag-intensity, 0) * 12deg));
   outline: 1px solid var(--hyper-chromatic-1);
   outline-offset: calc(1px + var(--hyper-drag-intensity, 0) * 5px);
-  z-index: 100;
+  z-index: 10; /* Local elevation during interaction */
 }
 
 /* The 'Meld' Stretch: Geometric Fusion Echo */
@@ -151,60 +150,6 @@ ol {
     0 0 calc(var(--hyper-drag-intensity, 0) * 30px) var(--hyper-chromatic-1);
 }
 
-[data-hyper-active="true"] .hyper-reactive.active {
-  box-shadow: 
-    0 24px 48px rgba(0, 0, 0, 0.5),
-    0 0 calc(var(--hyper-drag-intensity, 0) * 30px) var(--hyper-chromatic-1);
-}
-
-/* 🌊 Authority Shell Stacking 🌊 */
-.app-shell-root {
-  overflow: hidden; /* Viewport Lock */
-}
-
-.app-shell-grid {
-  flex: 1;
-  display: grid;
-  overflow: visible; /* Allow 4D components to exit their grid shells */
-  position: relative;
-  z-index: 100; /* Authority Elevation over Footer */
-}
-
-/* Hierarchy: Sidebar > Topbar > Drawer > Main */
-.sidebar {
-  z-index: 100;
-  position: relative;
-  background: var(--sidebar-background);
-}
-
-.sidebar-rail {
-  z-index: 100;
-}
-
-.workspace-topbar {
-  z-index: 90;
-  position: relative;
-  background: var(--chrome-background);
-}
-
-.utility-drawer {
-  z-index: 40;
-  position: relative;
-  background: var(--footer-background);
-  box-shadow: 0 -1px 0 var(--border-subtle);
-}
-
-.main-panel {
-  z-index: 1;
-  position: relative;
-  overflow: hidden;
-}
-
-.brand-lockup-icon {
-  z-index: 1000;
-  position: relative;
-  overflow: visible;
-}
 
 .parallax-backdrop {
   position: absolute;
@@ -344,7 +289,9 @@ ol {
   min-height: 0;
   display: grid;
   grid-template-columns: var(--sidebar-width, 220px) 1px minmax(0, 1fr);
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
+  z-index: 100; /* Authority Elevation over Footer */
 }
 
 .app-shell-root.is-compact .app-shell-grid,
@@ -427,6 +374,8 @@ ol {
   background: var(--surface-0);
   border-right: 1px solid var(--secondary-btn-border);
   overflow: visible;
+  position: relative;
+  z-index: 100; /* Authority over Workspace Topbar */
 }
 
 .sidebar-header {
@@ -1044,6 +993,8 @@ ol {
   flex: 0 0 auto;
   border-top: 1px solid rgba(var(--chrome-border-rgb), 0.14);
   background: var(--surface-0);
+  background-image: var(--runtime-material-texture, none);
+  background-blend-mode: overlay;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
 }
@@ -1068,24 +1019,77 @@ ol {
   align-items: center;
   gap: 8px;
   padding: 4px 12px;
+  background: var(--surface-0);
+  background-image: var(--runtime-material-texture, none);
+  background-blend-mode: overlay;
+  border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.12);
   color: var(--text-muted);
   font-size: 11px;
 }
 
-.utility-drawer-toggle,
-.utility-drawer-clear {
+.hybrid-log-button {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid var(--secondary-btn-border);
   border-radius: 5px;
-  background: var(--secondary-btn-bg);
-  color: var(--text-normal);
-  font-size: 10px;
-  padding: 3px 7px;
-  cursor: pointer;
+  background: var(--surface-0);
+  background-image: var(--runtime-material-texture, none);
+  background-blend-mode: overlay;
+  overflow: hidden;
 }
 
-.utility-drawer-toggle:hover,
-.utility-drawer-clear:hover {
+.hybrid-log-toggle,
+.hybrid-log-clear {
+  background: transparent;
+  border: none;
+  color: var(--text-normal);
+  font-size: 10px;
+  padding: 3px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hybrid-log-toggle:hover,
+.hybrid-log-clear:not(:disabled):hover {
   background: var(--secondary-btn-hover-bg);
+}
+
+.hybrid-log-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hybrid-log-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--secondary-btn-border);
+}
+
+.hybrid-log-count {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+[data-theme="nightwalker"] .utility-drawer {
+  background: var(--surface-1);
+  background-image: var(--runtime-material-texture, none);
+  background-blend-mode: overlay;
+  backdrop-filter: var(--glass-backdrop-filter, none);
+}
+
+[data-theme="nightwalker"] .utility-drawer-header {
+  background: var(--surface-0);
+  background-image: var(--runtime-material-texture, none);
+  background-blend-mode: overlay;
+  border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.18);
+}
+
+[data-theme="nightwalker"] .hybrid-log-button {
+  background: color-mix(in srgb, var(--surface-1) 78%, transparent);
+  background-image: var(--runtime-material-texture, none);
+  background-blend-mode: overlay;
 }
 
 .utility-drawer-body {
@@ -3025,11 +3029,19 @@ select:focus,
 }
 
 /* Settings / Utility Drawers - Lead Glass Density */
-[data-theme="redshift"] .settings-slide-panel,
-[data-theme="redshift"] .utility-drawer {
+[data-theme="redshift"] .settings-slide-panel {
   background: var(--surface-2) !important;
   border-left: 1px solid rgba(var(--chrome-border-rgb), 0.4);
   backdrop-filter: blur(48px) saturate(180%);
+}
+
+[data-theme="redshift"] .utility-drawer {
+  background: var(--surface-1) !important;
+  background-image: var(--runtime-material-texture, none);
+  background-blend-mode: overlay;
+  border-top: 1px solid rgba(var(--chrome-border-rgb), 0.25);
+  border-left: none;
+  backdrop-filter: var(--glass-backdrop-filter, none);
 }
 
 @keyframes interaction-vibration {

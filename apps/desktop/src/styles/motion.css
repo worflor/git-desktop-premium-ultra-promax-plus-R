@@ -149,3 +149,9 @@ svg:hover .plus-p2 { transform: scale(1.15) rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
   svg path, svg circle { animation: none !important; transition: opacity 0.2s !important; transform: none !important; d: none !important; }
 }
+
+/* Clear Logs */
+.icon-clear path { transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); transform-origin: center 8px; } 
+svg:hover .clear-lid, svg:hover .clear-handle { transform: translateY(-1.5px) rotate(6deg); transform-origin: center 4px; }
+.hybrid-log-clear:active svg .clear-bin { transform: scaleY(0.9); transform-origin: bottom; } 
+.hybrid-log-clear:active svg .clear-lines { transform: translateY(2px) scaleY(0); opacity: 0; }

@@ -1,4 +1,5 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { Icon } from "@/components/icons/Icon";
 import {
   UTILITY_DRAWER_HEIGHT_MAX_PX,
   UTILITY_DRAWER_HEIGHT_MIN_PX,
@@ -139,22 +140,27 @@ export function UtilityDrawer() {
         />
       </Show>
       <div class="utility-drawer-header">
-        <button
-          class="utility-drawer-toggle"
-          onClick={toggleExpanded}
-          aria-expanded={isExpanded()}
-          aria-controls="utility-drawer-events"
-        >
-          {isExpanded() ? "Hide Logs" : "Logs"}
-        </button>
-        <span>Command Log ({events().length})</span>
-        <button
-          class="utility-drawer-clear"
-          onClick={() => clearCommandLifecycleEvents()}
-          disabled={events().length === 0}
-        >
-          Clear
-        </button>
+        <div class="hybrid-log-button">
+          <button
+            class="hybrid-log-toggle"
+            onClick={toggleExpanded}
+            aria-expanded={isExpanded()}
+            aria-controls="utility-drawer-events"
+          >
+            Logs
+          </button>
+          <div class="hybrid-log-divider" />
+          <button
+            class="hybrid-log-clear"
+            onClick={() => clearCommandLifecycleEvents()}
+            disabled={events().length === 0}
+            title="Clear Logs"
+            aria-label="Clear Logs"
+          >
+            <Icon name="clear" size={12} class="clear-icon-svg" />
+          </button>
+        </div>
+        <span class="hybrid-log-count">({events().length})</span>
       </div>
 
       <Show when={isExpanded()}>

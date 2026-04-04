@@ -11,6 +11,7 @@ export type IconName =
   | "status-conflict"
   | "plus"
   | "sort"
+  | "clear"
   | "chevron-right";
 
 const stroke = {
@@ -103,6 +104,14 @@ export const iconRegistry: Record<IconName, JSX.Element> = {
       <path {...stroke} d="M8 8h3.2" />
       <path {...stroke} d="M8 12h4.5" />
     </>
+  ),
+  clear: (
+    <g class="icon-clear">
+      <path {...stroke} d="M5 4h6" class="clear-lid" />
+      <path {...stroke} d="M6.5 4v-1h3v1" class="clear-handle" />
+      <path {...stroke} d="M5.5 4v8c0 .8.7 1.5 1.5 1.5h2c.8 0 1.5-.7 1.5-1.5V4" class="clear-bin" />
+      <path {...stroke} d="M7 7v4M9 7v4" class="clear-lines" />
+    </g>
   ),
   "chevron-right": (
     <>
