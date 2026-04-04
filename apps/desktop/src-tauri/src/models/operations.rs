@@ -89,6 +89,7 @@ pub struct FileDiffManifestData {
     pub fallback_reason: Option<String>,
     pub visual_row_count: u32,
     pub layout_cache_key: String,
+    pub initial_chunk_text: String,
     pub hunks: Vec<DiffHunkData>,
 }
 

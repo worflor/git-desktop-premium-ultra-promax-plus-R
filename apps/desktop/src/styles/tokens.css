@@ -150,6 +150,8 @@
   --hyper-chromatic-1: #cd7f2d; /* Theme Copper Accent */
   --hyper-chromatic-2: #49372a; /* Theme Normal Text (Readable Deep Brown) */
   --hyper-core-color: #2f2519;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }
 
 :root[data-theme="quanta"] {
@@ -205,6 +207,8 @@
   --hyper-chromatic-1: #00ff00;
   --hyper-chromatic-2: #00ffff;
   --hyper-core-color: #ffffff;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }
 
 :root[data-theme="petrichor"] {
@@ -260,6 +264,8 @@
   --hyper-chromatic-1: #4b95af; /* Theme Teal */
   --hyper-chromatic-2: #40515f; /* Theme Deep Slate */
   --hyper-core-color: #23323d;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }
 
 :root[data-theme="redshift"] {
@@ -349,6 +355,8 @@
   --hyper-chromatic-1: #ff0044; /* Theme Primary Red */
   --hyper-chromatic-2: #ff7700; /* Theme Ghost Orange */
   --hyper-core-color: #ffffff;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }
 
 [data-theme="halo"] {
@@ -442,6 +450,8 @@
   --hyper-chromatic-1: #d4af37; /* Theme Gold */
   --hyper-chromatic-2: #4d453b; /* Theme Warm Gray */
   --hyper-core-color: #322b24;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }
 
 [data-theme="crafty"] {
@@ -516,6 +526,8 @@
   --hyper-chromatic-1: #8b5a2b; /* Theme Earth Brown */
   --hyper-chromatic-2: #70d655; /* Theme Forest Green */
   --hyper-core-color: #ffffff;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }
 
 [data-theme="blackboard"] {
@@ -592,6 +604,8 @@
   --hyper-chromatic-1: #96d2ff; /* Theme Chalk Blue */
   --hyper-chromatic-2: #ffffff; /* Theme Pure White */
   --hyper-core-color: #ffffff;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }
 
 :root[data-theme="quanta"] {
@@ -667,6 +681,8 @@
   --hyper-chromatic-1: #00ff88; /* Theme Flux Green */
   --hyper-chromatic-2: #00e0ff; /* Theme Pulse Blue */
   --hyper-core-color: #ffffff;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }
 
 [data-theme="nightwalker"] {
@@ -756,4 +772,6 @@
   --hyper-chromatic-1: #00f0ff; /* Theme Cyber Cyan */
   --hyper-chromatic-2: #00ffaa; /* Theme Neon Green */
   --hyper-core-color: #ffffff;
+  --hypercube-positive: var(--hyper-chromatic-2);
+  --hypercube-negative: var(--hyper-chromatic-1);
 }

@@ -99,6 +99,7 @@ pub fn prepare_file_diff_chunks(
             fallback_reason: layout.fallback_reason,
             visual_row_count: layout.visual_row_count,
             layout_cache_key: layout.layout_cache_key,
+            initial_chunk_text: chunks.first().cloned().unwrap_or_default(),
             hunks,
         };
 
@@ -664,6 +665,18 @@ mod tests {
             },
         )
         .expect("expected diff manifest generation to succeed");
+
+        let first_chunk = {
+            let payloads = state
+                .diff_payloads
+                .lock()
+                .expect("expected diff payload lock to be available");
+            payloads
+                .get(&manifest.diff_id)
+                .and_then(|record| record.chunks.first().cloned())
+                .expect("expected cached first diff chunk")
+        };
+        assert_eq!(manifest.initial_chunk_text, first_chunk);
 
         {
             let mut payloads = state

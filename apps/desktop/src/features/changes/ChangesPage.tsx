@@ -1,9 +1,10 @@
-import { createResource, createSignal, onMount, Show } from "solid-js";
+import { createEffect, createResource, createSignal, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
-import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { DiffShell } from "@/features/diff/DiffShell";
+import type { FileDiffManifestData } from "@/lib/backend/dtos";
+import type { CommandResult } from "@/lib/contracts/command";
 import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 import {
   createCommit,
@@ -17,6 +18,8 @@ interface ChangesPageProps {
   embedded?: boolean;
 }
 
+const DIFF_PRETEXT_FONT_PROFILE = '12px "JetBrains Mono", "Consolas", monospace';
+
 export function ChangesPage(props: ChangesPageProps = {}) {
   const mountedAt = performance.now();
   const repository = useRepositoryContext();
@@ -26,8 +29,10 @@ export function ChangesPage(props: ChangesPageProps = {}) {
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [selectedDiffPath, setSelectedDiffPath] = createSignal<string | null>(null);
   const [actionRunning, setActionRunning] = createSignal(false);
+  const diffManifestCache = new Map<string, CommandResult<FileDiffManifestData>>();
 
   const activeRepo = () => repository.activeRepositoryPath();
+  const diffCacheKey = (repo: string, path: string) => `${repo}::${path}`;
 
   const [statusResult, { refetch }] = createResource(activeRepo, async (path) => {
     if (!path) {
@@ -46,16 +51,51 @@ export function ChangesPage(props: ChangesPageProps = {}) {
 
       return { repo, path };
     },
-    async (input) =>
-      prepareFileDiffChunks(input.repo, input.path, {
+    async (input) => {
+      const cacheKey = diffCacheKey(input.repo, input.path);
+      const cached = diffManifestCache.get(cacheKey);
+      if (cached) {
+        return cached;
+      }
+
+      const result = await prepareFileDiffChunks(input.repo, input.path, {
         staged: false,
         contextLines: 3,
         chunkSizeBytes: 256 * 1024,
         layoutWidthPx: 1080,
-        fontProfile: "ui-mono-13",
+        fontProfile: DIFF_PRETEXT_FONT_PROFILE,
         lineHeightPx: 18
-      })
+      });
+
+      if (result.ok) {
+        diffManifestCache.set(cacheKey, result);
+      }
+
+      return result;
+    }
   );
+
+  createEffect(() => {
+    activeRepo();
+    diffManifestCache.clear();
+    setSelectedDiffPath(null);
+  });
+
+  createEffect(() => {
+    const latestStatus = statusResult.latest;
+    if (!latestStatus?.ok) {
+      return;
+    }
+
+    const currentPath = selectedDiffPath();
+    if (!currentPath) {
+      return;
+    }
+
+    if (!latestStatus.data.files.some((file) => file.path === currentPath)) {
+      setSelectedDiffPath(null);
+    }
+  });
 
   onMount(() => {
     requestAnimationFrame(() => {
@@ -110,6 +150,7 @@ export function ChangesPage(props: ChangesPageProps = {}) {
 
     setActionMessage(`${operation === "stage" ? "Staged" : "Unstaged"} ${result.data.affectedPaths.length} path(s).`);
     setSelectedPaths([]);
+    diffManifestCache.clear();
     void refetch();
   };
 
@@ -132,8 +173,16 @@ export function ChangesPage(props: ChangesPageProps = {}) {
 
     setActionMessage(`${result.data.summary} (${result.data.commitHash.slice(0, 8)})`);
     setCommitMessage("");
+    diffManifestCache.clear();
     void refetch();
   };
+
+  const activeDiffManifest = () => (diffManifestResult.latest?.ok ? diffManifestResult.latest.data : undefined);
+  const activeDiffPath = () => activeDiffManifest()?.path ?? selectedDiffPath() ?? undefined;
+  const diffError = () =>
+    diffManifestResult.latest && !diffManifestResult.latest.ok
+      ? diffManifestResult.latest.error.message
+      : null;
 
   return (
     <div class={`feature-page ${props.embedded ? "is-embedded" : ""}`} style="display: flex; height: 100%; overflow: hidden; gap: 0;">
@@ -166,8 +215,8 @@ export function ChangesPage(props: ChangesPageProps = {}) {
                 <h2 style="font-size: 12px; margin: 0; font-weight: 700; color: var(--text-strong); text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.85;">Changes</h2>
               </div>
               <div class="status-chip-stack" style="display: flex; gap: 4px;">
-                <span class="feature-meta-pill" style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--hypercube-positive) 15%, transparent); color: var(--hypercube-positive); border: 1px solid color-mix(in srgb, var(--hypercube-positive) 25%, transparent); font-weight: 700; font-family: var(--font-mono);">{stagedFileCount()} S</span>
-                <span class="feature-meta-pill" style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--hypercube-negative) 15%, transparent); color: var(--hypercube-negative); border: 1px solid color-mix(in srgb, var(--hypercube-negative) 25%, transparent); font-weight: 700; font-family: var(--font-mono);">{unstagedFileCount()} U</span>
+                <span class="status-badge-count is-positive">{stagedFileCount()} S</span>
+                <span class="status-badge-count is-negative">{unstagedFileCount()} U</span>
               </div>
             </div>
             
@@ -205,9 +254,9 @@ export function ChangesPage(props: ChangesPageProps = {}) {
                        <span class="file-path" style="font-family: var(--font-sans);">{file.path.split('/').pop()}</span>
                        <span style="opacity: 0.5; font-size: 10px; margin-left: 4px; font-family: var(--font-mono);">{file.path.substring(0, file.path.lastIndexOf('/'))}</span>
                     </button>
-                    <div class="status-tags" style="gap: 2px; display: flex; flex-shrink: 0;">
-                      <Show when={file.staged.trim().length > 0}><span style="color: var(--hypercube-positive); font-size: 10px; font-weight: 800; width: 12px; text-align: center; font-family: var(--font-mono);">S</span></Show>
-                      <Show when={file.unstaged.trim().length > 0}><span style="color: var(--hypercube-negative); font-size: 10px; font-weight: 800; width: 12px; text-align: center; font-family: var(--font-mono);">U</span></Show>
+                    <div class="status-tags" style="gap: 5px; display: flex; flex-shrink: 0;">
+                      <Show when={file.staged.trim().length > 0}><span class="status-badge is-positive">S</span></Show>
+                      <Show when={file.unstaged.trim().length > 0}><span class="status-badge is-negative">U</span></Show>
                     </div>
                   </li>
                 ))}
@@ -248,23 +297,12 @@ export function ChangesPage(props: ChangesPageProps = {}) {
             </div>
           </Show>
           <Show when={selectedDiffPath()}>
-            <Show when={diffManifestResult.loading}>
-              <div style="padding: 16px;"><LoadingStateSkeleton /></div>
-            </Show>
-            <Show when={diffManifestResult.latest && !diffManifestResult.latest.ok}>
-              <div style="padding: 16px;">
-                <ErrorStateCard
-                  title="Diff load failed"
-                  body={diffManifestResult.latest && !diffManifestResult.latest.ok ? diffManifestResult.latest.error.message : "Unknown error"}
-                />
-              </div>
-            </Show>
             <div style="flex: 1; overflow-y: auto;">
               <DiffShell
-                filePath={selectedDiffPath() ?? undefined}
-                manifest={diffManifestResult.latest?.ok ? diffManifestResult.latest.data : undefined}
+                filePath={activeDiffPath()}
+                manifest={activeDiffManifest()}
                 loading={diffManifestResult.loading}
-                error={diffManifestResult.latest && !diffManifestResult.latest.ok ? diffManifestResult.latest.error.message : null}
+                error={diffError()}
               />
             </div>
           </Show>

@@ -23,6 +23,20 @@ import { recordDiffRenderMetrics } from "@/lib/telemetry/diffRenderMetrics";
 type RenderMode = "dom" | "canvas";
 type LineKind = "added" | "deleted" | "hunk" | "meta" | "context";
 
+const RENDER_MODE_STORAGE_KEY = "agentbox-diff-render-mode";
+
+function getPersistedRenderMode(): RenderMode | null {
+  if (typeof window === "undefined") return null;
+  const val = localStorage.getItem(RENDER_MODE_STORAGE_KEY);
+  if (val === "dom" || val === "canvas") return val;
+  return null;
+}
+
+function persistRenderMode(mode: RenderMode) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(RENDER_MODE_STORAGE_KEY, mode);
+}
+
 interface DiffShellProps {
   filePath?: string;
   manifest?: FileDiffManifestData;
@@ -42,10 +56,17 @@ interface IndexedPretextLine {
   end: LayoutCursor;
 }
 
+interface VirtualizedDomWindow {
+  items: ParsedDiffLine[];
+  offsetTopPx: number;
+  totalHeightPx: number;
+}
+
 const LINE_HEIGHT_PX = 18;
 const CANVAS_OVERSCAN_LINES = 12;
+const DOM_OVERSCAN_LINES = 24;
 const CANVAS_LINE_NUMBER_GUTTER_PX = 56;
-const PRETEXT_FONT_PROFILE_FALLBACK = "13px Menlo, Consolas, monospace";
+const PRETEXT_FONT_PROFILE_FALLBACK = '12px "JetBrains Mono", "Consolas", monospace';
 const PRETEXT_TEXT_PADDING_PX = 16;
 
 interface RgbColor {
@@ -168,8 +189,9 @@ function resolvePretextFontProfile(element: HTMLElement | undefined): string {
   const size = style.fontSize.trim();
   const weight = style.fontWeight.trim();
 
-  const resolvedSize = size.length > 0 ? size : "13px";
-  const resolvedFamily = family.length > 0 ? family : "Menlo, Consolas, monospace";
+  const resolvedSize = size.length > 0 ? size : "12px";
+  const resolvedFamily =
+    family.length > 0 ? family : '"JetBrains Mono", "Consolas", monospace';
   const resolvedWeight =
     weight.length > 0 && weight !== "normal" && weight !== "400" ? `${weight} ` : "";
 
@@ -241,7 +263,7 @@ function percentile(values: number[], percentileValue: number): number {
 }
 
 export function DiffShell(props: DiffShellProps) {
-  const [mode, setMode] = createSignal<RenderMode>(resolveInitialMode(props.manifest));
+  const [mode, setMode] = createSignal<RenderMode>(getPersistedRenderMode() ?? resolveInitialMode(props.manifest));
   const [searchTerm, setSearchTerm] = createSignal("");
   const [loadedChunks, setLoadedChunks] = createSignal<string[]>([]);
   const [loadingChunk, setLoadingChunk] = createSignal(false);
@@ -250,6 +272,8 @@ export function DiffShell(props: DiffShellProps) {
   const [selectedHunkIndex, setSelectedHunkIndex] = createSignal<number>(-1);
   const [layoutWidthPx, setLayoutWidthPx] = createSignal(1080);
   const [pretextFontProfile, setPretextFontProfile] = createSignal(PRETEXT_FONT_PROFILE_FALLBACK);
+  const [viewportScrollTop, setViewportScrollTop] = createSignal(0);
+  const [viewportHeightPx, setViewportHeightPx] = createSignal(0);
 
   let viewportElement: HTMLDivElement | undefined;
   let canvasElement: HTMLCanvasElement | undefined;
@@ -329,6 +353,34 @@ export function DiffShell(props: DiffShellProps) {
     }
 
     return parsedLines().filter((entry) => entry.line.toLowerCase().includes(needle));
+  });
+
+  const domVirtualWindow = createMemo<VirtualizedDomWindow>(() => {
+    const lines = visibleLines();
+    const totalLineCount = lines.length;
+    const totalHeightPx = Math.max(totalLineCount * LINE_HEIGHT_PX, LINE_HEIGHT_PX);
+    if (totalLineCount === 0) {
+      return {
+        items: [],
+        offsetTopPx: 0,
+        totalHeightPx
+      };
+    }
+
+    const startIndex = Math.max(
+      Math.floor(viewportScrollTop() / LINE_HEIGHT_PX) - DOM_OVERSCAN_LINES,
+      0
+    );
+    const visibleCount =
+      Math.ceil(Math.max(viewportHeightPx(), LINE_HEIGHT_PX) / LINE_HEIGHT_PX) +
+      DOM_OVERSCAN_LINES * 2;
+    const endIndex = Math.min(startIndex + visibleCount, totalLineCount);
+
+    return {
+      items: lines.slice(startIndex, endIndex),
+      offsetTopPx: startIndex * LINE_HEIGHT_PX,
+      totalHeightPx
+    };
   });
 
   const hunkJumpTargets = createMemo(() => {
@@ -554,7 +606,7 @@ export function DiffShell(props: DiffShellProps) {
 
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     context.clearRect(0, 0, width, height);
-    context.font = "12px var(--font-mono)";
+    context.font = pretextFontProfile();
     context.textBaseline = "middle";
 
     const rootStyles = getComputedStyle(document.documentElement);
@@ -600,6 +652,8 @@ export function DiffShell(props: DiffShellProps) {
       return;
     }
 
+    setViewportScrollTop(viewportElement.scrollTop);
+
     const now = performance.now();
     if (lastScrollAt > 0) {
       const delta = now - lastScrollAt;
@@ -639,20 +693,27 @@ export function DiffShell(props: DiffShellProps) {
     sessionFlushed = false;
     lastScrollAt = 0;
     scrollFpsSamples = [];
-    setLoadedChunks([]);
+    setViewportScrollTop(0);
     setChunkError(null);
     setCopyMessage(null);
     setSelectedHunkIndex(-1);
 
     if (!currentManifest) {
+      setLoadedChunks([]);
       return;
     }
 
-    setMode(resolveInitialMode(currentManifest));
+    setLoadedChunks([currentManifest.initialChunkText]);
+
+    // Persist user's manual mode choice across diffs if present, otherwise follow manifest recommendation
+    const userPref = getPersistedRenderMode();
+    if (!userPref) {
+      setMode(resolveInitialMode(currentManifest));
+    }
+
     if (viewportElement) {
       viewportElement.scrollTop = 0;
     }
-    void loadNextChunk();
   });
 
   createEffect(() => {
@@ -695,6 +756,7 @@ export function DiffShell(props: DiffShellProps) {
 
     setPretextFontProfile(resolvePretextFontProfile(viewportElement));
     setLayoutWidthPx(Math.max(viewportElement.clientWidth, 320));
+    setViewportHeightPx(Math.max(viewportElement.clientHeight, LINE_HEIGHT_PX));
 
     let resizeObserver: ResizeObserver | undefined;
     if (typeof ResizeObserver !== "undefined") {
@@ -702,6 +764,7 @@ export function DiffShell(props: DiffShellProps) {
         if (viewportElement) {
           setPretextFontProfile(resolvePretextFontProfile(viewportElement));
           setLayoutWidthPx(Math.max(viewportElement.clientWidth, 320));
+          setViewportHeightPx(Math.max(viewportElement.clientHeight, LINE_HEIGHT_PX));
         }
         requestCanvasDraw();
       });
@@ -741,16 +804,25 @@ export function DiffShell(props: DiffShellProps) {
       <header class="diff-header">
         <h2>{props.filePath ? props.filePath : "No file selected"}</h2>
         <div class="diff-controls">
+          <Show when={props.loading && hasManifest()}>
+            <span class="diff-live-status">Loading next diff…</span>
+          </Show>
           <button
             class={`mode-toggle ${mode() === "dom" ? "is-active" : ""}`}
-            onClick={() => setMode("dom")}
+            onClick={() => {
+              setMode("dom");
+              persistRenderMode("dom");
+            }}
             disabled={!hasManifest()}
           >
             DOM
           </button>
           <button
             class={`mode-toggle ${mode() === "canvas" ? "is-active" : ""}`}
-            onClick={() => setMode("canvas")}
+            onClick={() => {
+              setMode("canvas");
+              persistRenderMode("canvas");
+            }}
             disabled={!hasManifest()}
           >
             Canvas
@@ -816,7 +888,7 @@ export function DiffShell(props: DiffShellProps) {
         }}
         onScroll={onViewportScroll}
       >
-        <Show when={props.loading}>
+        <Show when={props.loading && !manifest() && loadedChunks().length === 0}>
           <div class="diff-viewport-dom">Preparing diff chunks...</div>
         </Show>
 
@@ -824,7 +896,7 @@ export function DiffShell(props: DiffShellProps) {
           <div class="diff-viewport-dom">{props.error}</div>
         </Show>
 
-        <Show when={!props.loading && !props.error && chunkError()}>
+        <Show when={!props.error && chunkError()}>
           {(errorMessage) => <div class="diff-viewport-dom">{errorMessage()}</div>}
         </Show>
 
@@ -832,7 +904,7 @@ export function DiffShell(props: DiffShellProps) {
           <div class="diff-viewport-dom">Select a changed file to view its diff.</div>
         </Show>
 
-        <Show when={!props.loading && !props.error && !chunkError() && manifest()}>
+        <Show when={!props.error && !chunkError() && manifest()}>
           <Show
             when={
               (mode() === "canvas"
@@ -855,12 +927,19 @@ export function DiffShell(props: DiffShellProps) {
               }
             >
               <div class="diff-viewport-dom">
-                {visibleLines().map((entry) => (
-                  <div class={`diff-line diff-line-${entry.kind}`}>
-                    <span class="diff-line-number">{entry.number}</span>
-                    <span class="diff-line-text">{entry.line || " "}</span>
+                <div class="diff-viewport-virtual" style={{ height: `${domVirtualWindow().totalHeightPx}px` }}>
+                  <div
+                    class="diff-viewport-virtual-slice"
+                    style={{ transform: `translateY(${domVirtualWindow().offsetTopPx}px)` }}
+                  >
+                    {domVirtualWindow().items.map((entry) => (
+                      <div class={`diff-line diff-line-${entry.kind}`}>
+                        <span class="diff-line-number">{entry.number}</span>
+                        <span class="diff-line-text">{entry.line || " "}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
             </Show>
 

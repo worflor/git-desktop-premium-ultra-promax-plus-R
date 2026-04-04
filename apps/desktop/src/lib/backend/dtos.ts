@@ -144,6 +144,7 @@ export interface FileDiffManifestData {
   fallbackReason?: string;
   visualRowCount: number;
   layoutCacheKey: string;
+  initialChunkText: string;
   hunks: DiffHunkData[];
 }
 
