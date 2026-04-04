@@ -893,13 +893,25 @@ ol {
   will-change: transform;
 }
 
+.workspace-sync-trigger-svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  display: block;
+  overflow: visible;
+}
+
+.workspace-sync-trigger-svg path {
+  vector-effect: non-scaling-stroke;
+}
+
 .workspace-sync-btn .workspace-sync-summary {
   opacity: 0.88;
   transition: opacity 120ms ease, filter 120ms ease;
 }
 
-.workspace-sync-btn:hover .workspace-sync-icon .sync-p1,
-.workspace-sync-btn:hover .workspace-sync-icon .sync-p2 {
+.workspace-sync-btn:hover .workspace-sync-trigger-p1,
+.workspace-sync-btn:hover .workspace-sync-trigger-p2 {
   transform: none !important;
 }
 
@@ -4053,7 +4065,7 @@ ol {
 /* ── Topology (spatial git elements) ─────────────────────── */
 
 .topology-canvas {
-  min-height: 60px;
+  min-height: 52px;
   border-radius: 6px;
   background: var(--row-bg);
   border: 1px solid var(--secondary-btn-border);
@@ -4095,6 +4107,76 @@ ol {
   width: 100%;
   margin: 0;
   accent-color: rgb(var(--chrome-accent-rgb));
+}
+
+.history-topology-strip {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+.history-topology-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 8px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(var(--chrome-border-rgb), 0.35);
+}
+
+.history-topology-edge {
+  position: absolute;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(var(--chrome-border-rgb), 0.42);
+  transform-origin: left center;
+  pointer-events: none;
+}
+
+.history-topology-edge.is-branch {
+  background: rgba(var(--chrome-accent-rgb), 0.56);
+}
+
+.history-topology-node {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  aspect-ratio: 1 / 1;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--chrome-border-rgb), 0.72);
+  background: var(--surface-0);
+  box-shadow: inset 0 0 0 1px rgba(var(--chrome-border-rgb), 0.12);
+  cursor: pointer;
+  padding: 0;
+  transition:
+    transform var(--runtime-duration, 100ms) var(--runtime-ease, ease-out),
+    border-color var(--runtime-duration, 100ms) var(--runtime-ease, ease-out),
+    box-shadow var(--runtime-duration, 100ms) var(--runtime-ease, ease-out),
+    background-color var(--runtime-duration, 100ms) var(--runtime-ease, ease-out);
+}
+
+.history-topology-node:hover {
+  transform: scale(1.08);
+  border-color: rgba(var(--chrome-accent-rgb), 0.72);
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--chrome-accent-rgb), 0.2),
+    0 0 0 3px rgba(var(--chrome-accent-rgb), 0.1);
+}
+
+.history-topology-node.is-active {
+  width: 14px;
+  height: 14px;
+  border-color: rgba(var(--chrome-accent-rgb), 0.9);
+  background: rgba(var(--chrome-accent-rgb), 0.16);
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--chrome-accent-rgb), 0.22),
+    0 0 0 4px rgba(var(--chrome-accent-rgb), 0.12);
+}
+
+.history-topology-node.is-merge {
+  border-radius: 4px;
+  border-color: rgba(var(--chrome-accent-rgb), 0.62);
 }
 
 /* ── Responsive ──────────────────────────────────────────── */

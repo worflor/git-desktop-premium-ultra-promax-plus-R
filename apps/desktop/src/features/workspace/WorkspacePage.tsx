@@ -55,6 +55,38 @@ const SettingsPage = lazy(async () => {
   return { default: module.SettingsPage };
 });
 
+function WorkspaceSyncTriggerIcon(props: { active: boolean }) {
+  return (
+    <svg
+      class={`workspace-sync-trigger-svg ${props.active ? "is-active" : ""}`.trim()}
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      role="presentation"
+    >
+      <path
+        d="M12 5V2l2 2-2 2V5H4"
+        class="workspace-sync-trigger-p1"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+      <path
+        d="M4 11v3l-2-2 2-2v3h8"
+        class="workspace-sync-trigger-p2"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  );
+}
+
 function resolveModeFromPath(pathname: string): WorkspaceMode {
   if (pathname.startsWith("/history")) return "history";
   if (pathname.startsWith("/branches")) return "branches";
@@ -197,7 +229,7 @@ export function WorkspacePage() {
             onClick={() => setActivePanel(isSyncOpen() ? null : "sync")}
           >
             <span class="workspace-sync-icon-slot">
-              <Icon name="sync" size={16} class={`workspace-sync-icon ${isSyncOpen() ? "is-active" : ""}`.trim()} />
+              <WorkspaceSyncTriggerIcon active={isSyncOpen()} />
             </span>
             <Show when={shouldShowSyncSummary() && syncStatusData()}>
               {(resolvedStatus) => (

@@ -1083,7 +1083,8 @@ pub fn list_commit_history(
         "log".to_string(),
         format!("-n{bounded_limit}"),
         "--date=iso-strict".to_string(),
-        "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1e".to_string(),
+        "--decorate=short".to_string(),
+        "--pretty=format:%H%x1f%h%x1f%P%x1f%D%x1f%an%x1f%ae%x1f%ad%x1f%s%x1e".to_string(),
     ];
     if let Some(branch_name) = branch.and_then(trimmed_non_empty) {
         args.push(branch_name.to_string());
@@ -1099,9 +1100,25 @@ pub fn list_commit_history(
             continue;
         }
 
-        let mut fields = row.splitn(6, '\x1f');
+        let mut fields = row.splitn(8, '\x1f');
         let commit_hash = fields.next().unwrap_or_default().trim().to_string();
         let short_hash = fields.next().unwrap_or_default().trim().to_string();
+        let parent_hashes = fields
+            .next()
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(str::trim)
+            .filter(|hash| !hash.is_empty())
+            .map(|hash| hash.to_string())
+            .collect::<Vec<_>>();
+        let ref_names = fields
+            .next()
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
         let author_name = fields.next().unwrap_or_default().trim().to_string();
         let author_email = fields.next().unwrap_or_default().trim().to_string();
         let authored_at = fields.next().unwrap_or_default().trim().to_string();
@@ -1114,6 +1131,9 @@ pub fn list_commit_history(
         entries.push(CommitHistoryEntryData {
             commit_hash,
             short_hash,
+            is_merge: parent_hashes.len() > 1,
+            parent_hashes,
+            ref_names,
             subject,
             author_name,
             author_email,

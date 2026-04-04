@@ -142,6 +142,9 @@ pub struct BranchTrackingOperationData {
 pub struct CommitHistoryEntryData {
     pub commit_hash: String,
     pub short_hash: String,
+    pub parent_hashes: Vec<String>,
+    pub ref_names: Vec<String>,
+    pub is_merge: bool,
     pub subject: String,
     pub author_name: String,
     pub author_email: String,

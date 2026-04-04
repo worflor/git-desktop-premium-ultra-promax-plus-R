@@ -201,6 +201,9 @@ export interface WorktreeOperationData {
 export interface CommitHistoryEntry {
   commitHash: string;
   shortHash: string;
+  parentHashes: string[];
+  refNames: string[];
+  isMerge: boolean;
   subject: string;
   authorName: string;
   authorEmail: string;
