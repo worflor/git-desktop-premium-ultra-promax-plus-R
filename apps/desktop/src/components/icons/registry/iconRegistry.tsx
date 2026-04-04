@@ -23,49 +23,53 @@ const stroke = {
 
 export const iconRegistry: Record<IconName, JSX.Element> = {
   "app-logo": (
-    <g fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
       {/* Static snapshot of the Hypercube */}
-      <path d="M4 4l8 0l0 8l-8 0z" opacity="0.4" />
-      <path d="M6 6l4 0l0 4l-4 0z" />
+      <path d="M4 4h8v8h-8z" opacity="0.4" />
+      <path d="M6 6h4v4h-4z" />
       <path d="M4 4l2 2M12 4l-2 2M4 12l2-2M12 12l-2-2" />
       <path d="M8 2v12M2 8h12" stroke-dasharray="0.5 1.5" stroke-opacity="0.3" />
     </g>
   ),
   changes: (
     <>
-      <path {...stroke} d="M3 4h10" />
-      <path {...stroke} d="M3 8h10" />
-      <path {...stroke} d="M3 12h6" />
-      <path {...stroke} d="M12 10v4" />
-      <path {...stroke} d="M10 12h4" />
+      <path {...stroke} d="M3 4h10" class="changes-l1" />
+      <path {...stroke} d="M3 8h10" class="changes-l2" />
+      <path {...stroke} d="M3 12h6" class="changes-l3" />
+      <path {...stroke} d="M12 10v4" class="changes-v" />
+      <path {...stroke} d="M10 12h4" class="changes-h" />
     </>
   ),
   history: (
     <>
-      <path {...stroke} d="M3.5 8a4.5 4.5 0 108.3-2.3" />
-      <path {...stroke} d="M3.5 4.5v3.5H7" />
-      <path {...stroke} d="M8 5.5v2.8l2 1.2" />
+      <path {...stroke} d="M3 8a5 5 0 1 0 9.2 -2.5" class="history-arc" />
+      <path {...stroke} d="M3 4v4h4" class="history-arr" />
+      <path {...stroke} d="M8 5v3l2 2" class="history-clk" />
     </>
   ),
   branches: (
     <>
-      <circle {...stroke} cx="4" cy="4" r="1.5" />
-      <circle {...stroke} cx="12" cy="4" r="1.5" />
-      <circle {...stroke} cx="8" cy="12" r="1.5" />
-      <path {...stroke} d="M5.5 4h5" />
-      <path {...stroke} d="M8 5.5v5" />
+      <circle {...stroke} cx="4" cy="4" r="2" class="branch-c1" />
+      <circle {...stroke} cx="12" cy="4" r="2" class="branch-c2" />
+      <circle {...stroke} cx="8" cy="12" r="2" class="branch-c3" />
+      <path {...stroke} d="M6 4h4" class="branch-p1" />
+      <path {...stroke} d="M8 6v4" class="branch-p2" />
     </>
   ),
   sync: (
     <>
-      <path {...stroke} d="M12 5V2l2.5 2.5L12 7V5H6" />
-      <path {...stroke} d="M4 11v3L1.5 11.5 4 9v2h6" />
+      <path {...stroke} d="M12 5V2l2 2-2 2V5H4" class="sync-p1" />
+      <path {...stroke} d="M4 11v3l-2-2 2-2v3h8" class="sync-p2" />
     </>
   ),
   settings: (
     <>
-      <circle {...stroke} cx="8" cy="8" r="2.4" />
-      <path {...stroke} d="M8 2.5v1.4M8 12.1v1.4M2.5 8h1.4M12.1 8h1.4M3.9 3.9l1 1M11.1 11.1l1 1M3.9 12.1l1-1M11.1 4.9l1-1" />
+      <path {...stroke} d="M2.5 4h11" class="settings-l1" />
+      <circle {...stroke} cx="5" cy="4" r="1.5" class="settings-k1" />
+      <path {...stroke} d="M2.5 8h11" class="settings-l2" />
+      <circle {...stroke} cx="11" cy="8" r="1.5" class="settings-k2" />
+      <path {...stroke} d="M2.5 12h11" class="settings-l3" />
+      <circle {...stroke} cx="7" cy="12" r="1.5" class="settings-k3" />
     </>
   ),
   "git-branch": (
@@ -86,8 +90,8 @@ export const iconRegistry: Record<IconName, JSX.Element> = {
   ),
   plus: (
     <>
-      <path {...stroke} d="M8 3.5v9" />
-      <path {...stroke} d="M3.5 8h9" />
+      <path {...stroke} d="M8 3v10" class="plus-p1" />
+      <path {...stroke} d="M3 8h10" class="plus-p2" />
     </>
   ),
   sort: (

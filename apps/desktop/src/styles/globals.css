@@ -151,19 +151,59 @@ ol {
     0 0 calc(var(--hyper-drag-intensity, 0) * 30px) var(--hyper-chromatic-1);
 }
 
-/* 🌊 Global Hyper-Layering Fix 🌊 */
-[data-hyper-active="true"] .sidebar-brand-lockup,
-[data-hyper-active="true"] .workspace-topbar-brand,
-[data-hyper-active="true"] .brand-lockup-icon {
-  z-index: 9999999 !important;
-  position: relative !important;
-  overflow: visible !important;
+[data-hyper-active="true"] .hyper-reactive.active {
+  box-shadow: 
+    0 24px 48px rgba(0, 0, 0, 0.5),
+    0 0 calc(var(--hyper-drag-intensity, 0) * 30px) var(--hyper-chromatic-1);
 }
 
-[data-hyper-active="true"] .sidebar,
-[data-hyper-active="true"] .workspace-topbar {
-  overflow: visible !important;
-  z-index: 1000 ; /* Ensure it's above content but below the logo itself */
+/* 🌊 Authority Shell Stacking 🌊 */
+.app-shell-root {
+  overflow: hidden; /* Viewport Lock */
+}
+
+.app-shell-grid {
+  flex: 1;
+  display: grid;
+  overflow: visible; /* Allow 4D components to exit their grid shells */
+  position: relative;
+  z-index: 100; /* Authority Elevation over Footer */
+}
+
+/* Hierarchy: Sidebar > Topbar > Drawer > Main */
+.sidebar {
+  z-index: 100;
+  position: relative;
+  background: var(--sidebar-background);
+}
+
+.sidebar-rail {
+  z-index: 100;
+}
+
+.workspace-topbar {
+  z-index: 90;
+  position: relative;
+  background: var(--chrome-background);
+}
+
+.utility-drawer {
+  z-index: 40;
+  position: relative;
+  background: var(--footer-background);
+  box-shadow: 0 -1px 0 var(--border-subtle);
+}
+
+.main-panel {
+  z-index: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.brand-lockup-icon {
+  z-index: 1000;
+  position: relative;
+  overflow: visible;
 }
 
 .parallax-backdrop {
@@ -263,7 +303,7 @@ ol {
 }
 
 [data-theme="blackboard"] .layer-theme {
-  background-size: 1500px 1500px;
+  background-size: clamp(760px, 120vmin, 1500px) clamp(760px, 120vmin, 1500px);
   opacity: 0.46;
 }
 
