@@ -33,10 +33,40 @@ import {
 import { THEME_OPTIONS } from "@/lib/ui/theme";
 import { Select } from "@/components/primitives/Select";
 
+const GUARDRAIL_STAGE_VALUES = [0.125, 0.375, 0.625, 0.875] as const;
+const GUARDRAIL_STAGE_META = [
+  { label: "Loose", phrase: "Permissive review mode", color: "#4ad399" },
+  { label: "Balanced", phrase: "Practical everyday protections", color: "#7ab8ff" },
+  { label: "Strict", phrase: "Tighter safety checks", color: "#ef7c75" },
+  { label: "Paranoid", phrase: "Maximum lock-down safeguards", color: "#b280ff" }
+] as const;
+
+function clampGuardrailStage(stage: number): number {
+  return Math.max(0, Math.min(GUARDRAIL_STAGE_VALUES.length - 1, stage));
+}
+
+function guardrailStageFromValue(value: number): number {
+  if (value < 0.25) {
+    return 0;
+  }
+  if (value <= 0.5) {
+    return 1;
+  }
+  if (value < 0.75) {
+    return 2;
+  }
+  return 3;
+}
+
+function guardrailDisplayLabelFromProfile(profile: string): string {
+  return profile;
+}
+
 export function SettingsPage() {
   const layout = useLayoutPreferences();
   const [settingsResult, { refetch }] = createResource(() => getAppSettings());
   const [guardrailValue, setGuardrailValue] = createSignal(0.5);
+  const [guardrailStage, setGuardrailStage] = createSignal(guardrailStageFromValue(0.5));
   const [retentionDays, setRetentionDays] = createSignal(30);
   const [retentionMb, setRetentionMb] = createSignal(128);
   const [updateChannel, setUpdateChannel] = createSignal<"stable" | "beta">("stable");
@@ -83,6 +113,7 @@ export function SettingsPage() {
     const headingFont = headingStyle.font;
     const controlFont = controlStyle.font;
     const guardrailProfile = settingsResult.latest?.ok ? settingsResult.latest.data.guardrailProfile : "Balanced";
+    const guardrailDisplayProfile = guardrailDisplayLabelFromProfile(guardrailProfile);
     const readOnlyDefault = settingsResult.latest?.ok ? settingsResult.latest.data.aiReadOnlyDefault : true;
     const maxThemeLabelWidth = THEME_OPTIONS.reduce(
       (maxWidth, option) => Math.max(maxWidth, measureTextWidth(context, controlFont, option.label)),
@@ -90,7 +121,7 @@ export function SettingsPage() {
     );
 
     const measureScenario = (shrinkFactor: number, sidePadding: number) => {
-      const guardrailStatus = `${guardrailProfile} | Read-only: ${readOnlyDefault ? "Enabled" : "Disabled"}`;
+      const guardrailStatus = `${guardrailDisplayProfile} | Read-only: ${readOnlyDefault ? "Enabled" : "Disabled"}`;
 
       const guardrailTextWidth = Math.max(
         measureTextWidth(context, headingFont, "Guardrails"),
@@ -204,6 +235,7 @@ export function SettingsPage() {
     }
 
     setGuardrailValue(settings.data.guardrailValue);
+    setGuardrailStage(guardrailStageFromValue(settings.data.guardrailValue));
     setRetentionDays(settings.data.telemetryRetentionDays);
     setRetentionMb(settings.data.telemetryRetentionMb);
     setUpdateChannel(settings.data.updateChannel === "beta" ? "beta" : "stable");
@@ -219,6 +251,18 @@ export function SettingsPage() {
     KEYBINDING_PROFILE_OPTIONS.find((option) => option.id === layout.keybindingProfile())?.label ??
     layout.keybindingProfile();
 
+  const guardrailModePhrase = () => GUARDRAIL_STAGE_META[guardrailStage()]?.phrase ?? "Practical everyday protections";
+
+  const guardrailSliderFillPercent = () => {
+    const normalized = guardrailStage() / (GUARDRAIL_STAGE_VALUES.length - 1);
+    return `${Math.max(0, Math.min(100, normalized * 100))}%`;
+  };
+
+  const guardrailSliderColor = () => GUARDRAIL_STAGE_META[guardrailStage()]?.color ?? "#7ab8ff";
+
+  const guardrailSliderStyle = () =>
+    `--guardrail-fill-percent: ${guardrailSliderFillPercent()}; --guardrail-stage-color: ${guardrailSliderColor()};`;
+
   const onSaveGuardrail = async () => {
     setActionError(null);
     setActionMessage(null);
@@ -231,7 +275,8 @@ export function SettingsPage() {
     }
 
     setGuardrailValue(result.data.guardrailValue);
-    setActionMessage(`Saved guardrail profile: ${result.data.guardrailProfile}.`);
+    setGuardrailStage(guardrailStageFromValue(result.data.guardrailValue));
+    setActionMessage(`Saved guardrail profile: ${guardrailDisplayLabelFromProfile(result.data.guardrailProfile)}.`);
     void refetch();
   };
 
@@ -369,9 +414,8 @@ export function SettingsPage() {
       <header class="feature-header">
         <div class="feature-header-main">
           <p class="feature-kicker">Workspace Preferences</p>
-          <h1 class="feature-title">Settings</h1>
           <p class="feature-summary">
-            Interface behavior, safety protocols, and local diagnostics.
+            Configure global aesthetics, interface dynamics, and core operational safeguards for the entire workspace.
           </p>
         </div>
         <div class="feature-header-meta">
@@ -405,23 +449,40 @@ export function SettingsPage() {
               <h3>Guardrails</h3>
               <p class="section-summary">Automated action assertion and safety thresholds.</p>
               <p class="settings-fit-line">
-                {settingsResult.latest?.ok ? settingsResult.latest.data.guardrailProfile : "Balanced"} |
+                {guardrailModePhrase()} |
                 Read-only: {settingsResult.latest?.ok && settingsResult.latest.data.aiReadOnlyDefault ? "Enabled" : "Disabled"}
               </p>
               <input
                 type="range"
-                class="theme-slider"
+                class="theme-slider guardrail-slider"
                 min="0"
-                max="1"
-                step="0.01"
-                value={guardrailValue()}
+                max={GUARDRAIL_STAGE_VALUES.length - 1}
+                step="1"
+                list="guardrail-stage-ticks"
+                style={guardrailSliderStyle()}
+                value={guardrailStage()}
                 onInput={(event) => {
-                  setGuardrailValue(Number.parseFloat(event.currentTarget.value));
+                  const parsed = Number.parseInt(event.currentTarget.value, 10);
+                  const stage = clampGuardrailStage(Number.isNaN(parsed) ? 0 : parsed);
+                  setGuardrailStage(stage);
+                  setGuardrailValue(GUARDRAIL_STAGE_VALUES[stage] ?? 0.5);
                 }}
                 onChange={() => {
                   void onSaveGuardrail();
                 }}
               />
+              <datalist id="guardrail-stage-ticks">
+                {GUARDRAIL_STAGE_META.map((_, index) => (
+                  <option value={String(index)} />
+                ))}
+              </datalist>
+              <div class="guardrail-stage-labels" aria-hidden="true">
+                {GUARDRAIL_STAGE_META.map((stage, index) => (
+                  <span class={`guardrail-stage-label ${guardrailStage() === index ? "is-active" : ""}`}>
+                    {stage.label}
+                  </span>
+                ))}
+              </div>
             </article>
 
             <article class="state-card settings-top-card">
