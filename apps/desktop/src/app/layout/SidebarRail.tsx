@@ -1,6 +1,6 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
-import { useLocation, useNavigate } from "@solidjs/router";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
+import { BrandLockup } from "@/components/composite/BrandLockup";
 import { Icon } from "@/components/icons/Icon";
 import { listRecentRepositories, openRepository } from "@/lib/backend/commands";
 
@@ -14,8 +14,6 @@ function toProjectName(value: string): string {
 }
 
 export function SidebarRail() {
-  const location = useLocation();
-  const navigate = useNavigate();
   const repository = useRepositoryContext();
   const [pathInput, setPathInput] = createSignal("");
   const [repositoryError, setRepositoryError] = createSignal<string | null>(null);
@@ -62,29 +60,10 @@ export function SidebarRail() {
     void refetchRecents();
   };
 
-  const openSettingsPanel = () => {
-    const searchParams = new URLSearchParams(location.search);
-    if (searchParams.get("panel") === "settings") {
-      searchParams.delete("panel");
-    } else {
-      searchParams.set("panel", "settings");
-    }
-    const nextQuery = searchParams.toString();
-    const nextHref = nextQuery.length > 0 ? `${location.pathname}?${nextQuery}` : location.pathname;
-    if (nextHref === `${location.pathname}${location.search}`) return;
-    void navigate(nextHref);
-  };
-
   return (
     <aside class="sidebar-rail" aria-label="Projects">
       <div class="sidebar-header">
-        <div class="sidebar-brand-lockup">
-          <Icon name="app-logo" size={20} title="Application" />
-          <div class="sidebar-wordmark">
-            <span class="sidebar-wordmark-main">Git</span>
-            <span class="sidebar-wordmark-stage">Dev</span>
-          </div>
-        </div>
+        <BrandLockup />
       </div>
 
       <section class="sidebar-repository-panel">
@@ -154,11 +133,6 @@ export function SidebarRail() {
           <p class="sidebar-empty-projects">No projects yet</p>
         </Show>
       </section>
-
-      <button class="sidebar-settings-btn" type="button" onClick={openSettingsPanel}>
-        <Icon name="settings" size={16} tone="muted" />
-        <span>Settings</span>
-      </button>
     </aside>
   );
 }

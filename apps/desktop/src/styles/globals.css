@@ -139,6 +139,16 @@ ul, ol { list-style: none; padding: 0; }
   overflow: hidden;
 }
 
+.app-shell-root.is-compact .app-shell-grid,
+.app-shell-root.is-compact .app-shell-grid.sidebar-left {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell-root.is-compact .sidebar-rail,
+.app-shell-root.is-compact .panel-resizer {
+  display: none;
+}
+
 /* ── Titlebar ────────────────────────────────────────────── */
 
 .titlebar-strip {
@@ -211,6 +221,11 @@ ul, ol { list-style: none; padding: 0; }
   gap: 8px;
 }
 
+.brand-lockup-icon {
+  color: var(--text-strong);
+  flex: 0 0 auto;
+}
+
 .sidebar-wordmark {
   display: flex;
   align-items: center;
@@ -262,6 +277,9 @@ ul, ol { list-style: none; padding: 0; }
 .sidebar-project-head-btn {
   width: 24px;
   height: 24px;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -327,6 +345,8 @@ ul, ol { list-style: none; padding: 0; }
 
 .sidebar-project-add-btn {
   height: 26px;
+  appearance: none;
+  -webkit-appearance: none;
   border: 1px solid var(--secondary-btn-border);
   border-radius: 6px;
   background: var(--btn-bg);
@@ -362,6 +382,8 @@ ul, ol { list-style: none; padding: 0; }
 
 .sidebar-project-item {
   width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -424,6 +446,8 @@ ul, ol { list-style: none; padding: 0; }
   flex: 0 0 auto;
   margin-top: 8px;
   width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -488,16 +512,29 @@ ul, ol { list-style: none; padding: 0; }
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 8px 12px 8px 2px;
   border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.12);
   background: var(--surface-0);
   backdrop-filter: var(--glass-backdrop-filter, none);
+}
+
+.app-shell-root.is-compact .workspace-topbar {
+  /* Match compact lockup inset to the sidebar brand inset used in full mode. */
+  padding-left: 12px;
 }
 
 .workspace-topbar-copy {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.workspace-topbar-brand {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+.workspace-topbar .workspace-repo-name {
   min-width: 0;
 }
 
@@ -557,6 +594,10 @@ ul, ol { list-style: none; padding: 0; }
   background: var(--item-active-bg);
   border-color: var(--item-active-border);
   color: var(--accent-bright);
+}
+
+.workspace-settings-btn {
+  margin-left: 8px;
 }
 
 /* View tabs (legacy compat) */
@@ -1472,27 +1513,12 @@ ul, ol { list-style: none; padding: 0; }
 /* ── Responsive ──────────────────────────────────────────── */
 
 @media (max-width: 960px) {
-  .app-shell-grid,
-  .app-shell-grid.sidebar-left {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .sidebar-rail {
-    border-right: none;
-    border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.14);
-    max-height: 180px;
-  }
-
-  .panel-resizer { display: none; }
-
   .history-layout { grid-template-columns: 1fr; }
   .branch-create-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 680px) {
   .status-row, .branch-row, .issue-row { grid-template-columns: 1fr; }
-  .workspace-topbar { flex-direction: column; align-items: stretch; }
 }
 
 /* ── Keyframes ───────────────────────────────────────────── */
