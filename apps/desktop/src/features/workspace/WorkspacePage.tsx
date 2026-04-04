@@ -65,6 +65,8 @@ export function WorkspacePage() {
   const location = useLocation();
   const navigate = useNavigate();
   const isCompactLayout = useCompactLayoutMode();
+  const activeRepositoryPath = createMemo(() => repository.activeRepositoryPath());
+  const hasActiveRepository = createMemo(() => Boolean(activeRepositoryPath()));
 
   const activeMode = createMemo(() => resolveModeFromPath(location.pathname));
 
@@ -100,7 +102,7 @@ export function WorkspacePage() {
           <Show when={isCompactLayout()}>
             <BrandLockup class="workspace-topbar-brand" />
           </Show>
-          <Show when={repository.activeRepositoryPath()} fallback={
+          <Show when={activeRepositoryPath()} fallback={
             <span class="workspace-repo-name" style="opacity:0.5">No project open</span>
           }>
             {(path) => {
@@ -137,8 +139,8 @@ export function WorkspacePage() {
 
       {/* ── Content surface ── */}
       <div class="workspace-content">
-        <div class="workspace-content-panel">
-          <Show when={!repository.activeRepositoryPath()}>
+        <div class="workspace-content-panel" classList={{ "is-empty": !hasActiveRepository() }}>
+          <Show when={!hasActiveRepository()}>
             <div class="workspace-empty-inline-hint">
               Open a project to get started.
             </div>

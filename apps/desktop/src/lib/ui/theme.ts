@@ -215,7 +215,9 @@ const THEME_DEFINITIONS = [
       geometry: {
         radius: 0,
         pixelated: true,
-        typography: "'VT323', monospace"
+        typography: "'VT323', monospace",
+        fontScale: 1.2,
+        letterSpacing: "0.02em"
       }
     }
   }

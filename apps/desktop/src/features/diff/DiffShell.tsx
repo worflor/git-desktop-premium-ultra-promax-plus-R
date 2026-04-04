@@ -93,6 +93,9 @@ export function DiffShell(props: DiffShellProps) {
 
   const manifest = createMemo(() => props.manifest);
   const hasManifest = createMemo(() => Boolean(manifest()));
+  const isIdleEmpty = createMemo(
+    () => !props.filePath && !props.loading && !props.error && !chunkError() && !hasManifest()
+  );
   const hasMoreChunks = createMemo(() => {
     const currentManifest = manifest();
     if (!currentManifest) {
@@ -404,7 +407,7 @@ export function DiffShell(props: DiffShellProps) {
   });
 
   return (
-    <section class="diff-shell" data-render-mode={mode()}>
+    <section class="diff-shell" classList={{ "is-empty": isIdleEmpty() }} data-render-mode={mode()}>
       <header class="diff-header">
         <h2>{props.filePath ? props.filePath : "No file selected"}</h2>
         <div class="diff-controls">

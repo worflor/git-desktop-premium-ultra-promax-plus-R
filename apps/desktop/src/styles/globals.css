@@ -648,8 +648,13 @@ ul, ol { list-style: none; padding: 0; }
   min-height: 0;
   min-width: 0;
   overflow: auto;
+  position: relative;
   border-radius: 8px;
   scrollbar-gutter: stable;
+}
+
+.workspace-content-panel.is-empty {
+  overflow: hidden;
 }
 
 .workspace-content-panel > .feature-page.is-embedded { height: 100%; }
@@ -657,9 +662,15 @@ ul, ol { list-style: none; padding: 0; }
 .workspace-content-panel > .feature-page.is-embedded > .feature-toolbar { display: none; }
 
 .workspace-empty-inline-hint {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  pointer-events: none;
   color: var(--text-muted);
   font-size: 12px;
-  padding: 20px 0;
+  padding: 0 16px;
   text-align: center;
 }
 
@@ -870,13 +881,13 @@ ul, ol { list-style: none; padding: 0; }
 .feature-header-main { display: grid; gap: 4px; min-width: 0; }
 
 .feature-title {
-  font-size: 16px;
+  font-size: 1.2rem;
   font-weight: 600;
   color: var(--text-strong);
 }
 
 .feature-summary, .section-summary {
-  font-size: 12px;
+  font-size: 0.92rem;
   color: var(--text-muted);
   line-height: 1.4;
 }
@@ -884,7 +895,7 @@ ul, ol { list-style: none; padding: 0; }
 .feature-header-meta { display: flex; flex-wrap: wrap; gap: 4px; }
 
 .feature-meta-pill {
-  font-size: 10px;
+  font-size: 0.77rem;
   padding: 2px 7px;
   border-radius: 4px;
   background: rgba(var(--chrome-border-rgb), 0.1);
@@ -941,7 +952,8 @@ ul, ol { list-style: none; padding: 0; }
   background: var(--btn-hover-bg);
   border-color: var(--input-focus-border);
   color: var(--text-strong);
-  box-shadow: var(--runtime-glow-shadow), var(--btn-shadow, 1px 1px 0px var(--runtime-cell-shadow));
+  box-shadow: var(--btn-hover-shadow), var(--btn-hover-glow);
+  transform: scale(1.02);
 }
 
 .primary-btn:active,
@@ -969,7 +981,7 @@ ul, ol { list-style: none; padding: 0; }
   border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 0.85rem;
   font-weight: 500;
   cursor: pointer;
   transition: background 100ms, color 100ms, border-color 100ms;
@@ -977,8 +989,9 @@ ul, ol { list-style: none; padding: 0; }
 
 .ghost-btn:hover {
   background: var(--secondary-btn-hover-bg);
-  border-color: rgba(var(--chrome-border-rgb), 0.16);
-  color: var(--text-normal);
+  border-color: rgba(var(--chrome-border-rgb), 0.3);
+  color: var(--text-strong);
+  transform: translateY(-1px);
 }
 
 .ghost-btn:disabled {
@@ -1040,7 +1053,7 @@ ul, ol { list-style: none; padding: 0; }
   transition: transform 150ms ease-out;
 }
 
-.state-card h3 { margin: 0 0 6px; font-size: 13px; color: var(--text-strong); }
+.state-card h3 { margin: 0 0 6px; font-size: 1rem; color: var(--text-strong); }
 
 .state-card-error {
   border-color: rgba(var(--danger-rgb), 0.35);
@@ -1075,7 +1088,7 @@ ul, ol { list-style: none; padding: 0; }
   margin-bottom: 6px;
 }
 
-.status-list-head h2 { font-size: 13px; color: var(--text-strong); }
+.status-list-head h2 { font-size: 1rem; color: var(--text-strong); }
 
 .status-chip-stack { display: flex; gap: 4px; }
 
@@ -1204,6 +1217,12 @@ ul, ol { list-style: none; padding: 0; }
   transform-style: preserve-3d;
   transform: perspective(2500px) rotateY(calc(var(--cursor-x, 0) * var(--runtime-parallax-strength, 0) * 0.8deg)) rotateX(calc(var(--cursor-y, 0) * var(--runtime-parallax-strength, 0) * -0.8deg));
   transition: transform 150ms ease-out;
+}
+
+.diff-shell.is-empty .diff-viewport {
+  min-height: 64px;
+  max-height: 64px;
+  overflow: hidden;
 }
 
 .diff-viewport-dom,
@@ -1595,7 +1614,7 @@ ul, ol { list-style: none; padding: 0; }
   border: 1px solid var(--secondary-btn-border);
   border-radius: var(--runtime-radius, 6px);
   color: var(--text-normal);
-  font-size: 13px;
+  font-size: 1rem;
   font-family: inherit;
   cursor: pointer;
   transition: border-color 0.15s var(--runtime-ease, ease-out), background 0.15s var(--runtime-ease, ease-out);
@@ -1605,6 +1624,8 @@ ul, ol { list-style: none; padding: 0; }
 .custom-select-trigger:hover {
   background: var(--secondary-btn-hover-bg);
   border-color: var(--input-focus-border);
+  box-shadow: var(--btn-hover-glow);
+  transform: translateY(-1px);
 }
 
 .custom-select-value {
