@@ -563,6 +563,18 @@ export function SettingsPage() {
               />
             </div>
 
+            <p class="section-summary settings-shortcuts-summary">Core shortcuts for the active profile.</p>
+            <div class="keybinding-preview-card" style="margin-bottom: 24px;">
+              <ul class="keybinding-preview-list settings-keybinding-grid">
+                {getNavigationBindings(layout.keybindingProfile()).map((binding) => (
+                  <li class="keybinding-preview-row">
+                    <span>{binding.label}</span>
+                    <span class="shortcut-hint">{binding.keys}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
             <h4 class="settings-nav-subtitle">Behavioral Dynamics</h4>
             <label class="layout-checkbox-field settings-nav-checkbox">
               <input
@@ -576,58 +588,57 @@ export function SettingsPage() {
               <span>Auto-expand operation logs</span>
             </label>
 
-            <p class="section-summary settings-shortcuts-summary">Core shortcuts for the active profile.</p>
-            <div class="keybinding-preview-card">
-              <ul class="keybinding-preview-list settings-keybinding-grid">
-                {getNavigationBindings(layout.keybindingProfile()).map((binding) => (
-                  <li class="keybinding-preview-row">
-                    <span>{binding.label}</span>
-                    <span class="shortcut-hint">{binding.keys}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <h4 class="settings-nav-subtitle">AI Profiles</h4>
-            <div class="keybinding-preview-card settings-ai-models-card">
-              <Show when={aiProvidersResult.loading}>
-                <p class="section-summary">Detecting provider CLIs...</p>
-              </Show>
-
-              <Show when={aiProvidersResult.latest && !aiProvidersResult.latest.ok}>
-                <p class="section-summary settings-ai-provider-error">
-                  {aiProvidersResult.latest && !aiProvidersResult.latest.ok
-                    ? aiProvidersResult.latest.error.message
-                    : "Provider detection failed."}
-                </p>
-              </Show>
-
-              <Show
-                when={aiProvidersResult.latest?.ok}
-                fallback={<p class="section-summary">No provider diagnostics loaded yet.</p>}
+            <div class="settings-sub-header">
+              <h4 class="settings-nav-subtitle">AI CLIs</h4>
+              <button
+                class="ghost-btn"
+                style="font-size: 0.72rem; padding: 4px 10px; min-height: 24px; border-radius: 4px;"
+                onClick={() => void refetchAiProviders()}
               >
-                <ul class="keybinding-preview-list settings-ai-provider-list">
-                  {aiProvidersResult.latest?.ok
-                    ? aiProvidersResult.latest.data.providers.map((provider) => (
-                        <li class="keybinding-preview-row settings-ai-provider-row">
-                          <span>{provider.id.toUpperCase()}</span>
-                          <span
-                            class={`settings-ai-provider-status ${provider.available ? "is-ready" : "is-missing"}`}
-                          >
-                            {provider.available ? provider.planName ?? "Ready" : "Not detected"} ({provider.binary})
-                          </span>
-                        </li>
-                      ))
-                    : null}
-                </ul>
-              </Show>
-
-              <div class="inline-actions settings-ai-provider-actions">
-                <button class="ghost-btn" onClick={() => void refetchAiProviders()}>
-                  Refresh Providers
-                </button>
-              </div>
+                Refresh Providers
+              </button>
             </div>
+            <p class="section-summary">Routing and piping interface messages directly to local provider binaries.</p>
+
+            <Show when={aiProvidersResult.loading}>
+              <p class="section-summary">Detecting provider CLIs...</p>
+            </Show>
+
+            <Show when={aiProvidersResult.latest && !aiProvidersResult.latest.ok}>
+              <p class="section-summary settings-ai-provider-error">
+                {aiProvidersResult.latest && !aiProvidersResult.latest.ok
+                  ? aiProvidersResult.latest.error.message
+                  : "Provider detection failed."}
+              </p>
+            </Show>
+
+            <Show
+              when={aiProvidersResult.latest?.ok}
+              fallback={
+                <Show when={!aiProvidersResult.loading}>
+                  <p class="section-summary">No provider diagnostics loaded yet.</p>
+                </Show>
+              }
+            >
+              <div class="settings-ai-models-grid">
+                {aiProvidersResult.latest?.ok
+                  ? aiProvidersResult.latest.data.providers.map((provider) => (
+                      <div class="settings-ai-model-node">
+                        <div class="settings-ai-model-id">{provider.id}</div>
+                        <div class="settings-ai-model-meta">
+                          <span
+                            class={`settings-ai-model-status ${provider.available ? "is-ready" : "is-missing"}`}
+                          >
+                            {provider.available ? provider.planName ?? "Ready" : "Not detected"}
+                          </span>
+                          <span class="settings-ai-model-binary">{provider.binary}</span>
+                        </div>
+                      </div>
+                    ))
+                  : null}
+              </div>
+            </Show>
+
           </article>
 
             <article class="state-card state-card-wide">

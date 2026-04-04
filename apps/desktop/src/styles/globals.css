@@ -2634,6 +2634,7 @@ ol {
 
 .settings-nav-subtitle {
   margin-bottom: 8px;
+  margin-top: 18px; /* Standard rhythm for sub-sections */
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -2641,51 +2642,99 @@ ol {
   opacity: 0.8;
 }
 
+/* Ensure the first subtitle in a card doesn't have double top spacing */
+.state-card .settings-nav-subtitle:first-child,
+.state-card :first-child > .settings-nav-subtitle:first-child {
+  margin-top: 0;
+}
+
+.settings-sub-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 8px;
+}
+
+.settings-sub-header .settings-nav-subtitle {
+  margin: 0;
+}
+
 .settings-nav-checkbox {
   margin-bottom: 18px;
-  padding-bottom: 14px;
+  padding-bottom: 12px;
   border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.12);
 }
 
 .settings-shortcuts-summary {
   margin-bottom: 8px;
-}
-
-.settings-ai-models-card {
-  margin-bottom: 14px;
-}
-
-.settings-ai-provider-list {
-  gap: 6px;
-}
-
-.settings-ai-provider-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.settings-ai-provider-status {
-  justify-self: end;
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   color: var(--text-muted);
 }
 
-.settings-ai-provider-status.is-ready {
+
+.settings-ai-models-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  margin-top: 12px; /* Uniform gap from description/title */
+  margin-bottom: 4px;
+}
+
+.settings-ai-model-node {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: rgba(var(--chrome-border-rgb), 0.05);
+  border: 1px solid rgba(var(--chrome-border-rgb), 0.12);
+  border-radius: 8px;
+  transition: all 0.2s var(--runtime-ease, ease-out);
+}
+
+.settings-ai-model-node:hover {
+  background: rgba(var(--chrome-border-rgb), 0.08);
+  border-color: rgba(var(--chrome-border-rgb), 0.25);
+  transform: translateY(-1px);
+}
+
+.settings-ai-model-id {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-strong);
+  text-transform: uppercase;
+}
+
+.settings-ai-model-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-ai-model-status {
+  font-size: 0.72rem;
+  font-weight: 500;
   color: var(--accent-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.settings-ai-provider-status.is-missing {
+.settings-ai-model-status.is-missing {
   color: var(--text-muted);
-  opacity: 0.82;
+  opacity: 0.7;
 }
 
-.settings-ai-provider-actions {
-  margin-top: 4px;
+.settings-ai-model-binary {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+  white-space: nowrap;
 }
 
-.settings-ai-provider-error {
-  color: var(--status-danger);
-}
 
 /* ── Telemetry ───────────────────────────────────────────── */
 
