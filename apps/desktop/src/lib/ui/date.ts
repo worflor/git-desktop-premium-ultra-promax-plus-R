@@ -1,3 +1,5 @@
+import { createSignal } from "solid-js";
+
 /**
  * Utility for formatting commit dates in a human-readable way.
  */
@@ -64,4 +66,25 @@ export function formatFullDate(isoString: string): string {
   if (isNaN(date.getTime())) return isoString;
   const iso = date.toISOString();
   return (iso.split(".")[0] || iso).replace("T", " ");
+}
+
+const STORAGE_KEY = "gdpu.history.date_format";
+
+const initialPreference = () => {
+    if (typeof window === "undefined") return "relative";
+    return (window.localStorage.getItem(STORAGE_KEY) as DateFormat) || "relative";
+};
+
+const [globalFormatPreference, setGlobalFormatPreference] = createSignal<DateFormat>(initialPreference());
+
+/**
+ * Hook or helper to manage the persistent date format preference.
+ */
+export function useDateFormatPreference() {
+  return [globalFormatPreference, (mode: DateFormat) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(STORAGE_KEY, mode);
+    }
+    setGlobalFormatPreference(mode);
+  }] as const;
 }
