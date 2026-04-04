@@ -1,7 +1,10 @@
 import {
+  createEffect,
   createMemo,
+  createSignal,
   lazy,
   Match,
+  onMount,
   Show,
   Suspense,
   Switch
@@ -11,6 +14,7 @@ import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { BrandLockup } from "@/components/composite/BrandLockup";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { Icon } from "@/components/icons/Icon";
+import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 import { useCompactLayoutMode } from "@/lib/ui/layoutMode";
 
 type WorkspaceMode = "changes" | "history" | "branches" | "sync";
@@ -61,10 +65,12 @@ function resolveModeFromPath(pathname: string): WorkspaceMode {
 }
 
 export function WorkspacePage() {
+  const mountedAt = performance.now();
   const repository = useRepositoryContext();
   const location = useLocation();
   const navigate = useNavigate();
   const isCompactLayout = useCompactLayoutMode();
+  const [settingsPanelOpenStartedAt, setSettingsPanelOpenStartedAt] = createSignal<number | null>(null);
   const activeRepositoryPath = createMemo(() => repository.activeRepositoryPath());
   const hasActiveRepository = createMemo(() => Boolean(activeRepositoryPath()));
 
@@ -91,8 +97,45 @@ export function WorkspacePage() {
     const nextHref = nextQuery.length > 0 ? `${location.pathname}?${nextQuery}` : location.pathname;
     const currentHref = `${location.pathname}${location.search}`;
     if (nextHref === currentHref) return;
+
+    if (open) {
+      setSettingsPanelOpenStartedAt(performance.now());
+    } else {
+      setSettingsPanelOpenStartedAt(null);
+    }
+
     void navigate(nextHref);
   };
+
+  onMount(() => {
+    requestAnimationFrame(() => {
+      recordUiTiming({
+        event: "workspace.page.first-paint",
+        phase: "mount",
+        durationMs: performance.now() - mountedAt
+      });
+    });
+  });
+
+  createEffect(() => {
+    if (!isSettingsOpen()) {
+      return;
+    }
+
+    const startedAt = settingsPanelOpenStartedAt();
+    if (startedAt === null) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      recordUiTiming({
+        event: "settings.panel.open",
+        phase: "interaction",
+        durationMs: performance.now() - startedAt
+      });
+      setSettingsPanelOpenStartedAt(null);
+    });
+  });
 
   return (
     <div class="workspace-shell">

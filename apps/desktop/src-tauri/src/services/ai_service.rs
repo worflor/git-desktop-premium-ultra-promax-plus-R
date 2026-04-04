@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -41,6 +41,15 @@ const GEMINI_KNOWN_MODELS: [&str; 5] = [
     "gemini-2.5-pro",
     "gemini-2.5-flash",
 ];
+const CLAUDE_KNOWN_MODELS: [&str; 7] = [
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-sonnet-4-5",
+    "claude-opus-4-5",
+    "claude-sonnet-4",
+    "claude-opus-4-1",
+    "claude-haiku-4-5",
+];
 const DEFAULT_MODEL_CATEGORY_CONFIG: [ModelCategoryTemplate; 2] = [
     ModelCategoryTemplate {
         id: "quality",
@@ -66,6 +75,12 @@ const MAX_STDIN_DIFF_CHARS: usize = 120_000;
 #[cfg(test)]
 const MAX_INLINE_DIFF_CHARS: usize = 6_000;
 const PROVIDER_RESOLUTION_CACHE_TTL: Duration = Duration::from_secs(60);
+const PROVIDER_AVAILABILITY_CACHE_TTL: Duration = Duration::from_secs(20);
+const MODEL_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(45);
+const BINARY_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_millis(1200);
+const OPENCODE_BINARY_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+const WINDOWS_SCRIPT_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+const MODEL_DISCOVERY_COMMAND_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Copy)]
 struct CliProviderAdapter {
@@ -170,8 +185,16 @@ struct ProviderAvailability {
     auth: ProviderAuthStatus,
 }
 
+#[derive(Clone)]
 struct ProviderModelDiscovery {
     models: Vec<String>,
+}
+
+#[derive(Clone)]
+struct ClaudeOAuthCredentials {
+    access_token: String,
+    subscription_type: String,
+    has_inference_scope: bool,
 }
 
 struct ProviderModelCollection {
@@ -212,26 +235,35 @@ struct ProviderResolutionCacheEntry {
     resolution: Option<ProviderResolution>,
 }
 
+#[derive(Clone)]
+struct ProviderAvailabilityCacheEntry {
+    checked_at: Instant,
+    availability: ProviderAvailability,
+}
+
+#[derive(Clone)]
+struct ProviderModelDiscoveryCacheEntry {
+    checked_at: Instant,
+    discovery: Option<ProviderModelDiscovery>,
+}
+
 pub fn list_providers() -> Result<AiProviderListData, AppError> {
-    let providers = provider_adapters()
+    let providers = collect_provider_availability()
         .into_iter()
-        .map(|adapter| {
-            let availability = inspect_provider(&adapter);
-            AiProviderStatus {
-                id: adapter.id().to_string(),
-                available: availability.ready,
-                binary: adapter.binary_name().to_string(),
-                plan_name: availability.auth.plan_name.clone(),
-                resolved_binary: availability
-                    .resolution
-                    .as_ref()
-                    .map(|item| item.command.clone()),
-                detection_source: availability
-                    .resolution
-                    .as_ref()
-                    .map(|item| item.source.clone()),
-                health_check: format_provider_health(&availability),
-            }
+        .map(|(adapter, availability)| AiProviderStatus {
+            id: adapter.id().to_string(),
+            available: availability.ready,
+            binary: adapter.binary_name().to_string(),
+            plan_name: availability.auth.plan_name.clone(),
+            resolved_binary: availability
+                .resolution
+                .as_ref()
+                .map(|item| item.command.clone()),
+            detection_source: availability
+                .resolution
+                .as_ref()
+                .map(|item| item.source.clone()),
+            health_check: format_provider_health(&availability),
         })
         .collect();
 
@@ -817,10 +849,14 @@ fn execute_provider_attempt<F>(
 where
     F: FnMut(&str),
 {
-    let mut command = Command::new(binary);
+    let attempt_args = attempt
+        .args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<&str>>();
+    let mut command = build_process_command(binary, attempt_args.as_slice());
     command
         .current_dir(repository_path)
-        .args(attempt.args.iter().map(String::as_str))
         .env("NO_COLOR", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1437,6 +1473,40 @@ fn inspect_provider(adapter: &dyn AiProviderAdapter) -> ProviderAvailability {
     }
 }
 
+fn inspect_provider_cached(adapter: &CliProviderAdapter) -> ProviderAvailability {
+    let cache_key = adapter.id().to_ascii_lowercase();
+    if let Ok(cache) = provider_availability_cache().lock() {
+        if let Some(entry) = cache.get(cache_key.as_str()) {
+            if entry.checked_at.elapsed() < PROVIDER_AVAILABILITY_CACHE_TTL {
+                return entry.availability.clone();
+            }
+        }
+    }
+
+    let refresh_lock = provider_availability_refresh_lock(cache_key.as_str());
+    let _refresh_guard = refresh_lock.as_ref().and_then(|lock| lock.lock().ok());
+    if let Ok(cache) = provider_availability_cache().lock() {
+        if let Some(entry) = cache.get(cache_key.as_str()) {
+            if entry.checked_at.elapsed() < PROVIDER_AVAILABILITY_CACHE_TTL {
+                return entry.availability.clone();
+            }
+        }
+    }
+
+    let availability = inspect_provider(adapter);
+    if let Ok(mut cache) = provider_availability_cache().lock() {
+        cache.insert(
+            cache_key,
+            ProviderAvailabilityCacheEntry {
+                checked_at: Instant::now(),
+                availability: availability.clone(),
+            },
+        );
+    }
+
+    availability
+}
+
 fn format_provider_health(availability: &ProviderAvailability) -> String {
     let binary = availability
         .resolution
@@ -1495,7 +1565,7 @@ fn codex_auth_status() -> ProviderAuthStatus {
 }
 
 fn claude_auth_status() -> ProviderAuthStatus {
-    let Some(home_dir) = user_home_dir() else {
+    let Some(credentials_path) = claude_credentials_path() else {
         return ProviderAuthStatus {
             ok: false,
             detail: "home directory unavailable".to_string(),
@@ -1503,8 +1573,7 @@ fn claude_auth_status() -> ProviderAuthStatus {
         };
     };
 
-    let credentials_path = home_dir.join(".claude").join(".credentials.json");
-    let Some(value) = read_json_file(credentials_path.as_path()) else {
+    let Some(credentials) = read_claude_oauth_credentials(credentials_path.as_path()) else {
         return ProviderAuthStatus {
             ok: false,
             detail: "missing ~/.claude/.credentials.json".to_string(),
@@ -1512,24 +1581,13 @@ fn claude_auth_status() -> ProviderAuthStatus {
         };
     };
 
-    let oauth = value.get("claudeAiOauth").cloned().unwrap_or(Value::Null);
-    let token_ok = oauth
-        .get("accessToken")
-        .and_then(Value::as_str)
+    let subscription = credentials.subscription_type.clone();
+    let token_ok = resolve_claude_access_token(&credentials)
         .map(|token| !token.trim().is_empty())
         .unwrap_or(false);
-    let inference_scope = oauth
-        .get("scopes")
-        .and_then(Value::as_array)
-        .map(|scopes| scopes.iter().any(|scope| scope.as_str() == Some("user:inference")))
-        .unwrap_or(false);
-    let subscription = oauth
-        .get("subscriptionType")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let ok = token_ok && inference_scope;
+    let ok = token_ok && credentials.has_inference_scope;
     let plan_name = if ok {
-        Some(humanize_label(subscription))
+        Some(humanize_label(subscription.as_str()))
     } else {
         None
     };
@@ -1542,6 +1600,55 @@ fn claude_auth_status() -> ProviderAuthStatus {
             "claude oauth missing token or user:inference scope".to_string()
         },
         plan_name,
+    }
+}
+
+fn claude_credentials_path() -> Option<PathBuf> {
+    Some(user_home_dir()?.join(".claude").join(".credentials.json"))
+}
+
+fn read_claude_oauth_credentials(path: &Path) -> Option<ClaudeOAuthCredentials> {
+    let value = read_json_file(path)?;
+    let oauth = value.get("claudeAiOauth")?;
+
+    let access_token = oauth
+        .get("accessToken")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    let subscription_type = oauth
+        .get("subscriptionType")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let has_inference_scope = oauth
+        .get("scopes")
+        .and_then(Value::as_array)
+        .map(|scopes| scopes.iter().any(|scope| scope.as_str() == Some("user:inference")))
+        .unwrap_or(false);
+
+    Some(ClaudeOAuthCredentials {
+        access_token,
+        subscription_type,
+        has_inference_scope,
+    })
+}
+
+fn resolve_claude_access_token(credentials: &ClaudeOAuthCredentials) -> Option<String> {
+    if !credentials.has_inference_scope {
+        return None;
+    }
+
+    let token = credentials.access_token.trim().to_string();
+    if token.is_empty() {
+        return None;
+    }
+
+    if token.trim().is_empty() {
+        None
+    } else {
+        Some(token)
     }
 }
 
@@ -1782,10 +1889,37 @@ fn discover_provider_models(
 ) -> Option<ProviderModelDiscovery> {
     match adapter.kind() {
         ProviderKind::Codex => discover_codex_models(),
-        ProviderKind::Claude => discover_claude_models(),
+        ProviderKind::Claude => discover_claude_models(resolution),
         ProviderKind::Gemini => discover_gemini_models(),
         ProviderKind::OpenCode => discover_opencode_models(resolution),
     }
+}
+
+fn discover_provider_models_cached(
+    adapter: &CliProviderAdapter,
+    resolution: Option<&ProviderResolution>,
+) -> Option<ProviderModelDiscovery> {
+    let cache_key = adapter.id().to_ascii_lowercase();
+    if let Ok(cache) = provider_model_discovery_cache().lock() {
+        if let Some(entry) = cache.get(cache_key.as_str()) {
+            if entry.checked_at.elapsed() < MODEL_DISCOVERY_CACHE_TTL {
+                return entry.discovery.clone();
+            }
+        }
+    }
+
+    let discovery = discover_provider_models(adapter, resolution);
+    if let Ok(mut cache) = provider_model_discovery_cache().lock() {
+        cache.insert(
+            cache_key,
+            ProviderModelDiscoveryCacheEntry {
+                checked_at: Instant::now(),
+                discovery: discovery.clone(),
+            },
+        );
+    }
+
+    discovery
 }
 
 fn discover_codex_models() -> Option<ProviderModelDiscovery> {
@@ -1837,56 +1971,51 @@ fn discover_codex_config_model() -> Option<String> {
     None
 }
 
-fn discover_claude_models() -> Option<ProviderModelDiscovery> {
-    let home_dir = user_home_dir()?;
-    let credentials_path = home_dir.join(".claude").join(".credentials.json");
-    let credentials = read_json_file(credentials_path.as_path())?;
-    let token = credentials
-        .get("claudeAiOauth")
-        .and_then(|oauth| oauth.get("accessToken"))
-        .and_then(Value::as_str)?;
+fn discover_claude_models(resolution: Option<&ProviderResolution>) -> Option<ProviderModelDiscovery> {
+    let command = resolution
+        .map(|entry| entry.command.clone())
+        .unwrap_or_else(|| "claude".to_string());
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .ok()?;
-    let response = client
-        .get("https://api.anthropic.com/v1/models?limit=100")
-        .header("x-api-key", token)
-        .header("anthropic-version", "2023-06-01")
-        .send()
-        .ok()?;
-
-    if !response.status().is_success() {
-        return None;
-    }
-
-    let payload = response.json::<Value>().ok()?;
-    let data = payload.get("data")?.as_array()?;
     let mut models = Vec::<String>::new();
-
-    for model in data {
-        if let Some(id) = model.get("id").and_then(Value::as_str) {
-            if !id.trim().is_empty() {
-                models.push(id.to_string());
-            }
-        }
+    if let Some(configured) = discover_claude_configured_model(command.as_str()) {
+        models.push(configured);
     }
 
-    models.sort_by(|left, right| {
-        let left_latest = !has_yyyymmdd_suffix(left.as_str());
-        let right_latest = !has_yyyymmdd_suffix(right.as_str());
-        if left_latest != right_latest {
-            return right_latest.cmp(&left_latest);
+    for known in CLAUDE_KNOWN_MODELS {
+        if !models.iter().any(|value| value.eq_ignore_ascii_case(known)) {
+            models.push(known.to_string());
         }
-        right.cmp(left)
-    });
+    }
 
     if models.is_empty() {
         return None;
     }
 
     Some(ProviderModelDiscovery { models })
+}
+
+fn discover_claude_configured_model(command: &str) -> Option<String> {
+    let output = run_command_output_with_timeout(
+        command,
+        &["config", "get", "model"],
+        MODEL_DISCOVERY_COMMAND_TIMEOUT,
+    )?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(output.stdout.as_slice());
+    let model = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?
+        .to_string();
+
+    if model.is_empty() {
+        None
+    } else {
+        Some(model)
+    }
 }
 
 fn discover_gemini_models() -> Option<ProviderModelDiscovery> {
@@ -1905,7 +2034,11 @@ fn discover_opencode_models(resolution: Option<&ProviderResolution>) -> Option<P
         .map(|entry| entry.command.clone())
         .unwrap_or_else(|| "opencode".to_string());
 
-    let output = Command::new(command).arg("models").output().ok()?;
+    let output = run_command_output_with_timeout(
+        command.as_str(),
+        &["models"],
+        MODEL_DISCOVERY_COMMAND_TIMEOUT,
+    )?;
     if !output.status.success() {
         return None;
     }
@@ -1927,15 +2060,6 @@ fn discover_opencode_models(resolution: Option<&ProviderResolution>) -> Option<P
     }
 
     Some(ProviderModelDiscovery { models })
-}
-
-fn has_yyyymmdd_suffix(value: &str) -> bool {
-    if value.len() < 9 {
-        return false;
-    }
-
-    let suffix = &value[value.len() - 8..];
-    value.as_bytes()[value.len() - 9] == b'-' && suffix.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn model_category_definitions() -> Vec<ModelCategoryDefinition> {
@@ -2007,33 +2131,56 @@ fn configured_model_category_definitions() -> Option<Vec<ModelCategoryDefinition
 }
 
 fn discover_ready_provider_models() -> Vec<ProviderModelCollection> {
-    let mut collections = Vec::<ProviderModelCollection>::new();
+    let handles = collect_provider_availability()
+        .into_iter()
+        .filter_map(|(adapter, availability)| {
+            if !availability.ready {
+                return None;
+            }
 
-    for provider_id in ["claude", "codex", "gemini", "opencode"] {
-        let Some(adapter) = provider_adapter(provider_id) else {
-            continue;
-        };
-        let availability = inspect_provider(&adapter);
-        if !availability.ready {
-            continue;
-        }
+            Some(thread::spawn(move || {
+                let discovery =
+                    discover_provider_models_cached(&adapter, availability.resolution.as_ref())?;
+                if discovery.models.is_empty() {
+                    return None;
+                }
 
-        let Some(discovery) = discover_provider_models(&adapter, availability.resolution.as_ref()) else {
-            continue;
-        };
-        if discovery.models.is_empty() {
-            continue;
-        }
+                Some(ProviderModelCollection {
+                    provider_id: adapter.id().to_string(),
+                    provider_kind: adapter.kind(),
+                    plan_name: availability.auth.plan_name.clone(),
+                    models: discovery.models,
+                })
+            }))
+        })
+        .collect::<Vec<thread::JoinHandle<Option<ProviderModelCollection>>>>();
 
-        collections.push(ProviderModelCollection {
-            provider_id: adapter.id().to_string(),
-            provider_kind: adapter.kind(),
-            plan_name: availability.auth.plan_name.clone(),
-            models: discovery.models,
-        });
-    }
+    let mut collections = handles
+        .into_iter()
+        .filter_map(|handle| handle.join().ok().flatten())
+        .collect::<Vec<ProviderModelCollection>>();
 
+    collections.sort_by(|left, right| left.provider_id.cmp(&right.provider_id));
     collections
+}
+
+fn collect_provider_availability() -> Vec<(CliProviderAdapter, ProviderAvailability)> {
+    let handles = provider_adapters()
+        .into_iter()
+        .map(|adapter| {
+            thread::spawn(move || {
+                let availability = inspect_provider_cached(&adapter);
+                (adapter, availability)
+            })
+        })
+        .collect::<Vec<thread::JoinHandle<(CliProviderAdapter, ProviderAvailability)>>>();
+
+    let mut providers = handles
+        .into_iter()
+        .filter_map(|handle| handle.join().ok())
+        .collect::<Vec<(CliProviderAdapter, ProviderAvailability)>>();
+    providers.sort_by(|(left, _), (right, _)| left.id().cmp(right.id()));
+    providers
 }
 
 fn rank_models_for_category(models: &[String], hint_tokens: &[String]) -> Vec<String> {
@@ -2154,12 +2301,42 @@ fn provider_resolution_cache() -> &'static Mutex<std::collections::HashMap<Strin
     CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
+fn provider_availability_cache() -> &'static Mutex<std::collections::HashMap<String, ProviderAvailabilityCacheEntry>> {
+    static CACHE: OnceLock<
+        Mutex<std::collections::HashMap<String, ProviderAvailabilityCacheEntry>>,
+    > = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn provider_availability_refresh_lock(cache_key: &str) -> Option<Arc<Mutex<()>>> {
+    let mut guard = provider_availability_refresh_locks().lock().ok()?;
+    Some(
+        guard
+            .entry(cache_key.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone(),
+    )
+}
+
+fn provider_availability_refresh_locks() -> &'static Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>> {
+    static LOCKS: OnceLock<Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>> =
+        OnceLock::new();
+    LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn provider_model_discovery_cache() -> &'static Mutex<std::collections::HashMap<String, ProviderModelDiscoveryCacheEntry>> {
+    static CACHE: OnceLock<
+        Mutex<std::collections::HashMap<String, ProviderModelDiscoveryCacheEntry>>,
+    > = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
 fn known_binary_candidates(binary: &str) -> Vec<(String, String)> {
     let mut candidates = Vec::<(String, String)>::new();
     let mut seen = std::collections::HashSet::<String>::new();
 
     if cfg!(target_os = "windows") {
-        for suffix in ["", ".cmd", ".exe", ".bat"] {
+        for suffix in ["", ".cmd", ".exe", ".bat", ".ps1"] {
             push_candidate(
                 &mut candidates,
                 &mut seen,
@@ -2179,7 +2356,7 @@ fn known_binary_candidates(binary: &str) -> Vec<(String, String)> {
     if cfg!(target_os = "windows") {
         if let Ok(appdata) = std::env::var("APPDATA") {
             let npm_dir = std::path::Path::new(&appdata).join("npm");
-            for suffix in ["", ".cmd", ".exe"] {
+            for suffix in ["", ".cmd", ".exe", ".ps1"] {
                 let command = npm_dir
                     .join(format!("{binary}{suffix}"))
                     .to_string_lossy()
@@ -2264,15 +2441,127 @@ fn push_candidate(
     }
 }
 
+enum CommandExecutionOutcome {
+    Completed(Output),
+    SpawnFailed,
+    WaitFailed,
+    TimedOut,
+}
+
+fn build_process_command(command: &str, args: &[&str]) -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        let lowered = command.to_ascii_lowercase();
+        if lowered.ends_with(".ps1") {
+            let mut wrapped = Command::new("powershell");
+            wrapped
+                .arg("-NoProfile")
+                .arg("-ExecutionPolicy")
+                .arg("Bypass")
+                .arg("-File")
+                .arg(command)
+                .args(args);
+            return wrapped;
+        }
+
+        if lowered.ends_with(".cmd") || lowered.ends_with(".bat") {
+            let mut wrapped = Command::new("cmd");
+            wrapped.arg("/C").arg(command).args(args);
+            return wrapped;
+        }
+    }
+
+    let mut direct = Command::new(command);
+    direct.args(args);
+    direct
+}
+
+fn run_command_output_with_timeout_outcome(
+    command: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> CommandExecutionOutcome {
+    let mut invocation = build_process_command(command, args);
+    invocation.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = invocation.spawn();
+    let Ok(mut child) = child else {
+        return CommandExecutionOutcome::SpawnFailed;
+    };
+
+    let started_at = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::<u8>::new();
+                let mut stderr = Vec::<u8>::new();
+
+                if let Some(mut handle) = child.stdout.take() {
+                    let _ = handle.read_to_end(&mut stdout);
+                }
+                if let Some(mut handle) = child.stderr.take() {
+                    let _ = handle.read_to_end(&mut stderr);
+                }
+
+                return CommandExecutionOutcome::Completed(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) => {
+                if started_at.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return CommandExecutionOutcome::TimedOut;
+                }
+                thread::sleep(Duration::from_millis(15));
+            }
+            Err(_) => return CommandExecutionOutcome::WaitFailed,
+        }
+    }
+}
+
+fn run_command_output_with_timeout(command: &str, args: &[&str], timeout: Duration) -> Option<Output> {
+    match run_command_output_with_timeout_outcome(command, args, timeout) {
+        CommandExecutionOutcome::Completed(output) => Some(output),
+        CommandExecutionOutcome::SpawnFailed
+        | CommandExecutionOutcome::WaitFailed
+        | CommandExecutionOutcome::TimedOut => None,
+    }
+}
+
 fn probe_binary_health(command: &str) -> Option<String> {
     const HEALTH_CHECKS: [&[&str]; 4] = [&["--version"], &["version"], &["-v"], &["--help"]];
+    let lowered = command.to_ascii_lowercase();
+    let timeout = if lowered.contains("opencode") {
+        OPENCODE_BINARY_HEALTH_CHECK_TIMEOUT
+    } else if cfg!(target_os = "windows")
+        && (lowered.ends_with(".cmd")
+            || lowered.ends_with(".bat")
+            || lowered.ends_with(".ps1"))
+    {
+        WINDOWS_SCRIPT_HEALTH_CHECK_TIMEOUT
+    } else {
+        BINARY_HEALTH_CHECK_TIMEOUT
+    };
 
     for args in HEALTH_CHECKS {
-        let result = Command::new(command).args(args).output();
-        if let Ok(output) = result {
-            if output.status.success() {
-                return Some(format!("ok({})", args.join(" ")));
+        let output = match run_command_output_with_timeout_outcome(
+            command,
+            args,
+            timeout,
+        ) {
+            CommandExecutionOutcome::Completed(output) => output,
+            CommandExecutionOutcome::SpawnFailed | CommandExecutionOutcome::WaitFailed => {
+                continue;
             }
+            CommandExecutionOutcome::TimedOut => {
+                return None;
+            }
+        };
+
+        if output.status.success() {
+            return Some(format!("ok({})", args.join(" ")));
         }
     }
 

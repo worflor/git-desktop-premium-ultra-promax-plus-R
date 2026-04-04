@@ -5,6 +5,7 @@ import { useLayoutPreferences } from "@/app/layout/LayoutPreferencesContext";
 import { SidebarRail } from "@/app/layout/SidebarRail";
 import { PanelResizer } from "@/app/layout/PanelResizer";
 import { UtilityDrawer } from "@/app/layout/UtilityDrawer";
+import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 import { resolveNavigationHotkey } from "@/lib/ui/keybindings";
 import { useCompactLayoutMode } from "@/lib/ui/layoutMode";
 
@@ -20,6 +21,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export function AppShellFrame(props: AppShellFrameProps) {
+  const mountedAt = performance.now();
   const layout = useLayoutPreferences();
   const navigate = useNavigate();
   const isCompactLayout = useCompactLayoutMode();
@@ -35,6 +37,14 @@ export function AppShellFrame(props: AppShellFrameProps) {
   });
 
   onMount(() => {
+    requestAnimationFrame(() => {
+      recordUiTiming({
+        event: "shell.frame.first-paint",
+        phase: "mount",
+        durationMs: performance.now() - mountedAt
+      });
+    });
+
     let awaitingPrefix = false;
     let prefixTimerId: number | undefined;
 

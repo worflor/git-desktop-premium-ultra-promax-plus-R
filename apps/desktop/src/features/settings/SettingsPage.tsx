@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { Match, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, startTransition, Show } from "solid-js";
 import {
   useLayoutPreferences
 } from "@/app/layout/LayoutPreferencesContext";
@@ -28,6 +28,13 @@ import {
   setDiffRenderMetricsRetentionPolicy,
   subscribeDiffRenderMetricsReport
 } from "@/lib/telemetry/diffRenderMetrics";
+import {
+  clearUiTimingReport,
+  getUiTimingReport,
+  recordUiTiming,
+  setUiTimingRetentionPolicy,
+  subscribeUiTimingReport
+} from "@/lib/telemetry/uiTiming";
 import {
   getNavigationBindings,
   KEYBINDING_PROFILE_OPTIONS
@@ -65,20 +72,79 @@ function guardrailDisplayLabelFromProfile(profile: string): string {
 }
 
 const MODEL_CATEGORY_STORAGE_PREFIX = "gdpu.ai.category.";
+const MODEL_CATEGORY_LABEL_STORAGE_PREFIX = "gdpu.ai.category-label.";
+const AI_PROVIDER_PLACEHOLDERS = [
+  { id: "codex", binary: "codex" },
+  { id: "claude", binary: "claude" },
+  { id: "gemini", binary: "npx" },
+  { id: "opencode", binary: "opencode" }
+] as const;
+const MODEL_CATEGORY_PLACEHOLDERS = [
+  { id: "quality", label: "Quality model" },
+  { id: "fast", label: "Fast model" }
+] as const;
 
 function modelCategoryStorageKey(categoryId: string): string {
   return `${MODEL_CATEGORY_STORAGE_PREFIX}${categoryId}`;
+}
+
+function modelCategoryLabelStorageKey(categoryId: string): string {
+  return `${MODEL_CATEGORY_LABEL_STORAGE_PREFIX}${categoryId}`;
 }
 
 function buildEmptyCategoryMessage(categoryLabel: string): string {
   return `No ${categoryLabel.toLowerCase()} models from detected providers.`;
 }
 
+type DiagnosticsFocus = "command" | "diff" | "ui";
+
+interface DiagnosticsOffender {
+  focus: DiagnosticsFocus;
+  streamLabel: string;
+  name: string;
+  score: number;
+  metricLabel: string;
+}
+
+interface AiProviderDisplayCard {
+  id: string;
+  binary: string;
+  available: boolean;
+  planName?: string;
+  placeholder: boolean;
+}
+
 export function SettingsPage() {
+  const mountedAt = performance.now();
   const layout = useLayoutPreferences();
+  const [aiDiagnosticsBootstrapped, setAiDiagnosticsBootstrapped] = createSignal(false);
   const [settingsResult] = createResource(() => getAppSettings());
-  const [aiProvidersResult, { refetch: refetchAiProviders }] = createResource(() => listAiProviders());
-  const [aiModelOptionsResult, { refetch: refetchAiModelOptions }] = createResource(() => listAiModelOptions());
+  const [aiProvidersResult, { refetch: refetchAiProviders }] = createResource(
+    aiDiagnosticsBootstrapped,
+    async (enabled) => {
+      if (!enabled) {
+        return null;
+      }
+
+      return listAiProviders();
+    }
+  );
+  const [aiModelOptionsResult, { refetch: refetchAiModelOptions }] = createResource(
+    aiDiagnosticsBootstrapped,
+    async (enabled) => {
+      if (!enabled) {
+        return null;
+      }
+
+      return listAiModelOptions();
+    }
+  );
+  const [aiProvidersSnapshot, setAiProvidersSnapshot] = createSignal<ReturnType<typeof aiProvidersResult> | null>(
+    null
+  );
+  const [aiModelOptionsSnapshot, setAiModelOptionsSnapshot] = createSignal<
+    ReturnType<typeof aiModelOptionsResult> | null
+  >(null);
   const [settingsInitialized, setSettingsInitialized] = createSignal(false);
   const [guardrailValue, setGuardrailValue] = createSignal(0.5);
   const [guardrailStage, setGuardrailStage] = createSignal(guardrailStageFromValue(0.5));
@@ -91,15 +157,21 @@ export function SettingsPage() {
   const [actionMessage, setActionMessage] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [modelSelections, setModelSelections] = createSignal<Record<string, string>>({});
+  const [modelLabelOverrides, setModelLabelOverrides] = createSignal<Record<string, string>>({});
+  const [editingModelCategoryId, setEditingModelCategoryId] = createSignal<string | null>(null);
+  const [editingModelCategoryLabel, setEditingModelCategoryLabel] = createSignal("");
   const [modelSelectionInitialized, setModelSelectionInitialized] = createSignal(false);
   const [latencyReport, setLatencyReport] = createSignal(getCommandLatencyReport());
   const [diffRenderReport, setDiffRenderReport] = createSignal(getDiffRenderMetricsReport());
+  const [uiTimingReport, setUiTimingReport] = createSignal(getUiTimingReport());
+  const [diagnosticsFocus, setDiagnosticsFocus] = createSignal<DiagnosticsFocus>("command");
   const [topCardsCompact, setTopCardsCompact] = createSignal(false);
   const [topCardsUltraCompact, setTopCardsUltraCompact] = createSignal(false);
 
   let topCardsRowRef: HTMLDivElement | undefined;
   let guardrailsCardRef: HTMLElement | undefined;
   let calibrationCardRef: HTMLElement | undefined;
+  let editingModelCategoryInputRef: HTMLInputElement | undefined;
 
   const measureTextWidth = (context: CanvasRenderingContext2D, font: string, value: string) => {
     context.font = font;
@@ -197,16 +269,40 @@ export function SettingsPage() {
   });
 
   onMount(() => {
+    let aiDiagnosticsDelayId: number | undefined;
+
+    requestAnimationFrame(() => {
+      recordUiTiming({
+        event: "settings.page.first-paint",
+        phase: "mount",
+        durationMs: performance.now() - mountedAt
+      });
+
+      aiDiagnosticsDelayId = window.setTimeout(() => {
+        void startTransition(() => {
+          setAiDiagnosticsBootstrapped(true);
+        });
+        aiDiagnosticsDelayId = undefined;
+      }, 180);
+    });
+
     const unsubscribeCommandLatency = subscribeCommandLatencyReport((report) => {
       setLatencyReport(report);
     });
     const unsubscribeDiffRender = subscribeDiffRenderMetricsReport((report) => {
       setDiffRenderReport(report);
     });
+    const unsubscribeUiTiming = subscribeUiTimingReport((report) => {
+      setUiTimingReport(report);
+    });
 
     onCleanup(() => {
+      if (aiDiagnosticsDelayId !== undefined) {
+        window.clearTimeout(aiDiagnosticsDelayId);
+      }
       unsubscribeCommandLatency();
       unsubscribeDiffRender();
+      unsubscribeUiTiming();
     });
   });
 
@@ -242,6 +338,28 @@ export function SettingsPage() {
   });
 
   createEffect(() => {
+    const latest = aiProvidersResult.latest;
+    if (!latest?.ok) {
+      return;
+    }
+
+    void startTransition(() => {
+      setAiProvidersSnapshot(latest);
+    });
+  });
+
+  createEffect(() => {
+    const latest = aiModelOptionsResult.latest;
+    if (!latest?.ok) {
+      return;
+    }
+
+    void startTransition(() => {
+      setAiModelOptionsSnapshot(latest);
+    });
+  });
+
+  createEffect(() => {
     const latest = settingsResult.latest;
     if (latest) {
       setSettingsInitialized(true);
@@ -268,6 +386,7 @@ export function SettingsPage() {
     setCrashReportingEnabled(settings.data.crashReportingEnabled);
     setCommandLatencyRetentionPolicy(settings.data.telemetryRetentionDays, settings.data.telemetryRetentionMb);
     setDiffRenderMetricsRetentionPolicy(settings.data.telemetryRetentionDays, settings.data.telemetryRetentionMb);
+    setUiTimingRetentionPolicy(settings.data.telemetryRetentionDays, settings.data.telemetryRetentionMb);
   });
 
   const activeThemeLabel = () =>
@@ -290,15 +409,14 @@ export function SettingsPage() {
     `--guardrail-fill-percent: ${guardrailSliderFillPercent()}; --guardrail-stage-color: ${guardrailSliderColor()};`;
 
   const modelCategoryFields = createMemo(() => {
-    if (!aiModelOptionsResult.latest?.ok) {
+    const modelOptions = aiModelOptionsSnapshot();
+    if (!modelOptions?.ok) {
       return [];
     }
 
-    return aiModelOptionsResult.latest.data.categories.map((category) => ({
+    return modelOptions.data.categories.map((category) => ({
       id: category.id,
       label: category.label,
-      ariaLabel: category.label,
-      emptyMessage: buildEmptyCategoryMessage(category.label),
       options: category.models.map<SelectOption>((model) => ({
         id: model.value,
         label: model.label,
@@ -306,6 +424,240 @@ export function SettingsPage() {
       }))
     }));
   });
+
+  const aiProviderStatuses = createMemo(() => {
+    const providerSnapshot = aiProvidersSnapshot();
+    if (!providerSnapshot?.ok) {
+      return [];
+    }
+
+    return providerSnapshot.data.providers;
+  });
+
+  const aiProvidersLoading = createMemo(
+    () => aiDiagnosticsBootstrapped() && aiProvidersResult.loading && !aiProvidersSnapshot()
+  );
+
+  const aiModelOptionsLoading = createMemo(
+    () => aiDiagnosticsBootstrapped() && aiModelOptionsResult.loading && !aiModelOptionsSnapshot()
+  );
+
+  const aiProviderCards = createMemo<AiProviderDisplayCard[]>(() => {
+    const statuses = aiProviderStatuses();
+    if (statuses.length > 0) {
+      return statuses.map((provider) => ({
+        id: provider.id,
+        binary: provider.binary,
+        available: provider.available,
+        planName: provider.planName,
+        placeholder: false
+      }));
+    }
+
+    const statusLabel = aiDiagnosticsBootstrapped() ? "Detecting..." : "Queued";
+    return AI_PROVIDER_PLACEHOLDERS.map((provider) => ({
+      id: provider.id,
+      binary: provider.binary,
+      available: false,
+      planName: statusLabel,
+      placeholder: true
+    }));
+  });
+
+  const aiModelPlaceholderLabel = createMemo(() => {
+    if (!aiDiagnosticsBootstrapped()) {
+      return "Queued";
+    }
+
+    if (aiModelOptionsLoading()) {
+      return "Loading models...";
+    }
+
+    return "Awaiting model diagnostics...";
+  });
+
+  const topCommandOffender = createMemo<DiagnosticsOffender | null>(() => {
+    const summaries = latencyReport().summaries;
+    if (summaries.length === 0) {
+      return null;
+    }
+
+    const ranked = summaries
+      .map((summary) => {
+        const failureRate = summary.count === 0 ? 0 : summary.failureCount / summary.count;
+        const score = summary.p95Ms * (1 + failureRate * 3);
+
+        return {
+          summary,
+          score,
+          failureRate
+        };
+      })
+      .sort((left, right) => right.score - left.score);
+
+    const offender = ranked[0];
+    if (!offender) {
+      return null;
+    }
+
+    return {
+      focus: "command",
+      streamLabel: "Command",
+      name: offender.summary.command,
+      score: offender.score,
+      metricLabel: `${offender.summary.p95Ms.toFixed(0)}ms p95 · ${(offender.failureRate * 100).toFixed(0)}% fail`
+    };
+  });
+
+  const topDiffOffender = createMemo<DiagnosticsOffender | null>(() => {
+    const summaries = diffRenderReport().modeSummaries;
+    if (summaries.length === 0) {
+      return null;
+    }
+
+    const ranked = summaries
+      .map((summary) => {
+        const fpsPenalty = Math.max(0, 60 - summary.scrollFpsP50);
+        const score =
+          summary.firstPaintP95Ms + summary.memoryP95Mb * 4 + summary.fallbackRate * 600 + fpsPenalty * 6;
+
+        return {
+          summary,
+          score
+        };
+      })
+      .sort((left, right) => right.score - left.score);
+
+    const offender = ranked[0];
+    if (!offender) {
+      return null;
+    }
+
+    return {
+      focus: "diff",
+      streamLabel: "Diff Render",
+      name: `${offender.summary.rendererMode} renderer`,
+      score: offender.score,
+      metricLabel: `${(offender.summary.fallbackRate * 100).toFixed(0)}% fallback · ${offender.summary.firstPaintP95Ms.toFixed(0)}ms p95`
+    };
+  });
+
+  const topUiOffender = createMemo<DiagnosticsOffender | null>(() => {
+    const summaries = uiTimingReport().summaries;
+    if (summaries.length === 0) {
+      return null;
+    }
+
+    const ranked = summaries
+      .map((summary) => {
+        const failureRate = summary.count === 0 ? 0 : summary.failureCount / summary.count;
+        const score = summary.p95Ms * (1 + failureRate * 3);
+
+        return {
+          summary,
+          score,
+          failureRate
+        };
+      })
+      .sort((left, right) => right.score - left.score);
+
+    const offender = ranked[0];
+    if (!offender) {
+      return null;
+    }
+
+    return {
+      focus: "ui",
+      streamLabel: "UI Timing",
+      name: `${offender.summary.phase}:${offender.summary.event}`,
+      score: offender.score,
+      metricLabel: `${offender.summary.p95Ms.toFixed(0)}ms p95 · ${(offender.failureRate * 100).toFixed(0)}% fail`
+    };
+  });
+
+  const diagnosticsTopOffenders = createMemo(() => {
+    return [topCommandOffender(), topDiffOffender(), topUiOffender()]
+      .filter((offender): offender is DiagnosticsOffender => offender !== null)
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 3);
+  });
+
+  const copyTextWithFallback = (value: string): boolean => {
+    if (typeof document === "undefined") {
+      return false;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    let copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } catch {
+      copied = false;
+    }
+
+    document.body.removeChild(textarea);
+    return copied;
+  };
+
+  const onCopyAllDiagnostics = async () => {
+    setActionError(null);
+
+    const snapshot = {
+      copiedAt: new Date().toISOString(),
+      focusedStream: diagnosticsFocus(),
+      topOffenders: diagnosticsTopOffenders().map((offender) => ({
+        stream: offender.streamLabel,
+        name: offender.name,
+        metric: offender.metricLabel,
+        score: Number(offender.score.toFixed(2))
+      })),
+      command: latencyReport(),
+      diffRender: diffRenderReport(),
+      uiTiming: uiTimingReport()
+    };
+    const serialized = JSON.stringify(snapshot, null, 2);
+
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(serialized);
+        setActionMessage("Copied diagnostics snapshot to clipboard.");
+        return;
+      }
+
+      if (copyTextWithFallback(serialized)) {
+        setActionMessage("Copied diagnostics snapshot to clipboard.");
+        return;
+      }
+
+      setActionError("Clipboard access is unavailable.");
+    } catch {
+      if (copyTextWithFallback(serialized)) {
+        setActionMessage("Copied diagnostics snapshot to clipboard.");
+        return;
+      }
+
+      setActionError("Failed to copy diagnostics snapshot.");
+    }
+  };
+
+  const loadOrRefreshAiDiagnostics = () => {
+    if (!aiDiagnosticsBootstrapped()) {
+      void startTransition(() => {
+        setAiDiagnosticsBootstrapped(true);
+      });
+      return;
+    }
+
+    void Promise.all([refetchAiProviders(), refetchAiModelOptions()]);
+  };
 
   const modelValueByCategory = (categoryId: string) => modelSelections()[categoryId] ?? "";
 
@@ -316,7 +668,68 @@ export function SettingsPage() {
     }));
   };
 
+  const modelLabelByCategory = (categoryId: string, fallbackLabel: string) => {
+    const override = modelLabelOverrides()[categoryId] ?? "";
+    return override.trim() || fallbackLabel;
+  };
+
+  const beginModelCategoryRename = (categoryId: string, fallbackLabel: string) => {
+    const activeCategoryId = editingModelCategoryId();
+    if (activeCategoryId && activeCategoryId !== categoryId) {
+      const normalizedActiveValue = editingModelCategoryLabel().trim();
+      setModelLabelOverrides((current) => {
+        const next = { ...current };
+        if (normalizedActiveValue) {
+          next[activeCategoryId] = normalizedActiveValue;
+        } else {
+          delete next[activeCategoryId];
+        }
+        return next;
+      });
+    }
+
+    setEditingModelCategoryId(categoryId);
+    setEditingModelCategoryLabel(modelLabelByCategory(categoryId, fallbackLabel));
+  };
+
+  const commitModelCategoryRename = (categoryId: string) => {
+    const normalizedValue = editingModelCategoryLabel().trim();
+    setModelLabelOverrides((current) => {
+      const next = { ...current };
+      if (normalizedValue) {
+        next[categoryId] = normalizedValue;
+      } else {
+        delete next[categoryId];
+      }
+      return next;
+    });
+
+    setEditingModelCategoryId((active) => (active === categoryId ? null : active));
+    setEditingModelCategoryLabel("");
+  };
+
+  const cancelModelCategoryRename = (categoryId: string) => {
+    setEditingModelCategoryId((active) => (active === categoryId ? null : active));
+    setEditingModelCategoryLabel("");
+  };
+
   createEffect(() => {
+    const activeCategoryId = editingModelCategoryId();
+    if (!activeCategoryId) {
+      return;
+    }
+
+    setTimeout(() => {
+      editingModelCategoryInputRef?.focus();
+      editingModelCategoryInputRef?.select();
+    }, 0);
+  });
+
+  createEffect(() => {
+    if (!aiModelOptionsSnapshot()?.ok) {
+      return;
+    }
+
     const categories = modelCategoryFields();
     if (categories.length === 0) {
       setModelSelections({});
@@ -353,7 +766,7 @@ export function SettingsPage() {
   });
 
   createEffect(() => {
-    if (!modelSelectionInitialized() || typeof window === "undefined") {
+    if (!modelSelectionInitialized() || typeof window === "undefined" || !aiModelOptionsSnapshot()?.ok) {
       return;
     }
 
@@ -379,6 +792,69 @@ export function SettingsPage() {
       }
 
       const categoryId = storageKey.slice(MODEL_CATEGORY_STORAGE_PREFIX.length);
+      if (!activeCategoryIds.has(categoryId)) {
+        window.localStorage.removeItem(storageKey);
+      }
+    }
+  });
+
+  createEffect(() => {
+    if (!aiModelOptionsSnapshot()?.ok || typeof window === "undefined") {
+      return;
+    }
+
+    const categories = modelCategoryFields();
+    if (categories.length === 0) {
+      setModelLabelOverrides({});
+      return;
+    }
+
+    setModelLabelOverrides((current) => {
+      const next: Record<string, string> = {};
+
+      for (const category of categories) {
+        const currentValue = current[category.id] ?? "";
+        const storedValue = window.localStorage.getItem(modelCategoryLabelStorageKey(category.id)) ?? "";
+        next[category.id] = currentValue || storedValue;
+      }
+
+      const currentKeys = Object.keys(current);
+      const nextKeys = Object.keys(next);
+      const changed =
+        currentKeys.length !== nextKeys.length ||
+        nextKeys.some((key) => (current[key] ?? "") !== (next[key] ?? ""));
+
+      return changed ? next : current;
+    });
+  });
+
+  createEffect(() => {
+    if (!modelSelectionInitialized() || typeof window === "undefined" || !aiModelOptionsSnapshot()?.ok) {
+      return;
+    }
+
+    const categories = modelCategoryFields();
+    const labels = modelLabelOverrides();
+    const activeCategoryIds = new Set(categories.map((category) => category.id));
+
+    for (const category of categories) {
+      const value = (labels[category.id] ?? "").trim();
+      const storageKey = modelCategoryLabelStorageKey(category.id);
+
+      if (value) {
+        window.localStorage.setItem(storageKey, value);
+      } else {
+        window.localStorage.removeItem(storageKey);
+      }
+    }
+
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const storageKey = window.localStorage.key(index);
+      if (!storageKey || !storageKey.startsWith(MODEL_CATEGORY_LABEL_STORAGE_PREFIX)) {
+        continue;
+      }
+
+      const categoryId = storageKey.slice(MODEL_CATEGORY_LABEL_STORAGE_PREFIX.length);
       if (!activeCategoryIds.has(categoryId)) {
         window.localStorage.removeItem(storageKey);
       }
@@ -592,8 +1068,8 @@ export function SettingsPage() {
                   </span>
                 ))}
               </div>
+              <p class="settings-fit-line">{guardrailModePhrase()}</p>
               <p class="settings-fit-line">
-                {guardrailModePhrase()} |
                 Read-only: {settingsResult.latest?.ok && settingsResult.latest.data.aiReadOnlyDefault ? "Enabled" : "Disabled"}
               </p>
             </article>
@@ -703,24 +1179,85 @@ export function SettingsPage() {
             </label>
 
             <div class="settings-model-pair-grid">
-              {modelCategoryFields().map((field) => (
-                <div class="layout-control-field settings-model-field">
-                  <span>{field.label}</span>
-                  <Show
-                    when={field.options.length > 0}
-                    fallback={<p class="settings-model-empty">{field.emptyMessage}</p>}
-                  >
-                    <Select
-                      value={modelValueByCategory(field.id)}
-                      options={field.options}
-                      onChange={(value) => {
-                        setModelValueByCategory(field.id, value);
-                      }}
-                      ariaLabel={field.ariaLabel}
-                    />
-                  </Show>
-                </div>
-              ))}
+              <Show
+                when={modelCategoryFields().length > 0}
+                fallback={MODEL_CATEGORY_PLACEHOLDERS.map((field) => (
+                  <div class="layout-control-field settings-model-field settings-model-field-placeholder">
+                    <div class="settings-sub-header">
+                      <span class="settings-model-label-placeholder">{field.label}</span>
+                    </div>
+                    <div class="settings-model-select-placeholder">
+                      <span class="settings-inline-spinner" aria-hidden="true" />
+                      <span>{aiModelPlaceholderLabel()}</span>
+                    </div>
+                  </div>
+                ))}
+              >
+                {modelCategoryFields().map((field) => (
+                  <div class="layout-control-field settings-model-field">
+                    <div class="settings-sub-header">
+                      <Show
+                        when={editingModelCategoryId() === field.id}
+                        fallback={
+                          <button
+                            type="button"
+                            class="settings-model-label-trigger"
+                            onClick={() => {
+                              beginModelCategoryRename(field.id, field.label);
+                            }}
+                            title="Click to rename"
+                          >
+                            {modelLabelByCategory(field.id, field.label)}
+                          </button>
+                        }
+                      >
+                        <input
+                          ref={editingModelCategoryInputRef}
+                          class="path-input settings-model-label-input"
+                          value={editingModelCategoryLabel()}
+                          onInput={(event) => {
+                            setEditingModelCategoryLabel(event.currentTarget.value);
+                          }}
+                          onBlur={() => {
+                            if (editingModelCategoryId() === field.id) {
+                              commitModelCategoryRename(field.id);
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              commitModelCategoryRename(field.id);
+                            }
+
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              cancelModelCategoryRename(field.id);
+                            }
+                          }}
+                          aria-label="Rename model category"
+                        />
+                      </Show>
+                    </div>
+                    <Show
+                      when={field.options.length > 0}
+                      fallback={
+                        <p class="settings-model-empty">
+                          {buildEmptyCategoryMessage(modelLabelByCategory(field.id, field.label))}
+                        </p>
+                      }
+                    >
+                      <Select
+                        value={modelValueByCategory(field.id)}
+                        options={field.options}
+                        onChange={(value) => {
+                          setModelValueByCategory(field.id, value);
+                        }}
+                        ariaLabel={modelLabelByCategory(field.id, field.label)}
+                      />
+                    </Show>
+                  </div>
+                ))}
+              </Show>
             </div>
 
             <div class="settings-sub-header">
@@ -728,8 +1265,9 @@ export function SettingsPage() {
               <button
                 class="ghost-btn"
                 style="font-size: 0.72rem; padding: 4px 10px; min-height: 24px; border-radius: 4px;"
+                disabled={aiProvidersResult.loading || aiModelOptionsResult.loading}
                 onClick={() => {
-                  void Promise.all([refetchAiProviders(), refetchAiModelOptions()]);
+                  loadOrRefreshAiDiagnostics();
                 }}
               >
                 Refresh Providers
@@ -737,11 +1275,7 @@ export function SettingsPage() {
             </div>
             <p class="section-summary">Routing and piping interface messages directly to local provider binaries.</p>
 
-            <Show when={aiProvidersResult.loading}>
-              <p class="section-summary">Detecting provider CLIs...</p>
-            </Show>
-
-            <Show when={aiProvidersResult.latest && !aiProvidersResult.latest.ok}>
+            <Show when={aiProvidersResult.latest && !aiProvidersResult.latest.ok && !aiProvidersSnapshot()}>
               <p class="section-summary settings-ai-provider-error">
                 {aiProvidersResult.latest && !aiProvidersResult.latest.ok
                   ? aiProvidersResult.latest.error.message
@@ -749,143 +1283,287 @@ export function SettingsPage() {
               </p>
             </Show>
 
-            <Show
-              when={aiProvidersResult.latest?.ok}
-              fallback={
-                <Show when={!aiProvidersResult.loading}>
-                  <p class="section-summary">No provider diagnostics loaded yet.</p>
+            <div class="settings-ai-loading-row">
+              <Show when={!aiDiagnosticsBootstrapped() || aiProvidersLoading() || aiModelOptionsLoading()}>
+                <span class="settings-inline-spinner" aria-hidden="true" />
+                <span>
+                  {!aiDiagnosticsBootstrapped()
+                    ? "Preparing provider diagnostics..."
+                    : "Loading providers and model options..."}
+                </span>
+              </Show>
+            </div>
+
+            <div class="settings-ai-models-grid">
+              {aiProviderCards().map((provider) => (
+                <div class={`settings-ai-model-node ${provider.placeholder ? "is-placeholder" : ""}`}>
+                  <div class="settings-ai-model-id">{provider.id}</div>
+                  <div class="settings-ai-model-meta">
+                    <span
+                      class={`settings-ai-model-status ${provider.available ? "is-ready" : "is-missing"} ${provider.placeholder ? "is-loading" : ""}`}
+                    >
+                      {provider.placeholder
+                        ? provider.planName ?? "Detecting..."
+                        : provider.available
+                          ? provider.planName ?? "Ready"
+                          : "Not detected"}
+                    </span>
+                    <span class="settings-ai-model-binary">{provider.binary}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+          </article>
+
+            <article class="state-card state-card-wide settings-diagnostics-card">
+              <div class="settings-diagnostics-heading">
+                <h3>Diagnostics</h3>
+                <button class="ghost-btn settings-diagnostics-copy-btn" type="button" onClick={() => void onCopyAllDiagnostics()}>
+                  Copy All
+                </button>
+              </div>
+              <p class="section-summary">Comparative overview with focused drill-down for each diagnostic stream.</p>
+
+              <div class="settings-diagnostics-overview-grid">
+                <button
+                  class={`settings-diagnostics-overview ${diagnosticsFocus() === "command" ? "is-active" : ""}`}
+                  onClick={() => setDiagnosticsFocus("command")}
+                  aria-pressed={diagnosticsFocus() === "command"}
+                  type="button"
+                >
+                  <span class="settings-diagnostics-overview-title">Command</span>
+                  <span class="settings-diagnostics-overview-meta">
+                    {latencyReport().totalSamples} samples · {latencyReport().commandCount} commands
+                  </span>
+                </button>
+
+                <button
+                  class={`settings-diagnostics-overview ${diagnosticsFocus() === "diff" ? "is-active" : ""}`}
+                  onClick={() => setDiagnosticsFocus("diff")}
+                  aria-pressed={diagnosticsFocus() === "diff"}
+                  type="button"
+                >
+                  <span class="settings-diagnostics-overview-title">Diff Render</span>
+                  <span class="settings-diagnostics-overview-meta">
+                    {diffRenderReport().totalSessions} sessions · {((1 - diffRenderReport().fallbackRate) * 100).toFixed(0)}% stability
+                  </span>
+                </button>
+
+                <button
+                  class={`settings-diagnostics-overview ${diagnosticsFocus() === "ui" ? "is-active" : ""}`}
+                  onClick={() => setDiagnosticsFocus("ui")}
+                  aria-pressed={diagnosticsFocus() === "ui"}
+                  type="button"
+                >
+                  <span class="settings-diagnostics-overview-title">UI Timing</span>
+                  <span class="settings-diagnostics-overview-meta">
+                    {uiTimingReport().totalSamples} samples · {uiTimingReport().eventCount} events
+                  </span>
+                </button>
+              </div>
+
+              <div class="settings-diagnostics-offenders">
+                <div class="settings-diagnostics-offenders-header">
+                  <h4 class="settings-nav-subtitle">Top Offenders</h4>
+                  <p class="section-summary">Highest pressure points across latency, stability, and failure rate.</p>
+                </div>
+
+                <Show
+                  when={diagnosticsTopOffenders().length > 0}
+                  fallback={<p class="section-summary">No offender ranking yet. Capture diagnostic activity to populate this list.</p>}
+                >
+                  <div class="settings-diagnostics-offender-list">
+                    {diagnosticsTopOffenders().map((offender, index) => (
+                      <button
+                        class="settings-diagnostics-offender"
+                        type="button"
+                        onClick={() => setDiagnosticsFocus(offender.focus)}
+                        aria-label={`Focus ${offender.streamLabel} diagnostics`}
+                      >
+                        <span class="settings-diagnostics-offender-rank">#{index + 1}</span>
+                        <span class="settings-diagnostics-offender-main">
+                          <span class="settings-diagnostics-offender-stream">{offender.streamLabel}</span>
+                          <span class="settings-diagnostics-offender-name">{offender.name}</span>
+                        </span>
+                        <span class="settings-diagnostics-offender-metric">{offender.metricLabel}</span>
+                      </button>
+                    ))}
+                  </div>
                 </Show>
-              }
-            >
-              <div class="settings-ai-models-grid">
-                {aiProvidersResult.latest?.ok
-                  ? aiProvidersResult.latest.data.providers.map((provider) => (
-                      <div class="settings-ai-model-node">
-                        <div class="settings-ai-model-id">{provider.id}</div>
-                        <div class="settings-ai-model-meta">
-                          <span
-                            class={`settings-ai-model-status ${provider.available ? "is-ready" : "is-missing"}`}
-                          >
-                            {provider.available ? provider.planName ?? "Ready" : "Not detected"}
-                          </span>
-                          <span class="settings-ai-model-binary">{provider.binary}</span>
-                        </div>
-                      </div>
-                    ))
-                  : null}
-              </div>
-            </Show>
-
-          </article>
-
-            <article class="state-card state-card-wide">
-              <h3>Command Diagnostics</h3>
-              <p class="section-summary">Latency trends and operation logs.</p>
-              <p class="section-summary" style="margin-bottom: 12px;">
-                {latencyReport().totalSamples} samples · {latencyReport().commandCount} unique commands
-              </p>
-              <div class="inline-actions">
-                <button class="ghost-btn" onClick={() => setLatencyReport(getCommandLatencyReport())}>
-                  Refresh Snapshot
-                </button>
-                <button
-                  class="ghost-btn"
-                  disabled={latencyReport().totalSamples === 0}
-                  onClick={() => clearCommandLatencyReport()}
-                >
-                  Clear Samples
-                </button>
               </div>
 
-            <Show
-              when={latencyReport().summaries.length > 0}
-              fallback={<p>No command timings captured yet. Run normal actions to populate diagnostics.</p>}
-            >
-              <div class="telemetry-summary-list">
-                {latencyReport().summaries.slice(0, 10).map((summary) => (
-                  <div class="telemetry-summary-row">
-                    <div class="telemetry-summary-command">{summary.command}</div>
-                    <div class="telemetry-grid">
-                      <div class="telemetry-grid-item">
-                        <span class="telemetry-label">p50</span>
-                        <span class="telemetry-value">{summary.p50Ms.toFixed(1)}ms</span>
-                      </div>
-                      <div class="telemetry-grid-item">
-                        <span class="telemetry-label">Reliability</span>
-                        <span class="telemetry-value">{Math.round((summary.successCount / summary.count) * 100)}%</span>
-                      </div>
-                      <div class="telemetry-grid-item">
-                        <span class="telemetry-label">Range</span>
-                        <span class="telemetry-value">{Math.round(summary.minMs)}–{Math.round(summary.maxMs)}ms</span>
-                      </div>
+              <div class="settings-diagnostics-section settings-diagnostics-focus-panel">
+                <Switch>
+                  <Match when={diagnosticsFocus() === "command"}>
+                    <h4 class="settings-nav-subtitle">Command Diagnostics</h4>
+                    <p class="section-summary" style="margin-bottom: 12px;">
+                      {latencyReport().totalSamples} samples · {latencyReport().commandCount} unique commands
+                    </p>
+                    <div class="inline-actions">
+                      <button class="ghost-btn" onClick={() => setLatencyReport(getCommandLatencyReport())}>
+                        Refresh Snapshot
+                      </button>
+                      <button
+                        class="ghost-btn"
+                        disabled={latencyReport().totalSamples === 0}
+                        onClick={() => clearCommandLatencyReport()}
+                      >
+                        Clear Samples
+                      </button>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </Show>
 
-            <Show when={latencyReport().recentSamples.length > 0}>
-              <details class="telemetry-recent-details">
-                <summary>Recent Operations</summary>
-                <ul class="telemetry-recent-list">
-                  {latencyReport().recentSamples.map((sample) => (
-                    <li>
-                      {formatSampleTime(sample.recordedAt)} | {sample.command} |{" "}
-                      {(sample.backendDurationMs ?? sample.roundTripMs).toFixed(2)} ms | {sample.ok ? "ok" : sample.errorCode}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </Show>
-          </article>
-
-            <article class="state-card state-card-wide">
-              <h3>Diff Render Diagnostics</h3>
-              <p class="section-summary">First-paint, sustained scroll FPS, memory, and fallback-rate telemetry.</p>
-              <p class="section-summary" style="margin-bottom: 12px;">
-                {diffRenderReport().totalSessions} sessions · stability {((1 - diffRenderReport().fallbackRate) * 100).toFixed(0)}%
-              </p>
-
-              <div class="inline-actions">
-                <button class="ghost-btn" onClick={() => setDiffRenderReport(getDiffRenderMetricsReport())}>
-                  Refresh Diff Metrics
-                </button>
-                <button
-                  class="ghost-btn"
-                  disabled={diffRenderReport().totalSessions === 0}
-                  onClick={() => clearDiffRenderMetricsReport()}
-                >
-                  Clear Diff Metrics
-                </button>
-              </div>
-
-            <Show
-              when={diffRenderReport().modeSummaries.length > 0}
-              fallback={<p>No diff render sessions captured yet. Open and scroll file diffs to populate this panel.</p>}
-            >
-              <div class="telemetry-summary-list">
-                {diffRenderReport().modeSummaries.map((summary) => (
-                  <div class="telemetry-summary-row">
-                    <div class="telemetry-summary-command">Renderer: {summary.rendererMode}</div>
-                    <div class="telemetry-grid">
-                      <div class="telemetry-grid-item">
-                        <span class="telemetry-label">First Paint</span>
-                        <span class="telemetry-value">{summary.firstPaintP50Ms.toFixed(0)}ms</span>
+                    <Show
+                      when={latencyReport().summaries.length > 0}
+                      fallback={<p>No command timings captured yet. Run normal actions to populate diagnostics.</p>}
+                    >
+                      <div class="telemetry-summary-list">
+                        {latencyReport().summaries.slice(0, 10).map((summary) => (
+                          <div class="telemetry-summary-row">
+                            <div class="telemetry-summary-command">{summary.command}</div>
+                            <div class="telemetry-grid">
+                              <div class="telemetry-grid-item">
+                                <span class="telemetry-label">p50</span>
+                                <span class="telemetry-value">{summary.p50Ms.toFixed(1)}ms</span>
+                              </div>
+                              <div class="telemetry-grid-item">
+                                <span class="telemetry-label">Reliability</span>
+                                <span class="telemetry-value">{Math.round((summary.successCount / summary.count) * 100)}%</span>
+                              </div>
+                              <div class="telemetry-grid-item">
+                                <span class="telemetry-label">Range</span>
+                                <span class="telemetry-value">{Math.round(summary.minMs)}–{Math.round(summary.maxMs)}ms</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <div class="telemetry-grid-item">
-                        <span class="telemetry-label">Scroll p50</span>
-                        <span class="telemetry-value">{summary.scrollFpsP50.toFixed(0)}fps</span>
-                      </div>
-                      <div class="telemetry-grid-item">
-                        <span class="telemetry-label">Memory p95</span>
-                        <span class="telemetry-value">{summary.memoryP95Mb.toFixed(0)}MB</span>
-                      </div>
+                    </Show>
+
+                    <Show when={latencyReport().recentSamples.length > 0}>
+                      <details class="telemetry-recent-details">
+                        <summary>Recent Operations</summary>
+                        <ul class="telemetry-recent-list">
+                          {latencyReport().recentSamples.map((sample) => (
+                            <li>
+                              {formatSampleTime(sample.recordedAt)} | {sample.command} |{" "}
+                              {(sample.backendDurationMs ?? sample.roundTripMs).toFixed(2)} ms | {sample.ok ? "ok" : sample.errorCode}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    </Show>
+                  </Match>
+
+                  <Match when={diagnosticsFocus() === "diff"}>
+                    <h4 class="settings-nav-subtitle">Diff Render Diagnostics</h4>
+                    <p class="section-summary" style="margin-bottom: 12px;">
+                      {diffRenderReport().totalSessions} sessions · stability {((1 - diffRenderReport().fallbackRate) * 100).toFixed(0)}%
+                    </p>
+
+                    <div class="inline-actions">
+                      <button class="ghost-btn" onClick={() => setDiffRenderReport(getDiffRenderMetricsReport())}>
+                        Refresh Diff Metrics
+                      </button>
+                      <button
+                        class="ghost-btn"
+                        disabled={diffRenderReport().totalSessions === 0}
+                        onClick={() => clearDiffRenderMetricsReport()}
+                      >
+                        Clear Diff Metrics
+                      </button>
                     </div>
-                  </div>
-                ))}
+
+                    <Show
+                      when={diffRenderReport().modeSummaries.length > 0}
+                      fallback={<p>No diff render sessions captured yet. Open and scroll file diffs to populate this panel.</p>}
+                    >
+                      <div class="telemetry-summary-list">
+                        {diffRenderReport().modeSummaries.map((summary) => (
+                          <div class="telemetry-summary-row">
+                            <div class="telemetry-summary-command">Renderer: {summary.rendererMode}</div>
+                            <div class="telemetry-grid">
+                              <div class="telemetry-grid-item">
+                                <span class="telemetry-label">First Paint</span>
+                                <span class="telemetry-value">{summary.firstPaintP50Ms.toFixed(0)}ms</span>
+                              </div>
+                              <div class="telemetry-grid-item">
+                                <span class="telemetry-label">Scroll p50</span>
+                                <span class="telemetry-value">{summary.scrollFpsP50.toFixed(0)}fps</span>
+                              </div>
+                              <div class="telemetry-grid-item">
+                                <span class="telemetry-label">Memory p95</span>
+                                <span class="telemetry-value">{summary.memoryP95Mb.toFixed(0)}MB</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </Show>
+                  </Match>
+
+                  <Match when={diagnosticsFocus() === "ui"}>
+                    <h4 class="settings-nav-subtitle">UI Timing Diagnostics</h4>
+                    <p class="section-summary" style="margin-bottom: 12px;">
+                      {uiTimingReport().totalSamples} samples · {uiTimingReport().eventCount} instrumented events
+                    </p>
+
+                    <div class="inline-actions">
+                      <button class="ghost-btn" onClick={() => setUiTimingReport(getUiTimingReport())}>
+                        Refresh UI Timings
+                      </button>
+                      <button
+                        class="ghost-btn"
+                        disabled={uiTimingReport().totalSamples === 0}
+                        onClick={() => clearUiTimingReport()}
+                      >
+                        Clear UI Timings
+                      </button>
+                    </div>
+
+                    <Show
+                      when={uiTimingReport().summaries.length > 0}
+                      fallback={<p>No UI timing sessions captured yet. Open panels and navigate routes to populate this panel.</p>}
+                    >
+                      <div class="telemetry-summary-list">
+                        {uiTimingReport().summaries.slice(0, 10).map((summary) => (
+                          <div class="telemetry-summary-row">
+                            <div class="telemetry-summary-command">{summary.phase}: {summary.event}</div>
+                            <div class="telemetry-grid">
+                              <div class="telemetry-grid-item">
+                                <span class="telemetry-label">p50</span>
+                                <span class="telemetry-value">{summary.p50Ms.toFixed(1)}ms</span>
+                              </div>
+                              <div class="telemetry-grid-item">
+                                <span class="telemetry-label">Failures</span>
+                                <span class="telemetry-value">{summary.failureCount}</span>
+                              </div>
+                              <div class="telemetry-grid-item">
+                                <span class="telemetry-label">Range</span>
+                                <span class="telemetry-value">{Math.round(summary.minMs)}–{Math.round(summary.maxMs)}ms</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </Show>
+
+                    <Show when={uiTimingReport().recentSamples.length > 0}>
+                      <details class="telemetry-recent-details">
+                        <summary>Recent UI Timings</summary>
+                        <ul class="telemetry-recent-list">
+                          {uiTimingReport().recentSamples.map((sample) => (
+                            <li>
+                              {formatSampleTime(sample.recordedAt)} | {sample.phase}:{sample.event} | {sample.durationMs.toFixed(2)} ms | {sample.ok ? "ok" : sample.errorCode}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    </Show>
+                  </Match>
+                </Switch>
               </div>
-            </Show>
-          </article>
+            </article>
 
           <article class="state-card state-card-wide">
             <h3>Release Channel</h3>

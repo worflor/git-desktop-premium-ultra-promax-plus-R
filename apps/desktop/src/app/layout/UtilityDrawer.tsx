@@ -172,6 +172,9 @@ export function UtilityDrawer() {
                   <span class="utility-event-time">{formatEventTime(event.at)}</span>
                   <span class="utility-event-type">{event.type.toUpperCase()}</span>
                   <span class="utility-event-command" title={event.command}>{event.command}</span>
+                  <Show when={typeof event.durationMs === "number"}>
+                    <span class="utility-event-duration">{event.durationMs!.toFixed(1)}ms</span>
+                  </Show>
                   <Show when={event.errorCode}>
                     {(errorCode) => <span class="utility-event-error">{errorCode()}</span>}
                   </Show>

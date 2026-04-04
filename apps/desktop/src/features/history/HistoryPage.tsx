@@ -1,15 +1,17 @@
-import { createEffect, createResource, createSignal, Show } from "solid-js";
+import { createEffect, createResource, createSignal, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { getCommitDetail, listCommitHistory } from "@/lib/backend/commands";
+import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 
 interface HistoryPageProps {
   embedded?: boolean;
 }
 
 export function HistoryPage(props: HistoryPageProps = {}) {
+  const mountedAt = performance.now();
   const repository = useRepositoryContext();
   const [historyLimitInput, setHistoryLimitInput] = createSignal("50");
   const [selectedCommitHash, setSelectedCommitHash] = createSignal<string | null>(null);
@@ -68,6 +70,16 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     if (!stillExists) {
       setSelectedCommitHash(firstEntry.commitHash);
     }
+  });
+
+  onMount(() => {
+    requestAnimationFrame(() => {
+      recordUiTiming({
+        event: "history.page.first-paint",
+        phase: "mount",
+        durationMs: performance.now() - mountedAt
+      });
+    });
   });
 
   return (

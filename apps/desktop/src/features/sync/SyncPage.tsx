@@ -1,14 +1,16 @@
-import { createSignal, createResource, Show } from "solid-js";
+import { createSignal, createResource, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { getRepositoryStatus, pullRemote } from "@/lib/backend/commands";
+import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 
 interface SyncPageProps {
   embedded?: boolean;
 }
 
 export function SyncPage(props: SyncPageProps = {}) {
+  const mountedAt = performance.now();
   const repository = useRepositoryContext();
   const [syncRunning, setSyncRunning] = createSignal(false);
   const [syncError, setSyncError] = createSignal<string | null>(null);
@@ -36,6 +38,16 @@ export function SyncPage(props: SyncPageProps = {}) {
     }
     void refetch();
   };
+
+  onMount(() => {
+    requestAnimationFrame(() => {
+      recordUiTiming({
+        event: "sync.page.first-paint",
+        phase: "mount",
+        durationMs: performance.now() - mountedAt
+      });
+    });
+  });
 
   return (
     <div class={`feature-page ${props.embedded ? "is-embedded" : ""}`}>

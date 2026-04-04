@@ -1,10 +1,11 @@
-import { createResource, createSignal, Show } from "solid-js";
+import { createResource, createSignal, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { StatusPill } from "@/components/primitives/StatusPill";
 import { DiffShell } from "@/features/diff/DiffShell";
+import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 import {
   createCommit,
   prepareFileDiffChunks,
@@ -18,6 +19,7 @@ interface ChangesPageProps {
 }
 
 export function ChangesPage(props: ChangesPageProps = {}) {
+  const mountedAt = performance.now();
   const repository = useRepositoryContext();
   const [selectedPaths, setSelectedPaths] = createSignal<string[]>([]);
   const [commitMessage, setCommitMessage] = createSignal("");
@@ -55,6 +57,16 @@ export function ChangesPage(props: ChangesPageProps = {}) {
         lineHeightPx: 18
       })
   );
+
+  onMount(() => {
+    requestAnimationFrame(() => {
+      recordUiTiming({
+        event: "changes.page.first-paint",
+        phase: "mount",
+        durationMs: performance.now() - mountedAt
+      });
+    });
+  });
 
   const selectedCount = () => selectedPaths().length;
   const stagedFileCount = () =>

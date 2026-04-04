@@ -1,15 +1,17 @@
-import { createResource, createSignal, Show } from "solid-js";
+import { createResource, createSignal, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { Icon } from "@/components/icons/Icon";
 import { createBranch, listBranches, checkoutBranch } from "@/lib/backend/commands";
+import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 
 interface BranchesPageProps {
   embedded?: boolean;
 }
 
 export function BranchesPage(props: BranchesPageProps = {}) {
+  const mountedAt = performance.now();
   const repository = useRepositoryContext();
   const [newBranchName, setNewBranchName] = createSignal("");
   const [actionError, setActionError] = createSignal<string | null>(null);
@@ -59,6 +61,16 @@ export function BranchesPage(props: BranchesPageProps = {}) {
 
     void refetch();
   };
+
+  onMount(() => {
+    requestAnimationFrame(() => {
+      recordUiTiming({
+        event: "branches.page.first-paint",
+        phase: "mount",
+        durationMs: performance.now() - mountedAt
+      });
+    });
+  });
 
   return (
     <div class={`feature-page ${props.embedded ? "is-embedded" : ""}`}>
