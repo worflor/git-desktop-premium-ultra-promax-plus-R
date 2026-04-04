@@ -18,16 +18,17 @@ pub struct RecentRepositoriesData {
     pub repositories: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RepositoryStatusFile {
     pub path: String,
     pub staged: String,
     pub unstaged: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RepositoryStatusData {
     pub branch: String,
+    pub upstream: Option<String>,
     pub ahead: u32,
     pub behind: u32,
     pub files: Vec<RepositoryStatusFile>,

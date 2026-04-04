@@ -7,7 +7,7 @@ use crate::errors::AppError;
 use crate::models::operations::{
     LocalPullRequestData, LocalPullRequestListData, LocalPullRequestOperationData,
 };
-use crate::services::{git_provider, local_store};
+use crate::services::{git_provider, local_store, repository_root_service};
 
 const PULL_REQUESTS_FILE_NAME: &str = "local_pull_requests.json";
 pub const LOCAL_PULL_REQUEST_PROVIDER_ID: &str = "local-core";
@@ -242,11 +242,8 @@ pub fn merge_local_pull_request(
     verify_branch_exists(repository_path, &source_branch)?;
     verify_branch_exists(repository_path, &target_branch)?;
 
-    let original_branch = git_provider::run_git(
-        Some(repository_path),
-        &["rev-parse", "--abbrev-ref", "HEAD"],
-    )?
-    .stdout;
+    let original_branch = repository_root_service::get_repository_root_snapshot(repository_path)?
+        .current_branch;
 
     let restore_branch = branch_to_restore_after_merge(
         &original_branch,
@@ -383,8 +380,8 @@ fn update_pull_request_state(
 }
 
 fn ensure_clean_worktree(repository_path: &str) -> Result<(), AppError> {
-    let status_output = git_provider::run_git(Some(repository_path), &["status", "--porcelain"])?;
-    if !status_output.stdout.trim().is_empty() {
+    let snapshot = repository_root_service::get_repository_root_snapshot(repository_path)?;
+    if snapshot.worktree_dirty {
         return Err(AppError::InvalidInput(
             "working tree must be clean before local pull request merge".to_string(),
         ));

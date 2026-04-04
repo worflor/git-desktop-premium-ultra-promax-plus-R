@@ -1,22 +1,33 @@
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::errors::AppError;
 use crate::models::git::{
     ForgeAdapter, ForgeAdapterList, RemoteIntegrationData, RepositoryIntegrationMatrix,
 };
-use crate::services::{forge_remote_service, git_provider};
+use crate::services::{forge_remote_service, remote_topology_service};
 
 const ADAPTER_ID_LOCAL_CORE: &str = "local-core";
 const ADAPTER_ID_GITHUB_GH: &str = "github-gh";
 const ADAPTER_ID_GITLAB_CONTRACT: &str = forge_remote_service::GITLAB_PROVIDER_ID;
 const ADAPTER_ID_BITBUCKET_CONTRACT: &str = forge_remote_service::BITBUCKET_PROVIDER_ID;
 
+#[derive(Debug, Clone)]
 pub struct GithubCliAuthStatus {
     pub available: bool,
     pub authenticated: bool,
     pub version: Option<String>,
     pub message: String,
 }
+
+#[derive(Debug, Clone)]
+struct GithubCliAuthStatusCacheEntry {
+    checked_at: Instant,
+    status: GithubCliAuthStatus,
+}
+
+const GITHUB_CLI_AUTH_CACHE_TTL: Duration = Duration::from_secs(30);
 
 fn local_core_adapter() -> ForgeAdapter {
     ForgeAdapter {
@@ -72,65 +83,87 @@ fn detect_bitbucket_adapter() -> ForgeAdapter {
 }
 
 pub fn get_github_cli_auth_status() -> GithubCliAuthStatus {
+    if let Ok(cache) = github_cli_auth_status_cache().lock() {
+        if let Some(entry) = cache.as_ref() {
+            if entry.checked_at.elapsed() <= GITHUB_CLI_AUTH_CACHE_TTL {
+                return entry.status.clone();
+            }
+        }
+    }
+
     let version_output = Command::new("gh").arg("--version").output();
-    let Ok(version_output) = version_output else {
-        return GithubCliAuthStatus {
+    let status = if let Ok(version_output) = version_output {
+        if !version_output.status.success() {
+            GithubCliAuthStatus {
+                available: false,
+                authenticated: false,
+                version: None,
+                message: "GitHub CLI did not report a healthy version response.".to_string(),
+            }
+        } else {
+            let version = String::from_utf8_lossy(&version_output.stdout)
+                .lines()
+                .next()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty());
+
+            let auth_output = Command::new("gh")
+                .args(["auth", "status", "--hostname", "github.com"])
+                .output();
+
+            match auth_output {
+                Ok(output) if output.status.success() => {
+                    let message = first_non_empty_line(&output.stdout, &output.stderr)
+                        .unwrap_or_else(|| "GitHub CLI is authenticated for github.com.".to_string());
+                    GithubCliAuthStatus {
+                        available: true,
+                        authenticated: true,
+                        version,
+                        message,
+                    }
+                }
+                Ok(output) => {
+                    let message =
+                        first_non_empty_line(&output.stderr, &output.stdout).unwrap_or_else(|| {
+                            "GitHub CLI is installed but not authenticated for github.com.".to_string()
+                        });
+                    GithubCliAuthStatus {
+                        available: true,
+                        authenticated: false,
+                        version,
+                        message,
+                    }
+                }
+                Err(error) => GithubCliAuthStatus {
+                    available: true,
+                    authenticated: false,
+                    version,
+                    message: format!("GitHub CLI auth status probe failed: {error}"),
+                },
+            }
+        }
+    } else {
+        GithubCliAuthStatus {
             available: false,
             authenticated: false,
             version: None,
             message: "GitHub CLI is not installed or unavailable on PATH.".to_string(),
-        };
+        }
     };
 
-    if !version_output.status.success() {
-        return GithubCliAuthStatus {
-            available: false,
-            authenticated: false,
-            version: None,
-            message: "GitHub CLI did not report a healthy version response.".to_string(),
-        };
+    if let Ok(mut cache) = github_cli_auth_status_cache().lock() {
+        *cache = Some(GithubCliAuthStatusCacheEntry {
+            checked_at: Instant::now(),
+            status: status.clone(),
+        });
     }
 
-    let version = String::from_utf8_lossy(&version_output.stdout)
-        .lines()
-        .next()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty());
+    status
+}
 
-    let auth_output = Command::new("gh")
-        .args(["auth", "status", "--hostname", "github.com"])
-        .output();
-
-    match auth_output {
-        Ok(output) if output.status.success() => {
-            let message = first_non_empty_line(&output.stdout, &output.stderr)
-                .unwrap_or_else(|| "GitHub CLI is authenticated for github.com.".to_string());
-            GithubCliAuthStatus {
-                available: true,
-                authenticated: true,
-                version,
-                message,
-            }
-        }
-        Ok(output) => {
-            let message =
-                first_non_empty_line(&output.stderr, &output.stdout).unwrap_or_else(|| {
-                    "GitHub CLI is installed but not authenticated for github.com.".to_string()
-                });
-            GithubCliAuthStatus {
-                available: true,
-                authenticated: false,
-                version,
-                message,
-            }
-        }
-        Err(error) => GithubCliAuthStatus {
-            available: true,
-            authenticated: false,
-            version,
-            message: format!("GitHub CLI auth status probe failed: {error}"),
-        },
-    }
+fn github_cli_auth_status_cache() -> &'static Mutex<Option<GithubCliAuthStatusCacheEntry>> {
+    static CACHE: OnceLock<Mutex<Option<GithubCliAuthStatusCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
 }
 
 pub fn list_forge_adapters() -> Result<ForgeAdapterList, AppError> {
@@ -148,31 +181,17 @@ pub fn list_forge_adapters() -> Result<ForgeAdapterList, AppError> {
 pub fn get_repository_integration_matrix(
     repository_path: &str,
 ) -> Result<RepositoryIntegrationMatrix, AppError> {
-    let remote_output = git_provider::run_git(Some(repository_path), &["remote", "-v"])?;
+    let repository_remotes = remote_topology_service::list_repository_remotes(repository_path)?;
     let github_adapter = detect_gh();
     let github_auth = get_github_cli_auth_status();
     let gitlab_adapter = detect_gitlab_adapter();
     let bitbucket_adapter = detect_bitbucket_adapter();
     let mut remotes = Vec::<RemoteIntegrationData>::new();
-    let mut seen = std::collections::HashSet::<String>::new();
 
-    for line in remote_output.stdout.lines() {
-        if !line.contains("(fetch)") {
-            continue;
-        }
-
-        let mut fields = line.split_whitespace();
-        let remote = fields.next().unwrap_or_default().trim().to_string();
-        let url = fields.next().unwrap_or_default().trim().to_string();
-        if remote.is_empty() || url.is_empty() {
-            continue;
-        }
-
-        if !seen.insert(remote.clone()) {
-            continue;
-        }
-
-        let host_kind = detect_host_kind(&url);
+    for remote_entry in repository_remotes {
+        let remote = remote_entry.remote;
+        let url = remote_entry.url;
+        let host_kind = remote_entry.host_kind;
         let (adapter_id, adapter_available) = match host_kind.as_str() {
             "github" => (
                 Some(ADAPTER_ID_GITHUB_GH.to_string()),
@@ -279,26 +298,9 @@ fn first_non_empty_line(primary: &[u8], secondary: &[u8]) -> Option<String> {
     None
 }
 
+#[cfg(test)]
 fn detect_host_kind(url: &str) -> String {
-    let normalized = url.to_ascii_lowercase();
-    if normalized.contains("github.com") || normalized.contains("github") {
-        return "github".to_string();
-    }
-    if normalized.contains("gitlab.com") || normalized.contains("gitlab") {
-        return "gitlab".to_string();
-    }
-    if normalized.contains("bitbucket.org") || normalized.contains("bitbucket") {
-        return "bitbucket".to_string();
-    }
-    if normalized.starts_with("file://")
-        || normalized.starts_with("/")
-        || normalized.starts_with("./")
-        || normalized.starts_with("../")
-        || normalized.contains(":\\")
-    {
-        return "local".to_string();
-    }
-    "generic".to_string()
+    remote_topology_service::detect_host_kind_from_url(url).to_string()
 }
 
 #[cfg(test)]

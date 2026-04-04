@@ -14,6 +14,7 @@ import type {
   BranchListData,
   BranchOperationData,
   CommitData,
+  CommitDetailBatchData,
   CommitDetailData,
   CommitHistoryData,
   ConflictResolutionData,
@@ -143,6 +144,13 @@ export function getCommitDetail(
   return invokeCommand("get_commit_detail", { repositoryPath, commitHash });
 }
 
+export function primeCommitDetails(
+  repositoryPath: string,
+  commitHashes: string[]
+): Promise<CommandResult<CommitDetailBatchData>> {
+  return invokeCommand("prime_commit_details", { repositoryPath, commitHashes });
+}
+
 export function stagePaths(
   repositoryPath: string,
   paths: string[]
@@ -252,6 +260,10 @@ export function pushRemote(
     branch,
     forceWithLease
   });
+}
+
+export function syncRemote(repositoryPath: string): Promise<CommandResult<SyncData>> {
+  return invokeCommand("sync_remote", { repositoryPath });
 }
 
 export function getConflictState(repositoryPath: string): Promise<CommandResult<ConflictStateData>> {

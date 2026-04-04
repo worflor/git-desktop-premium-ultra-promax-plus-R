@@ -14,8 +14,8 @@ use crate::models::operations::{
     AiDiffReviewJobStartData, AiModelOptionListData, AiProviderListData, AppUpdateCheckData,
     AppUpdateInstallData,
     BranchListData, BranchOperationData, BranchTrackingOperationData,
-    CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData, CommitData, CommitDetailData,
-    CommitHistoryData, ConflictResolutionData, ConflictStateData, FileDiffChunkData, FileDiffData,
+    CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData, CommitData, CommitDetailBatchData,
+    CommitDetailData, CommitHistoryData, ConflictResolutionData, ConflictStateData, FileDiffChunkData, FileDiffData,
     FileDiffManifestData, IssueProviderListData, LocalIssueListData, LocalIssueOperationData,
     LocalPullRequestListData, LocalPullRequestOperationData, PathOperationData,
     PullRequestProviderListData, StartupReadinessSnapshotData, StashListData,
@@ -28,7 +28,8 @@ use crate::models::settings::AppSettingsData;
 use crate::runtime::state::AppState;
 use crate::services::{
     ai_service, auth_service, bootstrap_service, diff_service, forge_service, git_provider,
-    issue_service, logging_service, pull_request_service, repository_service, settings_service,
+    issue_service, logging_service, pull_request_service, remote_topology_service,
+    repository_read_service, repository_root_service, repository_service, settings_service,
     telemetry_service, update_service,
 };
 
@@ -97,6 +98,16 @@ fn map_error_with_command<T: Serialize>(
     );
     logging_service::clear_request_context();
     CommandResult::error(command_error, meta)
+}
+
+fn invalidate_repository_read_models(
+    _state: &State<'_, AppState>,
+    repository_path: &str,
+) -> Result<(), AppError> {
+    repository_read_service::invalidate_repository(repository_path);
+    repository_root_service::invalidate_repository(repository_path);
+    remote_topology_service::invalidate_repository(repository_path);
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -247,7 +258,7 @@ pub fn get_repository_status(
     let request_id = Uuid::new_v4().to_string();
     logging_service::set_request_context(request_id.as_str());
 
-    match git_provider::get_repository_status(&repository_path) {
+    match repository_read_service::get_repository_status(&repository_path) {
         Ok(data) => command_ok("get_repository_status", started_at, &state, data),
         Err(error) => map_error_with_command("get_repository_status", started_at, &state, error),
     }
@@ -262,7 +273,7 @@ pub fn list_branches(
     let request_id = Uuid::new_v4().to_string();
     logging_service::set_request_context(request_id.as_str());
 
-    match git_provider::list_branches(&repository_path) {
+    match repository_read_service::list_branches(&repository_path) {
         Ok(data) => command_ok("list_branches", started_at, &state, data),
         Err(error) => map_error_with_command("list_branches", started_at, &state, error),
     }
@@ -280,16 +291,21 @@ pub fn create_branch(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::create_branch(&repository_path, &branch_name, from_ref.as_deref()) {
-        Ok(_) => command_ok(
-            "create_branch",
-            started_at,
-            &state,
-            BranchOperationData {
-                repository_path,
-                branch_name,
-                operation: "create".to_string(),
-            },
-        ),
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("create_branch", started_at, &state, error);
+            }
+            command_ok(
+                "create_branch",
+                started_at,
+                &state,
+                BranchOperationData {
+                    repository_path,
+                    branch_name,
+                    operation: "create".to_string(),
+                },
+            )
+        }
         Err(error) => map_error_with_command("create_branch", started_at, &state, error),
     }
 }
@@ -305,16 +321,21 @@ pub fn checkout_branch(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::checkout_branch(&repository_path, &branch_name) {
-        Ok(_) => command_ok(
-            "checkout_branch",
-            started_at,
-            &state,
-            BranchOperationData {
-                repository_path,
-                branch_name,
-                operation: "checkout".to_string(),
-            },
-        ),
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("checkout_branch", started_at, &state, error);
+            }
+            command_ok(
+                "checkout_branch",
+                started_at,
+                &state,
+                BranchOperationData {
+                    repository_path,
+                    branch_name,
+                    operation: "checkout".to_string(),
+                },
+            )
+        }
         Err(error) => map_error_with_command("checkout_branch", started_at, &state, error),
     }
 }
@@ -332,20 +353,25 @@ pub fn delete_branch(
     let force = force.unwrap_or(false);
 
     match git_provider::delete_branch(&repository_path, &branch_name, force) {
-        Ok(_) => command_ok(
-            "delete_branch",
-            started_at,
-            &state,
-            BranchOperationData {
-                repository_path,
-                branch_name,
-                operation: if force {
-                    "delete-force".to_string()
-                } else {
-                    "delete".to_string()
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("delete_branch", started_at, &state, error);
+            }
+            command_ok(
+                "delete_branch",
+                started_at,
+                &state,
+                BranchOperationData {
+                    repository_path,
+                    branch_name,
+                    operation: if force {
+                        "delete-force".to_string()
+                    } else {
+                        "delete".to_string()
+                    },
                 },
-            },
-        ),
+            )
+        }
         Err(error) => map_error_with_command("delete_branch", started_at, &state, error),
     }
 }
@@ -362,16 +388,21 @@ pub fn rename_branch(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::rename_branch(&repository_path, &old_branch_name, &new_branch_name) {
-        Ok(_) => command_ok(
-            "rename_branch",
-            started_at,
-            &state,
-            BranchOperationData {
-                repository_path,
-                branch_name: new_branch_name,
-                operation: "rename".to_string(),
-            },
-        ),
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("rename_branch", started_at, &state, error);
+            }
+            command_ok(
+                "rename_branch",
+                started_at,
+                &state,
+                BranchOperationData {
+                    repository_path,
+                    branch_name: new_branch_name,
+                    operation: "rename".to_string(),
+                },
+            )
+        }
         Err(error) => map_error_with_command("rename_branch", started_at, &state, error),
     }
 }
@@ -388,17 +419,22 @@ pub fn set_branch_upstream(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::set_branch_upstream(&repository_path, &branch_name, &upstream) {
-        Ok(_) => command_ok(
-            "set_branch_upstream",
-            started_at,
-            &state,
-            BranchTrackingOperationData {
-                repository_path,
-                branch_name,
-                upstream,
-                operation: "track".to_string(),
-            },
-        ),
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("set_branch_upstream", started_at, &state, error);
+            }
+            command_ok(
+                "set_branch_upstream",
+                started_at,
+                &state,
+                BranchTrackingOperationData {
+                    repository_path,
+                    branch_name,
+                    upstream,
+                    operation: "track".to_string(),
+                },
+            )
+        }
         Err(error) => map_error_with_command("set_branch_upstream", started_at, &state, error),
     }
 }
@@ -433,7 +469,12 @@ pub fn create_stash(
     let include_untracked = include_untracked.unwrap_or(false);
 
     match git_provider::create_stash(&repository_path, message.as_deref(), include_untracked) {
-        Ok(data) => command_ok("create_stash", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("create_stash", started_at, &state, error);
+            }
+            command_ok("create_stash", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("create_stash", started_at, &state, error),
     }
 }
@@ -449,7 +490,12 @@ pub fn pop_stash(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::pop_stash(&repository_path, stash_ref.as_deref()) {
-        Ok(data) => command_ok("pop_stash", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("pop_stash", started_at, &state, error);
+            }
+            command_ok("pop_stash", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("pop_stash", started_at, &state, error),
     }
 }
@@ -465,7 +511,12 @@ pub fn drop_stash(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::drop_stash(&repository_path, &stash_ref) {
-        Ok(data) => command_ok("drop_stash", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("drop_stash", started_at, &state, error);
+            }
+            command_ok("drop_stash", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("drop_stash", started_at, &state, error),
     }
 }
@@ -503,17 +554,22 @@ pub fn create_worktree(
         &branch_name,
         start_point.as_deref(),
     ) {
-        Ok(_) => command_ok(
-            "create_worktree",
-            started_at,
-            &state,
-            WorktreeOperationData {
-                repository_path,
-                operation: "create".to_string(),
-                worktree_path,
-                branch_name: Some(branch_name),
-            },
-        ),
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("create_worktree", started_at, &state, error);
+            }
+            command_ok(
+                "create_worktree",
+                started_at,
+                &state,
+                WorktreeOperationData {
+                    repository_path,
+                    operation: "create".to_string(),
+                    worktree_path,
+                    branch_name: Some(branch_name),
+                },
+            )
+        }
         Err(error) => map_error_with_command("create_worktree", started_at, &state, error),
     }
 }
@@ -531,21 +587,26 @@ pub fn remove_worktree(
     let force = force.unwrap_or(false);
 
     match git_provider::remove_worktree(&repository_path, &worktree_path, force) {
-        Ok(_) => command_ok(
-            "remove_worktree",
-            started_at,
-            &state,
-            WorktreeOperationData {
-                repository_path,
-                operation: if force {
-                    "remove-force".to_string()
-                } else {
-                    "remove".to_string()
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("remove_worktree", started_at, &state, error);
+            }
+            command_ok(
+                "remove_worktree",
+                started_at,
+                &state,
+                WorktreeOperationData {
+                    repository_path,
+                    operation: if force {
+                        "remove-force".to_string()
+                    } else {
+                        "remove".to_string()
+                    },
+                    worktree_path,
+                    branch_name: None,
                 },
-                worktree_path,
-                branch_name: None,
-            },
-        ),
+            )
+        }
         Err(error) => map_error_with_command("remove_worktree", started_at, &state, error),
     }
 }
@@ -563,7 +624,13 @@ pub fn list_commit_history(
     let limit = limit.unwrap_or(50).clamp(1, 500) as usize;
 
     match git_provider::list_commit_history(&repository_path, limit, branch.as_deref()) {
-        Ok(data) => command_ok("list_commit_history", started_at, &state, data),
+        Ok(data) => {
+            let _ = repository_root_service::schedule_commit_history_warm(
+                &repository_path,
+                &data.entries,
+            );
+            command_ok("list_commit_history", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("list_commit_history", started_at, &state, error),
     }
 }
@@ -578,10 +645,56 @@ pub fn get_commit_detail(
     let request_id = Uuid::new_v4().to_string();
     logging_service::set_request_context(request_id.as_str());
 
-    match git_provider::get_commit_detail(&repository_path, &commit_hash) {
+    match repository_read_service::get_commit_detail(&repository_path, &commit_hash) {
         Ok(data) => command_ok("get_commit_detail", started_at, &state, data),
         Err(error) => map_error_with_command("get_commit_detail", started_at, &state, error),
     }
+}
+
+#[tauri::command(async)]
+pub fn prime_commit_details(
+    repository_path: String,
+    commit_hashes: Vec<String>,
+    state: State<'_, AppState>,
+) -> CommandResult<CommitDetailBatchData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    let normalized_hashes: Vec<String> = commit_hashes
+        .into_iter()
+        .map(|hash| hash.trim().to_string())
+        .filter(|hash| !hash.is_empty())
+        .collect();
+
+    let entries = match repository_read_service::prime_commit_details(
+        &repository_path,
+        &normalized_hashes,
+    ) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return map_error_with_command("prime_commit_details", started_at, &state, error);
+        }
+    };
+
+    let mut entries_by_hash = std::collections::HashMap::<String, CommitDetailData>::new();
+    for entry in entries {
+        entries_by_hash.insert(entry.commit_hash.clone(), entry);
+    }
+
+    let ordered_entries = normalized_hashes
+        .iter()
+        .filter_map(|commit_hash| entries_by_hash.remove(commit_hash.as_str()))
+        .collect();
+
+    command_ok(
+        "prime_commit_details",
+        started_at,
+        &state,
+        CommitDetailBatchData {
+            entries: ordered_entries,
+        },
+    )
 }
 
 #[tauri::command(async)]
@@ -595,16 +708,21 @@ pub fn stage_paths(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::stage_paths(&repository_path, &paths) {
-        Ok(_) => command_ok(
-            "stage_paths",
-            started_at,
-            &state,
-            PathOperationData {
-                repository_path,
-                operation: "stage".to_string(),
-                affected_paths: paths,
-            },
-        ),
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("stage_paths", started_at, &state, error);
+            }
+            command_ok(
+                "stage_paths",
+                started_at,
+                &state,
+                PathOperationData {
+                    repository_path,
+                    operation: "stage".to_string(),
+                    affected_paths: paths,
+                },
+            )
+        }
         Err(error) => map_error_with_command("stage_paths", started_at, &state, error),
     }
 }
@@ -620,16 +738,21 @@ pub fn unstage_paths(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::unstage_paths(&repository_path, &paths) {
-        Ok(_) => command_ok(
-            "unstage_paths",
-            started_at,
-            &state,
-            PathOperationData {
-                repository_path,
-                operation: "unstage".to_string(),
-                affected_paths: paths,
-            },
-        ),
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("unstage_paths", started_at, &state, error);
+            }
+            command_ok(
+                "unstage_paths",
+                started_at,
+                &state,
+                PathOperationData {
+                    repository_path,
+                    operation: "unstage".to_string(),
+                    affected_paths: paths,
+                },
+            )
+        }
         Err(error) => map_error_with_command("unstage_paths", started_at, &state, error),
     }
 }
@@ -657,7 +780,12 @@ pub fn create_commit(
     );
 
     match result {
-        Ok(data) => command_ok("create_commit", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("create_commit", started_at, &state, error);
+            }
+            command_ok("create_commit", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("create_commit", started_at, &state, error),
     }
 }
@@ -759,17 +887,22 @@ pub fn fetch_remote(
     let prune = prune.unwrap_or(false);
 
     match git_provider::fetch_remote(&repository_path, remote.as_deref(), prune) {
-        Ok(output) => command_ok(
-            "fetch_remote",
-            started_at,
-            &state,
-            SyncData {
-                operation: "fetch".to_string(),
-                remote: remote.unwrap_or_else(|| "default".to_string()),
-                branch: None,
-                output,
-            },
-        ),
+        Ok(output) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("fetch_remote", started_at, &state, error);
+            }
+            command_ok(
+                "fetch_remote",
+                started_at,
+                &state,
+                SyncData {
+                    operation: "fetch".to_string(),
+                    remote: remote.unwrap_or_else(|| "default".to_string()),
+                    branch: None,
+                    output,
+                },
+            )
+        }
         Err(error) => map_error_with_command("fetch_remote", started_at, &state, error),
     }
 }
@@ -793,17 +926,22 @@ pub fn pull_remote(
         branch.as_deref(),
         rebase,
     ) {
-        Ok(output) => command_ok(
-            "pull_remote",
-            started_at,
-            &state,
-            SyncData {
-                operation: "pull".to_string(),
-                remote: remote.unwrap_or_else(|| "default".to_string()),
-                branch,
-                output,
-            },
-        ),
+        Ok(output) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("pull_remote", started_at, &state, error);
+            }
+            command_ok(
+                "pull_remote",
+                started_at,
+                &state,
+                SyncData {
+                    operation: "pull".to_string(),
+                    remote: remote.unwrap_or_else(|| "default".to_string()),
+                    branch,
+                    output,
+                },
+            )
+        }
         Err(error) => map_error_with_command("pull_remote", started_at, &state, error),
     }
 }
@@ -827,18 +965,43 @@ pub fn push_remote(
         branch.as_deref(),
         force_with_lease,
     ) {
-        Ok(output) => command_ok(
-            "push_remote",
-            started_at,
-            &state,
-            SyncData {
-                operation: "push".to_string(),
-                remote: remote.unwrap_or_else(|| "default".to_string()),
-                branch,
-                output,
-            },
-        ),
+        Ok(output) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("push_remote", started_at, &state, error);
+            }
+            command_ok(
+                "push_remote",
+                started_at,
+                &state,
+                SyncData {
+                    operation: "push".to_string(),
+                    remote: remote.unwrap_or_else(|| "default".to_string()),
+                    branch,
+                    output,
+                },
+            )
+        }
         Err(error) => map_error_with_command("push_remote", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn sync_remote(
+    repository_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<SyncData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match git_provider::sync_remote(&repository_path) {
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("sync_remote", started_at, &state, error);
+            }
+            command_ok("sync_remote", started_at, &state, data)
+        }
+        Err(error) => map_error_with_command("sync_remote", started_at, &state, error),
     }
 }
 
@@ -853,7 +1016,12 @@ pub fn start_rebase(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::start_rebase(&repository_path, &onto_ref) {
-        Ok(data) => command_ok("start_rebase", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("start_rebase", started_at, &state, error);
+            }
+            command_ok("start_rebase", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("start_rebase", started_at, &state, error),
     }
 }
@@ -868,7 +1036,12 @@ pub fn continue_rebase(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::continue_rebase(&repository_path) {
-        Ok(data) => command_ok("continue_rebase", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("continue_rebase", started_at, &state, error);
+            }
+            command_ok("continue_rebase", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("continue_rebase", started_at, &state, error),
     }
 }
@@ -883,7 +1056,12 @@ pub fn abort_rebase(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::abort_rebase(&repository_path) {
-        Ok(data) => command_ok("abort_rebase", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("abort_rebase", started_at, &state, error);
+            }
+            command_ok("abort_rebase", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("abort_rebase", started_at, &state, error),
     }
 }
@@ -900,7 +1078,12 @@ pub fn start_cherry_pick(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::start_cherry_pick(&repository_path, &commit_ref, mainline) {
-        Ok(data) => command_ok("start_cherry_pick", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("start_cherry_pick", started_at, &state, error);
+            }
+            command_ok("start_cherry_pick", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("start_cherry_pick", started_at, &state, error),
     }
 }
@@ -915,7 +1098,12 @@ pub fn continue_cherry_pick(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::continue_cherry_pick(&repository_path) {
-        Ok(data) => command_ok("continue_cherry_pick", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("continue_cherry_pick", started_at, &state, error);
+            }
+            command_ok("continue_cherry_pick", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("continue_cherry_pick", started_at, &state, error),
     }
 }
@@ -930,7 +1118,12 @@ pub fn abort_cherry_pick(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::abort_cherry_pick(&repository_path) {
-        Ok(data) => command_ok("abort_cherry_pick", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("abort_cherry_pick", started_at, &state, error);
+            }
+            command_ok("abort_cherry_pick", started_at, &state, data)
+        }
         Err(error) => map_error_with_command("abort_cherry_pick", started_at, &state, error),
     }
 }
@@ -961,7 +1154,12 @@ pub fn continue_conflict_resolution(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::continue_conflict_resolution(&repository_path, operation.as_deref()) {
-        Ok(data) => command_ok("continue_conflict_resolution", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("continue_conflict_resolution", started_at, &state, error);
+            }
+            command_ok("continue_conflict_resolution", started_at, &state, data)
+        }
         Err(error) => {
             map_error_with_command("continue_conflict_resolution", started_at, &state, error)
         }
@@ -979,7 +1177,12 @@ pub fn abort_conflict_resolution(
     logging_service::set_request_context(request_id.as_str());
 
     match git_provider::abort_conflict_resolution(&repository_path, operation.as_deref()) {
-        Ok(data) => command_ok("abort_conflict_resolution", started_at, &state, data),
+        Ok(data) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("abort_conflict_resolution", started_at, &state, error);
+            }
+            command_ok("abort_conflict_resolution", started_at, &state, data)
+        }
         Err(error) => {
             map_error_with_command("abort_conflict_resolution", started_at, &state, error)
         }

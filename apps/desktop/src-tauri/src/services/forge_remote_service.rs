@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::blocking::{Client, RequestBuilder};
@@ -10,7 +10,7 @@ use crate::models::operations::{
     LocalIssueData, LocalIssueListData, LocalIssueOperationData, LocalPullRequestData,
     LocalPullRequestListData, LocalPullRequestOperationData,
 };
-use crate::services::{git_provider, local_store};
+use crate::services::{local_store, remote_topology_service};
 
 pub const GITLAB_PROVIDER_ID: &str = "gitlab-contract";
 pub const BITBUCKET_PROVIDER_ID: &str = "bitbucket-contract";
@@ -601,24 +601,24 @@ fn update_bitbucket_pull_request(
 }
 
 fn resolve_remote(repository_path: &str, host_kind: &str) -> Result<ResolvedRemote, AppError> {
-    let remotes = fetch_remotes(repository_path)?;
-    for (_, remote_url) in remotes {
-        let Some((host, path)) = parse_remote_url(remote_url.as_str()) else {
-            continue;
-        };
+    let remote = remote_topology_service::resolve_remote_for_host_kind(repository_path, host_kind)
+        .map_err(|error| match error {
+            AppError::ForgeAdapterUnavailable(_) => AppError::ForgeAdapterUnavailable(match host_kind {
+                "gitlab" => GITLAB_PROVIDER_ID.to_string(),
+                "bitbucket" => BITBUCKET_PROVIDER_ID.to_string(),
+                _ => host_kind.to_string(),
+            }),
+            other => other,
+        })?;
 
-        if detect_host_kind(host.as_str()) != host_kind {
-            continue;
-        }
+    let host = remote.host.ok_or_else(|| {
+        AppError::Internal("failed to parse remote host from repository topology".to_string())
+    })?;
+    let path = remote.normalized_path.ok_or_else(|| {
+        AppError::Internal("failed to parse remote path from repository topology".to_string())
+    })?;
 
-        return Ok(ResolvedRemote { host, path });
-    }
-
-    Err(AppError::ForgeAdapterUnavailable(match host_kind {
-        "gitlab" => GITLAB_PROVIDER_ID.to_string(),
-        "bitbucket" => BITBUCKET_PROVIDER_ID.to_string(),
-        _ => host_kind.to_string(),
-    }))
+    return Ok(ResolvedRemote { host, path });
 }
 
 fn resolve_bitbucket_remote(repository_path: &str) -> Result<BitbucketRemote, AppError> {
@@ -637,83 +637,14 @@ fn resolve_bitbucket_remote(repository_path: &str) -> Result<BitbucketRemote, Ap
     })
 }
 
-fn fetch_remotes(repository_path: &str) -> Result<Vec<(String, String)>, AppError> {
-    local_store::ensure_git_repository(repository_path)?;
-    let output = git_provider::run_git(Some(repository_path), &["remote", "-v"])?;
-
-    let mut remotes = Vec::<(String, String)>::new();
-    let mut seen = HashSet::<String>::new();
-    for line in output.stdout.lines() {
-        if !line.contains("(fetch)") {
-            continue;
-        }
-
-        let mut fields = line.split_whitespace();
-        let remote = fields.next().unwrap_or_default().trim().to_string();
-        let remote_url = fields.next().unwrap_or_default().trim().to_string();
-        if remote.is_empty() || remote_url.is_empty() {
-            continue;
-        }
-
-        let key = format!("{remote}|{remote_url}");
-        if !seen.insert(key) {
-            continue;
-        }
-
-        remotes.push((remote, remote_url));
-    }
-
-    Ok(remotes)
-}
-
+#[cfg(test)]
 fn parse_remote_url(value: &str) -> Option<(String, String)> {
-    let trimmed = value.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if let Some(rest) = trimmed.strip_prefix("git@") {
-        let (host, path) = rest.split_once(':')?;
-        return Some((
-            host.trim().to_ascii_lowercase(),
-            normalize_remote_path(path),
-        ));
-    }
-
-    if let Some((_, rest)) = trimmed.split_once("://") {
-        let rest = rest.trim();
-        let (host_part, path_part) = rest.split_once('/')?;
-        let host = host_part.rsplit_once('@').map(|(_, value)| value).unwrap_or(host_part);
-        return Some((
-            host.trim().to_ascii_lowercase(),
-            normalize_remote_path(path_part),
-        ));
-    }
-
-    None
+    remote_topology_service::parse_remote_url(value)
 }
 
-fn normalize_remote_path(value: &str) -> String {
-    value
-        .trim()
-        .trim_start_matches('/')
-        .trim_end_matches('/')
-        .trim_end_matches(".git")
-        .to_string()
-}
-
+#[cfg(test)]
 fn detect_host_kind(host: &str) -> &'static str {
-    if host.contains("github") {
-        return "github";
-    }
-    if host.contains("gitlab") {
-        return "gitlab";
-    }
-    if host.contains("bitbucket") {
-        return "bitbucket";
-    }
-
-    "generic"
+    remote_topology_service::detect_host_kind_from_host(host)
 }
 
 fn parse_gitlab_issue_array(payload: Value) -> Result<Vec<LocalIssueData>, AppError> {

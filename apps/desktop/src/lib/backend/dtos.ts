@@ -53,6 +53,7 @@ export interface RepositoryStatusFile {
 
 export interface RepositoryStatus {
   branch: string;
+  upstream?: string;
   ahead: number;
   behind: number;
   files: RepositoryStatusFile[];
@@ -228,6 +229,10 @@ export interface CommitDetailData {
   additions: number;
   deletions: number;
   files: CommitFileStatData[];
+}
+
+export interface CommitDetailBatchData {
+  entries: CommitDetailData[];
 }
 
 export interface AiProviderStatus {

@@ -40,7 +40,6 @@ function persistRenderMode(mode: RenderMode) {
 interface DiffShellProps {
   filePath?: string;
   manifest?: FileDiffManifestData;
-  loading?: boolean;
   error?: string | null;
 }
 
@@ -290,7 +289,7 @@ export function DiffShell(props: DiffShellProps) {
   const manifest = createMemo(() => props.manifest);
   const hasManifest = createMemo(() => Boolean(manifest()));
   const isIdleEmpty = createMemo(
-    () => !props.filePath && !props.loading && !props.error && !chunkError() && !hasManifest()
+    () => !props.filePath && !props.error && !chunkError() && !hasManifest()
   );
   const hasMoreChunks = createMemo(() => {
     const currentManifest = manifest();
@@ -804,9 +803,6 @@ export function DiffShell(props: DiffShellProps) {
       <header class="diff-header">
         <h2>{props.filePath ? props.filePath : "No file selected"}</h2>
         <div class="diff-controls">
-          <Show when={props.loading && hasManifest()}>
-            <span class="diff-live-status">Loading next diff…</span>
-          </Show>
           <button
             class={`mode-toggle ${mode() === "dom" ? "is-active" : ""}`}
             onClick={() => {
@@ -888,11 +884,7 @@ export function DiffShell(props: DiffShellProps) {
         }}
         onScroll={onViewportScroll}
       >
-        <Show when={props.loading && !manifest() && loadedChunks().length === 0}>
-          <div class="diff-viewport-dom">Preparing diff chunks...</div>
-        </Show>
-
-        <Show when={!props.loading && props.error}>
+        <Show when={props.error}>
           <div class="diff-viewport-dom">{props.error}</div>
         </Show>
 
@@ -900,7 +892,7 @@ export function DiffShell(props: DiffShellProps) {
           {(errorMessage) => <div class="diff-viewport-dom">{errorMessage()}</div>}
         </Show>
 
-        <Show when={!props.loading && !props.error && !chunkError() && !manifest()}>
+        <Show when={!props.error && !chunkError() && !manifest()}>
           <div class="diff-viewport-dom">Select a changed file to view its diff.</div>
         </Show>
 

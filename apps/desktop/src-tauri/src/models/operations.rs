@@ -103,7 +103,7 @@ pub struct FileDiffChunkData {
     pub chunk_text: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchInfoData {
     pub name: String,
@@ -113,7 +113,7 @@ pub struct BranchInfoData {
     pub behind: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BranchListData {
     pub current_branch: Option<String>,
@@ -137,7 +137,7 @@ pub struct BranchTrackingOperationData {
     pub operation: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitHistoryEntryData {
     pub commit_hash: String,
@@ -148,13 +148,13 @@ pub struct CommitHistoryEntryData {
     pub authored_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitHistoryData {
     pub entries: Vec<CommitHistoryEntryData>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitFileStatData {
     pub path: String,
@@ -162,7 +162,7 @@ pub struct CommitFileStatData {
     pub deletions: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitDetailData {
     pub commit_hash: String,
@@ -176,6 +176,12 @@ pub struct CommitDetailData {
     pub additions: u32,
     pub deletions: u32,
     pub files: Vec<CommitFileStatData>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDetailBatchData {
+    pub entries: Vec<CommitDetailData>,
 }
 
 #[derive(Debug, Serialize)]

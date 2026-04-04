@@ -1,22 +1,34 @@
-import { createEffect, createResource, createSignal, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
-import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
-import { getCommitDetail, listCommitHistory } from "@/lib/backend/commands";
+import type { CommitDetailData, CommitHistoryData } from "@/lib/backend/dtos";
+import { getCommitDetail, listCommitHistory, primeCommitDetails } from "@/lib/backend/commands";
+import { scheduleBackgroundTask } from "@/lib/perf/background";
 import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 
 interface HistoryPageProps {
   embedded?: boolean;
 }
 
+const historyCache = new Map<string, CommitHistoryData>();
+const commitDetailCache = new Map<string, CommitDetailData>();
+const pendingHistoryRequests = new Map<string, Promise<void>>();
+const pendingCommitDetailRequests = new Map<string, Promise<void>>();
+
 export function HistoryPage(props: HistoryPageProps = {}) {
   const mountedAt = performance.now();
   const repository = useRepositoryContext();
   const [historyLimitInput, setHistoryLimitInput] = createSignal("50");
   const [selectedCommitHash, setSelectedCommitHash] = createSignal<string | null>(null);
+  const [historyData, setHistoryData] = createSignal<CommitHistoryData | null>(null);
+  const [historyError, setHistoryError] = createSignal<string | null>(null);
+  const [commitDetailData, setCommitDetailData] = createSignal<CommitDetailData | null>(null);
+  const [commitDetailError, setCommitDetailError] = createSignal<string | null>(null);
 
   const activeRepo = () => repository.activeRepositoryPath();
+  const commitDetailCacheKey = (repositoryPath: string, commitHash: string) =>
+    `${repositoryPath}::${commitHash}`;
 
   const parsedLimit = () => {
     const parsed = Number.parseInt(historyLimitInput().trim(), 10);
@@ -26,36 +38,116 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     return Math.min(Math.max(parsed, 1), 500);
   };
 
-  const [historyResult] = createResource(
-    () => {
-      const repositoryPath = activeRepo();
-      if (!repositoryPath) {
-        return null;
-      }
-      return { repositoryPath, limit: parsedLimit() };
-    },
-    async (input) => listCommitHistory(input.repositoryPath, input.limit)
-  );
+  const loadHistory = async (repositoryPath: string, limit: number) => {
+    const cacheKey = `${repositoryPath}::${limit}`;
+    const cached = historyCache.get(cacheKey);
+    if (cached) {
+      setHistoryData(cached);
+      setHistoryError(null);
+    }
 
-  const [commitDetailResult] = createResource(
-    () => {
-      const repositoryPath = activeRepo();
-      const commitHash = selectedCommitHash();
-      if (!repositoryPath || !commitHash) {
-        return null;
-      }
-      return { repositoryPath, commitHash };
-    },
-    async (input) => getCommitDetail(input.repositoryPath, input.commitHash)
-  );
-
-  createEffect(() => {
-    const history = historyResult.latest;
-    if (!history || !history.ok || history.data.entries.length === 0) {
+    const pending = pendingHistoryRequests.get(cacheKey);
+    if (pending) {
+      await pending;
       return;
     }
 
-    const firstEntry = history.data.entries[0];
+    const request = (async () => {
+      const result = await listCommitHistory(repositoryPath, limit);
+      if (!result.ok) {
+        if (!cached) {
+          setHistoryError(result.error.message);
+          setHistoryData(null);
+        }
+        return;
+      }
+
+      historyCache.set(cacheKey, result.data);
+      if (activeRepo() === repositoryPath && parsedLimit() === limit) {
+        setHistoryData(result.data);
+        setHistoryError(null);
+      }
+    })();
+
+    pendingHistoryRequests.set(cacheKey, request);
+    try {
+      await request;
+    } finally {
+      pendingHistoryRequests.delete(cacheKey);
+    }
+  };
+
+  const loadCommitDetail = async (repositoryPath: string, commitHash: string, retainCurrent = true) => {
+    const cacheKey = commitDetailCacheKey(repositoryPath, commitHash);
+    const cached = commitDetailCache.get(cacheKey);
+    if (cached) {
+      setCommitDetailData(cached);
+      setCommitDetailError(null);
+      return;
+    }
+
+    if (!retainCurrent) {
+      setCommitDetailData(null);
+    }
+
+    setCommitDetailError(null);
+    const pending = pendingCommitDetailRequests.get(cacheKey);
+    if (pending) {
+      await pending;
+      return;
+    }
+
+    const request = (async () => {
+      const result = await getCommitDetail(repositoryPath, commitHash);
+      if (!result.ok) {
+        if (!commitDetailData() || !retainCurrent) {
+          setCommitDetailError(result.error.message);
+        }
+        return;
+      }
+
+      commitDetailCache.set(cacheKey, result.data);
+      if (activeRepo() === repositoryPath && selectedCommitHash() === commitHash) {
+        setCommitDetailData(result.data);
+        setCommitDetailError(null);
+      }
+    })();
+
+    pendingCommitDetailRequests.set(cacheKey, request);
+    try {
+      await request;
+    } finally {
+      pendingCommitDetailRequests.delete(cacheKey);
+    }
+  };
+
+  createEffect(() => {
+    const repositoryPath = activeRepo();
+    const limit = parsedLimit();
+    if (!repositoryPath) {
+      setHistoryData(null);
+      setHistoryError(null);
+      setCommitDetailData(null);
+      setCommitDetailError(null);
+      return;
+    }
+
+    const cached = historyCache.get(`${repositoryPath}::${limit}`);
+    if (cached) {
+      setHistoryData(cached);
+      setHistoryError(null);
+    }
+
+    void loadHistory(repositoryPath, limit);
+  });
+
+  createEffect(() => {
+    const history = historyData();
+    if (!history || history.entries.length === 0) {
+      return;
+    }
+
+    const firstEntry = history.entries[0];
     if (!firstEntry) {
       return;
     }
@@ -66,10 +158,58 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       return;
     }
 
-    const stillExists = history.data.entries.some((entry) => entry.commitHash === selected);
+    const stillExists = history.entries.some((entry) => entry.commitHash === selected);
     if (!stillExists) {
       setSelectedCommitHash(firstEntry.commitHash);
     }
+  });
+
+  createEffect(() => {
+    const repositoryPath = activeRepo();
+    const commitHash = selectedCommitHash();
+    if (!repositoryPath || !commitHash) {
+      return;
+    }
+
+    void loadCommitDetail(repositoryPath, commitHash);
+  });
+
+  createEffect(() => {
+    const repositoryPath = activeRepo();
+    const history = historyData();
+    if (!repositoryPath || !history) {
+      return;
+    }
+
+    const visibleCommitHashes = history.entries.slice(0, 12).map((entry) => entry.commitHash);
+    if (visibleCommitHashes.length === 0) {
+      return;
+    }
+
+    const cancel = scheduleBackgroundTask(() => {
+      void primeCommitDetails(repositoryPath, visibleCommitHashes).then((result) => {
+        if (!result.ok) {
+          return;
+        }
+
+        for (const entry of result.data.entries) {
+          commitDetailCache.set(commitDetailCacheKey(repositoryPath, entry.commitHash), entry);
+        }
+
+        const selected = selectedCommitHash();
+        if (!selected) {
+          return;
+        }
+
+        const selectedEntry = result.data.entries.find((entry) => entry.commitHash === selected);
+        if (selectedEntry && activeRepo() === repositoryPath) {
+          setCommitDetailData(selectedEntry);
+          setCommitDetailError(null);
+        }
+      });
+    });
+
+    onCleanup(cancel);
   });
 
   onMount(() => {
@@ -93,26 +233,22 @@ export function HistoryPage(props: HistoryPageProps = {}) {
         </div>
       </Show>
 
-      <Show when={historyResult.loading}>
-        <div style="padding: 16px;"><LoadingStateSkeleton /></div>
-      </Show>
-
-      <Show when={historyResult.latest && !historyResult.latest.ok}>
+      <Show when={historyError()}>
         <div style="padding: 16px;">
           <ErrorStateCard
             title="History lookup failed"
-            body={historyResult.latest && !historyResult.latest.ok ? historyResult.latest.error.message : "Unknown error"}
+            body={historyError() ?? "Unknown error"}
           />
         </div>
       </Show>
 
-      <Show when={historyResult.latest?.ok && historyResult.latest.data.entries.length === 0}>
+      <Show when={historyData() && historyData()!.entries.length === 0}>
         <div style="padding: 16px; display: flex; justify-content: center;">
           <EmptyStateCard title="No commits found" body="The selected repository has no visible commits in this range." />
         </div>
       </Show>
 
-      <Show when={historyResult.latest?.ok && historyResult.latest.data.entries.length > 0}>
+      <Show when={historyData() && historyData()!.entries.length > 0}>
         <div style="padding: 8px 12px; background: var(--surface-1); border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.15); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
           <div style="font-size: 11px; color: var(--text-muted); display: flex; gap: 8px; align-items: center;">
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -134,8 +270,8 @@ export function HistoryPage(props: HistoryPageProps = {}) {
         <section class="topology-canvas" style="margin: 0; padding: 0; border: none; border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.1); background: var(--surface-0); flex-shrink: 0; height: 36px; border-radius: 0;">
           <svg class="topology-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" style="height: 100%; width: 100%;">
              <path d="M 10,18 L 2000,18" class="topology-link" stroke="rgba(var(--chrome-border-rgb), 0.2)" />
-             {historyResult.latest?.ok &&
-                historyResult.latest.data.entries.map((entry, index, arr) => {
+             {historyData() &&
+                historyData()!.entries.map((entry, index, arr) => {
                   if (index > 20) return null; // Increased to 20 for density
                   const spacing = 1000 / Math.min(20, arr.length);
                   const x = 20 + index * spacing;
@@ -157,8 +293,8 @@ export function HistoryPage(props: HistoryPageProps = {}) {
           {/* Timeline Pane */}
           <article style="width: 280px; flex-shrink: 0; border-right: 1px solid rgba(var(--chrome-border-rgb), 0.15); background: var(--surface-1); display: flex; flex-direction: column; overflow: hidden;">
             <ul style="flex: 1; overflow-y: auto; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column;">
-              {historyResult.latest?.ok &&
-                historyResult.latest.data.entries.map((entry) => {
+              {historyData() &&
+                historyData()!.entries.map((entry) => {
                   const isSelected = selectedCommitHash() === entry.commitHash;
                   return (
                     <li>
@@ -186,53 +322,49 @@ export function HistoryPage(props: HistoryPageProps = {}) {
 
           {/* Detail Pane */}
           <article style="flex: 1; min-width: 0; background: var(--surface-0); display: flex; flex-direction: column; overflow: hidden;">
-            <Show when={commitDetailResult.loading}>
-              <div style="padding: 16px;"><LoadingStateSkeleton /></div>
-            </Show>
-
-            <Show when={commitDetailResult.latest && !commitDetailResult.latest.ok}>
+            <Show when={commitDetailError() && !commitDetailData()}>
               <div style="padding: 16px;">
                 <ErrorStateCard
                   title="Commit detail failed"
-                  body={commitDetailResult.latest && !commitDetailResult.latest.ok ? commitDetailResult.latest.error.message : "Unknown error"}
+                  body={commitDetailError() ?? "Unknown error"}
                 />
               </div>
             </Show>
 
-            <Show when={commitDetailResult.latest?.ok}>
+            <Show when={commitDetailData()}>
               <div style="flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column;">
                 <div style="margin-bottom: 24px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
                   <div style="min-width: 0;">
-                    <h3 style="margin: 0 0 8px 0; font-size: 1.25rem; line-height: 1.4; color: var(--text-strong); word-wrap: break-word;">{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.subject : ""}</h3>
+                    <h3 style="margin: 0 0 8px 0; font-size: 1.25rem; line-height: 1.4; color: var(--text-strong); word-wrap: break-word;">{commitDetailData() ? commitDetailData()!.subject : ""}</h3>
                     <div style="display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--text-muted); align-items: center;">
                       <div class="user-chip" style="display: flex; align-items: center; gap: 6px;">
                         <div style="width: 24px; height: 24px; border-radius: 12px; background: rgba(var(--chrome-border-rgb), 0.1); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; color: var(--text-strong);">
-                           {commitDetailResult.latest?.ok ? commitDetailResult.latest.data.authorName.charAt(0).toUpperCase() : ""}
+                           {commitDetailData() ? commitDetailData()!.authorName.charAt(0).toUpperCase() : ""}
                         </div>
-                        <span style="color: var(--text-normal); font-weight: 500;">{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.authorName : ""}</span>
+                        <span style="color: var(--text-normal); font-weight: 500;">{commitDetailData() ? commitDetailData()!.authorName : ""}</span>
                       </div>
                       <span style="opacity: 0.5;">|</span>
-                      <span>{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.authoredAt : ""}</span>
+                      <span>{commitDetailData() ? commitDetailData()!.authoredAt : ""}</span>
                       <span style="opacity: 0.5;">|</span>
-                      <span style="font-family: var(--font-mono); background: rgba(var(--chrome-border-rgb), 0.1); padding: 2px 6px; border-radius: 4px;">{commitDetailResult.latest?.ok ? commitDetailResult.latest.data.shortHash : ""}</span>
+                      <span style="font-family: var(--font-mono); background: rgba(var(--chrome-border-rgb), 0.1); padding: 2px 6px; border-radius: 4px;">{commitDetailData() ? commitDetailData()!.shortHash : ""}</span>
                     </div>
                   </div>
                 </div>
 
-                <Show when={commitDetailResult.latest?.ok && commitDetailResult.latest.data.body.length > 0}>
+                <Show when={commitDetailData() && commitDetailData()!.body.length > 0}>
                   <div style="margin-bottom: 24px; font-size: 13px; line-height: 1.6; color: var(--text-normal); white-space: pre-wrap; font-family: var(--font-sans); background: rgba(var(--chrome-border-rgb), 0.03); padding: 12px 16px; border-radius: 8px; border: 1px solid rgba(var(--chrome-border-rgb), 0.08);">
-                    {commitDetailResult.latest?.ok ? commitDetailResult.latest.data.body : ""}
+                    {commitDetailData() ? commitDetailData()!.body : ""}
                   </div>
                 </Show>
 
                 <div style="margin-top: auto; padding-top: 24px; border-top: 1px solid rgba(var(--chrome-border-rgb), 0.1);">
                   <h4 style="margin: 0 0 12px 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); display: flex; gap: 6px; align-items: center;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                    Changed Files ({commitDetailResult.latest?.ok ? commitDetailResult.latest.data.files.length : 0})
+                    Changed Files ({commitDetailData() ? commitDetailData()!.files.length : 0})
                   </h4>
                   <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px;">
-                    {commitDetailResult.latest?.ok &&
-                      commitDetailResult.latest.data.files.map((file) => (
+                    {commitDetailData() &&
+                      commitDetailData()!.files.map((file) => (
                         <li style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: rgba(var(--chrome-border-rgb), 0.04); border-radius: 6px; font-size: 12px; border: 1px solid rgba(var(--chrome-border-rgb), 0.06);">
                           <div style="display: flex; align-items: center; min-width: 0; gap: 8px;">
                              <span style="font-family: var(--font-sans); color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{file.path.split('/').pop()}</span>

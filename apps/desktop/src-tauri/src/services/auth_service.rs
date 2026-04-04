@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::errors::AppError;
 use crate::models::git::{AuthStatus, RemoteAuthDiagnostic};
-use crate::services::{forge_service, git_provider};
+use crate::services::{forge_service, git_provider, remote_topology_service};
 
 pub fn get_auth_status(repository_path: Option<&str>) -> Result<AuthStatus, AppError> {
     let mut diagnostics = Vec::new();
@@ -53,21 +53,12 @@ pub fn get_auth_status(repository_path: Option<&str>) -> Result<AuthStatus, AppE
             return Err(AppError::RepositoryPathMissing);
         }
 
-        if let Ok(output) = git_provider::run_git(Some(path), &["remote", "-v"]) {
-            for line in output.stdout.lines() {
-                if !line.contains("(fetch)") {
-                    continue;
-                }
-
-                let mut parts = line.split_whitespace();
-                let remote = parts.next().unwrap_or("unknown").to_string();
-                let url = parts.next().unwrap_or("").to_string();
-                if url.is_empty() {
-                    continue;
-                }
-
-                let protocol = detect_protocol(&url);
-                let host_kind = detect_host_kind(&url);
+        if let Ok(remotes) = remote_topology_service::list_repository_remotes(path) {
+            for remote_entry in remotes {
+                let remote = remote_entry.remote;
+                let url = remote_entry.url;
+                let protocol = remote_entry.protocol;
+                let host_kind = remote_entry.host_kind;
                 let guidance = match protocol.as_str() {
                     "ssh" if !ssh_agent_available => {
                         "SSH remote detected but ssh-agent is not available. Start ssh-agent and load your key.".to_string()
@@ -105,23 +96,4 @@ pub fn get_auth_status(repository_path: Option<&str>) -> Result<AuthStatus, AppE
         diagnostics,
         remote_diagnostics,
     })
-}
-
-fn detect_protocol(url: &str) -> String {
-    if url.starts_with("git@") || url.starts_with("ssh://") {
-        return "ssh".to_string();
-    }
-    if url.starts_with("https://") || url.starts_with("http://") {
-        return "https".to_string();
-    }
-    "other".to_string()
-}
-
-fn detect_host_kind(url: &str) -> &'static str {
-    let normalized = url.to_ascii_lowercase();
-    if normalized.contains("github.com") {
-        return "github";
-    }
-
-    "generic"
 }

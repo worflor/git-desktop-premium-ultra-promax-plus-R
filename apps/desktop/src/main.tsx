@@ -34,7 +34,7 @@ render(() => (
       <Route path="/changes" component={WorkspacePage} />
       <Route path="/history" component={WorkspacePage} />
       <Route path="/branches" component={WorkspacePage} />
-      <Route path="/sync" component={WorkspacePage} />
+      <Route path="/sync" component={() => <Navigate href="/changes?panel=sync" />} />
       <Route path="/settings" component={() => <Navigate href="/changes?panel=settings" />} />
       <Route path="/*rest" component={() => <Navigate href="/changes" />} />
     </Router>

@@ -1,10 +1,10 @@
-import { createEffect, createResource, createSignal, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
-import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { DiffShell } from "@/features/diff/DiffShell";
-import type { FileDiffManifestData } from "@/lib/backend/dtos";
+import type { FileDiffManifestData, RepositoryStatus } from "@/lib/backend/dtos";
 import type { CommandResult } from "@/lib/contracts/command";
+import { scheduleBackgroundTask } from "@/lib/perf/background";
 import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 import {
   createCommit,
@@ -19,6 +19,10 @@ interface ChangesPageProps {
 }
 
 const DIFF_PRETEXT_FONT_PROFILE = '12px "JetBrains Mono", "Consolas", monospace';
+const statusCache = new Map<string, RepositoryStatus>();
+const diffManifestCache = new Map<string, CommandResult<FileDiffManifestData>>();
+const pendingStatusRequests = new Map<string, Promise<void>>();
+const pendingDiffManifestRequests = new Map<string, Promise<void>>();
 
 export function ChangesPage(props: ChangesPageProps = {}) {
   const mountedAt = performance.now();
@@ -29,36 +33,77 @@ export function ChangesPage(props: ChangesPageProps = {}) {
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [selectedDiffPath, setSelectedDiffPath] = createSignal<string | null>(null);
   const [actionRunning, setActionRunning] = createSignal(false);
-  const diffManifestCache = new Map<string, CommandResult<FileDiffManifestData>>();
+  const [statusData, setStatusData] = createSignal<RepositoryStatus | null>(null);
+  const [statusError, setStatusError] = createSignal<string | null>(null);
+  const [displayedDiffManifest, setDisplayedDiffManifest] = createSignal<FileDiffManifestData | null>(null);
+  const [displayedDiffPath, setDisplayedDiffPath] = createSignal<string | null>(null);
+  const [diffError, setDiffError] = createSignal<string | null>(null);
 
   const activeRepo = () => repository.activeRepositoryPath();
   const diffCacheKey = (repo: string, path: string) => `${repo}::${path}`;
 
-  const [statusResult, { refetch }] = createResource(activeRepo, async (path) => {
-    if (!path) {
-      return null;
+  const loadStatus = async (repositoryPath: string) => {
+    const cached = statusCache.get(repositoryPath);
+    if (cached) {
+      setStatusData(cached);
+      setStatusError(null);
     }
-    return getRepositoryStatus(path);
-  });
 
-  const [diffManifestResult] = createResource(
-    () => {
-      const repo = activeRepo();
-      const path = selectedDiffPath();
-      if (!repo || !path) {
-        return null;
+    const pending = pendingStatusRequests.get(repositoryPath);
+    if (pending) {
+      await pending;
+      return;
+    }
+
+    const request = (async () => {
+      const result = await getRepositoryStatus(repositoryPath);
+      if (!result.ok) {
+        if (!cached) {
+          setStatusData(null);
+          setStatusError(result.error.message);
+        }
+        return;
       }
 
-      return { repo, path };
-    },
-    async (input) => {
-      const cacheKey = diffCacheKey(input.repo, input.path);
-      const cached = diffManifestCache.get(cacheKey);
-      if (cached) {
-        return cached;
+      statusCache.set(repositoryPath, result.data);
+      if (activeRepo() === repositoryPath) {
+        setStatusData(result.data);
+        setStatusError(null);
       }
+    })();
 
-      const result = await prepareFileDiffChunks(input.repo, input.path, {
+    pendingStatusRequests.set(repositoryPath, request);
+    try {
+      await request;
+    } finally {
+      pendingStatusRequests.delete(repositoryPath);
+    }
+  };
+
+  const loadDiffManifest = async (repositoryPath: string, path: string, retainCurrent = true) => {
+    const cacheKey = diffCacheKey(repositoryPath, path);
+    const cached = diffManifestCache.get(cacheKey);
+    if (cached?.ok) {
+      setDisplayedDiffManifest(cached.data);
+      setDisplayedDiffPath(cached.data.path);
+      setDiffError(null);
+      return;
+    }
+
+    if (!retainCurrent) {
+      setDisplayedDiffManifest(null);
+      setDisplayedDiffPath(path);
+    }
+
+    setDiffError(null);
+    const pending = pendingDiffManifestRequests.get(cacheKey);
+    if (pending) {
+      await pending;
+      return;
+    }
+
+    const request = (async () => {
+      const result = await prepareFileDiffChunks(repositoryPath, path, {
         staged: false,
         contextLines: 3,
         chunkSizeBytes: 256 * 1024,
@@ -69,21 +114,72 @@ export function ChangesPage(props: ChangesPageProps = {}) {
 
       if (result.ok) {
         diffManifestCache.set(cacheKey, result);
+        if (activeRepo() === repositoryPath && selectedDiffPath() === path) {
+          setDisplayedDiffManifest(result.data);
+          setDisplayedDiffPath(result.data.path);
+          setDiffError(null);
+        }
+        return;
       }
 
-      return result;
+      if (!displayedDiffManifest() || !retainCurrent) {
+        setDiffError(result.error.message);
+      }
+    })();
+
+    pendingDiffManifestRequests.set(cacheKey, request);
+    try {
+      await request;
+    } finally {
+      pendingDiffManifestRequests.delete(cacheKey);
     }
-  );
+  };
+
+  const prefetchDiffManifest = (repositoryPath: string, path: string) => {
+    const cacheKey = diffCacheKey(repositoryPath, path);
+    if (diffManifestCache.has(cacheKey) || pendingDiffManifestRequests.has(cacheKey)) {
+      return;
+    }
+
+    void loadDiffManifest(repositoryPath, path);
+  };
 
   createEffect(() => {
-    activeRepo();
-    diffManifestCache.clear();
-    setSelectedDiffPath(null);
+    const repositoryPath = activeRepo();
+    if (!repositoryPath) {
+      setStatusData(null);
+      setStatusError(null);
+      setDisplayedDiffManifest(null);
+      setDisplayedDiffPath(null);
+      setDiffError(null);
+      setSelectedDiffPath(null);
+      return;
+    }
+
+    const cached = statusCache.get(repositoryPath);
+    if (cached) {
+      setStatusData(cached);
+      setStatusError(null);
+    }
+
+    void loadStatus(repositoryPath);
   });
 
   createEffect(() => {
-    const latestStatus = statusResult.latest;
-    if (!latestStatus?.ok) {
+    const repositoryPath = activeRepo();
+    if (!repositoryPath) {
+      return;
+    }
+
+    setSelectedDiffPath(null);
+    setDisplayedDiffManifest(null);
+    setDisplayedDiffPath(null);
+    setDiffError(null);
+  });
+
+  createEffect(() => {
+    const latestStatus = statusData();
+    if (!latestStatus) {
       return;
     }
 
@@ -92,9 +188,46 @@ export function ChangesPage(props: ChangesPageProps = {}) {
       return;
     }
 
-    if (!latestStatus.data.files.some((file) => file.path === currentPath)) {
+    if (!latestStatus.files.some((file) => file.path === currentPath)) {
       setSelectedDiffPath(null);
+      setDisplayedDiffManifest(null);
+      setDisplayedDiffPath(null);
+      setDiffError(null);
     }
+  });
+
+  createEffect(() => {
+    const repositoryPath = activeRepo();
+    const path = selectedDiffPath();
+    if (!repositoryPath || !path) {
+      return;
+    }
+
+    const cached = diffManifestCache.get(diffCacheKey(repositoryPath, path));
+    if (cached?.ok) {
+      setDisplayedDiffManifest(cached.data);
+      setDisplayedDiffPath(cached.data.path);
+      setDiffError(null);
+      return;
+    }
+
+    void loadDiffManifest(repositoryPath, path);
+  });
+
+  createEffect(() => {
+    const repositoryPath = activeRepo();
+    const latestStatus = statusData();
+    if (!repositoryPath || !latestStatus) {
+      return;
+    }
+
+    const cancel = scheduleBackgroundTask(() => {
+      for (const file of latestStatus.files.slice(0, 4)) {
+        prefetchDiffManifest(repositoryPath, file.path);
+      }
+    });
+
+    onCleanup(cancel);
   });
 
   onMount(() => {
@@ -109,12 +242,12 @@ export function ChangesPage(props: ChangesPageProps = {}) {
 
   const selectedCount = () => selectedPaths().length;
   const stagedFileCount = () =>
-    statusResult.latest?.ok
-      ? statusResult.latest.data.files.filter((file) => file.staged.trim().length > 0).length
+    statusData()
+      ? statusData()!.files.filter((file) => file.staged.trim().length > 0).length
       : 0;
   const unstagedFileCount = () =>
-    statusResult.latest?.ok
-      ? statusResult.latest.data.files.filter((file) => file.unstaged.trim().length > 0).length
+    statusData()
+      ? statusData()!.files.filter((file) => file.unstaged.trim().length > 0).length
       : 0;
 
   const togglePathSelection = (path: string, checked: boolean) => {
@@ -151,7 +284,11 @@ export function ChangesPage(props: ChangesPageProps = {}) {
     setActionMessage(`${operation === "stage" ? "Staged" : "Unstaged"} ${result.data.affectedPaths.length} path(s).`);
     setSelectedPaths([]);
     diffManifestCache.clear();
-    void refetch();
+    const repositoryPath = activeRepo();
+    if (repositoryPath) {
+      statusCache.delete(repositoryPath);
+      void loadStatus(repositoryPath);
+    }
   };
 
   const onCommit = async () => {
@@ -174,15 +311,15 @@ export function ChangesPage(props: ChangesPageProps = {}) {
     setActionMessage(`${result.data.summary} (${result.data.commitHash.slice(0, 8)})`);
     setCommitMessage("");
     diffManifestCache.clear();
-    void refetch();
+    const repositoryPath = activeRepo();
+    if (repositoryPath) {
+      statusCache.delete(repositoryPath);
+      void loadStatus(repositoryPath);
+    }
   };
 
-  const activeDiffManifest = () => (diffManifestResult.latest?.ok ? diffManifestResult.latest.data : undefined);
-  const activeDiffPath = () => activeDiffManifest()?.path ?? selectedDiffPath() ?? undefined;
-  const diffError = () =>
-    diffManifestResult.latest && !diffManifestResult.latest.ok
-      ? diffManifestResult.latest.error.message
-      : null;
+  const activeDiffManifest = () => displayedDiffManifest() ?? undefined;
+  const activeDiffPath = () => displayedDiffPath() ?? selectedDiffPath() ?? undefined;
 
   return (
     <div class={`feature-page ${props.embedded ? "is-embedded" : ""}`} style="display: flex; height: 100%; overflow: hidden; gap: 0;">
@@ -195,19 +332,19 @@ export function ChangesPage(props: ChangesPageProps = {}) {
         </div>
       </Show>
 
-      <Show when={statusResult.loading}>
-        <div style="padding: 16px; width: 100%;">
-          <LoadingStateSkeleton />
+      <Show when={statusError()}>
+        <div style="padding: 16px; width: 100%; display: flex; align-items: center; justify-content: center; color: var(--state-conflicted);">
+          {statusError()}
         </div>
       </Show>
 
-      <Show when={statusResult.latest?.ok && statusResult.latest.data.files.length === 0}>
+      <Show when={statusData() && statusData()!.files.length === 0}>
         <div style="padding: 16px; width: 100%; display: flex; align-items: center; justify-content: center;">
           <EmptyStateCard title="Working tree is clean" body="No unstaged or staged changes detected." />
         </div>
       </Show>
 
-      <Show when={statusResult.latest?.ok && statusResult.latest.data.files.length > 0}>
+      <Show when={statusData() && statusData()!.files.length > 0}>
         <div style="width: 280px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid rgba(var(--chrome-border-rgb), 0.15); background: var(--surface-1);">
           <section class="status-list" style="flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px;">
             <div class="status-list-head" style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
@@ -240,8 +377,8 @@ export function ChangesPage(props: ChangesPageProps = {}) {
             </div>
             
             <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px;">
-              {statusResult.latest?.ok &&
-                statusResult.latest.data.files.map((file) => (
+              {statusData() &&
+                statusData()!.files.map((file) => (
                   <li class={`status-row ${selectedDiffPath() === file.path ? 'is-selected' : ''}`} style={`padding: 4px 6px; border-radius: 4px; background: ${selectedDiffPath() === file.path ? 'rgba(var(--chrome-border-rgb), 0.1)' : 'transparent'}; display: flex; align-items: center; gap: 6px;`}>
                     <input
                       type="checkbox"
@@ -279,7 +416,7 @@ export function ChangesPage(props: ChangesPageProps = {}) {
             <button class="primary-btn" style="width: 100%; min-height: 28px; font-size: 12px; font-weight: 600;" onClick={() => void onCommit()}>
               {actionRunning()
                 ? "Committing..."
-                : "Commit to " + (statusResult.latest?.ok ? statusResult.latest.data.branch || "HEAD" : "HEAD")}
+                : "Commit to " + (statusData() ? statusData()!.branch || "HEAD" : "HEAD")}
             </button>
             <Show when={actionMessage()}>
               {(message) => <div style="font-size: 11px; color: var(--state-added);">{message()}</div>}
@@ -301,7 +438,6 @@ export function ChangesPage(props: ChangesPageProps = {}) {
               <DiffShell
                 filePath={activeDiffPath()}
                 manifest={activeDiffManifest()}
-                loading={diffManifestResult.loading}
                 error={diffError()}
               />
             </div>

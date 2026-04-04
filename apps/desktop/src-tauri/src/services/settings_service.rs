@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +28,7 @@ const DEFAULT_THEME_ID: &str = "aether";
 const DEFAULT_KEYBINDING_PROFILE: &str = "classic";
 const DEFAULT_UPDATE_CHANNEL: &str = "stable";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct StoredSettings {
     guardrail_value: f32,
@@ -64,7 +65,7 @@ impl Default for StoredSettings {
 }
 
 pub fn get_settings() -> Result<AppSettingsData, AppError> {
-    let stored = load_settings()?;
+    let stored = load_settings_cached()?;
     Ok(to_data(&stored))
 }
 
@@ -75,7 +76,7 @@ pub fn update_guardrail(value: f32) -> Result<AppSettingsData, AppError> {
         ));
     }
 
-    let mut stored = load_settings()?;
+    let mut stored = load_settings_cached()?;
     stored.guardrail_value = value.clamp(0.0, 1.0);
     persist_settings(&stored)?;
     Ok(to_data(&stored))
@@ -85,7 +86,7 @@ pub fn update_telemetry_retention(days: u32, max_mb: u32) -> Result<AppSettingsD
     let days = days.clamp(1, 365);
     let max_mb = max_mb.clamp(16, 4096);
 
-    let mut stored = load_settings()?;
+    let mut stored = load_settings_cached()?;
     stored.telemetry_retention_days = days;
     stored.telemetry_retention_mb = max_mb;
     persist_settings(&stored)?;
@@ -95,14 +96,14 @@ pub fn update_telemetry_retention(days: u32, max_mb: u32) -> Result<AppSettingsD
 pub fn update_update_channel(channel: &str) -> Result<AppSettingsData, AppError> {
     let normalized_channel = parse_update_channel(channel)?;
 
-    let mut stored = load_settings()?;
+    let mut stored = load_settings_cached()?;
     stored.update_channel = normalized_channel.to_string();
     persist_settings(&stored)?;
     Ok(to_data(&stored))
 }
 
 pub fn update_crash_reporting(enabled: bool) -> Result<AppSettingsData, AppError> {
-    let mut stored = load_settings()?;
+    let mut stored = load_settings_cached()?;
     stored.crash_reporting_enabled = enabled;
     persist_settings(&stored)?;
     Ok(to_data(&stored))
@@ -116,7 +117,7 @@ pub fn update_layout_preferences(
 ) -> Result<AppSettingsData, AppError> {
     let normalized_sidebar_position = parse_sidebar_position(sidebar_position)?;
 
-    let mut stored = load_settings()?;
+    let mut stored = load_settings_cached()?;
     stored.sidebar_width_px = clamp_sidebar_width_px(sidebar_width_px);
     stored.sidebar_position = normalized_sidebar_position.to_string();
     stored.utility_drawer_default_expanded = utility_drawer_default_expanded;
@@ -133,7 +134,7 @@ pub fn update_ui_preferences(
     let normalized_theme_id = normalize_theme_id(theme_id);
     let normalized_keybinding_profile = normalize_keybinding_profile(keybinding_profile);
 
-    let mut stored = load_settings()?;
+    let mut stored = load_settings_cached()?;
     stored.theme_id = normalized_theme_id.to_string();
     stored.keybinding_profile = normalized_keybinding_profile.to_string();
 
@@ -249,8 +250,34 @@ fn parse_update_channel(value: &str) -> Result<&'static str, AppError> {
     ))
 }
 
-fn load_settings() -> Result<StoredSettings, AppError> {
+#[derive(Debug, Clone)]
+struct SettingsCacheEntry {
+    path: PathBuf,
+    settings: StoredSettings,
+}
+
+fn load_settings_cached() -> Result<StoredSettings, AppError> {
     let path = settings_file_path()?;
+    if let Ok(cache) = settings_cache().lock() {
+        if let Some(entry) = cache.as_ref() {
+            if entry.path == path {
+                return Ok(entry.settings.clone());
+            }
+        }
+    }
+
+    let settings = load_settings_from_path(path.as_path())?;
+    if let Ok(mut cache) = settings_cache().lock() {
+        *cache = Some(SettingsCacheEntry {
+            path,
+            settings: settings.clone(),
+        });
+    }
+
+    Ok(settings)
+}
+
+fn load_settings_from_path(path: &std::path::Path) -> Result<StoredSettings, AppError> {
     if !path.exists() {
         return Ok(StoredSettings::default());
     }
@@ -275,12 +302,26 @@ fn persist_settings(settings: &StoredSettings) -> Result<(), AppError> {
     let payload = serde_json::to_string_pretty(settings)
         .map_err(|error| AppError::Internal(format!("failed to serialize settings: {error}")))?;
 
-    fs::write(path, payload)
-        .map_err(|error| AppError::Internal(format!("failed to write settings file: {error}")))
+    fs::write(&path, payload)
+        .map_err(|error| AppError::Internal(format!("failed to write settings file: {error}")))?;
+
+    if let Ok(mut cache) = settings_cache().lock() {
+        *cache = Some(SettingsCacheEntry {
+            path,
+            settings: settings.clone(),
+        });
+    }
+
+    Ok(())
 }
 
 fn settings_file_path() -> Result<PathBuf, AppError> {
     Ok(storage_paths::gdpu_data_dir()?.join(SETTINGS_FILE_NAME))
+}
+
+fn settings_cache() -> &'static Mutex<Option<SettingsCacheEntry>> {
+    static CACHE: OnceLock<Mutex<Option<SettingsCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
 }
 
 #[cfg(test)]

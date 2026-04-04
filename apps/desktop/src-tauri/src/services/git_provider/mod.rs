@@ -11,11 +11,11 @@ use crate::models::git::GitCapabilities;
 use crate::models::operations::{
     BranchInfoData, BranchListData, CommitDetailData, CommitFileStatData, CommitHistoryData,
     CommitHistoryEntryData, ConflictResolutionData, ConflictStateData, StashEntryData,
-    StashListData, StashOperationData, WorktreeData, WorktreeListData,
+    StashListData, StashOperationData, SyncData, WorktreeData, WorktreeListData,
 };
 use crate::models::repository::{RepositoryStatusData, RepositoryStatusFile};
 
-pub use cli::run_git;
+pub use cli::{run_git, GitCommandOutput};
 
 const MIN_GIT_MAJOR: u32 = 2;
 const MIN_GIT_MINOR: u32 = 39;
@@ -24,6 +24,15 @@ const GIT_READY_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 #[derive(Debug, Clone, Copy)]
 struct GitReadyCacheEntry {
     checked_at: Instant,
+}
+
+struct SyncTarget {
+    branch: String,
+    upstream: Option<String>,
+    remote: String,
+    remote_branch: String,
+    ahead: u32,
+    behind: u32,
 }
 
 pub fn detect_capabilities() -> Result<GitCapabilities, AppError> {
@@ -153,6 +162,7 @@ pub fn get_repository_status(repository_path: &str) -> Result<RepositoryStatusDa
     )?;
 
     let mut branch = "detached".to_string();
+    let mut upstream = None::<String>;
     let mut ahead = 0_u32;
     let mut behind = 0_u32;
     let mut files = Vec::new();
@@ -161,6 +171,11 @@ pub fn get_repository_status(repository_path: &str) -> Result<RepositoryStatusDa
     for line in output.stdout.lines() {
         if let Some(value) = line.strip_prefix("# branch.head ") {
             branch = value.to_string();
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("# branch.upstream ") {
+            upstream = trimmed_non_empty(value).map(str::to_string);
             continue;
         }
 
@@ -208,6 +223,7 @@ pub fn get_repository_status(repository_path: &str) -> Result<RepositoryStatusDa
 
     Ok(RepositoryStatusData {
         branch,
+        upstream,
         ahead,
         behind,
         files,
@@ -307,6 +323,11 @@ pub fn get_head_commit_hash(repository_path: &str) -> Result<String, AppError> {
     Ok(output.stdout)
 }
 
+pub fn get_conflict_operation(repository_path: &str) -> Result<Option<String>, AppError> {
+    ensure_git_ready()?;
+    detect_conflict_operation(repository_path)
+}
+
 pub fn get_file_diff(
     repository_path: &str,
     path: &str,
@@ -351,11 +372,7 @@ pub fn fetch_remote(
     }
 
     let output = run_git(Some(repository_path), &args)?;
-    if output.stdout.is_empty() {
-        return Ok("Fetch completed".to_string());
-    }
-
-    Ok(output.stdout)
+    Ok(render_command_output(&output, "Fetch completed"))
 }
 
 pub fn pull_remote(
@@ -378,11 +395,7 @@ pub fn pull_remote(
     }
 
     let output = run_git(Some(repository_path), &args)?;
-    if output.stdout.is_empty() {
-        return Ok("Pull completed".to_string());
-    }
-
-    Ok(output.stdout)
+    Ok(render_command_output(&output, "Pull completed"))
 }
 
 pub fn push_remote(
@@ -405,11 +418,87 @@ pub fn push_remote(
     }
 
     let output = run_git(Some(repository_path), &args)?;
-    if output.stdout.is_empty() {
-        return Ok("Push completed".to_string());
+    Ok(render_command_output(&output, "Push completed"))
+}
+
+pub fn sync_remote(repository_path: &str) -> Result<SyncData, AppError> {
+    ensure_git_ready()?;
+
+    let fetch_output = run_git(Some(repository_path), &["fetch", "--prune"])?;
+    let initial_target = resolve_current_sync_target(repository_path)?;
+    let mut notes = Vec::<String>::new();
+    let fetch_message = render_command_output(&fetch_output, "");
+    if !fetch_message.is_empty() {
+        notes.push(fetch_message);
     }
 
-    Ok(output.stdout)
+    let mut operation = "fetch".to_string();
+    let mut active_target = initial_target;
+
+    if active_target.upstream.is_none() {
+        let publish_output = run_git(
+            Some(repository_path),
+            &[
+                "push",
+                "--set-upstream",
+                active_target.remote.as_str(),
+                active_target.branch.as_str(),
+            ],
+        )?;
+        notes.push(render_command_output(
+            &publish_output,
+            "Published branch and set upstream",
+        ));
+        operation = "publish".to_string();
+    } else {
+        let should_pull = active_target.behind > 0;
+        let should_push = active_target.ahead > 0;
+
+        if should_pull {
+            let pull_output = run_git(
+                Some(repository_path),
+                &[
+                    "pull",
+                    "--rebase",
+                    active_target.remote.as_str(),
+                    active_target.remote_branch.as_str(),
+                ],
+            )?;
+            notes.push(render_command_output(&pull_output, "Pull completed"));
+            active_target = resolve_current_sync_target(repository_path)?;
+            operation = "pull".to_string();
+        }
+
+        if active_target.ahead > 0 || should_push {
+            let push_output = run_git(
+                Some(repository_path),
+                &[
+                    "push",
+                    active_target.remote.as_str(),
+                    active_target.branch.as_str(),
+                ],
+            )?;
+            notes.push(render_command_output(&push_output, "Push completed"));
+            operation = if should_pull {
+                "sync".to_string()
+            } else {
+                "push".to_string()
+            };
+        } else if !should_pull {
+            notes.push("Remote refs refreshed. No local commits needed syncing.".to_string());
+        }
+    }
+
+    Ok(SyncData {
+        operation,
+        remote: active_target.remote,
+        branch: Some(active_target.branch),
+        output: notes
+            .into_iter()
+            .filter(|entry| !entry.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    })
 }
 
 pub fn start_rebase(
@@ -1056,87 +1145,143 @@ pub fn get_commit_detail(
     repository_path: &str,
     commit_hash: &str,
 ) -> Result<CommitDetailData, AppError> {
+    let details = get_commit_details(repository_path, &[commit_hash.to_string()])?;
+    details.into_iter().next().ok_or_else(|| {
+        AppError::Internal("failed to resolve commit detail from git output".to_string())
+    })
+}
+
+pub fn get_commit_details(
+    repository_path: &str,
+    commit_hashes: &[String],
+) -> Result<Vec<CommitDetailData>, AppError> {
     ensure_git_ready()?;
 
-    let commit_hash = commit_hash.trim();
-    if commit_hash.is_empty() {
-        return Err(AppError::InvalidInput(
-            "commit hash is required for commit detail".to_string(),
-        ));
+    let normalized_hashes: Vec<String> = commit_hashes
+        .iter()
+        .map(|hash| hash.trim())
+        .filter(|hash| !hash.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    if normalized_hashes.is_empty() {
+        return Ok(Vec::new());
     }
 
-    let meta_args = [
+    let mut meta_args = vec![
         "show".to_string(),
         "--no-patch".to_string(),
         "--date=iso-strict".to_string(),
-        "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%b".to_string(),
-        commit_hash.to_string(),
+        "--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%b".to_string(),
     ];
+    meta_args.extend(normalized_hashes.iter().cloned());
     let meta_refs: Vec<&str> = meta_args.iter().map(String::as_str).collect();
     let meta_output = run_git(Some(repository_path), &meta_refs)?;
-    let metadata = meta_output.stdout;
 
-    let mut fields = metadata.splitn(7, '\x1f');
-    let parsed_commit_hash = fields.next().unwrap_or_default().trim().to_string();
-    let short_hash = fields.next().unwrap_or_default().trim().to_string();
-    let author_name = fields.next().unwrap_or_default().trim().to_string();
-    let author_email = fields.next().unwrap_or_default().trim().to_string();
-    let authored_at = fields.next().unwrap_or_default().trim().to_string();
-    let subject = fields.next().unwrap_or_default().trim().to_string();
-    let body = fields.next().unwrap_or_default().trim().to_string();
+    let mut details_by_hash = HashMap::<String, CommitDetailData>::new();
+    for record in meta_output.stdout.split('\x1e') {
+        let row = record.trim();
+        if row.is_empty() {
+            continue;
+        }
 
-    if parsed_commit_hash.is_empty() {
+        let mut fields = row.splitn(7, '\x1f');
+        let parsed_commit_hash = fields.next().unwrap_or_default().trim().to_string();
+        if parsed_commit_hash.is_empty() {
+            continue;
+        }
+
+        details_by_hash.insert(
+            parsed_commit_hash.clone(),
+            CommitDetailData {
+                commit_hash: parsed_commit_hash,
+                short_hash: fields.next().unwrap_or_default().trim().to_string(),
+                author_name: fields.next().unwrap_or_default().trim().to_string(),
+                author_email: fields.next().unwrap_or_default().trim().to_string(),
+                authored_at: fields.next().unwrap_or_default().trim().to_string(),
+                subject: fields.next().unwrap_or_default().trim().to_string(),
+                body: fields.next().unwrap_or_default().trim().to_string(),
+                files_changed: 0,
+                additions: 0,
+                deletions: 0,
+                files: Vec::new(),
+            },
+        );
+    }
+
+    if details_by_hash.is_empty() {
         return Err(AppError::Internal(
             "failed to parse commit metadata from git output".to_string(),
         ));
     }
 
-    let stats_args = ["show", "--numstat", "--format=", commit_hash];
-    let stats_output = run_git(Some(repository_path), &stats_args)?;
+    let mut stats_args = vec![
+        "show".to_string(),
+        "--numstat".to_string(),
+        "--format=%x1e%H".to_string(),
+    ];
+    stats_args.extend(normalized_hashes.iter().cloned());
+    let stats_refs: Vec<&str> = stats_args.iter().map(String::as_str).collect();
+    let stats_output = run_git(Some(repository_path), &stats_refs)?;
 
-    let mut files = Vec::new();
-    let mut additions = 0_u32;
-    let mut deletions = 0_u32;
-
-    for line in stats_output.stdout.lines() {
-        let row = line.trim();
+    for record in stats_output.stdout.split('\x1e') {
+        let row = record.trim();
         if row.is_empty() {
             continue;
         }
 
-        let mut parts = row.splitn(3, '\t');
-        let add_raw = parts.next().unwrap_or_default().trim();
-        let del_raw = parts.next().unwrap_or_default().trim();
-        let path = parts.next().unwrap_or_default().trim().to_string();
-        if path.is_empty() {
+        let mut lines = row.lines();
+        let Some(commit_hash) = lines.next().map(str::trim).filter(|value| !value.is_empty()) else {
             continue;
+        };
+
+        let Some(detail) = details_by_hash.get_mut(commit_hash) else {
+            continue;
+        };
+
+        let mut additions = 0_u32;
+        let mut deletions = 0_u32;
+        let mut files = Vec::new();
+
+        for line in lines {
+            let stat_row = line.trim();
+            if stat_row.is_empty() {
+                continue;
+            }
+
+            let mut parts = stat_row.splitn(3, '\t');
+            let add_raw = parts.next().unwrap_or_default().trim();
+            let del_raw = parts.next().unwrap_or_default().trim();
+            let path = parts.next().unwrap_or_default().trim().to_string();
+            if path.is_empty() {
+                continue;
+            }
+
+            let file_additions = parse_numstat_count(add_raw);
+            let file_deletions = parse_numstat_count(del_raw);
+            additions = additions.saturating_add(file_additions);
+            deletions = deletions.saturating_add(file_deletions);
+
+            files.push(CommitFileStatData {
+                path,
+                additions: file_additions,
+                deletions: file_deletions,
+            });
         }
 
-        let file_additions = parse_numstat_count(add_raw);
-        let file_deletions = parse_numstat_count(del_raw);
-        additions = additions.saturating_add(file_additions);
-        deletions = deletions.saturating_add(file_deletions);
-
-        files.push(CommitFileStatData {
-            path,
-            additions: file_additions,
-            deletions: file_deletions,
-        });
+        detail.files_changed = files.len() as u32;
+        detail.additions = additions;
+        detail.deletions = deletions;
+        detail.files = files;
     }
 
-    Ok(CommitDetailData {
-        commit_hash: parsed_commit_hash,
-        short_hash,
-        subject,
-        body,
-        author_name,
-        author_email,
-        authored_at,
-        files_changed: files.len() as u32,
-        additions,
-        deletions,
-        files,
-    })
+    let mut details = Vec::with_capacity(normalized_hashes.len());
+    for commit_hash in normalized_hashes {
+        if let Some(detail) = details_by_hash.remove(commit_hash.as_str()) {
+            details.push(detail);
+        }
+    }
+
+    Ok(details)
 }
 
 fn trimmed_non_empty(value: &str) -> Option<&str> {
@@ -1145,6 +1290,71 @@ fn trimmed_non_empty(value: &str) -> Option<&str> {
         return None;
     }
     Some(trimmed)
+}
+
+fn render_command_output(output: &GitCommandOutput, fallback: &str) -> String {
+    let mut sections = Vec::<String>::new();
+    if let Some(stdout) = trimmed_non_empty(output.stdout.as_str()) {
+        sections.push(stdout.to_string());
+    }
+    if let Some(stderr) = trimmed_non_empty(output.stderr.as_str()) {
+        sections.push(stderr.to_string());
+    }
+
+    if sections.is_empty() {
+        return fallback.to_string();
+    }
+
+    sections.join("\n")
+}
+
+fn is_detached_head(branch: &str) -> bool {
+    let normalized = branch.trim();
+    normalized.is_empty()
+        || normalized.eq_ignore_ascii_case("detached")
+        || normalized.eq_ignore_ascii_case("(detached)")
+}
+
+fn split_upstream_ref(upstream: &str) -> Option<(String, String)> {
+    let (remote, branch) = upstream.trim().split_once('/')?;
+    let remote = remote.trim();
+    let branch = branch.trim();
+    if remote.is_empty() || branch.is_empty() {
+        return None;
+    }
+
+    Some((remote.to_string(), branch.to_string()))
+}
+
+fn resolve_current_sync_target(repository_path: &str) -> Result<SyncTarget, AppError> {
+    let snapshot = crate::services::repository_root_service::get_repository_root_snapshot(
+        repository_path,
+    )?;
+    if is_detached_head(snapshot.current_branch.as_str()) {
+        return Err(AppError::InvalidInput(
+            "sync is unavailable while HEAD is detached".to_string(),
+        ));
+    }
+
+    let (remote, remote_branch) = if let Some(upstream) = snapshot.upstream.as_deref() {
+        split_upstream_ref(upstream).ok_or_else(|| {
+            AppError::Internal(format!("failed to parse upstream ref: {upstream}"))
+        })?
+    } else {
+        let remote = snapshot.default_remote.ok_or_else(|| {
+            AppError::InvalidInput("no remote is configured for this repository".to_string())
+        })?;
+        (remote, snapshot.current_branch.clone())
+    };
+
+    Ok(SyncTarget {
+        branch: snapshot.current_branch,
+        upstream: snapshot.upstream,
+        remote,
+        remote_branch,
+        ahead: snapshot.ahead,
+        behind: snapshot.behind,
+    })
 }
 
 fn normalize_status_code(code: Option<char>) -> String {
@@ -1419,7 +1629,8 @@ mod tests {
         continue_conflict_resolution, create_stash, create_worktree, drop_stash, get_commit_detail,
         get_conflict_state, get_repository_status, list_branches, list_commit_history,
         list_stashes, list_worktrees, normalize_conflict_operation, remove_worktree,
-        set_branch_upstream, stage_paths, start_cherry_pick, start_rebase, unstage_paths,
+        set_branch_upstream, stage_paths, start_cherry_pick, start_rebase, sync_remote,
+        unstage_paths,
     };
 
     struct FixtureRepo {
@@ -1544,7 +1755,7 @@ mod tests {
         }
     }
 
-    fn git_status_snapshot(repository_path: &Path) -> (String, HashMap<String, String>) {
+    fn git_status_snapshot(repository_path: &Path) -> (String, Option<String>, HashMap<String, String>) {
         let output = run_fixture_git(
             repository_path,
             &[
@@ -1556,10 +1767,19 @@ mod tests {
         );
 
         let mut branch = "detached".to_string();
+        let mut upstream = None::<String>;
         let mut files = HashMap::<String, String>::new();
         for line in output.lines() {
             if let Some(value) = line.strip_prefix("# branch.head ") {
                 branch = value.to_string();
+                continue;
+            }
+
+            if let Some(value) = line.strip_prefix("# branch.upstream ") {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    upstream = Some(trimmed.to_string());
+                }
                 continue;
             }
 
@@ -1578,7 +1798,7 @@ mod tests {
             }
         }
 
-        (branch, files)
+        (branch, upstream, files)
     }
 
     fn assert_provider_matches_git_status(repository_path: &Path) {
@@ -1591,11 +1811,12 @@ mod tests {
         .expect("expected provider status result");
 
         assert_eq!(actual.branch, expected.0);
-        assert_eq!(actual.files.len(), expected.1.len());
+        assert_eq!(actual.upstream, expected.1);
+        assert_eq!(actual.files.len(), expected.2.len());
 
         for file in actual.files {
             let xy = expected
-                .1
+                .2
                 .get(&file.path)
                 .unwrap_or_else(|| panic!("missing fixture status for path {}", file.path));
             if xy == "??" {
@@ -1874,6 +2095,52 @@ mod tests {
         assert_eq!(feature_branch.upstream.as_deref(), Some(expected_upstream));
         assert_eq!(feature_branch.ahead, expected_ahead);
         assert_eq!(feature_branch.behind, expected_behind);
+
+        let _ = fs::remove_dir_all(remote_path);
+    }
+
+    #[test]
+    fn fixture_sync_remote_publishes_branch_and_sets_upstream() {
+        let fixture = FixtureRepo::new("sync-publish");
+        write_repo_file(fixture.path(), "tracked.txt", "base\n");
+        commit_all(fixture.path(), "base commit");
+
+        let remote_path = std::env::temp_dir().join(format!("gdpu-sync-remote-{}", Uuid::new_v4()));
+        let remote_path_str = remote_path
+            .to_str()
+            .expect("remote path should be valid utf-8")
+            .to_string();
+
+        run_fixture_git(
+            fixture.path(),
+            &["init", "--bare", remote_path_str.as_str()],
+        );
+        run_fixture_git(
+            fixture.path(),
+            &["remote", "add", "origin", remote_path_str.as_str()],
+        );
+
+        let sync_result =
+            sync_remote(fixture.path_str()).expect("expected sync remote publish to succeed");
+        assert_eq!(sync_result.operation, "publish");
+        assert_eq!(sync_result.remote, "origin");
+        assert_eq!(sync_result.branch.as_deref(), Some("main"));
+
+        let provider_status =
+            get_repository_status(fixture.path_str()).expect("expected provider status after sync");
+        assert_eq!(provider_status.upstream.as_deref(), Some("origin/main"));
+
+        let remote_head = run_fixture_git(
+            fixture.path(),
+            &[
+                "--git-dir",
+                remote_path_str.as_str(),
+                "rev-parse",
+                "refs/heads/main",
+            ],
+        );
+        let local_head = run_fixture_git(fixture.path(), &["rev-parse", "HEAD"]);
+        assert_eq!(remote_head, local_head);
 
         let _ = fs::remove_dir_all(remote_path);
     }

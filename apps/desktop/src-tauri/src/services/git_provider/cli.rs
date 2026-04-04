@@ -12,6 +12,7 @@ const RETRY_BACKOFF_MS: [u64; 2] = [200, 500];
 
 pub struct GitCommandOutput {
     pub stdout: String,
+    pub stderr: String,
 }
 
 pub fn run_git(repository_path: Option<&str>, args: &[&str]) -> Result<GitCommandOutput, AppError> {
@@ -49,6 +50,7 @@ pub fn run_git(repository_path: Option<&str>, args: &[&str]) -> Result<GitComman
 
                     return Ok(GitCommandOutput {
                         stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                        stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
                     });
                 }
                 Ok(output) => {
