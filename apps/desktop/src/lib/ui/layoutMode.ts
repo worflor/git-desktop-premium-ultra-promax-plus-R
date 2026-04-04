@@ -1,6 +1,6 @@
 import { createSignal, onCleanup, onMount, type Accessor } from "solid-js";
 
-export const COMPACT_LAYOUT_BREAKPOINT_PX = 960;
+export const COMPACT_LAYOUT_BREAKPOINT_PX = 694;
 
 const COMPACT_LAYOUT_QUERY = `(max-width: ${COMPACT_LAYOUT_BREAKPOINT_PX}px)`;
 

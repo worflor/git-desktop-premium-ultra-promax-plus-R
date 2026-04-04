@@ -1,4 +1,4 @@
-import { createContext, createSignal, onMount, useContext, type Accessor, type ParentProps } from "solid-js";
+import { createContext, createSignal, onCleanup, onMount, useContext, type Accessor, type ParentProps } from "solid-js";
 import { getAppSettings, updateLayoutPreferences, updateUiPreferences } from "@/lib/backend/commands";
 import { applyTheme, DEFAULT_THEME_ID, normalizeThemeId, type ThemeId } from "@/lib/ui/theme";
 import { normalizeKeybindingProfile, type KeybindingProfile } from "@/lib/ui/keybindings";
@@ -43,8 +43,23 @@ function clampInteger(value: number, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+function getSidebarWidthRuntimeMaxPx(): number {
+  if (typeof window === "undefined") {
+    return SIDEBAR_WIDTH_MAX_PX;
+  }
+
+  return Math.min(SIDEBAR_WIDTH_MAX_PX, Math.floor(window.innerWidth * 0.5));
+}
+
 function clampSidebarWidthPx(value: number): number {
-  return clampInteger(value, SIDEBAR_WIDTH_MIN_PX, SIDEBAR_WIDTH_MAX_PX, SIDEBAR_WIDTH_DEFAULT_PX);
+  const runtimeMax = getSidebarWidthRuntimeMaxPx();
+  const fallback = Math.min(SIDEBAR_WIDTH_DEFAULT_PX, runtimeMax);
+
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(runtimeMax, Math.max(SIDEBAR_WIDTH_MIN_PX, Math.round(value)));
 }
 
 function clampUtilityDrawerHeightPx(value: number): number {
@@ -251,6 +266,16 @@ export function LayoutPreferencesProvider(props: ParentProps) {
 
   onMount(() => {
     applyTheme(themeId(), { deferMaterial: true });
+
+    const onWindowResize = () => {
+      setSidebarWidthPxSignal((current) => clampSidebarWidthPx(current));
+    };
+
+    window.addEventListener("resize", onWindowResize, { passive: true });
+    onCleanup(() => {
+      window.removeEventListener("resize", onWindowResize);
+    });
+
     void loadSettings();
   });
 
