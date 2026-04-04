@@ -428,34 +428,40 @@ export function SettingsPage() {
               <p class="section-summary">Diagnostic retention and performance logs.</p>
               <p class="settings-fit-line">Data remains local-only.</p>
               <div class="sync-grid settings-retention-grid">
-                <input
-                  class="path-input"
-                  type="number"
-                  min="1"
-                  max="365"
-                  value={retentionDays()}
-                  onInput={(event) => {
-                    setRetentionDays(Number.parseInt(event.currentTarget.value, 10) || 1);
-                  }}
-                  onBlur={() => {
-                    void onSaveRetention();
-                  }}
-                  aria-label="Retention days"
-                />
-                <input
-                  class="path-input"
-                  type="number"
-                  min="16"
-                  max="4096"
-                  value={retentionMb()}
-                  onInput={(event) => {
-                    setRetentionMb(Number.parseInt(event.currentTarget.value, 10) || 16);
-                  }}
-                  onBlur={() => {
-                    void onSaveRetention();
-                  }}
-                  aria-label="Retention max MB"
-                />
+                <div class="input-with-unit">
+                  <input
+                    class="path-input"
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={retentionDays()}
+                    onInput={(event) => {
+                      setRetentionDays(Number.parseInt(event.currentTarget.value, 10) || 1);
+                    }}
+                    onBlur={() => {
+                      void onSaveRetention();
+                    }}
+                    aria-label="Retention days"
+                  />
+                  <span class="unit">days</span>
+                </div>
+                <div class="input-with-unit">
+                  <input
+                    class="path-input"
+                    type="number"
+                    min="16"
+                    max="4096"
+                    value={retentionMb()}
+                    onInput={(event) => {
+                      setRetentionMb(Number.parseInt(event.currentTarget.value, 10) || 16);
+                    }}
+                    onBlur={() => {
+                      void onSaveRetention();
+                    }}
+                    aria-label="Retention max MB"
+                  />
+                  <span class="unit">MB</span>
+                </div>
               </div>
             </article>
 

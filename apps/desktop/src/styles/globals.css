@@ -1502,6 +1502,29 @@ ul, ol { list-style: none; padding: 0; }
   font-size: 12px;
 }
 
+.input-with-unit {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.input-with-unit .path-input {
+  padding-right: 36px;
+}
+
+.input-with-unit .unit {
+  position: absolute;
+  right: 10px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  opacity: 0.6;
+  pointer-events: none;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .keybinding-preview-card {
   border: 1px solid var(--secondary-btn-border);
   border-radius: 6px;
