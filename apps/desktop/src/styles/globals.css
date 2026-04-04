@@ -1176,6 +1176,15 @@ ol {
   background-size: 100% 6px;
 }
 
+/* Guardrail Functional Fill */
+.guardrail-slider {
+  background-image: linear-gradient(to right,
+      var(--guardrail-stage-color) 0,
+      var(--guardrail-stage-color) var(--guardrail-fill-percent),
+      rgba(var(--chrome-border-rgb), 0.22) var(--guardrail-fill-percent),
+      rgba(var(--chrome-border-rgb), 0.22) 100%) !important;
+}
+
 /* Base thumb reset for Webkit (Global Fallback) */
 .theme-slider::-webkit-slider-thumb, 
 .guardrail-slider::-webkit-slider-thumb {
