@@ -445,21 +445,36 @@ pub fn close_bitbucket_pull_request(
     repository_path: &str,
     pull_request_id: &str,
 ) -> Result<LocalPullRequestOperationData, AppError> {
-    update_bitbucket_pull_request(repository_path, pull_request_id, json!({ "state": "DECLINED" }), "close")
+    update_bitbucket_pull_request(
+        repository_path,
+        pull_request_id,
+        json!({ "state": "DECLINED" }),
+        "close",
+    )
 }
 
 pub fn reopen_bitbucket_pull_request(
     repository_path: &str,
     pull_request_id: &str,
 ) -> Result<LocalPullRequestOperationData, AppError> {
-    update_bitbucket_pull_request(repository_path, pull_request_id, json!({ "state": "OPEN" }), "reopen")
+    update_bitbucket_pull_request(
+        repository_path,
+        pull_request_id,
+        json!({ "state": "OPEN" }),
+        "reopen",
+    )
 }
 
 pub fn mark_bitbucket_pull_request_ready(
     repository_path: &str,
     pull_request_id: &str,
 ) -> Result<LocalPullRequestOperationData, AppError> {
-    update_bitbucket_pull_request(repository_path, pull_request_id, json!({ "draft": false }), "mark-ready")
+    update_bitbucket_pull_request(
+        repository_path,
+        pull_request_id,
+        json!({ "draft": false }),
+        "mark-ready",
+    )
 }
 
 pub fn merge_bitbucket_pull_request(
@@ -603,11 +618,13 @@ fn update_bitbucket_pull_request(
 fn resolve_remote(repository_path: &str, host_kind: &str) -> Result<ResolvedRemote, AppError> {
     let remote = remote_topology_service::resolve_remote_for_host_kind(repository_path, host_kind)
         .map_err(|error| match error {
-            AppError::ForgeAdapterUnavailable(_) => AppError::ForgeAdapterUnavailable(match host_kind {
-                "gitlab" => GITLAB_PROVIDER_ID.to_string(),
-                "bitbucket" => BITBUCKET_PROVIDER_ID.to_string(),
-                _ => host_kind.to_string(),
-            }),
+            AppError::ForgeAdapterUnavailable(_) => {
+                AppError::ForgeAdapterUnavailable(match host_kind {
+                    "gitlab" => GITLAB_PROVIDER_ID.to_string(),
+                    "bitbucket" => BITBUCKET_PROVIDER_ID.to_string(),
+                    _ => host_kind.to_string(),
+                })
+            }
             other => other,
         })?;
 
@@ -623,13 +640,16 @@ fn resolve_remote(repository_path: &str, host_kind: &str) -> Result<ResolvedRemo
 
 fn resolve_bitbucket_remote(repository_path: &str) -> Result<BitbucketRemote, AppError> {
     let remote = resolve_remote(repository_path, "bitbucket")?;
-    let mut segments = remote.path.split('/').filter(|value| !value.trim().is_empty());
-    let workspace = segments
-        .next()
-        .ok_or_else(|| AppError::Internal("failed to parse Bitbucket workspace from remote URL".to_string()))?;
-    let repo_slug = segments
-        .next()
-        .ok_or_else(|| AppError::Internal("failed to parse Bitbucket repository slug from remote URL".to_string()))?;
+    let mut segments = remote
+        .path
+        .split('/')
+        .filter(|value| !value.trim().is_empty());
+    let workspace = segments.next().ok_or_else(|| {
+        AppError::Internal("failed to parse Bitbucket workspace from remote URL".to_string())
+    })?;
+    let repo_slug = segments.next().ok_or_else(|| {
+        AppError::Internal("failed to parse Bitbucket repository slug from remote URL".to_string())
+    })?;
 
     Ok(BitbucketRemote {
         workspace: workspace.to_string(),
@@ -709,14 +729,17 @@ fn parse_bitbucket_pull_request_array(
         .collect()
 }
 
-fn parse_gitlab_issue(value: Option<&serde_json::Map<String, Value>>) -> Result<LocalIssueData, AppError> {
+fn parse_gitlab_issue(
+    value: Option<&serde_json::Map<String, Value>>,
+) -> Result<LocalIssueData, AppError> {
     let value = value
         .ok_or_else(|| AppError::Internal("GitLab issue payload was not an object".to_string()))?;
 
     let id = value_to_string(value.get("iid")).unwrap_or_else(|| {
         value_to_string(value.get("id")).unwrap_or_else(|| "unknown".to_string())
     });
-    let title = value_as_string(Some(value), "title").unwrap_or_else(|| "Untitled issue".to_string());
+    let title =
+        value_as_string(Some(value), "title").unwrap_or_else(|| "Untitled issue".to_string());
     let body = value_as_string(Some(value), "description").unwrap_or_default();
     let state = normalize_gitlab_issue_state(
         value_as_string(Some(value), "state")
@@ -759,11 +782,13 @@ fn parse_gitlab_issue(value: Option<&serde_json::Map<String, Value>>) -> Result<
 fn parse_bitbucket_issue(
     value: Option<&serde_json::Map<String, Value>>,
 ) -> Result<LocalIssueData, AppError> {
-    let value = value
-        .ok_or_else(|| AppError::Internal("Bitbucket issue payload was not an object".to_string()))?;
+    let value = value.ok_or_else(|| {
+        AppError::Internal("Bitbucket issue payload was not an object".to_string())
+    })?;
 
     let id = value_to_string(value.get("id")).unwrap_or_else(|| "unknown".to_string());
-    let title = value_as_string(Some(value), "title").unwrap_or_else(|| "Untitled issue".to_string());
+    let title =
+        value_as_string(Some(value), "title").unwrap_or_else(|| "Untitled issue".to_string());
     let body = value
         .get("content")
         .and_then(Value::as_object)
@@ -812,7 +837,8 @@ fn parse_gitlab_pull_request(
     let id = value_to_string(value.get("iid")).unwrap_or_else(|| {
         value_to_string(value.get("id")).unwrap_or_else(|| "unknown".to_string())
     });
-    let title = value_as_string(Some(value), "title").unwrap_or_else(|| "Untitled merge request".to_string());
+    let title = value_as_string(Some(value), "title")
+        .unwrap_or_else(|| "Untitled merge request".to_string());
     let description = value_as_string(Some(value), "description").unwrap_or_default();
     let source_branch = value_as_string(Some(value), "source_branch").unwrap_or_default();
     let target_branch = value_as_string(Some(value), "target_branch").unwrap_or_default();
@@ -893,7 +919,8 @@ fn parse_bitbucket_pull_request(
     })?;
 
     let id = value_to_string(value.get("id")).unwrap_or_else(|| "unknown".to_string());
-    let title = value_as_string(Some(value), "title").unwrap_or_else(|| "Untitled pull request".to_string());
+    let title = value_as_string(Some(value), "title")
+        .unwrap_or_else(|| "Untitled pull request".to_string());
     let description = value_as_string(Some(value), "description").unwrap_or_default();
     let source_branch = value
         .get("source")
@@ -978,7 +1005,9 @@ fn gitlab_request(
         .header("Accept", "application/json");
 
     if let Some(payload) = payload {
-        request = request.header("Content-Type", "application/json").json(&payload);
+        request = request
+            .header("Content-Type", "application/json")
+            .json(&payload);
     }
 
     execute_json_request(request, "GitLab API request")
@@ -1002,7 +1031,9 @@ fn bitbucket_request(
     );
 
     let client = http_client()?;
-    let mut request = client.request(method, url).header("Accept", "application/json");
+    let mut request = client
+        .request(method, url)
+        .header("Accept", "application/json");
     request = match auth {
         BitbucketAuth::BearerToken(token) => request.bearer_auth(token),
         BitbucketAuth::Basic {
@@ -1012,7 +1043,9 @@ fn bitbucket_request(
     };
 
     if let Some(payload) = payload {
-        request = request.header("Content-Type", "application/json").json(&payload);
+        request = request
+            .header("Content-Type", "application/json")
+            .json(&payload);
     }
 
     execute_json_request(request, "Bitbucket API request")
@@ -1081,7 +1114,9 @@ fn execute_json_request(request: RequestBuilder, context: &str) -> Result<Value,
     }
 
     serde_json::from_str(body.as_str()).map_err(|error| {
-        AppError::Internal(format!("{context} returned malformed JSON payload: {error}"))
+        AppError::Internal(format!(
+            "{context} returned malformed JSON payload: {error}"
+        ))
     })
 }
 
@@ -1132,10 +1167,7 @@ fn normalize_gitlab_issue_state(value: &str) -> String {
 
 fn normalize_bitbucket_issue_state(value: &str) -> String {
     let normalized = value.trim().to_ascii_lowercase();
-    if matches!(
-        normalized.as_str(),
-        "new" | "open" | "on hold" | "on_hold"
-    ) {
+    if matches!(normalized.as_str(), "new" | "open" | "on hold" | "on_hold") {
         return "open".to_string();
     }
 
@@ -1167,10 +1199,7 @@ fn value_to_string(value: Option<&Value>) -> Option<String> {
     }
 }
 
-fn value_as_string(
-    value: Option<&serde_json::Map<String, Value>>,
-    key: &str,
-) -> Option<String> {
+fn value_as_string(value: Option<&serde_json::Map<String, Value>>, key: &str) -> Option<String> {
     value.and_then(|value| value_to_string(value.get(key)))
 }
 
@@ -1303,7 +1332,13 @@ mod tests {
     fn draft_prefix_helpers_round_trip() {
         assert!(title_is_draft("Draft: add api integration"));
         assert!(title_is_draft("wip: add api integration"));
-        assert_eq!(strip_draft_prefix("Draft: add api integration"), "add api integration");
-        assert_eq!(strip_draft_prefix("title without prefix"), "title without prefix");
+        assert_eq!(
+            strip_draft_prefix("Draft: add api integration"),
+            "add api integration"
+        );
+        assert_eq!(
+            strip_draft_prefix("title without prefix"),
+            "title without prefix"
+        );
     }
 }

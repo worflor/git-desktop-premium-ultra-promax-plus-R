@@ -13,10 +13,11 @@ interface IconProps {
 export function Icon(props: IconProps): JSX.Element {
   const size = () => props.size ?? 16;
   const toneClass = () => `icon-tone-${props.tone ?? "normal"}`;
+  const nameClass = () => `icon-${props.name}`;
 
   return (
     <svg
-      class={`icon ${toneClass()} ${props.class ?? ""}`.trim()}
+      class={`icon ${nameClass()} ${toneClass()} ${props.class ?? ""}`.trim()}
       style={props.style}
       width={size()}
       height={size()}

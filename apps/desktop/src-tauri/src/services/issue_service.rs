@@ -95,9 +95,7 @@ pub fn list_issues(
         }
         GITHUB_ISSUE_PROVIDER_ID => local_issue_service::list_local_issues(repository_path),
         GITLAB_ISSUE_PROVIDER_ID => forge_remote_service::list_gitlab_issues(repository_path),
-        BITBUCKET_ISSUE_PROVIDER_ID => {
-            forge_remote_service::list_bitbucket_issues(repository_path)
-        }
+        BITBUCKET_ISSUE_PROVIDER_ID => forge_remote_service::list_bitbucket_issues(repository_path),
         unknown => Err(AppError::InvalidInput(format!(
             "unknown issue provider: {unknown}"
         ))),

@@ -242,8 +242,8 @@ pub fn merge_local_pull_request(
     verify_branch_exists(repository_path, &source_branch)?;
     verify_branch_exists(repository_path, &target_branch)?;
 
-    let original_branch = repository_root_service::get_repository_root_snapshot(repository_path)?
-        .current_branch;
+    let original_branch =
+        repository_root_service::get_repository_root_snapshot(repository_path)?.current_branch;
 
     let restore_branch = branch_to_restore_after_merge(
         &original_branch,

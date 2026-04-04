@@ -175,9 +175,7 @@ fn parse_endpoint_list(env_name: &str, raw_value: &str) -> Result<Vec<Url>, AppE
         .filter(|value| !value.is_empty())
     {
         let parsed = Url::parse(token).map_err(|error| {
-            AppError::InvalidInput(format!(
-                "invalid updater endpoint in {env_name}: {error}"
-            ))
+            AppError::InvalidInput(format!("invalid updater endpoint in {env_name}: {error}"))
         })?;
 
         if parsed.scheme() != "https" && !cfg!(debug_assertions) {

@@ -10,16 +10,16 @@ use crate::models::git::{
     AuthStatus, ForgeAdapterList, GitCapabilities, RepositoryIntegrationMatrix,
 };
 use crate::models::operations::{
-    AiAuditListData, AiAuditMaintenanceData, AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData,
-    AiDiffReviewJobStartData, AiModelOptionListData, AiProviderListData, AppUpdateCheckData,
-    AppUpdateInstallData,
-    BranchListData, BranchOperationData, BranchTrackingOperationData,
-    CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData, CommitData, CommitDetailBatchData,
-    CommitDetailData, CommitHistoryData, ConflictResolutionData, ConflictStateData, FileDiffChunkData, FileDiffData,
-    FileDiffManifestData, IssueProviderListData, LocalIssueListData, LocalIssueOperationData,
-    LocalPullRequestListData, LocalPullRequestOperationData, PathOperationData,
-    PullRequestProviderListData, StartupReadinessSnapshotData, StashListData,
-    StashOperationData, SyncData, WorktreeListData, WorktreeOperationData,
+    AiAuditListData, AiAuditMaintenanceData, AiDiffReviewCancelData, AiDiffReviewData,
+    AiDiffReviewJobData, AiDiffReviewJobStartData, AiModelOptionListData, AiProviderListData,
+    AppUpdateCheckData, AppUpdateInstallData, BranchListData, BranchOperationData,
+    BranchTrackingOperationData, CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData,
+    CommitData, CommitDetailBatchData, CommitDetailData, CommitHistoryData, ConflictResolutionData,
+    ConflictStateData, FileDiffChunkData, FileDiffData, FileDiffManifestData,
+    IssueProviderListData, LocalIssueListData, LocalIssueOperationData, LocalPullRequestListData,
+    LocalPullRequestOperationData, PathOperationData, PullRequestProviderListData,
+    StartupReadinessSnapshotData, StashListData, StashOperationData, SyncData, WorktreeListData,
+    WorktreeOperationData,
 };
 use crate::models::repository::{
     OpenRepositoryData, PickRepositoryDirectoryData, RecentRepositoriesData, RepositoryStatusData,
@@ -29,8 +29,8 @@ use crate::runtime::state::AppState;
 use crate::services::{
     ai_service, auth_service, bootstrap_service, diff_service, forge_service, git_provider,
     issue_service, logging_service, pull_request_service, remote_topology_service,
-    repository_read_service, repository_root_service, repository_service, settings_service,
-    telemetry_service, update_service,
+    repository_read_service, repository_root_service, repository_service,
+    repository_topology_service, settings_service, telemetry_service, update_service,
 };
 
 fn response_meta(started_at: Instant, state: &State<'_, AppState>) -> ResponseMeta {
@@ -106,6 +106,7 @@ fn invalidate_repository_read_models(
 ) -> Result<(), AppError> {
     repository_read_service::invalidate_repository(repository_path);
     repository_root_service::invalidate_repository(repository_path);
+    repository_topology_service::invalidate_repository(repository_path);
     remote_topology_service::invalidate_repository(repository_path);
     Ok(())
 }
@@ -623,7 +624,7 @@ pub fn list_commit_history(
     logging_service::set_request_context(request_id.as_str());
     let limit = limit.unwrap_or(50).clamp(1, 500) as usize;
 
-    match git_provider::list_commit_history(&repository_path, limit, branch.as_deref()) {
+    match repository_read_service::list_commit_history(&repository_path, limit, branch.as_deref()) {
         Ok(data) => {
             let _ = repository_root_service::schedule_commit_history_warm(
                 &repository_path,
@@ -667,15 +668,13 @@ pub fn prime_commit_details(
         .filter(|hash| !hash.is_empty())
         .collect();
 
-    let entries = match repository_read_service::prime_commit_details(
-        &repository_path,
-        &normalized_hashes,
-    ) {
-        Ok(entries) => entries,
-        Err(error) => {
-            return map_error_with_command("prime_commit_details", started_at, &state, error);
-        }
-    };
+    let entries =
+        match repository_read_service::prime_commit_details(&repository_path, &normalized_hashes) {
+            Ok(entries) => entries,
+            Err(error) => {
+                return map_error_with_command("prime_commit_details", started_at, &state, error);
+            }
+        };
 
     let mut entries_by_hash = std::collections::HashMap::<String, CommitDetailData>::new();
     for entry in entries {
@@ -986,10 +985,7 @@ pub fn push_remote(
 }
 
 #[tauri::command(async)]
-pub fn sync_remote(
-    repository_path: String,
-    state: State<'_, AppState>,
-) -> CommandResult<SyncData> {
+pub fn sync_remote(repository_path: String, state: State<'_, AppState>) -> CommandResult<SyncData> {
     let started_at = Instant::now();
     let request_id = Uuid::new_v4().to_string();
     logging_service::set_request_context(request_id.as_str());
@@ -1137,7 +1133,7 @@ pub fn get_conflict_state(
     let request_id = Uuid::new_v4().to_string();
     logging_service::set_request_context(request_id.as_str());
 
-    match git_provider::get_conflict_state(&repository_path) {
+    match repository_topology_service::get_conflict_state(&repository_path) {
         Ok(data) => command_ok("get_conflict_state", started_at, &state, data),
         Err(error) => map_error_with_command("get_conflict_state", started_at, &state, error),
     }
@@ -1156,7 +1152,12 @@ pub fn continue_conflict_resolution(
     match git_provider::continue_conflict_resolution(&repository_path, operation.as_deref()) {
         Ok(data) => {
             if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
-                return map_error_with_command("continue_conflict_resolution", started_at, &state, error);
+                return map_error_with_command(
+                    "continue_conflict_resolution",
+                    started_at,
+                    &state,
+                    error,
+                );
             }
             command_ok("continue_conflict_resolution", started_at, &state, data)
         }
@@ -1179,7 +1180,12 @@ pub fn abort_conflict_resolution(
     match git_provider::abort_conflict_resolution(&repository_path, operation.as_deref()) {
         Ok(data) => {
             if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
-                return map_error_with_command("abort_conflict_resolution", started_at, &state, error);
+                return map_error_with_command(
+                    "abort_conflict_resolution",
+                    started_at,
+                    &state,
+                    error,
+                );
             }
             command_ok("abort_conflict_resolution", started_at, &state, data)
         }
@@ -1464,9 +1470,7 @@ pub fn get_ai_audit_entries(
 }
 
 #[tauri::command(async)]
-pub fn clear_ai_audit_entries(
-    state: State<'_, AppState>,
-) -> CommandResult<AiAuditMaintenanceData> {
+pub fn clear_ai_audit_entries(state: State<'_, AppState>) -> CommandResult<AiAuditMaintenanceData> {
     let started_at = Instant::now();
     let request_id = Uuid::new_v4().to_string();
     logging_service::set_request_context(request_id.as_str());

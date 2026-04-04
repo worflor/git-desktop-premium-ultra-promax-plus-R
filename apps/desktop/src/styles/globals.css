@@ -850,32 +850,75 @@ ol {
   color: var(--accent-bright);
 }
 
+.workspace-mode-btn[aria-pressed="true"],
+.workspace-mode-btn.is-open {
+  background: var(--item-active-bg);
+  border-color: var(--item-active-border);
+  color: var(--accent-bright);
+}
+
 .workspace-sync-btn {
-  width: auto;
+  width: 34px;
   min-width: 34px;
-  padding: 0 8px;
+  padding: 0;
   gap: 6px;
+  justify-content: center;
+  position: relative;
+  overflow: visible;
 }
 
-.workspace-sync-btn .icon {
-  flex: 0 0 auto;
-  display: block;
-}
-
-.workspace-sync-icon .sync-p1,
-.workspace-sync-icon .sync-p2,
-.workspace-sync-btn:hover .workspace-sync-icon .sync-p1,
-.workspace-sync-btn:hover .workspace-sync-icon .sync-p2,
-.workspace-sync-btn.is-active .workspace-sync-icon .sync-p1,
-.workspace-sync-btn.is-active .workspace-sync-icon .sync-p2 {
-  animation: none !important;
+.workspace-sync-btn:hover,
+.workspace-sync-btn:focus-visible,
+.workspace-sync-btn[aria-pressed="true"] {
   transform: none !important;
 }
 
+.workspace-sync-icon-slot {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+
+.workspace-sync-btn .icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  display: block;
+  overflow: visible;
+  will-change: transform;
+}
+
+.workspace-sync-btn .workspace-sync-summary {
+  opacity: 0.88;
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+
+.workspace-sync-btn:hover .workspace-sync-icon .sync-p1,
+.workspace-sync-btn:hover .workspace-sync-icon .sync-p2 {
+  transform: none !important;
+}
+
+.workspace-sync-btn:hover .workspace-sync-summary,
+.workspace-sync-btn:focus-visible .workspace-sync-summary,
+.workspace-sync-btn[aria-pressed="true"] .workspace-sync-summary {
+  opacity: 1;
+}
+
 .workspace-sync-summary {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .workspace-sync-chip {
@@ -890,6 +933,7 @@ ol {
   font-weight: 700;
   font-family: var(--font-mono);
   letter-spacing: 0.01em;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 
 .workspace-sync-chip.is-ahead {
@@ -902,6 +946,16 @@ ol {
   color: var(--hypercube-negative);
   background: color-mix(in srgb, var(--hypercube-negative) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--hypercube-negative) 18%, transparent);
+}
+
+.workspace-sync-btn[aria-pressed="true"] .workspace-sync-chip.is-ahead {
+  background: color-mix(in srgb, var(--hypercube-positive) 18%, var(--item-active-bg));
+  border-color: color-mix(in srgb, var(--hypercube-positive) 28%, var(--item-active-border));
+}
+
+.workspace-sync-btn[aria-pressed="true"] .workspace-sync-chip.is-behind {
+  background: color-mix(in srgb, var(--hypercube-negative) 18%, var(--item-active-bg));
+  border-color: color-mix(in srgb, var(--hypercube-negative) 28%, var(--item-active-border));
 }
 
 /* ── Status Indicators & Micro-Badges ────────────────────── */

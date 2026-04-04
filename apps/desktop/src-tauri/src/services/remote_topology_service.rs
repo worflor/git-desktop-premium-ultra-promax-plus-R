@@ -176,7 +176,10 @@ pub fn parse_remote_url(value: &str) -> Option<(String, String)> {
     if let Some((_, rest)) = trimmed.split_once("://") {
         let rest = rest.trim();
         let (host_part, path_part) = rest.split_once('/')?;
-        let host = host_part.rsplit_once('@').map(|(_, value)| value).unwrap_or(host_part);
+        let host = host_part
+            .rsplit_once('@')
+            .map(|(_, value)| value)
+            .unwrap_or(host_part);
         return Some((
             host.trim().to_ascii_lowercase(),
             normalize_remote_path(path_part),
@@ -231,13 +234,19 @@ mod tests {
     fn detect_host_kind_from_url_handles_local_paths() {
         assert_eq!(detect_host_kind_from_url("file:///tmp/repo"), "local");
         assert_eq!(detect_host_kind_from_url("../relative/repo"), "local");
-        assert_eq!(detect_host_kind_from_url("ssh://example.com/repo.git"), "generic");
+        assert_eq!(
+            detect_host_kind_from_url("ssh://example.com/repo.git"),
+            "generic"
+        );
     }
 
     #[test]
     fn detect_protocol_classifies_transport() {
         assert_eq!(detect_protocol("git@github.com:owner/repo.git"), "ssh");
-        assert_eq!(detect_protocol("https://github.com/owner/repo.git"), "https");
+        assert_eq!(
+            detect_protocol("https://github.com/owner/repo.git"),
+            "https"
+        );
         assert_eq!(detect_protocol("file:///tmp/repo"), "local");
         assert_eq!(detect_protocol("custom://repo"), "other");
     }

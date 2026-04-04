@@ -236,9 +236,9 @@ fn run_pretext_runtime(
 
     let response = invoke_pretext_runtime_worker(script_path.as_path(), request_payload.as_str())
         .map_err(|error| {
-            runtime_unavailable_reason_set(error.clone());
-            error
-        })?;
+        runtime_unavailable_reason_set(error.clone());
+        error
+    })?;
 
     if !response.ok {
         let reason = response
@@ -274,41 +274,39 @@ fn invoke_pretext_runtime_worker(
         *worker_slot = Some(spawn_pretext_runtime_worker(script_path)?);
     }
 
-    let response_line_result = {
-        let worker = worker_slot
-            .as_mut()
-            .ok_or_else(|| "pretext runtime worker unavailable".to_string())?;
+    let response_line_result =
+        {
+            let worker = worker_slot
+                .as_mut()
+                .ok_or_else(|| "pretext runtime worker unavailable".to_string())?;
 
-        worker
-            .stdin
-            .write_all(request_payload.as_bytes())
-            .map_err(|error| format!("failed to write pretext runtime request: {error}"))
-            .and_then(|_| {
-                worker
-                    .stdin
-                    .write_all(b"\n")
-                    .map_err(|error| format!("failed to finalize pretext runtime request: {error}"))
-            })
-            .and_then(|_| {
-                worker
-                    .stdin
-                    .flush()
-                    .map_err(|error| format!("failed to flush pretext runtime request: {error}"))
-            })
-            .and_then(|_| {
-                let mut line = String::new();
-                let byte_count = worker
-                    .stdout
-                    .read_line(&mut line)
-                    .map_err(|error| format!("failed to read pretext runtime response: {error}"))?;
+            worker
+                .stdin
+                .write_all(request_payload.as_bytes())
+                .map_err(|error| format!("failed to write pretext runtime request: {error}"))
+                .and_then(|_| {
+                    worker.stdin.write_all(b"\n").map_err(|error| {
+                        format!("failed to finalize pretext runtime request: {error}")
+                    })
+                })
+                .and_then(|_| {
+                    worker.stdin.flush().map_err(|error| {
+                        format!("failed to flush pretext runtime request: {error}")
+                    })
+                })
+                .and_then(|_| {
+                    let mut line = String::new();
+                    let byte_count = worker.stdout.read_line(&mut line).map_err(|error| {
+                        format!("failed to read pretext runtime response: {error}")
+                    })?;
 
-                if byte_count == 0 {
-                    return Err("pretext runtime worker closed stdout".to_string());
-                }
+                    if byte_count == 0 {
+                        return Err("pretext runtime worker closed stdout".to_string());
+                    }
 
-                Ok(line)
-            })
-    };
+                    Ok(line)
+                })
+        };
 
     let response_line = match response_line_result {
         Ok(line) => line,
@@ -330,7 +328,9 @@ fn invoke_pretext_runtime_worker(
     })
 }
 
-fn spawn_pretext_runtime_worker(script_path: &std::path::Path) -> Result<PretextRuntimeWorker, String> {
+fn spawn_pretext_runtime_worker(
+    script_path: &std::path::Path,
+) -> Result<PretextRuntimeWorker, String> {
     let mut child = Command::new("node")
         .arg(script_path)
         .stdin(Stdio::piped())

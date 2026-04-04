@@ -1,6 +1,6 @@
 mod cli;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
@@ -10,8 +10,8 @@ use crate::errors::AppError;
 use crate::models::git::GitCapabilities;
 use crate::models::operations::{
     BranchInfoData, BranchListData, CommitDetailData, CommitFileStatData, CommitHistoryData,
-    CommitHistoryEntryData, ConflictResolutionData, ConflictStateData, StashEntryData,
-    StashListData, StashOperationData, SyncData, WorktreeData, WorktreeListData,
+    CommitHistoryEntryData, ConflictResolutionData, StashEntryData, StashListData,
+    StashOperationData, SyncData, WorktreeData, WorktreeListData,
 };
 use crate::models::repository::{RepositoryStatusData, RepositoryStatusFile};
 
@@ -586,23 +586,6 @@ pub fn continue_cherry_pick(repository_path: &str) -> Result<ConflictResolutionD
 
 pub fn abort_cherry_pick(repository_path: &str) -> Result<ConflictResolutionData, AppError> {
     abort_conflict_resolution(repository_path, Some("cherry-pick"))
-}
-
-pub fn get_conflict_state(repository_path: &str) -> Result<ConflictStateData, AppError> {
-    ensure_git_ready()?;
-
-    let conflicted_files = list_conflicted_files(repository_path)?;
-    let operation = detect_conflict_operation(repository_path)?;
-    let in_conflict = !conflicted_files.is_empty() || operation.is_some();
-    let guidance = build_conflict_guidance(operation.as_deref(), in_conflict);
-
-    Ok(ConflictStateData {
-        repository_path: repository_path.to_string(),
-        in_conflict,
-        operation,
-        conflicted_files,
-        guidance,
-    })
 }
 
 pub fn continue_conflict_resolution(
@@ -1230,7 +1213,11 @@ pub fn get_commit_details(
         }
 
         let mut lines = row.lines();
-        let Some(commit_hash) = lines.next().map(str::trim).filter(|value| !value.is_empty()) else {
+        let Some(commit_hash) = lines
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
             continue;
         };
 
@@ -1327,9 +1314,8 @@ fn split_upstream_ref(upstream: &str) -> Option<(String, String)> {
 }
 
 fn resolve_current_sync_target(repository_path: &str) -> Result<SyncTarget, AppError> {
-    let snapshot = crate::services::repository_root_service::get_repository_root_snapshot(
-        repository_path,
-    )?;
+    let snapshot =
+        crate::services::repository_root_service::get_repository_root_snapshot(repository_path)?;
     if is_detached_head(snapshot.current_branch.as_str()) {
         return Err(AppError::InvalidInput(
             "sync is unavailable while HEAD is detached".to_string(),
@@ -1444,49 +1430,6 @@ fn resolve_latest_stash_ref(repository_path: &str) -> Option<String> {
     })
 }
 
-fn list_conflicted_files(repository_path: &str) -> Result<Vec<String>, AppError> {
-    let output = run_git(
-        Some(repository_path),
-        &["status", "--porcelain=2", "--untracked-files=no"],
-    )?;
-
-    let mut conflicted_files = Vec::<String>::new();
-    let mut seen = HashSet::<String>::new();
-
-    for line in output.stdout.lines() {
-        if line.starts_with("u ") {
-            let path = line
-                .split_whitespace()
-                .last()
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            if !path.is_empty() && seen.insert(path.clone()) {
-                conflicted_files.push(path);
-            }
-            continue;
-        }
-
-        if line.starts_with("1 ") || line.starts_with("2 ") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            let xy = parts.get(1).copied().unwrap_or("??");
-            let index_status = xy.chars().next();
-            let worktree_status = xy.chars().nth(1);
-            let is_conflicted = index_status == Some('U') || worktree_status == Some('U');
-
-            if is_conflicted {
-                let path = parts.last().copied().unwrap_or_default().trim().to_string();
-                if !path.is_empty() && seen.insert(path.clone()) {
-                    conflicted_files.push(path);
-                }
-            }
-        }
-    }
-
-    conflicted_files.sort();
-    Ok(conflicted_files)
-}
-
 fn detect_conflict_operation(repository_path: &str) -> Result<Option<String>, AppError> {
     let git_dir = resolve_git_dir_path(repository_path)?;
 
@@ -1530,41 +1473,6 @@ fn resolve_git_dir_path(repository_path: &str) -> Result<PathBuf, AppError> {
     }
 
     Ok(PathBuf::from(git_dir))
-}
-
-fn build_conflict_guidance(operation: Option<&str>, in_conflict: bool) -> Vec<String> {
-    if !in_conflict {
-        return vec!["No conflicts detected.".to_string()];
-    }
-
-    match operation {
-        Some("merge") => vec![
-            "Resolve conflicted files and stage the resolved versions.".to_string(),
-            "Use Continue to run git merge --continue.".to_string(),
-            "Use Abort to run git merge --abort.".to_string(),
-        ],
-        Some("rebase") => vec![
-            "Resolve conflicted files and stage the resolved versions.".to_string(),
-            "Use Continue to run git rebase --continue.".to_string(),
-            "Use Abort to run git rebase --abort.".to_string(),
-        ],
-        Some("cherry-pick") => vec![
-            "Resolve conflicted files and stage the resolved versions.".to_string(),
-            "Use Continue to run git cherry-pick --continue.".to_string(),
-            "Use Abort to run git cherry-pick --abort.".to_string(),
-        ],
-        Some("revert") => vec![
-            "Resolve conflicted files and stage the resolved versions.".to_string(),
-            "Use Continue to run git revert --continue.".to_string(),
-            "Use Abort to run git revert --abort.".to_string(),
-        ],
-        _ => vec![
-            "Conflicted files were detected, but no active merge/rebase operation was identified."
-                .to_string(),
-            "Resolve files, stage them, then continue manually with the appropriate git command."
-                .to_string(),
-        ],
-    }
 }
 
 fn resolve_conflict_operation(
@@ -1624,13 +1532,14 @@ mod tests {
 
     use uuid::Uuid;
 
+    use crate::services::repository_topology_service;
+
     use super::{
-        abort_conflict_resolution, build_conflict_guidance, conflict_action_args,
-        continue_conflict_resolution, create_stash, create_worktree, drop_stash, get_commit_detail,
-        get_conflict_state, get_repository_status, list_branches, list_commit_history,
-        list_stashes, list_worktrees, normalize_conflict_operation, remove_worktree,
-        set_branch_upstream, stage_paths, start_cherry_pick, start_rebase, sync_remote,
-        unstage_paths,
+        abort_conflict_resolution, conflict_action_args, continue_conflict_resolution,
+        create_stash, create_worktree, drop_stash, get_commit_detail, get_repository_status,
+        list_branches, list_commit_history, list_stashes, list_worktrees,
+        normalize_conflict_operation, remove_worktree, set_branch_upstream, stage_paths,
+        start_cherry_pick, start_rebase, sync_remote, unstage_paths,
     };
 
     struct FixtureRepo {
@@ -1755,7 +1664,9 @@ mod tests {
         }
     }
 
-    fn git_status_snapshot(repository_path: &Path) -> (String, Option<String>, HashMap<String, String>) {
+    fn git_status_snapshot(
+        repository_path: &Path,
+    ) -> (String, Option<String>, HashMap<String, String>) {
         let output = run_fixture_git(
             repository_path,
             &[
@@ -1907,23 +1818,6 @@ mod tests {
     fn maps_merge_continue_conflict_args() {
         let args = conflict_action_args("merge", "continue").expect("expected merge continue args");
         assert_eq!(args, vec!["merge", "--continue"]);
-    }
-
-    #[test]
-    fn merge_guidance_mentions_continue_and_abort() {
-        let guidance = build_conflict_guidance(Some("merge"), true);
-        assert!(guidance
-            .iter()
-            .any(|line| line.contains("git merge --continue")));
-        assert!(guidance
-            .iter()
-            .any(|line| line.contains("git merge --abort")));
-    }
-
-    #[test]
-    fn no_conflict_guidance_reports_clean_state() {
-        let guidance = build_conflict_guidance(None, false);
-        assert_eq!(guidance, vec!["No conflicts detected.".to_string()]);
     }
 
     #[test]
@@ -2239,7 +2133,7 @@ mod tests {
             "expected merge to fail with conflict, but it succeeded"
         );
 
-        let conflict_state = get_conflict_state(fixture.path_str())
+        let conflict_state = repository_topology_service::get_conflict_state(fixture.path_str())
             .expect("expected provider conflict state result");
         assert!(conflict_state.in_conflict);
         assert_eq!(conflict_state.operation.as_deref(), Some("merge"));
@@ -2260,8 +2154,8 @@ mod tests {
         assert_eq!(resolution.operation, "merge");
         assert_eq!(resolution.action, "abort");
 
-        let post_state =
-            get_conflict_state(fixture.path_str()).expect("expected post-abort conflict state");
+        let post_state = repository_topology_service::get_conflict_state(fixture.path_str())
+            .expect("expected post-abort conflict state");
         assert!(!post_state.in_conflict);
         assert!(post_state.operation.is_none());
     }
@@ -2298,8 +2192,8 @@ mod tests {
         assert_eq!(resolution.operation, "merge");
         assert_eq!(resolution.action, "continue");
 
-        let post_state =
-            get_conflict_state(fixture.path_str()).expect("expected post-continue conflict state");
+        let post_state = repository_topology_service::get_conflict_state(fixture.path_str())
+            .expect("expected post-continue conflict state");
         assert!(!post_state.in_conflict);
         assert!(post_state.operation.is_none());
 
@@ -2333,7 +2227,7 @@ mod tests {
             "expected rebase to fail with conflict, but it succeeded"
         );
 
-        let conflict_state = get_conflict_state(fixture.path_str())
+        let conflict_state = repository_topology_service::get_conflict_state(fixture.path_str())
             .expect("expected provider conflict state result");
         assert!(conflict_state.in_conflict);
         assert_eq!(conflict_state.operation.as_deref(), Some("rebase"));
@@ -2343,8 +2237,8 @@ mod tests {
         assert_eq!(resolution.operation, "rebase");
         assert_eq!(resolution.action, "abort");
 
-        let post_state =
-            get_conflict_state(fixture.path_str()).expect("expected post-abort conflict state");
+        let post_state = repository_topology_service::get_conflict_state(fixture.path_str())
+            .expect("expected post-abort conflict state");
         assert!(!post_state.in_conflict);
         assert!(post_state.operation.is_none());
 

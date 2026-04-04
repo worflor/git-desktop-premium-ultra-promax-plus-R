@@ -1,5 +1,5 @@
-use std::fs;
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -754,7 +754,10 @@ where
             "Resolved provider binary '{}' via {} ({}).\n",
             resolution.command, resolution.source, resolution.health_check
         ));
-        emit(&format!("Provider auth status: {}.\n", availability.auth.detail));
+        emit(&format!(
+            "Provider auth status: {}.\n",
+            availability.auth.detail
+        ));
     }
 
     if availability.ready {
@@ -787,7 +790,10 @@ where
         }
     } else {
         emit("Provider is not ready for CLI piggybacking; using deterministic local fallback review.\n");
-        emit(&format!("Readiness detail: {}\n", format_provider_health(&availability)));
+        emit(&format!(
+            "Readiness detail: {}\n",
+            format_provider_health(&availability)
+        ));
     }
 
     run_fallback_review(
@@ -843,7 +849,14 @@ where
             "Running provider adapter attempt: {}\n",
             attempt.name
         ));
-        match execute_provider_attempt(adapter, binary, repository_path, &attempt, cancel_flag, emit) {
+        match execute_provider_attempt(
+            adapter,
+            binary,
+            repository_path,
+            &attempt,
+            cancel_flag,
+            emit,
+        ) {
             Ok(true) => {
                 emit("Provider review completed.\n");
                 return Ok(true);
@@ -967,11 +980,8 @@ where
                 }
             }
 
-            let formatted_output = format_provider_output(
-                attempt.output_mode,
-                &stdout_output,
-                &stderr_output,
-            );
+            let formatted_output =
+                format_provider_output(attempt.output_mode, &stdout_output, &stderr_output);
 
             if !status.success() {
                 if let Some(output) = formatted_output {
@@ -1124,11 +1134,7 @@ fn set_provider_environment(kind: ProviderKind, command: &mut Command) {
     }
 }
 
-fn format_provider_output(
-    mode: ProviderOutputMode,
-    stdout: &str,
-    stderr: &str,
-) -> Option<String> {
+fn format_provider_output(mode: ProviderOutputMode, stdout: &str, stderr: &str) -> Option<String> {
     match mode {
         ProviderOutputMode::PlainText => {
             let stdout = strip_ansi(stdout.trim());
@@ -1570,7 +1576,11 @@ fn codex_auth_status() -> ProviderAuthStatus {
 
     let has_token = value
         .get("tokens")
-        .and_then(|tokens| tokens.get("id_token").or_else(|| tokens.get("access_token")))
+        .and_then(|tokens| {
+            tokens
+                .get("id_token")
+                .or_else(|| tokens.get("access_token"))
+        })
         .and_then(Value::as_str)
         .map(|token| !token.trim().is_empty())
         .unwrap_or(false);
@@ -1647,7 +1657,11 @@ fn read_claude_oauth_credentials(path: &Path) -> Option<ClaudeOAuthCredentials> 
     let has_inference_scope = oauth
         .get("scopes")
         .and_then(Value::as_array)
-        .map(|scopes| scopes.iter().any(|scope| scope.as_str() == Some("user:inference")))
+        .map(|scopes| {
+            scopes
+                .iter()
+                .any(|scope| scope.as_str() == Some("user:inference"))
+        })
         .unwrap_or(false);
 
     Some(ClaudeOAuthCredentials {
@@ -1853,7 +1867,13 @@ fn opencode_auth_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     if let Some(home_dir) = user_home_dir() {
-        paths.push(home_dir.join(".local").join("share").join("opencode").join("auth.json"));
+        paths.push(
+            home_dir
+                .join(".local")
+                .join("share")
+                .join("opencode")
+                .join("auth.json"),
+        );
     }
 
     if let Ok(app_data) = std::env::var("APPDATA") {
@@ -1861,7 +1881,11 @@ fn opencode_auth_paths() -> Vec<PathBuf> {
     }
 
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        paths.push(PathBuf::from(local_app_data).join("opencode").join("auth.json"));
+        paths.push(
+            PathBuf::from(local_app_data)
+                .join("opencode")
+                .join("auth.json"),
+        );
     }
 
     paths
@@ -1979,7 +2003,9 @@ fn discover_codex_config_model() -> Option<String> {
     None
 }
 
-fn discover_claude_models(_resolution: Option<&ProviderResolution>) -> Option<ProviderModelDiscovery> {
+fn discover_claude_models(
+    _resolution: Option<&ProviderResolution>,
+) -> Option<ProviderModelDiscovery> {
     let mut models = Vec::<String>::new();
     if let Some(configured) = discover_claude_configured_model() {
         models.push(configured);
@@ -2027,9 +2053,7 @@ fn find_model_value_in_json(value: &Value) -> Option<String> {
             }
             None
         }
-        Value::Array(items) => items
-            .iter()
-            .find_map(find_model_value_in_json),
+        Value::Array(items) => items.iter().find_map(find_model_value_in_json),
         _ => None,
     }
 }
@@ -2048,7 +2072,9 @@ fn discover_gemini_models() -> Option<ProviderModelDiscovery> {
     })
 }
 
-fn discover_opencode_models(resolution: Option<&ProviderResolution>) -> Option<ProviderModelDiscovery> {
+fn discover_opencode_models(
+    resolution: Option<&ProviderResolution>,
+) -> Option<ProviderModelDiscovery> {
     let command = resolution
         .map(|entry| entry.command.clone())
         .unwrap_or_else(|| "opencode".to_string());
@@ -2236,7 +2262,11 @@ fn model_category_definitions() -> Vec<ModelCategoryDefinition> {
             id: entry.id.to_string(),
             label: entry.label.to_string(),
             description: entry.description.map(|value| value.to_string()),
-            hint_tokens: entry.hint_tokens.iter().map(|value| value.to_string()).collect(),
+            hint_tokens: entry
+                .hint_tokens
+                .iter()
+                .map(|value| value.to_string())
+                .collect(),
         })
         .collect()
 }
@@ -2377,13 +2407,14 @@ fn model_matches_any_hint(model_id: &str, hint_tokens: &[String]) -> bool {
     }
 
     let normalized = model_id.to_ascii_lowercase();
-    hint_tokens.iter().any(|hint| normalized.contains(hint.as_str()))
+    hint_tokens
+        .iter()
+        .any(|hint| normalized.contains(hint.as_str()))
 }
 
 fn normalize_model_key(model_id: &str) -> String {
     let bare = model_id.split('/').next_back().unwrap_or(model_id);
-    bare
-        .replace('.', "-")
+    bare.replace('.', "-")
         .replace('_', "-")
         .to_ascii_lowercase()
 }
@@ -2462,13 +2493,15 @@ fn resolve_provider_command(binary: &str) -> Option<ProviderResolution> {
     resolved
 }
 
-fn provider_resolution_cache() -> &'static Mutex<std::collections::HashMap<String, ProviderResolutionCacheEntry>> {
+fn provider_resolution_cache(
+) -> &'static Mutex<std::collections::HashMap<String, ProviderResolutionCacheEntry>> {
     static CACHE: OnceLock<Mutex<std::collections::HashMap<String, ProviderResolutionCacheEntry>>> =
         OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
-fn provider_availability_cache() -> &'static Mutex<std::collections::HashMap<String, ProviderAvailabilityCacheEntry>> {
+fn provider_availability_cache(
+) -> &'static Mutex<std::collections::HashMap<String, ProviderAvailabilityCacheEntry>> {
     static CACHE: OnceLock<
         Mutex<std::collections::HashMap<String, ProviderAvailabilityCacheEntry>>,
     > = OnceLock::new();
@@ -2485,13 +2518,15 @@ fn provider_availability_refresh_lock(cache_key: &str) -> Option<Arc<Mutex<()>>>
     )
 }
 
-fn provider_availability_refresh_locks() -> &'static Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>> {
+fn provider_availability_refresh_locks(
+) -> &'static Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>> {
     static LOCKS: OnceLock<Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>> =
         OnceLock::new();
     LOCKS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
-fn provider_model_discovery_cache() -> &'static Mutex<std::collections::HashMap<String, ProviderModelDiscoveryCacheEntry>> {
+fn provider_model_discovery_cache(
+) -> &'static Mutex<std::collections::HashMap<String, ProviderModelDiscoveryCacheEntry>> {
     static CACHE: OnceLock<
         Mutex<std::collections::HashMap<String, ProviderModelDiscoveryCacheEntry>>,
     > = OnceLock::new();
@@ -2688,7 +2723,11 @@ fn run_command_output_with_timeout_outcome(
     }
 }
 
-fn run_command_output_with_timeout(command: &str, args: &[&str], timeout: Duration) -> Option<Output> {
+fn run_command_output_with_timeout(
+    command: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<Output> {
     match run_command_output_with_timeout_outcome(command, args, timeout) {
         CommandExecutionOutcome::Completed(output) => Some(output),
         CommandExecutionOutcome::SpawnFailed
@@ -2703,9 +2742,7 @@ fn probe_binary_health(command: &str) -> Option<String> {
     let timeout = if lowered.contains("opencode") {
         OPENCODE_BINARY_HEALTH_CHECK_TIMEOUT
     } else if cfg!(target_os = "windows")
-        && (lowered.ends_with(".cmd")
-            || lowered.ends_with(".bat")
-            || lowered.ends_with(".ps1"))
+        && (lowered.ends_with(".cmd") || lowered.ends_with(".bat") || lowered.ends_with(".ps1"))
     {
         WINDOWS_SCRIPT_HEALTH_CHECK_TIMEOUT
     } else {
@@ -2713,11 +2750,7 @@ fn probe_binary_health(command: &str) -> Option<String> {
     };
 
     for args in HEALTH_CHECKS {
-        let output = match run_command_output_with_timeout_outcome(
-            command,
-            args,
-            timeout,
-        ) {
+        let output = match run_command_output_with_timeout_outcome(command, args, timeout) {
             CommandExecutionOutcome::Completed(output) => output,
             CommandExecutionOutcome::SpawnFailed | CommandExecutionOutcome::WaitFailed => {
                 continue;
@@ -2747,8 +2780,9 @@ mod tests {
     use super::{
         build_inline_prompt, build_provider_attempts, build_stdin_payload,
         enforce_guardrail_for_review, known_binary_candidates, prompt_requests_write_action,
-        provider_adapters, provider_binary_name, push_candidate, AiProviderAdapter, ProviderKind,
-        validate_review_input, MAX_INLINE_DIFF_CHARS, MAX_STDIN_DIFF_CHARS, PROVIDER_BINARIES,
+        provider_adapters, provider_binary_name, push_candidate, validate_review_input,
+        AiProviderAdapter, ProviderKind, MAX_INLINE_DIFF_CHARS, MAX_STDIN_DIFF_CHARS,
+        PROVIDER_BINARIES,
     };
 
     #[test]
@@ -2766,7 +2800,9 @@ mod tests {
         for adapter in provider_adapters() {
             assert!(ids.insert(adapter.id()));
             assert!(!adapter.binary_name().trim().is_empty());
-            assert!(!adapter.build_attempts("review prompt", "diff body").is_empty());
+            assert!(!adapter
+                .build_attempts("review prompt", "diff body")
+                .is_empty());
         }
     }
 
@@ -2829,7 +2865,9 @@ mod tests {
         ] {
             let attempts = build_provider_attempts(kind, "review prompt", "diff body");
             assert!(!attempts.is_empty());
-            assert!(attempts.iter().any(|attempt| attempt.stdin_payload.is_some()));
+            assert!(attempts
+                .iter()
+                .any(|attempt| attempt.stdin_payload.is_some()));
         }
     }
 

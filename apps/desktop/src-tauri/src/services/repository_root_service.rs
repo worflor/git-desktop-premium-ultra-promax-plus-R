@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::errors::AppError;
 use crate::models::operations::CommitHistoryEntryData;
-use crate::services::{git_provider, remote_topology_service, repository_read_service};
+use crate::services::{repository_read_service, repository_topology_service};
 
 const ROOT_SNAPSHOT_CACHE_TTL: Duration = Duration::from_millis(900);
 const HISTORY_WARM_COOLDOWN: Duration = Duration::from_millis(1500);
@@ -40,21 +40,17 @@ pub fn get_repository_root_snapshot(
         }
     }
 
-    let status = repository_read_service::get_repository_status(repository_path)?;
-    let head_hash = git_provider::get_head_commit_hash(repository_path)?;
-    let conflict_operation = git_provider::get_conflict_operation(repository_path)?;
-    let remotes = remote_topology_service::list_repository_remotes(repository_path)?;
-    let default_remote = select_default_remote(&remotes);
+    let topology = repository_topology_service::get_repository_topology_snapshot(repository_path)?;
 
     let snapshot = RepositoryRootSnapshot {
-        head_hash,
-        current_branch: status.branch,
-        upstream: status.upstream,
-        ahead: status.ahead,
-        behind: status.behind,
-        conflict_operation,
-        worktree_dirty: !status.files.is_empty(),
-        default_remote,
+        head_hash: topology.head_hash,
+        current_branch: topology.status.branch,
+        upstream: topology.status.upstream,
+        ahead: topology.status.ahead,
+        behind: topology.status.behind,
+        conflict_operation: topology.conflict_operation,
+        worktree_dirty: !topology.status.files.is_empty(),
+        default_remote: topology.default_remote,
     };
 
     if let Ok(mut cache) = root_snapshot_cache().lock() {
@@ -145,18 +141,6 @@ fn should_warm_commit_details(snapshot: &RepositoryRootSnapshot) -> bool {
 fn is_detached_head(branch: &str) -> bool {
     let normalized = branch.trim().to_ascii_lowercase();
     normalized.is_empty() || normalized == "head" || normalized == "detached"
-}
-
-fn select_default_remote(remotes: &[remote_topology_service::RepositoryRemote]) -> Option<String> {
-    if remotes.is_empty() {
-        return None;
-    }
-
-    if let Some(origin) = remotes.iter().find(|remote| remote.remote == "origin") {
-        return Some(origin.remote.clone());
-    }
-
-    Some(remotes[0].remote.clone())
 }
 
 fn mark_warm_scheduled(repository_path: &str) -> bool {

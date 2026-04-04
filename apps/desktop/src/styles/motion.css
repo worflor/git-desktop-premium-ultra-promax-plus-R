@@ -76,17 +76,25 @@ svg:hover .branch-c3 { transform: scale(1.1); }
 .is-active .branch-c3 { animation: branch-pulse 2.5s infinite cubic-bezier(0.4, 0, 0.2, 1) 0.6s; }
 
 /* Sync Icon */
-.sync-p1 { d: path("M12 5V2l2 2-2 2V5H4"); transform-origin: 8px 8px; }
-.sync-p2 { d: path("M4 11v3l-2-2 2-2v3h8"); transform-origin: 8px 8px; }
+.icon-sync .sync-p1 { d: path("M12 5V2l2 2-2 2V5H4"); transform-origin: 8px 8px; }
+.icon-sync .sync-p2 { d: path("M4 11v3l-2-2 2-2v3h8"); transform-origin: 8px 8px; }
 
-svg:hover .sync-p1 { transform: translateY(-0.5px); }
-svg:hover .sync-p2 { transform: translateY(0.5px); }
+.icon-sync:hover .sync-p1 { transform: translateY(-0.5px); }
+.icon-sync:hover .sync-p2 { transform: translateY(0.5px); }
 
 @keyframes sync-spin-loop {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 }
-.is-active .sync-p1, .is-active .sync-p2 { animation: sync-spin-loop 2.5s infinite cubic-bezier(0.87, 0, 0.13, 1); transform-origin: 8px 8px; }
+.is-active .icon-sync .sync-p1,
+.is-active .icon-sync .sync-p2,
+.icon-sync.is-active .sync-p1,
+.icon-sync.is-active .sync-p2,
+.workspace-sync-btn[aria-pressed="true"] .workspace-sync-icon .sync-p1,
+.workspace-sync-btn[aria-pressed="true"] .workspace-sync-icon .sync-p2 {
+  animation: sync-spin-loop 2.5s infinite cubic-bezier(0.87, 0, 0.13, 1);
+  transform-origin: 8px 8px;
+}
 
 /* Settings Icon */
 .settings-l1, .settings-l2, .settings-l3 { d: path("M2.5 4h11"); stroke-dasharray: 20; }

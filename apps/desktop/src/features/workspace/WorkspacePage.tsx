@@ -96,6 +96,13 @@ export function WorkspacePage() {
     const latest = syncStatus.latest;
     return latest?.ok ? latest.data : null;
   });
+  const shouldShowSyncSummary = createMemo(() => {
+    const status = syncStatusData();
+    if (!status) {
+      return false;
+    }
+    return status.ahead > 0 || status.behind > 0;
+  });
 
   const setActivePanel = (panel: WorkspacePanel | null) => {
     const searchParams = new URLSearchParams(location.search);
@@ -181,7 +188,7 @@ export function WorkspacePage() {
           ))}
 
           <button
-            class={`workspace-mode-btn workspace-sync-btn hyper-reactive ${isSyncOpen() ? "is-active active" : ""}`}
+            class={`workspace-mode-btn workspace-sync-btn hyper-reactive ${isSyncOpen() ? "is-open" : ""}`}
             type="button"
             title="sync"
             aria-label={isSyncOpen() ? "Close sync" : "Open sync"}
@@ -189,8 +196,10 @@ export function WorkspacePage() {
             aria-expanded={isSyncOpen()}
             onClick={() => setActivePanel(isSyncOpen() ? null : "sync")}
           >
-            <Icon name="sync" size={16} class="workspace-sync-icon" />
-            <Show when={syncStatusData()}>
+            <span class="workspace-sync-icon-slot">
+              <Icon name="sync" size={16} class={`workspace-sync-icon ${isSyncOpen() ? "is-active" : ""}`.trim()} />
+            </span>
+            <Show when={shouldShowSyncSummary() && syncStatusData()}>
               {(resolvedStatus) => (
                 <span class="workspace-sync-summary">
                   <Show when={resolvedStatus().ahead > 0}>
@@ -205,7 +214,7 @@ export function WorkspacePage() {
           </button>
 
           <button
-            class={`workspace-mode-btn workspace-settings-btn hyper-reactive ${isSettingsOpen() ? "is-active active" : ""}`}
+            class={`workspace-mode-btn workspace-settings-btn hyper-reactive ${isSettingsOpen() ? "is-open" : ""}`}
             type="button"
             title="settings"
             aria-label={isSettingsOpen() ? "Close settings" : "Open settings"}

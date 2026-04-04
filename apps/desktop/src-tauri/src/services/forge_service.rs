@@ -56,7 +56,11 @@ fn detect_gh() -> ForgeAdapter {
     }
 }
 
-fn remote_api_adapter(id: &str, status: forge_remote_service::AdapterStatus, version: &str) -> ForgeAdapter {
+fn remote_api_adapter(
+    id: &str,
+    status: forge_remote_service::AdapterStatus,
+    version: &str,
+) -> ForgeAdapter {
     ForgeAdapter {
         id: id.to_string(),
         available: status.available,
@@ -114,7 +118,9 @@ pub fn get_github_cli_auth_status() -> GithubCliAuthStatus {
             match auth_output {
                 Ok(output) if output.status.success() => {
                     let message = first_non_empty_line(&output.stdout, &output.stderr)
-                        .unwrap_or_else(|| "GitHub CLI is authenticated for github.com.".to_string());
+                        .unwrap_or_else(|| {
+                            "GitHub CLI is authenticated for github.com.".to_string()
+                        });
                     GithubCliAuthStatus {
                         available: true,
                         authenticated: true,
@@ -123,9 +129,10 @@ pub fn get_github_cli_auth_status() -> GithubCliAuthStatus {
                     }
                 }
                 Ok(output) => {
-                    let message =
-                        first_non_empty_line(&output.stderr, &output.stdout).unwrap_or_else(|| {
-                            "GitHub CLI is installed but not authenticated for github.com.".to_string()
+                    let message = first_non_empty_line(&output.stderr, &output.stdout)
+                        .unwrap_or_else(|| {
+                            "GitHub CLI is installed but not authenticated for github.com."
+                                .to_string()
                         });
                     GithubCliAuthStatus {
                         available: true,

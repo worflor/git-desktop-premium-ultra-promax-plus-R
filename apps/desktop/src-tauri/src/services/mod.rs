@@ -18,6 +18,7 @@ pub mod remote_topology_service;
 pub mod repository_read_service;
 pub mod repository_root_service;
 pub mod repository_service;
+pub mod repository_topology_service;
 pub mod settings_service;
 pub mod storage_paths;
 pub mod telemetry_service;

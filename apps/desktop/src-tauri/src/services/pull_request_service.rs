@@ -91,7 +91,8 @@ pub fn list_pull_requests(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let list_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::list_local_pull_requests(repository_path)
         }
         GITLAB_PULL_REQUEST_PROVIDER_ID => {
@@ -120,16 +121,15 @@ pub fn create_pull_request(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            local_pull_request_service::create_local_pull_request(
-                repository_path,
-                title,
-                description,
-                source_branch,
-                target_branch,
-                draft,
-            )
-        }
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => local_pull_request_service::create_local_pull_request(
+            repository_path,
+            title,
+            description,
+            source_branch,
+            target_branch,
+            draft,
+        ),
         GITLAB_PULL_REQUEST_PROVIDER_ID => forge_remote_service::create_gitlab_pull_request(
             repository_path,
             title,
@@ -165,7 +165,8 @@ pub fn close_pull_request(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::close_local_pull_request(repository_path, pull_request_id)
         }
         GITLAB_PULL_REQUEST_PROVIDER_ID => {
@@ -193,7 +194,8 @@ pub fn reopen_pull_request(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::reopen_local_pull_request(repository_path, pull_request_id)
         }
         GITLAB_PULL_REQUEST_PROVIDER_ID => {
@@ -221,7 +223,8 @@ pub fn mark_pull_request_ready(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::mark_local_pull_request_ready(
                 repository_path,
                 pull_request_id,
@@ -231,7 +234,10 @@ pub fn mark_pull_request_ready(
             forge_remote_service::mark_gitlab_pull_request_ready(repository_path, pull_request_id)
         }
         BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
-            forge_remote_service::mark_bitbucket_pull_request_ready(repository_path, pull_request_id)
+            forge_remote_service::mark_bitbucket_pull_request_ready(
+                repository_path,
+                pull_request_id,
+            )
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
@@ -253,13 +259,12 @@ pub fn merge_pull_request(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
-            local_pull_request_service::merge_local_pull_request(
-                repository_path,
-                pull_request_id,
-                delete_source_branch,
-            )
-        }
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
+        | GITHUB_PULL_REQUEST_PROVIDER_ID => local_pull_request_service::merge_local_pull_request(
+            repository_path,
+            pull_request_id,
+            delete_source_branch,
+        ),
         GITLAB_PULL_REQUEST_PROVIDER_ID => forge_remote_service::merge_gitlab_pull_request(
             repository_path,
             pull_request_id,

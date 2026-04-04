@@ -139,11 +139,17 @@ fn execute_git_command(
     args: &[&str],
 ) -> std::io::Result<std::process::Output> {
     let mut command = Command::new("git");
+    command.args(["-c", "core.editor=true", "-c", "sequence.editor=true"]);
     command.args(args);
 
     if let Some(path) = repository_path {
         command.current_dir(path);
     }
+
+    command.env("GIT_EDITOR", "true");
+    command.env("GIT_SEQUENCE_EDITOR", "true");
+    command.env("EDITOR", "true");
+    command.env("VISUAL", "true");
 
     command.output()
 }
