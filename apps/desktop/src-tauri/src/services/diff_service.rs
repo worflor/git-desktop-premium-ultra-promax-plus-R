@@ -1,10 +1,11 @@
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-
-use uuid::Uuid;
 
 use crate::errors::AppError;
 use crate::models::operations::{DiffHunkData, FileDiffChunkData, FileDiffManifestData};
-use crate::runtime::state::{AppState, DiffPayloadRecord};
 use crate::services::{git_provider, logging_service, pretext_service, telemetry_service};
 
 const DEFAULT_CHUNK_SIZE_BYTES: usize = 64 * 1024;
@@ -27,8 +28,37 @@ pub struct PrepareFileDiffChunksInput<'a> {
     pub line_height_px: Option<u32>,
 }
 
+#[derive(Debug, Clone)]
+struct DiffPayloadRecord {
+    repository_path: String,
+    created_at: Instant,
+    expires_at: Instant,
+    manifest: FileDiffManifestData,
+    chunks: Vec<String>,
+}
+
+#[derive(Debug)]
+struct DiffAnalysis {
+    total_lines: u32,
+    additions: u32,
+    deletions: u32,
+    hunks: Vec<DiffHunkData>,
+    chunks: Vec<String>,
+}
+
+#[derive(Debug)]
+struct HunkDraft {
+    hunk_index: u32,
+    header: String,
+    old_start: u32,
+    old_lines: u32,
+    new_start: u32,
+    new_lines: u32,
+    added_lines: u32,
+    deleted_lines: u32,
+}
+
 pub fn prepare_file_diff_chunks(
-    state: &AppState,
     input: PrepareFileDiffChunksInput<'_>,
 ) -> Result<FileDiffManifestData, AppError> {
     let started_at = Instant::now();
@@ -54,22 +84,40 @@ pub fn prepare_file_diff_chunks(
             });
         }
 
-        let hunks = parse_hunks(&diff_text);
-        let (additions, deletions) = count_changed_lines(&diff_text);
-        let chunks = split_text_chunks(&diff_text, chunk_size);
-        let diff_id = Uuid::new_v4().to_string();
-
         let layout_options = pretext_service::LayoutOptions::from_command_inputs(
             input.layout_width_px,
             input.font_profile,
             input.line_height_px,
         );
+        let diff_id = build_diff_id(
+            input.repository_path,
+            input.path.trim(),
+            input.staged,
+            input.context_lines,
+            chunk_size,
+            &layout_options,
+            diff_text.as_str(),
+        );
+
+        let now = Instant::now();
+        let mut payloads = diff_payload_cache()
+            .lock()
+            .map_err(|_| AppError::Internal("failed to lock diff payload cache".to_string()))?;
+        prune_diff_payloads(&mut payloads, now);
+        if let Some(record) = payloads.get_mut(diff_id.as_str()) {
+            record.created_at = now;
+            record.expires_at = now + DIFF_CACHE_TTL;
+            return Ok(record.manifest.clone());
+        }
+
+        let analysis = analyze_diff_text(diff_text.as_str(), chunk_size);
         let layout = pretext_service::prepare_layout(&diff_id, &diff_text, &layout_options);
 
         let mode_threshold_max_changed_lines = mode_a_max_changed_lines();
         let mode_threshold_max_payload_bytes = mode_a_max_payload_bytes();
+        let changed_lines = analysis.additions.saturating_add(analysis.deletions);
         let renderer_mode = select_renderer_mode(
-            additions.saturating_add(deletions),
+            changed_lines,
             total_bytes,
             layout.fallback_activated,
             mode_threshold_max_changed_lines,
@@ -82,13 +130,13 @@ pub fn prepare_file_diff_chunks(
             staged: input.staged,
             context_lines: input.context_lines as u32,
             chunk_size_bytes: chunk_size as u32,
-            chunk_count: chunks.len() as u32,
+            chunk_count: analysis.chunks.len() as u32,
             total_bytes: total_bytes as u32,
-            total_lines: diff_text.lines().count() as u32,
-            changed_lines: additions.saturating_add(deletions),
-            additions,
-            deletions,
-            hunk_count: hunks.len() as u32,
+            total_lines: analysis.total_lines,
+            changed_lines,
+            additions: analysis.additions,
+            deletions: analysis.deletions,
+            hunk_count: analysis.hunks.len() as u32,
             renderer_mode,
             mode_threshold_max_changed_lines,
             mode_threshold_max_payload_bytes: mode_threshold_max_payload_bytes as u32,
@@ -99,27 +147,20 @@ pub fn prepare_file_diff_chunks(
             fallback_reason: layout.fallback_reason,
             visual_row_count: layout.visual_row_count,
             layout_cache_key: layout.layout_cache_key,
-            initial_chunk_text: chunks.first().cloned().unwrap_or_default(),
-            hunks,
+            initial_chunk_text: analysis.chunks.first().cloned().unwrap_or_default(),
+            hunks: analysis.hunks,
         };
 
-        let now = Instant::now();
-        let mut payloads = state
-            .diff_payloads
-            .lock()
-            .map_err(|_| AppError::Internal("failed to lock diff payload cache".to_string()))?;
-
-        prune_diff_payloads(&mut payloads, now);
         payloads.insert(
             diff_id,
             DiffPayloadRecord {
+                repository_path: input.repository_path.to_string(),
                 created_at: now,
                 expires_at: now + DIFF_CACHE_TTL,
                 manifest: manifest.clone(),
-                chunks,
+                chunks: analysis.chunks,
             },
         );
-
         trim_diff_payloads(&mut payloads);
 
         Ok(manifest)
@@ -197,7 +238,6 @@ pub fn prepare_file_diff_chunks(
 }
 
 pub fn get_file_diff_chunk(
-    state: &AppState,
     diff_id: &str,
     chunk_index: usize,
 ) -> Result<FileDiffChunkData, AppError> {
@@ -213,11 +253,9 @@ pub fn get_file_diff_chunk(
         }
 
         let now = Instant::now();
-        let mut payloads = state
-            .diff_payloads
+        let mut payloads = diff_payload_cache()
             .lock()
             .map_err(|_| AppError::Internal("failed to lock diff payload cache".to_string()))?;
-
         prune_diff_payloads(&mut payloads, now);
 
         let record = payloads
@@ -272,14 +310,22 @@ pub fn get_file_diff_chunk(
     result
 }
 
-fn prune_diff_payloads(
-    payloads: &mut std::collections::HashMap<String, DiffPayloadRecord>,
-    now: Instant,
-) {
+pub fn invalidate_repository(repository_path: &str) {
+    if let Ok(mut payloads) = diff_payload_cache().lock() {
+        payloads.retain(|_, record| record.repository_path != repository_path);
+    }
+}
+
+fn diff_payload_cache() -> &'static Mutex<HashMap<String, DiffPayloadRecord>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, DiffPayloadRecord>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn prune_diff_payloads(payloads: &mut HashMap<String, DiffPayloadRecord>, now: Instant) {
     payloads.retain(|_, record| record.expires_at > now);
 }
 
-fn trim_diff_payloads(payloads: &mut std::collections::HashMap<String, DiffPayloadRecord>) {
+fn trim_diff_payloads(payloads: &mut HashMap<String, DiffPayloadRecord>) {
     if payloads.len() <= MAX_RETAINED_DIFFS {
         return;
     }
@@ -292,7 +338,151 @@ fn trim_diff_payloads(payloads: &mut std::collections::HashMap<String, DiffPaylo
 
     let drop_count = records.len().saturating_sub(MAX_RETAINED_DIFFS);
     for (diff_id, _) in records.into_iter().take(drop_count) {
-        payloads.remove(&diff_id);
+        payloads.remove(diff_id.as_str());
+    }
+}
+
+fn build_diff_id(
+    repository_path: &str,
+    path: &str,
+    staged: bool,
+    context_lines: usize,
+    chunk_size: usize,
+    layout_options: &pretext_service::LayoutOptions,
+    diff_text: &str,
+) -> String {
+    let mut hasher = DefaultHasher::new();
+    repository_path.hash(&mut hasher);
+    path.hash(&mut hasher);
+    staged.hash(&mut hasher);
+    context_lines.hash(&mut hasher);
+    chunk_size.hash(&mut hasher);
+    layout_options.width_px.hash(&mut hasher);
+    layout_options.font_profile.hash(&mut hasher);
+    layout_options.line_height_px.hash(&mut hasher);
+    diff_text.hash(&mut hasher);
+    format!("diff:{:016x}", hasher.finish())
+}
+
+fn analyze_diff_text(diff_text: &str, chunk_size: usize) -> DiffAnalysis {
+    if diff_text.is_empty() {
+        return DiffAnalysis {
+            total_lines: 0,
+            additions: 0,
+            deletions: 0,
+            hunks: Vec::new(),
+            chunks: vec![String::new()],
+        };
+    }
+
+    let mut additions = 0_u32;
+    let mut deletions = 0_u32;
+    let mut total_lines = 0_u32;
+    let mut hunks = Vec::<DiffHunkData>::new();
+    let mut current_hunk = None::<HunkDraft>;
+    let mut chunks = Vec::<String>::new();
+    let mut current_chunk = String::new();
+
+    for line in diff_text.split_inclusive('\n') {
+        total_lines = total_lines.saturating_add(1);
+
+        if let Some((old_start, old_lines, new_start, new_lines)) = parse_hunk_header(line) {
+            if let Some(previous) = current_hunk.take() {
+                hunks.push(finish_hunk(previous));
+            }
+            current_hunk = Some(HunkDraft {
+                hunk_index: hunks.len() as u32,
+                header: line.trim_end_matches('\n').to_string(),
+                old_start,
+                old_lines,
+                new_start,
+                new_lines,
+                added_lines: 0,
+                deleted_lines: 0,
+            });
+        } else if line.starts_with('+') && !line.starts_with("+++") {
+            additions = additions.saturating_add(1);
+            if let Some(active) = current_hunk.as_mut() {
+                active.added_lines = active.added_lines.saturating_add(1);
+            }
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            deletions = deletions.saturating_add(1);
+            if let Some(active) = current_hunk.as_mut() {
+                active.deleted_lines = active.deleted_lines.saturating_add(1);
+            }
+        }
+
+        append_chunk(&mut chunks, &mut current_chunk, line, chunk_size);
+    }
+
+    if !diff_text.ends_with('\n') {
+        total_lines = total_lines.saturating_add(1);
+    }
+
+    if let Some(last) = current_hunk.take() {
+        hunks.push(finish_hunk(last));
+    }
+
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk);
+    }
+
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+
+    DiffAnalysis {
+        total_lines,
+        additions,
+        deletions,
+        hunks,
+        chunks,
+    }
+}
+
+fn append_chunk(
+    chunks: &mut Vec<String>,
+    current_chunk: &mut String,
+    line: &str,
+    chunk_size: usize,
+) {
+    if current_chunk.len() + line.len() <= chunk_size {
+        current_chunk.push_str(line);
+        return;
+    }
+
+    if !current_chunk.is_empty() {
+        chunks.push(std::mem::take(current_chunk));
+    }
+
+    if line.len() <= chunk_size {
+        current_chunk.push_str(line);
+        return;
+    }
+
+    let mut line_chunk = String::new();
+    for ch in line.chars() {
+        if line_chunk.len() + ch.len_utf8() > chunk_size && !line_chunk.is_empty() {
+            chunks.push(std::mem::take(&mut line_chunk));
+        }
+        line_chunk.push(ch);
+    }
+
+    if !line_chunk.is_empty() {
+        *current_chunk = line_chunk;
+    }
+}
+
+fn finish_hunk(hunk: HunkDraft) -> DiffHunkData {
+    DiffHunkData {
+        hunk_index: hunk.hunk_index,
+        header: hunk.header,
+        old_start: hunk.old_start,
+        old_lines: hunk.old_lines,
+        new_start: hunk.new_start,
+        new_lines: hunk.new_lines,
+        added_lines: hunk.added_lines,
+        deleted_lines: hunk.deleted_lines,
     }
 }
 
@@ -330,136 +520,20 @@ fn select_renderer_mode(
     "canvas".to_string()
 }
 
+#[cfg(test)]
 fn split_text_chunks(value: &str, chunk_size: usize) -> Vec<String> {
-    if value.is_empty() {
-        return vec![String::new()];
-    }
-
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-
-    for line in value.split_inclusive('\n') {
-        if current.len() + line.len() <= chunk_size {
-            current.push_str(line);
-            continue;
-        }
-
-        if !current.is_empty() {
-            chunks.push(current);
-            current = String::new();
-        }
-
-        if line.len() <= chunk_size {
-            current.push_str(line);
-            continue;
-        }
-
-        let mut line_chunk = String::new();
-        for ch in line.chars() {
-            if line_chunk.len() + ch.len_utf8() > chunk_size && !line_chunk.is_empty() {
-                chunks.push(line_chunk);
-                line_chunk = String::new();
-            }
-            line_chunk.push(ch);
-        }
-
-        if !line_chunk.is_empty() {
-            chunks.push(line_chunk);
-        }
-    }
-
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-
-    if chunks.is_empty() {
-        chunks.push(String::new());
-    }
-
-    chunks
+    analyze_diff_text(value, chunk_size).chunks
 }
 
+#[cfg(test)]
 fn count_changed_lines(diff_text: &str) -> (u32, u32) {
-    let mut additions = 0_u32;
-    let mut deletions = 0_u32;
-
-    for line in diff_text.lines() {
-        if line.starts_with('+') && !line.starts_with("+++") {
-            additions = additions.saturating_add(1);
-        } else if line.starts_with('-') && !line.starts_with("---") {
-            deletions = deletions.saturating_add(1);
-        }
-    }
-
-    (additions, deletions)
+    let analysis = analyze_diff_text(diff_text, DEFAULT_CHUNK_SIZE_BYTES);
+    (analysis.additions, analysis.deletions)
 }
 
+#[cfg(test)]
 fn parse_hunks(diff_text: &str) -> Vec<DiffHunkData> {
-    struct HunkDraft {
-        hunk_index: u32,
-        header: String,
-        old_start: u32,
-        old_lines: u32,
-        new_start: u32,
-        new_lines: u32,
-        added_lines: u32,
-        deleted_lines: u32,
-    }
-
-    let mut hunks = Vec::<DiffHunkData>::new();
-    let mut current: Option<HunkDraft> = None;
-
-    for line in diff_text.lines() {
-        if let Some((old_start, old_lines, new_start, new_lines)) = parse_hunk_header(line) {
-            if let Some(previous) = current.take() {
-                hunks.push(DiffHunkData {
-                    hunk_index: previous.hunk_index,
-                    header: previous.header,
-                    old_start: previous.old_start,
-                    old_lines: previous.old_lines,
-                    new_start: previous.new_start,
-                    new_lines: previous.new_lines,
-                    added_lines: previous.added_lines,
-                    deleted_lines: previous.deleted_lines,
-                });
-            }
-
-            current = Some(HunkDraft {
-                hunk_index: hunks.len() as u32,
-                header: line.to_string(),
-                old_start,
-                old_lines,
-                new_start,
-                new_lines,
-                added_lines: 0,
-                deleted_lines: 0,
-            });
-            continue;
-        }
-
-        if let Some(active) = current.as_mut() {
-            if line.starts_with('+') && !line.starts_with("+++") {
-                active.added_lines = active.added_lines.saturating_add(1);
-            } else if line.starts_with('-') && !line.starts_with("---") {
-                active.deleted_lines = active.deleted_lines.saturating_add(1);
-            }
-        }
-    }
-
-    if let Some(last) = current.take() {
-        hunks.push(DiffHunkData {
-            hunk_index: last.hunk_index,
-            header: last.header,
-            old_start: last.old_start,
-            old_lines: last.old_lines,
-            new_start: last.new_start,
-            new_lines: last.new_lines,
-            added_lines: last.added_lines,
-            deleted_lines: last.deleted_lines,
-        });
-    }
-
-    hunks
+    analyze_diff_text(diff_text, DEFAULT_CHUNK_SIZE_BYTES).hunks
 }
 
 fn parse_hunk_header(line: &str) -> Option<(u32, u32, u32, u32)> {
@@ -500,11 +574,10 @@ mod tests {
 
     use uuid::Uuid;
 
-    use crate::runtime::state::AppState;
-
     use super::{
-        count_changed_lines, get_file_diff_chunk, parse_hunks, prepare_file_diff_chunks,
-        split_text_chunks, PrepareFileDiffChunksInput, MAX_RETAINED_DIFFS,
+        count_changed_lines, diff_payload_cache, get_file_diff_chunk, parse_hunks,
+        prepare_file_diff_chunks, split_text_chunks, PrepareFileDiffChunksInput,
+        MAX_RETAINED_DIFFS,
     };
 
     struct FixtureRepo {
@@ -650,25 +723,20 @@ mod tests {
             "fn main() {\n    println!(\"updated\");\n}\n",
         );
 
-        let state = AppState::default();
-        let manifest = prepare_file_diff_chunks(
-            &state,
-            PrepareFileDiffChunksInput {
-                repository_path: fixture.path_str(),
-                path: "src/app.rs",
-                staged: false,
-                context_lines: 3,
-                chunk_size_bytes: Some(16 * 1024),
-                layout_width_px: None,
-                font_profile: None,
-                line_height_px: None,
-            },
-        )
+        let manifest = prepare_file_diff_chunks(PrepareFileDiffChunksInput {
+            repository_path: fixture.path_str(),
+            path: "src/app.rs",
+            staged: false,
+            context_lines: 3,
+            chunk_size_bytes: Some(16 * 1024),
+            layout_width_px: None,
+            font_profile: None,
+            line_height_px: None,
+        })
         .expect("expected diff manifest generation to succeed");
 
         let first_chunk = {
-            let payloads = state
-                .diff_payloads
+            let payloads = diff_payload_cache()
                 .lock()
                 .expect("expected diff payload lock to be available");
             payloads
@@ -679,8 +747,7 @@ mod tests {
         assert_eq!(manifest.initial_chunk_text, first_chunk);
 
         {
-            let mut payloads = state
-                .diff_payloads
+            let mut payloads = diff_payload_cache()
                 .lock()
                 .expect("expected diff payload lock to be available");
             let record = payloads
@@ -689,7 +756,7 @@ mod tests {
             record.expires_at = Instant::now() - Duration::from_secs(1);
         }
 
-        let error = get_file_diff_chunk(&state, manifest.diff_id.as_str(), 0)
+        let error = get_file_diff_chunk(manifest.diff_id.as_str(), 0)
             .expect_err("expected expired payload to be pruned before chunk retrieval");
         assert!(error.to_string().contains("unknown diff id"));
     }
@@ -700,7 +767,6 @@ mod tests {
         write_repo_file(fixture.path(), "src/cache.txt", "base\n");
         commit_all(fixture.path(), "base commit");
 
-        let state = AppState::default();
         let mut first_diff_id = None::<String>;
 
         for index in 0..(MAX_RETAINED_DIFFS + 4) {
@@ -709,19 +775,16 @@ mod tests {
                 "src/cache.txt",
                 format!("base\nupdate-{index}\n").as_str(),
             );
-            let manifest = prepare_file_diff_chunks(
-                &state,
-                PrepareFileDiffChunksInput {
-                    repository_path: fixture.path_str(),
-                    path: "src/cache.txt",
-                    staged: false,
-                    context_lines: 3,
-                    chunk_size_bytes: Some(8 * 1024),
-                    layout_width_px: None,
-                    font_profile: None,
-                    line_height_px: None,
-                },
-            )
+            let manifest = prepare_file_diff_chunks(PrepareFileDiffChunksInput {
+                repository_path: fixture.path_str(),
+                path: "src/cache.txt",
+                staged: false,
+                context_lines: 3,
+                chunk_size_bytes: Some(8 * 1024),
+                layout_width_px: None,
+                font_profile: None,
+                line_height_px: None,
+            })
             .expect("expected diff manifest generation to succeed");
 
             if first_diff_id.is_none() {
@@ -729,8 +792,7 @@ mod tests {
             }
         }
 
-        let payloads = state
-            .diff_payloads
+        let payloads = diff_payload_cache()
             .lock()
             .expect("expected diff payload lock to be available");
         assert!(payloads.len() <= MAX_RETAINED_DIFFS);
@@ -740,6 +802,40 @@ mod tests {
             !payloads.contains_key(oldest.as_str()),
             "oldest payload should be evicted after capacity limit"
         );
+    }
+
+    #[test]
+    fn identical_diff_requests_reuse_stable_diff_id() {
+        let fixture = FixtureRepo::new("stable-id");
+        write_repo_file(fixture.path(), "src/reused.txt", "base\n");
+        commit_all(fixture.path(), "base commit");
+        write_repo_file(fixture.path(), "src/reused.txt", "base\nchanged\n");
+
+        let first = prepare_file_diff_chunks(PrepareFileDiffChunksInput {
+            repository_path: fixture.path_str(),
+            path: "src/reused.txt",
+            staged: false,
+            context_lines: 3,
+            chunk_size_bytes: Some(16 * 1024),
+            layout_width_px: Some(1080),
+            font_profile: Some("ui-mono-13"),
+            line_height_px: Some(18),
+        })
+        .expect("expected first diff manifest");
+
+        let second = prepare_file_diff_chunks(PrepareFileDiffChunksInput {
+            repository_path: fixture.path_str(),
+            path: "src/reused.txt",
+            staged: false,
+            context_lines: 3,
+            chunk_size_bytes: Some(16 * 1024),
+            layout_width_px: Some(1080),
+            font_profile: Some("ui-mono-13"),
+            line_height_px: Some(18),
+        })
+        .expect("expected second diff manifest");
+
+        assert_eq!(first.diff_id, second.diff_id);
     }
 
     #[test]
@@ -754,7 +850,6 @@ mod tests {
             .join("\n");
         write_repo_file(fixture.path(), "src/large.txt", large_payload.as_str());
 
-        let state = AppState::default();
         let Some(budget_ms) = perf_budget_from_env("GDPU_DIFF_PREPARE_P95_BUDGET_MS") else {
             eprintln!(
                 "skipping diff prepare perf budget test: GDPU_DIFF_PREPARE_P95_BUDGET_MS is not set"
@@ -763,38 +858,32 @@ mod tests {
         };
 
         for _ in 0..3 {
-            let _ = prepare_file_diff_chunks(
-                &state,
-                PrepareFileDiffChunksInput {
-                    repository_path: fixture.path_str(),
-                    path: "src/large.txt",
-                    staged: false,
-                    context_lines: 3,
-                    chunk_size_bytes: Some(64 * 1024),
-                    layout_width_px: Some(1080),
-                    font_profile: Some("ui-mono-13"),
-                    line_height_px: Some(18),
-                },
-            )
+            let _ = prepare_file_diff_chunks(PrepareFileDiffChunksInput {
+                repository_path: fixture.path_str(),
+                path: "src/large.txt",
+                staged: false,
+                context_lines: 3,
+                chunk_size_bytes: Some(64 * 1024),
+                layout_width_px: Some(1080),
+                font_profile: Some("ui-mono-13"),
+                line_height_px: Some(18),
+            })
             .expect("expected warm-up diff preparation to succeed");
         }
 
         let mut durations_ms = Vec::<u128>::new();
         for _ in 0..20 {
             let started_at = Instant::now();
-            let _ = prepare_file_diff_chunks(
-                &state,
-                PrepareFileDiffChunksInput {
-                    repository_path: fixture.path_str(),
-                    path: "src/large.txt",
-                    staged: false,
-                    context_lines: 3,
-                    chunk_size_bytes: Some(64 * 1024),
-                    layout_width_px: Some(1080),
-                    font_profile: Some("ui-mono-13"),
-                    line_height_px: Some(18),
-                },
-            )
+            let _ = prepare_file_diff_chunks(PrepareFileDiffChunksInput {
+                repository_path: fixture.path_str(),
+                path: "src/large.txt",
+                staged: false,
+                context_lines: 3,
+                chunk_size_bytes: Some(64 * 1024),
+                layout_width_px: Some(1080),
+                font_profile: Some("ui-mono-13"),
+                line_height_px: Some(18),
+            })
             .expect("expected diff preparation benchmark call to succeed");
             durations_ms.push(started_at.elapsed().as_millis());
         }

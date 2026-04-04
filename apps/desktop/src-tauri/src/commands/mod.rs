@@ -104,6 +104,7 @@ fn invalidate_repository_read_models(
     _state: &State<'_, AppState>,
     repository_path: &str,
 ) -> Result<(), AppError> {
+    diff_service::invalidate_repository(repository_path);
     repository_read_service::invalidate_repository(repository_path);
     repository_root_service::invalidate_repository(repository_path);
     repository_topology_service::invalidate_repository(repository_path);
@@ -839,19 +840,16 @@ pub fn prepare_file_diff_chunks(
     let context_lines = request.context_lines.unwrap_or(3).clamp(0, 30) as usize;
     let chunk_size = request.chunk_size_bytes.unwrap_or((64 * 1024) as u32) as usize;
 
-    match diff_service::prepare_file_diff_chunks(
-        &state,
-        diff_service::PrepareFileDiffChunksInput {
-            repository_path: &request.repository_path,
-            path: &request.path,
-            staged,
-            context_lines,
-            chunk_size_bytes: Some(chunk_size),
-            layout_width_px: request.layout_width_px,
-            font_profile: request.font_profile.as_deref(),
-            line_height_px: request.line_height_px,
-        },
-    ) {
+    match diff_service::prepare_file_diff_chunks(diff_service::PrepareFileDiffChunksInput {
+        repository_path: &request.repository_path,
+        path: &request.path,
+        staged,
+        context_lines,
+        chunk_size_bytes: Some(chunk_size),
+        layout_width_px: request.layout_width_px,
+        font_profile: request.font_profile.as_deref(),
+        line_height_px: request.line_height_px,
+    }) {
         Ok(data) => command_ok("prepare_file_diff_chunks", started_at, &state, data),
         Err(error) => map_error_with_command("prepare_file_diff_chunks", started_at, &state, error),
     }
@@ -867,7 +865,7 @@ pub fn get_file_diff_chunk(
     let request_id = Uuid::new_v4().to_string();
     logging_service::set_request_context(request_id.as_str());
 
-    match diff_service::get_file_diff_chunk(&state, &diff_id, chunk_index as usize) {
+    match diff_service::get_file_diff_chunk(&diff_id, chunk_index as usize) {
         Ok(data) => command_ok("get_file_diff_chunk", started_at, &state, data),
         Err(error) => map_error_with_command("get_file_diff_chunk", started_at, &state, error),
     }

@@ -12,7 +12,7 @@ interface IconProps {
 
 export function Icon(props: IconProps): JSX.Element {
   const size = () => props.size ?? 16;
-  const toneClass = () => `icon-tone-${props.tone ?? "normal"}`;
+  const toneClass = () => (props.tone ? `icon-tone-${props.tone}` : "");
   const nameClass = () => `icon-${props.name}`;
 
   return (
