@@ -1156,8 +1156,8 @@ export function SettingsPage() {
             </article>
 
             <article ref={calibrationCardRef} class="state-card settings-top-card">
-              <h3>Atmosphere</h3>
-              <p class="section-summary">Aesthetic architecture and interface dynamics.</p>
+              <h3>Appearance</h3>
+              <p class="section-summary">Global interface mood and atmosphere.</p>
               <div class="layout-control-field">
                 <Select
                   value={layout.themeId()}
@@ -1166,7 +1166,7 @@ export function SettingsPage() {
                     layout.setThemeId(id);
                     void layout.persistUiPreferences();
                   }}
-                  ariaLabel="Aesthetic atmosphere"
+                  ariaLabel="Interface appearance"
                 />
               </div>
 

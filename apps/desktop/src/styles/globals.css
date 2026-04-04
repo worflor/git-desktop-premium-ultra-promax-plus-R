@@ -752,6 +752,7 @@ ol {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 12px 8px 2px;
   border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.12);
@@ -815,6 +816,9 @@ ol {
 .workspace-mode-nav {
   display: flex;
   align-items: center;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 2px;
 }
 
@@ -904,6 +908,11 @@ ol {
 
 .workspace-content-panel>.feature-page.is-embedded {
   height: 100%;
+}
+
+.workspace-content-panel > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .workspace-content-panel>.feature-page.is-embedded>.feature-header,
@@ -1016,7 +1025,7 @@ ol {
   flex: 0 0 auto;
   margin: 6px 12px 0;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   padding: 10px 12px;
   border: 1px solid rgba(var(--danger-rgb), 0.35);
@@ -1042,6 +1051,8 @@ ol {
 .command-recovery-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -1075,6 +1086,7 @@ ol {
   min-height: 32px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 4px 12px;
   background: var(--surface-0);
@@ -1169,7 +1181,7 @@ ol {
 
 .utility-event-row {
   display: grid;
-  grid-template-columns: auto auto 1fr auto auto;
+  grid-template-columns: minmax(0, auto) minmax(0, auto) minmax(0, 1fr) minmax(0, auto) minmax(0, auto);
   gap: 8px;
   align-items: center;
   padding: 4px 8px;
@@ -1181,10 +1193,16 @@ ol {
 
 .utility-event-time {
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .utility-event-type {
   color: var(--accent-bright);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .utility-event-command {
@@ -1196,10 +1214,16 @@ ol {
 
 .utility-event-error {
   color: var(--state-deleted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .utility-event-duration {
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .event-start .utility-event-type {
@@ -1685,6 +1709,7 @@ ol {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 6px;
 }
@@ -1696,6 +1721,8 @@ ol {
 
 .status-chip-stack {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
 }
 
@@ -1740,7 +1767,31 @@ ol {
 
 .status-tags {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
+}
+
+@media (max-width: 760px) {
+  .workspace-topbar {
+    gap: 6px;
+  }
+
+  .workspace-topbar-copy {
+    flex: 1 1 100%;
+  }
+
+  .workspace-mode-nav {
+    flex: 1 1 100%;
+  }
+
+  .command-recovery-banner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .command-recovery-actions {
+    justify-content: flex-start;
+  }
 }
 
 .commit-bar {
