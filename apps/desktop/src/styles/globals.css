@@ -115,23 +115,48 @@ ol {
   will-change: transform;
 }
 
-[data-theme="aether"] .parallax-backdrop,
+[data-theme="aether"] .parallax-backdrop {
+  --theme-parallax-pin-strength: 0.42;
+  --theme-parallax-mouse-strength: 0.64;
+}
+
 [data-theme="quanta"] .parallax-backdrop {
-  --theme-parallax-pin-strength: 1;
-  --theme-parallax-mouse-strength: 1; /* Exclusively enable mouse depth for stars */
+  --theme-parallax-pin-strength: 0.34;
+  --theme-parallax-mouse-strength: 0.52;
 }
 
 .parallax-layer {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 4000px;
-  height: 4000px;
-  margin-left: -2000px;
-  margin-top: -2000px;
+  width: 3200px;
+  height: 3200px;
+  margin-left: -1600px;
+  margin-top: -1600px;
   background-repeat: repeat;
   pointer-events: none;
   opacity: 0.6;
+}
+
+[data-theme="aether"] .layer-near,
+[data-theme="quanta"] .layer-near {
+  background-size: 1040px 1040px;
+}
+
+[data-theme="aether"] .layer-mid,
+[data-theme="quanta"] .layer-mid {
+  background-size: 1460px 1460px;
+}
+
+[data-theme="aether"] .layer-far,
+[data-theme="quanta"] .layer-far {
+  background-size: 1840px 1840px;
+}
+
+[data-theme="aether"] .layer-bg,
+[data-theme="quanta"] .layer-bg {
+  background-size: 520px 520px;
+  opacity: 0.42;
 }
 
 /* Child-Planes: Mouse Parallel is now gated by theme-strength */
@@ -169,6 +194,11 @@ ol {
                          calc(var(--monitor-mouse-y, 0) * 0.03 * var(--runtime-parallax-strength, 1) * var(--theme-parallax-mouse-strength, 0) * 1px), 0);
 }
 
+[data-theme="blackboard"] .layer-theme {
+  background-size: 1500px 1500px;
+  opacity: 0.46;
+}
+
 /* ── Utility Drawer Collision Fix ── */
 .utility-drawer {
   pointer-events: none !important;
@@ -190,6 +220,15 @@ ol {
   z-index: 9999;
   background-image: var(--runtime-material-texture, none);
   mix-blend-mode: overlay;
+}
+
+[data-theme="aether"] .app-shell-root::after {
+  opacity: 0.72;
+}
+
+[data-theme="quanta"] .app-shell-root::after {
+  opacity: 0.5;
+  mix-blend-mode: normal;
 }
 
 .app-shell-grid {

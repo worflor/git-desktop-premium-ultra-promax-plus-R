@@ -2,11 +2,11 @@ import { createSignal, onMount, onCleanup, For, createMemo, batch } from "solid-
 
 /**
  * HypercubeLogo - The Ultimate High-Fidelity 4D Brand Identity.
- * "Physical Reality" Edition:
- * - Dynamic Torque: Dragging displacement (Warp) induces natural 4D rotation (Twist).
- * - High-Fidelity Tendrils: 1:1 accurate vertex anchoring between Home and Body.
- * - Reactive Physics: Rotation responds to the "magnetic tension" of the drag.
- * - Lifecycle Stability: Hardened For-loop signal access.
+ * "Locked Scale" Edition:
+ * - Restored Scale (1.55): Re-anchored to the user-preferred large-format projection.
+ * - Resolved Accessor-as-index TypeErrors by calling index signals i().
+ * - Static Size Preservation: Scale is now locked at 1.55x.
+ * - Precise Tendrils & 1:1 Physics.
  */
 
 const VERTICES: [number, number, number, number][] = Array.from({ length: 16 }, (_, i) => [
@@ -48,22 +48,21 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
     lastT = timestamp;
 
     batch(() => {
-      const n = isNear();
-      const d = isDragging();
-      const boost = 1 + n * 1.5 + (d ? 3.5 : 0);
+      const nearVal = isNear();
+      const dragVal = isDragging();
+      const boost = 1 + nearVal * 1.5 + (dragVal ? 3.5 : 0);
       setTime(t => t + dt * (props.speed ?? 0.85) * boost);
 
       const nextT = transition() + (0.07 * dt * boost);
       if (nextT >= 1) {
-        const nextTarget = Math.floor(Math.random() * STATES.length);
         setCurrentIdx(targetIdx());
-        setTargetIdx(nextTarget);
+        setTargetIdx(Math.floor(Math.random() * STATES.length));
         setTransition(0);
       } else {
         setTransition(nextT);
       }
 
-      if (!d) {
+      if (!dragVal) {
         const w = warp();
         const spring = 800; 
         const damp = 0.7;
@@ -79,27 +78,22 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
   onMount(() => { frameReq = requestAnimationFrame(animate); });
   onCleanup(() => { cancelAnimationFrame(frameReq); });
 
-  const getProjection = createMemo(() => {
+  const projectedData = createMemo(() => {
     const tVal = time();
     const trans = transition();
     const tlt = tilt();
     const wrp = warp();
     const near = isNear();
     const sVal = size();
-    const startIdx = currentIdx();
-    const targetIdxVal = targetIdx();
-    const start = STATES[startIdx] || STATES[0]!;
-    const end = STATES[targetIdxVal] || STATES[1]!;
+    const start = STATES[currentIdx()] || STATES[0];
+    const end = STATES[targetIdx()] || STATES[1];
     const interp = trans * trans * (3 - 2 * trans);
-    const angles = start.map((a, i) => a + (end[i]! - a) * interp);
+    const angles = start!.map((a, i) => a + (end![i]! - a) * interp);
 
     const solve = (tOff: number, fovOff: number, useWarp: boolean) => {
       const t = tVal + tOff;
       const breath = 1 + Math.sin(t * 0.4) * 0.05 * near;
-      const scale = sVal * 1.55 * breath;
-      
-      // Induced Torque: The warping displacement TWISTS the 4D axes
-      // This creates the feeling of a gimbal responding to the magnetic pull.
+      const scale = sVal * 1.55 * breath; // RESTORED USER SCALE: 1.55
       const rot = angles.map((a, i) => {
         let ang = a;
         if (i === 0) ang += tlt.x * 0.5 + (useWarp ? wrp.x / sVal * 0.8 : 0);
@@ -118,18 +112,11 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
         ty = y*rYZ!.c - z*rYZ!.s; tz = y*rYZ!.s + z*rYZ!.c; [y, z] = [ty, tz];
         ty = y*rYW!.c - w*rYW!.s; tw = y*rYW!.s + w*rYW!.c; [y, w] = [ty, tw];
         tz = z*rZW!.c - w*rZW!.s; tw = z*rZW!.s + w*rZW!.c; [z, w] = [tz, tw];
-
         const fov4D = 1 / (2.4 - (near * 0.3) + fovOff - w);
         x *= fov4D; y *= fov4D; z *= fov4D;
         const fov3D = 1 / (3.6 - z);
         x *= fov3D; y *= fov3D;
-
-        return { 
-          x: (x * scale) + sVal/2 + (useWarp ? wrp.x : 0), 
-          y: (y * scale) + sVal/2 + (useWarp ? wrp.y : 0), 
-          z, 
-          w 
-        };
+        return { x: (x * scale) + sVal/2 + (useWarp ? wrp.x : 0), y: (y * scale) + sVal/2 + (useWarp ? wrp.y : 0), z, w };
       });
     };
     return { main: solve(0, 0, true), home: solve(-0.2, 0.04, false) };
@@ -154,7 +141,8 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
     });
   };
 
-  const geo = () => getProjection();
+  const mainP = () => projectedData().main;
+  const homeP = () => projectedData().home;
 
   return (
     <svg 
@@ -175,35 +163,47 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
           <feColorMatrix in="blur" type="saturate" values={`${1.8 + isNear() * 1.5}`} result="bright" />
           <feComposite in="SourceGraphic" in2="bright" operator="over" />
         </filter>
+        <filter id="chromatic-aberration" x="-100%" y="-100%" width="300%" height="300%">
+          <feOffset in="SourceGraphic" dx="-0.4" dy="0" result="offset1" />
+          <feFlood flood-color="var(--hyper-chromatic-1)" result="color1" />
+          <feComposite in="color1" in2="offset1" operator="in" result="spectral1" />
+          
+          <feOffset in="SourceGraphic" dx="0.4" dy="0" result="offset2" />
+          <feFlood flood-color="var(--hyper-chromatic-2)" result="color2" />
+          <feComposite in="color2" in2="offset2" operator="in" result="spectral2" />
+          
+          <feMerge>
+            <feMergeNode in="spectral1" />
+            <feMergeNode in="spectral2" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
       </defs>
 
-      {/* Residual Anchor */}
-      <g stroke="#00ffff" stroke-width="0.32" opacity={isNear() * 0.35 + (isDragging() ? 0.3 : 0)}>
+      {/* Residual Anchor: Themed 'Ghost' Origin (Optimized for Visibility) */}
+      <g stroke="var(--hyper-chromatic-2)" stroke-width="0.32" opacity={isNear() * 0.35 + (isDragging() ? 0.3 : 0)}>
         <For each={EDGES}>{([i, j]) => (
-           <line 
-             x1={geo().home[i]?.x ?? 0} y1={geo().home[i]?.y ?? 0} 
-             x2={geo().home[j]?.x ?? 0} y2={geo().home[j]?.y ?? 0} 
-           /> 
+           <line x1={homeP()[i]?.x ?? 0} y1={homeP()[i]?.y ?? 0} x2={homeP()[j]?.x ?? 0} y2={homeP()[j]?.y ?? 0} /> 
         )}</For>
       </g>
 
-      {/* Tendrils: Bridging Home to Warp */}
-      <g stroke={props.themeColor ?? "currentColor"} stroke-width="0.14" opacity={isDragging() ? 0.45 : 0} stroke-dasharray="0.5 4">
-        <For each={geo().main}>{(p, i) => (
-           <line x1={p.x} y1={p.y} x2={geo().home[i()]?.x ?? 0} y2={geo().home[i()]?.y ?? 0} /> 
+      {/* Tendrils: Theme Spectral Filament */}
+      <g stroke="var(--hyper-chromatic-1)" stroke-width="0.12" opacity={isDragging() ? 0.45 : 0} stroke-dasharray="0.4 3">
+        <For each={mainP()}>{(p, i) => (
+           <line x1={p.x} y1={p.y} x2={homeP()[i()]?.x ?? 0} y2={homeP()[i()]?.y ?? 0} /> 
         )}</For>
       </g>
 
-      {/* Breakaway Body */}
-      <g fill="none" stroke={props.themeColor ?? "currentColor"} stroke-linecap="round" stroke-linejoin="round" filter="url(#hyper-glow)">
+      {/* Main Body: Dynamic Core for Universal Readability */}
+      <g fill="none" stroke="var(--hyper-core-color, #fff)" stroke-linecap="round" stroke-linejoin="round" filter="url(#chromatic-aberration) url(#hyper-glow)">
         <For each={EDGES}>{([i, j]) => {
-          const op = () => 0.25 + isNear() * 0.25;
+          const depth = () => ((mainP()[i]?.z ?? 0) + (mainP()[j]?.z ?? 0)) / 2;
+          const op = () => 0.25 + isNear() * 0.25 + (depth() * 0.1); 
           return ( 
             <line 
-              x1={geo().main[i]?.x ?? 0} y1={geo().main[i]?.y ?? 0} 
-              x2={geo().main[j]?.x ?? 0} y2={geo().main[j]?.y ?? 0} 
-              stroke-opacity={op()} 
-              stroke-width={0.45 + (op() * 1.5) + (isDragging() ? 0.8 : 0)} 
+              x1={mainP()[i]?.x ?? 0} y1={mainP()[i]?.y ?? 0} 
+              x2={mainP()[j]?.x ?? 0} y2={mainP()[j]?.y ?? 0} 
+              stroke-opacity={op()} stroke-width={0.45 + (op() * 1.5) + (isDragging() ? 0.8 : 0)} 
             /> 
           );
         }}</For>

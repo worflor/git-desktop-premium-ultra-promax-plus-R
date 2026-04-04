@@ -77,13 +77,13 @@ export function AppShellFrame(props: AppShellFrameProps) {
       }
     };
 
-    let tickerId: number;
+    let windowSampleIntervalId: number | undefined;
     let startupDelayId: number | undefined;
     let lastX = 0, lastY = 0;
     let lastWindowX: number | null = null;
     let lastWindowY: number | null = null;
 
-    const runTicker = () => {
+    const sampleWindowPosition = () => {
       // Avoid rewriting CSS variables when the window is stationary.
       const root = document.documentElement;
 
@@ -97,8 +97,6 @@ export function AppShellFrame(props: AppShellFrameProps) {
         root.style.setProperty("--window-screen-y", screenY.toString());
         lastWindowY = screenY;
       }
-
-      tickerId = requestAnimationFrame(runTicker);
     };
 
     const onWindowMouseMove = (event: MouseEvent) => {
@@ -115,9 +113,10 @@ export function AppShellFrame(props: AppShellFrameProps) {
     window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("mousemove", onWindowMouseMove, { passive: true });
     
-    // Let first content paint complete before background parallax ticker starts.
+    // Let first content paint complete before starting low-frequency window position sampling.
     startupDelayId = window.setTimeout(() => {
-      tickerId = requestAnimationFrame(runTicker);
+      sampleWindowPosition();
+      windowSampleIntervalId = window.setInterval(sampleWindowPosition, 66);
       startupDelayId = undefined;
     }, 120);
     
@@ -126,7 +125,9 @@ export function AppShellFrame(props: AppShellFrameProps) {
       if (startupDelayId !== undefined) {
         window.clearTimeout(startupDelayId);
       }
-      cancelAnimationFrame(tickerId);
+      if (windowSampleIntervalId !== undefined) {
+        window.clearInterval(windowSampleIntervalId);
+      }
       window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("mousemove", onWindowMouseMove);
     });

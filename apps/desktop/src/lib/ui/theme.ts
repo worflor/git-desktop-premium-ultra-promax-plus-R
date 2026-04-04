@@ -112,8 +112,8 @@ const THEME_DEFINITIONS = [
     description: "Deep cosmic glass with cool contrast for long review sessions.",
     shader: {
       mode: "glass",
-      blurPx: 14,
-      saturatePct: 132,
+      blurPx: 11,
+      saturatePct: 124,
       opacityScale: 0.98,
       edgeIntensity: 0.62,
       texture: "scanlines",
@@ -121,7 +121,7 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.4,
       particles: "stardust",
-      parallaxStrength: 0.3,
+      parallaxStrength: 0.2,
       interaction: "warp"
     }
   },
@@ -131,8 +131,8 @@ const THEME_DEFINITIONS = [
     description: "Deep emerald obsidian with technical subatomic jitter and high-refraction glass.",
     shader: {
       mode: "glass",
-      blurPx: 22,
-      saturatePct: 160,
+      blurPx: 16,
+      saturatePct: 142,
       opacityScale: 0.88,
       edgeIntensity: 0.8,
       texture: "scanlines",
@@ -140,7 +140,7 @@ const THEME_DEFINITIONS = [
       motion: "fluid",
       luminescence: 0.5,
       particles: "quantum",
-      parallaxStrength: 0.4,
+      parallaxStrength: 0.24,
       interaction: "vibration",
       geometry: {
         letterSpacing: "0.02em"
@@ -183,11 +183,11 @@ const THEME_DEFINITIONS = [
       opacityScale: 1.0,
       edgeIntensity: 1.0,
       texture: "grain",
-      textureOpacity: 0.15,
+      textureOpacity: 0.1,
       motion: "snappy",
       luminescence: 0.1,
       particles: "chalkdust",
-      parallaxStrength: 0.2,
+      parallaxStrength: 0.12,
       interaction: "chalk",
       geometry: {
         radius: 2,
