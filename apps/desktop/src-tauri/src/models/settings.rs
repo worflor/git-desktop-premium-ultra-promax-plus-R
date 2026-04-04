@@ -8,6 +8,8 @@ pub struct AppSettingsData {
     pub ai_read_only_default: bool,
     pub telemetry_retention_days: u32,
     pub telemetry_retention_mb: u32,
+    pub update_channel: String,
+    pub crash_reporting_enabled: bool,
     pub theme_id: String,
     pub keybinding_profile: String,
     pub sidebar_width_px: u32,

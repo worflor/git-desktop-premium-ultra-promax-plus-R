@@ -3,6 +3,9 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { createCanvas } from "canvas";
+import { layout, prepare } from "@chenglou/pretext";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const fixturesPath = path.resolve(__dirname, "pretext-fixtures.json");
@@ -12,8 +15,17 @@ const DEFAULT_LAYOUT_P95_BUDGET_MS = 200;
 const DEFAULT_ITERATIONS = 20;
 const DEFAULT_MAX_LAYOUT_BYTES = 24 * 1024 * 1024;
 const DEFAULT_FALLBACK_RATE_MAX = 0.001;
-const AVERAGE_GLYPH_WIDTH_PX = 8;
 const LAYOUT_WIDTH_PX = 1080;
+const LINE_HEIGHT_PX = 18;
+const FONT_PROFILE = "13px Menlo";
+
+if (typeof globalThis.OffscreenCanvas === "undefined") {
+  globalThis.OffscreenCanvas = class OffscreenCanvas {
+    constructor(width, height) {
+      return createCanvas(width, height);
+    }
+  };
+}
 
 function durationMs(startNs) {
   return Number(process.hrtime.bigint() - startNs) / 1_000_000;
@@ -61,9 +73,18 @@ function expandFixtureMacros(rawDiff) {
   return expanded;
 }
 
-function simulatePretextPrepare(diffText) {
+function fallbackLayoutSummary(diffText, reason) {
   const lines = diffText.split("\n");
-  const lineLengths = lines.map((line) => Array.from(line.endsWith("\r") ? line.slice(0, -1) : line).length);
+  return {
+    prepareMs: 0,
+    layoutMs: 0,
+    visualRows: Math.max(lines.length, 1),
+    fallbackActivated: true,
+    fallbackReason: reason
+  };
+}
+
+function runPretextLayout(diffText) {
   let fallbackReason = null;
   const maxLayoutBytes = Number.parseInt(process.env.GDPU_PRETEXT_MAX_LAYOUT_BYTES ?? "", 10);
   const resolvedMaxLayoutBytes = Number.isFinite(maxLayoutBytes) && maxLayoutBytes >= 1024
@@ -80,34 +101,30 @@ function simulatePretextPrepare(diffText) {
     fallbackReason = "forced by GDPU_FORCE_DIFF_FALLBACK";
   }
 
-  return {
-    lines,
-    lineLengths,
-    fallbackActivated: fallbackReason !== null,
-    fallbackReason
-  };
-}
+  if (fallbackReason) {
+    return fallbackLayoutSummary(diffText, fallbackReason);
+  }
 
-function simulatePretextLayout(prepared) {
-  const maxColumns = Math.max(Math.floor(LAYOUT_WIDTH_PX / AVERAGE_GLYPH_WIDTH_PX), 16);
-  if (prepared.fallbackActivated) {
+  try {
+    const prepareStartedAt = process.hrtime.bigint();
+    const prepared = prepare(diffText, FONT_PROFILE, { whiteSpace: "pre-wrap" });
+    const prepareMs = durationMs(prepareStartedAt);
+
+    const layoutStartedAt = process.hrtime.bigint();
+    const layoutResult = layout(prepared, LAYOUT_WIDTH_PX, LINE_HEIGHT_PX);
+    const layoutMs = durationMs(layoutStartedAt);
+
     return {
-      visualRows: Math.max(prepared.lines.length, 1),
-      lineCount: prepared.lines.length
+      prepareMs,
+      layoutMs,
+      visualRows: Math.max(layoutResult.lineCount, 1),
+      fallbackActivated: false,
+      fallbackReason: null
     };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return fallbackLayoutSummary(diffText, `pretext runtime error: ${message}`);
   }
-
-  let visualRows = 0;
-
-  for (const length of prepared.lineLengths) {
-    const rows = length === 0 ? 1 : Math.ceil(length / maxColumns);
-    visualRows += rows;
-  }
-
-  return {
-    visualRows,
-    lineCount: prepared.lines.length
-  };
 }
 
 function benchmarkFixture(fixture, iterations) {
@@ -119,16 +136,12 @@ function benchmarkFixture(fixture, iterations) {
   let fallbackReason = null;
 
   for (let i = 0; i < iterations; i++) {
-    const prepareStartedAt = process.hrtime.bigint();
-    const prepared = simulatePretextPrepare(payload);
-    prepareSamples.push(durationMs(prepareStartedAt));
-    fallbackActivated = prepared.fallbackActivated;
-    fallbackReason = prepared.fallbackReason;
-
-    const layoutStartedAt = process.hrtime.bigint();
-    const layout = simulatePretextLayout(prepared);
-    layoutSamples.push(durationMs(layoutStartedAt));
-    visualRows = layout.visualRows;
+    const runtimeLayout = runPretextLayout(payload);
+    prepareSamples.push(runtimeLayout.prepareMs);
+    layoutSamples.push(runtimeLayout.layoutMs);
+    visualRows = runtimeLayout.visualRows;
+    fallbackActivated = runtimeLayout.fallbackActivated;
+    fallbackReason = runtimeLayout.fallbackReason;
   }
 
   return {

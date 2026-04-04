@@ -65,6 +65,11 @@ Deliverables:
 - Security and privacy review
 - Alpha feedback loop and issue triage cadence
 
+Implementation update (2026-04-03):
+- Backend settings now expose stable/beta update channel selection and crash-reporting toggle commands (`update_update_channel`, `update_crash_reporting`).
+- Crash-report option now installs a backend panic hook that persists local crash artifacts when enabled.
+- Linux packaging baseline now includes a Flatpak manifest scaffold (`apps/desktop/flatpak/com.gdpu.desktop.json`) plus CI manifest validation on Ubuntu.
+
 Exit criteria:
 - Stable alpha builds for external users
 - Prioritized post-alpha backlog

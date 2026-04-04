@@ -3,10 +3,24 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { createCanvas } from "canvas";
+import { layoutWithLines, prepareWithSegments } from "@chenglou/pretext";
+
 const RENDER_POLICY = {
   canvasLineThreshold: 1600,
   canvasCharThreshold: 100000
 };
+const LAYOUT_WIDTH_PX = 1080;
+const LINE_HEIGHT_PX = 18;
+const FONT_PROFILE = "13px Menlo";
+
+if (typeof globalThis.OffscreenCanvas === "undefined") {
+  globalThis.OffscreenCanvas = class OffscreenCanvas {
+    constructor(width, height) {
+      return createCanvas(width, height);
+    }
+  };
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,6 +59,18 @@ function pickDefaultMode(text) {
   return "dom";
 }
 
+function lineVisualRows(line) {
+  try {
+    const prepared = prepareWithSegments(line || " ", FONT_PROFILE, { whiteSpace: "pre-wrap" });
+    const result = layoutWithLines(prepared, LAYOUT_WIDTH_PX, LINE_HEIGHT_PX);
+    return Math.max(result.lineCount, 1);
+  } catch {
+    const charCount = Math.max(Array.from(line).length, 1);
+    const maxColumns = Math.max(Math.floor(LAYOUT_WIDTH_PX / 8), 16);
+    return Math.ceil(charCount / maxColumns);
+  }
+}
+
 function expandFixtureMacros(rawDiff) {
   let expanded = rawDiff;
 
@@ -75,7 +101,8 @@ function analyzeDiff(diffText) {
     return {
       lineNumber: index + 1,
       kind: detectLineKind(line),
-      charLength: Array.from(line).length
+      charLength: Array.from(line).length,
+      visualRows: lineVisualRows(line)
     };
   });
 
@@ -102,7 +129,7 @@ function analyzeDiff(diffText) {
 
 function deterministicSignature(analysis) {
   return analysis.mappedLines
-    .map((line) => `${line.lineNumber}:${line.kind}:${line.charLength}`)
+    .map((line) => `${line.lineNumber}:${line.kind}:${line.charLength}:${line.visualRows}`)
     .join("|");
 }
 
@@ -168,7 +195,8 @@ function validateFixture(fixture) {
       defaultMode: analysisA.defaultMode,
       lineCount: analysisA.lineCount,
       changedLines: analysisA.changedLines,
-      maxLineChars: analysisA.maxLineChars
+      maxLineChars: analysisA.maxLineChars,
+      visualRows: analysisA.mappedLines.reduce((total, line) => total + line.visualRows, 0)
     }
   };
 }
@@ -190,7 +218,7 @@ function main() {
   console.log(`Pretext fixture gate executed ${results.length} fixtures.`);
   for (const result of results) {
     console.log(
-      `- ${result.id}: mode=${result.summary.defaultMode}, lines=${result.summary.lineCount}, changed=${result.summary.changedLines}, maxLineChars=${result.summary.maxLineChars}`
+      `- ${result.id}: mode=${result.summary.defaultMode}, lines=${result.summary.lineCount}, changed=${result.summary.changedLines}, maxLineChars=${result.summary.maxLineChars}, visualRows=${result.summary.visualRows}`
     );
   }
 

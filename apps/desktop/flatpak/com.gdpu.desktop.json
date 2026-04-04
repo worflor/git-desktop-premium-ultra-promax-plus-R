@@ -1,0 +1,34 @@
+{
+  "app-id": "com.gdpu.desktop",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "24.08",
+  "sdk": "org.freedesktop.Sdk",
+  "command": "gdpu-desktop",
+  "finish-args": [
+    "--share=network",
+    "--share=ipc",
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--device=dri",
+    "--filesystem=home",
+    "--talk-name=org.freedesktop.secrets"
+  ],
+  "modules": [
+    {
+      "name": "gdpu-desktop",
+      "buildsystem": "simple",
+      "build-commands": [
+        "npm ci",
+        "npm run build --workspace apps/desktop",
+        "cargo build --release --manifest-path apps/desktop/src-tauri/Cargo.toml",
+        "install -Dm755 apps/desktop/src-tauri/target/release/gdpu-desktop /app/bin/gdpu-desktop"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "../../"
+        }
+      ]
+    }
+  ]
+}

@@ -98,7 +98,7 @@ Define the implementation structure before coding so AI agents can add files pre
 - UI component files: PascalCase.
 - Hooks and utilities: camelCase.
 - Rust modules: snake_case.
-- Command handlers: verb_noun naming (for example get_repository_status.rs).
+- Command handlers: keep verb_noun function naming (for example `get_repository_status`), and group handlers either in `commands/mod.rs` or domain-specific modules depending on slice size.
 
 ## Dependency Direction Rules
 1. primitives -> composite -> features -> app.

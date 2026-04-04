@@ -25,6 +25,7 @@ const SUPPORTED_THEME_IDS: [&str; 9] = [
 ];
 const DEFAULT_THEME_ID: &str = "aether";
 const DEFAULT_KEYBINDING_PROFILE: &str = "classic";
+const DEFAULT_UPDATE_CHANNEL: &str = "stable";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -33,6 +34,8 @@ struct StoredSettings {
     ai_read_only_default: bool,
     telemetry_retention_days: u32,
     telemetry_retention_mb: u32,
+    update_channel: String,
+    crash_reporting_enabled: bool,
     theme_id: String,
     keybinding_profile: String,
     sidebar_width_px: u32,
@@ -48,6 +51,8 @@ impl Default for StoredSettings {
             ai_read_only_default: true,
             telemetry_retention_days: 30,
             telemetry_retention_mb: 128,
+            update_channel: DEFAULT_UPDATE_CHANNEL.to_string(),
+            crash_reporting_enabled: false,
             theme_id: DEFAULT_THEME_ID.to_string(),
             keybinding_profile: DEFAULT_KEYBINDING_PROFILE.to_string(),
             sidebar_width_px: 280,
@@ -83,6 +88,22 @@ pub fn update_telemetry_retention(days: u32, max_mb: u32) -> Result<AppSettingsD
     let mut stored = load_settings()?;
     stored.telemetry_retention_days = days;
     stored.telemetry_retention_mb = max_mb;
+    persist_settings(&stored)?;
+    Ok(to_data(&stored))
+}
+
+pub fn update_update_channel(channel: &str) -> Result<AppSettingsData, AppError> {
+    let normalized_channel = parse_update_channel(channel)?;
+
+    let mut stored = load_settings()?;
+    stored.update_channel = normalized_channel.to_string();
+    persist_settings(&stored)?;
+    Ok(to_data(&stored))
+}
+
+pub fn update_crash_reporting(enabled: bool) -> Result<AppSettingsData, AppError> {
+    let mut stored = load_settings()?;
+    stored.crash_reporting_enabled = enabled;
     persist_settings(&stored)?;
     Ok(to_data(&stored))
 }
@@ -127,6 +148,8 @@ fn to_data(stored: &StoredSettings) -> AppSettingsData {
         ai_read_only_default: stored.ai_read_only_default,
         telemetry_retention_days: stored.telemetry_retention_days,
         telemetry_retention_mb: stored.telemetry_retention_mb,
+        update_channel: normalize_update_channel(&stored.update_channel).to_string(),
+        crash_reporting_enabled: stored.crash_reporting_enabled,
         theme_id: normalize_theme_id(&stored.theme_id).to_string(),
         keybinding_profile: normalize_keybinding_profile(&stored.keybinding_profile).to_string(),
         sidebar_width_px: clamp_sidebar_width_px(stored.sidebar_width_px),
@@ -201,6 +224,29 @@ fn normalize_keybinding_profile(value: &str) -> &'static str {
     }
 
     DEFAULT_KEYBINDING_PROFILE
+}
+
+fn normalize_update_channel(value: &str) -> &'static str {
+    let normalized = value.trim();
+    if normalized.eq_ignore_ascii_case("beta") {
+        return "beta";
+    }
+
+    DEFAULT_UPDATE_CHANNEL
+}
+
+fn parse_update_channel(value: &str) -> Result<&'static str, AppError> {
+    let normalized = value.trim();
+    if normalized.eq_ignore_ascii_case("stable") {
+        return Ok("stable");
+    }
+    if normalized.eq_ignore_ascii_case("beta") {
+        return Ok("beta");
+    }
+
+    Err(AppError::InvalidInput(
+        "update channel must be 'stable' or 'beta'".to_string(),
+    ))
 }
 
 fn load_settings() -> Result<StoredSettings, AppError> {
@@ -349,5 +395,39 @@ mod tests {
 
         let loaded = get_settings().expect("loading default settings should succeed");
         assert_eq!(loaded.guardrail_profile, "Balanced");
+    }
+
+    #[test]
+    fn update_channel_persists_and_normalizes() {
+        let _scope = AppDataTestScope::enter();
+
+        let updated = update_update_channel("beta").expect("updating channel should succeed");
+        assert_eq!(updated.update_channel, "beta");
+
+        let loaded = get_settings().expect("loading settings should succeed");
+        assert_eq!(loaded.update_channel, "beta");
+    }
+
+    #[test]
+    fn update_channel_rejects_unknown_values() {
+        let _scope = AppDataTestScope::enter();
+
+        let error =
+            update_update_channel("nightly").expect_err("unknown channel should be rejected");
+        assert!(error
+            .to_string()
+            .contains("update channel must be 'stable' or 'beta'"));
+    }
+
+    #[test]
+    fn crash_reporting_toggle_persists() {
+        let _scope = AppDataTestScope::enter();
+
+        let updated =
+            update_crash_reporting(true).expect("updating crash reporting should succeed");
+        assert!(updated.crash_reporting_enabled);
+
+        let loaded = get_settings().expect("loading settings should succeed");
+        assert!(loaded.crash_reporting_enabled);
     }
 }

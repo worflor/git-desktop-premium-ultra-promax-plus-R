@@ -28,6 +28,42 @@ const MAX_PROVIDER_RUNTIME: Duration = Duration::from_secs(90);
 const MAX_STDIN_DIFF_CHARS: usize = 120_000;
 const MAX_INLINE_DIFF_CHARS: usize = 6_000;
 
+#[derive(Clone, Copy)]
+struct CliProviderAdapter {
+    id: &'static str,
+    binary: &'static str,
+}
+
+trait AiProviderAdapter {
+    fn id(&self) -> &'static str;
+    fn binary_name(&self) -> &'static str;
+    fn build_attempts(&self, prompt: &str, diff: &str) -> Vec<ProviderAttempt>;
+}
+
+impl AiProviderAdapter for CliProviderAdapter {
+    fn id(&self) -> &'static str {
+        self.id
+    }
+
+    fn binary_name(&self) -> &'static str {
+        self.binary
+    }
+
+    fn build_attempts(&self, prompt: &str, diff: &str) -> Vec<ProviderAttempt> {
+        build_provider_attempts(prompt, diff)
+    }
+}
+
+fn provider_adapters() -> [CliProviderAdapter; 4] {
+    PROVIDER_BINARIES.map(|(id, binary)| CliProviderAdapter { id, binary })
+}
+
+fn provider_adapter(provider_id: &str) -> Option<CliProviderAdapter> {
+    provider_adapters()
+        .into_iter()
+        .find(|adapter| adapter.id() == provider_id)
+}
+
 struct ProviderAttempt {
     name: &'static str,
     args: Vec<String>,
@@ -53,14 +89,14 @@ struct ProviderResolution {
 }
 
 pub fn list_providers() -> Result<AiProviderListData, AppError> {
-    let providers = PROVIDER_BINARIES
+    let providers = provider_adapters()
         .into_iter()
-        .map(|(id, binary)| {
-            let resolution = resolve_provider(id);
+        .map(|adapter| {
+            let resolution = resolve_provider(&adapter);
             AiProviderStatus {
-                id: id.to_string(),
+                id: adapter.id().to_string(),
                 available: resolution.is_some(),
-                binary: binary.to_string(),
+                binary: adapter.binary_name().to_string(),
                 resolved_binary: resolution.as_ref().map(|value| value.command.clone()),
                 detection_source: resolution.as_ref().map(|value| value.source.clone()),
                 health_check: resolution
@@ -385,7 +421,7 @@ fn validate_review_input(provider_id: &str, repository_path: &str) -> Result<(),
         ));
     }
 
-    if provider_binary_name(provider_id).is_none() {
+    if provider_adapter(provider_id).is_none() {
         return Err(AppError::AiProviderUnavailable(provider_id.to_string()));
     }
 
@@ -445,7 +481,7 @@ fn run_review_pipeline<F>(
 where
     F: FnMut(&str),
 {
-    let binary = provider_binary_name(provider_id)
+    let adapter = provider_adapter(provider_id)
         .ok_or_else(|| AppError::AiProviderUnavailable(provider_id.to_string()))?;
     let normalized_scope_path = diff_scope_path.and_then(trimmed_non_empty);
     let diff = collect_diff(repository_path, normalized_scope_path)?;
@@ -458,13 +494,14 @@ where
         return Err(cancel_error());
     }
 
-    if let Some(resolution) = resolve_provider(provider_id) {
+    if let Some(resolution) = resolve_provider(&adapter) {
         emit(&format!(
             "Resolved provider binary '{}' via {} ({}).\n",
             resolution.command, resolution.source, resolution.health_check
         ));
 
         match run_provider_review(
+            &adapter,
             &resolution.command,
             repository_path,
             prompt,
@@ -487,11 +524,19 @@ where
         }
     } else {
         emit(&format!(
-            "Provider binary '{binary}' is unavailable; using deterministic local fallback review.\n"
+            "Provider binary '{}' is unavailable; using deterministic local fallback review.\n",
+            adapter.binary_name()
         ));
     }
 
-    run_fallback_review(provider_id, binary, prompt, &diff, cancel_flag, emit)
+    run_fallback_review(
+        adapter.id(),
+        adapter.binary_name(),
+        prompt,
+        &diff,
+        cancel_flag,
+        emit,
+    )
 }
 
 fn collect_diff(repository_path: &str, diff_scope_path: Option<&str>) -> Result<String, AppError> {
@@ -508,6 +553,7 @@ fn collect_diff(repository_path: &str, diff_scope_path: Option<&str>) -> Result<
 }
 
 fn run_provider_review<F>(
+    adapter: &dyn AiProviderAdapter,
     binary: &str,
     repository_path: &str,
     prompt: &str,
@@ -518,7 +564,7 @@ fn run_provider_review<F>(
 where
     F: FnMut(&str),
 {
-    let attempts = build_provider_attempts(prompt, diff);
+    let attempts = adapter.build_attempts(prompt, diff);
     if attempts.is_empty() {
         return Ok(false);
     }
@@ -888,16 +934,13 @@ fn trimmed_non_empty(value: &str) -> Option<&str> {
     Some(trimmed)
 }
 
+#[cfg(test)]
 fn provider_binary_name(provider_id: &str) -> Option<&'static str> {
-    PROVIDER_BINARIES
-        .into_iter()
-        .find(|(id, _)| *id == provider_id)
-        .map(|(_, binary)| binary)
+    provider_adapter(provider_id).map(|adapter| adapter.binary_name())
 }
 
-fn resolve_provider(provider_id: &str) -> Option<ProviderResolution> {
-    let binary = provider_binary_name(provider_id)?;
-    resolve_provider_command(binary)
+fn resolve_provider(adapter: &dyn AiProviderAdapter) -> Option<ProviderResolution> {
+    resolve_provider_command(adapter.binary_name())
 }
 
 fn resolve_provider_command(binary: &str) -> Option<ProviderResolution> {
@@ -1041,8 +1084,8 @@ mod tests {
     use super::{
         build_inline_prompt, build_provider_attempts, build_stdin_payload,
         enforce_guardrail_for_review, known_binary_candidates, prompt_requests_write_action,
-        provider_binary_name, push_candidate, validate_review_input, MAX_INLINE_DIFF_CHARS,
-        MAX_STDIN_DIFF_CHARS, PROVIDER_BINARIES,
+        provider_adapters, provider_binary_name, push_candidate, AiProviderAdapter,
+        validate_review_input, MAX_INLINE_DIFF_CHARS, MAX_STDIN_DIFF_CHARS, PROVIDER_BINARIES,
     };
 
     #[test]
@@ -1052,6 +1095,16 @@ mod tests {
         }
 
         assert_eq!(provider_binary_name("unknown-provider"), None);
+    }
+
+    #[test]
+    fn provider_adapter_contracts_are_well_formed() {
+        let mut ids = HashSet::new();
+        for adapter in provider_adapters() {
+            assert!(ids.insert(adapter.id()));
+            assert!(!adapter.binary_name().trim().is_empty());
+            assert!(!adapter.build_attempts("review prompt", "diff body").is_empty());
+        }
     }
 
     #[test]

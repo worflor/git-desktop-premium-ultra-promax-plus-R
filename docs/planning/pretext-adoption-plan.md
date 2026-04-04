@@ -55,6 +55,8 @@ Implementation status:
 - Diff UI now consumes backend chunked manifests/chunks for incremental transfer and render-mode aware loading.
 - Canvas diff mode now uses backend hunk metadata for jump-to-hunk navigation and line-range rendering.
 - Canary benchmark now reports fallback activation rate and enforces a configurable fallback-rate threshold budget.
+- Fixture and canary scripts now execute real Pretext prepare/layout calls (with node-canvas OffscreenCanvas shim) instead of synthetic estimators.
+- Backend pretext adapter now attempts a real Pretext runtime helper (`scripts/pretext-layout-runtime.mjs`) with cached results and deterministic fallback on runtime unavailability.
 
 Exit criteria:
 - Pretext upgrades are gated and repeatable

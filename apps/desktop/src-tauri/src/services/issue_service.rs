@@ -2,7 +2,7 @@ use crate::errors::AppError;
 use crate::models::operations::{
     IssueProviderData, IssueProviderListData, LocalIssueListData, LocalIssueOperationData,
 };
-use crate::services::{forge_service, local_issue_service};
+use crate::services::{forge_remote_service, forge_service, local_issue_service};
 
 const GITHUB_ISSUE_PROVIDER_ID: &str = "github-gh";
 const GITLAB_ISSUE_PROVIDER_ID: &str = "gitlab-contract";
@@ -47,28 +47,32 @@ pub fn list_issue_providers(repository_path: &str) -> Result<IssueProviderListDa
     }
 
     if has_gitlab_remote {
+        let status = forge_remote_service::gitlab_adapter_status();
         providers.push(IssueProviderData {
             id: GITLAB_ISSUE_PROVIDER_ID.to_string(),
             display_name: "GitLab Issues".to_string(),
-            available: true,
-            mode: "remote-mirrored".to_string(),
-            guidance: Some(
-                "Mirrored through local-core while GitLab adapter remains contract-only in this build."
-                    .to_string(),
-            ),
+            available: status.available,
+            mode: if status.available {
+                "remote-api".to_string()
+            } else {
+                "remote-api-unavailable".to_string()
+            },
+            guidance: Some(status.guidance),
         });
     }
 
     if has_bitbucket_remote {
+        let status = forge_remote_service::bitbucket_adapter_status();
         providers.push(IssueProviderData {
             id: BITBUCKET_ISSUE_PROVIDER_ID.to_string(),
             display_name: "Bitbucket Issues".to_string(),
-            available: true,
-            mode: "remote-mirrored".to_string(),
-            guidance: Some(
-                "Mirrored through local-core while Bitbucket adapter remains contract-only in this build."
-                    .to_string(),
-            ),
+            available: status.available,
+            mode: if status.available {
+                "remote-api".to_string()
+            } else {
+                "remote-api-unavailable".to_string()
+            },
+            guidance: Some(status.guidance),
         });
     }
 
@@ -86,10 +90,14 @@ pub fn list_issues(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let list_data = match provider_id.as_str() {
-        local_issue_service::LOCAL_ISSUE_PROVIDER_ID
-        | GITHUB_ISSUE_PROVIDER_ID
-        | GITLAB_ISSUE_PROVIDER_ID
-        | BITBUCKET_ISSUE_PROVIDER_ID => local_issue_service::list_local_issues(repository_path),
+        local_issue_service::LOCAL_ISSUE_PROVIDER_ID => {
+            local_issue_service::list_local_issues(repository_path)
+        }
+        GITHUB_ISSUE_PROVIDER_ID => local_issue_service::list_local_issues(repository_path),
+        GITLAB_ISSUE_PROVIDER_ID => forge_remote_service::list_gitlab_issues(repository_path),
+        BITBUCKET_ISSUE_PROVIDER_ID => {
+            forge_remote_service::list_bitbucket_issues(repository_path)
+        }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown issue provider: {unknown}"
         ))),
@@ -107,11 +115,14 @@ pub fn create_issue(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_issue_service::LOCAL_ISSUE_PROVIDER_ID
-        | GITHUB_ISSUE_PROVIDER_ID
-        | GITLAB_ISSUE_PROVIDER_ID
-        | BITBUCKET_ISSUE_PROVIDER_ID => {
+        local_issue_service::LOCAL_ISSUE_PROVIDER_ID | GITHUB_ISSUE_PROVIDER_ID => {
             local_issue_service::create_local_issue(repository_path, title, body)
+        }
+        GITLAB_ISSUE_PROVIDER_ID => {
+            forge_remote_service::create_gitlab_issue(repository_path, title, body)
+        }
+        BITBUCKET_ISSUE_PROVIDER_ID => {
+            forge_remote_service::create_bitbucket_issue(repository_path, title, body)
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown issue provider: {unknown}"
@@ -129,11 +140,14 @@ pub fn close_issue(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_issue_service::LOCAL_ISSUE_PROVIDER_ID
-        | GITHUB_ISSUE_PROVIDER_ID
-        | GITLAB_ISSUE_PROVIDER_ID
-        | BITBUCKET_ISSUE_PROVIDER_ID => {
+        local_issue_service::LOCAL_ISSUE_PROVIDER_ID | GITHUB_ISSUE_PROVIDER_ID => {
             local_issue_service::close_local_issue(repository_path, issue_id)
+        }
+        GITLAB_ISSUE_PROVIDER_ID => {
+            forge_remote_service::close_gitlab_issue(repository_path, issue_id)
+        }
+        BITBUCKET_ISSUE_PROVIDER_ID => {
+            forge_remote_service::close_bitbucket_issue(repository_path, issue_id)
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown issue provider: {unknown}"
@@ -151,11 +165,14 @@ pub fn reopen_issue(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_issue_service::LOCAL_ISSUE_PROVIDER_ID
-        | GITHUB_ISSUE_PROVIDER_ID
-        | GITLAB_ISSUE_PROVIDER_ID
-        | BITBUCKET_ISSUE_PROVIDER_ID => {
+        local_issue_service::LOCAL_ISSUE_PROVIDER_ID | GITHUB_ISSUE_PROVIDER_ID => {
             local_issue_service::reopen_local_issue(repository_path, issue_id)
+        }
+        GITLAB_ISSUE_PROVIDER_ID => {
+            forge_remote_service::reopen_gitlab_issue(repository_path, issue_id)
+        }
+        BITBUCKET_ISSUE_PROVIDER_ID => {
+            forge_remote_service::reopen_bitbucket_issue(repository_path, issue_id)
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown issue provider: {unknown}"
@@ -173,22 +190,15 @@ fn resolve_provider(repository_path: &str, provider_id: Option<&str>) -> Result<
         .unwrap_or(providers.default_provider_id.as_str())
         .to_string();
 
-    if matches!(
-        requested.as_str(),
-        GITHUB_ISSUE_PROVIDER_ID | GITLAB_ISSUE_PROVIDER_ID | BITBUCKET_ISSUE_PROVIDER_ID
-    ) && !providers
-        .providers
-        .iter()
-        .any(|provider| provider.id == requested)
-    {
-        return Err(AppError::ForgeAdapterUnavailable(requested));
-    }
-
-    providers
+    let provider = providers
         .providers
         .iter()
         .find(|provider| provider.id == requested)
         .ok_or_else(|| AppError::InvalidInput(format!("unknown issue provider: {requested}")))?;
+
+    if !provider.available {
+        return Err(AppError::ForgeAdapterUnavailable(requested));
+    }
 
     Ok(requested)
 }

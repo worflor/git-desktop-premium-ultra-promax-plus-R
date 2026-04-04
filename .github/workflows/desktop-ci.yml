@@ -8,7 +8,14 @@ on:
 
 jobs:
   desktop-checks:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,6 +40,10 @@ jobs:
 
       - name: Pretext canary benchmark
         run: npm run pretext:canary --workspace apps/desktop
+
+      - name: Flatpak manifest check
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run flatpak:manifest:check --workspace apps/desktop
 
       - name: Frontend build
         run: npm run build --workspace apps/desktop

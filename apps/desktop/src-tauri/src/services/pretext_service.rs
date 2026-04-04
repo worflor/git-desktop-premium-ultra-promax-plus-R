@@ -1,15 +1,26 @@
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-const PRETEXT_LAYOUT_VERSION: &str = "pretext-adapter-v1";
+use serde::{Deserialize, Serialize};
+
+const PRETEXT_LAYOUT_VERSION: &str = "pretext-runtime-adapter-v2";
+const PRETEXT_RUNTIME_SCRIPT_PATH: &str = "../scripts/pretext-layout-runtime.mjs";
 const DEFAULT_LAYOUT_WIDTH_PX: u32 = 1080;
 const DEFAULT_LINE_HEIGHT_PX: u32 = 18;
-const DEFAULT_FONT_PROFILE: &str = "ui-mono-13";
+const DEFAULT_FONT_PROFILE: &str = "13px Menlo";
 const MIN_LAYOUT_WIDTH_PX: u32 = 320;
 const MAX_LAYOUT_WIDTH_PX: u32 = 4096;
 const MIN_LINE_HEIGHT_PX: u32 = 12;
 const MAX_LINE_HEIGHT_PX: u32 = 64;
 const DEFAULT_MAX_LAYOUT_BYTES: usize = 24 * 1024 * 1024;
 const AVERAGE_GLYPH_WIDTH_PX: u32 = 8;
+const MAX_RUNTIME_LAYOUT_CACHE_ENTRIES: usize = 128;
 
 #[derive(Debug, Clone)]
 pub struct LayoutOptions {
@@ -33,8 +44,8 @@ impl LayoutOptions {
         let font_profile = font_profile
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .unwrap_or(DEFAULT_FONT_PROFILE)
-            .to_string();
+            .map(resolve_font_profile)
+            .unwrap_or_else(|| DEFAULT_FONT_PROFILE.to_string());
 
         Self {
             width_px,
@@ -55,53 +66,296 @@ pub struct LayoutSnapshot {
     pub layout_cache_key: String,
 }
 
-pub fn prepare_layout(diff_id: &str, payload: &str, options: &LayoutOptions) -> LayoutSnapshot {
-    let prepare_started_at = Instant::now();
-    let max_layout_bytes = max_layout_bytes();
-    let mut fallback_reason = None::<String>;
+#[derive(Debug, Clone)]
+struct RuntimeLayoutSnapshot {
+    pretext_version: String,
+    prepare_ms: u64,
+    layout_ms: u64,
+    visual_row_count: u32,
+}
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeLayoutRequest<'a> {
+    text: &'a str,
+    width_px: u32,
+    line_height_px: u32,
+    font_profile: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeLayoutResponse {
+    ok: bool,
+    pretext_version: String,
+    prepare_ms: f64,
+    layout_ms: f64,
+    line_count: u32,
+}
+
+pub fn prepare_layout(diff_id: &str, payload: &str, options: &LayoutOptions) -> LayoutSnapshot {
+    let layout_cache_key = build_layout_cache_key(
+        diff_id,
+        options.width_px,
+        options.font_profile.as_str(),
+        options.line_height_px,
+    );
+
+    let max_layout_bytes = max_layout_bytes();
     if payload.len() > max_layout_bytes {
-        fallback_reason = Some(format!(
-            "payload exceeds pretext layout budget: {} > {}",
-            payload.len(),
-            max_layout_bytes
-        ));
+        return fallback_layout(
+            payload,
+            options,
+            layout_cache_key,
+            format!(
+                "payload exceeds pretext layout budget: {} > {}",
+                payload.len(),
+                max_layout_bytes
+            ),
+        );
     }
 
     if payload.contains('\0') {
-        fallback_reason = Some("payload contains binary null bytes".to_string());
+        return fallback_layout(
+            payload,
+            options,
+            layout_cache_key,
+            "payload contains binary null bytes".to_string(),
+        );
     }
 
     if force_fallback_enabled() {
-        fallback_reason = Some("forced by GDPU_FORCE_DIFF_FALLBACK=1".to_string());
+        return fallback_layout(
+            payload,
+            options,
+            layout_cache_key,
+            "forced by GDPU_FORCE_DIFF_FALLBACK=1".to_string(),
+        );
     }
 
+    let runtime_cache_key = build_runtime_cache_key(payload, options);
+    if let Some(cached_layout) = runtime_layout_cache_get(runtime_cache_key.as_str()) {
+        return LayoutSnapshot {
+            pretext_version: cached_layout.pretext_version,
+            prepare_ms: cached_layout.prepare_ms,
+            layout_ms: cached_layout.layout_ms,
+            fallback_activated: false,
+            fallback_reason: None,
+            visual_row_count: cached_layout.visual_row_count,
+            layout_cache_key,
+        };
+    }
+
+    match run_pretext_runtime(payload, options) {
+        Ok(runtime_layout) => {
+            runtime_layout_cache_insert(runtime_cache_key, runtime_layout.clone());
+            LayoutSnapshot {
+                pretext_version: runtime_layout.pretext_version,
+                prepare_ms: runtime_layout.prepare_ms,
+                layout_ms: runtime_layout.layout_ms,
+                fallback_activated: false,
+                fallback_reason: None,
+                visual_row_count: runtime_layout.visual_row_count,
+                layout_cache_key,
+            }
+        }
+        Err(error) => fallback_layout(
+            payload,
+            options,
+            layout_cache_key,
+            format!("pretext runtime unavailable: {error}"),
+        ),
+    }
+}
+
+fn fallback_layout(
+    payload: &str,
+    options: &LayoutOptions,
+    layout_cache_key: String,
+    reason: String,
+) -> LayoutSnapshot {
+    let prepare_started_at = Instant::now();
     let lines = payload.lines().collect::<Vec<_>>();
     let prepare_ms = prepare_started_at.elapsed().as_millis() as u64;
 
     let layout_started_at = Instant::now();
-    let visual_row_count = if fallback_reason.is_some() {
-        // Fallback uses 1:1 row mapping to preserve deterministic line navigation.
-        lines.len().max(1) as u32
-    } else {
-        estimate_visual_rows(&lines, options.width_px)
-    };
+    let visual_row_count = lines.len().max(1) as u32;
+    let estimated_layout_rows = estimate_visual_rows(&lines, options.width_px);
     let layout_ms = layout_started_at.elapsed().as_millis() as u64;
 
     LayoutSnapshot {
         pretext_version: PRETEXT_LAYOUT_VERSION.to_string(),
         prepare_ms,
         layout_ms,
-        fallback_activated: fallback_reason.is_some(),
-        fallback_reason,
-        visual_row_count,
-        layout_cache_key: build_layout_cache_key(
-            diff_id,
-            options.width_px,
-            options.font_profile.as_str(),
-            options.line_height_px,
-        ),
+        fallback_activated: true,
+        fallback_reason: Some(truncate_reason(reason.as_str())),
+        visual_row_count: visual_row_count.max(estimated_layout_rows),
+        layout_cache_key,
     }
+}
+
+fn run_pretext_runtime(
+    payload: &str,
+    options: &LayoutOptions,
+) -> Result<RuntimeLayoutSnapshot, String> {
+    if let Some(cached_error) = runtime_unavailable_reason_get() {
+        return Err(cached_error);
+    }
+
+    let script_path = pretext_runtime_script_path();
+    if !script_path.exists() {
+        let reason = format!(
+            "pretext runtime script missing at {}",
+            script_path.to_string_lossy()
+        );
+        runtime_unavailable_reason_set(reason.clone());
+        return Err(reason);
+    }
+
+    let request = RuntimeLayoutRequest {
+        text: payload,
+        width_px: options.width_px,
+        line_height_px: options.line_height_px,
+        font_profile: options.font_profile.as_str(),
+    };
+
+    let request_payload = serde_json::to_vec(&request)
+        .map_err(|error| format!("failed to serialize pretext runtime request: {error}"))?;
+
+    let mut child = Command::new("node")
+        .arg(script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            let reason = format!("failed to spawn pretext runtime process: {error}");
+            runtime_unavailable_reason_set(reason.clone());
+            reason
+        })?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(&request_payload)
+            .map_err(|error| format!("failed to write pretext runtime request: {error}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("failed to execute pretext runtime process: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        let reason = if detail.is_empty() {
+            "pretext runtime process failed without diagnostics".to_string()
+        } else {
+            format!("pretext runtime process failed: {detail}")
+        };
+        runtime_unavailable_reason_set(reason.clone());
+        return Err(reason);
+    }
+
+    let response: RuntimeLayoutResponse =
+        serde_json::from_slice(&output.stdout).map_err(|error| {
+            let reason = format!("failed to parse pretext runtime response: {error}");
+            runtime_unavailable_reason_set(reason.clone());
+            reason
+        })?;
+
+    if !response.ok {
+        let reason = "pretext runtime response marked as not ok".to_string();
+        runtime_unavailable_reason_set(reason.clone());
+        return Err(reason);
+    }
+
+    Ok(RuntimeLayoutSnapshot {
+        pretext_version: format!("pretext@{}", response.pretext_version),
+        prepare_ms: f64_to_u64_ms(response.prepare_ms),
+        layout_ms: f64_to_u64_ms(response.layout_ms),
+        visual_row_count: response.line_count.max(1),
+    })
+}
+
+fn f64_to_u64_ms(value: f64) -> u64 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+
+    value.round() as u64
+}
+
+fn truncate_reason(value: &str) -> String {
+    const MAX_REASON_LENGTH: usize = 240;
+    let trimmed = value.trim();
+    if trimmed.len() <= MAX_REASON_LENGTH {
+        return trimmed.to_string();
+    }
+
+    let mut output = String::new();
+    for ch in trimmed.chars().take(MAX_REASON_LENGTH) {
+        output.push(ch);
+    }
+    output.push_str("...");
+    output
+}
+
+fn pretext_runtime_script_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(PRETEXT_RUNTIME_SCRIPT_PATH)
+}
+
+fn build_runtime_cache_key(payload: &str, options: &LayoutOptions) -> String {
+    let mut hasher = DefaultHasher::new();
+    payload.hash(&mut hasher);
+    options.width_px.hash(&mut hasher);
+    options.line_height_px.hash(&mut hasher);
+    normalize_font_profile(options.font_profile.as_str()).hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn runtime_layout_cache_get(cache_key: &str) -> Option<RuntimeLayoutSnapshot> {
+    runtime_layout_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(cache_key).cloned())
+}
+
+fn runtime_layout_cache_insert(cache_key: String, snapshot: RuntimeLayoutSnapshot) {
+    if let Ok(mut cache) = runtime_layout_cache().lock() {
+        cache.insert(cache_key, snapshot);
+
+        while cache.len() > MAX_RUNTIME_LAYOUT_CACHE_ENTRIES {
+            if let Some(first_key) = cache.keys().next().cloned() {
+                cache.remove(first_key.as_str());
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+fn runtime_layout_cache() -> &'static Mutex<HashMap<String, RuntimeLayoutSnapshot>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, RuntimeLayoutSnapshot>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn runtime_unavailable_reason_get() -> Option<String> {
+    runtime_unavailable_reason_store()
+        .lock()
+        .ok()
+        .and_then(|value| value.clone())
+}
+
+fn runtime_unavailable_reason_set(reason: String) {
+    if let Ok(mut value) = runtime_unavailable_reason_store().lock() {
+        *value = Some(reason);
+    }
+}
+
+fn runtime_unavailable_reason_store() -> &'static Mutex<Option<String>> {
+    static STORE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(None))
 }
 
 fn build_layout_cache_key(
@@ -129,6 +383,26 @@ fn normalize_font_profile(value: &str) -> String {
         .collect::<String>()
         .trim_matches('-')
         .to_string()
+}
+
+fn resolve_font_profile(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return DEFAULT_FONT_PROFILE.to_string();
+    }
+
+    if trimmed.contains("px") {
+        return trimmed.to_string();
+    }
+
+    if let Some(size) = trimmed
+        .strip_prefix("ui-mono-")
+        .and_then(|item| item.parse::<u32>().ok())
+    {
+        return format!("{size}px Menlo");
+    }
+
+    DEFAULT_FONT_PROFILE.to_string()
 }
 
 fn estimate_visual_rows(lines: &[&str], width_px: u32) -> u32 {

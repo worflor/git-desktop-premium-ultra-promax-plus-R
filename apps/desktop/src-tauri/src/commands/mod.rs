@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
@@ -667,8 +667,9 @@ pub fn get_file_diff(
     }
 }
 
-#[tauri::command]
-pub fn prepare_file_diff_chunks(
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareFileDiffChunksRequest {
     repository_path: String,
     path: String,
     staged: Option<bool>,
@@ -677,25 +678,32 @@ pub fn prepare_file_diff_chunks(
     layout_width_px: Option<u32>,
     font_profile: Option<String>,
     line_height_px: Option<u32>,
+}
+
+#[tauri::command]
+pub fn prepare_file_diff_chunks(
+    request: PrepareFileDiffChunksRequest,
     state: State<'_, AppState>,
 ) -> CommandResult<FileDiffManifestData> {
     let started_at = Instant::now();
     let request_id = Uuid::new_v4().to_string();
     logging_service::set_request_context(request_id.as_str());
-    let staged = staged.unwrap_or(false);
-    let context_lines = context_lines.unwrap_or(3).clamp(0, 30) as usize;
-    let chunk_size = chunk_size_bytes.unwrap_or((64 * 1024) as u32) as usize;
+    let staged = request.staged.unwrap_or(false);
+    let context_lines = request.context_lines.unwrap_or(3).clamp(0, 30) as usize;
+    let chunk_size = request.chunk_size_bytes.unwrap_or((64 * 1024) as u32) as usize;
 
     match diff_service::prepare_file_diff_chunks(
         &state,
-        &repository_path,
-        &path,
-        staged,
-        context_lines,
-        Some(chunk_size),
-        layout_width_px,
-        font_profile.as_deref(),
-        line_height_px,
+        diff_service::PrepareFileDiffChunksInput {
+            repository_path: &request.repository_path,
+            path: &request.path,
+            staged,
+            context_lines,
+            chunk_size_bytes: Some(chunk_size),
+            layout_width_px: request.layout_width_px,
+            font_profile: request.font_profile.as_deref(),
+            line_height_px: request.line_height_px,
+        },
     ) {
         Ok(data) => command_ok("prepare_file_diff_chunks", started_at, &state, data),
         Err(error) => map_error_with_command("prepare_file_diff_chunks", started_at, &state, error),
@@ -1361,6 +1369,36 @@ pub fn update_telemetry_retention(
         Err(error) => {
             map_error_with_command("update_telemetry_retention", started_at, &state, error)
         }
+    }
+}
+
+#[tauri::command]
+pub fn update_update_channel(
+    update_channel: String,
+    state: State<'_, AppState>,
+) -> CommandResult<AppSettingsData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match settings_service::update_update_channel(&update_channel) {
+        Ok(data) => command_ok("update_update_channel", started_at, &state, data),
+        Err(error) => map_error_with_command("update_update_channel", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn update_crash_reporting(
+    crash_reporting_enabled: bool,
+    state: State<'_, AppState>,
+) -> CommandResult<AppSettingsData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match settings_service::update_crash_reporting(crash_reporting_enabled) {
+        Ok(data) => command_ok("update_crash_reporting", started_at, &state, data),
+        Err(error) => map_error_with_command("update_crash_reporting", started_at, &state, error),
     }
 }
 

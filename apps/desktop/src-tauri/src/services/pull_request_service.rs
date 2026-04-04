@@ -3,7 +3,7 @@ use crate::models::operations::{
     LocalPullRequestListData, LocalPullRequestOperationData, PullRequestProviderData,
     PullRequestProviderListData,
 };
-use crate::services::{forge_service, local_pull_request_service};
+use crate::services::{forge_remote_service, forge_service, local_pull_request_service};
 
 const GITHUB_PULL_REQUEST_PROVIDER_ID: &str = "github-gh";
 const GITLAB_PULL_REQUEST_PROVIDER_ID: &str = "gitlab-contract";
@@ -48,28 +48,32 @@ pub fn list_pull_request_providers(
     }
 
     if has_gitlab_remote {
+        let status = forge_remote_service::gitlab_adapter_status();
         providers.push(PullRequestProviderData {
             id: GITLAB_PULL_REQUEST_PROVIDER_ID.to_string(),
             display_name: "GitLab Merge Requests".to_string(),
-            available: true,
-            mode: "remote-mirrored".to_string(),
-            guidance: Some(
-                "Mirrored through local-core while GitLab adapter remains contract-only in this build."
-                    .to_string(),
-            ),
+            available: status.available,
+            mode: if status.available {
+                "remote-api".to_string()
+            } else {
+                "remote-api-unavailable".to_string()
+            },
+            guidance: Some(status.guidance),
         });
     }
 
     if has_bitbucket_remote {
+        let status = forge_remote_service::bitbucket_adapter_status();
         providers.push(PullRequestProviderData {
             id: BITBUCKET_PULL_REQUEST_PROVIDER_ID.to_string(),
             display_name: "Bitbucket Pull Requests".to_string(),
-            available: true,
-            mode: "remote-mirrored".to_string(),
-            guidance: Some(
-                "Mirrored through local-core while Bitbucket adapter remains contract-only in this build."
-                    .to_string(),
-            ),
+            available: status.available,
+            mode: if status.available {
+                "remote-api".to_string()
+            } else {
+                "remote-api-unavailable".to_string()
+            },
+            guidance: Some(status.guidance),
         });
     }
 
@@ -87,11 +91,14 @@ pub fn list_pull_requests(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let list_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
-        | GITHUB_PULL_REQUEST_PROVIDER_ID
-        | GITLAB_PULL_REQUEST_PROVIDER_ID
-        | BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::list_local_pull_requests(repository_path)
+        }
+        GITLAB_PULL_REQUEST_PROVIDER_ID => {
+            forge_remote_service::list_gitlab_pull_requests(repository_path)
+        }
+        BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+            forge_remote_service::list_bitbucket_pull_requests(repository_path)
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
@@ -113,10 +120,7 @@ pub fn create_pull_request(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
-        | GITHUB_PULL_REQUEST_PROVIDER_ID
-        | GITLAB_PULL_REQUEST_PROVIDER_ID
-        | BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::create_local_pull_request(
                 repository_path,
                 title,
@@ -126,6 +130,22 @@ pub fn create_pull_request(
                 draft,
             )
         }
+        GITLAB_PULL_REQUEST_PROVIDER_ID => forge_remote_service::create_gitlab_pull_request(
+            repository_path,
+            title,
+            description,
+            source_branch,
+            target_branch,
+            draft,
+        ),
+        BITBUCKET_PULL_REQUEST_PROVIDER_ID => forge_remote_service::create_bitbucket_pull_request(
+            repository_path,
+            title,
+            description,
+            source_branch,
+            target_branch,
+            draft,
+        ),
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
@@ -145,11 +165,14 @@ pub fn close_pull_request(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
-        | GITHUB_PULL_REQUEST_PROVIDER_ID
-        | GITLAB_PULL_REQUEST_PROVIDER_ID
-        | BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::close_local_pull_request(repository_path, pull_request_id)
+        }
+        GITLAB_PULL_REQUEST_PROVIDER_ID => {
+            forge_remote_service::close_gitlab_pull_request(repository_path, pull_request_id)
+        }
+        BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+            forge_remote_service::close_bitbucket_pull_request(repository_path, pull_request_id)
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
@@ -170,11 +193,14 @@ pub fn reopen_pull_request(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
-        | GITHUB_PULL_REQUEST_PROVIDER_ID
-        | GITLAB_PULL_REQUEST_PROVIDER_ID
-        | BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::reopen_local_pull_request(repository_path, pull_request_id)
+        }
+        GITLAB_PULL_REQUEST_PROVIDER_ID => {
+            forge_remote_service::reopen_gitlab_pull_request(repository_path, pull_request_id)
+        }
+        BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+            forge_remote_service::reopen_bitbucket_pull_request(repository_path, pull_request_id)
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
@@ -195,14 +221,17 @@ pub fn mark_pull_request_ready(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
-        | GITHUB_PULL_REQUEST_PROVIDER_ID
-        | GITLAB_PULL_REQUEST_PROVIDER_ID
-        | BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::mark_local_pull_request_ready(
                 repository_path,
                 pull_request_id,
             )
+        }
+        GITLAB_PULL_REQUEST_PROVIDER_ID => {
+            forge_remote_service::mark_gitlab_pull_request_ready(repository_path, pull_request_id)
+        }
+        BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+            forge_remote_service::mark_bitbucket_pull_request_ready(repository_path, pull_request_id)
         }
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
@@ -224,16 +253,23 @@ pub fn merge_pull_request(
     let provider_id = resolve_provider(repository_path, provider_id)?;
 
     let operation_data = match provider_id.as_str() {
-        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID
-        | GITHUB_PULL_REQUEST_PROVIDER_ID
-        | GITLAB_PULL_REQUEST_PROVIDER_ID
-        | BITBUCKET_PULL_REQUEST_PROVIDER_ID => {
+        local_pull_request_service::LOCAL_PULL_REQUEST_PROVIDER_ID | GITHUB_PULL_REQUEST_PROVIDER_ID => {
             local_pull_request_service::merge_local_pull_request(
                 repository_path,
                 pull_request_id,
                 delete_source_branch,
             )
         }
+        GITLAB_PULL_REQUEST_PROVIDER_ID => forge_remote_service::merge_gitlab_pull_request(
+            repository_path,
+            pull_request_id,
+            delete_source_branch,
+        ),
+        BITBUCKET_PULL_REQUEST_PROVIDER_ID => forge_remote_service::merge_bitbucket_pull_request(
+            repository_path,
+            pull_request_id,
+            delete_source_branch,
+        ),
         unknown => Err(AppError::InvalidInput(format!(
             "unknown pull request provider: {unknown}"
         ))),
@@ -253,26 +289,17 @@ fn resolve_provider(repository_path: &str, provider_id: Option<&str>) -> Result<
         .unwrap_or(providers.default_provider_id.as_str())
         .to_string();
 
-    if matches!(
-        requested.as_str(),
-        GITHUB_PULL_REQUEST_PROVIDER_ID
-            | GITLAB_PULL_REQUEST_PROVIDER_ID
-            | BITBUCKET_PULL_REQUEST_PROVIDER_ID
-    ) && !providers
-        .providers
-        .iter()
-        .any(|provider| provider.id == requested)
-    {
-        return Err(AppError::ForgeAdapterUnavailable(requested));
-    }
-
-    providers
+    let provider = providers
         .providers
         .iter()
         .find(|provider| provider.id == requested)
         .ok_or_else(|| {
             AppError::InvalidInput(format!("unknown pull request provider: {requested}"))
         })?;
+
+    if !provider.available {
+        return Err(AppError::ForgeAdapterUnavailable(requested));
+    }
 
     Ok(requested)
 }

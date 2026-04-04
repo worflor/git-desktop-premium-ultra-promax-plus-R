@@ -103,12 +103,6 @@ ul, ol { list-style: none; padding: 0; }
     filter 0.4s ease;
 }
 
-/* Universal Reactivity: The UI fuels the Void */
-.app-shell-root:has(.primary-btn:hover, .workspace-mode-btn:hover, .workspace-view-tab:hover) ::before {
-  opacity: 0.95 !important;
-  filter: brightness(1.6) saturate(1.2) !important;
-}
-
 /* ── Nightwalker Reactive Void (Digital Guttering) ───────── */
 [data-theme="nightwalker"] .app-shell-root::before {
   /* Mask out the main content area to focus rain in the functional areas */
@@ -1511,6 +1505,36 @@ ul, ol { list-style: none; padding: 0; }
 @keyframes status-pulse {
   0%, 100% { opacity: 0.8; transform: scale(1); }
   50% { opacity: 1; transform: scale(1.15); box-shadow: 0 0 8px rgba(var(--status-online-rgb), 0.7); }
+}
+
+/* ── Global Form Overrides (Spectral Sync) ─────────────── */
+select {
+  background-color: var(--input-bg) !important;
+  color: var(--text-normal) !important;
+  border: 1px solid var(--input-border) !important;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 32px 6px 10px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScxMicgaGVpZ2h0PScxMicgdmlld0JveD0nMCAwIDI0IDI0JyBmaWxsPSdub25lJyBzdHJva2U9J2rgba(255, 0, 68, 0.8knIHN0cm9rZS13aWR0aD0nMicgc3Ryb2tlLWxpbmVjYXA9J3JvdW5kJyBzdHJva2UtbGluZWpvaW49J3JvdW5kJz48cG9seWxpbmUgcG9pbnRzPSc2IDkgMTIgMTUgMTggOScvPjwvc3ZnPg==");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  backdrop-filter: blur(8px);
+}
+
+option {
+  /* IMPORTANT: Browsers render transparent option BGs as grey. Enforcement of solid Obsidian is required for premium aesthetics. */
+  background-color: #050203 !important; 
+  color: var(--text-normal) !important;
+  padding: 10px;
+}
+
+select:focus, .path-input:focus {
+  outline: none;
+  border-color: var(--input-focus-border) !important;
+  box-shadow: 0 0 10px rgba(var(--chrome-accent-rgb), 0.15);
 }
 
 /* ── Redshift Spectral Obsidian Overrides ────────────────── */

@@ -429,6 +429,18 @@ export function updateTelemetryRetention(
   return invokeCommand("update_telemetry_retention", { retentionDays, retentionMb });
 }
 
+export function updateUpdateChannel(
+  updateChannel: "stable" | "beta" | string
+): Promise<CommandResult<AppSettingsData>> {
+  return invokeCommand("update_update_channel", { updateChannel });
+}
+
+export function updateCrashReporting(
+  crashReportingEnabled: boolean
+): Promise<CommandResult<AppSettingsData>> {
+  return invokeCommand("update_crash_reporting", { crashReportingEnabled });
+}
+
 export function updateLayoutPreferences(
   sidebarWidthPx: number,
   sidebarPosition: "left" | "right",

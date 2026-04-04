@@ -1415,11 +1415,11 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        abort_conflict_resolution, build_conflict_guidance, conflict_action_args, create_stash,
-        create_worktree, drop_stash, get_commit_detail, get_conflict_state, get_repository_status,
-        list_branches, list_commit_history, list_stashes, list_worktrees,
-        normalize_conflict_operation, remove_worktree, stage_paths, start_cherry_pick,
-        start_rebase, unstage_paths,
+        abort_conflict_resolution, build_conflict_guidance, conflict_action_args,
+        continue_conflict_resolution, create_stash, create_worktree, drop_stash, get_commit_detail,
+        get_conflict_state, get_repository_status, list_branches, list_commit_history,
+        list_stashes, list_worktrees, normalize_conflict_operation, remove_worktree,
+        set_branch_upstream, stage_paths, start_cherry_pick, start_rebase, unstage_paths,
     };
 
     struct FixtureRepo {
@@ -1812,6 +1812,73 @@ mod tests {
     }
 
     #[test]
+    fn fixture_set_branch_upstream_matches_git_cli() {
+        let fixture = FixtureRepo::new("branch-upstream");
+        write_repo_file(fixture.path(), "tracked.txt", "base\n");
+        commit_all(fixture.path(), "base commit");
+
+        let remote_path = std::env::temp_dir().join(format!("gdpu-remote-{}", Uuid::new_v4()));
+        let remote_path_str = remote_path
+            .to_str()
+            .expect("remote path should be valid utf-8")
+            .to_string();
+
+        run_fixture_git(
+            fixture.path(),
+            &["init", "--bare", remote_path_str.as_str()],
+        );
+        run_fixture_git(
+            fixture.path(),
+            &["remote", "add", "origin", remote_path_str.as_str()],
+        );
+        run_fixture_git(fixture.path(), &["push", "-u", "origin", "main"]);
+
+        run_fixture_git(fixture.path(), &["checkout", "-b", "feature/upstream"]);
+        write_repo_file(fixture.path(), "tracked.txt", "base\nfeature\n");
+        commit_all(fixture.path(), "feature commit");
+        run_fixture_git(fixture.path(), &["push", "origin", "feature/upstream"]);
+
+        let _ = run_fixture_git_with_status(fixture.path(), &["branch", "--unset-upstream"]);
+
+        set_branch_upstream(
+            fixture.path_str(),
+            "feature/upstream",
+            "origin/feature/upstream",
+        )
+        .expect("expected set branch upstream to succeed");
+
+        let provider = list_branches(fixture.path_str()).expect("expected provider branch list");
+        let feature_branch = provider
+            .branches
+            .iter()
+            .find(|branch| branch.name == "feature/upstream")
+            .expect("expected feature/upstream branch in provider result");
+        assert_eq!(
+            feature_branch.upstream.as_deref(),
+            Some("origin/feature/upstream")
+        );
+
+        let expected_tracking = run_fixture_git(
+            fixture.path(),
+            &[
+                "for-each-ref",
+                "--format=%(upstream:short)|%(upstream:track)",
+                "refs/heads/feature/upstream",
+            ],
+        );
+        let mut fields = expected_tracking.splitn(2, '|');
+        let expected_upstream = fields.next().unwrap_or_default().trim();
+        let expected_track = fields.next().unwrap_or_default().trim();
+        let (expected_ahead, expected_behind) = parse_branch_track_fixture(expected_track);
+
+        assert_eq!(feature_branch.upstream.as_deref(), Some(expected_upstream));
+        assert_eq!(feature_branch.ahead, expected_ahead);
+        assert_eq!(feature_branch.behind, expected_behind);
+
+        let _ = fs::remove_dir_all(remote_path);
+    }
+
+    #[test]
     fn fixture_commit_history_and_detail_match_git_cli() {
         let fixture = FixtureRepo::new("commit-detail");
         write_repo_file(fixture.path(), "tracked.txt", "base\n");
@@ -1930,6 +1997,92 @@ mod tests {
             get_conflict_state(fixture.path_str()).expect("expected post-abort conflict state");
         assert!(!post_state.in_conflict);
         assert!(post_state.operation.is_none());
+    }
+
+    #[test]
+    fn fixture_merge_conflict_continue_matches_git_cli() {
+        let fixture = FixtureRepo::new("merge-conflict-continue");
+        write_repo_file(fixture.path(), "conflict.txt", "base line\n");
+        commit_all(fixture.path(), "base commit");
+
+        run_fixture_git(
+            fixture.path(),
+            &["checkout", "-b", "feature/conflict-continue"],
+        );
+        write_repo_file(fixture.path(), "conflict.txt", "feature line\n");
+        commit_all(fixture.path(), "feature edit");
+
+        run_fixture_git(fixture.path(), &["checkout", "main"]);
+        write_repo_file(fixture.path(), "conflict.txt", "main line\n");
+        commit_all(fixture.path(), "main edit");
+
+        let merge_attempt =
+            run_fixture_git_with_status(fixture.path(), &["merge", "feature/conflict-continue"]);
+        assert!(
+            !merge_attempt.0,
+            "expected merge to fail with conflict, but it succeeded"
+        );
+
+        write_repo_file(fixture.path(), "conflict.txt", "resolved line\n");
+        run_fixture_git(fixture.path(), &["add", "conflict.txt"]);
+
+        let resolution = continue_conflict_resolution(fixture.path_str(), Some("merge"))
+            .expect("expected conflict continue operation to succeed");
+        assert_eq!(resolution.operation, "merge");
+        assert_eq!(resolution.action, "continue");
+
+        let post_state =
+            get_conflict_state(fixture.path_str()).expect("expected post-continue conflict state");
+        assert!(!post_state.in_conflict);
+        assert!(post_state.operation.is_none());
+
+        let merge_parent_hashes =
+            run_fixture_git(fixture.path(), &["log", "-1", "--pretty=format:%P"]);
+        assert!(
+            merge_parent_hashes.split_whitespace().count() >= 2,
+            "expected merge continue to produce a merge commit"
+        );
+    }
+
+    #[test]
+    fn fixture_rebase_conflict_abort_matches_git_cli() {
+        let fixture = FixtureRepo::new("rebase-conflict-abort");
+        write_repo_file(fixture.path(), "conflict.txt", "base line\n");
+        commit_all(fixture.path(), "base commit");
+
+        run_fixture_git(fixture.path(), &["checkout", "-b", "feature/rebase-abort"]);
+        write_repo_file(fixture.path(), "conflict.txt", "feature line\n");
+        commit_all(fixture.path(), "feature edit");
+        let feature_head_before_rebase = run_fixture_git(fixture.path(), &["rev-parse", "HEAD"]);
+
+        run_fixture_git(fixture.path(), &["checkout", "main"]);
+        write_repo_file(fixture.path(), "conflict.txt", "main line\n");
+        commit_all(fixture.path(), "main edit");
+
+        run_fixture_git(fixture.path(), &["checkout", "feature/rebase-abort"]);
+        let rebase_attempt = run_fixture_git_with_status(fixture.path(), &["rebase", "main"]);
+        assert!(
+            !rebase_attempt.0,
+            "expected rebase to fail with conflict, but it succeeded"
+        );
+
+        let conflict_state = get_conflict_state(fixture.path_str())
+            .expect("expected provider conflict state result");
+        assert!(conflict_state.in_conflict);
+        assert_eq!(conflict_state.operation.as_deref(), Some("rebase"));
+
+        let resolution = abort_conflict_resolution(fixture.path_str(), Some("rebase"))
+            .expect("expected rebase abort operation to succeed");
+        assert_eq!(resolution.operation, "rebase");
+        assert_eq!(resolution.action, "abort");
+
+        let post_state =
+            get_conflict_state(fixture.path_str()).expect("expected post-abort conflict state");
+        assert!(!post_state.in_conflict);
+        assert!(post_state.operation.is_none());
+
+        let feature_head_after_abort = run_fixture_git(fixture.path(), &["rev-parse", "HEAD"]);
+        assert_eq!(feature_head_after_abort, feature_head_before_rebase);
     }
 
     #[test]

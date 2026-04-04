@@ -5,9 +5,10 @@ mod runtime;
 mod services;
 
 use runtime::state::AppState;
-use services::bootstrap_service;
+use services::{bootstrap_service, crash_reporting_service};
 
 fn main() {
+    crash_reporting_service::install_panic_hook();
     std::thread::spawn(bootstrap_service::run_startup_readiness_probe);
 
     tauri::Builder::default()
@@ -76,6 +77,8 @@ fn main() {
             commands::get_app_settings,
             commands::update_ai_guardrail,
             commands::update_telemetry_retention,
+            commands::update_update_channel,
+            commands::update_crash_reporting,
             commands::update_layout_preferences,
             commands::update_ui_preferences,
             commands::get_command_telemetry_snapshot,

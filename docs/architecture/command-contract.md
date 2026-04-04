@@ -110,12 +110,16 @@ Examples:
 61. get_app_settings
 62. update_ai_guardrail
 63. update_telemetry_retention
-64. update_layout_preferences
-65. update_ui_preferences
-66. get_command_telemetry_snapshot
-67. clear_command_telemetry
+64. update_update_channel
+65. update_crash_reporting
+66. update_layout_preferences
+67. update_ui_preferences
+68. get_command_telemetry_snapshot
+69. clear_command_telemetry
 
 Settings payload note:
+- update_update_channel uses `{ updateChannel }`; accepted values are `stable` and `beta`.
+- update_crash_reporting uses `{ crashReportingEnabled }` and toggles local crash-report artifact persistence.
 - update_layout_preferences uses `{ sidebarWidthPx, sidebarPosition, utilityDrawerDefaultExpanded, utilityDrawerHeightPx }`.
 - sidebarPosition accepts `left` or `right`.
 - update_ui_preferences uses `{ themeId, keybindingProfile }`.

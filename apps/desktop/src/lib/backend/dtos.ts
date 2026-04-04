@@ -263,6 +263,8 @@ export interface AppSettingsData {
   aiReadOnlyDefault: boolean;
   telemetryRetentionDays: number;
   telemetryRetentionMb: number;
+  updateChannel: "stable" | "beta" | string;
+  crashReportingEnabled: boolean;
   themeId: string;
   keybindingProfile: "classic" | "compact" | string;
   sidebarWidthPx: number;

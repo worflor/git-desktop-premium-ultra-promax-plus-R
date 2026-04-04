@@ -4,12 +4,12 @@ use crate::errors::AppError;
 use crate::models::git::{
     ForgeAdapter, ForgeAdapterList, RemoteIntegrationData, RepositoryIntegrationMatrix,
 };
-use crate::services::git_provider;
+use crate::services::{forge_remote_service, git_provider};
 
 const ADAPTER_ID_LOCAL_CORE: &str = "local-core";
 const ADAPTER_ID_GITHUB_GH: &str = "github-gh";
-const ADAPTER_ID_GITLAB_CONTRACT: &str = "gitlab-contract";
-const ADAPTER_ID_BITBUCKET_CONTRACT: &str = "bitbucket-contract";
+const ADAPTER_ID_GITLAB_CONTRACT: &str = forge_remote_service::GITLAB_PROVIDER_ID;
+const ADAPTER_ID_BITBUCKET_CONTRACT: &str = forge_remote_service::BITBUCKET_PROVIDER_ID;
 
 pub struct GithubCliAuthStatus {
     pub available: bool,
@@ -45,27 +45,29 @@ fn detect_gh() -> ForgeAdapter {
     }
 }
 
-fn contract_only_adapter(id: &str, message: &str) -> ForgeAdapter {
+fn remote_api_adapter(id: &str, status: forge_remote_service::AdapterStatus, version: &str) -> ForgeAdapter {
     ForgeAdapter {
         id: id.to_string(),
-        available: false,
-        version: Some("contract-only".to_string()),
-        auth_state: Some("degraded".to_string()),
-        auth_message: Some(message.to_string()),
+        available: status.available,
+        version: Some(version.to_string()),
+        auth_state: Some(status.auth_state),
+        auth_message: Some(status.guidance),
     }
 }
 
-fn gitlab_contract_adapter() -> ForgeAdapter {
-    contract_only_adapter(
+fn detect_gitlab_adapter() -> ForgeAdapter {
+    remote_api_adapter(
         ADAPTER_ID_GITLAB_CONTRACT,
-        "GitLab adapter contract is declared; API/token integration is not enabled in this build.",
+        forge_remote_service::gitlab_adapter_status(),
+        "api-v4",
     )
 }
 
-fn bitbucket_contract_adapter() -> ForgeAdapter {
-    contract_only_adapter(
+fn detect_bitbucket_adapter() -> ForgeAdapter {
+    remote_api_adapter(
         ADAPTER_ID_BITBUCKET_CONTRACT,
-        "Bitbucket adapter contract is declared; API/token integration is not enabled in this build.",
+        forge_remote_service::bitbucket_adapter_status(),
+        "api-v2",
     )
 }
 
@@ -137,8 +139,8 @@ pub fn list_forge_adapters() -> Result<ForgeAdapterList, AppError> {
         adapters: vec![
             local_core_adapter(),
             github,
-            gitlab_contract_adapter(),
-            bitbucket_contract_adapter(),
+            detect_gitlab_adapter(),
+            detect_bitbucket_adapter(),
         ],
     })
 }
@@ -149,8 +151,8 @@ pub fn get_repository_integration_matrix(
     let remote_output = git_provider::run_git(Some(repository_path), &["remote", "-v"])?;
     let github_adapter = detect_gh();
     let github_auth = get_github_cli_auth_status();
-    let gitlab_adapter = gitlab_contract_adapter();
-    let bitbucket_adapter = bitbucket_contract_adapter();
+    let gitlab_adapter = detect_gitlab_adapter();
+    let bitbucket_adapter = detect_bitbucket_adapter();
     let mut remotes = Vec::<RemoteIntegrationData>::new();
     let mut seen = std::collections::HashSet::<String>::new();
 
@@ -213,22 +215,24 @@ pub fn get_repository_integration_matrix(
         }
         if host_kind == "gitlab" {
             capability_summary.push("gitlab.remote.detected".to_string());
-            capability_summary.push("gitlab.issues.local-mirror".to_string());
-            capability_summary.push("gitlab.merge-requests.local-mirror".to_string());
+            capability_summary.push("gitlab.issues.remote-api".to_string());
+            capability_summary.push("gitlab.merge-requests.remote-api".to_string());
             if gitlab_adapter.available {
                 capability_summary.push("gitlab.optional-adapter.available".to_string());
+                capability_summary.push("gitlab.optional-adapter.authenticated".to_string());
             } else {
-                capability_summary.push("gitlab.optional-adapter.contract-only".to_string());
+                capability_summary.push("gitlab.optional-adapter.unauthenticated".to_string());
             }
         }
         if host_kind == "bitbucket" {
             capability_summary.push("bitbucket.remote.detected".to_string());
-            capability_summary.push("bitbucket.issues.local-mirror".to_string());
-            capability_summary.push("bitbucket.pull-requests.local-mirror".to_string());
+            capability_summary.push("bitbucket.issues.remote-api".to_string());
+            capability_summary.push("bitbucket.pull-requests.remote-api".to_string());
             if bitbucket_adapter.available {
                 capability_summary.push("bitbucket.optional-adapter.available".to_string());
+                capability_summary.push("bitbucket.optional-adapter.authenticated".to_string());
             } else {
-                capability_summary.push("bitbucket.optional-adapter.contract-only".to_string());
+                capability_summary.push("bitbucket.optional-adapter.unauthenticated".to_string());
             }
         }
 
@@ -252,10 +256,10 @@ pub fn get_repository_integration_matrix(
             "local.pull-requests.offline".to_string(),
             "github.issues.local-mirror".to_string(),
             "github.pull-requests.local-mirror".to_string(),
-            "gitlab.issues.local-mirror".to_string(),
-            "gitlab.merge-requests.local-mirror".to_string(),
-            "bitbucket.issues.local-mirror".to_string(),
-            "bitbucket.pull-requests.local-mirror".to_string(),
+            "gitlab.issues.remote-api".to_string(),
+            "gitlab.merge-requests.remote-api".to_string(),
+            "bitbucket.issues.remote-api".to_string(),
+            "bitbucket.pull-requests.remote-api".to_string(),
             "local.telemetry.only".to_string(),
         ],
         remotes,
@@ -277,13 +281,13 @@ fn first_non_empty_line(primary: &[u8], secondary: &[u8]) -> Option<String> {
 
 fn detect_host_kind(url: &str) -> String {
     let normalized = url.to_ascii_lowercase();
-    if normalized.contains("github.com") {
+    if normalized.contains("github.com") || normalized.contains("github") {
         return "github".to_string();
     }
-    if normalized.contains("gitlab.com") {
+    if normalized.contains("gitlab.com") || normalized.contains("gitlab") {
         return "gitlab".to_string();
     }
-    if normalized.contains("bitbucket.org") {
+    if normalized.contains("bitbucket.org") || normalized.contains("bitbucket") {
         return "bitbucket".to_string();
     }
     if normalized.starts_with("file://")

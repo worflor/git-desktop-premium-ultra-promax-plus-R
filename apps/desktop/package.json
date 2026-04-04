@@ -9,12 +9,15 @@
     "typecheck": "tsc --noEmit",
     "pretext:fixtures": "node scripts/pretext-fixture-gate.mjs",
     "pretext:canary": "node scripts/pretext-canary-benchmark.mjs",
+    "flatpak:manifest:check": "node scripts/flatpak-manifest-check.mjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.4",
     "@solidjs/router": "^0.15.3",
     "@tauri-apps/api": "^2.5.0",
+    "canvas": "^3.2.3",
     "solid-js": "^1.9.4"
   },
   "devDependencies": {

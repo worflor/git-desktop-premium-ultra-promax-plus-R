@@ -150,7 +150,7 @@ const THEME_DEFINITIONS = [
   {
     id: "redshift",
     label: "Redshift",
-    description: "Deep cosmic garnet with Relativistic EM Wave oscillation and CMB background radiation.",
+    description: "Deep space signals and cosmic radiation. Blue energy forward; Red tides receding.",
     shader: {
       mode: "glass",
       blurPx: 24,
@@ -163,7 +163,7 @@ const THEME_DEFINITIONS = [
       luminescence: 0.45,
       particles: "embers",
       parallaxStrength: 0,
-      interaction: "vibration",
+      interaction: "none",
       geometry: {
         typography: "'JetBrains Mono', monospace",
         letterSpacing: "normal",

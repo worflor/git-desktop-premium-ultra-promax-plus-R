@@ -217,7 +217,9 @@ Implementation update (2026-04-03):
 - CI now includes a dedicated fixture test step via `cargo test fixture_ -- --nocapture`.
 - Additional backend unit coverage now validates diff chunk parsing/chunking behavior, AI audit redaction/retention behavior, forge/AI adapter contract invariants, and transient git retry classification.
 - Fixture parity coverage now also validates stash lifecycle parity and worktree create/remove behavior against direct git CLI outputs.
+- Fixture parity now includes branch upstream tracking, merge conflict continue flow, and rebase conflict abort flow against direct git CLI state.
 - Performance budget tests now gate command status p95 and diff prepare p95 latency (`cargo test perf_budget_ -- --nocapture`).
+- Desktop CI now runs as a Windows/Linux/macOS matrix to continuously validate backend command and fixture behavior across target platforms.
 
 ### Advanced Git Workflow Expansion (P1)
 Acceptance criteria:

@@ -16,26 +16,36 @@ const MAX_RETAINED_DIFFS: usize = 24;
 const DEFAULT_MODE_A_MAX_CHANGED_LINES: u32 = 15_000;
 const DEFAULT_MODE_A_MAX_PAYLOAD_BYTES: usize = 3 * 1024 * 1024;
 
+pub struct PrepareFileDiffChunksInput<'a> {
+    pub repository_path: &'a str,
+    pub path: &'a str,
+    pub staged: bool,
+    pub context_lines: usize,
+    pub chunk_size_bytes: Option<usize>,
+    pub layout_width_px: Option<u32>,
+    pub font_profile: Option<&'a str>,
+    pub line_height_px: Option<u32>,
+}
+
 pub fn prepare_file_diff_chunks(
     state: &AppState,
-    repository_path: &str,
-    path: &str,
-    staged: bool,
-    context_lines: usize,
-    chunk_size_bytes: Option<usize>,
-    layout_width_px: Option<u32>,
-    font_profile: Option<&str>,
-    line_height_px: Option<u32>,
+    input: PrepareFileDiffChunksInput<'_>,
 ) -> Result<FileDiffManifestData, AppError> {
     let started_at = Instant::now();
     let request_id = logging_service::current_request_context();
 
     let result = (|| {
-        let chunk_size = chunk_size_bytes
+        let chunk_size = input
+            .chunk_size_bytes
             .unwrap_or(DEFAULT_CHUNK_SIZE_BYTES)
             .clamp(MIN_CHUNK_SIZE_BYTES, MAX_CHUNK_SIZE_BYTES);
 
-        let diff_text = git_provider::get_file_diff(repository_path, path, staged, context_lines)?;
+        let diff_text = git_provider::get_file_diff(
+            input.repository_path,
+            input.path,
+            input.staged,
+            input.context_lines,
+        )?;
         let total_bytes = diff_text.len();
         if total_bytes > MAX_DIFF_BYTES {
             return Err(AppError::DiffTooLarge {
@@ -50,9 +60,9 @@ pub fn prepare_file_diff_chunks(
         let diff_id = Uuid::new_v4().to_string();
 
         let layout_options = pretext_service::LayoutOptions::from_command_inputs(
-            layout_width_px,
-            font_profile,
-            line_height_px,
+            input.layout_width_px,
+            input.font_profile,
+            input.line_height_px,
         );
         let layout = pretext_service::prepare_layout(&diff_id, &diff_text, &layout_options);
 
@@ -68,9 +78,9 @@ pub fn prepare_file_diff_chunks(
 
         let manifest = FileDiffManifestData {
             diff_id: diff_id.clone(),
-            path: path.trim().to_string(),
-            staged,
-            context_lines: context_lines as u32,
+            path: input.path.trim().to_string(),
+            staged: input.staged,
+            context_lines: input.context_lines as u32,
             chunk_size_bytes: chunk_size as u32,
             chunk_count: chunks.len() as u32,
             total_bytes: total_bytes as u32,
@@ -493,7 +503,7 @@ mod tests {
 
     use super::{
         count_changed_lines, get_file_diff_chunk, parse_hunks, prepare_file_diff_chunks,
-        split_text_chunks, MAX_RETAINED_DIFFS,
+        split_text_chunks, PrepareFileDiffChunksInput, MAX_RETAINED_DIFFS,
     };
 
     struct FixtureRepo {
@@ -642,14 +652,16 @@ mod tests {
         let state = AppState::default();
         let manifest = prepare_file_diff_chunks(
             &state,
-            fixture.path_str(),
-            "src/app.rs",
-            false,
-            3,
-            Some(16 * 1024),
-            None,
-            None,
-            None,
+            PrepareFileDiffChunksInput {
+                repository_path: fixture.path_str(),
+                path: "src/app.rs",
+                staged: false,
+                context_lines: 3,
+                chunk_size_bytes: Some(16 * 1024),
+                layout_width_px: None,
+                font_profile: None,
+                line_height_px: None,
+            },
         )
         .expect("expected diff manifest generation to succeed");
 
@@ -686,14 +698,16 @@ mod tests {
             );
             let manifest = prepare_file_diff_chunks(
                 &state,
-                fixture.path_str(),
-                "src/cache.txt",
-                false,
-                3,
-                Some(8 * 1024),
-                None,
-                None,
-                None,
+                PrepareFileDiffChunksInput {
+                    repository_path: fixture.path_str(),
+                    path: "src/cache.txt",
+                    staged: false,
+                    context_lines: 3,
+                    chunk_size_bytes: Some(8 * 1024),
+                    layout_width_px: None,
+                    font_profile: None,
+                    line_height_px: None,
+                },
             )
             .expect("expected diff manifest generation to succeed");
 
@@ -738,14 +752,16 @@ mod tests {
         for _ in 0..3 {
             let _ = prepare_file_diff_chunks(
                 &state,
-                fixture.path_str(),
-                "src/large.txt",
-                false,
-                3,
-                Some(64 * 1024),
-                Some(1080),
-                Some("ui-mono-13"),
-                Some(18),
+                PrepareFileDiffChunksInput {
+                    repository_path: fixture.path_str(),
+                    path: "src/large.txt",
+                    staged: false,
+                    context_lines: 3,
+                    chunk_size_bytes: Some(64 * 1024),
+                    layout_width_px: Some(1080),
+                    font_profile: Some("ui-mono-13"),
+                    line_height_px: Some(18),
+                },
             )
             .expect("expected warm-up diff preparation to succeed");
         }
@@ -755,14 +771,16 @@ mod tests {
             let started_at = Instant::now();
             let _ = prepare_file_diff_chunks(
                 &state,
-                fixture.path_str(),
-                "src/large.txt",
-                false,
-                3,
-                Some(64 * 1024),
-                Some(1080),
-                Some("ui-mono-13"),
-                Some(18),
+                PrepareFileDiffChunksInput {
+                    repository_path: fixture.path_str(),
+                    path: "src/large.txt",
+                    staged: false,
+                    context_lines: 3,
+                    chunk_size_bytes: Some(64 * 1024),
+                    layout_width_px: Some(1080),
+                    font_profile: Some("ui-mono-13"),
+                    line_height_px: Some(18),
+                },
             )
             .expect("expected diff preparation benchmark call to succeed");
             durations_ms.push(started_at.elapsed().as_millis());

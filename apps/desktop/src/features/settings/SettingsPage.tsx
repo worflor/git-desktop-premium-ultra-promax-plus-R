@@ -4,7 +4,13 @@ import {
 } from "@/app/layout/LayoutPreferencesContext";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
-import { getAppSettings, updateAiGuardrail, updateTelemetryRetention } from "@/lib/backend/commands";
+import {
+  getAppSettings,
+  updateAiGuardrail,
+  updateCrashReporting,
+  updateTelemetryRetention,
+  updateUpdateChannel
+} from "@/lib/backend/commands";
 import {
   clearCommandLatencyReport,
   getCommandLatencyReport,
@@ -29,6 +35,8 @@ export function SettingsPage() {
   const [guardrailValue, setGuardrailValue] = createSignal(0.5);
   const [retentionDays, setRetentionDays] = createSignal(30);
   const [retentionMb, setRetentionMb] = createSignal(128);
+  const [updateChannel, setUpdateChannel] = createSignal<"stable" | "beta">("stable");
+  const [crashReportingEnabled, setCrashReportingEnabled] = createSignal(false);
   const [actionMessage, setActionMessage] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [latencyReport, setLatencyReport] = createSignal(getCommandLatencyReport());
@@ -57,6 +65,8 @@ export function SettingsPage() {
     setGuardrailValue(settings.data.guardrailValue);
     setRetentionDays(settings.data.telemetryRetentionDays);
     setRetentionMb(settings.data.telemetryRetentionMb);
+    setUpdateChannel(settings.data.updateChannel === "beta" ? "beta" : "stable");
+    setCrashReportingEnabled(settings.data.crashReportingEnabled);
     setCommandLatencyRetentionPolicy(settings.data.telemetryRetentionDays, settings.data.telemetryRetentionMb);
     setDiffRenderMetricsRetentionPolicy(settings.data.telemetryRetentionDays, settings.data.telemetryRetentionMb);
   });
@@ -99,6 +109,40 @@ export function SettingsPage() {
     setRetentionMb(result.data.telemetryRetentionMb);
     setActionMessage(
       `Saved retention policy: ${result.data.telemetryRetentionDays} days / ${result.data.telemetryRetentionMb} MB.`
+    );
+    void refetch();
+  };
+
+  const onSaveUpdateChannel = async (channel: "stable" | "beta") => {
+    setActionError(null);
+    setActionMessage(null);
+
+    const result = await updateUpdateChannel(channel);
+
+    if (!result.ok) {
+      setActionError(result.error.message);
+      return;
+    }
+
+    setUpdateChannel(result.data.updateChannel === "beta" ? "beta" : "stable");
+    setActionMessage(`Saved update channel: ${result.data.updateChannel}.`);
+    void refetch();
+  };
+
+  const onSaveCrashReporting = async (enabled: boolean) => {
+    setActionError(null);
+    setActionMessage(null);
+
+    const result = await updateCrashReporting(enabled);
+
+    if (!result.ok) {
+      setActionError(result.error.message);
+      return;
+    }
+
+    setCrashReportingEnabled(result.data.crashReportingEnabled);
+    setActionMessage(
+      `Crash reporting ${result.data.crashReportingEnabled ? "enabled" : "disabled"}.`
     );
     void refetch();
   };
@@ -198,6 +242,40 @@ export function SettingsPage() {
                 aria-label="Retention max MB"
               />
             </div>
+          </article>
+
+          <article class="state-card">
+            <h3>Release Channel</h3>
+            <p class="section-summary">Update feed and crash diagnostics policy.</p>
+            <div class="layout-control-field">
+              <span>Channel</span>
+              <select
+                class="path-input"
+                value={updateChannel()}
+                onChange={(event) => {
+                  const next = event.currentTarget.value === "beta" ? "beta" : "stable";
+                  setUpdateChannel(next);
+                  void onSaveUpdateChannel(next);
+                }}
+                aria-label="Update channel"
+              >
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+              </select>
+            </div>
+
+            <label class="layout-checkbox-field" style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
+              <input
+                type="checkbox"
+                checked={crashReportingEnabled()}
+                onChange={(event) => {
+                  const enabled = event.currentTarget.checked;
+                  setCrashReportingEnabled(enabled);
+                  void onSaveCrashReporting(enabled);
+                }}
+              />
+              <span>Enable local crash-report artifacts</span>
+            </label>
           </article>
 
           <article class="state-card">
