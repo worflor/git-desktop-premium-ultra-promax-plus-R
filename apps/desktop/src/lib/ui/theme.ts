@@ -4,8 +4,8 @@ const THEME_IDS = [
   "halo",
   "nightwalker",
   "petrichor",
-  "aether",
   "helix",
+  "aether",
   "quanta",
   "redshift",
   "blackboard",
@@ -90,6 +90,23 @@ const THEME_DEFINITIONS = [
     }
   },
   {
+    id: "helix",
+    label: "Helix",
+    description: "Warm daylight surfaces with soft amber chrome.",
+    shader: {
+      mode: "solid",
+      blurPx: 0,
+      saturatePct: 100,
+      opacityScale: 1.14,
+      edgeIntensity: 0,
+      texture: "grain",
+      textureOpacity: 0.15,
+      motion: "snappy",
+      luminescence: 0.1,
+      parallaxStrength: 0
+    }
+  },
+  {
     id: "aether",
     label: "Aether",
     description: "Deep cosmic glass with cool contrast for long review sessions.",
@@ -106,23 +123,6 @@ const THEME_DEFINITIONS = [
       particles: "stardust",
       parallaxStrength: 0,
       interaction: "warp"
-    }
-  },
-  {
-    id: "helix",
-    label: "Helix",
-    description: "Warm daylight surfaces with soft amber chrome.",
-    shader: {
-      mode: "solid",
-      blurPx: 0,
-      saturatePct: 100,
-      opacityScale: 1.14,
-      edgeIntensity: 0,
-      texture: "grain",
-      textureOpacity: 0.15,
-      motion: "snappy",
-      luminescence: 0.1,
-      parallaxStrength: 0
     }
   },
   {
