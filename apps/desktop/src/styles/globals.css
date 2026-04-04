@@ -1300,6 +1300,45 @@ ol {
   box-shadow: 0 0 0 2px #fff;
 }
 
+/* ── Theme Specific Slider Track Stylings ────────────────── */
+
+/* Aether: Frosted Glass Track */
+[data-theme="aether"] .theme-slider, 
+[data-theme="aether"] .guardrail-slider {
+  box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.15);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+}
+
+/* Helix: Antiqued Brass Frame */
+[data-theme="helix"] .theme-slider, 
+[data-theme="helix"] .guardrail-slider {
+  box-shadow: 0 0 0 1px #8c7657, 1px 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Petrichor: Misty Track Shadow */
+[data-theme="petrichor"] .theme-slider, 
+[data-theme="petrichor"] .guardrail-slider {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(var(--chrome-border-rgb), 0.1);
+}
+
+/* Redshift: Spectral Red Aura */
+[data-theme="redshift"] .theme-slider, 
+[data-theme="redshift"] .guardrail-slider {
+  box-shadow: 0 0 4px rgba(255, 0, 68, 0.2), 0 0 0 0.5px rgba(255, 0, 68, 0.3);
+}
+
+/* Halo: Ceramic Gold Rim */
+[data-theme="halo"] .theme-slider, 
+[data-theme="halo"] .guardrail-slider {
+  box-shadow: 0 0 0 1px #d4af3733, inset 0 1px 1px rgba(0, 0, 0, 0.05);
+}
+
+/* Nightwalker: Kinetic Glow */
+[data-theme="nightwalker"] .theme-slider, 
+[data-theme="nightwalker"] .guardrail-slider {
+  box-shadow: 0 0 6px rgba(0, 240, 255, 0.15), 0 0 0 1px rgba(0, 240, 255, 0.1);
+}
 .guardrail-slider::-moz-range-track {
   height: 6px;
   border-radius: 3px;
