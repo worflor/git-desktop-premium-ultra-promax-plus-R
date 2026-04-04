@@ -31,6 +31,7 @@ import {
   KEYBINDING_PROFILE_OPTIONS
 } from "@/lib/ui/keybindings";
 import { THEME_OPTIONS } from "@/lib/ui/theme";
+import { Select } from "@/components/primitives/Select";
 
 export function SettingsPage() {
   const layout = useLayoutPreferences();
@@ -469,19 +470,15 @@ export function SettingsPage() {
               <h3>Theme</h3>
               <p class="section-summary">Theme and aesthetic architecture.</p>
               <div class="layout-control-field">
-                <select
-                  class="path-input"
+                <Select
                   value={layout.themeId()}
-                  onChange={(event) => {
-                    layout.setThemeId(event.currentTarget.value);
+                  options={THEME_OPTIONS}
+                  onChange={(id) => {
+                    layout.setThemeId(id);
                     void layout.persistUiPreferences();
                   }}
-                  aria-label="Theme"
-                >
-                  {THEME_OPTIONS.map((option) => (
-                    <option value={option.id}>{option.label}</option>
-                  ))}
-                </select>
+                  ariaLabel="Theme"
+                />
               </div>
 
               <p class="theme-description-yappery">{THEME_OPTIONS.find((t) => t.id === layout.themeId())?.description}</p>
@@ -494,19 +491,16 @@ export function SettingsPage() {
             
             <div class="layout-control-field settings-nav-profile-field">
               <span class="settings-nav-profile-label">Keybinding profile</span>
-              <select
-                class="path-input settings-keybinding-select"
+              <Select
+                class="settings-keybinding-select"
                 value={layout.keybindingProfile()}
-                onChange={(event) => {
-                  layout.setKeybindingProfile(event.currentTarget.value);
+                options={KEYBINDING_PROFILE_OPTIONS}
+                onChange={(id) => {
+                  layout.setKeybindingProfile(id);
                   void layout.persistUiPreferences();
                 }}
-                aria-label="Keybinding profile"
-              >
-                {KEYBINDING_PROFILE_OPTIONS.map((option) => (
-                  <option value={option.id}>{option.label}</option>
-                ))}
-              </select>
+                ariaLabel="Keybinding profile"
+              />
             </div>
 
             <h4 class="settings-nav-subtitle">Behavioral Dynamics</h4>
@@ -648,19 +642,19 @@ export function SettingsPage() {
             <p class="section-summary">Update feed and crash diagnostics policy.</p>
             <div class="layout-control-field">
               <span>Channel</span>
-              <select
-                class="path-input"
+              <Select
                 value={updateChannel()}
-                onChange={(event) => {
-                  const next = event.currentTarget.value === "beta" ? "beta" : "stable";
+                options={[
+                  { id: "stable", label: "Stable" },
+                  { id: "beta", label: "Beta" }
+                ]}
+                onChange={(id) => {
+                  const next = id === "beta" ? "beta" : "stable";
                   setUpdateChannel(next);
                   void onSaveUpdateChannel(next);
                 }}
-                aria-label="Update channel"
-              >
-                <option value="stable">Stable</option>
-                <option value="beta">Beta</option>
-              </select>
+                ariaLabel="Update channel"
+              />
             </div>
 
             <label class="layout-checkbox-field" style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
