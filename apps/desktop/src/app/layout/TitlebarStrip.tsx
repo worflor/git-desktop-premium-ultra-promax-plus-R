@@ -1,14 +1,15 @@
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
+import { createMemo } from "solid-js";
 
 export function TitlebarStrip() {
   const repository = useRepositoryContext();
 
-  const projectName = () => {
+  const projectName = createMemo(() => {
     const path = repository.activeRepositoryPath();
     if (!path) return "";
     const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
     return parts[parts.length - 1] ?? path;
-  };
+  });
 
   return (
     <header class="titlebar-strip" data-tauri-drag-region>

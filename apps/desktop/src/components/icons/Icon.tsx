@@ -28,7 +28,7 @@ export function Icon(props: IconProps): JSX.Element {
       role={props.title ? "img" : "presentation"}
     >
       {props.title && <title>{props.title}</title>}
-      {iconRegistry[props.name]}
+      {iconRegistry[props.name]()}
     </svg>
   );
 }

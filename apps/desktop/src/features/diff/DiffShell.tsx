@@ -693,6 +693,7 @@ export function DiffShell(props: DiffShellProps) {
     lastScrollAt = 0;
     scrollFpsSamples = [];
     setViewportScrollTop(0);
+    setSearchTerm("");
     setChunkError(null);
     setCopyMessage(null);
     setSelectedHunkIndex(-1);

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, onMount, Show } from "solid-js";
+import { createMemo, createResource, createSignal, For, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { BrandLockup } from "@/components/composite/BrandLockup";
 import { Icon } from "@/components/icons/Icon";
@@ -45,12 +45,6 @@ export function SidebarRail() {
     });
   });
 
-  createEffect(() => {
-    const active = repository.activeRepositoryPath();
-    if (!active) return;
-    setPathInput((current) => (current === active ? current : active));
-  });
-
   const sortedProjects = createMemo(() => {
     if (!recentRepositories.latest?.ok) return [] as string[];
     return recentRepositories.latest.data.repositories.slice(0, 20);
@@ -60,6 +54,15 @@ export function SidebarRail() {
     const active = repository.activeRepositoryPath();
     if (!active) return false;
     return normalizePath(path) === normalizePath(active);
+  };
+
+  const togglePathEntry = () => {
+    const next = !showPathEntry();
+    setShowPathEntry(next);
+
+    if (next && !repositoryError()) {
+      setPathInput("");
+    }
   };
 
   const tryPickRepositoryDirectory = async (): Promise<string | null> => {
@@ -111,7 +114,7 @@ export function SidebarRail() {
       setRepositoryError(result.error.message);
       return;
     }
-    setPathInput(result.data.repositoryPath);
+    setPathInput("");
     repository.setActiveRepositoryPath(result.data.repositoryPath);
     setShowPathEntry(false);
     void refetchRecents();
@@ -131,7 +134,7 @@ export function SidebarRail() {
               class={`workspace-mode-btn sidebar-project-head-btn hyper-reactive ${showPathEntry() ? "is-active active" : ""}`}
               type="button"
               aria-label={showPathEntry() ? "Cancel" : "Add project"}
-              onClick={() => setShowPathEntry((c) => !c)}
+              onClick={togglePathEntry}
               title={showPathEntry() ? "Cancel" : "Add project"}
             >
               <Icon name="plus" size={16} tone="muted" />

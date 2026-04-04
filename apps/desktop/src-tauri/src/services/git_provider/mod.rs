@@ -200,7 +200,7 @@ pub fn get_repository_status(repository_path: &str) -> Result<RepositoryStatusDa
         if let Some(path) = line.strip_prefix("? ") {
             files.push(RepositoryStatusFile {
                 path: path.to_string(),
-                staged: "untracked".to_string(),
+                staged: "clean".to_string(),
                 unstaged: "untracked".to_string(),
             });
             continue;

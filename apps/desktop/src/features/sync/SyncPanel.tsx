@@ -1,4 +1,4 @@
-import { createMemo, createResource, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
@@ -164,6 +164,7 @@ export function SyncPanel(props: SyncPanelProps) {
   const [refreshRunning, setRefreshRunning] = createSignal(false);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [lastResult, setLastResult] = createSignal<CommandResult<SyncData> | null>(null);
+  let previousRepositoryPath: string | null | undefined;
 
   const activeRepo = () => repository.activeRepositoryPath();
 
@@ -172,6 +173,17 @@ export function SyncPanel(props: SyncPanelProps) {
       return null;
     }
     return getRepositoryStatus(path);
+  });
+
+  createEffect(() => {
+    const repositoryPath = activeRepo();
+    if (previousRepositoryPath !== repositoryPath) {
+      previousRepositoryPath = repositoryPath;
+      setSyncRunning(false);
+      setRefreshRunning(false);
+      setActionError(null);
+      setLastResult(null);
+    }
   });
 
   const status = createMemo(() => {
@@ -216,17 +228,25 @@ export function SyncPanel(props: SyncPanelProps) {
 
     setActionError(null);
     setRefreshRunning(true);
-    const result = await fetchRemote(repo, undefined, true);
-    setRefreshRunning(false);
+    try {
+      const result = await fetchRemote(repo, undefined, true);
+      if (activeRepo() !== repo) {
+        return;
+      }
 
-    if (!result.ok) {
-      setActionError(result.error.message);
-      return;
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
+
+      setLastResult(result);
+      await refetch();
+      if (activeRepo() === repo) {
+        props.onStatusChanged?.();
+      }
+    } finally {
+      setRefreshRunning(false);
     }
-
-    setLastResult(result);
-    await refetch();
-    props.onStatusChanged?.();
   };
 
   const runPrimarySync = async () => {
@@ -235,17 +255,25 @@ export function SyncPanel(props: SyncPanelProps) {
 
     setActionError(null);
     setSyncRunning(true);
-    const result = await syncRemote(repo);
-    setSyncRunning(false);
+    try {
+      const result = await syncRemote(repo);
+      if (activeRepo() !== repo) {
+        return;
+      }
 
-    if (!result.ok) {
-      setActionError(result.error.message);
-      return;
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
+
+      setLastResult(result);
+      await refetch();
+      if (activeRepo() === repo) {
+        props.onStatusChanged?.();
+      }
+    } finally {
+      setSyncRunning(false);
     }
-
-    setLastResult(result);
-    await refetch();
-    props.onStatusChanged?.();
   };
 
   const lastDuration = createMemo(() => formatDuration(lastResult()?.meta?.durationMs));

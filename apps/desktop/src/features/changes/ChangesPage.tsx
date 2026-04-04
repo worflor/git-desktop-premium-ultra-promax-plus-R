@@ -38,6 +38,7 @@ export function ChangesPage(props: ChangesPageProps = {}) {
   const [displayedDiffManifest, setDisplayedDiffManifest] = createSignal<FileDiffManifestData | null>(null);
   const [displayedDiffPath, setDisplayedDiffPath] = createSignal<string | null>(null);
   const [diffError, setDiffError] = createSignal<string | null>(null);
+  let previousRepositoryPath: string | null | undefined;
 
   const activeRepo = () => repository.activeRepositoryPath();
   const diffCacheKey = (repo: string, path: string) => `${repo}::${path}`;
@@ -146,13 +147,21 @@ export function ChangesPage(props: ChangesPageProps = {}) {
 
   createEffect(() => {
     const repositoryPath = activeRepo();
-    if (!repositoryPath) {
+    if (previousRepositoryPath !== repositoryPath) {
+      previousRepositoryPath = repositoryPath;
+      setSelectedPaths([]);
+      setSelectedDiffPath(null);
       setStatusData(null);
       setStatusError(null);
       setDisplayedDiffManifest(null);
       setDisplayedDiffPath(null);
       setDiffError(null);
-      setSelectedDiffPath(null);
+      setActionMessage(null);
+      setActionError(null);
+      setActionRunning(false);
+    }
+
+    if (!repositoryPath) {
       return;
     }
 
@@ -241,13 +250,14 @@ export function ChangesPage(props: ChangesPageProps = {}) {
   });
 
   const selectedCount = () => selectedPaths().length;
+  const isDirtyStatus = (status: string) => status !== "clean" && status.trim().length > 0;
   const stagedFileCount = () =>
     statusData()
-      ? statusData()!.files.filter((file) => file.staged.trim().length > 0).length
+      ? statusData()!.files.filter((file) => isDirtyStatus(file.staged)).length
       : 0;
   const unstagedFileCount = () =>
     statusData()
-      ? statusData()!.files.filter((file) => file.unstaged.trim().length > 0).length
+      ? statusData()!.files.filter((file) => isDirtyStatus(file.unstaged)).length
       : 0;
 
   const togglePathSelection = (path: string, checked: boolean) => {
@@ -269,25 +279,28 @@ export function ChangesPage(props: ChangesPageProps = {}) {
     setActionMessage(null);
     setActionRunning(true);
 
-    const result =
-      operation === "stage"
-        ? await stagePaths(repo, selectedPaths())
-        : await unstagePaths(repo, selectedPaths());
+    try {
+      const result =
+        operation === "stage"
+          ? await stagePaths(repo, selectedPaths())
+          : await unstagePaths(repo, selectedPaths());
 
-    setActionRunning(false);
+      if (activeRepo() !== repo) {
+        return;
+      }
 
-    if (!result.ok) {
-      setActionError(result.error.message);
-      return;
-    }
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
 
-    setActionMessage(`${operation === "stage" ? "Staged" : "Unstaged"} ${result.data.affectedPaths.length} path(s).`);
-    setSelectedPaths([]);
-    diffManifestCache.clear();
-    const repositoryPath = activeRepo();
-    if (repositoryPath) {
-      statusCache.delete(repositoryPath);
-      void loadStatus(repositoryPath);
+      setActionMessage(`${operation === "stage" ? "Staged" : "Unstaged"} ${result.data.affectedPaths.length} path(s).`);
+      setSelectedPaths([]);
+      diffManifestCache.clear();
+      statusCache.delete(repo);
+      void loadStatus(repo);
+    } finally {
+      setActionRunning(false);
     }
   };
 
@@ -300,21 +313,25 @@ export function ChangesPage(props: ChangesPageProps = {}) {
     setActionError(null);
     setActionMessage(null);
     setActionRunning(true);
-    const result = await createCommit(repo, commitMessage(), false, false);
-    setActionRunning(false);
+    try {
+      const result = await createCommit(repo, commitMessage(), false, false);
 
-    if (!result.ok) {
-      setActionError(result.error.message);
-      return;
-    }
+      if (activeRepo() !== repo) {
+        return;
+      }
 
-    setActionMessage(`${result.data.summary} (${result.data.commitHash.slice(0, 8)})`);
-    setCommitMessage("");
-    diffManifestCache.clear();
-    const repositoryPath = activeRepo();
-    if (repositoryPath) {
-      statusCache.delete(repositoryPath);
-      void loadStatus(repositoryPath);
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
+
+      setActionMessage(`${result.data.summary} (${result.data.commitHash.slice(0, 8)})`);
+      setCommitMessage("");
+      diffManifestCache.clear();
+      statusCache.delete(repo);
+      void loadStatus(repo);
+    } finally {
+      setActionRunning(false);
     }
   };
 
@@ -392,8 +409,8 @@ export function ChangesPage(props: ChangesPageProps = {}) {
                        <span style="opacity: 0.5; font-size: 10px; margin-left: 4px; font-family: var(--font-mono);">{file.path.substring(0, file.path.lastIndexOf('/'))}</span>
                     </button>
                     <div class="status-tags" style="gap: 5px; display: flex; flex-shrink: 0;">
-                      <Show when={file.staged.trim().length > 0}><span class="status-badge is-positive">S</span></Show>
-                      <Show when={file.unstaged.trim().length > 0}><span class="status-badge is-negative">U</span></Show>
+                      <Show when={isDirtyStatus(file.staged)}><span class="status-badge is-positive">S</span></Show>
+                      <Show when={isDirtyStatus(file.unstaged)}><span class="status-badge is-negative">U</span></Show>
                     </div>
                   </li>
                 ))}

@@ -22,17 +22,16 @@ const stroke = {
   "stroke-linejoin": "round"
 } as const;
 
-export const iconRegistry: Record<IconName, JSX.Element> = {
-  "app-logo": (
+export const iconRegistry: Record<IconName, () => JSX.Element> = {
+  "app-logo": () => (
     <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-      {/* Static snapshot of the Hypercube */}
       <path d="M4 4h8v8h-8z" opacity="0.4" />
       <path d="M6 6h4v4h-4z" />
       <path d="M4 4l2 2M12 4l-2 2M4 12l2-2M12 12l-2-2" />
       <path d="M8 2v12M2 8h12" stroke-dasharray="0.5 1.5" stroke-opacity="0.3" />
     </g>
   ),
-  changes: (
+  changes: () => (
     <>
       <path {...stroke} d="M3 4h10" class="changes-l1" />
       <path {...stroke} d="M3 8h10" class="changes-l2" />
@@ -41,14 +40,14 @@ export const iconRegistry: Record<IconName, JSX.Element> = {
       <path {...stroke} d="M10 12h4" class="changes-h" />
     </>
   ),
-  history: (
+  history: () => (
     <>
       <path {...stroke} d="M3 8a5 5 0 1 0 9.2 -2.5" class="history-arc" />
       <path {...stroke} d="M3 4v4h4" class="history-arr" />
       <path {...stroke} d="M8 5v3l2 2" class="history-clk" />
     </>
   ),
-  branches: (
+  branches: () => (
     <>
       <circle {...stroke} cx="4" cy="4" r="2" class="branch-c1" />
       <circle {...stroke} cx="12" cy="4" r="2" class="branch-c2" />
@@ -57,13 +56,13 @@ export const iconRegistry: Record<IconName, JSX.Element> = {
       <path {...stroke} d="M8 6v4" class="branch-p2" />
     </>
   ),
-  sync: (
+  sync: () => (
     <>
       <path {...stroke} d="M12 5V2l2 2-2 2V5H4" class="sync-p1" />
       <path {...stroke} d="M4 11v3l-2-2 2-2v3h8" class="sync-p2" />
     </>
   ),
-  settings: (
+  settings: () => (
     <>
       <path {...stroke} d="M2.5 4h11" class="settings-l1" />
       <circle {...stroke} cx="5" cy="4" r="1.5" class="settings-k1" />
@@ -73,7 +72,7 @@ export const iconRegistry: Record<IconName, JSX.Element> = {
       <circle {...stroke} cx="7" cy="12" r="1.5" class="settings-k3" />
     </>
   ),
-  "git-branch": (
+  "git-branch": () => (
     <>
       <path {...stroke} d="M4 3.5v9" />
       <circle {...stroke} cx="4" cy="3.5" r="1.5" />
@@ -82,20 +81,20 @@ export const iconRegistry: Record<IconName, JSX.Element> = {
       <circle {...stroke} cx="11.5" cy="8.8" r="1.5" />
     </>
   ),
-  "status-conflict": (
+  "status-conflict": () => (
     <>
       <path {...stroke} d="M8 2.5l5.2 9H2.8z" />
       <path {...stroke} d="M8 6v2.8" />
       <path {...stroke} d="M8 11.2h.01" />
     </>
   ),
-  plus: (
+  plus: () => (
     <>
       <path {...stroke} d="M8 3v10" class="plus-p1" />
       <path {...stroke} d="M3 8h10" class="plus-p2" />
     </>
   ),
-  sort: (
+  sort: () => (
     <>
       <path {...stroke} d="M5 3.5v9" />
       <path {...stroke} d="M3.7 4.8L5 3.5l1.3 1.3" />
@@ -105,7 +104,7 @@ export const iconRegistry: Record<IconName, JSX.Element> = {
       <path {...stroke} d="M8 12h4.5" />
     </>
   ),
-  clear: (
+  clear: () => (
     <g class="icon-clear">
       <path {...stroke} d="M5 4h6" class="clear-lid" />
       <path {...stroke} d="M6.5 4v-1h3v1" class="clear-handle" />
@@ -113,7 +112,7 @@ export const iconRegistry: Record<IconName, JSX.Element> = {
       <path {...stroke} d="M7 7v4M9 7v4" class="clear-lines" />
     </g>
   ),
-  "chevron-right": (
+  "chevron-right": () => (
     <>
       <path {...stroke} d="M6 4.5L9.5 8 6 11.5" />
     </>

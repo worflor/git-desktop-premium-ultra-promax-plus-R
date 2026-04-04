@@ -1,4 +1,4 @@
-import { createResource, createSignal, onMount, Show } from "solid-js";
+import { createEffect, createResource, createSignal, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
@@ -17,6 +17,7 @@ export function BranchesPage(props: BranchesPageProps = {}) {
   const [newBranchName, setNewBranchName] = createSignal("");
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [actionRunning, setActionRunning] = createSignal(false);
+  let previousRepositoryPath: string | null | undefined;
 
   const activeRepo = () => repository.activeRepositoryPath();
 
@@ -27,6 +28,16 @@ export function BranchesPage(props: BranchesPageProps = {}) {
     return listBranches(path);
   });
 
+  createEffect(() => {
+    const repositoryPath = activeRepo();
+    if (previousRepositoryPath !== repositoryPath) {
+      previousRepositoryPath = repositoryPath;
+      setNewBranchName("");
+      setActionError(null);
+      setActionRunning(false);
+    }
+  });
+
   const onCreateBranch = async () => {
     const repo = activeRepo();
     const branchName = newBranchName().trim();
@@ -34,16 +45,22 @@ export function BranchesPage(props: BranchesPageProps = {}) {
 
     setActionError(null);
     setActionRunning(true);
-    const result = await createBranch(repo, branchName, "HEAD");
-    setActionRunning(false);
+    try {
+      const result = await createBranch(repo, branchName, "HEAD");
+      if (activeRepo() !== repo) {
+        return;
+      }
 
-    if (!result.ok) {
-      setActionError(result.error.message);
-      return;
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
+
+      setNewBranchName("");
+      void refetch();
+    } finally {
+      setActionRunning(false);
     }
-
-    setNewBranchName("");
-    void refetch();
   };
 
   const onCheckoutBranch = async (branchName: string) => {
@@ -52,15 +69,21 @@ export function BranchesPage(props: BranchesPageProps = {}) {
 
     setActionError(null);
     setActionRunning(true);
-    const result = await checkoutBranch(repo, branchName);
-    setActionRunning(false);
+    try {
+      const result = await checkoutBranch(repo, branchName);
+      if (activeRepo() !== repo) {
+        return;
+      }
 
-    if (!result.ok) {
-      setActionError(result.error.message);
-      return;
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
+
+      void refetch();
+    } finally {
+      setActionRunning(false);
     }
-
-    void refetch();
   };
 
   onMount(() => {

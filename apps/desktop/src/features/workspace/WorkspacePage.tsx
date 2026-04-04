@@ -102,6 +102,14 @@ export function WorkspacePage() {
   const [panelOpenStartedAt, setPanelOpenStartedAt] = createSignal<number | null>(null);
   const activeRepositoryPath = createMemo(() => repository.activeRepositoryPath());
   const hasActiveRepository = createMemo(() => Boolean(activeRepositoryPath()));
+  const activeRepositoryName = createMemo(() => {
+    const path = activeRepositoryPath();
+    if (!path) {
+      return null;
+    }
+    const segments = path.replace(/\\/g, "/").split("/").filter(Boolean);
+    return segments[segments.length - 1] ?? path;
+  });
   const [syncStatus, { refetch: refetchSyncStatus }] = createResource(activeRepositoryPath, async (path) => {
     if (!path) {
       return null;
@@ -196,13 +204,12 @@ export function WorkspacePage() {
           <Show when={isCompactLayout()}>
             <BrandLockup class="workspace-topbar-brand" />
           </Show>
-          <Show when={activeRepositoryPath()} fallback={
+          <Show when={activeRepositoryName()} fallback={
             <span class="workspace-repo-name" style="opacity:0.5">No project open</span>
           }>
-            {(path) => {
-              const segments = path().replace(/\\/g, "/").split("/").filter(Boolean);
-              const name = segments[segments.length - 1] ?? path();
-              return <span class="workspace-repo-name" title={path()}>{name}</span>;
+            {(name) => {
+              const path = activeRepositoryPath();
+              return <span class="workspace-repo-name" title={path ?? ""}>{name()}</span>;
             }}
           </Show>
         </div>

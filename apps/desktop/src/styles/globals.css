@@ -4114,6 +4114,14 @@ ol {
   touch-action: none;
 }
 
+.history-topology-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .history-topology-rail {
   position: absolute;
   z-index: 0;
@@ -4126,21 +4134,18 @@ ol {
   box-shadow: inset 0 1px 0 rgba(var(--chrome-border-rgb), 0.12);
 }
 
-.history-topology-edge {
-  position: absolute;
-  z-index: 1;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(var(--chrome-border-rgb), 0.42);
-  transform-origin: left center;
-  pointer-events: none;
-  transition:
-    background-color var(--runtime-duration, 140ms) var(--runtime-ease, ease-out),
-    opacity var(--runtime-duration, 140ms) var(--runtime-ease, ease-out);
+.history-topology-path {
+  fill: none;
+  stroke: rgba(var(--chrome-border-rgb), 0.44);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.history-topology-edge.is-branch {
-  background: rgba(var(--chrome-accent-rgb), 0.56);
+.history-topology-path-branch {
+  stroke: rgba(var(--chrome-border-rgb), 0.34);
+  stroke-width: 1.4;
+  opacity: 0.64;
 }
 
 .history-topology-node {

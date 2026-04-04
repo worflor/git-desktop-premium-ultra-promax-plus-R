@@ -223,11 +223,13 @@ export function HistoryPage(props: HistoryPageProps = {}) {
   const [historyError, setHistoryError] = createSignal<string | null>(null);
   const [commitDetailData, setCommitDetailData] = createSignal<CommitDetailData | null>(null);
   const [commitDetailError, setCommitDetailError] = createSignal<string | null>(null);
+  const [historyRepositoryPath, setHistoryRepositoryPath] = createSignal<string | null>(null);
   const [overviewWidth, setOverviewWidth] = createSignal(0);
   const [hoverLensX, setHoverLensX] = createSignal<number | null>(null);
   const [isScrubbing, setIsScrubbing] = createSignal(false);
   const [hoveredCommitHash, setHoveredCommitHash] = createSignal<string | null>(null);
   let overviewContainer: HTMLDivElement | undefined;
+  let previousRepositoryPath: string | null | undefined;
 
   const activeRepo = () => repository.activeRepositoryPath();
   const commitDetailCacheKey = (repositoryPath: string, commitHash: string) =>
@@ -243,7 +245,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
 
   const overviewEntries = createMemo(() => {
     const history = historyData();
-    return history ? history.entries : [];
+    return history && historyRepositoryPath() === activeRepo() ? history.entries : [];
   });
 
   const overviewGraph = createMemo(() => buildGraphLayout(overviewEntries()));
@@ -296,7 +298,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     const baselineGap = Math.max(medianGap, 60_000);
     const weightedGaps = rawGaps.map((gap) => {
       const normalized = Math.log1p(gap / baselineGap);
-      return Math.max(0.82, Math.min(1.4, 1 + normalized * 0.22));
+      return Math.max(0.68, Math.min(1.85, 1 + normalized * 0.42));
     });
     const totalWeight = weightedGaps.reduce((sum, weight) => sum + weight, 0);
 
@@ -307,7 +309,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       weightedPercents.push(cursor);
     }
 
-    const subtleBlend = 0.2;
+    const subtleBlend = 0.38;
     return evenPercents.map(
       (evenPercent, index) =>
         evenPercent * (1 - subtleBlend) + (weightedPercents[index] ?? evenPercent) * subtleBlend
@@ -436,6 +438,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     const cached = historyCache.get(cacheKey);
     if (cached) {
       setHistoryData(cached);
+      setHistoryRepositoryPath(repositoryPath);
       setHistoryError(null);
     }
 
@@ -458,6 +461,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       historyCache.set(cacheKey, result.data);
       if (activeRepo() === repositoryPath && parsedLimit() === limit) {
         setHistoryData(result.data);
+        setHistoryRepositoryPath(repositoryPath);
         setHistoryError(null);
       }
     })();
@@ -531,18 +535,26 @@ export function HistoryPage(props: HistoryPageProps = {}) {
 
   createEffect(() => {
     const repositoryPath = activeRepo();
-    const limit = parsedLimit();
-    if (!repositoryPath) {
+    if (previousRepositoryPath !== repositoryPath) {
+      previousRepositoryPath = repositoryPath;
+      setSelectedCommitHash(null);
+      setHoveredCommitHash(null);
       setHistoryData(null);
+      setHistoryRepositoryPath(null);
       setHistoryError(null);
       setCommitDetailData(null);
       setCommitDetailError(null);
+    }
+
+    const limit = parsedLimit();
+    if (!repositoryPath) {
       return;
     }
 
     const cached = historyCache.get(`${repositoryPath}::${limit}`);
     if (cached) {
       setHistoryData(cached);
+      setHistoryRepositoryPath(repositoryPath);
       setHistoryError(null);
     }
 
@@ -550,6 +562,10 @@ export function HistoryPage(props: HistoryPageProps = {}) {
   });
 
   createEffect(() => {
+    if (historyRepositoryPath() !== activeRepo()) {
+      return;
+    }
+
     const history = historyData();
     if (!history || history.entries.length === 0) {
       return;
@@ -585,7 +601,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
   createEffect(() => {
     const repositoryPath = activeRepo();
     const history = historyData();
-    if (!repositoryPath || !history) {
+    if (!repositoryPath || !history || historyRepositoryPath() !== repositoryPath) {
       return;
     }
 
@@ -737,6 +753,13 @@ export function HistoryPage(props: HistoryPageProps = {}) {
             }}
           >
             <div class="history-topology-rail" />
+            <svg
+              class="history-topology-svg"
+              width={effectiveOverviewWidth()}
+              height={overviewHeight()}
+              viewBox={`0 0 ${effectiveOverviewWidth()} ${overviewHeight()}`}
+              preserveAspectRatio="none"
+            >
             <For each={overviewGraph().edges}>
               {(edge) => {
                 const metrics = lensMetrics();
@@ -749,19 +772,23 @@ export function HistoryPage(props: HistoryPageProps = {}) {
                 const x1 = (fromMetric.centerPercent / 100) * effectiveOverviewWidth() + fromMetric.shiftPx;
                 const x2 = (toMetric.centerPercent / 100) * effectiveOverviewWidth() + toMetric.shiftPx;
                 const y1 = 8 + edge.fromLane * overviewLaneStep();
-                const y2 = 8 + edge.toLane * overviewLaneStep();
-                const dx = x2 - x1;
-                const dy = y2 - y1;
-                const length = Math.sqrt(dx * dx + dy * dy);
-                const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                const isBranch = edge.fromLane !== edge.toLane;
+                if (!isBranch) {
+                  return null;
+                }
+
+                const reconnectX = x2;
+                const reconnectY = 8;
+
                 return (
-                  <div
-                    class={`history-topology-edge ${edge.fromLane !== edge.toLane ? "is-branch" : ""}`}
-                    style={`left: ${x1}px; top: ${y1}px; width: ${length}px; transform: rotate(${angle}deg);`}
+                  <path
+                    class="history-topology-path history-topology-path-branch"
+                    d={`M ${x1} ${y1} L ${reconnectX} ${reconnectY}`}
                   />
                 );
               }}
             </For>
+            </svg>
             <For each={overviewGraph().nodes}>
               {(node, index) => {
                 const metric = lensMetrics()[index()];
