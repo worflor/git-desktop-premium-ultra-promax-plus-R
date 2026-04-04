@@ -1984,6 +1984,12 @@ ol {
   z-index: 1;
 }
 
+.settings-top-row .custom-select-container,
+.settings-top-row .custom-select-trigger {
+  position: relative;
+  z-index: 2;
+}
+
 .settings-top-row .settings-fit-line {
   margin: 0;
   min-width: 0;
