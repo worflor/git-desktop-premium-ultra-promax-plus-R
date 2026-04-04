@@ -128,7 +128,7 @@ const THEME_DEFINITIONS = [
   {
     id: "quanta",
     label: "Quanta",
-    description: "Deep emerald obsidian with technical subatomic jitter and high-refraction glass.",
+    description: "Deep emerald obsidian with crystalline subatomic clarity and high-refraction glass.",
     shader: {
       mode: "glass",
       blurPx: 16,
@@ -199,7 +199,7 @@ const THEME_DEFINITIONS = [
   {
     id: "crafty",
     label: "Crafty",
-    description: "Voxel-based rendering with sharp geometry and pixel-perfect textures.",
+    description: "Sharp 8-bit geometry with nostalgic block architecture and pixel-perfect surfaces.",
     shader: {
       mode: "solid",
       blurPx: 0,

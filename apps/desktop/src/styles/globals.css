@@ -2174,6 +2174,17 @@ ol {
   margin-bottom: 0;
 }
 
+.settings-top-row .settings-retention-hybrid {
+  margin-top: 2px;
+  width: fit-content;
+}
+
+.settings-top-row .settings-retention-action {
+  min-height: 24px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+
 .settings-top-row .theme-description-yappery {
   margin: 2px 0 0;
   padding-left: 8px;
@@ -2220,6 +2231,12 @@ ol {
 .settings-top-row.is-ultra-compact .settings-fit-line,
 .settings-top-row.is-ultra-compact .layout-control-field span,
 .settings-top-row.is-ultra-compact .theme-description-yappery {
+  font-size: 10px;
+}
+
+.settings-top-row.is-ultra-compact .settings-retention-action {
+  min-height: 20px;
+  padding: 2px 6px;
   font-size: 10px;
 }
 
@@ -2567,45 +2584,69 @@ ol {
 }
 
 .keybinding-preview-card {
-  border: 1px solid var(--secondary-btn-border);
-  border-radius: 6px;
-  background: var(--row-bg);
-  padding: 8px;
-  display: grid;
-  gap: 6px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  display: block;
 }
 
 .keybinding-preview-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.keybinding-preview-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid rgba(var(--chrome-border-rgb), 0.16);
-  border-radius: 6px;
-  background: rgba(var(--chrome-border-rgb), 0.06);
-}
-
-.keybinding-preview-row>span:first-child {
-  min-width: 0;
-  font-weight: 600;
-}
-
-.keybinding-preview-row>.shortcut-hint {
-  justify-self: end;
+  display: contents;
 }
 
 .settings-keybinding-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 6px;
 }
+
+.keybinding-preview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 10px;
+  background: rgba(var(--chrome-border-rgb), 0.05);
+  border: 1px solid rgba(var(--chrome-border-rgb), 0.1);
+  border-radius: var(--runtime-radius, 6px);
+  transition: background 150ms ease, border-color 150ms ease;
+  user-select: none;
+}
+
+.keybinding-preview-row:hover {
+  background: rgba(var(--chrome-border-rgb), 0.08);
+  border-color: rgba(var(--chrome-border-rgb), 0.2);
+}
+
+.keybinding-preview-row > span:first-child {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.keybinding-preview-row > .shortcut-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--surface-2);
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: 4px;
+  border: 1px solid rgba(var(--chrome-border-rgb), 0.3);
+  box-shadow: 0 1.5px 0 rgba(var(--chrome-border-rgb), 0.15), inset 0 0.5px 0 rgba(255, 255, 255, 0.05);
+}
+
 
 .settings-update-status {
   margin-top: 12px;

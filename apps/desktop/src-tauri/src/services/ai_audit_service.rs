@@ -92,6 +92,13 @@ pub fn get_ai_audit_entries(limit: Option<usize>) -> Result<AiAuditListData, App
     })
 }
 
+pub fn clear_ai_audit_entries() -> Result<u32, AppError> {
+    let entries = load_entries()?;
+    let affected_entries = entries.len() as u32;
+    persist_entries(&[])?;
+    Ok(affected_entries)
+}
+
 fn repository_hint(repository_path: &str) -> String {
     let trimmed = repository_path.trim();
     let name = Path::new(trimmed)

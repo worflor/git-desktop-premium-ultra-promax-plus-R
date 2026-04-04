@@ -1,4 +1,5 @@
 use std::fs;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -81,6 +82,7 @@ const BINARY_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_millis(1200);
 const OPENCODE_BINARY_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 const WINDOWS_SCRIPT_HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 const MODEL_DISCOVERY_COMMAND_TIMEOUT: Duration = Duration::from_secs(8);
+const OPENCODE_VERBOSE_MODEL_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Copy)]
 struct CliProviderAdapter {
@@ -188,11 +190,12 @@ struct ProviderAvailability {
 #[derive(Clone)]
 struct ProviderModelDiscovery {
     models: Vec<String>,
+    model_details: HashMap<String, String>,
 }
 
 #[derive(Clone)]
 struct ClaudeOAuthCredentials {
-    access_token: String,
+    has_access_token: bool,
     subscription_type: String,
     has_inference_scope: bool,
 }
@@ -202,6 +205,7 @@ struct ProviderModelCollection {
     provider_kind: ProviderKind,
     plan_name: Option<String>,
     models: Vec<String>,
+    model_details: HashMap<String, String>,
 }
 
 #[derive(Clone, Copy)]
@@ -274,6 +278,16 @@ pub fn list_model_options() -> Result<AiModelOptionListData, AppError> {
     let categories = model_category_definitions();
     let providers = discover_ready_provider_models();
 
+    let model_details_by_key = providers
+        .iter()
+        .flat_map(|provider| {
+            provider
+                .model_details
+                .iter()
+                .map(|(key, detail)| (key.clone(), detail.clone()))
+        })
+        .collect::<HashMap<String, String>>();
+
     let direct_provider_model_keys = providers
         .iter()
         .filter(|provider| provider.provider_kind != ProviderKind::OpenCode)
@@ -313,15 +327,22 @@ pub fn list_model_options() -> Result<AiModelOptionListData, AppError> {
 
             for model_id in ranked_models {
                 let key = normalize_model_key(model_id.as_str());
-                if !seen.insert(key) {
+                if !seen.insert(key.clone()) {
                     continue;
                 }
+
+                let model_detail = provider
+                    .model_details
+                    .get(key.as_str())
+                    .cloned()
+                    .or_else(|| model_details_by_key.get(key.as_str()).cloned());
 
                 models.push(build_model_option(
                     provider.provider_id.as_str(),
                     provider.provider_kind,
                     provider.plan_name.clone(),
                     model_id.as_str(),
+                    model_detail,
                 ));
             }
         }
@@ -341,6 +362,10 @@ pub fn list_model_options() -> Result<AiModelOptionListData, AppError> {
 
 pub fn get_audit_entries(limit: Option<usize>) -> Result<AiAuditListData, AppError> {
     ai_audit_service::get_ai_audit_entries(limit)
+}
+
+pub fn clear_audit_entries() -> Result<u32, AppError> {
+    ai_audit_service::clear_ai_audit_entries()
 }
 
 pub fn run_diff_review(
@@ -1582,9 +1607,7 @@ fn claude_auth_status() -> ProviderAuthStatus {
     };
 
     let subscription = credentials.subscription_type.clone();
-    let token_ok = resolve_claude_access_token(&credentials)
-        .map(|token| !token.trim().is_empty())
-        .unwrap_or(false);
+    let token_ok = credentials.has_access_token;
     let ok = token_ok && credentials.has_inference_scope;
     let plan_name = if ok {
         Some(humanize_label(subscription.as_str()))
@@ -1611,12 +1634,11 @@ fn read_claude_oauth_credentials(path: &Path) -> Option<ClaudeOAuthCredentials> 
     let value = read_json_file(path)?;
     let oauth = value.get("claudeAiOauth")?;
 
-    let access_token = oauth
+    let has_access_token = oauth
         .get("accessToken")
         .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("")
-        .to_string();
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false);
     let subscription_type = oauth
         .get("subscriptionType")
         .and_then(Value::as_str)
@@ -1629,27 +1651,10 @@ fn read_claude_oauth_credentials(path: &Path) -> Option<ClaudeOAuthCredentials> 
         .unwrap_or(false);
 
     Some(ClaudeOAuthCredentials {
-        access_token,
+        has_access_token,
         subscription_type,
         has_inference_scope,
     })
-}
-
-fn resolve_claude_access_token(credentials: &ClaudeOAuthCredentials) -> Option<String> {
-    if !credentials.has_inference_scope {
-        return None;
-    }
-
-    let token = credentials.access_token.trim().to_string();
-    if token.is_empty() {
-        return None;
-    }
-
-    if token.trim().is_empty() {
-        None
-    } else {
-        Some(token)
-    }
 }
 
 fn gemini_auth_status() -> ProviderAuthStatus {
@@ -1939,7 +1944,10 @@ fn discover_codex_models() -> Option<ProviderModelDiscovery> {
         return None;
     }
 
-    Some(ProviderModelDiscovery { models })
+    Some(ProviderModelDiscovery {
+        models,
+        model_details: HashMap::new(),
+    })
 }
 
 fn discover_codex_config_model() -> Option<String> {
@@ -1971,13 +1979,9 @@ fn discover_codex_config_model() -> Option<String> {
     None
 }
 
-fn discover_claude_models(resolution: Option<&ProviderResolution>) -> Option<ProviderModelDiscovery> {
-    let command = resolution
-        .map(|entry| entry.command.clone())
-        .unwrap_or_else(|| "claude".to_string());
-
+fn discover_claude_models(_resolution: Option<&ProviderResolution>) -> Option<ProviderModelDiscovery> {
     let mut models = Vec::<String>::new();
-    if let Some(configured) = discover_claude_configured_model(command.as_str()) {
+    if let Some(configured) = discover_claude_configured_model() {
         models.push(configured);
     }
 
@@ -1991,30 +1995,42 @@ fn discover_claude_models(resolution: Option<&ProviderResolution>) -> Option<Pro
         return None;
     }
 
-    Some(ProviderModelDiscovery { models })
+    Some(ProviderModelDiscovery {
+        models,
+        model_details: HashMap::new(),
+    })
 }
 
-fn discover_claude_configured_model(command: &str) -> Option<String> {
-    let output = run_command_output_with_timeout(
-        command,
-        &["config", "get", "model"],
-        MODEL_DISCOVERY_COMMAND_TIMEOUT,
-    )?;
-    if !output.status.success() {
-        return None;
-    }
+fn discover_claude_configured_model() -> Option<String> {
+    let settings_path = user_home_dir()?.join(".claude").join("settings.json");
+    let settings = read_json_file(settings_path.as_path())?;
+    find_model_value_in_json(&settings)
+}
 
-    let stdout = String::from_utf8_lossy(output.stdout.as_slice());
-    let model = stdout
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())?
-        .to_string();
+fn find_model_value_in_json(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(map) => {
+            for (key, item) in map {
+                let key_normalized = key.to_ascii_lowercase();
+                if key_normalized.contains("model") {
+                    if let Some(model) = item.as_str() {
+                        let trimmed = model.trim();
+                        if !trimmed.is_empty() {
+                            return Some(trimmed.to_string());
+                        }
+                    }
+                }
 
-    if model.is_empty() {
-        None
-    } else {
-        Some(model)
+                if let Some(nested) = find_model_value_in_json(item) {
+                    return Some(nested);
+                }
+            }
+            None
+        }
+        Value::Array(items) => items
+            .iter()
+            .find_map(find_model_value_in_json),
+        _ => None,
     }
 }
 
@@ -2026,13 +2042,20 @@ fn discover_gemini_models() -> Option<ProviderModelDiscovery> {
     if models.is_empty() {
         return None;
     }
-    Some(ProviderModelDiscovery { models })
+    Some(ProviderModelDiscovery {
+        models,
+        model_details: HashMap::new(),
+    })
 }
 
 fn discover_opencode_models(resolution: Option<&ProviderResolution>) -> Option<ProviderModelDiscovery> {
     let command = resolution
         .map(|entry| entry.command.clone())
         .unwrap_or_else(|| "opencode".to_string());
+
+    if let Some(verbose_discovery) = discover_opencode_verbose_models(command.as_str()) {
+        return Some(verbose_discovery);
+    }
 
     let output = run_command_output_with_timeout(
         command.as_str(),
@@ -2059,7 +2082,145 @@ fn discover_opencode_models(resolution: Option<&ProviderResolution>) -> Option<P
         return None;
     }
 
-    Some(ProviderModelDiscovery { models })
+    Some(ProviderModelDiscovery {
+        models,
+        model_details: HashMap::new(),
+    })
+}
+
+fn discover_opencode_verbose_models(command: &str) -> Option<ProviderModelDiscovery> {
+    let output = run_command_output_with_timeout(
+        command,
+        &["models", "--verbose"],
+        OPENCODE_VERBOSE_MODEL_DISCOVERY_TIMEOUT,
+    )?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(output.stdout.as_slice());
+    parse_opencode_verbose_models(stdout.as_ref())
+}
+
+fn parse_opencode_verbose_models(stdout: &str) -> Option<ProviderModelDiscovery> {
+    let mut lines = stdout.lines().peekable();
+    let mut seen = HashSet::<String>::new();
+    let mut models = Vec::<String>::new();
+    let mut model_details = HashMap::<String, String>::new();
+
+    while let Some(line) = lines.next() {
+        let model_id = line.trim();
+        if model_id.is_empty() || !model_id.contains('/') || model_id.starts_with('{') {
+            continue;
+        }
+
+        let model_key = normalize_model_key(model_id);
+        if seen.insert(model_key.clone()) {
+            models.push(model_id.to_string());
+        }
+
+        while let Some(next_line) = lines.peek() {
+            if next_line.trim().is_empty() {
+                let _ = lines.next();
+                continue;
+            }
+            break;
+        }
+
+        let Some(next_line) = lines.peek() else {
+            continue;
+        };
+        if !next_line.trim_start().starts_with('{') {
+            continue;
+        }
+
+        let mut payload = String::new();
+        while let Some(json_line) = lines.next() {
+            payload.push_str(json_line);
+            payload.push('\n');
+
+            if let Ok(value) = serde_json::from_str::<Value>(payload.as_str()) {
+                if let Some(detail) = extract_opencode_model_detail(&value) {
+                    model_details.insert(model_key.clone(), detail);
+                }
+                break;
+            }
+        }
+    }
+
+    if models.is_empty() {
+        return None;
+    }
+
+    Some(ProviderModelDiscovery {
+        models,
+        model_details,
+    })
+}
+
+fn extract_opencode_model_detail(value: &Value) -> Option<String> {
+    let mut details = Vec::<String>::new();
+
+    if let Some(context_limit) = value.pointer("/limit/context").and_then(Value::as_u64) {
+        details.push(format!("ctx {}", format_token_limit(context_limit)));
+    }
+    if let Some(input_limit) = value.pointer("/limit/input").and_then(Value::as_u64) {
+        details.push(format!("in {}", format_token_limit(input_limit)));
+    }
+    if let Some(output_limit) = value.pointer("/limit/output").and_then(Value::as_u64) {
+        details.push(format!("out {}", format_token_limit(output_limit)));
+    }
+
+    if value
+        .pointer("/capabilities/reasoning")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        details.push("reasoning".to_string());
+    }
+    if value
+        .pointer("/capabilities/toolcall")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        details.push("tools".to_string());
+    }
+    if value
+        .pointer("/capabilities/attachment")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        details.push("attachments".to_string());
+    }
+
+    if let Some(status) = value.get("status").and_then(Value::as_str) {
+        let normalized = status.trim();
+        if !normalized.is_empty() {
+            details.push(normalized.to_string());
+        }
+    }
+    if let Some(release_date) = value.get("release_date").and_then(Value::as_str) {
+        let normalized = release_date.trim();
+        if !normalized.is_empty() {
+            details.push(normalized.to_string());
+        }
+    }
+
+    if details.is_empty() {
+        None
+    } else {
+        Some(details.join(" | "))
+    }
+}
+
+fn format_token_limit(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        return format!("{:.1}m", tokens as f64 / 1_000_000.0);
+    }
+    if tokens >= 1_000 {
+        return format!("{:.0}k", tokens as f64 / 1_000.0);
+    }
+    tokens.to_string()
 }
 
 fn model_category_definitions() -> Vec<ModelCategoryDefinition> {
@@ -2150,6 +2311,7 @@ fn discover_ready_provider_models() -> Vec<ProviderModelCollection> {
                     provider_kind: adapter.kind(),
                     plan_name: availability.auth.plan_name.clone(),
                     models: discovery.models,
+                    model_details: discovery.model_details,
                 })
             }))
         })
@@ -2240,12 +2402,17 @@ fn build_model_option(
     kind: ProviderKind,
     plan_name: Option<String>,
     model_id: &str,
+    model_detail: Option<String>,
 ) -> AiModelOptionData {
     let provider_symbol = provider_symbol(kind).to_string();
     let label = format!("{provider_symbol} {model_id}");
-    let description = match plan_name.as_deref() {
+    let base_description = match plan_name.as_deref() {
         Some(plan) => format!("{plan} via {provider_id}"),
         None => format!("via {provider_id}"),
+    };
+    let description = match model_detail {
+        Some(detail) if !detail.trim().is_empty() => format!("{base_description} | {detail}"),
+        _ => base_description,
     };
 
     AiModelOptionData {

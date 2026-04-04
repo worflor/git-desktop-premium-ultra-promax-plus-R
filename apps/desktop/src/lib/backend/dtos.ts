@@ -279,6 +279,12 @@ export interface AiDiffReviewCancelData {
   canceled: boolean;
 }
 
+export interface AiAuditMaintenanceData {
+  operation: string;
+  affectedEntries: number;
+  sampleCount: number;
+}
+
 export interface AppSettingsData {
   guardrailValue: number;
   guardrailProfile: "Loose" | "Balanced" | "Strict" | "Paranoid";

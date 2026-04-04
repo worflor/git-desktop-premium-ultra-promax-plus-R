@@ -305,6 +305,14 @@ pub struct AiAuditListData {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiAuditMaintenanceData {
+    pub operation: String,
+    pub affected_entries: u32,
+    pub sample_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IssueProviderData {
     pub id: String,
     pub display_name: String,

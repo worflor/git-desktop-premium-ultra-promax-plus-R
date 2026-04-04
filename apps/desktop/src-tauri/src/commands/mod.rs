@@ -10,7 +10,7 @@ use crate::models::git::{
     AuthStatus, ForgeAdapterList, GitCapabilities, RepositoryIntegrationMatrix,
 };
 use crate::models::operations::{
-    AiAuditListData, AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData,
+    AiAuditListData, AiAuditMaintenanceData, AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData,
     AiDiffReviewJobStartData, AiModelOptionListData, AiProviderListData, AppUpdateCheckData,
     AppUpdateInstallData,
     BranchListData, BranchOperationData, BranchTrackingOperationData,
@@ -97,7 +97,7 @@ fn map_error_with_command<T: Serialize>(
     CommandResult::error(command_error, meta)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_repository(
     repository_path: String,
     state: State<'_, AppState>,
@@ -112,7 +112,7 @@ pub fn open_repository(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_recent_repositories(
     state: State<'_, AppState>,
 ) -> CommandResult<RecentRepositoriesData> {
@@ -141,7 +141,7 @@ pub fn list_recent_repositories(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_git_capabilities(state: State<'_, AppState>) -> CommandResult<GitCapabilities> {
     let started_at = Instant::now();
     let request_id = Uuid::new_v4().to_string();
@@ -153,7 +153,7 @@ pub fn get_git_capabilities(state: State<'_, AppState>) -> CommandResult<GitCapa
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_auth_status(state: State<'_, AppState>) -> CommandResult<AuthStatus> {
     let started_at = Instant::now();
     let request_id = Uuid::new_v4().to_string();
@@ -165,7 +165,7 @@ pub fn get_auth_status(state: State<'_, AppState>) -> CommandResult<AuthStatus> 
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_repository_auth_status(
     repository_path: String,
     state: State<'_, AppState>,
@@ -182,7 +182,7 @@ pub fn get_repository_auth_status(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_forge_adapters(state: State<'_, AppState>) -> CommandResult<ForgeAdapterList> {
     let started_at = Instant::now();
     let request_id = Uuid::new_v4().to_string();
@@ -194,7 +194,7 @@ pub fn list_forge_adapters(state: State<'_, AppState>) -> CommandResult<ForgeAda
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_repository_integration_matrix(
     repository_path: String,
     state: State<'_, AppState>,
@@ -219,7 +219,7 @@ pub fn get_repository_integration_matrix(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_repository_status(
     repository_path: String,
     state: State<'_, AppState>,
@@ -234,7 +234,7 @@ pub fn get_repository_status(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_branches(
     repository_path: String,
     state: State<'_, AppState>,
@@ -249,7 +249,7 @@ pub fn list_branches(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_branch(
     repository_path: String,
     branch_name: String,
@@ -275,7 +275,7 @@ pub fn create_branch(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn checkout_branch(
     repository_path: String,
     branch_name: String,
@@ -300,7 +300,7 @@ pub fn checkout_branch(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_branch(
     repository_path: String,
     branch_name: String,
@@ -331,7 +331,7 @@ pub fn delete_branch(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_branch(
     repository_path: String,
     old_branch_name: String,
@@ -357,7 +357,7 @@ pub fn rename_branch(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_branch_upstream(
     repository_path: String,
     branch_name: String,
@@ -384,7 +384,7 @@ pub fn set_branch_upstream(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_stashes(
     repository_path: String,
     limit: Option<u32>,
@@ -401,7 +401,7 @@ pub fn list_stashes(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_stash(
     repository_path: String,
     message: Option<String>,
@@ -419,7 +419,7 @@ pub fn create_stash(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pop_stash(
     repository_path: String,
     stash_ref: Option<String>,
@@ -435,7 +435,7 @@ pub fn pop_stash(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn drop_stash(
     repository_path: String,
     stash_ref: String,
@@ -451,7 +451,7 @@ pub fn drop_stash(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_worktrees(
     repository_path: String,
     state: State<'_, AppState>,
@@ -466,7 +466,7 @@ pub fn list_worktrees(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_worktree(
     repository_path: String,
     worktree_path: String,
@@ -499,7 +499,7 @@ pub fn create_worktree(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_worktree(
     repository_path: String,
     worktree_path: String,
@@ -531,7 +531,7 @@ pub fn remove_worktree(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_commit_history(
     repository_path: String,
     limit: Option<u32>,
@@ -549,7 +549,7 @@ pub fn list_commit_history(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_commit_detail(
     repository_path: String,
     commit_hash: String,
@@ -565,7 +565,7 @@ pub fn get_commit_detail(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stage_paths(
     repository_path: String,
     paths: Vec<String>,
@@ -590,7 +590,7 @@ pub fn stage_paths(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn unstage_paths(
     repository_path: String,
     paths: Vec<String>,
@@ -615,7 +615,7 @@ pub fn unstage_paths(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_commit(
     repository_path: String,
     message: String,
@@ -643,7 +643,7 @@ pub fn create_commit(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_file_diff(
     repository_path: String,
     path: String,
@@ -681,7 +681,7 @@ pub struct PrepareFileDiffChunksRequest {
     line_height_px: Option<u32>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn prepare_file_diff_chunks(
     request: PrepareFileDiffChunksRequest,
     state: State<'_, AppState>,
@@ -711,7 +711,7 @@ pub fn prepare_file_diff_chunks(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_file_diff_chunk(
     diff_id: String,
     chunk_index: u32,
@@ -727,7 +727,7 @@ pub fn get_file_diff_chunk(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fetch_remote(
     repository_path: String,
     remote: Option<String>,
@@ -755,7 +755,7 @@ pub fn fetch_remote(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pull_remote(
     repository_path: String,
     remote: Option<String>,
@@ -789,7 +789,7 @@ pub fn pull_remote(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn push_remote(
     repository_path: String,
     remote: Option<String>,
@@ -823,7 +823,7 @@ pub fn push_remote(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_rebase(
     repository_path: String,
     onto_ref: String,
@@ -839,7 +839,7 @@ pub fn start_rebase(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn continue_rebase(
     repository_path: String,
     state: State<'_, AppState>,
@@ -854,7 +854,7 @@ pub fn continue_rebase(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn abort_rebase(
     repository_path: String,
     state: State<'_, AppState>,
@@ -869,7 +869,7 @@ pub fn abort_rebase(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_cherry_pick(
     repository_path: String,
     commit_ref: String,
@@ -886,7 +886,7 @@ pub fn start_cherry_pick(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn continue_cherry_pick(
     repository_path: String,
     state: State<'_, AppState>,
@@ -901,7 +901,7 @@ pub fn continue_cherry_pick(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn abort_cherry_pick(
     repository_path: String,
     state: State<'_, AppState>,
@@ -916,7 +916,7 @@ pub fn abort_cherry_pick(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_conflict_state(
     repository_path: String,
     state: State<'_, AppState>,
@@ -931,7 +931,7 @@ pub fn get_conflict_state(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn continue_conflict_resolution(
     repository_path: String,
     operation: Option<String>,
@@ -949,7 +949,7 @@ pub fn continue_conflict_resolution(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn abort_conflict_resolution(
     repository_path: String,
     operation: Option<String>,
@@ -967,7 +967,7 @@ pub fn abort_conflict_resolution(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_issue_providers(
     repository_path: String,
     state: State<'_, AppState>,
@@ -982,7 +982,7 @@ pub fn list_issue_providers(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_local_issues(
     repository_path: String,
     provider_id: Option<String>,
@@ -998,7 +998,7 @@ pub fn list_local_issues(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_pull_request_providers(
     repository_path: String,
     state: State<'_, AppState>,
@@ -1015,7 +1015,7 @@ pub fn list_pull_request_providers(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_pull_requests(
     repository_path: String,
     provider_id: Option<String>,
@@ -1031,7 +1031,7 @@ pub fn list_pull_requests(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 pub fn create_pull_request(
     repository_path: String,
@@ -1062,7 +1062,7 @@ pub fn create_pull_request(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn close_pull_request(
     repository_path: String,
     provider_id: Option<String>,
@@ -1083,7 +1083,7 @@ pub fn close_pull_request(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reopen_pull_request(
     repository_path: String,
     provider_id: Option<String>,
@@ -1104,7 +1104,7 @@ pub fn reopen_pull_request(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mark_pull_request_ready(
     repository_path: String,
     provider_id: Option<String>,
@@ -1125,7 +1125,7 @@ pub fn mark_pull_request_ready(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn merge_pull_request(
     repository_path: String,
     provider_id: Option<String>,
@@ -1149,7 +1149,7 @@ pub fn merge_pull_request(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_local_issue(
     repository_path: String,
     provider_id: Option<String>,
@@ -1167,7 +1167,7 @@ pub fn create_local_issue(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn close_local_issue(
     repository_path: String,
     provider_id: Option<String>,
@@ -1184,7 +1184,7 @@ pub fn close_local_issue(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reopen_local_issue(
     repository_path: String,
     provider_id: Option<String>,
@@ -1201,7 +1201,7 @@ pub fn reopen_local_issue(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_ai_providers(state: State<'_, AppState>) -> CommandResult<AiProviderListData> {
     let started_at = Instant::now();
     let request_id = Uuid::new_v4().to_string();
@@ -1213,7 +1213,7 @@ pub fn list_ai_providers(state: State<'_, AppState>) -> CommandResult<AiProvider
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_ai_model_options(state: State<'_, AppState>) -> CommandResult<AiModelOptionListData> {
     let started_at = Instant::now();
     let request_id = Uuid::new_v4().to_string();
@@ -1225,7 +1225,7 @@ pub fn list_ai_model_options(state: State<'_, AppState>) -> CommandResult<AiMode
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_ai_audit_entries(
     limit: Option<u32>,
     state: State<'_, AppState>,
@@ -1241,7 +1241,30 @@ pub fn get_ai_audit_entries(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+pub fn clear_ai_audit_entries(
+    state: State<'_, AppState>,
+) -> CommandResult<AiAuditMaintenanceData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match ai_service::clear_audit_entries() {
+        Ok(affected_entries) => command_ok(
+            "clear_ai_audit_entries",
+            started_at,
+            &state,
+            AiAuditMaintenanceData {
+                operation: "clear".to_string(),
+                affected_entries,
+                sample_count: 0,
+            },
+        ),
+        Err(error) => map_error_with_command("clear_ai_audit_entries", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
 pub fn run_ai_diff_review(
     provider_id: String,
     repository_path: String,
@@ -1264,7 +1287,7 @@ pub fn run_ai_diff_review(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_ai_diff_review_job(
     provider_id: String,
     repository_path: String,
@@ -1288,7 +1311,7 @@ pub fn start_ai_diff_review_job(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_ai_diff_review_job(
     job_id: String,
     state: State<'_, AppState>,
@@ -1303,7 +1326,7 @@ pub fn get_ai_diff_review_job(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_ai_diff_review_job(
     job_id: String,
     state: State<'_, AppState>,
@@ -1320,7 +1343,7 @@ pub fn cancel_ai_diff_review_job(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_startup_readiness_snapshot(
     refresh: Option<bool>,
     state: State<'_, AppState>,
@@ -1337,7 +1360,7 @@ pub fn get_startup_readiness_snapshot(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_app_settings(state: State<'_, AppState>) -> CommandResult<AppSettingsData> {
     let started_at = Instant::now();
     let request_id = Uuid::new_v4().to_string();
@@ -1349,7 +1372,7 @@ pub fn get_app_settings(state: State<'_, AppState>) -> CommandResult<AppSettings
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_ai_guardrail(
     guardrail_value: f32,
     state: State<'_, AppState>,
@@ -1364,7 +1387,7 @@ pub fn update_ai_guardrail(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_telemetry_retention(
     retention_days: u32,
     retention_mb: u32,
@@ -1385,7 +1408,7 @@ pub fn update_telemetry_retention(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_update_channel(
     update_channel: String,
     state: State<'_, AppState>,
@@ -1400,7 +1423,7 @@ pub fn update_update_channel(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn check_for_app_update(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -1415,7 +1438,7 @@ pub fn check_for_app_update(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_app_update(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -1430,7 +1453,7 @@ pub fn install_app_update(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_crash_reporting(
     crash_reporting_enabled: bool,
     state: State<'_, AppState>,
@@ -1445,7 +1468,7 @@ pub fn update_crash_reporting(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_layout_preferences(
     sidebar_width_px: u32,
     sidebar_position: String,
@@ -1470,7 +1493,7 @@ pub fn update_layout_preferences(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_ui_preferences(
     theme_id: String,
     keybinding_profile: String,
@@ -1486,7 +1509,7 @@ pub fn update_ui_preferences(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_command_telemetry_snapshot(
     recent_limit: Option<u32>,
     state: State<'_, AppState>,
@@ -1504,7 +1527,7 @@ pub fn get_command_telemetry_snapshot(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_command_telemetry(
     state: State<'_, AppState>,
 ) -> CommandResult<CommandTelemetryMaintenanceData> {

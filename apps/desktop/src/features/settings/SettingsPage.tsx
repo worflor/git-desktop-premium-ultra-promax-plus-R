@@ -6,6 +6,7 @@ import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import {
   checkForAppUpdate,
+  clearAiAuditEntries,
   getAppSettings,
   installAppUpdate,
   listAiModelOptions,
@@ -154,13 +155,15 @@ export function SettingsPage() {
   const [crashReportingEnabled, setCrashReportingEnabled] = createSignal(false);
   const [updateCheckResult, setUpdateCheckResult] = createSignal<AppUpdateCheckData | null>(null);
   const [updateActionBusy, setUpdateActionBusy] = createSignal(false);
+  const [dataMaintenanceBusy, setDataMaintenanceBusy] = createSignal(false);
   const [actionMessage, setActionMessage] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [modelSelections, setModelSelections] = createSignal<Record<string, string>>({});
   const [modelLabelOverrides, setModelLabelOverrides] = createSignal<Record<string, string>>({});
   const [editingModelCategoryId, setEditingModelCategoryId] = createSignal<string | null>(null);
   const [editingModelCategoryLabel, setEditingModelCategoryLabel] = createSignal("");
-  const [modelSelectionInitialized, setModelSelectionInitialized] = createSignal(false);
+  const [modelSelectionsHydrated, setModelSelectionsHydrated] = createSignal(false);
+  const [modelLabelsHydrated, setModelLabelsHydrated] = createSignal(false);
   const [latencyReport, setLatencyReport] = createSignal(getCommandLatencyReport());
   const [diffRenderReport, setDiffRenderReport] = createSignal(getDiffRenderMetricsReport());
   const [uiTimingReport, setUiTimingReport] = createSignal(getUiTimingReport());
@@ -220,9 +223,9 @@ export function SettingsPage() {
       );
 
       const telemetryTextWidth = Math.max(
-        measureTextWidth(context, headingFont, "Local Telemetry"),
-        measureTextWidth(context, bodyFont, "Diagnostic retention and performance logs."),
-        measureTextWidth(context, bodyFont, "Data remains local-only.")
+        measureTextWidth(context, headingFont, "Local Data Retention"),
+        measureTextWidth(context, bodyFont, "Retention policy for local diagnostics and AI audit records."),
+        measureTextWidth(context, bodyFont, "Includes diagnostics, performance timings, and AI audit metadata.")
       );
 
       const interfaceTextWidth = Math.max(
@@ -263,10 +266,6 @@ export function SettingsPage() {
     setTopCardsCompact(true);
     setTopCardsUltraCompact(true);
   };
-
-  onMount(() => {
-    setModelSelectionInitialized(true);
-  });
 
   onMount(() => {
     let aiDiagnosticsDelayId: number | undefined;
@@ -732,7 +731,7 @@ export function SettingsPage() {
 
     const categories = modelCategoryFields();
     if (categories.length === 0) {
-      setModelSelections({});
+      setModelSelectionsHydrated(true);
       return;
     }
 
@@ -747,7 +746,7 @@ export function SettingsPage() {
             ? ""
             : (window.localStorage.getItem(modelCategoryStorageKey(category.id)) ?? "");
 
-        let resolvedValue = currentValue || storedValue;
+        let resolvedValue = storedValue || currentValue;
         if (!resolvedValue || !allowedValues.has(resolvedValue)) {
           resolvedValue = category.options.at(0)?.id ?? "";
         }
@@ -763,14 +762,19 @@ export function SettingsPage() {
 
       return changed ? next : current;
     });
+
+    setModelSelectionsHydrated(true);
   });
 
   createEffect(() => {
-    if (!modelSelectionInitialized() || typeof window === "undefined" || !aiModelOptionsSnapshot()?.ok) {
+    if (!modelSelectionsHydrated() || typeof window === "undefined" || !aiModelOptionsSnapshot()?.ok) {
       return;
     }
 
     const categories = modelCategoryFields();
+    if (categories.length === 0) {
+      return;
+    }
     const selections = modelSelections();
     const activeCategoryIds = new Set(categories.map((category) => category.id));
 
@@ -826,14 +830,19 @@ export function SettingsPage() {
 
       return changed ? next : current;
     });
+
+    setModelLabelsHydrated(true);
   });
 
   createEffect(() => {
-    if (!modelSelectionInitialized() || typeof window === "undefined" || !aiModelOptionsSnapshot()?.ok) {
+    if (!modelLabelsHydrated() || typeof window === "undefined" || !aiModelOptionsSnapshot()?.ok) {
       return;
     }
 
     const categories = modelCategoryFields();
+    if (categories.length === 0) {
+      return;
+    }
     const labels = modelLabelOverrides();
     const activeCategoryIds = new Set(categories.map((category) => category.id));
 
@@ -891,6 +900,88 @@ export function SettingsPage() {
     setActionMessage(
       `Saved retention policy: ${result.data.telemetryRetentionDays} days / ${result.data.telemetryRetentionMb} MB.`
     );
+  };
+
+  const confirmLocalDataAction = (message: string) => {
+    if (typeof window === "undefined") {
+      return true;
+    }
+
+    return window.confirm(message);
+  };
+
+  const onClearDiagnostics = () => {
+    if (!confirmLocalDataAction("Clear local diagnostics samples and performance timings?")) {
+      return;
+    }
+
+    setActionError(null);
+    setDataMaintenanceBusy(true);
+
+    try {
+      clearCommandLatencyReport();
+      clearDiffRenderMetricsReport();
+      clearUiTimingReport();
+      setLatencyReport(getCommandLatencyReport());
+      setDiffRenderReport(getDiffRenderMetricsReport());
+      setUiTimingReport(getUiTimingReport());
+      setActionMessage("Cleared local diagnostics samples.");
+    } finally {
+      setDataMaintenanceBusy(false);
+    }
+  };
+
+  const onClearAiAudit = async () => {
+    if (!confirmLocalDataAction("Clear local AI audit metadata records?")) {
+      return;
+    }
+
+    setActionError(null);
+    setDataMaintenanceBusy(true);
+
+    try {
+      const result = await clearAiAuditEntries();
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
+
+      const count = result.data.affectedEntries;
+      setActionMessage(`Cleared ${count} AI audit ${count === 1 ? "entry" : "entries"}.`);
+    } finally {
+      setDataMaintenanceBusy(false);
+    }
+  };
+
+  const onClearAllLocalData = async () => {
+    if (!confirmLocalDataAction("Clear all local diagnostics samples and AI audit metadata records?")) {
+      return;
+    }
+
+    setActionError(null);
+    setDataMaintenanceBusy(true);
+
+    try {
+      clearCommandLatencyReport();
+      clearDiffRenderMetricsReport();
+      clearUiTimingReport();
+      setLatencyReport(getCommandLatencyReport());
+      setDiffRenderReport(getDiffRenderMetricsReport());
+      setUiTimingReport(getUiTimingReport());
+
+      const auditResult = await clearAiAuditEntries();
+      if (!auditResult.ok) {
+        setActionError(`Diagnostics were cleared, but AI audit clear failed: ${auditResult.error.message}`);
+        return;
+      }
+
+      const count = auditResult.data.affectedEntries;
+      setActionMessage(
+        `Cleared diagnostics and ${count} AI audit ${count === 1 ? "entry" : "entries"}.`
+      );
+    } finally {
+      setDataMaintenanceBusy(false);
+    }
   };
 
   const onSaveUpdateChannel = async (channel: "stable" | "beta") => {
@@ -1093,8 +1184,8 @@ export function SettingsPage() {
             </article>
 
             <article class="state-card settings-top-card">
-              <h3>Local Telemetry</h3>
-              <p class="section-summary">Diagnostic retention and performance logs.</p>
+              <h3>Local Data Retention</h3>
+              <p class="section-summary">Retention policy for local diagnostics and AI audit records.</p>
               <div class="sync-grid settings-retention-grid">
                 <div class="input-with-unit">
                   <input
@@ -1131,7 +1222,42 @@ export function SettingsPage() {
                   <span class="unit">MB</span>
                 </div>
               </div>
-              <p class="settings-fit-line">Data remains local-only.</p>
+              <p class="settings-fit-line">Includes diagnostics, performance timings, and AI audit metadata.</p>
+              <div class="settings-retention-hybrid hybrid-log-button" role="group" aria-label="Local data clear actions">
+                <button
+                  class="hybrid-log-toggle settings-retention-action"
+                  type="button"
+                  title="Clear diagnostics"
+                  disabled={dataMaintenanceBusy()}
+                  onClick={onClearDiagnostics}
+                >
+                  Diag
+                </button>
+                <div class="hybrid-log-divider" />
+                <button
+                  class="hybrid-log-toggle settings-retention-action"
+                  type="button"
+                  title="Clear AI audit"
+                  disabled={dataMaintenanceBusy()}
+                  onClick={() => {
+                    void onClearAiAudit();
+                  }}
+                >
+                  Audit
+                </button>
+                <div class="hybrid-log-divider" />
+                <button
+                  class="hybrid-log-toggle settings-retention-action"
+                  type="button"
+                  title="Clear all local data"
+                  disabled={dataMaintenanceBusy()}
+                  onClick={() => {
+                    void onClearAllLocalData();
+                  }}
+                >
+                  All
+                </button>
+              </div>
             </article>
           </div>
 

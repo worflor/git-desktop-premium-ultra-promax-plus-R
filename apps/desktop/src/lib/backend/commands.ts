@@ -1,5 +1,6 @@
 import type { CommandResult } from "@/lib/contracts/command";
 import type {
+  AiAuditMaintenanceData,
   AiDiffReviewCancelData,
   AiDiffReviewData,
   AiDiffReviewJobData,
@@ -413,6 +414,10 @@ export function getAiDiffReviewJob(jobId: string): Promise<CommandResult<AiDiffR
 
 export function cancelAiDiffReviewJob(jobId: string): Promise<CommandResult<AiDiffReviewCancelData>> {
   return invokeCommand("cancel_ai_diff_review_job", { jobId });
+}
+
+export function clearAiAuditEntries(): Promise<CommandResult<AiAuditMaintenanceData>> {
+  return invokeCommand("clear_ai_audit_entries", {});
 }
 
 export function getStartupReadinessSnapshot(
