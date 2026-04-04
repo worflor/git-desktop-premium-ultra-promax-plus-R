@@ -93,7 +93,7 @@ export function SidebarRail() {
           <span class="sidebar-section-title">Projects</span>
           <div class="sidebar-projects-actions">
             <button
-              class={`sidebar-project-head-btn ${showPathEntry() ? "is-active" : ""}`}
+              class={`workspace-mode-btn sidebar-project-head-btn hyper-reactive ${showPathEntry() ? "is-active active" : ""}`}
               type="button"
               aria-label={showPathEntry() ? "Cancel" : "Add project"}
               onClick={() => setShowPathEntry((c) => !c)}

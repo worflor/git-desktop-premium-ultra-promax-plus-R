@@ -8,6 +8,7 @@ import {
   checkForAppUpdate,
   getAppSettings,
   installAppUpdate,
+  listAiProviders,
   updateAiGuardrail,
   updateCrashReporting,
   updateTelemetryRetention,
@@ -65,6 +66,7 @@ function guardrailDisplayLabelFromProfile(profile: string): string {
 export function SettingsPage() {
   const layout = useLayoutPreferences();
   const [settingsResult] = createResource(() => getAppSettings());
+  const [aiProvidersResult, { refetch: refetchAiProviders }] = createResource(() => listAiProviders());
   const [settingsInitialized, setSettingsInitialized] = createSignal(false);
   const [guardrailValue, setGuardrailValue] = createSignal(0.5);
   const [guardrailStage, setGuardrailStage] = createSignal(guardrailStageFromValue(0.5));
@@ -444,10 +446,7 @@ export function SettingsPage() {
             <article ref={guardrailsCardRef} class="state-card settings-top-card">
               <h3>Guardrails</h3>
               <p class="section-summary">Automated action assertion and safety thresholds.</p>
-              <p class="settings-fit-line">
-                {guardrailModePhrase()} |
-                Read-only: {settingsResult.latest?.ok && settingsResult.latest.data.aiReadOnlyDefault ? "Enabled" : "Disabled"}
-              </p>
+
               <input
                 type="range"
                 class="theme-slider guardrail-slider"
@@ -479,6 +478,10 @@ export function SettingsPage() {
                   </span>
                 ))}
               </div>
+              <p class="settings-fit-line">
+                {guardrailModePhrase()} |
+                Read-only: {settingsResult.latest?.ok && settingsResult.latest.data.aiReadOnlyDefault ? "Enabled" : "Disabled"}
+              </p>
             </article>
 
             <article ref={calibrationCardRef} class="state-card settings-top-card">
@@ -572,6 +575,7 @@ export function SettingsPage() {
               />
               <span>Auto-expand operation logs</span>
             </label>
+
             <p class="section-summary settings-shortcuts-summary">Core shortcuts for the active profile.</p>
             <div class="keybinding-preview-card">
               <ul class="keybinding-preview-list settings-keybinding-grid">
@@ -582,6 +586,47 @@ export function SettingsPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+
+            <h4 class="settings-nav-subtitle">AI Profiles</h4>
+            <div class="keybinding-preview-card settings-ai-models-card">
+              <Show when={aiProvidersResult.loading}>
+                <p class="section-summary">Detecting provider CLIs...</p>
+              </Show>
+
+              <Show when={aiProvidersResult.latest && !aiProvidersResult.latest.ok}>
+                <p class="section-summary settings-ai-provider-error">
+                  {aiProvidersResult.latest && !aiProvidersResult.latest.ok
+                    ? aiProvidersResult.latest.error.message
+                    : "Provider detection failed."}
+                </p>
+              </Show>
+
+              <Show
+                when={aiProvidersResult.latest?.ok}
+                fallback={<p class="section-summary">No provider diagnostics loaded yet.</p>}
+              >
+                <ul class="keybinding-preview-list settings-ai-provider-list">
+                  {aiProvidersResult.latest?.ok
+                    ? aiProvidersResult.latest.data.providers.map((provider) => (
+                        <li class="keybinding-preview-row settings-ai-provider-row">
+                          <span>{provider.id.toUpperCase()}</span>
+                          <span
+                            class={`settings-ai-provider-status ${provider.available ? "is-ready" : "is-missing"}`}
+                          >
+                            {provider.available ? provider.planName ?? "Ready" : "Not detected"} ({provider.binary})
+                          </span>
+                        </li>
+                      ))
+                    : null}
+                </ul>
+              </Show>
+
+              <div class="inline-actions settings-ai-provider-actions">
+                <button class="ghost-btn" onClick={() => void refetchAiProviders()}>
+                  Refresh Providers
+                </button>
+              </div>
             </div>
           </article>
 

@@ -1,5 +1,6 @@
+use std::fs;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -7,6 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::errors::AppError;
@@ -17,15 +19,16 @@ use crate::models::operations::{
 use crate::runtime::state::{AiReviewJobRecord, AiReviewJobState, AppState, SharedAiReviewJob};
 use crate::services::{ai_audit_service, git_provider, settings_service};
 
-const PROVIDER_BINARIES: [(&str, &str); 4] = [
-    ("codex", "codex"),
-    ("claude", "claude"),
-    ("gemini", "gemini"),
-    ("opencode", "opencode"),
+const PROVIDER_BINARIES: [(&str, &str, ProviderKind); 4] = [
+    ("codex", "codex", ProviderKind::Codex),
+    ("claude", "claude", ProviderKind::Claude),
+    ("gemini", "npx", ProviderKind::Gemini),
+    ("opencode", "opencode", ProviderKind::OpenCode),
 ];
 const MAX_RETAINED_JOBS: usize = 64;
 const MAX_PROVIDER_RUNTIME: Duration = Duration::from_secs(90);
 const MAX_STDIN_DIFF_CHARS: usize = 120_000;
+#[cfg(test)]
 const MAX_INLINE_DIFF_CHARS: usize = 6_000;
 const PROVIDER_RESOLUTION_CACHE_TTL: Duration = Duration::from_secs(60);
 
@@ -33,12 +36,23 @@ const PROVIDER_RESOLUTION_CACHE_TTL: Duration = Duration::from_secs(60);
 struct CliProviderAdapter {
     id: &'static str,
     binary: &'static str,
+    kind: ProviderKind,
+}
+
+#[derive(Clone, Copy)]
+enum ProviderKind {
+    Codex,
+    Claude,
+    Gemini,
+    OpenCode,
 }
 
 trait AiProviderAdapter {
     fn id(&self) -> &'static str;
     fn binary_name(&self) -> &'static str;
+    fn kind(&self) -> ProviderKind;
     fn build_attempts(&self, prompt: &str, diff: &str) -> Vec<ProviderAttempt>;
+    fn auth_status(&self) -> ProviderAuthStatus;
 }
 
 impl AiProviderAdapter for CliProviderAdapter {
@@ -50,13 +64,21 @@ impl AiProviderAdapter for CliProviderAdapter {
         self.binary
     }
 
+    fn kind(&self) -> ProviderKind {
+        self.kind
+    }
+
     fn build_attempts(&self, prompt: &str, diff: &str) -> Vec<ProviderAttempt> {
-        build_provider_attempts(prompt, diff)
+        build_provider_attempts(self.kind, prompt, diff)
+    }
+
+    fn auth_status(&self) -> ProviderAuthStatus {
+        provider_auth_status(self.kind)
     }
 }
 
 fn provider_adapters() -> [CliProviderAdapter; 4] {
-    PROVIDER_BINARIES.map(|(id, binary)| CliProviderAdapter { id, binary })
+    PROVIDER_BINARIES.map(|(id, binary, kind)| CliProviderAdapter { id, binary, kind })
 }
 
 fn provider_adapter(provider_id: &str) -> Option<CliProviderAdapter> {
@@ -69,6 +91,23 @@ struct ProviderAttempt {
     name: &'static str,
     args: Vec<String>,
     stdin_payload: Option<String>,
+    output_mode: ProviderOutputMode,
+}
+
+#[derive(Clone, Copy)]
+enum ProviderOutputMode {
+    PlainText,
+    CodexJsonl,
+    ClaudeJson,
+    GeminiJson,
+    OpenCodeJsonl,
+}
+
+#[derive(Clone)]
+struct ProviderAuthStatus {
+    ok: bool,
+    detail: String,
+    plan_name: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -90,6 +129,13 @@ struct ProviderResolution {
 }
 
 #[derive(Clone)]
+struct ProviderAvailability {
+    ready: bool,
+    resolution: Option<ProviderResolution>,
+    auth: ProviderAuthStatus,
+}
+
+#[derive(Clone)]
 struct ProviderResolutionCacheEntry {
     checked_at: Instant,
     resolution: Option<ProviderResolution>,
@@ -99,17 +145,21 @@ pub fn list_providers() -> Result<AiProviderListData, AppError> {
     let providers = provider_adapters()
         .into_iter()
         .map(|adapter| {
-            let resolution = resolve_provider(&adapter);
+            let availability = inspect_provider(&adapter);
             AiProviderStatus {
                 id: adapter.id().to_string(),
-                available: resolution.is_some(),
+                available: availability.ready,
                 binary: adapter.binary_name().to_string(),
-                resolved_binary: resolution.as_ref().map(|value| value.command.clone()),
-                detection_source: resolution.as_ref().map(|value| value.source.clone()),
-                health_check: resolution
+                plan_name: availability.auth.plan_name.clone(),
+                resolved_binary: availability
+                    .resolution
                     .as_ref()
-                    .map(|value| value.health_check.clone())
-                    .unwrap_or_else(|| "unavailable".to_string()),
+                    .map(|item| item.command.clone()),
+                detection_source: availability
+                    .resolution
+                    .as_ref()
+                    .map(|item| item.source.clone()),
+                health_check: format_provider_health(&availability),
             }
         })
         .collect();
@@ -490,6 +540,7 @@ where
 {
     let adapter = provider_adapter(provider_id)
         .ok_or_else(|| AppError::AiProviderUnavailable(provider_id.to_string()))?;
+    let availability = inspect_provider(&adapter);
     let normalized_scope_path = diff_scope_path.and_then(trimmed_non_empty);
     let diff = collect_diff(repository_path, normalized_scope_path)?;
 
@@ -501,15 +552,23 @@ where
         return Err(cancel_error());
     }
 
-    if let Some(resolution) = resolve_provider(&adapter) {
+    if let Some(resolution) = availability.resolution.as_ref() {
         emit(&format!(
             "Resolved provider binary '{}' via {} ({}).\n",
             resolution.command, resolution.source, resolution.health_check
         ));
+        emit(&format!("Provider auth status: {}.\n", availability.auth.detail));
+    }
 
+    if availability.ready {
+        let resolved_command = availability
+            .resolution
+            .as_ref()
+            .map(|value| value.command.clone())
+            .unwrap_or_else(|| adapter.binary_name().to_string());
         match run_provider_review(
             &adapter,
-            &resolution.command,
+            resolved_command.as_str(),
             repository_path,
             prompt,
             &diff,
@@ -530,10 +589,8 @@ where
             }
         }
     } else {
-        emit(&format!(
-            "Provider binary '{}' is unavailable; using deterministic local fallback review.\n",
-            adapter.binary_name()
-        ));
+        emit("Provider is not ready for CLI piggybacking; using deterministic local fallback review.\n");
+        emit(&format!("Readiness detail: {}\n", format_provider_health(&availability)));
     }
 
     run_fallback_review(
@@ -589,7 +646,7 @@ where
             "Running provider adapter attempt: {}\n",
             attempt.name
         ));
-        match execute_provider_attempt(binary, repository_path, &attempt, cancel_flag, emit) {
+        match execute_provider_attempt(adapter, binary, repository_path, &attempt, cancel_flag, emit) {
             Ok(true) => {
                 emit("Provider review completed.\n");
                 return Ok(true);
@@ -610,6 +667,7 @@ where
 }
 
 fn execute_provider_attempt<F>(
+    adapter: &dyn AiProviderAdapter,
     binary: &str,
     repository_path: &str,
     attempt: &ProviderAttempt,
@@ -626,6 +684,7 @@ where
         .env("NO_COLOR", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    set_provider_environment(adapter.kind(), &mut command);
 
     if attempt.stdin_payload.is_some() {
         command.stdin(Stdio::piped());
@@ -656,7 +715,7 @@ where
     drop(tx);
 
     let started_at = Instant::now();
-    let mut saw_stdout = false;
+    let mut stdout_output = String::new();
     let mut stderr_output = String::new();
 
     loop {
@@ -669,13 +728,10 @@ where
         while let Ok(chunk) = rx.try_recv() {
             match chunk.source {
                 StreamSource::Stdout => {
-                    if !chunk.text.trim().is_empty() {
-                        saw_stdout = true;
-                    }
-                    emit(&chunk.text);
+                    stdout_output.push_str(&chunk.text);
                 }
                 StreamSource::Stderr => {
-                    if stderr_output.len() < 8_192 {
+                    if stderr_output.len() < 32_768 {
                         stderr_output.push_str(&chunk.text);
                     }
                 }
@@ -697,13 +753,10 @@ where
                 match rx.recv_timeout(Duration::from_millis(25)) {
                     Ok(chunk) => match chunk.source {
                         StreamSource::Stdout => {
-                            if !chunk.text.trim().is_empty() {
-                                saw_stdout = true;
-                            }
-                            emit(&chunk.text);
+                            stdout_output.push_str(&chunk.text);
                         }
                         StreamSource::Stderr => {
-                            if stderr_output.len() < 8_192 {
+                            if stderr_output.len() < 32_768 {
                                 stderr_output.push_str(&chunk.text);
                             }
                         }
@@ -713,22 +766,27 @@ where
                 }
             }
 
+            let formatted_output = format_provider_output(
+                attempt.output_mode,
+                &stdout_output,
+                &stderr_output,
+            );
+
             if !status.success() {
+                if let Some(output) = formatted_output {
+                    emit("[provider error]\n");
+                    emit(output.trim());
+                    emit("\n");
+                } else if !stderr_output.trim().is_empty() {
+                    emit("[provider error]\n");
+                    emit(strip_ansi(stderr_output.trim()).as_str());
+                    emit("\n");
+                }
                 return Ok(false);
             }
 
-            if saw_stdout {
-                if !stderr_output.trim().is_empty() {
-                    emit("\n[provider notes]\n");
-                    emit(stderr_output.trim());
-                    emit("\n");
-                }
-                return Ok(true);
-            }
-
-            if !stderr_output.trim().is_empty() {
-                emit("\n[provider output]\n");
-                emit(stderr_output.trim());
+            if let Some(output) = formatted_output {
+                emit(output.trim());
                 emit("\n");
                 return Ok(true);
             }
@@ -761,52 +819,333 @@ where
     });
 }
 
-fn build_provider_attempts(prompt: &str, diff: &str) -> Vec<ProviderAttempt> {
-    let inline_prompt = build_inline_prompt(prompt, diff);
+fn build_provider_attempts(kind: ProviderKind, prompt: &str, diff: &str) -> Vec<ProviderAttempt> {
     let stdin_payload = build_stdin_payload(prompt, diff);
-    vec![
-        ProviderAttempt {
-            name: "prompt --prompt",
-            args: vec!["--prompt".to_string(), inline_prompt.clone()],
-            stdin_payload: None,
-        },
-        ProviderAttempt {
-            name: "prompt -p",
-            args: vec!["-p".to_string(), inline_prompt.clone()],
-            stdin_payload: None,
-        },
-        ProviderAttempt {
-            name: "prompt --print",
-            args: vec!["--print".to_string(), inline_prompt.clone()],
-            stdin_payload: None,
-        },
-        ProviderAttempt {
-            name: "exec --prompt",
-            args: vec![
-                "exec".to_string(),
-                "--prompt".to_string(),
-                inline_prompt.clone(),
-            ],
-            stdin_payload: None,
-        },
-        ProviderAttempt {
-            name: "chat --prompt",
-            args: vec!["chat".to_string(), "--prompt".to_string(), inline_prompt],
-            stdin_payload: None,
-        },
-        ProviderAttempt {
-            name: "stdin default",
-            args: Vec::new(),
-            stdin_payload: Some(stdin_payload.clone()),
-        },
-        ProviderAttempt {
-            name: "stdin --stdin",
-            args: vec!["--stdin".to_string()],
-            stdin_payload: Some(stdin_payload),
-        },
-    ]
+    match kind {
+        ProviderKind::Codex => vec![
+            ProviderAttempt {
+                name: "codex exec --json -",
+                args: vec!["exec".to_string(), "--json".to_string(), "-".to_string()],
+                stdin_payload: Some(stdin_payload.clone()),
+                output_mode: ProviderOutputMode::CodexJsonl,
+            },
+            ProviderAttempt {
+                name: "codex exec -",
+                args: vec!["exec".to_string(), "-".to_string()],
+                stdin_payload: Some(stdin_payload),
+                output_mode: ProviderOutputMode::PlainText,
+            },
+        ],
+        ProviderKind::Claude => vec![
+            ProviderAttempt {
+                name: "claude -p --output-format json",
+                args: vec![
+                    "-p".to_string(),
+                    "--output-format".to_string(),
+                    "json".to_string(),
+                ],
+                stdin_payload: Some(stdin_payload.clone()),
+                output_mode: ProviderOutputMode::ClaudeJson,
+            },
+            ProviderAttempt {
+                name: "claude -p",
+                args: vec!["-p".to_string()],
+                stdin_payload: Some(stdin_payload),
+                output_mode: ProviderOutputMode::PlainText,
+            },
+        ],
+        ProviderKind::Gemini => vec![
+            ProviderAttempt {
+                name: "npx --yes @google/gemini-cli -o json",
+                args: vec![
+                    "--yes".to_string(),
+                    "@google/gemini-cli".to_string(),
+                    "-p".to_string(),
+                    "".to_string(),
+                    "-o".to_string(),
+                    "json".to_string(),
+                    "-m".to_string(),
+                    "auto-gemini-3".to_string(),
+                ],
+                stdin_payload: Some(stdin_payload.clone()),
+                output_mode: ProviderOutputMode::GeminiJson,
+            },
+            ProviderAttempt {
+                name: "npx --yes @google/gemini-cli",
+                args: vec![
+                    "--yes".to_string(),
+                    "@google/gemini-cli".to_string(),
+                    "-p".to_string(),
+                    "".to_string(),
+                    "-m".to_string(),
+                    "auto-gemini-3".to_string(),
+                ],
+                stdin_payload: Some(stdin_payload),
+                output_mode: ProviderOutputMode::PlainText,
+            },
+        ],
+        ProviderKind::OpenCode => vec![
+            ProviderAttempt {
+                name: "opencode run --format json",
+                args: vec![
+                    "run".to_string(),
+                    "--format".to_string(),
+                    "json".to_string(),
+                    "-m".to_string(),
+                    "opencode/big-pickle".to_string(),
+                ],
+                stdin_payload: Some(stdin_payload.clone()),
+                output_mode: ProviderOutputMode::OpenCodeJsonl,
+            },
+            ProviderAttempt {
+                name: "opencode run",
+                args: vec![
+                    "run".to_string(),
+                    "-m".to_string(),
+                    "opencode/big-pickle".to_string(),
+                ],
+                stdin_payload: Some(stdin_payload),
+                output_mode: ProviderOutputMode::PlainText,
+            },
+        ],
+    }
 }
 
+fn set_provider_environment(kind: ProviderKind, command: &mut Command) {
+    match kind {
+        ProviderKind::Claude => {
+            command.env("CLAUDE_CODE_ENTRYPOINT", "cli");
+        }
+        ProviderKind::Gemini => {
+            command.env("CI", "1");
+        }
+        ProviderKind::Codex | ProviderKind::OpenCode => {}
+    }
+}
+
+fn format_provider_output(
+    mode: ProviderOutputMode,
+    stdout: &str,
+    stderr: &str,
+) -> Option<String> {
+    match mode {
+        ProviderOutputMode::PlainText => {
+            let stdout = strip_ansi(stdout.trim());
+            if !stdout.is_empty() {
+                return Some(stdout);
+            }
+            let stderr = strip_ansi(stderr.trim());
+            if !stderr.is_empty() {
+                return Some(stderr);
+            }
+            None
+        }
+        ProviderOutputMode::CodexJsonl => parse_codex_jsonl(stdout).or_else(|| {
+            let stderr = strip_ansi(stderr.trim());
+            if stderr.is_empty() {
+                None
+            } else {
+                Some(stderr)
+            }
+        }),
+        ProviderOutputMode::ClaudeJson => parse_claude_json(stdout).or_else(|| {
+            let fallback = strip_ansi(stdout.trim());
+            if !fallback.is_empty() {
+                return Some(fallback);
+            }
+            let stderr = strip_ansi(stderr.trim());
+            if stderr.is_empty() {
+                None
+            } else {
+                Some(stderr)
+            }
+        }),
+        ProviderOutputMode::GeminiJson => parse_gemini_json(stdout).or_else(|| {
+            let fallback = strip_ansi(stdout.trim());
+            if !fallback.is_empty() {
+                return Some(fallback);
+            }
+            let stderr = strip_ansi(stderr.trim());
+            if stderr.is_empty() {
+                None
+            } else {
+                Some(stderr)
+            }
+        }),
+        ProviderOutputMode::OpenCodeJsonl => parse_opencode_jsonl(stdout).or_else(|| {
+            let fallback = strip_ansi(stdout.trim());
+            if !fallback.is_empty() {
+                return Some(fallback);
+            }
+            let stderr = strip_ansi(stderr.trim());
+            if stderr.is_empty() {
+                None
+            } else {
+                Some(stderr)
+            }
+        }),
+    }
+}
+
+fn parse_codex_jsonl(stdout: &str) -> Option<String> {
+    let mut response = String::new();
+    let mut error_message = String::new();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        let Some(kind) = value.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+
+        match kind {
+            "item.completed" => {
+                if let Some(text) = value
+                    .get("item")
+                    .and_then(|item| item.get("text"))
+                    .and_then(Value::as_str)
+                {
+                    response = text.to_string();
+                }
+            }
+            "error" | "turn.failed" => {
+                if let Some(message) = value.get("message").and_then(Value::as_str) {
+                    error_message = message.to_string();
+                } else if let Some(message) = value
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(Value::as_str)
+                {
+                    error_message = message.to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !response.trim().is_empty() {
+        return Some(response);
+    }
+    if !error_message.trim().is_empty() {
+        return Some(format!("Codex error: {}", strip_ansi(error_message.trim())));
+    }
+
+    let fallback = strip_ansi(stdout.trim());
+    if fallback.is_empty() {
+        None
+    } else {
+        Some(fallback)
+    }
+}
+
+fn parse_claude_json(stdout: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(stdout).ok()?;
+
+    if value
+        .get("is_error")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        if let Some(message) = value.get("result").and_then(Value::as_str) {
+            return Some(format!("Claude error: {}", strip_ansi(message)));
+        }
+    }
+
+    if let Some(result) = value.get("result").and_then(Value::as_str) {
+        let trimmed = result.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    None
+}
+
+fn parse_gemini_json(stdout: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(stdout).ok()?;
+    if let Some(message) = value
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+    {
+        return Some(format!("Gemini error: {}", strip_ansi(message)));
+    }
+
+    if let Some(response) = value.get("response").and_then(Value::as_str) {
+        let trimmed = response.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    None
+}
+
+fn parse_opencode_jsonl(stdout: &str) -> Option<String> {
+    let mut response = String::new();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        let Some(kind) = value.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+
+        if kind == "text" {
+            if let Some(text) = value
+                .get("part")
+                .and_then(|part| part.get("text"))
+                .and_then(Value::as_str)
+            {
+                response.push_str(text);
+            }
+        }
+    }
+
+    let trimmed = response.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn strip_ansi(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if matches!(chars.peek(), Some('[')) {
+                let _ = chars.next();
+                while let Some(next) = chars.next() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+
+        result.push(ch);
+    }
+
+    result
+}
+
+#[cfg(test)]
 fn build_inline_prompt(prompt: &str, diff: &str) -> String {
     let diff_excerpt = truncate_chars(diff, MAX_INLINE_DIFF_CHARS);
     format!(
@@ -946,8 +1285,355 @@ fn provider_binary_name(provider_id: &str) -> Option<&'static str> {
     provider_adapter(provider_id).map(|adapter| adapter.binary_name())
 }
 
-fn resolve_provider(adapter: &dyn AiProviderAdapter) -> Option<ProviderResolution> {
-    resolve_provider_command(adapter.binary_name())
+fn inspect_provider(adapter: &dyn AiProviderAdapter) -> ProviderAvailability {
+    let resolution = resolve_provider_command(adapter.binary_name());
+    let auth = adapter.auth_status();
+    let ready = resolution.is_some() && auth.ok;
+
+    ProviderAvailability {
+        ready,
+        resolution,
+        auth,
+    }
+}
+
+fn format_provider_health(availability: &ProviderAvailability) -> String {
+    let binary = availability
+        .resolution
+        .as_ref()
+        .map(|value| value.health_check.clone())
+        .unwrap_or_else(|| "binary unavailable".to_string());
+
+    format!("{binary}; auth={}", availability.auth.detail)
+}
+
+fn provider_auth_status(kind: ProviderKind) -> ProviderAuthStatus {
+    match kind {
+        ProviderKind::Codex => codex_auth_status(),
+        ProviderKind::Claude => claude_auth_status(),
+        ProviderKind::Gemini => gemini_auth_status(),
+        ProviderKind::OpenCode => opencode_auth_status(),
+    }
+}
+
+fn codex_auth_status() -> ProviderAuthStatus {
+    let auth_file = codex_auth_path();
+    let Some(value) = read_json_file(auth_file.as_path()) else {
+        return ProviderAuthStatus {
+            ok: false,
+            detail: "missing ~/.codex/auth.json".to_string(),
+            plan_name: None,
+        };
+    };
+
+    let plan_name = value
+        .get("tokens")
+        .and_then(|tokens| tokens.get("id_token"))
+        .and_then(Value::as_str)
+        .and_then(extract_codex_plan_from_id_token)
+        .map(|plan| humanize_label(plan.as_str()));
+
+    let has_token = value
+        .get("tokens")
+        .and_then(|tokens| tokens.get("id_token").or_else(|| tokens.get("access_token")))
+        .and_then(Value::as_str)
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false);
+
+    ProviderAuthStatus {
+        ok: has_token,
+        detail: if has_token {
+            match plan_name.as_deref() {
+                Some(plan) => format!("codex auth token found ({plan})"),
+                None => "codex auth token found".to_string(),
+            }
+        } else {
+            "codex token missing".to_string()
+        },
+        plan_name,
+    }
+}
+
+fn claude_auth_status() -> ProviderAuthStatus {
+    let Some(home_dir) = user_home_dir() else {
+        return ProviderAuthStatus {
+            ok: false,
+            detail: "home directory unavailable".to_string(),
+            plan_name: None,
+        };
+    };
+
+    let credentials_path = home_dir.join(".claude").join(".credentials.json");
+    let Some(value) = read_json_file(credentials_path.as_path()) else {
+        return ProviderAuthStatus {
+            ok: false,
+            detail: "missing ~/.claude/.credentials.json".to_string(),
+            plan_name: None,
+        };
+    };
+
+    let oauth = value.get("claudeAiOauth").cloned().unwrap_or(Value::Null);
+    let token_ok = oauth
+        .get("accessToken")
+        .and_then(Value::as_str)
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false);
+    let inference_scope = oauth
+        .get("scopes")
+        .and_then(Value::as_array)
+        .map(|scopes| scopes.iter().any(|scope| scope.as_str() == Some("user:inference")))
+        .unwrap_or(false);
+    let subscription = oauth
+        .get("subscriptionType")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let ok = token_ok && inference_scope;
+    let plan_name = if ok {
+        Some(humanize_label(subscription))
+    } else {
+        None
+    };
+
+    ProviderAuthStatus {
+        ok,
+        detail: if ok {
+            format!("claude oauth ready ({subscription})")
+        } else {
+            "claude oauth missing token or user:inference scope".to_string()
+        },
+        plan_name,
+    }
+}
+
+fn gemini_auth_status() -> ProviderAuthStatus {
+    let Some(home_dir) = user_home_dir() else {
+        return ProviderAuthStatus {
+            ok: false,
+            detail: "home directory unavailable".to_string(),
+            plan_name: None,
+        };
+    };
+
+    let credentials_path = home_dir.join(".gemini").join("oauth_creds.json");
+    let Some(value) = read_json_file(credentials_path.as_path()) else {
+        return ProviderAuthStatus {
+            ok: false,
+            detail: "missing ~/.gemini/oauth_creds.json".to_string(),
+            plan_name: None,
+        };
+    };
+
+    let has_token = value
+        .get("access_token")
+        .and_then(Value::as_str)
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false);
+    let plan_name = if has_token {
+        gemini_account_label(home_dir.as_path()).or_else(|| Some("Google AI".to_string()))
+    } else {
+        None
+    };
+
+    ProviderAuthStatus {
+        ok: has_token,
+        detail: if has_token {
+            "gemini oauth token found".to_string()
+        } else {
+            "gemini oauth token missing".to_string()
+        },
+        plan_name,
+    }
+}
+
+fn opencode_auth_status() -> ProviderAuthStatus {
+    let auth_candidates = opencode_auth_paths();
+    for path in auth_candidates {
+        let Some(value) = read_json_file(path.as_path()) else {
+            continue;
+        };
+
+        let provider_count = value
+            .as_object()
+            .map(|providers| providers.len())
+            .unwrap_or(0);
+
+        if provider_count > 0 {
+            return ProviderAuthStatus {
+                ok: true,
+                detail: format!("opencode connected providers={provider_count}"),
+                plan_name: Some(format!(
+                    "{provider_count} provider{}",
+                    if provider_count == 1 { "" } else { "s" }
+                )),
+            };
+        }
+
+        return ProviderAuthStatus {
+            ok: true,
+            detail: "opencode auth file present".to_string(),
+            plan_name: Some("Connected".to_string()),
+        };
+    }
+
+    ProviderAuthStatus {
+        ok: true,
+        detail: "opencode auth managed by CLI".to_string(),
+        plan_name: Some("Connected".to_string()),
+    }
+}
+
+fn extract_codex_plan_from_id_token(id_token: &str) -> Option<String> {
+    let payload_segment = id_token.split('.').nth(1)?;
+    let payload_bytes = decode_base64url(payload_segment)?;
+    let payload_text = String::from_utf8(payload_bytes).ok()?;
+    let payload = serde_json::from_str::<Value>(&payload_text).ok()?;
+
+    payload
+        .get("https://api.openai.com/auth")
+        .and_then(|auth| auth.get("chatgpt_plan_type"))
+        .and_then(Value::as_str)
+        .map(|value| value.to_string())
+}
+
+fn gemini_account_label(home_dir: &Path) -> Option<String> {
+    let settings_path = home_dir.join(".gemini").join("settings.json");
+    let settings = read_json_file(settings_path.as_path())?;
+    let selected = settings
+        .get("security")
+        .and_then(|security| security.get("auth"))
+        .and_then(|auth| auth.get("selectedType"))
+        .and_then(Value::as_str)?;
+
+    Some(
+        match selected {
+            "oauth-personal" => "Google AI",
+            "oauth-adc" => "Cloud ADC",
+            "service-account" => "Service Account",
+            "api-key" => "API Key",
+            _ => "Connected",
+        }
+        .to_string(),
+    )
+}
+
+fn humanize_label(value: &str) -> String {
+    value
+        .split(['-', '_', ' '])
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut part = String::new();
+                    part.push(first.to_ascii_uppercase());
+                    part.push_str(chars.as_str().to_ascii_lowercase().as_str());
+                    part
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+fn decode_base64url(value: &str) -> Option<Vec<u8>> {
+    let mut normalized = String::with_capacity(value.len() + 4);
+    for ch in value.chars() {
+        match ch {
+            '-' => normalized.push('+'),
+            '_' => normalized.push('/'),
+            _ => normalized.push(ch),
+        }
+    }
+
+    let remainder = normalized.len() % 4;
+    if remainder != 0 {
+        normalized.push_str("=".repeat(4 - remainder).as_str());
+    }
+
+    decode_base64_standard(normalized.as_bytes())
+}
+
+fn decode_base64_standard(input: &[u8]) -> Option<Vec<u8>> {
+    let mut output = Vec::with_capacity((input.len() * 3) / 4);
+    let mut accumulator: u32 = 0;
+    let mut bits: u8 = 0;
+
+    for byte in input {
+        if *byte == b'=' {
+            break;
+        }
+
+        let value = match byte {
+            b'A'..=b'Z' => *byte - b'A',
+            b'a'..=b'z' => *byte - b'a' + 26,
+            b'0'..=b'9' => *byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'\r' | b'\n' | b'\t' | b' ' => continue,
+            _ => return None,
+        } as u32;
+
+        accumulator = (accumulator << 6) | value;
+        bits += 6;
+
+        while bits >= 8 {
+            bits -= 8;
+            output.push(((accumulator >> bits) & 0xFF) as u8);
+        }
+    }
+
+    Some(output)
+}
+
+fn codex_auth_path() -> PathBuf {
+    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        return PathBuf::from(codex_home).join("auth.json");
+    }
+
+    user_home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".codex")
+        .join("auth.json")
+}
+
+fn opencode_auth_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Some(home_dir) = user_home_dir() {
+        paths.push(home_dir.join(".local").join("share").join("opencode").join("auth.json"));
+    }
+
+    if let Ok(app_data) = std::env::var("APPDATA") {
+        paths.push(PathBuf::from(app_data).join("opencode").join("auth.json"));
+    }
+
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        paths.push(PathBuf::from(local_app_data).join("opencode").join("auth.json"));
+    }
+
+    paths
+}
+
+fn user_home_dir() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.trim().is_empty() {
+            return Some(PathBuf::from(home));
+        }
+    }
+
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        if !profile.trim().is_empty() {
+            return Some(PathBuf::from(profile));
+        }
+    }
+
+    None
+}
+
+fn read_json_file(path: &Path) -> Option<Value> {
+    let payload = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<Value>(&payload).ok()
 }
 
 fn resolve_provider_command(binary: &str) -> Option<ProviderResolution> {
@@ -996,12 +1682,23 @@ fn known_binary_candidates(binary: &str) -> Vec<(String, String)> {
     let mut candidates = Vec::<(String, String)>::new();
     let mut seen = std::collections::HashSet::<String>::new();
 
-    push_candidate(
-        &mut candidates,
-        &mut seen,
-        binary.to_string(),
-        "PATH".to_string(),
-    );
+    if cfg!(target_os = "windows") {
+        for suffix in ["", ".cmd", ".exe", ".bat"] {
+            push_candidate(
+                &mut candidates,
+                &mut seen,
+                format!("{binary}{suffix}"),
+                "PATH".to_string(),
+            );
+        }
+    } else {
+        push_candidate(
+            &mut candidates,
+            &mut seen,
+            binary.to_string(),
+            "PATH".to_string(),
+        );
+    }
 
     if cfg!(target_os = "windows") {
         if let Ok(appdata) = std::env::var("APPDATA") {
@@ -1118,13 +1815,13 @@ mod tests {
     use super::{
         build_inline_prompt, build_provider_attempts, build_stdin_payload,
         enforce_guardrail_for_review, known_binary_candidates, prompt_requests_write_action,
-        provider_adapters, provider_binary_name, push_candidate, AiProviderAdapter,
+        provider_adapters, provider_binary_name, push_candidate, AiProviderAdapter, ProviderKind,
         validate_review_input, MAX_INLINE_DIFF_CHARS, MAX_STDIN_DIFF_CHARS, PROVIDER_BINARIES,
     };
 
     #[test]
     fn provider_binary_name_maps_all_supported_provider_ids() {
-        for (provider_id, expected_binary) in PROVIDER_BINARIES {
+        for (provider_id, expected_binary, _) in PROVIDER_BINARIES {
             assert_eq!(provider_binary_name(provider_id), Some(expected_binary));
         }
 
@@ -1192,19 +1889,16 @@ mod tests {
 
     #[test]
     fn build_provider_attempts_exposes_expected_contract_strategies() {
-        let attempts = build_provider_attempts("review prompt", "diff body");
-
-        assert!(attempts.len() >= 7);
-        assert_eq!(attempts[0].name, "prompt --prompt");
-        assert!(attempts
-            .iter()
-            .any(|attempt| attempt.stdin_payload.is_some()));
-        assert!(attempts.iter().any(|attempt| {
-            attempt
-                .args
-                .iter()
-                .any(|arg| arg.eq_ignore_ascii_case("--stdin"))
-        }));
+        for kind in [
+            ProviderKind::Codex,
+            ProviderKind::Claude,
+            ProviderKind::Gemini,
+            ProviderKind::OpenCode,
+        ] {
+            let attempts = build_provider_attempts(kind, "review prompt", "diff body");
+            assert!(!attempts.is_empty());
+            assert!(attempts.iter().any(|attempt| attempt.stdin_payload.is_some()));
+        }
     }
 
     #[test]

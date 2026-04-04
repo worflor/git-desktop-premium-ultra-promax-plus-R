@@ -229,6 +229,7 @@ export interface AiProviderStatus {
   id: string;
   available: boolean;
   binary: string;
+  planName?: string;
 }
 
 export interface AiProviderListData {

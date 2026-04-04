@@ -76,7 +76,12 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
   };
 
   onMount(() => { frameReq = requestAnimationFrame(animate); });
-  onCleanup(() => { cancelAnimationFrame(frameReq); });
+  onCleanup(() => {
+    cancelAnimationFrame(frameReq);
+    const root = document.documentElement;
+    root.setAttribute("data-hyper-active", "false");
+    root.style.setProperty("--hyper-drag-intensity", "0");
+  });
 
   const projectedData = createMemo(() => {
     const tVal = time();
@@ -164,8 +169,7 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
   const handleRelease = (e: PointerEvent) => {
     setIsDragging(false);
     svgRef?.releasePointerCapture(e.pointerId);
-    
-    // Clear Broadcast
+
     const root = document.documentElement;
     root.setAttribute("data-hyper-active", "false");
     root.style.setProperty("--hyper-drag-intensity", "0");
@@ -182,13 +186,21 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
       shape-rendering="geometricPrecision" 
       style={{ overflow: "visible", cursor: isDragging() ? "grabbing" : "pointer", "touch-action": "none", "user-select": "none", "-webkit-user-select": "none" }}
       onPointerMove={handlePointer}
-      onPointerDown={(e) => { e.preventDefault(); setIsDragging(true); svgRef?.setPointerCapture(e.pointerId); }}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        setIsDragging(true);
+        document.documentElement.setAttribute("data-hyper-active", "true");
+        svgRef?.setPointerCapture(e.pointerId);
+      }}
       onPointerUp={handleRelease}
+      onPointerCancel={handleRelease}
       onPointerLeave={() => { 
         setIsNear(0); 
         if (!isDragging()) {
           setTilt({ x: 0, y: 0 });
-          document.documentElement.style.setProperty("--hyper-drag-intensity", "0");
+          const root = document.documentElement;
+          root.style.setProperty("--hyper-drag-intensity", "0");
+          root.setAttribute("data-hyper-active", "false");
         }
       }}
     >

@@ -183,6 +183,7 @@ pub struct AiProviderStatus {
     pub id: String,
     pub available: bool,
     pub binary: String,
+    pub plan_name: Option<String>,
     pub resolved_binary: Option<String>,
     pub detection_source: Option<String>,
     pub health_check: String,

@@ -111,30 +111,55 @@ ol {
 }
 
 [data-hyper-active="true"] .hyper-reactive {
+  --hyper-intensity-clamped: clamp(0, var(--hyper-drag-intensity, 0), 1);
+  --hyper-corner-cut: calc(var(--hyper-intensity-clamped) * 10%);
   filter: url(#hyper-prism);
-  clip-path: polygon(10% 0%, 90% 0%, 100% 10%, 100% 90%, 90% 100%, 10% 100%, 0% 90%, 0% 10%);
+  clip-path: polygon(
+    var(--hyper-corner-cut) 0%,
+    calc(100% - var(--hyper-corner-cut)) 0%,
+    100% var(--hyper-corner-cut),
+    100% calc(100% - var(--hyper-corner-cut)),
+    calc(100% - var(--hyper-corner-cut)) 100%,
+    var(--hyper-corner-cut) 100%,
+    0% calc(100% - var(--hyper-corner-cut)),
+    0% var(--hyper-corner-cut)
+  );
   transform: perspective(1200px) 
              scale(calc(1 + var(--hyper-drag-intensity, 0) * 0.05)) 
              translateZ(calc(var(--hyper-drag-intensity, 0) * 15px))
              rotateX(calc(var(--hyper-drag-intensity, 0) * -12deg))
              rotateY(calc(var(--hyper-drag-intensity, 0) * 12deg));
-  outline: 1px solid var(--hyper-chromatic-1);
-  outline-offset: calc(1px + var(--hyper-drag-intensity, 0) * 5px);
+  outline: calc(var(--hyper-intensity-clamped) * 1px) solid var(--hyper-chromatic-1);
+  outline-offset: calc(var(--hyper-intensity-clamped) * 6px);
   z-index: 10; /* Local elevation during interaction */
 }
 
 /* The 'Meld' Stretch: Geometric Fusion Echo */
-[data-hyper-active="true"] .hyper-reactive::before {
+.hyper-reactive::before {
   content: "";
   position: absolute;
   inset: -1px;
   border: 1.5px solid var(--hyper-chromatic-2);
+  opacity: 0;
+  transform: rotate3d(1, 1, 0, 0deg) scale(1);
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease;
+  pointer-events: none;
+  clip-path: polygon(
+    var(--hyper-corner-cut) 0%,
+    calc(100% - var(--hyper-corner-cut)) 0%,
+    100% var(--hyper-corner-cut),
+    100% calc(100% - var(--hyper-corner-cut)),
+    calc(100% - var(--hyper-corner-cut)) 100%,
+    var(--hyper-corner-cut) 100%,
+    0% calc(100% - var(--hyper-corner-cut)),
+    0% var(--hyper-corner-cut)
+  );
+}
+
+[data-hyper-active="true"] .hyper-reactive::before {
   opacity: calc(var(--hyper-drag-intensity, 0) * 0.5);
   transform: rotate3d(1, 1, 0, calc(var(--hyper-drag-intensity, 0) * 45deg))
              scale(calc(1 + var(--hyper-drag-intensity, 0) * 0.15));
-  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease;
-  pointer-events: none;
-  clip-path: polygon(10% 0%, 90% 0%, 100% 10%, 100% 90%, 90% 100%, 10% 100%, 0% 90%, 0% 10%);
 }
 
 /* Active State Amplification: Clean Standard Mode */
@@ -146,8 +171,8 @@ ol {
 
 [data-hyper-active="true"] .hyper-reactive.active {
   box-shadow: 
-    0 24px 48px rgba(0, 0, 0, 0.5),
-    0 0 calc(var(--hyper-drag-intensity, 0) * 30px) var(--hyper-chromatic-1);
+    0 24px 48px rgb(0 0 0 / calc(var(--hyper-intensity-clamped, 0) * 0.5)),
+    0 0 calc(var(--hyper-intensity-clamped, 0) * 30px) var(--hyper-chromatic-1);
 }
 
 
@@ -2624,6 +2649,42 @@ ol {
 
 .settings-shortcuts-summary {
   margin-bottom: 8px;
+}
+
+.settings-ai-models-card {
+  margin-bottom: 14px;
+}
+
+.settings-ai-provider-list {
+  gap: 6px;
+}
+
+.settings-ai-provider-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.settings-ai-provider-status {
+  justify-self: end;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.settings-ai-provider-status.is-ready {
+  color: var(--accent-bright);
+}
+
+.settings-ai-provider-status.is-missing {
+  color: var(--text-muted);
+  opacity: 0.82;
+}
+
+.settings-ai-provider-actions {
+  margin-top: 4px;
+}
+
+.settings-ai-provider-error {
+  color: var(--status-danger);
 }
 
 /* ── Telemetry ───────────────────────────────────────────── */
