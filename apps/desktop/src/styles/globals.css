@@ -1222,6 +1222,7 @@ ol {
 
 .feature-page {
   width: 100%;
+  min-width: 0;
   display: grid;
   gap: 10px;
 }
@@ -1790,6 +1791,7 @@ ol {
 .diff-shell {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .diff-shell-meta {
@@ -1822,22 +1824,34 @@ ol {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .diff-header h2 {
   font-size: 12px;
   color: var(--text-muted);
   font-weight: 500;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .diff-controls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 4px;
+  min-width: 0;
+  flex: 1 1 300px;
+}
+
+.diff-controls > * {
+  min-width: 0;
 }
 
 .diff-hunk-select {
-  min-width: 180px;
+  min-width: 0;
+  width: min(220px, 100%);
   max-width: 280px;
   height: 30px;
   border: 1px solid rgba(var(--chrome-border-rgb), 0.2);
@@ -1849,7 +1863,16 @@ ol {
   padding: 0 8px;
 }
 
+.diff-controls .diff-search {
+  flex: 1 1 180px;
+  min-width: 120px;
+  max-width: 100%;
+}
+
 .diff-viewport {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 200px;
   max-height: none;
   overflow: auto;
@@ -1867,10 +1890,13 @@ ol {
   min-height: 64px;
   max-height: 64px;
   overflow: hidden;
+  transform: none;
 }
 
 .diff-viewport-dom,
 .diff-viewport-canvas {
+  min-width: 0;
+  max-width: 100%;
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-muted);

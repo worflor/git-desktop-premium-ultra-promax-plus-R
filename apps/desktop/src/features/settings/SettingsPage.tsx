@@ -388,12 +388,6 @@ export function SettingsPage() {
     setUiTimingRetentionPolicy(settings.data.telemetryRetentionDays, settings.data.telemetryRetentionMb);
   });
 
-  const activeThemeLabel = () =>
-    THEME_OPTIONS.find((option) => option.id === layout.themeId())?.label ?? layout.themeId();
-
-  const activeKeybindingLabel = () =>
-    KEYBINDING_PROFILE_OPTIONS.find((option) => option.id === layout.keybindingProfile())?.label ??
-    layout.keybindingProfile();
 
   const guardrailModePhrase = () => GUARDRAIL_STAGE_META[guardrailStage()]?.phrase ?? "Practical everyday protections";
 
@@ -1097,10 +1091,6 @@ export function SettingsPage() {
             Configure global aesthetics, interface dynamics, and core operational safeguards for the entire workspace.
           </p>
         </div>
-        <div class="feature-header-meta">
-          <span class="feature-meta-pill">{activeThemeLabel()}</span>
-          <span class="feature-meta-pill">{activeKeybindingLabel()}</span>
-        </div>
       </header>
 
       <Show when={settingsResult.loading && !settingsInitialized()}>
@@ -1166,8 +1156,8 @@ export function SettingsPage() {
             </article>
 
             <article ref={calibrationCardRef} class="state-card settings-top-card">
-              <h3>Theme</h3>
-              <p class="section-summary">Theme and aesthetic architecture.</p>
+              <h3>Atmosphere</h3>
+              <p class="section-summary">Aesthetic architecture and interface dynamics.</p>
               <div class="layout-control-field">
                 <Select
                   value={layout.themeId()}
@@ -1176,7 +1166,7 @@ export function SettingsPage() {
                     layout.setThemeId(id);
                     void layout.persistUiPreferences();
                   }}
-                  ariaLabel="Theme"
+                  ariaLabel="Aesthetic atmosphere"
                 />
               </div>
 
