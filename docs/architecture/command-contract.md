@@ -116,10 +116,14 @@ Examples:
 67. update_ui_preferences
 68. get_command_telemetry_snapshot
 69. clear_command_telemetry
+70. check_for_app_update
+71. install_app_update
 
 Settings payload note:
 - update_update_channel uses `{ updateChannel }`; accepted values are `stable` and `beta`.
 - update_crash_reporting uses `{ crashReportingEnabled }` and toggles local crash-report artifact persistence.
+- check_for_app_update returns channel-aware updater diagnostics including update availability and target version metadata.
+- install_app_update performs check + download + install when available and returns install outcome metadata.
 - update_layout_preferences uses `{ sidebarWidthPx, sidebarPosition, utilityDrawerDefaultExpanded, utilityDrawerHeightPx }`.
 - sidebarPosition accepts `left` or `right`.
 - update_ui_preferences uses `{ themeId, keybindingProfile }`.

@@ -5,12 +5,15 @@ import {
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import {
+  checkForAppUpdate,
   getAppSettings,
+  installAppUpdate,
   updateAiGuardrail,
   updateCrashReporting,
   updateTelemetryRetention,
   updateUpdateChannel
 } from "@/lib/backend/commands";
+import type { AppUpdateCheckData } from "@/lib/backend/dtos";
 import {
   clearCommandLatencyReport,
   getCommandLatencyReport,
@@ -37,6 +40,8 @@ export function SettingsPage() {
   const [retentionMb, setRetentionMb] = createSignal(128);
   const [updateChannel, setUpdateChannel] = createSignal<"stable" | "beta">("stable");
   const [crashReportingEnabled, setCrashReportingEnabled] = createSignal(false);
+  const [updateCheckResult, setUpdateCheckResult] = createSignal<AppUpdateCheckData | null>(null);
+  const [updateActionBusy, setUpdateActionBusy] = createSignal(false);
   const [actionMessage, setActionMessage] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [latencyReport, setLatencyReport] = createSignal(getCommandLatencyReport());
@@ -125,6 +130,7 @@ export function SettingsPage() {
     }
 
     setUpdateChannel(result.data.updateChannel === "beta" ? "beta" : "stable");
+    setUpdateCheckResult(null);
     setActionMessage(`Saved update channel: ${result.data.updateChannel}.`);
     void refetch();
   };
@@ -147,6 +153,63 @@ export function SettingsPage() {
     void refetch();
   };
 
+  const onCheckForUpdates = async () => {
+    setActionError(null);
+    setActionMessage(null);
+    setUpdateActionBusy(true);
+
+    try {
+      const result = await checkForAppUpdate();
+
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
+
+      setUpdateCheckResult(result.data);
+      if (result.data.updateAvailable) {
+        setActionMessage(
+          `Update ${result.data.latestVersion ?? ""} is available on ${result.data.channel}.`
+        );
+      } else {
+        setActionMessage(`No updates found on ${result.data.channel}.`);
+      }
+    } finally {
+      setUpdateActionBusy(false);
+    }
+  };
+
+  const onInstallUpdate = async () => {
+    setActionError(null);
+    setActionMessage(null);
+    setUpdateActionBusy(true);
+
+    try {
+      const result = await installAppUpdate();
+
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
+
+      setActionMessage(result.data.message);
+      if (result.data.installed) {
+        setUpdateCheckResult((current) =>
+          current
+            ? {
+                ...current,
+                updateAvailable: false,
+                latestVersion: result.data.targetVersion,
+                checkedAt: result.data.checkedAt
+              }
+            : null
+        );
+      }
+    } finally {
+      setUpdateActionBusy(false);
+    }
+  };
+
   const formatSampleTime = (value: string) => {
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) {
@@ -154,6 +217,15 @@ export function SettingsPage() {
     }
 
     return parsed.toLocaleTimeString();
+  };
+
+  const formatTimestamp = (value: string) => {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+
+    return parsed.toLocaleString();
   };
 
   return (
@@ -244,39 +316,6 @@ export function SettingsPage() {
             </div>
           </article>
 
-          <article class="state-card">
-            <h3>Release Channel</h3>
-            <p class="section-summary">Update feed and crash diagnostics policy.</p>
-            <div class="layout-control-field">
-              <span>Channel</span>
-              <select
-                class="path-input"
-                value={updateChannel()}
-                onChange={(event) => {
-                  const next = event.currentTarget.value === "beta" ? "beta" : "stable";
-                  setUpdateChannel(next);
-                  void onSaveUpdateChannel(next);
-                }}
-                aria-label="Update channel"
-              >
-                <option value="stable">Stable</option>
-                <option value="beta">Beta</option>
-              </select>
-            </div>
-
-            <label class="layout-checkbox-field" style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
-              <input
-                type="checkbox"
-                checked={crashReportingEnabled()}
-                onChange={(event) => {
-                  const enabled = event.currentTarget.checked;
-                  setCrashReportingEnabled(enabled);
-                  void onSaveCrashReporting(enabled);
-                }}
-              />
-              <span>Enable local crash-report artifacts</span>
-            </label>
-          </article>
 
           <article class="state-card">
             <h3>Interface Calibration</h3>
@@ -307,36 +346,35 @@ export function SettingsPage() {
             <h3>Navigation & Surface Guide</h3>
             <p class="section-summary">Keyboard architecture and interface behavior.</p>
             
-            <div class="layout-control-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.1);">
-              <div class="layout-control-field">
-                <span>Keybinding profile</span>
-                <select
-                  class="path-input"
-                  value={layout.keybindingProfile()}
-                  onChange={(event) => {
-                    layout.setKeybindingProfile(event.currentTarget.value);
-                    void layout.persistUiPreferences();
-                  }}
-                  aria-label="Keybinding profile"
-                >
-                  {KEYBINDING_PROFILE_OPTIONS.map((option) => (
-                    <option value={option.id}>{option.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <label class="layout-checkbox-field" style="display: flex; align-items: center; gap: 8px;">
-                <input
-                  type="checkbox"
-                  checked={layout.utilityDrawerExpanded()}
-                  onChange={(event) => {
-                    layout.setUtilityDrawerExpanded(event.currentTarget.checked);
-                    void layout.persistLayoutPreferences();
-                  }}
-                />
-                <span>Auto-expand logs</span>
-              </label>
+            <div class="layout-control-field" style="margin-bottom: 24px;">
+              <span>Keybinding profile</span>
+              <select
+                class="path-input"
+                value={layout.keybindingProfile()}
+                onChange={(event) => {
+                  layout.setKeybindingProfile(event.currentTarget.value);
+                  void layout.persistUiPreferences();
+                }}
+                aria-label="Keybinding profile"
+              >
+                {KEYBINDING_PROFILE_OPTIONS.map((option) => (
+                  <option value={option.id}>{option.label}</option>
+                ))}
+              </select>
             </div>
+
+            <h4 style="margin-bottom: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); opacity: 0.8;">Behavioral Dynamics</h4>
+            <label class="layout-checkbox-field" style="display: flex; align-items: center; gap: 8px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.1);">
+              <input
+                type="checkbox"
+                checked={layout.utilityDrawerExpanded()}
+                onChange={(event) => {
+                  layout.setUtilityDrawerExpanded(event.currentTarget.checked);
+                  void layout.persistLayoutPreferences();
+                }}
+              />
+              <span>Auto-expand operation logs</span>
+            </label>
             <p class="section-summary">Core shortcuts for the active profile.</p>
             <div class="keybinding-preview-card">
               <ul class="keybinding-preview-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
@@ -443,6 +481,76 @@ export function SettingsPage() {
                   </div>
                 ))}
               </div>
+            </Show>
+          </article>
+
+          <article class="state-card state-card-wide">
+            <h3>Release Channel</h3>
+            <p class="section-summary">Update feed and crash diagnostics policy.</p>
+            <div class="layout-control-field">
+              <span>Channel</span>
+              <select
+                class="path-input"
+                value={updateChannel()}
+                onChange={(event) => {
+                  const next = event.currentTarget.value === "beta" ? "beta" : "stable";
+                  setUpdateChannel(next);
+                  void onSaveUpdateChannel(next);
+                }}
+                aria-label="Update channel"
+              >
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+              </select>
+            </div>
+
+            <label class="layout-checkbox-field" style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
+              <input
+                type="checkbox"
+                checked={crashReportingEnabled()}
+                onChange={(event) => {
+                  const enabled = event.currentTarget.checked;
+                  setCrashReportingEnabled(enabled);
+                  void onSaveCrashReporting(enabled);
+                }}
+              />
+              <span>Enable local crash-report artifacts</span>
+            </label>
+
+            <div class="inline-actions" style="margin-top: 12px;">
+              <button
+                class="primary-btn"
+                disabled={updateActionBusy()}
+                onClick={() => {
+                  void onCheckForUpdates();
+                }}
+              >
+                {updateActionBusy() ? "Working..." : "Check for Updates"}
+              </button>
+              <button
+                class="primary-btn"
+                disabled={updateActionBusy() || !updateCheckResult()?.updateAvailable}
+                onClick={() => {
+                  void onInstallUpdate();
+                }}
+              >
+                Install Available Update
+              </button>
+            </div>
+
+            <Show when={updateCheckResult()}>
+              {(status) => (
+                <div style="margin-top: 12px; font-size: 12px; color: var(--text-muted); border-top: 1px solid rgba(var(--chrome-border-rgb), 0.2); padding-top: 10px;">
+                  <p>Last checked: {formatTimestamp(status().checkedAt)}</p>
+                  <p>Current version: {status().currentVersion}</p>
+                  <Show when={status().updateAvailable} fallback={<p>No update available for the selected channel.</p>}>
+                    <p>Available version: {status().latestVersion ?? "unknown"}</p>
+                    <Show when={status().endpoint}>
+                      {(endpoint) => <p>Endpoint: {endpoint()}</p>}
+                    </Show>
+                  </Show>
+                </div>
+              )}
             </Show>
           </article>
         </section>

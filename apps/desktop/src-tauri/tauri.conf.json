@@ -25,5 +25,11 @@
     "active": true,
     "targets": "all",
     "icon": []
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "endpoints": []
+    }
   }
 }

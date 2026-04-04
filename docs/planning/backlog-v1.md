@@ -140,6 +140,9 @@ Implementation update (2026-04-03):
 - AI provider discovery now returns resolved binary command, detection source, and health-check status.
 - Detection now includes PATH plus known install path probes to improve Windows and non-PATH discovery.
 - Provider adapter contract tests now validate attempt strategy generation and truncation guarantees for bounded prompt/diff payload construction.
+Implementation update (2026-04-03):
+- AI service provider resolution now uses an explicit adapter abstraction (`AiProviderAdapter`) to isolate provider contracts from pipeline orchestration.
+- Added adapter contract test coverage to validate provider adapter identity/binary/attempt invariants.
 
 ### E-2 Diff review stream panel (P1)
 Acceptance criteria:

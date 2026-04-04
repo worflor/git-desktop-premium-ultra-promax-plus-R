@@ -9,10 +9,6 @@ use crate::errors::AppError;
 use crate::models::operations::{StartupReadinessCheckData, StartupReadinessSnapshotData};
 use crate::services::{ai_service, auth_service, forge_service, git_provider, logging_service};
 
-pub fn run_startup_readiness_probe() {
-    let _ = run_probe_with_new_request_id();
-}
-
 pub fn get_startup_readiness_snapshot(
     refresh: bool,
 ) -> Result<StartupReadinessSnapshotData, AppError> {

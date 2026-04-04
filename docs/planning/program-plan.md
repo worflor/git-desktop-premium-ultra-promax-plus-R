@@ -65,3 +65,7 @@ Gate:
 - Diagnostics page includes environment and provider health
 - Known issues list is explicit and user-facing
 - Minimal onboarding doc exists for first-time setup
+
+Implementation update (2026-04-03):
+- Runtime update check/install command path is implemented and surfaced in Settings release controls.
+- Alpha hardening pack now includes onboarding, known issues, security/privacy review, and feedback triage cadence docs under `docs/alpha/`.

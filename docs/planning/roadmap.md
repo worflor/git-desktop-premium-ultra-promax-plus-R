@@ -70,6 +70,11 @@ Implementation update (2026-04-03):
 - Crash-report option now installs a backend panic hook that persists local crash artifacts when enabled.
 - Linux packaging baseline now includes a Flatpak manifest scaffold (`apps/desktop/flatpak/com.gdpu.desktop.json`) plus CI manifest validation on Ubuntu.
 
+Implementation update (2026-04-03):
+- Backend now exposes updater runtime commands for channel-aware check/install workflows (`check_for_app_update`, `install_app_update`) using Tauri updater integration.
+- Settings UI now includes release update actions to check and install available updates without leaving the app.
+- Alpha hardening document pack added under `docs/alpha/` for onboarding, known issues, security/privacy posture, and feedback triage cadence.
+
 Exit criteria:
 - Stable alpha builds for external users
 - Prioritized post-alpha backlog

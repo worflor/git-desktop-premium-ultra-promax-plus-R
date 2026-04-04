@@ -58,35 +58,108 @@ function normalizeSidebarPosition(value: string): SidebarPosition {
   return "left";
 }
 
+const LAYOUT_PREFERENCES_CACHE_KEY = "gdpu.layout.preferences.v1";
+
+interface LayoutSettingsData {
+  themeId: string;
+  keybindingProfile: string;
+  sidebarWidthPx: number;
+  sidebarPosition: string;
+  utilityDrawerDefaultExpanded: boolean;
+  utilityDrawerHeightPx: number;
+}
+
+interface CachedLayoutPreferences {
+  themeId?: string;
+  keybindingProfile?: string;
+  sidebarWidthPx?: number;
+  sidebarPosition?: string;
+  utilityDrawerDefaultExpanded?: boolean;
+  utilityDrawerHeightPx?: number;
+}
+
+function loadCachedLayoutPreferences(): CachedLayoutPreferences | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const payload = window.localStorage.getItem(LAYOUT_PREFERENCES_CACHE_KEY);
+    if (!payload) {
+      return null;
+    }
+
+    const parsed: unknown = JSON.parse(payload);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    return parsed as CachedLayoutPreferences;
+  } catch {
+    return null;
+  }
+}
+
+function persistCachedLayoutPreferences(data: LayoutSettingsData): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(LAYOUT_PREFERENCES_CACHE_KEY, JSON.stringify(data));
+  } catch {
+    // Ignore storage failures: preferences still round-trip through backend settings.
+  }
+}
+
+function resolveInitialThemeId(cached: CachedLayoutPreferences | null): ThemeId {
+  const bootstrapTheme =
+    typeof document !== "undefined" ? document.documentElement.getAttribute("data-theme") : null;
+  return normalizeThemeId(cached?.themeId ?? bootstrapTheme ?? DEFAULT_THEME_ID);
+}
+
 export function LayoutPreferencesProvider(props: ParentProps) {
+  const cachedSettings = loadCachedLayoutPreferences();
   const [initialized, setInitialized] = createSignal(false);
   const [loading, setLoading] = createSignal(true);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
-  const [themeId, setThemeIdSignal] = createSignal<ThemeId>(DEFAULT_THEME_ID);
-  const [keybindingProfile, setKeybindingProfileSignal] = createSignal<KeybindingProfile>("classic");
-  const [sidebarWidthPx, setSidebarWidthPxSignal] = createSignal(188);
-  const [sidebarPosition, setSidebarPositionSignal] = createSignal<SidebarPosition>("left");
-  const [utilityDrawerExpanded, setUtilityDrawerExpandedSignal] = createSignal(false);
-  const [utilityDrawerHeightPx, setUtilityDrawerHeightPxSignal] = createSignal(144);
+  const [themeId, setThemeIdSignal] = createSignal<ThemeId>(resolveInitialThemeId(cachedSettings));
+  const [keybindingProfile, setKeybindingProfileSignal] = createSignal<KeybindingProfile>(
+    normalizeKeybindingProfile(cachedSettings?.keybindingProfile ?? "classic")
+  );
+  const [sidebarWidthPx, setSidebarWidthPxSignal] = createSignal(
+    clampSidebarWidthPx(cachedSettings?.sidebarWidthPx ?? 188)
+  );
+  const [sidebarPosition, setSidebarPositionSignal] = createSignal<SidebarPosition>(
+    normalizeSidebarPosition(cachedSettings?.sidebarPosition ?? "left")
+  );
+  const [utilityDrawerExpanded, setUtilityDrawerExpandedSignal] = createSignal(
+    Boolean(cachedSettings?.utilityDrawerDefaultExpanded)
+  );
+  const [utilityDrawerHeightPx, setUtilityDrawerHeightPxSignal] = createSignal(
+    clampUtilityDrawerHeightPx(cachedSettings?.utilityDrawerHeightPx ?? 144)
+  );
 
-  const applySettingsData = (data: {
-    themeId: string;
-    keybindingProfile: string;
-    sidebarWidthPx: number;
-    sidebarPosition: string;
-    utilityDrawerDefaultExpanded: boolean;
-    utilityDrawerHeightPx: number;
-  }) => {
-    const normalizedThemeId = normalizeThemeId(data.themeId);
-    setThemeIdSignal(normalizedThemeId);
-    applyTheme(normalizedThemeId);
-    setKeybindingProfileSignal(normalizeKeybindingProfile(data.keybindingProfile));
-    setSidebarWidthPxSignal(clampSidebarWidthPx(data.sidebarWidthPx));
-    setSidebarPositionSignal(normalizeSidebarPosition(data.sidebarPosition));
-    setUtilityDrawerExpandedSignal(data.utilityDrawerDefaultExpanded);
-    setUtilityDrawerHeightPxSignal(clampUtilityDrawerHeightPx(data.utilityDrawerHeightPx));
+  const applySettingsData = (data: LayoutSettingsData) => {
+    const normalized: LayoutSettingsData = {
+      themeId: normalizeThemeId(data.themeId),
+      keybindingProfile: normalizeKeybindingProfile(data.keybindingProfile),
+      sidebarWidthPx: clampSidebarWidthPx(data.sidebarWidthPx),
+      sidebarPosition: normalizeSidebarPosition(data.sidebarPosition),
+      utilityDrawerDefaultExpanded: Boolean(data.utilityDrawerDefaultExpanded),
+      utilityDrawerHeightPx: clampUtilityDrawerHeightPx(data.utilityDrawerHeightPx)
+    };
+
+    setThemeIdSignal(normalized.themeId as ThemeId);
+    applyTheme(normalized.themeId);
+    setKeybindingProfileSignal(normalized.keybindingProfile as KeybindingProfile);
+    setSidebarWidthPxSignal(normalized.sidebarWidthPx);
+    setSidebarPositionSignal(normalized.sidebarPosition as SidebarPosition);
+    setUtilityDrawerExpandedSignal(normalized.utilityDrawerDefaultExpanded);
+    setUtilityDrawerHeightPxSignal(normalized.utilityDrawerHeightPx);
+    persistCachedLayoutPreferences(normalized);
   };
 
   const loadSettings = async () => {
@@ -176,6 +249,7 @@ export function LayoutPreferencesProvider(props: ParentProps) {
   };
 
   onMount(() => {
+    applyTheme(themeId());
     void loadSettings();
   });
 

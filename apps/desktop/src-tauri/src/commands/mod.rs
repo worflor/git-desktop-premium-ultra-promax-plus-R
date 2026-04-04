@@ -11,14 +11,14 @@ use crate::models::git::{
 };
 use crate::models::operations::{
     AiAuditListData, AiDiffReviewCancelData, AiDiffReviewData, AiDiffReviewJobData,
-    AiDiffReviewJobStartData, AiProviderListData, BranchListData, BranchOperationData,
-    BranchTrackingOperationData, CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData,
-    CommitData, CommitDetailData, CommitHistoryData, ConflictResolutionData, ConflictStateData,
-    FileDiffChunkData, FileDiffData, FileDiffManifestData, IssueProviderListData,
-    LocalIssueListData, LocalIssueOperationData, LocalPullRequestListData,
-    LocalPullRequestOperationData, PathOperationData, PullRequestProviderListData,
-    StartupReadinessSnapshotData, StashListData, StashOperationData, SyncData, WorktreeListData,
-    WorktreeOperationData,
+    AiDiffReviewJobStartData, AiProviderListData, AppUpdateCheckData, AppUpdateInstallData,
+    BranchListData, BranchOperationData, BranchTrackingOperationData,
+    CommandTelemetryMaintenanceData, CommandTelemetrySnapshotData, CommitData, CommitDetailData,
+    CommitHistoryData, ConflictResolutionData, ConflictStateData, FileDiffChunkData, FileDiffData,
+    FileDiffManifestData, IssueProviderListData, LocalIssueListData, LocalIssueOperationData,
+    LocalPullRequestListData, LocalPullRequestOperationData, PathOperationData,
+    PullRequestProviderListData, StartupReadinessSnapshotData, StashListData,
+    StashOperationData, SyncData, WorktreeListData, WorktreeOperationData,
 };
 use crate::models::repository::{OpenRepositoryData, RecentRepositoriesData, RepositoryStatusData};
 use crate::models::settings::AppSettingsData;
@@ -26,7 +26,7 @@ use crate::runtime::state::AppState;
 use crate::services::{
     ai_service, auth_service, bootstrap_service, diff_service, forge_service, git_provider,
     issue_service, logging_service, pull_request_service, repository_service, settings_service,
-    telemetry_service,
+    telemetry_service, update_service,
 };
 
 fn response_meta(started_at: Instant, state: &State<'_, AppState>) -> ResponseMeta {
@@ -1384,6 +1384,36 @@ pub fn update_update_channel(
     match settings_service::update_update_channel(&update_channel) {
         Ok(data) => command_ok("update_update_channel", started_at, &state, data),
         Err(error) => map_error_with_command("update_update_channel", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn check_for_app_update(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<AppUpdateCheckData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match tauri::async_runtime::block_on(update_service::check_for_updates(&app)) {
+        Ok(data) => command_ok("check_for_app_update", started_at, &state, data),
+        Err(error) => map_error_with_command("check_for_app_update", started_at, &state, error),
+    }
+}
+
+#[tauri::command]
+pub fn install_app_update(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<AppUpdateInstallData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match tauri::async_runtime::block_on(update_service::install_update(&app)) {
+        Ok(data) => command_ok("install_app_update", started_at, &state, data),
+        Err(error) => map_error_with_command("install_app_update", started_at, &state, error),
     }
 }
 

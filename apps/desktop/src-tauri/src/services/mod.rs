@@ -18,3 +18,4 @@ pub mod repository_service;
 pub mod settings_service;
 pub mod storage_paths;
 pub mod telemetry_service;
+pub mod update_service;

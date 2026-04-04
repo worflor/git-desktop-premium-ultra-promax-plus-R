@@ -6,6 +6,8 @@ import type {
   AiDiffReviewJobStartData,
   AiProviderListData,
   AppSettingsData,
+  AppUpdateCheckData,
+  AppUpdateInstallData,
   AuthStatus,
   BranchListData,
   BranchOperationData,
@@ -433,6 +435,14 @@ export function updateUpdateChannel(
   updateChannel: "stable" | "beta" | string
 ): Promise<CommandResult<AppSettingsData>> {
   return invokeCommand("update_update_channel", { updateChannel });
+}
+
+export function checkForAppUpdate(): Promise<CommandResult<AppUpdateCheckData>> {
+  return invokeCommand("check_for_app_update", {});
+}
+
+export function installAppUpdate(): Promise<CommandResult<AppUpdateInstallData>> {
+  return invokeCommand("install_app_update", {});
 }
 
 export function updateCrashReporting(

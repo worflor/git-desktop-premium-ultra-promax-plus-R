@@ -226,6 +226,34 @@ pub struct AiDiffReviewCancelData {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppUpdateCheckData {
+    pub channel: String,
+    pub endpoint: Option<String>,
+    pub checked_at: String,
+    pub update_available: bool,
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    pub notes: Option<String>,
+    pub published_at: Option<String>,
+    pub target: Option<String>,
+    pub download_url: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUpdateInstallData {
+    pub channel: String,
+    pub endpoint: Option<String>,
+    pub checked_at: String,
+    pub attempted: bool,
+    pub installed: bool,
+    pub current_version: String,
+    pub target_version: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiAuditEntryData {
     pub id: String,
     pub event: String,

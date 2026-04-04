@@ -46,6 +46,11 @@ interface SurfaceRuntime {
   ambientWeight: number;
 }
 
+interface MotionRuntime {
+  ease: string;
+  duration: string;
+}
+
 const CHANNEL_MAX = 255;
 const OVERLAY_BINDINGS: readonly OverlayBinding[] = [
   { source: "--panel-overlay", target: "--runtime-panel-overlay" },
@@ -63,6 +68,17 @@ const STATE_TINT_BINDINGS: readonly StateTintBinding[] = [
   { source: "--state-unstaged", target: "--runtime-state-unstaged-bg-soft", alpha: 0.18 },
   { source: "--state-added", target: "--runtime-state-added-bg-subtle", alpha: 0.12 }
 ];
+
+const DEFAULT_MOTION_RUNTIME: MotionRuntime = {
+  ease: "cubic-bezier(0.2, 0, 0, 1)",
+  duration: "120ms"
+};
+
+const MOTION_RUNTIME_BY_KIND: Readonly<Record<NonNullable<SurfaceMaterialShader["motion"]>, MotionRuntime>> = {
+  snappy: { ease: "cubic-bezier(0.3, 0, 0.1, 1)", duration: "80ms" },
+  fluid: { ease: "cubic-bezier(0.4, 0, 0.2, 1)", duration: "180ms" },
+  elastic: { ease: "cubic-bezier(0.68, -0.55, 0.26, 1.55)", duration: "250ms" }
+};
 
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -252,16 +268,21 @@ function computeRuntime(shader: SurfaceMaterialShader, devicePixelRatio: number)
   return { filter: `blur(${bPx.toFixed(2)}px) saturate(${sPct.toFixed(1)}%)`, alphaScale: aS, ambientWeight: aW };
 }
 
-function applyOverlayRuntime(root: HTMLElement, cS: CSSStyleDeclaration, ambient: RgbaColor | null, src: string, tgt: string, aS: number, aW: number): void {
-  const p = parseCssColor(cS.getPropertyValue(src));
+function resolveMotionRuntime(motion: SurfaceMaterialShader["motion"]): MotionRuntime {
+  if (!motion) {
+    return DEFAULT_MOTION_RUNTIME;
+  }
+  return MOTION_RUNTIME_BY_KIND[motion] ?? DEFAULT_MOTION_RUNTIME;
+}
+
+function applyOverlayRuntime(root: HTMLElement, p: RgbaColor | null, ambient: RgbaColor | null, tgt: string, aS: number, aW: number): void {
   if (!p) { root.style.removeProperty(tgt); return; }
   let r = p.r, g = p.g, b = p.b;
   if (ambient && aW > 0) { r += ((ambient.r - r) * aW) >> 8; g += ((ambient.g - g) * aW) >> 8; b += ((ambient.b - b) * aW) >> 8; }
   root.style.setProperty(tgt, toRgbaString({ r: clamp(r, 0, CHANNEL_MAX), g: clamp(g, 0, CHANNEL_MAX), b: clamp(b, 0, CHANNEL_MAX), a: clamp(p.a * aS, 0, 0.985) }));
 }
 
-function applyStateTintRuntime(root: HTMLElement, cS: CSSStyleDeclaration, src: string, tgt: string, alpha: number): void {
-  const p = parseCssColor(cS.getPropertyValue(src));
+function applyStateTintRuntime(root: HTMLElement, p: RgbaColor | null, tgt: string, alpha: number): void {
   if (!p) { root.style.removeProperty(tgt); return; }
   root.style.setProperty(tgt, toRgbaString({ r: p.r, g: p.g, b: p.b, a: clamp(alpha, 0, 0.985) }));
 }
@@ -271,6 +292,15 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
   const runtime = computeRuntime(shader, window.devicePixelRatio || 1);
   root.style.setProperty("--runtime-glass-filter", runtime.filter);
   const cS = window.getComputedStyle(root);
+  const parsedColorCache = new Map<string, RgbaColor | null>();
+  const getParsedColor = (source: string): RgbaColor | null => {
+    if (parsedColorCache.has(source)) {
+      return parsedColorCache.get(source) ?? null;
+    }
+    const parsed = parseCssColor(cS.getPropertyValue(source));
+    parsedColorCache.set(source, parsed);
+    return parsed;
+  };
   const rA = cS.getPropertyValue("--theme-ambient-rgb").trim();
   const ambient = rA ? parseCssColor(`rgb(${rA})`) : null;
   root.style.setProperty("--runtime-material-texture", generateProceduralTexture(shader, ambient));
@@ -291,11 +321,9 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
   else if (interaction === "warp") root.style.setProperty("--runtime-warp-scale", "1.05");
   else if (interaction === "chalk") root.style.setProperty("--runtime-chalk-jitter", "8ms");
 
-  let ease = "cubic-bezier(0.2, 0, 0, 1)", duration = "120ms";
-  if (shader.motion === "snappy") { ease = "cubic-bezier(0.3, 0, 0.1, 1)"; duration = "80ms"; }
-  else if (shader.motion === "fluid") { ease = "cubic-bezier(0.4, 0, 0.2, 1)"; duration = "180ms"; }
-  else if (shader.motion === "elastic") { ease = "cubic-bezier(0.68, -0.55, 0.26, 1.55)"; duration = "250ms"; }
-  root.style.setProperty("--runtime-ease", ease); root.style.setProperty("--runtime-duration", duration);
+  const motionRuntime = resolveMotionRuntime(shader.motion);
+  root.style.setProperty("--runtime-ease", motionRuntime.ease);
+  root.style.setProperty("--runtime-duration", motionRuntime.duration);
   root.style.setProperty("--runtime-parallax-strength", (shader.parallaxStrength ?? 0.5).toString());
   root.style.setProperty("--runtime-radius", `${shader.geometry?.radius ?? 8}px`);
   if (shader.geometry?.pixelated) { root.style.setProperty("--runtime-image-render", "pixelated"); root.style.setProperty("--runtime-font-smooth", "none"); }
@@ -312,6 +340,6 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
   } else {
     root.style.setProperty("--runtime-cell-shadow", "rgba(0,0,0,0.5)"); root.style.setProperty("--runtime-rim-light", "rgba(255,255,255,0.1)"); root.style.setProperty("--runtime-glow-shadow", "0 0 8px rgba(255,255,255,0.15)");
   }
-  for (const b of OVERLAY_BINDINGS) applyOverlayRuntime(root, cS, ambient, b.source, b.target, runtime.alphaScale, runtime.ambientWeight);
-  for (const b of STATE_TINT_BINDINGS) applyStateTintRuntime(root, cS, b.source, b.target, b.alpha);
+  for (const b of OVERLAY_BINDINGS) applyOverlayRuntime(root, getParsedColor(b.source), ambient, b.target, runtime.alphaScale, runtime.ambientWeight);
+  for (const b of STATE_TINT_BINDINGS) applyStateTintRuntime(root, getParsedColor(b.source), b.target, b.alpha);
 }

@@ -233,15 +233,19 @@ export const THEME_OPTIONS: ThemeOption[] = THEME_DEFINITIONS.map((definition) =
   description: definition.description
 }));
 
+const NORMALIZED_THEME_ID_LOOKUP: ReadonlyMap<string, ThemeId> = new Map(
+  THEME_IDS.map((id) => [id, id])
+);
+
 function findThemeDefinition(themeId: ThemeId): ThemeDefinition {
   return THEME_DEFINITION_BY_ID.get(themeId) ?? THEME_DEFINITIONS[0];
 }
 
 export function normalizeThemeId(value: string): ThemeId {
   const normalized = value.trim().toLowerCase();
-  const match = THEME_OPTIONS.find((option) => option.id === normalized);
+  const match = NORMALIZED_THEME_ID_LOOKUP.get(normalized);
   if (match) {
-    return match.id;
+    return match;
   }
   return DEFAULT_THEME_ID;
 }

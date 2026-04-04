@@ -273,6 +273,30 @@ export interface AppSettingsData {
   utilityDrawerHeightPx: number;
 }
 
+export interface AppUpdateCheckData {
+  channel: "stable" | "beta" | string;
+  endpoint?: string;
+  checkedAt: string;
+  updateAvailable: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  notes?: string;
+  publishedAt?: string;
+  target?: string;
+  downloadUrl?: string;
+}
+
+export interface AppUpdateInstallData {
+  channel: "stable" | "beta" | string;
+  endpoint?: string;
+  checkedAt: string;
+  attempted: boolean;
+  installed: boolean;
+  currentVersion: string;
+  targetVersion?: string;
+  message: string;
+}
+
 export interface StartupReadinessCheckData {
   id: string;
   ok: boolean;

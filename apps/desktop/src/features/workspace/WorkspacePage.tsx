@@ -1,17 +1,15 @@
 import {
   createMemo,
+  lazy,
   Match,
   Show,
+  Suspense,
   Switch
 } from "solid-js";
 import { useLocation, useNavigate } from "@solidjs/router";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
+import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { Icon } from "@/components/icons/Icon";
-import { BranchesPage } from "@/features/branches/BranchesPage";
-import { ChangesPage } from "@/features/changes/ChangesPage";
-import { HistoryPage } from "@/features/history/HistoryPage";
-import { SettingsPage } from "@/features/settings/SettingsPage";
-import { SyncPage } from "@/features/sync/SyncPage";
 
 type WorkspaceMode = "changes" | "history" | "branches" | "sync";
 
@@ -27,6 +25,31 @@ const MODES: readonly ModeEntry[] = [
   { id: "branches", icon: "branches", route: "/branches" },
   { id: "sync", icon: "sync", route: "/sync" },
 ];
+
+const ChangesPage = lazy(async () => {
+  const module = await import("@/features/changes/ChangesPage");
+  return { default: module.ChangesPage };
+});
+
+const HistoryPage = lazy(async () => {
+  const module = await import("@/features/history/HistoryPage");
+  return { default: module.HistoryPage };
+});
+
+const BranchesPage = lazy(async () => {
+  const module = await import("@/features/branches/BranchesPage");
+  return { default: module.BranchesPage };
+});
+
+const SyncPage = lazy(async () => {
+  const module = await import("@/features/sync/SyncPage");
+  return { default: module.SyncPage };
+});
+
+const SettingsPage = lazy(async () => {
+  const module = await import("@/features/settings/SettingsPage");
+  return { default: module.SettingsPage };
+});
 
 function resolveModeFromPath(pathname: string): WorkspaceMode {
   if (pathname.startsWith("/history")) return "history";
@@ -104,20 +127,22 @@ export function WorkspacePage() {
               Open a project from the sidebar to get started.
             </div>
           </Show>
-          <Switch>
-            <Match when={activeMode() === "changes"}>
-              <ChangesPage embedded />
-            </Match>
-            <Match when={activeMode() === "history"}>
-              <HistoryPage embedded />
-            </Match>
-            <Match when={activeMode() === "branches"}>
-              <BranchesPage embedded />
-            </Match>
-            <Match when={activeMode() === "sync"}>
-              <SyncPage embedded />
-            </Match>
-          </Switch>
+          <Suspense fallback={<LoadingStateSkeleton />}>
+            <Switch>
+              <Match when={activeMode() === "changes"}>
+                <ChangesPage embedded />
+              </Match>
+              <Match when={activeMode() === "history"}>
+                <HistoryPage embedded />
+              </Match>
+              <Match when={activeMode() === "branches"}>
+                <BranchesPage embedded />
+              </Match>
+              <Match when={activeMode() === "sync"}>
+                <SyncPage embedded />
+              </Match>
+            </Switch>
+          </Suspense>
         </div>
       </div>
 
@@ -137,7 +162,11 @@ export function WorkspacePage() {
             </button>
           </header>
           <div class="settings-slide-body">
-            <SettingsPage />
+            <Show when={isSettingsOpen()}>
+              <Suspense fallback={<LoadingStateSkeleton />}>
+                <SettingsPage />
+              </Suspense>
+            </Show>
           </div>
         </section>
       </div>

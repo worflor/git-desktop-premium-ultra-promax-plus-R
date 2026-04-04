@@ -4,6 +4,59 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Git Desktop Premium Ultra Promax Plus-R</title>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+      }
+
+      html,
+      body {
+        background: #f9f6e9;
+      }
+    </style>
+    <script>
+      (function bootstrapStartupTheme() {
+        var cacheKey = "gdpu.layout.preferences.v1";
+        var fallbackTheme = "halo";
+        var backgroundByTheme = {
+          halo: "radial-gradient(circle at 20% 15%, #fdfbf7 0%, #f9f6e9 45%, #f2efe4 100%)",
+          helix: "radial-gradient(circle at 15% 8%, #f4d8b5 0%, #efe7d6 44%, #dfd4bf 100%)",
+          aether: "radial-gradient(circle at 14% 10%, #1a2333 0%, #0d1118 44%, #0a0d12 100%)",
+          quanta: "radial-gradient(circle at 10% 10%, #061009 0%, #030604 60%, #020403 100%)",
+          nightwalker: "linear-gradient(180deg, #050505 0%, #0d0d0f 100%)",
+          petrichor: "radial-gradient(circle at 12% 12%, #2f3f38 0%, #1f2a26 48%, #161d1b 100%)",
+          redshift: "radial-gradient(circle at 8% 14%, #3b0f1f 0%, #1f0b14 52%, #12080d 100%)",
+          blackboard: "radial-gradient(circle at 10% 10%, #262d2b 0%, #1a201f 55%, #121615 100%)",
+          crafty: "radial-gradient(circle at 12% 12%, #2b2620 0%, #1f1a15 58%, #15120f 100%)"
+        };
+        var lightThemes = {
+          halo: true,
+          helix: true
+        };
+
+        var theme = fallbackTheme;
+        try {
+          var raw = window.localStorage.getItem(cacheKey);
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            if (parsed && typeof parsed.themeId === "string" && parsed.themeId.trim().length > 0) {
+              theme = parsed.themeId.trim().toLowerCase();
+            }
+          }
+        } catch (_error) {
+          theme = fallbackTheme;
+        }
+
+        var background = backgroundByTheme[theme] || backgroundByTheme[fallbackTheme];
+        var root = document.documentElement;
+        root.setAttribute("data-theme", theme);
+        root.style.background = background;
+        root.style.colorScheme = lightThemes[theme] ? "light" : "dark";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
