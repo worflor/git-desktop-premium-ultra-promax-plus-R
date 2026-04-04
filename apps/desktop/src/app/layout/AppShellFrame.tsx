@@ -78,16 +78,25 @@ export function AppShellFrame(props: AppShellFrameProps) {
     };
 
     let tickerId: number;
+    let startupDelayId: number | undefined;
     let lastX = 0, lastY = 0;
+    let lastWindowX: number | null = null;
+    let lastWindowY: number | null = null;
 
     const runTicker = () => {
-      // High-performance polling of window coordinates for realtime pinning
-      // Using a unified ticker ensures window and mouse stay in sync at monitor refresh rate
+      // Avoid rewriting CSS variables when the window is stationary.
       const root = document.documentElement;
-      
-      // Update window position (Crucial for smooth window dragging)
-      root.style.setProperty("--window-screen-x", window.screenX.toString());
-      root.style.setProperty("--window-screen-y", window.screenY.toString());
+
+      const screenX = window.screenX;
+      const screenY = window.screenY;
+      if (screenX !== lastWindowX) {
+        root.style.setProperty("--window-screen-x", screenX.toString());
+        lastWindowX = screenX;
+      }
+      if (screenY !== lastWindowY) {
+        root.style.setProperty("--window-screen-y", screenY.toString());
+        lastWindowY = screenY;
+      }
 
       tickerId = requestAnimationFrame(runTicker);
     };
@@ -106,11 +115,17 @@ export function AppShellFrame(props: AppShellFrameProps) {
     window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("mousemove", onWindowMouseMove, { passive: true });
     
-    // Start the realtime pinning engine
-    tickerId = requestAnimationFrame(runTicker);
+    // Let first content paint complete before background parallax ticker starts.
+    startupDelayId = window.setTimeout(() => {
+      tickerId = requestAnimationFrame(runTicker);
+      startupDelayId = undefined;
+    }, 120);
     
     onCleanup(() => {
       clearPrefixTimer();
+      if (startupDelayId !== undefined) {
+        window.clearTimeout(startupDelayId);
+      }
       cancelAnimationFrame(tickerId);
       window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("mousemove", onWindowMouseMove);

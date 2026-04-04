@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onMount, Show } from "solid-js";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { BrandLockup } from "@/components/composite/BrandLockup";
 import { Icon } from "@/components/icons/Icon";
@@ -19,9 +19,31 @@ export function SidebarRail() {
   const [repositoryError, setRepositoryError] = createSignal<string | null>(null);
   const [openRunning, setOpenRunning] = createSignal(false);
   const [showPathEntry, setShowPathEntry] = createSignal(false);
-  const [recentRepositories, { refetch: refetchRecents }] = createResource(() =>
-    listRecentRepositories()
+  const [shouldLoadRecents, setShouldLoadRecents] = createSignal(false);
+  const [recentRepositories, { refetch: refetchRecents }] = createResource(
+    shouldLoadRecents,
+    async (enabled) => {
+      if (!enabled) {
+        return null;
+      }
+
+      return listRecentRepositories();
+    }
   );
+
+  onMount(() => {
+    const schedule =
+      typeof window.requestIdleCallback === "function"
+        ? (callback: () => void) =>
+            window.requestIdleCallback(() => {
+              callback();
+            }, { timeout: 250 })
+        : (callback: () => void) => window.setTimeout(callback, 0);
+
+    schedule(() => {
+      setShouldLoadRecents(true);
+    });
+  });
 
   createEffect(() => {
     const active = repository.activeRepositoryPath();

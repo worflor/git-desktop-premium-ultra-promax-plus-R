@@ -3,6 +3,7 @@ import { Navigate, Route, Router, type RouteSectionProps } from "@solidjs/router
 import { App } from "@/app/App";
 import { AppShellFrame } from "@/app/layout/AppShellFrame";
 import { WorkspacePage } from "@/features/workspace/WorkspacePage";
+import { applyTheme } from "@/lib/ui/theme";
 import "@/styles/tokens.css";
 import "@/styles/globals.css";
 import "@/styles/motion.css";
@@ -11,6 +12,11 @@ const root = document.getElementById("root");
 
 if (!root) {
   throw new Error("App root element not found.");
+}
+
+const bootstrappedTheme = document.documentElement.getAttribute("data-theme");
+if (bootstrappedTheme && bootstrappedTheme.trim().length > 0) {
+  applyTheme(bootstrappedTheme, { deferMaterial: true, force: true });
 }
 
 function AppRoot(props: RouteSectionProps) {

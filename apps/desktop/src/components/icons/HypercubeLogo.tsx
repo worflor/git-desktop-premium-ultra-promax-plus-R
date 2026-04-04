@@ -2,10 +2,11 @@ import { createSignal, onMount, onCleanup, For, createMemo, batch } from "solid-
 
 /**
  * HypercubeLogo - The Ultimate High-Fidelity 4D Brand Identity.
- * "Hard-Magnetic Breakaway" Edition:
- * - Mechanical Stiction: High-density magnetic capture (0.01x drag).
- * - Kinetic Threshold: Instant snap breakaway when pulled past the horizon.
- * - Reactive Tendrils: High-tension filaments connecting Home to Cube.
+ * "Physical Reality" Edition:
+ * - Dynamic Torque: Dragging displacement (Warp) induces natural 4D rotation (Twist).
+ * - High-Fidelity Tendrils: 1:1 accurate vertex anchoring between Home and Body.
+ * - Reactive Physics: Rotation responds to the "magnetic tension" of the drag.
+ * - Lifecycle Stability: Hardened For-loop signal access.
  */
 
 const VERTICES: [number, number, number, number][] = Array.from({ length: 16 }, (_, i) => [
@@ -50,14 +51,13 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
       const n = isNear();
       const d = isDragging();
       const boost = 1 + n * 1.5 + (d ? 3.5 : 0);
-      const s = (props.speed ?? 0.85) * boost;
-
-      setTime(t => t + dt * s);
+      setTime(t => t + dt * (props.speed ?? 0.85) * boost);
 
       const nextT = transition() + (0.07 * dt * boost);
       if (nextT >= 1) {
+        const nextTarget = Math.floor(Math.random() * STATES.length);
         setCurrentIdx(targetIdx());
-        setTargetIdx(Math.floor(Math.random() * STATES.length));
+        setTargetIdx(nextTarget);
         setTransition(0);
       } else {
         setTransition(nextT);
@@ -65,8 +65,8 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
 
       if (!d) {
         const w = warp();
-        const spring = 350; // Ultra snappy homing
-        const damp = 0.75;
+        const spring = 800; 
+        const damp = 0.7;
         const ax = -spring * w.x; const ay = -spring * w.y;
         const nVX = (w.vx + ax * dt) * damp; const nVY = (w.vy + ay * dt) * damp;
         setWarp({ x: w.x + nVX * dt, y: w.y + nVY * dt, vx: nVX, vy: nVY });
@@ -85,35 +85,51 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
     const tlt = tilt();
     const wrp = warp();
     const near = isNear();
-    
-    const start = STATES[currentIdx()]!;
-    const end = STATES[targetIdx()]!;
+    const sVal = size();
+    const startIdx = currentIdx();
+    const targetIdxVal = targetIdx();
+    const start = STATES[startIdx] || STATES[0]!;
+    const end = STATES[targetIdxVal] || STATES[1]!;
     const interp = trans * trans * (3 - 2 * trans);
     const angles = start.map((a, i) => a + (end[i]! - a) * interp);
-    const sVal = size();
 
     const solve = (tOff: number, fovOff: number, useWarp: boolean) => {
       const t = tVal + tOff;
-      const scale = sVal * 1.55 * (1 + Math.sin(t * 0.4) * 0.05 * near);
+      const breath = 1 + Math.sin(t * 0.4) * 0.05 * near;
+      const scale = sVal * 1.55 * breath;
+      
+      // Induced Torque: The warping displacement TWISTS the 4D axes
+      // This creates the feeling of a gimbal responding to the magnetic pull.
+      const rot = angles.map((a, i) => {
+        let ang = a;
+        if (i === 0) ang += tlt.x * 0.5 + (useWarp ? wrp.x / sVal * 0.8 : 0);
+        if (i === 1) ang += tlt.y * 0.5 + (useWarp ? wrp.y / sVal * 0.8 : 0);
+        if (i > 1) ang += Math.sin(t * 0.1) * 0.05 + (useWarp ? (wrp.x + wrp.y) / sVal * 0.2 : 0);
+        return { c: Math.cos(ang), s: Math.sin(ang) };
+      });
+
       return VERTICES.map((v) => {
         let [x, y, z, w] = v;
-        const [xy, xz, xw, yz, yw, zw] = angles.map((a, i) => {
-          if (i === 0) return a + tlt.x * 0.5;
-          if (i === 1) return a + tlt.y * 0.5;
-          return a + (Math.sin(t * 0.1) * 0.05);
-        });
+        const [rXY, rXZ, rXW, rYZ, rYW, rZW] = rot;
         let tx, ty, tz, tw;
-        tx = x*Math.cos(xy) - y*Math.sin(xy); ty = x*Math.sin(xy) + y*Math.cos(xy); [x, y] = [tx, ty];
-        tx = x*Math.cos(xz) - z*Math.sin(xz); tz = x*Math.sin(xz) + z*Math.cos(xz); [x, z] = [tx, tz];
-        tx = x*Math.cos(xw) - w*Math.sin(xw); tw = x*Math.sin(xw) + w * Math.cos(xw); [x, w] = [tx, tw];
-        ty = y*Math.cos(yz) - z*Math.sin(yz); tz = y*Math.sin(yz) + z*Math.cos(yz); [y, z] = [ty, tz];
-        ty = y*Math.cos(yw) - w*Math.sin(yw); tw = y*Math.sin(yw) + w*Math.cos(yw); [y, w] = [ty, tw];
-        tz = z*Math.cos(zw) - w*Math.sin(zw); tw = z*Math.sin(zw) + w*Math.cos(zw); [z, w] = [tz, tw];
+        tx = x*rXY!.c - y*rXY!.s; ty = x*rXY!.s + y*rXY!.c; [x, y] = [tx, ty];
+        tx = x*rXZ!.c - z*rXZ!.s; tz = x*rXZ!.s + z*rXZ!.c; [x, z] = [tx, tz];
+        tx = x*rXW!.c - w*rXW!.s; tw = x*rXW!.s + w*rXW!.c; [x, w] = [tx, tw];
+        ty = y*rYZ!.c - z*rYZ!.s; tz = y*rYZ!.s + z*rYZ!.c; [y, z] = [ty, tz];
+        ty = y*rYW!.c - w*rYW!.s; tw = y*rYW!.s + w*rYW!.c; [y, w] = [ty, tw];
+        tz = z*rZW!.c - w*rZW!.s; tw = z*rZW!.s + w*rZW!.c; [z, w] = [tz, tw];
+
         const fov4D = 1 / (2.4 - (near * 0.3) + fovOff - w);
         x *= fov4D; y *= fov4D; z *= fov4D;
         const fov3D = 1 / (3.6 - z);
         x *= fov3D; y *= fov3D;
-        return { x: (x * scale) + sVal/2 + (useWarp ? wrp.x : 0), y: (y * scale) + sVal/2 + (useWarp ? wrp.y : 0) };
+
+        return { 
+          x: (x * scale) + sVal/2 + (useWarp ? wrp.x : 0), 
+          y: (y * scale) + sVal/2 + (useWarp ? wrp.y : 0), 
+          z, 
+          w 
+        };
       });
     };
     return { main: solve(0, 0, true), home: solve(-0.2, 0.04, false) };
@@ -125,24 +141,20 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
     const dx = e.clientX - rect.left - size()/2;
     const dy = e.clientY - rect.top - size()/2;
     const d = Math.sqrt(dx*dx + dy*dy);
-    
-    setTilt({ x: dx/size(), y: dy/size() });
-    setIsNear(Math.max(0, 1 - d/(size()*3)));
-    
-    if (isDragging()) {
-      // Hard Mechanical Magnetism
-      const threshold = size() * 1.4; // Breakaway horizon
-      let factor;
-      if (d < threshold) {
-        // High-density attraction logic
-        factor = 0.02 + Math.pow(d / threshold, 4) * 0.3; // Hard stictional curves
-      } else {
-        // Sudden breakthrough snapping to cursor
-        factor = 1.0; 
+    batch(() => {
+      setTilt({ x: dx/size(), y: dy/size() });
+      setIsNear(Math.max(0, 1 - d/(size()*3)));
+      if (isDragging()) {
+        const threshold = size() * 2.2; 
+        const sigmaFactor = size() * 0.3;
+        const sigma = 1 / (1 + Math.exp(-(d - threshold) / sigmaFactor)); 
+        const f = 0.01 + sigma * 0.99;
+        setWarp({ x: dx * f, y: dy * f, vx: 0, vy: 0 });
       }
-      setWarp({ x: dx * factor, y: dy * factor, vx: 0, vy: 0 });
-    }
+    });
   };
+
+  const geo = () => getProjection();
 
   return (
     <svg 
@@ -160,34 +172,40 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
       <defs>
         <filter id="hyper-glow" x="-500%" y="-500%" width="1200%" height="1200%">
           <feGaussianBlur in="SourceGraphic" stdDeviation={0.6 + isNear() * 0.5} result="blur" />
-          <feColorMatrix in="blur" type="saturate" values={1.8 + isNear() * 1.5} result="bright" />
+          <feColorMatrix in="blur" type="saturate" values={`${1.8 + isNear() * 1.5}`} result="bright" />
           <feComposite in="SourceGraphic" in2="bright" operator="over" />
         </filter>
       </defs>
 
-      {/* Origin Residuals */}
+      {/* Residual Anchor */}
       <g stroke="#00ffff" stroke-width="0.32" opacity={isNear() * 0.35 + (isDragging() ? 0.3 : 0)}>
-        <For each={EDGES}>{([i, j]) => {
-          const m = getProjection();
-          return ( <line x1={m.home[i]!.x} y1={m.home[i]!.y} x2={m.home[j]!.x} y2={m.home[j]!.y} /> );
-        }}</For>
+        <For each={EDGES}>{([i, j]) => (
+           <line 
+             x1={geo().home[i]?.x ?? 0} y1={geo().home[i]?.y ?? 0} 
+             x2={geo().home[j]?.x ?? 0} y2={geo().home[j]?.y ?? 0} 
+           /> 
+        )}</For>
       </g>
 
-      {/* Tendrils */}
+      {/* Tendrils: Bridging Home to Warp */}
       <g stroke={props.themeColor ?? "currentColor"} stroke-width="0.14" opacity={isDragging() ? 0.45 : 0} stroke-dasharray="0.5 4">
-        <For each={getProjection().main}>{(p, i) => {
-           const h = getProjection().home[i]!;
-           return ( <line x1={p.x} y1={p.y} x2={h.x} y2={h.y} /> );
-        }}</For>
+        <For each={geo().main}>{(p, i) => (
+           <line x1={p.x} y1={p.y} x2={geo().home[i()]?.x ?? 0} y2={geo().home[i()]?.y ?? 0} /> 
+        )}</For>
       </g>
 
-      {/* Main Struct */}
+      {/* Breakaway Body */}
       <g fill="none" stroke={props.themeColor ?? "currentColor"} stroke-linecap="round" stroke-linejoin="round" filter="url(#hyper-glow)">
         <For each={EDGES}>{([i, j]) => {
-          const m = getProjection();
-          const depth = (m.main[i]!.z + m.main[j]!.z) / 2;
-          const op = 0.25 + isNear() * 0.25;
-          return ( <line x1={m.main[i]!.x} y1={m.main[i]!.y} x2={m.main[j]!.x} y2={m.main[j]!.y} stroke-opacity={op} stroke-width={0.45 + (op * 1.5) + (isDragging() ? 0.7 : 0)} /> );
+          const op = () => 0.25 + isNear() * 0.25;
+          return ( 
+            <line 
+              x1={geo().main[i]?.x ?? 0} y1={geo().main[i]?.y ?? 0} 
+              x2={geo().main[j]?.x ?? 0} y2={geo().main[j]?.y ?? 0} 
+              stroke-opacity={op()} 
+              stroke-width={0.45 + (op() * 1.5) + (isDragging() ? 0.8 : 0)} 
+            /> 
+          );
         }}</For>
       </g>
     </svg>

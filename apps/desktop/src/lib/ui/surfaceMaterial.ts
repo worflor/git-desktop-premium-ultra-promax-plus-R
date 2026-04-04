@@ -51,7 +51,13 @@ interface MotionRuntime {
   duration: string;
 }
 
+interface MaterialPayload {
+  texture: string;
+  particles: ParticlePayload;
+}
+
 const CHANNEL_MAX = 255;
+const MATERIAL_PAYLOAD_CACHE_LIMIT = 24;
 const OVERLAY_BINDINGS: readonly OverlayBinding[] = [
   { source: "--panel-overlay", target: "--runtime-panel-overlay" },
   { source: "--panel-overlay-strong", target: "--runtime-panel-overlay-strong" },
@@ -79,6 +85,10 @@ const MOTION_RUNTIME_BY_KIND: Readonly<Record<NonNullable<SurfaceMaterialShader[
   fluid: { ease: "cubic-bezier(0.4, 0, 0.2, 1)", duration: "180ms" },
   elastic: { ease: "cubic-bezier(0.68, -0.55, 0.26, 1.55)", duration: "250ms" }
 };
+
+const materialPayloadCache = new Map<string, MaterialPayload>();
+const pendingMaterialPayloadKeys = new Set<string>();
+let materialGenerationEpoch = 0;
 
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -287,6 +297,100 @@ function applyStateTintRuntime(root: HTMLElement, p: RgbaColor | null, tgt: stri
   root.style.setProperty(tgt, toRgbaString({ r: p.r, g: p.g, b: p.b, a: clamp(alpha, 0, 0.985) }));
 }
 
+function buildMaterialCacheKey(shader: SurfaceMaterialShader, ambient: RgbaColor | null): string {
+  const ambientKey = ambient
+    ? `${Math.round(ambient.r)},${Math.round(ambient.g)},${Math.round(ambient.b)},${ambient.a.toFixed(3)}`
+    : "none";
+  return `${JSON.stringify(shader)}|${ambientKey}`;
+}
+
+function getCachedMaterialPayload(key: string): MaterialPayload | null {
+  const payload = materialPayloadCache.get(key);
+  if (!payload) {
+    return null;
+  }
+
+  materialPayloadCache.delete(key);
+  materialPayloadCache.set(key, payload);
+  return payload;
+}
+
+function setCachedMaterialPayload(key: string, payload: MaterialPayload): void {
+  materialPayloadCache.set(key, payload);
+  if (materialPayloadCache.size <= MATERIAL_PAYLOAD_CACHE_LIMIT) {
+    return;
+  }
+
+  const firstKey = materialPayloadCache.keys().next().value;
+  if (typeof firstKey === "string") {
+    materialPayloadCache.delete(firstKey);
+  }
+}
+
+function clearMaterialPayload(root: HTMLElement): void {
+  root.style.setProperty("--runtime-material-texture", "none");
+  root.style.setProperty("--runtime-material-particles", "none");
+  ["near", "mid", "far", "bg"].forEach((layer) => {
+    root.style.removeProperty(`--runtime-material-particles-${layer}`);
+  });
+}
+
+function applyParticlePayload(root: HTMLElement, particles: ParticlePayload): void {
+  if (typeof particles === "string") {
+    root.style.setProperty("--runtime-material-particles", particles);
+    ["near", "mid", "far", "bg"].forEach((layer) => {
+      root.style.removeProperty(`--runtime-material-particles-${layer}`);
+    });
+    return;
+  }
+
+  root.style.setProperty("--runtime-material-particles", "none");
+  Object.entries(particles).forEach(([layer, payload]) => {
+    root.style.setProperty(`--runtime-material-particles-${layer}`, payload);
+  });
+}
+
+function applyMaterialPayload(root: HTMLElement, payload: MaterialPayload): void {
+  root.style.setProperty("--runtime-material-texture", payload.texture);
+  applyParticlePayload(root, payload.particles);
+}
+
+function scheduleMaterialPayloadGeneration(
+  root: HTMLElement,
+  shader: SurfaceMaterialShader,
+  ambient: RgbaColor | null,
+  cacheKey: string,
+  generationEpoch: number,
+  defer: boolean
+): void {
+  if (pendingMaterialPayloadKeys.has(cacheKey)) {
+    return;
+  }
+
+  pendingMaterialPayloadKeys.add(cacheKey);
+  const runGeneration = () => {
+    pendingMaterialPayloadKeys.delete(cacheKey);
+    const payload: MaterialPayload = {
+      texture: generateProceduralTexture(shader, ambient),
+      particles: generateProceduralParticles(shader, ambient)
+    };
+
+    setCachedMaterialPayload(cacheKey, payload);
+    if (generationEpoch !== materialGenerationEpoch) {
+      return;
+    }
+
+    applyMaterialPayload(root, payload);
+  };
+
+  if (defer) {
+    window.setTimeout(runGeneration, 0);
+    return;
+  }
+
+  runGeneration();
+}
+
 export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLElement): void {
   if (typeof window === "undefined") return;
   const runtime = computeRuntime(shader, window.devicePixelRatio || 1);
@@ -303,15 +407,24 @@ export function applySurfaceMaterial(shader: SurfaceMaterialShader, root: HTMLEl
   };
   const rA = cS.getPropertyValue("--theme-ambient-rgb").trim();
   const ambient = rA ? parseCssColor(`rgb(${rA})`) : null;
-  root.style.setProperty("--runtime-material-texture", generateProceduralTexture(shader, ambient));
-  const particles = generateProceduralParticles(shader, ambient);
-  if (typeof particles === "string") {
-    root.style.setProperty("--runtime-material-particles", particles);
-    ["near", "mid", "far", "bg"].forEach(l => root.style.removeProperty(`--runtime-material-particles-${l}`));
+
+  const generationEpoch = ++materialGenerationEpoch;
+  const materialCacheKey = buildMaterialCacheKey(shader, ambient);
+  const cachedMaterialPayload = getCachedMaterialPayload(materialCacheKey);
+  if (cachedMaterialPayload) {
+    applyMaterialPayload(root, cachedMaterialPayload);
   } else {
-    root.style.setProperty("--runtime-material-particles", "none");
-    Object.entries(particles).forEach(([k, v]) => root.style.setProperty(`--runtime-material-particles-${k}`, v));
+    clearMaterialPayload(root);
+    scheduleMaterialPayloadGeneration(
+      root,
+      shader,
+      ambient,
+      materialCacheKey,
+      generationEpoch,
+      document.readyState !== "complete"
+    );
   }
+
   const interaction = shader.interaction ?? "none";
   root.style.setProperty("--runtime-interaction-signature", interaction);
   document.documentElement.setAttribute("data-interaction", interaction);

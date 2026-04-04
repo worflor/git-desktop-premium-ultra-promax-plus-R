@@ -140,27 +140,31 @@ export function WorkspacePage() {
       {/* ── Content surface ── */}
       <div class="workspace-content">
         <div class="workspace-content-panel" classList={{ "is-empty": !hasActiveRepository() }}>
-          <Show when={!hasActiveRepository()}>
-            <div class="workspace-empty-inline-hint">
-              Open a project to get started.
-            </div>
+          <Show
+            when={hasActiveRepository()}
+            fallback={
+              <div class="workspace-empty-inline-hint">
+                Open a project to get started.
+              </div>
+            }
+          >
+            <Suspense fallback={<LoadingStateSkeleton />}>
+              <Switch>
+                <Match when={activeMode() === "changes"}>
+                  <ChangesPage embedded />
+                </Match>
+                <Match when={activeMode() === "history"}>
+                  <HistoryPage embedded />
+                </Match>
+                <Match when={activeMode() === "branches"}>
+                  <BranchesPage embedded />
+                </Match>
+                <Match when={activeMode() === "sync"}>
+                  <SyncPage embedded />
+                </Match>
+              </Switch>
+            </Suspense>
           </Show>
-          <Suspense fallback={<LoadingStateSkeleton />}>
-            <Switch>
-              <Match when={activeMode() === "changes"}>
-                <ChangesPage embedded />
-              </Match>
-              <Match when={activeMode() === "history"}>
-                <HistoryPage embedded />
-              </Match>
-              <Match when={activeMode() === "branches"}>
-                <BranchesPage embedded />
-              </Match>
-              <Match when={activeMode() === "sync"}>
-                <SyncPage embedded />
-              </Match>
-            </Switch>
-          </Suspense>
         </div>
       </div>
 

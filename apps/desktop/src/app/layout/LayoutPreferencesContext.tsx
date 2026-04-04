@@ -153,7 +153,7 @@ export function LayoutPreferencesProvider(props: ParentProps) {
     };
 
     setThemeIdSignal(normalized.themeId as ThemeId);
-    applyTheme(normalized.themeId);
+    applyTheme(normalized.themeId, { deferMaterial: !initialized() });
     setKeybindingProfileSignal(normalized.keybindingProfile as KeybindingProfile);
     setSidebarWidthPxSignal(normalized.sidebarWidthPx);
     setSidebarPositionSignal(normalized.sidebarPosition as SidebarPosition);
@@ -249,7 +249,7 @@ export function LayoutPreferencesProvider(props: ParentProps) {
   };
 
   onMount(() => {
-    applyTheme(themeId());
+    applyTheme(themeId(), { deferMaterial: true });
     void loadSettings();
   });
 

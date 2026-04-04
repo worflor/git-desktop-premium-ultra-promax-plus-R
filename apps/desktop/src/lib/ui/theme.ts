@@ -252,13 +252,43 @@ export function normalizeThemeId(value: string): ThemeId {
   return DEFAULT_THEME_ID;
 }
 
-export function applyTheme(themeIdInput: ThemeId | string): void {
+interface ApplyThemeOptions {
+  deferMaterial?: boolean;
+  force?: boolean;
+}
+
+let activeThemeId: ThemeId | null = null;
+let deferredMaterialFrameId: number | null = null;
+
+export function applyTheme(themeIdInput: ThemeId | string, options?: ApplyThemeOptions): void {
   if (typeof document === "undefined") {
     return;
   }
 
   const themeId = normalizeThemeId(themeIdInput);
   const root = document.documentElement;
+
+  if (!options?.force && activeThemeId === themeId) {
+    return;
+  }
+
+  activeThemeId = themeId;
   root.setAttribute("data-theme", themeId);
-  applySurfaceMaterial(findThemeDefinition(themeId).shader, root);
+
+  if (deferredMaterialFrameId !== null) {
+    window.cancelAnimationFrame(deferredMaterialFrameId);
+    deferredMaterialFrameId = null;
+  }
+
+  const applyMaterial = () => {
+    deferredMaterialFrameId = null;
+    applySurfaceMaterial(findThemeDefinition(themeId).shader, root);
+  };
+
+  if (options?.deferMaterial) {
+    deferredMaterialFrameId = window.requestAnimationFrame(applyMaterial);
+    return;
+  }
+
+  applyMaterial();
 }

@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -27,6 +27,7 @@ const MAX_RETAINED_JOBS: usize = 64;
 const MAX_PROVIDER_RUNTIME: Duration = Duration::from_secs(90);
 const MAX_STDIN_DIFF_CHARS: usize = 120_000;
 const MAX_INLINE_DIFF_CHARS: usize = 6_000;
+const PROVIDER_RESOLUTION_CACHE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy)]
 struct CliProviderAdapter {
@@ -86,6 +87,12 @@ struct ProviderResolution {
     command: String,
     source: String,
     health_check: String,
+}
+
+#[derive(Clone)]
+struct ProviderResolutionCacheEntry {
+    checked_at: Instant,
+    resolution: Option<ProviderResolution>,
 }
 
 pub fn list_providers() -> Result<AiProviderListData, AppError> {
@@ -944,18 +951,45 @@ fn resolve_provider(adapter: &dyn AiProviderAdapter) -> Option<ProviderResolutio
 }
 
 fn resolve_provider_command(binary: &str) -> Option<ProviderResolution> {
+    let cache_key = binary.trim().to_ascii_lowercase();
+    if let Ok(cache) = provider_resolution_cache().lock() {
+        if let Some(entry) = cache.get(cache_key.as_str()) {
+            if entry.checked_at.elapsed() < PROVIDER_RESOLUTION_CACHE_TTL {
+                return entry.resolution.clone();
+            }
+        }
+    }
+
     let candidates = known_binary_candidates(binary);
+    let mut resolved = None;
     for (command, source) in candidates {
         if let Some(health_check) = probe_binary_health(command.as_str()) {
-            return Some(ProviderResolution {
+            resolved = Some(ProviderResolution {
                 command,
                 source,
                 health_check,
             });
+            break;
         }
     }
 
-    None
+    if let Ok(mut cache) = provider_resolution_cache().lock() {
+        cache.insert(
+            cache_key,
+            ProviderResolutionCacheEntry {
+                checked_at: Instant::now(),
+                resolution: resolved.clone(),
+            },
+        );
+    }
+
+    resolved
+}
+
+fn provider_resolution_cache() -> &'static Mutex<std::collections::HashMap<String, ProviderResolutionCacheEntry>> {
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<String, ProviderResolutionCacheEntry>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
 fn known_binary_candidates(binary: &str) -> Vec<(String, String)> {
