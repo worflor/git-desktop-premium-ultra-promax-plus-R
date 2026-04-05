@@ -32,7 +32,7 @@ pub fn get_repository_status(repository_path: &str) -> Result<RepositoryStatusDa
 pub fn list_branches(repository_path: &str) -> Result<BranchListData, AppError> {
     if let Ok(cache) = branch_list_cache().lock() {
         if let Some(entry) = cache.get(repository_path) {
-            if entry.captured_at.elapsed() <= BRANCH_LIST_CACHE_TTL {
+            if is_cache_snapshot_fresh(entry.captured_at, BRANCH_LIST_CACHE_TTL) {
                 return Ok(entry.data.clone());
             }
         }
@@ -59,7 +59,7 @@ pub fn list_commit_history(
     let cache_key = commit_history_cache_key(repository_path, limit, branch)?;
     if let Ok(cache) = commit_history_cache().lock() {
         if let Some(entry) = cache.get(cache_key.as_str()) {
-            if entry.captured_at.elapsed() <= COMMIT_HISTORY_CACHE_TTL {
+            if is_cache_snapshot_fresh(entry.captured_at, COMMIT_HISTORY_CACHE_TTL) {
                 return Ok(entry.data.clone());
             }
         }
@@ -289,15 +289,19 @@ fn branch_list_cache() -> &'static Mutex<HashMap<String, BranchListSnapshot>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn normalized_branch_name(branch: Option<&str>) -> Option<&str> {
+    branch.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then_some(trimmed)
+    })
+}
+
 fn commit_history_cache_key(
     repository_path: &str,
     limit: usize,
     branch: Option<&str>,
 ) -> Result<String, AppError> {
-    if let Some(branch_name) = branch.and_then(|value| {
-        let trimmed = value.trim();
-        (!trimmed.is_empty()).then_some(trimmed)
-    }) {
+    if let Some(branch_name) = normalized_branch_name(branch) {
         return Ok(format!("{repository_path}::{branch_name}::{limit}"));
     }
 
@@ -311,4 +315,8 @@ fn commit_history_cache_key(
 fn commit_history_cache() -> &'static Mutex<HashMap<String, CommitHistorySnapshot>> {
     static CACHE: OnceLock<Mutex<HashMap<String, CommitHistorySnapshot>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn is_cache_snapshot_fresh(captured_at: Instant, ttl: Duration) -> bool {
+    captured_at.elapsed() <= ttl
 }

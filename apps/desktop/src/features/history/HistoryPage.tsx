@@ -16,7 +16,6 @@ interface GraphNode extends CommitHistoryEntry {
   row: number;
   lane: number;
   visibleParents: string[];
-  visibleChildren: string[];
 }
 
 interface GraphEdge {
@@ -32,18 +31,43 @@ interface GraphLayout {
   nodes: GraphNode[];
   edges: GraphEdge[];
   laneCount: number;
-  hashToNode: Map<string, GraphNode>;
+}
+
+interface TimelineConfig {
+  EDGE_INSET_PX: number;
+  LENS_RADIUS_MIN: number;
+  LENS_RADIUS_MAX: number;
+  TEMPORAL_BLEND: number;
+  SCALE_FOCUS: number;
+  SCALE_SELECTED: number;
+  SCALE_HOVER: number;
+  GAP_LOG_FACTOR: number;
+  MIN_LANE_HEIGHT: number;
 }
 
 interface LensNodeMetric {
-  centerPercent: number;
-  shiftPx: number;
   scale: number;
   x: number;
   y: number;
 }
 
+const HISTORY_DEFAULT_LIMIT = 50;
+const HISTORY_MAX_LIMIT = 500;
 const HISTORY_CACHE_TTL_MS = 1500;
+const TIMELINE_NODE_RADIUS_PX = 3;
+const TIMELINE_TRACK_VERTICAL_INSET_PX = 8;
+const TIMELINE_STRIP_HORIZONTAL_PADDING_PX = 16;
+const TIMELINE_CONFIG: TimelineConfig = {
+  EDGE_INSET_PX: TIMELINE_NODE_RADIUS_PX,
+  LENS_RADIUS_MIN: 32,
+  LENS_RADIUS_MAX: 64,
+  TEMPORAL_BLEND: 0.32,
+  SCALE_FOCUS: 0.45,
+  SCALE_SELECTED: 1.25,
+  SCALE_HOVER: 1.1,
+  GAP_LOG_FACTOR: 1.1,
+  MIN_LANE_HEIGHT: 42
+};
 
 interface HistoryCacheEntry {
   capturedAt: number;
@@ -67,6 +91,37 @@ function getCachedHistoryEntry(cacheKey: string): HistoryCacheEntry | null {
   }
 
   return cached;
+}
+
+function clampHistoryLimit(input: string): number {
+  const parsed = Number.parseInt(input.trim(), 10);
+  if (Number.isNaN(parsed)) {
+    return HISTORY_DEFAULT_LIMIT;
+  }
+  return Math.min(Math.max(parsed, 1), HISTORY_MAX_LIMIT);
+}
+
+function projectTimelineBaseXs(
+  nodeCount: number,
+  width: number,
+  percents: number[],
+  edgeInsetPx: number
+): number[] {
+  if (nodeCount === 0) return [];
+  if (nodeCount === 1) return [width * 0.5];
+
+  const usableWidth = Math.max(0, width - edgeInsetPx * 2);
+  const rawBasePositions = Array.from({ length: nodeCount }, (_, index) => {
+    const centerPercent = percents[index] ?? 50;
+    return (centerPercent / 100) * usableWidth;
+  });
+  const minBaseX = Math.min(...rawBasePositions);
+  const maxBaseX = Math.max(...rawBasePositions);
+  const baseRange = Math.max(maxBaseX - minBaseX, 1);
+
+  return rawBasePositions.map(
+    (rawBaseX) => edgeInsetPx + ((rawBaseX - minBaseX) / baseRange) * usableWidth
+  );
 }
 
 function CommitTime(props: { isoString: string; style?: string; class?: string; readOnly?: boolean }) {
@@ -153,9 +208,6 @@ function buildGraphLayout(entries: CommitHistoryEntry[]): GraphLayout {
   const visibleHashes = new Set(entries.map((entry) => entry.commitHash));
   const activeLanes: Array<string | null> = [];
   const hashToNode = new Map<string, GraphNode>();
-  const hashToLane = new Map<string, number>();
-  const hashToRow = new Map<string, number>();
-  const childrenMap = new Map<string, string[]>();
   let laneCount = 1;
 
   const reserveLaneForHash = (hash: string, preferredLane?: number) => {
@@ -203,32 +255,21 @@ function buildGraphLayout(entries: CommitHistoryEntry[]): GraphLayout {
     }
 
     laneCount = Math.max(laneCount, lane + 1, activeLanes.length);
-    hashToLane.set(entry.commitHash, lane);
-    hashToRow.set(entry.commitHash, row);
 
     const node: GraphNode = {
       ...entry,
       row,
       lane,
-      visibleParents,
-      visibleChildren: [] // Will be populated in the next pass
+      visibleParents
     };
 
     hashToNode.set(entry.commitHash, node);
     return node;
   });
 
-  // Second pass: Populate visibleChildren and edges
   const edges: GraphEdge[] = [];
   nodes.forEach((node) => {
     node.visibleParents.forEach((parentHash) => {
-      // Connect neighbors in the child map
-      const children = childrenMap.get(parentHash) || [];
-      if (!children.includes(node.commitHash)) {
-        children.push(node.commitHash);
-        childrenMap.set(parentHash, children);
-      }
-
       const parentNode = hashToNode.get(parentHash);
       if (parentNode) {
         edges.push({
@@ -243,17 +284,12 @@ function buildGraphLayout(entries: CommitHistoryEntry[]): GraphLayout {
     });
   });
 
-  // Final pass: Back-hydrate nodes with their children
-  nodes.forEach((node) => {
-    node.visibleChildren = childrenMap.get(node.commitHash) || [];
-  });
-
-  return { nodes, edges, laneCount, hashToNode };
+  return { nodes, edges, laneCount };
 }
 
 function computeTimelineBasePercents(
   entries: CommitHistoryEntry[],
-  timelineConfig: { GAP_LOG_FACTOR: number; TEMPORAL_BLEND: number }
+  timelineConfig: Pick<TimelineConfig, "GAP_LOG_FACTOR" | "TEMPORAL_BLEND">
 ): number[] {
   const count = entries.length;
   if (count === 0) return [];
@@ -298,7 +334,7 @@ function computeTimelineBasePercents(
 export function HistoryPage(props: HistoryPageProps = {}) {
   const mountedAt = performance.now();
   const repository = useRepositoryContext();
-  const [historyLimitInput, setHistoryLimitInput] = createSignal("50");
+  const [historyLimitInput, setHistoryLimitInput] = createSignal(String(HISTORY_DEFAULT_LIMIT));
   const [selectedCommitHash, setSelectedCommitHash] = createSignal<string | null>(null);
   const [historyData, setHistoryData] = createSignal<CommitHistoryData | null>(null);
   const [historyError, setHistoryError] = createSignal<string | null>(null);
@@ -316,13 +352,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
   const commitDetailCacheKey = (repositoryPath: string, commitHash: string) =>
     `${repositoryPath}::${commitHash}`;
 
-  const parsedLimit = () => {
-    const parsed = Number.parseInt(historyLimitInput().trim(), 10);
-    if (Number.isNaN(parsed)) {
-      return 50;
-    }
-    return Math.min(Math.max(parsed, 1), 500);
-  };
+  const parsedLimit = () => clampHistoryLimit(historyLimitInput());
 
   const overviewEntries = createMemo(() => {
     const history = historyData();
@@ -330,44 +360,27 @@ export function HistoryPage(props: HistoryPageProps = {}) {
   });
 
   const overviewGraph = createMemo(() => buildGraphLayout(overviewEntries()));
-  const overviewHeight = createMemo(() => Math.max(42, overviewGraph().laneCount * 14 + 18));
-  const overviewLaneStep = createMemo(() => (overviewHeight() - 16) / Math.max(overviewGraph().laneCount, 1));
+  const overviewHeight = createMemo(() =>
+    Math.max(TIMELINE_CONFIG.MIN_LANE_HEIGHT, overviewGraph().laneCount * 14 + 18)
+  );
+  const overviewLaneStep = createMemo(
+    () =>
+      (overviewHeight() - TIMELINE_TRACK_VERTICAL_INSET_PX * 2) /
+      Math.max(overviewGraph().laneCount, 1)
+  );
   const effectiveOverviewWidth = createMemo(() => {
     const w = overviewWidth();
     return w > 1 ? w : (overviewContainer?.getBoundingClientRect().width ?? 600);
   });
   // ─── Timeline Architecture Standards ──────────────────────────────
-  const TIMELINE_CONFIG = {
-    INSET_PX: 4,             // Node-box inset so endpoints sit flush with the rail
-    LENS_RADIUS_MIN: 32,    // Minimum influence radius
-    LENS_RADIUS_MAX: 64,    // Maximum influence radius
-    MAX_SHIFT_PX: 10,       // Maximum displacement at lens boundary
-    TEMPORAL_BLEND: 0.32,    // Ratio of time-linear vs even-distribution (lower = more visually balanced)
-    SCALE_FOCUS: 0.45,      // Magnification power at dead center
-    SCALE_SELECTED: 1.25,   // Multiplier for active commit
-    SCALE_HOVER: 1.1,       // Multiplier for mouse hover
-    GAP_LOG_FACTOR: 1.1,    // Exponential expansion of long time-gaps
-    MIN_LANE_HEIGHT: 42     // Vertical spacing for branch topology
-  } as const;
   const timelineBasePercents = createMemo<number[]>(() => computeTimelineBasePercents(overviewEntries(), TIMELINE_CONFIG));
   const projectedTimelineBaseXs = createMemo<number[]>(() => {
-    const nodes = overviewGraph().nodes;
-    const width = effectiveOverviewWidth();
-    if (nodes.length === 0) return [];
-    if (nodes.length === 1) return [width * 0.5];
-
-    const { INSET_PX } = TIMELINE_CONFIG;
-    const percents = timelineBasePercents();
-    const usableWidth = Math.max(0, width - INSET_PX * 2);
-    const rawBasePositions = nodes.map((_, index) => {
-      const centerPercent = percents[index] ?? 50;
-      return (centerPercent / 100) * usableWidth;
-    });
-    const minBaseX = Math.min(...rawBasePositions);
-    const maxBaseX = Math.max(...rawBasePositions);
-    const baseRange = Math.max(maxBaseX - minBaseX, 1);
-
-    return rawBasePositions.map((rawBaseX) => INSET_PX + ((rawBaseX - minBaseX) / baseRange) * usableWidth);
+    return projectTimelineBaseXs(
+      overviewGraph().nodes.length,
+      effectiveOverviewWidth(),
+      timelineBasePercents(),
+      TIMELINE_CONFIG.EDGE_INSET_PX
+    );
   });
 
   const hoveredNodeCenterPx = createMemo(() => {
@@ -404,9 +417,9 @@ export function HistoryPage(props: HistoryPageProps = {}) {
 
     if (nodes.length === 1) {
       return [{
-        centerPercent: 50, shiftPx: 0,
         scale: (selectedCommitHash() === nodes[0]!.commitHash ? SCALE_SELECTED : 1),
-        x: width * 0.5, y: 8 + laneCenterOffset
+        x: width * 0.5,
+        y: TIMELINE_TRACK_VERTICAL_INSET_PX + laneCenterOffset
       }];
     }
 
@@ -420,10 +433,8 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     };
 
     const baseXs = projectedTimelineBaseXs();
-    const percents = timelineBasePercents();
 
     return nodes.map((node, index) => {
-      const centerPercent = percents[index] ?? 50;
       const baseCenterPx = baseXs[index] ?? width * 0.5;
       const deltaPx = baseCenterPx - focusPx;
       const focusGain = influenceAt(Math.abs(deltaPx));
@@ -437,11 +448,9 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       if (node.isMerge) scale *= 1.05;
 
       return {
-        centerPercent,
-        shiftPx: 0,
         scale,
         x: baseCenterPx,
-        y: 8 + node.lane * laneStep + laneCenterOffset
+        y: TIMELINE_TRACK_VERTICAL_INSET_PX + node.lane * laneStep + laneCenterOffset
       };
     });
   });
@@ -764,7 +773,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
         >
           <div
             class="history-topology-strip"
-            style={`height: ${overviewHeight() + 16}px; padding: 8px 16px; box-sizing: border-box;`}
+            style={`height: ${overviewHeight() + TIMELINE_TRACK_VERTICAL_INSET_PX * 2}px; padding: ${TIMELINE_TRACK_VERTICAL_INSET_PX}px ${TIMELINE_STRIP_HORIZONTAL_PADDING_PX}px; box-sizing: border-box;`}
           >
             <div
               ref={overviewContainer}
@@ -795,7 +804,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
               <div
                 class="history-topology-rail"
                 style={{
-                  top: `${8 + overviewLaneStep() / 2}px`
+                  top: `${TIMELINE_TRACK_VERTICAL_INSET_PX + overviewLaneStep() / 2}px`
                 }}
               />
               <svg
@@ -851,35 +860,20 @@ export function HistoryPage(props: HistoryPageProps = {}) {
               <For each={overviewGraph().nodes}>
                 {(node, index) => {
                   const metric = () => lensMetrics()[index()];
-                  const totalNodes = () => overviewGraph().nodes.length;
-                  const isFirstNode = () => index() === 0;
-                  const isLastNode = () => index() === totalNodes() - 1;
-                  const leftPosition = () => {
-                    if (isFirstNode()) return "0%";
-                    if (isLastNode()) return "100%";
-                    return `${metric()?.centerPercent ?? 50}%`;
-                  };
-                  const translateX = () => {
-                    if (isFirstNode()) return "0%";
-                    if (isLastNode()) return "-100%";
-                    return "-50%";
-                  };
                   return (
                     <button
                       type="button"
                       class={`history-topology-node ${selectedCommitHash() === node.commitHash ? "is-active" : ""} ${hoveredCommitHash() === node.commitHash ? "is-hovered" : ""} ${node.isMerge ? "is-merge" : ""}`}
                       style={{
-                        left: leftPosition(),
+                        left: `${metric()?.x ?? 0}px`,
                         top: `${metric()?.y ?? 0}px`,
-                        transform: `translate(${translateX()}, -50%) scale(${metric()?.scale ?? 1})`,
+                        transform: `translate(-50%, -50%) scale(${metric()?.scale ?? 1})`,
                         "z-index": selectedCommitHash() === node.commitHash ? 12 : hoveredCommitHash() === node.commitHash ? 8 : 2
                       }}
                       onClick={() => {
                         setSelectedCommitHash(node.commitHash);
                         const m = metric();
-                        if (m && overviewContainer) {
-                          setHoverLensX((m.centerPercent / 100) * overviewContainer.clientWidth);
-                        }
+                        if (m) setHoverLensX(m.x);
                       }}
                       onPointerEnter={() => setHoveredCommitHash(node.commitHash)}
                       title={`${node.shortHash}: ${node.subject}`}
