@@ -5,13 +5,24 @@ use std::time::{Duration, Instant};
 use crate::errors::AppError;
 use crate::models::operations::{BranchListData, CommitDetailData, CommitHistoryData};
 use crate::models::repository::RepositoryStatusData;
-use crate::services::{git_provider, repository_root_service, repository_topology_service};
+use crate::services::{git_provider, repository_topology_service};
 
 const MAX_CACHED_COMMIT_DETAILS: usize = 512;
 const BRANCH_LIST_CACHE_TTL: Duration = Duration::from_secs(3);
-const COMMIT_HISTORY_CACHE_TTL: Duration = Duration::from_millis(1500);
+const COMMIT_HISTORY_CACHE_TTL: Duration = Duration::from_secs(10);
 
 type PendingCommitDetailSignal = Arc<(Mutex<bool>, Condvar)>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommitDetailFetchPriority {
+    UserInteractive,
+    SpeculativeWarm,
+}
+
+#[derive(Debug, Clone)]
+struct PendingCommitDetailFetch {
+    signal: PendingCommitDetailSignal,
+    priority: CommitDetailFetchPriority,
+}
 
 #[derive(Debug, Clone)]
 struct BranchListSnapshot {
@@ -88,21 +99,32 @@ pub fn get_commit_detail(
     }
 
     let cache_key = commit_detail_cache_key(repository_path, commit_hash);
-    match reserve_pending_commit_detail_fetch(cache_key.as_str())? {
-        PendingCommitDetailReservation::Wait(signal) => {
-            wait_for_pending_commit_detail(signal)?;
+    match reserve_pending_commit_detail_fetch(
+        cache_key.as_str(),
+        CommitDetailFetchPriority::UserInteractive,
+    )? {
+        PendingCommitDetailReservation::Wait(fetch) => {
+            wait_for_pending_commit_detail(fetch.signal)?;
             if let Some(cached) = get_cached_commit_detail(repository_path, commit_hash)? {
                 return Ok(cached);
             }
         }
-        PendingCommitDetailReservation::Owner(signal) => {
+        PendingCommitDetailReservation::BypassSpeculative => {
+            let result = git_provider::get_commit_detail(repository_path, commit_hash);
+            if let Ok(data) = &result {
+                cache_commit_details(repository_path, std::slice::from_ref(data))?;
+            }
+            return result;
+        }
+        PendingCommitDetailReservation::Owner(fetch) => {
             let result = git_provider::get_commit_detail(repository_path, commit_hash);
             let cache_result = if let Ok(data) = &result {
                 cache_commit_details(repository_path, std::slice::from_ref(data))
             } else {
                 Ok(())
             };
-            let finish_result = finish_pending_commit_detail_fetch(cache_key.as_str(), signal);
+            let finish_result =
+                finish_pending_commit_detail_fetch(cache_key.as_str(), fetch.signal);
             cache_result?;
             finish_result?;
             return result;
@@ -129,12 +151,16 @@ pub fn prime_commit_details(
             Some(entry) => entries.push(entry),
             None => {
                 let cache_key = commit_detail_cache_key(repository_path, commit_hash);
-                match reserve_pending_commit_detail_fetch(cache_key.as_str())? {
-                    PendingCommitDetailReservation::Owner(signal) => {
+                match reserve_pending_commit_detail_fetch(
+                    cache_key.as_str(),
+                    CommitDetailFetchPriority::SpeculativeWarm,
+                )? {
+                    PendingCommitDetailReservation::Owner(fetch) => {
                         missing_hashes.push(commit_hash.clone());
-                        owned_reservations.push((cache_key, signal));
+                        owned_reservations.push((cache_key, fetch.signal));
                     }
-                    PendingCommitDetailReservation::Wait(_) => {}
+                    PendingCommitDetailReservation::Wait(_)
+                    | PendingCommitDetailReservation::BypassSpeculative => {}
                 }
             }
         }
@@ -224,24 +250,35 @@ fn commit_detail_cache() -> &'static Mutex<HashMap<String, CommitDetailData>> {
 }
 
 enum PendingCommitDetailReservation {
-    Owner(PendingCommitDetailSignal),
-    Wait(PendingCommitDetailSignal),
+    Owner(PendingCommitDetailFetch),
+    Wait(PendingCommitDetailFetch),
+    BypassSpeculative,
 }
 
 fn reserve_pending_commit_detail_fetch(
     cache_key: &str,
+    priority: CommitDetailFetchPriority,
 ) -> Result<PendingCommitDetailReservation, AppError> {
     let mut pending = pending_commit_detail_fetches().lock().map_err(|_| {
         AppError::Internal("failed to lock pending commit detail fetches".to_string())
     })?;
 
-    if let Some(signal) = pending.get(cache_key) {
-        return Ok(PendingCommitDetailReservation::Wait(signal.clone()));
+    if let Some(fetch) = pending.get(cache_key) {
+        if priority == CommitDetailFetchPriority::UserInteractive
+            && fetch.priority == CommitDetailFetchPriority::SpeculativeWarm
+        {
+            return Ok(PendingCommitDetailReservation::BypassSpeculative);
+        }
+
+        return Ok(PendingCommitDetailReservation::Wait(fetch.clone()));
     }
 
-    let signal = Arc::new((Mutex::new(false), Condvar::new()));
-    pending.insert(cache_key.to_string(), signal.clone());
-    Ok(PendingCommitDetailReservation::Owner(signal))
+    let fetch = PendingCommitDetailFetch {
+        signal: Arc::new((Mutex::new(false), Condvar::new())),
+        priority,
+    };
+    pending.insert(cache_key.to_string(), fetch.clone());
+    Ok(PendingCommitDetailReservation::Owner(fetch))
 }
 
 fn finish_pending_commit_detail_fetch(
@@ -279,8 +316,8 @@ fn wait_for_pending_commit_detail(signal: PendingCommitDetailSignal) -> Result<(
     Ok(())
 }
 
-fn pending_commit_detail_fetches() -> &'static Mutex<HashMap<String, PendingCommitDetailSignal>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, PendingCommitDetailSignal>>> = OnceLock::new();
+fn pending_commit_detail_fetches() -> &'static Mutex<HashMap<String, PendingCommitDetailFetch>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, PendingCommitDetailFetch>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -305,11 +342,8 @@ fn commit_history_cache_key(
         return Ok(format!("{repository_path}::{branch_name}::{limit}"));
     }
 
-    let root = repository_root_service::get_repository_root_snapshot(repository_path)?;
-    Ok(format!(
-        "{repository_path}::HEAD:{}::{limit}",
-        root.head_hash
-    ))
+    let head_hash = git_provider::get_head_commit_hash(repository_path)?;
+    Ok(format!("{repository_path}::HEAD:{head_hash}::{limit}"))
 }
 
 fn commit_history_cache() -> &'static Mutex<HashMap<String, CommitHistorySnapshot>> {

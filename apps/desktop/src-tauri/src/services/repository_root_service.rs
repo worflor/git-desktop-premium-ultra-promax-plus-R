@@ -76,22 +76,25 @@ pub fn schedule_commit_history_warm(
     repository_path: &str,
     entries: &[CommitHistoryEntryData],
 ) -> Result<(), AppError> {
-    let snapshot = get_repository_root_snapshot(repository_path)?;
-    if !should_warm_commit_details(&snapshot) {
-        return Ok(());
-    }
-
-    let hashes = score_commit_history_candidates(snapshot.head_hash.as_str(), entries);
-    if hashes.is_empty() {
-        return Ok(());
-    }
-
     if !mark_warm_scheduled(repository_path) {
         return Ok(());
     }
 
     let repository_path = repository_path.to_string();
+    let entries = entries.to_vec();
     thread::spawn(move || {
+        let Ok(snapshot) = get_repository_root_snapshot(&repository_path) else {
+            return;
+        };
+        if !should_warm_commit_details(&snapshot) {
+            return;
+        }
+
+        let hashes = score_commit_history_candidates(snapshot.head_hash.as_str(), &entries);
+        if hashes.is_empty() {
+            return;
+        }
+
         let _ = repository_read_service::prime_commit_details(&repository_path, &hashes);
     });
 
