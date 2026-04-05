@@ -4,8 +4,7 @@ import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import type { CommitDetailData, CommitHistoryData, CommitHistoryEntry } from "@/lib/backend/dtos";
-import { getCommitDetail, listCommitHistory, primeCommitDetails } from "@/lib/backend/commands";
-import { scheduleBackgroundTask } from "@/lib/perf/background";
+import { getCommitDetail, listCommitHistory } from "@/lib/backend/commands";
 import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 import { formatCommitDate, formatFullDate, useDateFormatPreference } from "@/lib/ui/date";
 
@@ -17,6 +16,7 @@ interface GraphNode extends CommitHistoryEntry {
   row: number;
   lane: number;
   visibleParents: string[];
+  visibleChildren: string[];
 }
 
 interface GraphEdge {
@@ -32,18 +32,42 @@ interface GraphLayout {
   nodes: GraphNode[];
   edges: GraphEdge[];
   laneCount: number;
+  hashToNode: Map<string, GraphNode>;
 }
 
 interface LensNodeMetric {
   centerPercent: number;
   shiftPx: number;
   scale: number;
+  x: number;
+  y: number;
 }
 
-const historyCache = new Map<string, CommitHistoryData>();
+const HISTORY_CACHE_TTL_MS = 1500;
+
+interface HistoryCacheEntry {
+  capturedAt: number;
+  data: CommitHistoryData;
+}
+
+const historyCache = new Map<string, HistoryCacheEntry>();
 const [commitDetailStore, setCommitDetailStore] = createStore<Record<string, CommitDetailData>>({});
 const pendingHistoryRequests = new Map<string, Promise<void>>();
 const pendingCommitDetailRequests = new Map<string, Promise<void>>();
+
+function getCachedHistoryEntry(cacheKey: string): HistoryCacheEntry | null {
+  const cached = historyCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+
+  if (Date.now() - cached.capturedAt > HISTORY_CACHE_TTL_MS) {
+    historyCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached;
+}
 
 function CommitTime(props: { isoString: string; style?: string; class?: string; readOnly?: boolean }) {
   const [globalFormat, setGlobalFormat] = useDateFormatPreference();
@@ -75,8 +99,8 @@ function CommitImpact(props: { hash: string; repoPath: string | null }) {
   });
 
   return (
-    <Show 
-      when={detail()} 
+    <Show
+      when={detail()}
       fallback={
         <div style="display: flex; gap: 2px; opacity: 0.2; align-items: center;">
           {[...Array(5)].map(() => (
@@ -94,29 +118,26 @@ function CommitImpact(props: { hash: string; repoPath: string | null }) {
         const addRatio = additions / total;
         const blocks = 5;
         const addBlocks = Math.round(addRatio * blocks);
-        
-        // Logarithmic intensity scaling for the 'bloom' effect
-        const intensity = Math.min(1, Math.log10(total + 1) / 3);
-        const glowColor = addRatio > 0.6 ? "var(--state-added-rgb)" : addRatio < 0.4 ? "var(--state-deleted-rgb)" : "var(--chrome-accent-rgb)";
+
 
         return (
-          <div 
-            style="display: flex; align-items: center; gap: 6px;" 
+          <div
+            style="display: flex; align-items: center; gap: 6px;"
             title={`${data().filesChanged} files: +${additions} -${deletions}`}
           >
             <div style="display: flex; gap: 2px; align-items: center; font-size: 9px; font-family: var(--font-mono); font-weight: 700;">
-               <span style="color: var(--state-added); opacity: 0.9;">{additions}</span>
-               <span style="opacity: 0.3;">/</span>
-               <span style="color: var(--state-deleted); opacity: 0.9;">{deletions}</span>
+              <span style="color: var(--state-added); opacity: 0.9;">{additions}</span>
+              <span style="opacity: 0.3;">/</span>
+              <span style="color: var(--state-deleted); opacity: 0.9;">{deletions}</span>
             </div>
-            <div 
-              style={`display: flex; gap: 1.5px; padding: 1px; border-radius: 2px; background: rgba(var(--chrome-border-rgb), 0.05); border: 0.5px solid rgba(var(--chrome-border-rgb), 0.1); box-shadow: ${intensity > 0.7 ? `0 0 8px rgba(${glowColor}, ${intensity * 0.3})` : "none"}`}
+            <div
+              style={`display: flex; gap: 1.5px; padding: 1px; border-radius: 2px; background: rgba(var(--chrome-border-rgb), 0.05); border: 0.5px solid rgba(var(--chrome-border-rgb), 0.1);`}
             >
               {[...Array(blocks)].map((_, i) => {
                 const isAdd = i < addBlocks;
                 return (
-                  <div 
-                    style={`width: 6px; height: 3px; border-radius: 0.5px; background: ${isAdd ? "var(--state-added)" : "var(--state-deleted)"}; opacity: ${0.4 + intensity * 0.6}; transition: all 0.3s ease;`} 
+                  <div
+                    style={`width: 6px; height: 3px; border-radius: 0.5px; background: ${isAdd ? "var(--state-added)" : "var(--state-deleted)"}; opacity: 0.75; transition: all 0.3s ease;`}
                   />
                 );
               })}
@@ -131,9 +152,10 @@ function CommitImpact(props: { hash: string; repoPath: string | null }) {
 function buildGraphLayout(entries: CommitHistoryEntry[]): GraphLayout {
   const visibleHashes = new Set(entries.map((entry) => entry.commitHash));
   const activeLanes: Array<string | null> = [];
-  const nodes: GraphNode[] = [];
+  const hashToNode = new Map<string, GraphNode>();
   const hashToLane = new Map<string, number>();
   const hashToRow = new Map<string, number>();
+  const childrenMap = new Map<string, string[]>();
   let laneCount = 1;
 
   const reserveLaneForHash = (hash: string, preferredLane?: number) => {
@@ -157,7 +179,7 @@ function buildGraphLayout(entries: CommitHistoryEntry[]): GraphLayout {
     return activeLanes.length - 1;
   };
 
-  entries.forEach((entry, row) => {
+  const nodes: GraphNode[] = entries.map((entry, row) => {
     let lane = activeLanes.findIndex((laneHash) => laneHash === entry.commitHash);
     if (lane < 0) {
       lane = reserveLaneForHash(entry.commitHash);
@@ -183,35 +205,94 @@ function buildGraphLayout(entries: CommitHistoryEntry[]): GraphLayout {
     laneCount = Math.max(laneCount, lane + 1, activeLanes.length);
     hashToLane.set(entry.commitHash, lane);
     hashToRow.set(entry.commitHash, row);
-    nodes.push({
+
+    const node: GraphNode = {
       ...entry,
       row,
       lane,
-      visibleParents
-    });
+      visibleParents,
+      visibleChildren: [] // Will be populated in the next pass
+    };
+
+    hashToNode.set(entry.commitHash, node);
+    return node;
   });
 
+  // Second pass: Populate visibleChildren and edges
   const edges: GraphEdge[] = [];
   nodes.forEach((node) => {
     node.visibleParents.forEach((parentHash) => {
-      const parentRow = hashToRow.get(parentHash);
-      const parentLane = hashToLane.get(parentHash);
-      if (typeof parentRow !== "number" || typeof parentLane !== "number") {
-        return;
+      // Connect neighbors in the child map
+      const children = childrenMap.get(parentHash) || [];
+      if (!children.includes(node.commitHash)) {
+        children.push(node.commitHash);
+        childrenMap.set(parentHash, children);
       }
 
-      edges.push({
-        fromHash: node.commitHash,
-        toHash: parentHash,
-        fromRow: node.row,
-        toRow: parentRow,
-        fromLane: node.lane,
-        toLane: parentLane
-      });
+      const parentNode = hashToNode.get(parentHash);
+      if (parentNode) {
+        edges.push({
+          fromHash: node.commitHash,
+          toHash: parentHash,
+          fromRow: node.row,
+          toRow: parentNode.row,
+          fromLane: node.lane,
+          toLane: parentNode.lane
+        });
+      }
     });
   });
 
-  return { nodes, edges, laneCount };
+  // Final pass: Back-hydrate nodes with their children
+  nodes.forEach((node) => {
+    node.visibleChildren = childrenMap.get(node.commitHash) || [];
+  });
+
+  return { nodes, edges, laneCount, hashToNode };
+}
+
+function computeTimelineBasePercents(
+  entries: CommitHistoryEntry[],
+  timelineConfig: { GAP_LOG_FACTOR: number; TEMPORAL_BLEND: number }
+): number[] {
+  const count = entries.length;
+  if (count === 0) return [];
+  if (count === 1) return [50];
+
+  const evenPercents = entries.map((_, index) => (index / (count - 1)) * 100);
+  const timestampValues = entries.map((entry) => {
+    const parsed = Date.parse(entry.authoredAt || "");
+    return Number.isNaN(parsed) ? Date.now() : parsed;
+  });
+
+  const rawGaps = timestampValues.slice(0, -1).map((value, index) => {
+    const nextValue = timestampValues[index + 1] ?? Number.NaN;
+    if (!Number.isFinite(value) || !Number.isFinite(nextValue)) return 1;
+    return Math.max(1, Math.abs(value - nextValue));
+  });
+
+  const medianGap = [...rawGaps].sort((a, b) => a - b)[Math.floor(rawGaps.length / 2)] || 60000;
+  const weightedGaps = rawGaps.map((gap) => {
+    return Math.max(0.4, Math.min(12, 1 + Math.log1p(gap / medianGap) * timelineConfig.GAP_LOG_FACTOR));
+  });
+
+  const totalWeight = weightedGaps.reduce((acc, weight) => acc + weight, 0);
+  const timePercents: number[] = [0];
+  let cursor = 0;
+  for (const weight of weightedGaps) {
+    cursor += (weight / (totalWeight || 1)) * 100;
+    timePercents.push(cursor);
+  }
+
+  const finalPercents = evenPercents.map((even, index) => {
+    const timed = timePercents[index] ?? even;
+    return even * (1 - timelineConfig.TEMPORAL_BLEND) + timed * timelineConfig.TEMPORAL_BLEND;
+  });
+
+  const min = Math.min(...finalPercents);
+  const max = Math.max(...finalPercents);
+  const range = max - min;
+  return finalPercents.map((percent) => (range > 0 ? ((percent - min) / range) * 100 : percent));
 }
 
 export function HistoryPage(props: HistoryPageProps = {}) {
@@ -249,137 +330,132 @@ export function HistoryPage(props: HistoryPageProps = {}) {
   });
 
   const overviewGraph = createMemo(() => buildGraphLayout(overviewEntries()));
-  const overviewHeight = createMemo(() => Math.max(36, overviewGraph().laneCount * 12 + 18));
+  const overviewHeight = createMemo(() => Math.max(42, overviewGraph().laneCount * 14 + 18));
   const overviewLaneStep = createMemo(() => (overviewHeight() - 16) / Math.max(overviewGraph().laneCount, 1));
-  const effectiveOverviewWidth = createMemo(() => Math.max(overviewWidth(), overviewContainer?.clientWidth ?? 0, 1));
-  const selectedIndex = createMemo(() => {
+  const effectiveOverviewWidth = createMemo(() => {
+    const w = overviewWidth();
+    return w > 1 ? w : (overviewContainer?.getBoundingClientRect().width ?? 600);
+  });
+  // ─── Timeline Architecture Standards ──────────────────────────────
+  const TIMELINE_CONFIG = {
+    INSET_PX: 4,             // Node-box inset so endpoints sit flush with the rail
+    LENS_RADIUS_MIN: 32,    // Minimum influence radius
+    LENS_RADIUS_MAX: 64,    // Maximum influence radius
+    MAX_SHIFT_PX: 10,       // Maximum displacement at lens boundary
+    TEMPORAL_BLEND: 0.32,    // Ratio of time-linear vs even-distribution (lower = more visually balanced)
+    SCALE_FOCUS: 0.45,      // Magnification power at dead center
+    SCALE_SELECTED: 1.25,   // Multiplier for active commit
+    SCALE_HOVER: 1.1,       // Multiplier for mouse hover
+    GAP_LOG_FACTOR: 1.1,    // Exponential expansion of long time-gaps
+    MIN_LANE_HEIGHT: 42     // Vertical spacing for branch topology
+  } as const;
+  const timelineBasePercents = createMemo<number[]>(() => computeTimelineBasePercents(overviewEntries(), TIMELINE_CONFIG));
+  const projectedTimelineBaseXs = createMemo<number[]>(() => {
     const nodes = overviewGraph().nodes;
-    const selectedHash = selectedCommitHash();
-    if (!selectedHash) {
-      return nodes.length > 0 ? 0 : null;
-    }
-    const index = nodes.findIndex((node) => node.commitHash === selectedHash);
-    return index >= 0 ? index : nodes.length > 0 ? 0 : null;
-  });
-
-  const timelineBasePercents = createMemo(() => {
-    const entries = overviewEntries();
-    const count = entries.length;
-    if (count === 0) {
-      return [] as number[];
-    }
-    if (count === 1) {
-      return [50];
-    }
-
-    const insetPercent = 1.8;
-    const usablePercent = 100 - insetPercent * 2;
-    const evenPercents = entries.map((_, index) =>
-      insetPercent + (index / (count - 1)) * usablePercent
-    );
-
-    const timestamps = entries.map((entry) => {
-      const parsed = Date.parse(entry.authoredAt);
-      return Number.isFinite(parsed) ? parsed : Number.NaN;
-    });
-    const rawGaps = timestamps.slice(0, -1).map((value, index) => {
-      const nextValue = timestamps[index + 1] ?? Number.NaN;
-      if (!Number.isFinite(value) || !Number.isFinite(nextValue)) {
-        return 1;
-      }
-      return Math.max(1, Math.abs(value - nextValue));
-    });
-
-    const sortedGaps = [...rawGaps].sort((a, b) => a - b);
-    const medianGap =
-      sortedGaps.length > 0
-        ? sortedGaps[Math.floor(sortedGaps.length / 2)] ?? 1
-        : 1;
-    const baselineGap = Math.max(medianGap, 60_000);
-    const weightedGaps = rawGaps.map((gap) => {
-      const normalized = Math.log1p(gap / baselineGap);
-      return Math.max(0.68, Math.min(1.85, 1 + normalized * 0.42));
-    });
-    const totalWeight = weightedGaps.reduce((sum, weight) => sum + weight, 0);
-
-    const weightedPercents: number[] = [insetPercent];
-    let cursor = insetPercent;
-    for (let index = 0; index < weightedGaps.length; index += 1) {
-      cursor += (weightedGaps[index]! / Math.max(totalWeight, 1)) * usablePercent;
-      weightedPercents.push(cursor);
-    }
-
-    const subtleBlend = 0.38;
-    return evenPercents.map(
-      (evenPercent, index) =>
-        evenPercent * (1 - subtleBlend) + (weightedPercents[index] ?? evenPercent) * subtleBlend
-    );
-  });
-
-  const baseCenterPercent = (index: number, count: number) =>
-    timelineBasePercents()[index] ?? (count <= 1 ? 50 : 1.8 + (index / (count - 1)) * (100 - 3.6));
-
-  const selectedBaseCenterPx = createMemo(() => {
-    const count = overviewGraph().nodes.length;
-    const index = selectedIndex();
     const width = effectiveOverviewWidth();
-    if (index === null || count === 0) {
-      return width * 0.5;
-    }
-    return (baseCenterPercent(index, count) / 100) * width;
+    if (nodes.length === 0) return [];
+    if (nodes.length === 1) return [width * 0.5];
+
+    const { INSET_PX } = TIMELINE_CONFIG;
+    const percents = timelineBasePercents();
+    const usableWidth = Math.max(0, width - INSET_PX * 2);
+    const rawBasePositions = nodes.map((_, index) => {
+      const centerPercent = percents[index] ?? 50;
+      return (centerPercent / 100) * usableWidth;
+    });
+    const minBaseX = Math.min(...rawBasePositions);
+    const maxBaseX = Math.max(...rawBasePositions);
+    const baseRange = Math.max(maxBaseX - minBaseX, 1);
+
+    return rawBasePositions.map((rawBaseX) => INSET_PX + ((rawBaseX - minBaseX) / baseRange) * usableWidth);
   });
 
-  const lensFocusPx = createMemo(() => hoverLensX() ?? selectedBaseCenterPx());
+  const hoveredNodeCenterPx = createMemo(() => {
+    const hash = hoveredCommitHash();
+    if (!hash) return null;
+    const nodes = overviewGraph().nodes;
+    const index = nodes.findIndex((n) => n.commitHash === hash);
+    if (index === -1) return null;
+    return projectedTimelineBaseXs()[index] ?? null;
+  });
 
+  const lensFocusPx = createMemo(() => {
+    const x = hoverLensX();
+    if (x !== null) return x;
+    const hovered = hoveredNodeCenterPx();
+    if (hovered !== null) return hovered;
+    return effectiveOverviewWidth() * 0.5;
+  });
+
+
+  /**
+   * Final projection stage: Maps normalized percents to physical pixel coordinates.
+   * Incorporates the kinetic magnification lens and boundary damping.
+   */
   const lensMetrics = createMemo<LensNodeMetric[]>(() => {
     const nodes = overviewGraph().nodes;
     const width = effectiveOverviewWidth();
     const focusPx = lensFocusPx();
-    if (nodes.length === 0) {
-      return [];
-    }
+    if (nodes.length === 0) return [];
+
+    const { SCALE_FOCUS, SCALE_SELECTED, SCALE_HOVER } = TIMELINE_CONFIG;
+    const laneStep = overviewLaneStep();
+    const laneCenterOffset = laneStep / 2;
 
     if (nodes.length === 1) {
-      const node = nodes[0]!;
-      const isSelected = selectedCommitHash() === node.commitHash;
-      const isHovered = hoveredCommitHash() === node.commitHash;
       return [{
-        centerPercent: 50,
-        shiftPx: 0,
-        scale: 1 + (isSelected ? 0.22 : 0) + (isHovered ? 0.08 : 0) + (node.isMerge ? 0.05 : 0)
+        centerPercent: 50, shiftPx: 0,
+        scale: (selectedCommitHash() === nodes[0]!.commitHash ? SCALE_SELECTED : 1),
+        x: width * 0.5, y: 8 + laneCenterOffset
       }];
     }
 
     const spacingPx = width / Math.max(nodes.length - 1, 1);
-    const lensRadiusPx = Math.max(28, Math.min(96, spacingPx * 3.5));
-    const maxShiftPx = Math.max(2, Math.min(8, spacingPx * 0.45));
-    const maxScaleGain = 0.55;
+    const lensRadiusPx = Math.max(TIMELINE_CONFIG.LENS_RADIUS_MIN, Math.min(TIMELINE_CONFIG.LENS_RADIUS_MAX, spacingPx * 2.8));
+
     const influenceAt = (distancePx: number) => {
+      // Gaussian distribution for luxury magnification feel
       const normalized = Math.min(distancePx / lensRadiusPx, 1);
-      return Math.cos(normalized * Math.PI * 0.5) ** 2;
+      return Math.exp(-4 * normalized * normalized) * (1 - normalized * normalized);
     };
 
+    const baseXs = projectedTimelineBaseXs();
+    const percents = timelineBasePercents();
+
     return nodes.map((node, index) => {
-      const centerPercent = baseCenterPercent(index, nodes.length);
-      const baseCenterPx = (centerPercent / 100) * width;
+      const centerPercent = percents[index] ?? 50;
+      const baseCenterPx = baseXs[index] ?? width * 0.5;
       const deltaPx = baseCenterPx - focusPx;
       const focusGain = influenceAt(Math.abs(deltaPx));
-      const direction = Math.abs(deltaPx) < 0.5 ? 0 : deltaPx < 0 ? -1 : 1;
-      const shiftPx = direction * focusGain * maxShiftPx;
+
       const isSelected = selectedCommitHash() === node.commitHash;
       const isHovered = hoveredCommitHash() === node.commitHash;
-      const scale =
-        1 +
-        focusGain * maxScaleGain +
-        (isSelected ? 0.18 : 0) +
-        (isHovered ? 0.06 : 0) +
-        (node.isMerge ? 0.04 : 0);
+
+      let scale = 1 + focusGain * SCALE_FOCUS;
+      if (isSelected) scale *= SCALE_SELECTED;
+      if (isHovered) scale *= SCALE_HOVER;
+      if (node.isMerge) scale *= 1.05;
+
       return {
         centerPercent,
-        shiftPx,
-        scale
+        shiftPx: 0,
+        scale,
+        x: baseCenterPx,
+        y: 8 + node.lane * laneStep + laneCenterOffset
       };
     });
+  });
+
+  const lensMetricsMap = createMemo(() => {
+    const metrics = lensMetrics();
+    const map = new Map<string, LensNodeMetric>();
+    const entries = overviewEntries();
+    // High-performance mapping pass
+    for (let i = 0; i < entries.length; i++) {
+      const m = metrics[i];
+      if (m) map.set(entries[i]!.commitHash, m);
+    }
+    return map;
   });
 
   const resolveOverviewOffsetX = (clientX: number) => {
@@ -400,12 +476,10 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       return null;
     }
 
-    const rect = container.getBoundingClientRect();
     let nearestIndex = 0;
     let nearestDistance = Number.POSITIVE_INFINITY;
     metrics.forEach((metric, index) => {
-      const centerX = (metric.centerPercent / 100) * rect.width + metric.shiftPx;
-      const distance = Math.abs(centerX - offsetX);
+      const distance = Math.abs(metric.x - offsetX);
       if (distance < nearestDistance) {
         nearestDistance = distance;
         nearestIndex = index;
@@ -435,11 +509,12 @@ export function HistoryPage(props: HistoryPageProps = {}) {
 
   const loadHistory = async (repositoryPath: string, limit: number) => {
     const cacheKey = `${repositoryPath}::${limit}`;
-    const cached = historyCache.get(cacheKey);
+    const cached = getCachedHistoryEntry(cacheKey);
     if (cached) {
-      setHistoryData(cached);
+      setHistoryData(cached.data);
       setHistoryRepositoryPath(repositoryPath);
       setHistoryError(null);
+      return;
     }
 
     const pending = pendingHistoryRequests.get(cacheKey);
@@ -458,7 +533,10 @@ export function HistoryPage(props: HistoryPageProps = {}) {
         return;
       }
 
-      historyCache.set(cacheKey, result.data);
+      historyCache.set(cacheKey, {
+        capturedAt: Date.now(),
+        data: result.data
+      });
       if (activeRepo() === repositoryPath && parsedLimit() === limit) {
         setHistoryData(result.data);
         setHistoryRepositoryPath(repositoryPath);
@@ -551,11 +629,12 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       return;
     }
 
-    const cached = historyCache.get(`${repositoryPath}::${limit}`);
+    const cached = getCachedHistoryEntry(`${repositoryPath}::${limit}`);
     if (cached) {
-      setHistoryData(cached);
+      setHistoryData(cached.data);
       setHistoryRepositoryPath(repositoryPath);
       setHistoryError(null);
+      return;
     }
 
     void loadHistory(repositoryPath, limit);
@@ -596,46 +675,6 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     }
 
     void loadCommitDetail(repositoryPath, commitHash);
-  });
-
-  createEffect(() => {
-    const repositoryPath = activeRepo();
-    const history = historyData();
-    if (!repositoryPath || !history || historyRepositoryPath() !== repositoryPath) {
-      return;
-    }
-
-    const visibleCommitHashes = history.entries.slice(0, 12).map((entry) => entry.commitHash);
-    if (visibleCommitHashes.length === 0) {
-      return;
-    }
-
-    const cancel = scheduleBackgroundTask(() => {
-      void primeCommitDetails(repositoryPath, visibleCommitHashes).then((result) => {
-        if (!result.ok) {
-          return;
-        }
-
-        const updates: Record<string, CommitDetailData> = {};
-        for (const entry of result.data.entries) {
-          updates[commitDetailCacheKey(repositoryPath, entry.commitHash)] = entry;
-        }
-        setCommitDetailStore(updates);
-
-        const selected = selectedCommitHash();
-        if (!selected) {
-          return;
-        }
-
-        const selectedEntry = result.data.entries.find((entry) => entry.commitHash === selected);
-        if (selectedEntry && activeRepo() === repositoryPath) {
-          setCommitDetailData(selectedEntry);
-          setCommitDetailError(null);
-        }
-      });
-    });
-
-    onCleanup(cancel);
   });
 
   onMount(() => {
@@ -720,102 +759,121 @@ export function HistoryPage(props: HistoryPageProps = {}) {
         </div>
 
         <section
-          ref={overviewContainer}
           class="topology-canvas"
-          style="margin: 0; padding: 8px 12px 10px; border: none; border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.1); background: var(--surface-0); flex-shrink: 0; border-radius: 0;"
+          style="margin: 0; padding: 0; border: none; border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.1); background: var(--surface-0); flex-shrink: 0; border-radius: 0; overflow: hidden;"
         >
           <div
             class="history-topology-strip"
-            style={`height: ${overviewHeight()}px;`}
-            onPointerEnter={(event) => {
-              updateScrubTarget(event.clientX, false);
-            }}
-            onPointerDown={(event) => {
-              event.currentTarget.setPointerCapture(event.pointerId);
-              setIsScrubbing(true);
-              updateScrubTarget(event.clientX, true);
-            }}
-            onPointerMove={(event) => {
-              updateScrubTarget(event.clientX, isScrubbing());
-            }}
-            onMouseMove={(event) => {
-              updateScrubTarget(event.clientX, isScrubbing());
-            }}
-            onPointerUp={(event) => {
-              event.currentTarget.releasePointerCapture(event.pointerId);
-              setIsScrubbing(false);
-            }}
-            onPointerLeave={() => {
-              if (!isScrubbing()) {
-                setHoverLensX(null);
-                setHoveredCommitHash(null);
-              }
-            }}
+            style={`height: ${overviewHeight() + 16}px; padding: 8px 16px; box-sizing: border-box;`}
           >
-            <div class="history-topology-rail" />
-            <svg
-              class="history-topology-svg"
-              width={effectiveOverviewWidth()}
-              height={overviewHeight()}
-              viewBox={`0 0 ${effectiveOverviewWidth()} ${overviewHeight()}`}
-              preserveAspectRatio="none"
+            <div
+              ref={overviewContainer}
+              class="history-topology-track"
+              onPointerEnter={(event) => {
+                updateScrubTarget(event.clientX, false);
+              }}
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                setIsScrubbing(true);
+                updateScrubTarget(event.clientX, true);
+              }}
+              onMouseMove={(event) => {
+                // Mousemove is used for fine-grained coordinate scrubbing
+                updateScrubTarget(event.clientX, isScrubbing());
+              }}
+              onPointerUp={(event) => {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+                setIsScrubbing(false);
+              }}
+              onPointerLeave={() => {
+                if (!isScrubbing()) {
+                  setHoverLensX(null);
+                  setHoveredCommitHash(null);
+                }
+              }}
             >
-            <For each={overviewGraph().edges}>
-              {(edge) => {
-                const metrics = lensMetrics();
-                const fromMetric = metrics[edge.fromRow];
-                const toMetric = metrics[edge.toRow];
-                if (!fromMetric || !toMetric) {
-                  return null;
-                }
+              <div
+                class="history-topology-rail"
+                style={{
+                  top: `${8 + overviewLaneStep() / 2}px`
+                }}
+              />
+              <svg
+                class="history-topology-svg"
+                width={effectiveOverviewWidth()}
+                height={overviewHeight()}
+                viewBox={`0 0 ${effectiveOverviewWidth()} ${overviewHeight()}`}
+                preserveAspectRatio="none"
+                style="pointer-events: none; overflow: visible;"
+              >
+                <For each={overviewGraph().edges}>
+                  {(edge) => {
+                    const nodeRadius = 3;
+                    const pathData = createMemo(() => {
+                      const from = lensMetricsMap().get(edge.fromHash);
+                      const to = lensMetricsMap().get(edge.toHash);
+                      if (!from || !to) return "";
 
-                const x1 = (fromMetric.centerPercent / 100) * effectiveOverviewWidth() + fromMetric.shiftPx;
-                const x2 = (toMetric.centerPercent / 100) * effectiveOverviewWidth() + toMetric.shiftPx;
-                const y1 = 8 + edge.fromLane * overviewLaneStep();
-                const isBranch = edge.fromLane !== edge.toLane;
-                if (!isBranch) {
-                  return null;
-                }
+                      const dx = to.x - from.x;
+                      const dy = to.y - from.y;
+                      const dist = Math.sqrt(dx * dx + dy * dy);
+                      if (dist < 0.1) return "";
 
-                const reconnectX = x2;
-                const reconnectY = 8;
+                      const startX = from.x + (dx / dist) * (nodeRadius * from.scale);
+                      const startY = from.y + (dy / dist) * (nodeRadius * from.scale);
+                      const endX = to.x - (dx / dist) * (nodeRadius * to.scale);
+                      const endY = to.y - (dy / dist) * (nodeRadius * to.scale);
 
-                return (
-                  <path
-                    class="history-topology-path history-topology-path-branch"
-                    d={`M ${x1} ${y1} L ${reconnectX} ${reconnectY}`}
-                  />
-                );
-              }}
-            </For>
-            </svg>
-            <For each={overviewGraph().nodes}>
-              {(node, index) => {
-                const metric = lensMetrics()[index()];
-                if (!metric) {
-                  return null;
-                }
+                      if (edge.fromLane === edge.toLane) {
+                        return `M ${startX} ${startY} L ${endX} ${endY}`;
+                      } else {
+                        const ctrlX = startX + (endX - startX) * 0.48;
+                        return `M ${startX} ${startY} C ${ctrlX} ${startY}, ${ctrlX} ${endY}, ${endX} ${endY}`;
+                      }
+                    });
 
-                const isSelected = selectedCommitHash() === node.commitHash;
-                const isHovered = hoveredCommitHash() === node.commitHash;
-                const nodeScale = isSelected ? metric.scale * 1.28 : metric.scale;
-                return (
-                  <button
-                    type="button"
-                    class={`history-topology-node ${isSelected ? "is-active" : ""} ${isHovered ? "is-hovered" : ""} ${node.isMerge ? "is-merge" : ""}`}
-                    style={`left: calc(${metric.centerPercent}% - 3px); top: ${8 + node.lane * overviewLaneStep() - 3}px; width: 6px; height: 6px; transform: translateX(${metric.shiftPx}px) scale(${nodeScale}); z-index: ${isSelected ? 8 : isHovered ? 6 : 2};`}
-                    onClick={() => {
-                      setSelectedCommitHash(node.commitHash);
-                      const clickedCenter = (metric.centerPercent / 100) * effectiveOverviewWidth() + metric.shiftPx;
-                      setHoverLensX(clickedCenter);
-                    }}
-                    onPointerEnter={() => setHoveredCommitHash(node.commitHash)}
-                    title={`${node.shortHash}: ${node.subject}`}
-                    aria-label={`Select commit ${node.shortHash}`}
-                  />
-                );
-              }}
-            </For>
+                    const isMainline = edge.fromLane === 0 && edge.toLane === 0;
+                    const isSameLane = edge.fromLane === edge.toLane;
+
+                    return (
+                      <path
+                        class={`history-topology-path ${isMainline ? "is-active-rail" : isSameLane ? "is-lane" : "is-branch"}`}
+                        d={pathData()}
+                        fill="none"
+                        stroke={isMainline ? "var(--chrome-accent)" : "currentColor"}
+                        stroke-width={isMainline ? 2 : 1.4}
+                        stroke-opacity={isMainline ? 0.45 : 0.28}
+                      />
+                    );
+                  }}
+                </For>
+              </svg>
+              <For each={overviewGraph().nodes}>
+                {(node, index) => {
+                  const metric = () => lensMetrics()[index()];
+                  return (
+                    <button
+                      type="button"
+                      class={`history-topology-node ${selectedCommitHash() === node.commitHash ? "is-active" : ""} ${hoveredCommitHash() === node.commitHash ? "is-hovered" : ""} ${node.isMerge ? "is-merge" : ""}`}
+                      style={{
+                        left: `${metric()?.x ?? 0}px`,
+                        top: `${metric()?.y ?? 0}px`,
+                        transform: `translate(-50%, -50%) scale(${metric()?.scale ?? 1})`,
+                        "z-index": selectedCommitHash() === node.commitHash ? 12 : hoveredCommitHash() === node.commitHash ? 8 : 2
+                      }}
+                      onClick={() => {
+                        setSelectedCommitHash(node.commitHash);
+                        const m = metric();
+                        if (m) setHoverLensX(m.x);
+                      }}
+                      onPointerEnter={() => setHoveredCommitHash(node.commitHash)}
+                      title={`${node.shortHash}: ${node.subject}`}
+                      aria-label={`Select commit ${node.shortHash}`}
+                    />
+                  );
+                }}
+              </For>
+            </div>
           </div>
         </section>
 
@@ -830,8 +888,23 @@ export function HistoryPage(props: HistoryPageProps = {}) {
                   return (
                     <li>
                       <button
-                        style={`width: 100%; text-align: left; padding: 10px 12px; background: ${isSelected ? "rgba(var(--accent-rgb), 0.1)" : "transparent"}; border: none; border-bottom: 1px solid rgba(var(--chrome-border-rgb), 0.08); border-left: 2px solid ${isSelected ? "var(--accent-bright)" : "transparent"}; cursor: pointer; display: flex; flex-direction: column; gap: 4px;`}
+                        style={{
+                          width: "100%",
+                          "text-align": "left",
+                          padding: "10px 12px",
+                          background: selectedCommitHash() === entry.commitHash ? "rgba(var(--accent-rgb), 0.12)" : "transparent",
+                          border: "none",
+                          "border-bottom": "1px solid rgba(var(--chrome-border-rgb), 0.08)",
+                          "border-left": `2px solid ${selectedCommitHash() === entry.commitHash ? "var(--accent-bright)" : "transparent"}`,
+                          cursor: "pointer",
+                          display: "flex",
+                          "flex-direction": "column",
+                          gap: "4px",
+                          transition: "all 0.16s ease"
+                        }}
                         onClick={() => setSelectedCommitHash(entry.commitHash)}
+                        onPointerEnter={() => setHoveredCommitHash(entry.commitHash)}
+                        onPointerLeave={() => setHoveredCommitHash(null)}
                       >
                         <div style="display: flex; justify-content: space-between; align-items: baseline; font-size: 10px;">
                           <span style={`font-family: var(--font-mono); font-weight: ${isSelected ? "700" : "600"}; color: ${isSelected ? "var(--text-strong)" : "var(--text-muted)"};`}>

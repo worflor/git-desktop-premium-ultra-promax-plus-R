@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::errors::AppError;
@@ -10,6 +10,8 @@ use crate::services::{git_provider, repository_root_service, repository_topology
 const MAX_CACHED_COMMIT_DETAILS: usize = 512;
 const BRANCH_LIST_CACHE_TTL: Duration = Duration::from_secs(3);
 const COMMIT_HISTORY_CACHE_TTL: Duration = Duration::from_millis(1500);
+
+type PendingCommitDetailSignal = Arc<(Mutex<bool>, Condvar)>;
 
 #[derive(Debug, Clone)]
 struct BranchListSnapshot {
@@ -85,9 +87,33 @@ pub fn get_commit_detail(
         return Ok(cached);
     }
 
-    let data = git_provider::get_commit_detail(repository_path, commit_hash)?;
-    cache_commit_details(repository_path, std::slice::from_ref(&data))?;
-    Ok(data)
+    let cache_key = commit_detail_cache_key(repository_path, commit_hash);
+    match reserve_pending_commit_detail_fetch(cache_key.as_str())? {
+        PendingCommitDetailReservation::Wait(signal) => {
+            wait_for_pending_commit_detail(signal)?;
+            if let Some(cached) = get_cached_commit_detail(repository_path, commit_hash)? {
+                return Ok(cached);
+            }
+        }
+        PendingCommitDetailReservation::Owner(signal) => {
+            let result = git_provider::get_commit_detail(repository_path, commit_hash);
+            let cache_result = if let Ok(data) = &result {
+                cache_commit_details(repository_path, std::slice::from_ref(data))
+            } else {
+                Ok(())
+            };
+            let finish_result = finish_pending_commit_detail_fetch(cache_key.as_str(), signal);
+            cache_result?;
+            finish_result?;
+            return result;
+        }
+    }
+
+    let result = git_provider::get_commit_detail(repository_path, commit_hash);
+    if let Ok(data) = &result {
+        cache_commit_details(repository_path, std::slice::from_ref(data))?;
+    }
+    result
 }
 
 pub fn prime_commit_details(
@@ -96,18 +122,46 @@ pub fn prime_commit_details(
 ) -> Result<Vec<CommitDetailData>, AppError> {
     let mut entries = Vec::<CommitDetailData>::new();
     let mut missing_hashes = Vec::<String>::new();
+    let mut owned_reservations = Vec::<(String, PendingCommitDetailSignal)>::new();
 
     for commit_hash in commit_hashes {
         match get_cached_commit_detail(repository_path, commit_hash)? {
             Some(entry) => entries.push(entry),
-            None => missing_hashes.push(commit_hash.clone()),
+            None => {
+                let cache_key = commit_detail_cache_key(repository_path, commit_hash);
+                match reserve_pending_commit_detail_fetch(cache_key.as_str())? {
+                    PendingCommitDetailReservation::Owner(signal) => {
+                        missing_hashes.push(commit_hash.clone());
+                        owned_reservations.push((cache_key, signal));
+                    }
+                    PendingCommitDetailReservation::Wait(_) => {}
+                }
+            }
         }
     }
 
     if !missing_hashes.is_empty() {
-        let fetched_entries = git_provider::get_commit_details(repository_path, &missing_hashes)?;
-        cache_commit_details(repository_path, &fetched_entries)?;
-        entries.extend(fetched_entries);
+        let fetched_entries = git_provider::get_commit_details(repository_path, &missing_hashes);
+        match fetched_entries {
+            Ok(fetched_entries) => {
+                let cache_result = cache_commit_details(repository_path, &fetched_entries);
+                for (cache_key, signal) in &owned_reservations {
+                    finish_pending_commit_detail_fetch(cache_key.as_str(), signal.clone())?;
+                }
+                cache_result?;
+                entries.extend(fetched_entries);
+            }
+            Err(error) => {
+                for (cache_key, signal) in owned_reservations {
+                    finish_pending_commit_detail_fetch(cache_key.as_str(), signal)?;
+                }
+                return Err(error);
+            }
+        }
+    } else {
+        for (cache_key, signal) in owned_reservations {
+            finish_pending_commit_detail_fetch(cache_key.as_str(), signal)?;
+        }
     }
 
     Ok(entries)
@@ -166,6 +220,67 @@ fn commit_detail_cache_key(repository_path: &str, commit_hash: &str) -> String {
 
 fn commit_detail_cache() -> &'static Mutex<HashMap<String, CommitDetailData>> {
     static CACHE: OnceLock<Mutex<HashMap<String, CommitDetailData>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+enum PendingCommitDetailReservation {
+    Owner(PendingCommitDetailSignal),
+    Wait(PendingCommitDetailSignal),
+}
+
+fn reserve_pending_commit_detail_fetch(
+    cache_key: &str,
+) -> Result<PendingCommitDetailReservation, AppError> {
+    let mut pending = pending_commit_detail_fetches().lock().map_err(|_| {
+        AppError::Internal("failed to lock pending commit detail fetches".to_string())
+    })?;
+
+    if let Some(signal) = pending.get(cache_key) {
+        return Ok(PendingCommitDetailReservation::Wait(signal.clone()));
+    }
+
+    let signal = Arc::new((Mutex::new(false), Condvar::new()));
+    pending.insert(cache_key.to_string(), signal.clone());
+    Ok(PendingCommitDetailReservation::Owner(signal))
+}
+
+fn finish_pending_commit_detail_fetch(
+    cache_key: &str,
+    signal: PendingCommitDetailSignal,
+) -> Result<(), AppError> {
+    {
+        let mut pending = pending_commit_detail_fetches().lock().map_err(|_| {
+            AppError::Internal("failed to lock pending commit detail fetches".to_string())
+        })?;
+        pending.remove(cache_key);
+    }
+
+    let (done_lock, done_condvar) = &*signal;
+    let mut done = done_lock.lock().map_err(|_| {
+        AppError::Internal("failed to lock pending commit detail signal".to_string())
+    })?;
+    *done = true;
+    done_condvar.notify_all();
+    Ok(())
+}
+
+fn wait_for_pending_commit_detail(signal: PendingCommitDetailSignal) -> Result<(), AppError> {
+    let (done_lock, done_condvar) = &*signal;
+    let mut done = done_lock.lock().map_err(|_| {
+        AppError::Internal("failed to lock pending commit detail signal".to_string())
+    })?;
+
+    while !*done {
+        done = done_condvar.wait(done).map_err(|_| {
+            AppError::Internal("failed to wait for pending commit detail".to_string())
+        })?;
+    }
+
+    Ok(())
+}
+
+fn pending_commit_detail_fetches() -> &'static Mutex<HashMap<String, PendingCommitDetailSignal>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, PendingCommitDetailSignal>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

@@ -10,7 +10,7 @@ import {
   Suspense,
   Switch
 } from "solid-js";
-import { useLocation, useNavigate } from "@solidjs/router";
+import { useLocation, useNavigate, useSearchParams } from "@solidjs/router";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { BrandLockup } from "@/components/composite/BrandLockup";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
@@ -93,11 +93,17 @@ function resolveModeFromPath(pathname: string): WorkspaceMode {
   return "changes";
 }
 
+function resolveWorkspacePanel(panel: string | string[] | null | undefined): WorkspacePanel | null {
+  const value = Array.isArray(panel) ? panel[0] : panel;
+  return value === "settings" || value === "sync" ? value : null;
+}
+
 export function WorkspacePage() {
   const mountedAt = performance.now();
   const repository = useRepositoryContext();
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isCompactLayout = useCompactLayoutMode();
   const [panelOpenStartedAt, setPanelOpenStartedAt] = createSignal<number | null>(null);
   const activeRepositoryPath = createMemo(() => repository.activeRepositoryPath());
@@ -124,11 +130,7 @@ export function WorkspacePage() {
     void navigate(entry.route);
   };
 
-  const activePanel = createMemo<WorkspacePanel | null>(() => {
-    const searchParams = new URLSearchParams(location.search);
-    const panel = searchParams.get("panel");
-    return panel === "settings" || panel === "sync" ? panel : null;
-  });
+  const activePanel = createMemo<WorkspacePanel | null>(() => resolveWorkspacePanel(searchParams.panel));
 
   const isSettingsOpen = createMemo(() => activePanel() === "settings");
   const isSyncOpen = createMemo(() => activePanel() === "sync");
@@ -144,26 +146,21 @@ export function WorkspacePage() {
     return status.ahead > 0 || status.behind > 0;
   });
 
-  const setActivePanel = (panel: WorkspacePanel | null) => {
-    const searchParams = new URLSearchParams(location.search);
-    if (panel) {
-      searchParams.set("panel", panel);
-    } else {
-      searchParams.delete("panel");
-    }
+  const setPanel = (panel: WorkspacePanel | null) => {
+    const nextPanel = panel ?? null;
+    if (activePanel() === nextPanel) return;
 
-    const nextQuery = searchParams.toString();
-    const nextHref = nextQuery.length > 0 ? `${location.pathname}?${nextQuery}` : location.pathname;
-    const currentHref = `${location.pathname}${location.search}`;
-    if (nextHref === currentHref) return;
-
-    if (panel) {
+    if (nextPanel) {
       setPanelOpenStartedAt(performance.now());
     } else {
       setPanelOpenStartedAt(null);
     }
 
-    void navigate(nextHref);
+    void setSearchParams({ panel: nextPanel }, { replace: true });
+  };
+
+  const closePanel = () => {
+    setPanel(null);
   };
 
   onMount(() => {
@@ -233,7 +230,7 @@ export function WorkspacePage() {
             aria-label={isSyncOpen() ? "Close sync" : "Open sync"}
             aria-pressed={isSyncOpen()}
             aria-expanded={isSyncOpen()}
-            onClick={() => setActivePanel(isSyncOpen() ? null : "sync")}
+            onClick={() => setPanel(isSyncOpen() ? null : "sync")}
           >
             <span class="workspace-sync-icon-slot">
               <WorkspaceSyncTriggerIcon active={isSyncOpen()} />
@@ -259,7 +256,7 @@ export function WorkspacePage() {
             aria-label={isSettingsOpen() ? "Close settings" : "Open settings"}
             aria-pressed={isSettingsOpen()}
             aria-expanded={isSettingsOpen()}
-            onClick={() => setActivePanel(isSettingsOpen() ? null : "settings")}
+            onClick={() => setPanel(isSettingsOpen() ? null : "settings")}
           >
             <Icon name="settings" size={16} />
           </button>
@@ -286,7 +283,7 @@ export function WorkspacePage() {
 
       <Show when={isSyncOpen()}>
         <SyncPanel
-          onClose={() => setActivePanel(null)}
+          onClose={closePanel}
           onStatusChanged={() => {
             void refetchSyncStatus();
           }}
@@ -298,12 +295,12 @@ export function WorkspacePage() {
           type="button"
           class="settings-slide-backdrop"
           aria-label="Close settings"
-          onClick={() => setActivePanel(null)}
+          onClick={closePanel}
         />
         <section class="settings-slide-panel" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title">
           <header class="settings-slide-header">
             <h2 id="settings-panel-title">Settings</h2>
-            <button type="button" class="settings-slide-close hyper-reactive" onClick={() => setActivePanel(null)}>
+            <button type="button" class="settings-slide-close hyper-reactive" onClick={closePanel}>
               Close
             </button>
           </header>

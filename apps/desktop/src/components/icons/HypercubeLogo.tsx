@@ -41,12 +41,12 @@ const rotate4D = (coords: number[], rot: { c: number; s: number }[]) => {
   let [x, y, z, w] = coords;
   const [rXY, rXZ, rXW, rYZ, rYW, rZW] = rot;
   let tx, ty, tz, tw;
-  tx = x! * rXY!.c - y! * rXY!.s; ty = x! * rXY!.s + y! * rXY!.c; [x, y] = [tx, ty];
-  tx = x! * rXZ!.c - z! * rXZ!.s; tz = x! * rXZ!.s + z! * rXZ!.c; [x, z] = [tx, tz];
-  tx = x! * rXW!.c - w! * rXW!.s; tw = x! * rXW!.s + w! * rXW!.c; [x, w] = [tx, tw];
-  ty = y! * rYZ!.c - z! * rYZ!.s; tz = y! * rYZ!.s + z! * rYZ!.c; [y, z] = [ty, tz];
-  ty = y! * rYW!.c - w! * rYW!.s; tw = y! * rYW!.s + w! * rYW!.c; [y, w] = [ty, tw];
-  tz = z! * rZW!.c - w! * rZW!.s; tw = z! * rZW!.s + w! * rZW!.c; [z, w] = [tz, tw];
+  tx = x! * rXY!.c - y! * rXY!.s; ty = x! * rXY!.s + y! * rXY!.c;[x, y] = [tx, ty];
+  tx = x! * rXZ!.c - z! * rXZ!.s; tz = x! * rXZ!.s + z! * rXZ!.c;[x, z] = [tx, tz];
+  tx = x! * rXW!.c - w! * rXW!.s; tw = x! * rXW!.s + w! * rXW!.c;[x, w] = [tx, tw];
+  ty = y! * rYZ!.c - z! * rYZ!.s; tz = y! * rYZ!.s + z! * rYZ!.c;[y, z] = [ty, tz];
+  ty = y! * rYW!.c - w! * rYW!.s; tw = y! * rYW!.s + w! * rYW!.c;[y, w] = [ty, tw];
+  tz = z! * rZW!.c - w! * rZW!.s; tw = z! * rZW!.s + w! * rZW!.c;[z, w] = [tz, tw];
   return [x, y, z, w];
 };
 
@@ -93,7 +93,7 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
       const totalDist = currentVerts.reduce((acc, v1, j) => {
         const v2 = otherVerts[j]!;
         const dx = v1[0]! - v2[0]!, dy = v1[1]! - v2[1]!, dz = v1[2]! - v2[2]!, dw = v1[3]! - v2[3]!;
-        const y = Math.sqrt(dx*dx + dy*dy + dz*dz + dw*dw) - acc.c;
+        const y = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw) - acc.c;
         const t = acc.s + y;
         acc.c = (t - acc.s) - y;
         acc.s = t;
@@ -113,7 +113,7 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
 
     const rand = xorshift64();
     const next = available[Math.floor(rand * available.length)] ?? (sIdx + 2) % STATES.length;
-    
+
     history.push(next);
     if (history.length > 4) history.shift();
     return next;
@@ -128,7 +128,7 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
       const nearVal = isNear();
       const dragVal = isDragging();
       const targetB = 1 + nearVal * 1.2 + (dragVal ? 2.3 : 0);
-      
+
       setSmoothBoost(sb => sb + (targetB - sb) * dt * 12);
       const currentB = smoothBoost();
       setTime(t => t + dt * (props.speed ?? 0.85) * currentB);
@@ -212,10 +212,10 @@ export function HypercubeLogo(props: { size?: number; class?: string; themeColor
       });
     };
 
-    return { 
-      main: solve(0, 0, true), 
+    return {
+      main: solve(0, 0, true),
       home: solve(-0.2, 0.04, false),
-      ghost: solve(-0.4, 0.08, false) 
+      ghost: solve(-0.4, 0.08, false)
     };
   });
 

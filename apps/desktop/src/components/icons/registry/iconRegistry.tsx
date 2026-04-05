@@ -58,18 +58,15 @@ export const iconRegistry: Record<IconName, () => JSX.Element> = {
   ),
   sync: () => (
     <>
-      <path {...stroke} d="M12 5V2l2 2-2 2V5H4" class="sync-p1" />
-      <path {...stroke} d="M4 11v3l-2-2 2-2v3h8" class="sync-p2" />
+      <path {...stroke} d="M12.5 5.5l2-2-2-2v2h-9" class="sync-p1" />
+      <path {...stroke} d="M3.5 10.5l-2 2 2 2v-2h9" class="sync-p2" />
     </>
   ),
   settings: () => (
     <>
-      <path {...stroke} d="M2.5 4h11" class="settings-l1" />
-      <circle {...stroke} cx="5" cy="4" r="1.5" class="settings-k1" />
-      <path {...stroke} d="M2.5 8h11" class="settings-l2" />
-      <circle {...stroke} cx="11" cy="8" r="1.5" class="settings-k2" />
-      <path {...stroke} d="M2.5 12h11" class="settings-l3" />
-      <circle {...stroke} cx="7" cy="12" r="1.5" class="settings-k3" />
+      <circle {...stroke} cx="8" cy="8" r="1.5" class="settings-core" />
+      <path {...stroke} d="M4 8a4 4 0 118 0 4 4 0 01-8 0" class="settings-r1" stroke-dasharray="12 13" />
+      <path {...stroke} d="M2 8a6 6 0 1112 0 6 6 0 01-12 0" class="settings-r2" stroke-dasharray="18 20" />
     </>
   ),
   "git-branch": () => (

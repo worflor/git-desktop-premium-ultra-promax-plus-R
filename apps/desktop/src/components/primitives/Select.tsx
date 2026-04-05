@@ -22,7 +22,11 @@ export function Select(props: SelectProps) {
 
   const activeOption = () => props.options.find((o) => o.id === props.value);
 
-  const handleClickOutside = (event: MouseEvent) => {
+  const closePopup = () => {
+    setIsOpen(false);
+  };
+
+  const handlePointerDownOutside = (event: PointerEvent) => {
     if (
       isOpen() &&
       triggerRef &&
@@ -30,22 +34,32 @@ export function Select(props: SelectProps) {
       popupRef &&
       !popupRef.contains(event.target as Node)
     ) {
-      setIsOpen(false);
+      closePopup();
+    }
+  };
+
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && isOpen()) {
+      event.preventDefault();
+      closePopup();
+      triggerRef?.focus();
     }
   };
 
   onMount(() => {
-    document.addEventListener("click", handleClickOutside);
+    document.addEventListener("pointerdown", handlePointerDownOutside);
+    document.addEventListener("keydown", handleKeyDown);
     onCleanup(() => {
-      document.removeEventListener("click", handleClickOutside);
+      document.removeEventListener("pointerdown", handlePointerDownOutside);
+      document.removeEventListener("keydown", handleKeyDown);
     });
   });
 
   const toggleOpen = () => setIsOpen(!isOpen());
 
   const handleSelect = (id: string) => {
+    closePopup();
     props.onChange(id);
-    setIsOpen(false);
   };
 
   // Re-calculate position on scroll/resize for the Portal
@@ -114,6 +128,7 @@ export function Select(props: SelectProps) {
           <div
             ref={popupRef}
             class="custom-select-popup"
+            onKeyDown={handleKeyDown}
             style={{
               top: `${coords().top + 4}px`,
               left: `${coords().left}px`,

@@ -1,5 +1,5 @@
 import { createEffect, onCleanup, onMount, type JSX } from "solid-js";
-import { useLocation, useNavigate } from "@solidjs/router";
+import { useNavigate, useSearchParams } from "@solidjs/router";
 import { CommandRecoveryBanner } from "@/app/layout/CommandRecoveryBanner";
 import { useLayoutPreferences } from "@/app/layout/LayoutPreferencesContext";
 import { SidebarRail } from "@/app/layout/SidebarRail";
@@ -13,6 +13,8 @@ interface AppShellFrameProps {
   children?: JSX.Element;
 }
 
+type WorkspacePanel = "settings" | "sync";
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tagName = target.tagName.toLowerCase();
@@ -20,11 +22,16 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.isContentEditable;
 }
 
+function resolveWorkspacePanel(panel: string | string[] | null | undefined): WorkspacePanel | null {
+  const value = Array.isArray(panel) ? panel[0] : panel;
+  return value === "settings" || value === "sync" ? value : null;
+}
+
 export function AppShellFrame(props: AppShellFrameProps) {
   const mountedAt = performance.now();
   const layout = useLayoutPreferences();
-  const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isCompactLayout = useCompactLayoutMode();
 
   const shellGridStyle = () => `--sidebar-width: ${layout.sidebarWidthPx()}px;`;
@@ -68,6 +75,14 @@ export function AppShellFrame(props: AppShellFrameProps) {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       if (isEditableTarget(event.target)) return;
 
+      if (event.key === "Escape") {
+        if (resolveWorkspacePanel(searchParams.panel)) {
+          event.preventDefault();
+          void setSearchParams({ panel: null }, { replace: true });
+        }
+        return;
+      }
+
       const outcome = resolveNavigationHotkey(
         layout.keybindingProfile(),
         event.key,
@@ -85,11 +100,7 @@ export function AppShellFrame(props: AppShellFrameProps) {
       event.preventDefault();
       if (outcome.route) {
         if (outcome.route === "/sync" || outcome.route === "/settings") {
-          const searchParams = new URLSearchParams(location.search);
-          searchParams.set("panel", outcome.route === "/sync" ? "sync" : "settings");
-          const nextQuery = searchParams.toString();
-          const nextHref = nextQuery.length > 0 ? `${location.pathname}?${nextQuery}` : location.pathname;
-          void navigate(nextHref);
+          void setSearchParams({ panel: outcome.route === "/sync" ? "sync" : "settings" }, { replace: true });
           return;
         }
 
