@@ -359,6 +359,11 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     const width = overviewContainer?.getBoundingClientRect().width ?? 0;
     return width > 0 ? Math.round(width) : 0;
   };
+  const syncOverviewWidth = (width = measureOverviewWidth()) => {
+    if (width > 0 && width !== overviewWidth()) {
+      setOverviewWidth(width);
+    }
+  };
 
   const activeRepo = () => repository.activeRepositoryPath();
   const commitDetailCacheKey = (repositoryPath: string, commitHash: string) =>
@@ -643,18 +648,20 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     const observer = new ResizeObserver((entries) => {
       const observedWidth = entries[0]?.contentRect.width ?? 0;
       const width = observedWidth > 0 ? Math.round(observedWidth) : measureOverviewWidth();
-      setOverviewWidth(width);
+      syncOverviewWidth(width);
     });
     observer.observe(container);
-    setOverviewWidth(measureOverviewWidth());
+    syncOverviewWidth();
     onCleanup(() => observer.disconnect());
   });
 
   createEffect(() => {
     overviewEntries().length;
-    requestAnimationFrame(() => {
-      setOverviewWidth(measureOverviewWidth());
+    // History data can change track width after the observer callback; resample on the next frame.
+    const frame = requestAnimationFrame(() => {
+      syncOverviewWidth();
     });
+    onCleanup(() => cancelAnimationFrame(frame));
   });
 
   createEffect(() => {
