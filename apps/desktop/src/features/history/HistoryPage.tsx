@@ -34,7 +34,8 @@ interface GraphLayout {
 }
 
 interface TimelineConfig {
-  EDGE_INSET_PX: number;
+  EDGE_INSET_LEFT_PX: number;
+  EDGE_INSET_RIGHT_PX: number;
   LENS_RADIUS_MIN: number;
   LENS_RADIUS_MAX: number;
   TEMPORAL_BLEND: number;
@@ -55,10 +56,12 @@ const HISTORY_DEFAULT_LIMIT = 50;
 const HISTORY_MAX_LIMIT = 500;
 const HISTORY_CACHE_TTL_MS = 1500;
 const TIMELINE_NODE_RADIUS_PX = 3;
+const TIMELINE_NODE_BOX_SIZE_PX = 8;
 const TIMELINE_TRACK_VERTICAL_INSET_PX = 8;
-const TIMELINE_STRIP_HORIZONTAL_PADDING_PX = 16;
+const TIMELINE_STRIP_HORIZONTAL_PADDING_PX = 4;
 const TIMELINE_CONFIG: TimelineConfig = {
-  EDGE_INSET_PX: TIMELINE_NODE_RADIUS_PX,
+  EDGE_INSET_LEFT_PX: TIMELINE_NODE_BOX_SIZE_PX / 2 + 6,
+  EDGE_INSET_RIGHT_PX: TIMELINE_NODE_BOX_SIZE_PX / 2,
   LENS_RADIUS_MIN: 32,
   LENS_RADIUS_MAX: 64,
   TEMPORAL_BLEND: 0.32,
@@ -105,12 +108,13 @@ function projectTimelineBaseXs(
   nodeCount: number,
   width: number,
   percents: number[],
-  edgeInsetPx: number
+  edgeInsetLeftPx: number,
+  edgeInsetRightPx: number
 ): number[] {
   if (nodeCount === 0) return [];
   if (nodeCount === 1) return [width * 0.5];
 
-  const usableWidth = Math.max(0, width - edgeInsetPx * 2);
+  const usableWidth = Math.max(0, width - edgeInsetLeftPx - edgeInsetRightPx);
   const rawBasePositions = Array.from({ length: nodeCount }, (_, index) => {
     const centerPercent = percents[index] ?? 50;
     return (centerPercent / 100) * usableWidth;
@@ -120,7 +124,7 @@ function projectTimelineBaseXs(
   const baseRange = Math.max(maxBaseX - minBaseX, 1);
 
   return rawBasePositions.map(
-    (rawBaseX) => edgeInsetPx + ((rawBaseX - minBaseX) / baseRange) * usableWidth
+    (rawBaseX) => edgeInsetLeftPx + ((rawBaseX - minBaseX) / baseRange) * usableWidth
   );
 }
 
@@ -379,8 +383,20 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       overviewGraph().nodes.length,
       effectiveOverviewWidth(),
       timelineBasePercents(),
-      TIMELINE_CONFIG.EDGE_INSET_PX
+      TIMELINE_CONFIG.EDGE_INSET_LEFT_PX,
+      TIMELINE_CONFIG.EDGE_INSET_RIGHT_PX
     );
+  });
+  const timelineRailBounds = createMemo(() => {
+    const width = effectiveOverviewWidth();
+    const baseXs = projectedTimelineBaseXs();
+    if (baseXs.length === 0) {
+      return { left: 0, right: width };
+    }
+
+    const left = baseXs[0] ?? 0;
+    const right = baseXs[baseXs.length - 1] ?? width;
+    return { left, right };
   });
 
   const hoveredNodeCenterPx = createMemo(() => {
@@ -704,7 +720,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
 
   return (
     <div
-      class={`feature-page ${props.embedded ? "is-embedded" : ""}`}
+      class={`feature-page history-page ${props.embedded ? "is-embedded" : ""}`}
       style="display: flex; flex-direction: column; height: 100%; overflow: hidden; gap: 0;"
     >
       <Show when={!activeRepo()}>
@@ -804,6 +820,8 @@ export function HistoryPage(props: HistoryPageProps = {}) {
               <div
                 class="history-topology-rail"
                 style={{
+                  left: `${timelineRailBounds().left}px`,
+                  right: `${Math.max(effectiveOverviewWidth() - timelineRailBounds().right, 0)}px`,
                   top: `${TIMELINE_TRACK_VERTICAL_INSET_PX + overviewLaneStep() / 2}px`
                 }}
               />
@@ -817,7 +835,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
               >
                 <For each={overviewGraph().edges}>
                   {(edge) => {
-                    const nodeRadius = 3;
+                    const nodeRadius = TIMELINE_NODE_RADIUS_PX;
                     const pathData = createMemo(() => {
                       const from = lensMetricsMap().get(edge.fromHash);
                       const to = lensMetricsMap().get(edge.toHash);

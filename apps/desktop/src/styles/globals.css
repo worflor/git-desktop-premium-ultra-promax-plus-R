@@ -1976,6 +1976,12 @@ ol {
   padding: 12px;
 }
 
+.feature-page.history-page:not(.is-embedded) {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
 .feature-page.is-embedded>.feature-header,
 .feature-page.is-embedded>.feature-toolbar {
   display: none;
@@ -4157,6 +4163,7 @@ ol {
 .history-topology-node {
   position: absolute;
   z-index: 3;
+  box-sizing: border-box;
   aspect-ratio: 1 / 1;
   border-radius: 999px;
   cursor: pointer;
