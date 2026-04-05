@@ -100,10 +100,10 @@ ol {
 
 /* ☢️ Universal Hyper-Reactive Manifold ☢️ */
 .hyper-reactive {
+  /* Only compositor-safe transitions in default state (transform, outline).
+     Paint-triggering transitions (filter, clip-path, box-shadow) are deferred
+     to the active drag state where they're actually needed. */
   transition: transform 0.2s cubic-bezier(0.2, 0.2, 0, 1),
-    filter 0.3s ease-out,
-    clip-path 0.3s ease,
-    box-shadow 0.3s ease,
     outline 0.15s ease;
   outline: 1px solid transparent;
   outline-offset: 0px;
@@ -111,6 +111,13 @@ ol {
 }
 
 [data-hyper-active="true"] .hyper-reactive {
+  /* Upgrade to full transition set during drag — filter, clip-path, box-shadow
+     transitions are only needed while the hypercube is being dragged. */
+  transition: transform 0.2s cubic-bezier(0.2, 0.2, 0, 1),
+    filter 0.3s ease-out,
+    clip-path 0.3s ease,
+    box-shadow 0.3s ease,
+    outline 0.15s ease;
   --hyper-intensity-clamped: clamp(0, var(--hyper-drag-intensity, 0), 1);
   --hyper-corner-cut: calc(var(--hyper-intensity-clamped) * 10%);
   filter: url(#hyper-prism);
@@ -174,6 +181,7 @@ ol {
   overflow: hidden;
   pointer-events: none;
   z-index: 0;
+  contain: strict;
   -webkit-mask-image: var(--gutter-mask);
   mask-image: var(--gutter-mask);
 
@@ -302,6 +310,50 @@ ol {
   opacity: 0.46;
 }
 
+/* ── Particle Drift Animations ────────────────────────────
+   These replace embedded SVG animations with a single compositor-only
+   background-position animation per layer element. One GPU operation
+   instead of 40-60 individual SVG element re-rasterizations per frame.
+   Gated on data-app-visible to halt when the window is hidden. */
+
+@keyframes particle-drift-x {
+  from { background-position: -1000px 0; }
+  to   { background-position: 1000px 0; }
+}
+
+@keyframes particle-drift-y {
+  from { background-position: 0 -1000px; }
+  to   { background-position: 0 1000px; }
+}
+
+[data-theme="redshift"] .layer-theme {
+  animation: particle-drift-x 20s linear infinite;
+}
+
+[data-theme="nightwalker"] .layer-theme {
+  animation: particle-drift-y 3s linear infinite;
+}
+
+[data-theme="crafty"] .layer-theme {
+  animation: particle-drift-y 18s linear infinite;
+}
+
+/* Pause ALL infinite CSS animations when the app window is hidden.
+   This is the CSS half of the visibility gate — the JS half pauses
+   rAF loops and timers in HypercubeLogo and AppShellFrame. Together
+   they reduce idle GPU to near-zero when the window is not visible. */
+[data-app-visible="false"] .parallax-layer,
+[data-app-visible="false"] .status-online-indicator,
+[data-app-visible="false"] .loading-skeleton-row,
+[data-app-visible="false"] .skeleton-loader-row,
+[data-app-visible="false"] .loading-spinner-icon svg,
+[data-app-visible="false"] .history-topology-node,
+[data-app-visible="false"] .history-topology-path,
+[data-app-visible="false"] .is-active svg path,
+[data-app-visible="false"] .is-active svg circle {
+  animation-play-state: paused !important;
+}
+
 /* ── Utility Drawer Collision Fix ── */
 .utility-drawer {
   pointer-events: none !important;
@@ -427,6 +479,7 @@ ol {
   overflow: visible;
   position: relative;
   z-index: 100;
+  contain: layout style;
   /* Authority over Workspace Topbar */
 }
 
@@ -724,6 +777,7 @@ ol {
   grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   padding: 0;
+  contain: layout style;
 }
 
 /* ── Workspace Shell ─────────────────────────────────────── */
@@ -900,7 +954,7 @@ ol {
 
 .workspace-sync-btn .workspace-sync-summary {
   opacity: 0.88;
-  transition: opacity 120ms ease, filter 120ms ease;
+  transition: opacity 120ms ease;
 }
 
 .workspace-sync-btn:hover .workspace-sync-trigger-p1,
@@ -2080,7 +2134,7 @@ ol {
   color: var(--btn-text);
   font-size: 12px;
   cursor: pointer;
-  transition: background var(--runtime-duration, 80ms) var(--runtime-ease, ease-out), border-color var(--runtime-duration, 80ms) var(--runtime-ease, ease-out), color var(--runtime-duration, 80ms) var(--runtime-ease, ease-out), box-shadow var(--runtime-duration, 80ms) var(--runtime-ease, ease-out), transform var(--runtime-duration, 80ms) var(--runtime-ease, ease-out);
+  transition: background var(--runtime-duration, 80ms) var(--runtime-ease, ease-out), border-color var(--runtime-duration, 80ms) var(--runtime-ease, ease-out), color var(--runtime-duration, 80ms) var(--runtime-ease, ease-out), transform var(--runtime-duration, 80ms) var(--runtime-ease, ease-out);
   box-shadow: var(--btn-shadow, 1px 1px 0px var(--runtime-cell-shadow));
 }
 
@@ -2387,9 +2441,6 @@ ol {
   background: var(--surface-1);
   padding: 10px;
   box-shadow: inset 0 1px 0px var(--runtime-rim-light), 2px 2px 0px var(--runtime-cell-shadow);
-  transform-style: preserve-3d;
-  transform: perspective(2500px) rotateY(calc(var(--cursor-x, 0) * var(--runtime-parallax-strength, 0) * 1.2deg)) rotateX(calc(var(--cursor-y, 0) * var(--runtime-parallax-strength, 0) * -1.2deg));
-  transition: transform 150ms ease-out;
 }
 
 .state-card h3 {
@@ -3377,7 +3428,7 @@ ol {
   border-radius: var(--runtime-radius, 8px);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), inset 0 0.5px 0 rgba(255, 255, 255, 0.1);
   overflow: hidden;
-  will-change: transform, opacity;
+  will-change: transform;
   animation: select-popup-enter var(--runtime-duration, 150ms) var(--runtime-ease, ease-out);
 }
 
@@ -4091,7 +4142,7 @@ ol {
 
 .topology-node {
   fill: rgba(var(--chrome-border-rgb), 0.5);
-  transition: fill var(--runtime-duration, 100ms) var(--runtime-ease, ease-out), filter var(--runtime-duration, 100ms) var(--runtime-ease, ease-out);
+  transition: fill var(--runtime-duration, 100ms) var(--runtime-ease, ease-out);
   cursor: pointer;
   stroke: var(--runtime-cell-shadow);
   stroke-width: 1px;
@@ -4172,6 +4223,7 @@ ol {
   width: 6px;
   height: 6px;
   overflow: visible;
+  contain: layout style;
   background: var(--history-node-bg, color-mix(in srgb, var(--surface-0) 88%, var(--text-strong)));
   border: 1px solid var(--history-node-border, rgba(var(--chrome-border-rgb), 0.62));
   transition:
@@ -4219,7 +4271,12 @@ ol {
   --history-node-bg: rgba(118, 147, 255, 0.4);
   --history-node-border: rgba(157, 178, 255, 0.4);
   box-shadow: 0 0 10px rgba(118, 147, 255, 0.15);
-  backdrop-filter: blur(4px);
+}
+
+/* Nebula breathing only on hovered nodes — not all 50+ visible nodes.
+   box-shadow animation triggers paint per node per frame; limiting to hover
+   means at most 1 node animates at a time. */
+[data-theme="aether"] .history-topology-node.is-hovered:not(.is-active) {
   animation: aether-nebula 4s infinite ease-in-out;
 }
 
@@ -4285,10 +4342,13 @@ ol {
     0 0 24px rgba(0, 255, 136, 0.2);
 }
 
+/* Static drop-shadow instead of animated filter: drop-shadow().
+   Animated SVG filter forces re-rasterization every frame.
+   Static shadow + opacity transition gives equivalent visual weight. */
 [data-theme="quanta"] .history-topology-path.is-active-rail {
   stroke: #00ff88;
-  stroke-opacity: 0.18;
-  animation: quanta-flux 3s infinite ease-in-out;
+  stroke-opacity: 0.25;
+  filter: drop-shadow(0 0 4px rgba(0, 255, 136, 0.6));
 }
 
 [data-theme="quanta"] .history-topology-path.is-lane,
@@ -4525,6 +4585,12 @@ ol {
 }
 
 
+/* Previously missing — referenced by redshift hover but never defined. */
+@keyframes spectralShift {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
 @keyframes settings-inline-spin {
   from {
     transform: rotate(0deg);
@@ -4713,7 +4779,7 @@ select:focus,
 [data-theme="redshift"] .settings-slide-panel {
   background: var(--surface-2) !important;
   border-left: 1px solid rgba(var(--chrome-border-rgb), 0.4);
-  backdrop-filter: blur(48px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(160%);
 }
 
 [data-theme="redshift"] .utility-drawer {
@@ -4831,8 +4897,7 @@ select:focus,
 [data-theme="aether"] .primary-btn:hover,
 [data-theme="aether"] .workspace-mode-btn:hover {
   transform: scale(var(--interaction-warp-scale, 1.05));
-  backdrop-filter: blur(24px) saturate(140%);
-  transition: transform 0.4s cubic-bezier(0.2, 0, 0, 1), backdrop-filter 0.4s;
+  transition: transform 0.4s cubic-bezier(0.2, 0, 0, 1);
 }
 
 [data-theme="blackboard"] .primary-btn:hover {
@@ -4855,4 +4920,75 @@ select:focus,
 [data-theme="blackboard"] .workspace-mode-btn:active {
   transform: scale(0.97);
   transition: transform 0.1s;
+}
+
+/* ── Reduced Motion ──────────────────────────────────────
+   Comprehensive motion reduction for users who prefer it.
+   Covers all continuous GPU work: parallax, particles,
+   backdrop-filter blur, history node animations, interaction
+   effects, and the hypercube rotation. Static visual identity
+   is preserved — only continuous motion is eliminated. */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Kill all parallax layer transforms and drift animations. */
+  .parallax-backdrop,
+  .parallax-layer {
+    transform: none !important;
+    animation: none !important;
+    will-change: auto !important;
+  }
+
+  /* Replace backdrop-filter blur with solid backgrounds.
+     Blur is expensive and the frosted-glass look is a motion affordance. */
+  .workspace-split-panel,
+  .sync-popover,
+  .utility-drawer-content,
+  .select-popup,
+  .sidebar-rail,
+  .workspace-topbar,
+  .workspace-content-panel,
+  .settings-slide-panel,
+  .utility-drawer {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* Halt all history node theme animations. */
+  .history-topology-node,
+  .history-topology-path {
+    animation: none !important;
+    filter: none !important;
+  }
+
+  /* Halt interaction effects. */
+  [data-interaction="vibration"] .primary-btn:hover,
+  [data-interaction="vibration"] .workspace-mode-btn:hover,
+  [data-interaction="vibration"] .workspace-view-tab:hover,
+  [data-interaction="caustic"] .primary-btn:hover::after,
+  [data-interaction="caustic"] .workspace-mode-btn:hover::after,
+  [data-interaction="caustic"] .workspace-view-tab:hover::after {
+    animation: none !important;
+  }
+
+  /* Disable hyper-reactive 3D transforms. */
+  .hyper-reactive,
+  [data-hyper-active="true"] .hyper-reactive {
+    transform: none !important;
+    filter: none !important;
+    clip-path: none !important;
+  }
+
+  /* Skeleton shimmer and status pulse. */
+  .loading-skeleton-row,
+  .skeleton-loader-row,
+  .status-online-indicator {
+    animation: none !important;
+  }
+
+  /* Redshift hover drift. */
+  [data-theme="redshift"] .sidebar-project-item:hover,
+  [data-theme="redshift"] .workspace-mode-btn:hover,
+  [data-theme="redshift"] .workspace-view-tab:hover {
+    animation: none !important;
+  }
 }

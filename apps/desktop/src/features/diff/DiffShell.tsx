@@ -286,6 +286,19 @@ export function DiffShell(props: DiffShellProps) {
   let scheduledDrawFrameId: number | null = null;
   let canvasLineCache = new Map<number, ParsedDiffLine>();
 
+  // Cached canvas theme palette. Resolved once from getComputedStyle and reused
+  // across all draw frames. Invalidated by the MutationObserver on data-theme/style
+  // changes — avoids forcing a synchronous style recalc on every scroll frame.
+  let canvasPalette: {
+    addedFill: string; deletedFill: string; hunkFill: string;
+    lineNumberFill: string; lineTextFill: string;
+  } | null = null;
+
+  // Previous canvas geometry — skip redundant style writes that trigger reflow.
+  let prevCanvasW = 0;
+  let prevCanvasH = 0;
+  let prevCanvasTop = 0;
+
   const manifest = createMemo(() => props.manifest);
   const hasManifest = createMemo(() => Boolean(manifest()));
   const isIdleEmpty = createMemo(
@@ -592,11 +605,24 @@ export function DiffShell(props: DiffShellProps) {
     const width = Math.max(viewportElement.clientWidth - 16, 320);
     const height = Math.max(sliceSize * LINE_HEIGHT_PX, LINE_HEIGHT_PX);
 
-    canvasElement.width = Math.floor(width * pixelRatio);
-    canvasElement.height = Math.floor(height * pixelRatio);
-    canvasElement.style.width = `${width}px`;
-    canvasElement.style.height = `${height}px`;
-    canvasElement.style.top = `${startLine * LINE_HEIGHT_PX}px`;
+    const canvasW = Math.floor(width * pixelRatio);
+    const canvasH = Math.floor(height * pixelRatio);
+    const canvasTop = startLine * LINE_HEIGHT_PX;
+
+    // Only write canvas dimensions/position when they actually change.
+    // Each write triggers a reflow; during smooth scrolling the width rarely changes.
+    if (canvasW !== prevCanvasW || canvasH !== prevCanvasH) {
+      canvasElement.width = canvasW;
+      canvasElement.height = canvasH;
+      canvasElement.style.width = `${width}px`;
+      canvasElement.style.height = `${height}px`;
+      prevCanvasW = canvasW;
+      prevCanvasH = canvasH;
+    }
+    if (canvasTop !== prevCanvasTop) {
+      canvasElement.style.top = `${canvasTop}px`;
+      prevCanvasTop = canvasTop;
+    }
 
     const context = canvasElement.getContext("2d");
     if (!context) {
@@ -608,14 +634,21 @@ export function DiffShell(props: DiffShellProps) {
     context.font = pretextFontProfile();
     context.textBaseline = "middle";
 
-    const rootStyles = getComputedStyle(document.documentElement);
-    const hypercubePositive = rootStyles.getPropertyValue("--hypercube-positive");
-    const hypercubeNegative = rootStyles.getPropertyValue("--hypercube-negative");
-    const addedFill = withAlpha(hypercubePositive, 0.16);
-    const deletedFill = withAlpha(hypercubeNegative, 0.16);
-    const hunkFill = withAlpha(hypercubePositive, 0.1);
-    const lineNumberFill = withAlpha(rootStyles.getPropertyValue("--text-muted"), 0.76);
-    const lineTextFill = withAlpha(rootStyles.getPropertyValue("--text-strong"), 0.94);
+    // Resolve theme palette from cache. Only call getComputedStyle when the
+    // cache is cold (first draw or after a theme/style change via MutationObserver).
+    if (!canvasPalette) {
+      const rootStyles = getComputedStyle(document.documentElement);
+      const hypercubePositive = rootStyles.getPropertyValue("--hypercube-positive");
+      const hypercubeNegative = rootStyles.getPropertyValue("--hypercube-negative");
+      canvasPalette = {
+        addedFill: withAlpha(hypercubePositive, 0.16),
+        deletedFill: withAlpha(hypercubeNegative, 0.16),
+        hunkFill: withAlpha(hypercubePositive, 0.1),
+        lineNumberFill: withAlpha(rootStyles.getPropertyValue("--text-muted"), 0.76),
+        lineTextFill: withAlpha(rootStyles.getPropertyValue("--text-strong"), 0.94),
+      };
+    }
+    const { addedFill, deletedFill, hunkFill, lineNumberFill, lineTextFill } = canvasPalette;
 
     for (let index = 0; index < sliceSize; index += 1) {
       const lineIndex = startLine + index;
@@ -774,6 +807,8 @@ export function DiffShell(props: DiffShellProps) {
     let themeObserver: MutationObserver | undefined;
     if (typeof MutationObserver !== "undefined") {
       themeObserver = new MutationObserver(() => {
+        // Invalidate cached theme colors so the next draw frame re-resolves them.
+        canvasPalette = null;
         if (viewportElement) {
           setPretextFontProfile(resolvePretextFontProfile(viewportElement));
         }

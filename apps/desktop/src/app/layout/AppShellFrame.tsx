@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, onMount, type JSX } from "solid-js";
+import { createEffect, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { useNavigate, useSearchParams } from "@solidjs/router";
 import { CommandRecoveryBanner } from "@/app/layout/CommandRecoveryBanner";
 import { useLayoutPreferences } from "@/app/layout/LayoutPreferencesContext";
@@ -27,6 +27,14 @@ function resolveWorkspacePanel(panel: string | string[] | null | undefined): Wor
   return value === "settings" || value === "sync" ? value : null;
 }
 
+/**
+ * Themes with multi-layer parallax particles (stardust, quantum) need
+ * near/mid/far/bg layers. Single-layer themes only need layer-theme.
+ * Themes with zero parallaxStrength need no layers at all.
+ */
+const MULTI_LAYER_THEMES = new Set(["aether", "quanta"]);
+const NO_PARALLAX_THEMES = new Set(["petrichor", "helix"]);
+
 export function AppShellFrame(props: AppShellFrameProps) {
   const mountedAt = performance.now();
   const layout = useLayoutPreferences();
@@ -37,6 +45,9 @@ export function AppShellFrame(props: AppShellFrameProps) {
   const shellGridStyle = () => `--sidebar-width: ${layout.sidebarWidthPx()}px;`;
   const shellRootClass = () =>
     isCompactLayout() ? "app-shell-root is-compact" : "app-shell-root is-full";
+
+  const hasParallax = () => !NO_PARALLAX_THEMES.has(layout.themeId());
+  const hasMultiLayer = () => MULTI_LAYER_THEMES.has(layout.themeId());
 
   createEffect(() => {
     if (layout.sidebarPosition() !== "left") {
@@ -130,6 +141,18 @@ export function AppShellFrame(props: AppShellFrameProps) {
       }
     };
 
+    const startWindowSampling = () => {
+      if (windowSampleIntervalId !== undefined) return;
+      sampleWindowPosition();
+      windowSampleIntervalId = window.setInterval(sampleWindowPosition, 66);
+    };
+
+    const stopWindowSampling = () => {
+      if (windowSampleIntervalId === undefined) return;
+      window.clearInterval(windowSampleIntervalId);
+      windowSampleIntervalId = undefined;
+    };
+
     const onWindowMouseMove = (event: MouseEvent) => {
       // Only inject mouse variables on change to reduce CSS-OM overhead
       if (event.screenX === lastX && event.screenY === lastY) return;
@@ -143,22 +166,32 @@ export function AppShellFrame(props: AppShellFrameProps) {
 
     window.addEventListener("keydown", onWindowKeyDown);
     window.addEventListener("mousemove", onWindowMouseMove, { passive: true });
-    
+
     // Let first content paint complete before starting low-frequency window position sampling.
     startupDelayId = window.setTimeout(() => {
-      sampleWindowPosition();
-      windowSampleIntervalId = window.setInterval(sampleWindowPosition, 66);
+      startWindowSampling();
       startupDelayId = undefined;
     }, 120);
-    
+
+    // Gate the window position polling interval on page visibility.
+    // When the window is hidden, the interval is pure waste — screenX/Y cannot
+    // change while the window is not visible, and the CSS variables drive nothing.
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stopWindowSampling();
+      } else if (startupDelayId === undefined) {
+        startWindowSampling();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     onCleanup(() => {
       clearPrefixTimer();
       if (startupDelayId !== undefined) {
         window.clearTimeout(startupDelayId);
       }
-      if (windowSampleIntervalId !== undefined) {
-        window.clearInterval(windowSampleIntervalId);
-      }
+      stopWindowSampling();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("keydown", onWindowKeyDown);
       window.removeEventListener("mousemove", onWindowMouseMove);
     });
@@ -166,14 +199,21 @@ export function AppShellFrame(props: AppShellFrameProps) {
 
   return (
     <div class={shellRootClass()}>
-      {/* GPU-Accelerated Celestial Backdrop */}
-      <div class="parallax-backdrop">
-        <div class="parallax-layer layer-bg" />
-        <div class="parallax-layer layer-far" />
-        <div class="parallax-layer layer-mid" />
-        <div class="parallax-layer layer-near" />
-        <div class="parallax-layer layer-theme" />
-      </div>
+      {/* GPU-Accelerated Celestial Backdrop — conditionally mounted by theme.
+          Themes with zero parallax (petrichor, helix) skip all layers.
+          Themes with single-layer particles skip the near/mid/far/bg layers.
+          This avoids reserving GPU texture memory for invisible compositor layers. */}
+      <Show when={hasParallax()}>
+        <div class="parallax-backdrop">
+          <Show when={hasMultiLayer()}>
+            <div class="parallax-layer layer-bg" />
+            <div class="parallax-layer layer-far" />
+            <div class="parallax-layer layer-mid" />
+            <div class="parallax-layer layer-near" />
+          </Show>
+          <div class="parallax-layer layer-theme" />
+        </div>
+      </Show>
 
       <CommandRecoveryBanner />
       <div class="app-shell-grid sidebar-left" style={shellGridStyle()}>

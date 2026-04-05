@@ -4,6 +4,7 @@ import { App } from "@/app/App";
 import { AppShellFrame } from "@/app/layout/AppShellFrame";
 import { WorkspacePage } from "@/features/workspace/WorkspacePage";
 import { applyTheme } from "@/lib/ui/theme";
+import "@/lib/ui/visibility"; // Install data-app-visible attribute before first render.
 import "@/styles/tokens.css";
 import "@/styles/globals.css";
 import "@/styles/motion.css";
@@ -57,13 +58,6 @@ render(() => (
             <feMergeNode in="spec2" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
-        </filter>
-        <filter id="hyper-glitch-shard" x="-50%" y="-50%" width="200%" height="200%">
-          <feMorphology operator="dilate" radius="0.4" in="SourceGraphic" result="morphed" />
-          <feComponentTransfer in="morphed" result="sharp">
-            <feFuncA type="discrete" tableValues="0 1" />
-          </feComponentTransfer>
-          <feBlend mode="screen" in="SourceGraphic" in2="sharp" />
         </filter>
       </defs>
     </svg>

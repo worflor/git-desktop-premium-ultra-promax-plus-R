@@ -310,13 +310,8 @@
   --diff-overlay: rgba(0, 0, 0, 0.6);
   --danger-overlay: rgba(40, 5, 8, 0.3);
   
-  --glass-backdrop-filter: blur(32px) saturate(150%);
-  --shadow-elev: 
-    0 16px 52px rgba(0, 0, 0, 0.8),
-    0 0 0 1px rgba(var(--chrome-border-rgb), 0.2); /* Structural Rim */
-  
   --glass-backdrop-filter: blur(24px) saturate(150%);
-  --shadow-elev: 
+  --shadow-elev:
     0 16px 52px rgba(0, 0, 0, 0.8),
     0 0 0 0.5px rgba(255, 0, 68, 0.15); /* Structural spectral rim */
 
@@ -403,7 +398,7 @@
   --input-overlay: rgba(255, 255, 255, 0.15);
   --diff-overlay: rgba(254, 252, 248, 0.9);
   --danger-overlay: rgba(255, 240, 235, 0.85);
-  --glass-backdrop-filter: blur(32px) saturate(125%);
+  --glass-backdrop-filter: blur(24px) saturate(125%);
   --shadow-elev: 0 10px 25px rgba(184, 134, 11, 0.08),
     0 0 1px rgba(184, 134, 11, 0.15);
 

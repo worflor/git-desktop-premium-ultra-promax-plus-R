@@ -196,36 +196,38 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
       bg: buildLayer(34, 0.14, 0.46, 89.4)
     };
   } else if (shader.particles === "embers") {
-    svg += `<style>.near-wave { stroke: rgba(0, 240, 255, 0.4); animation: propagate 6s linear infinite; stroke-width: 1.2; } .mid-wave { stroke: rgba(255, 20, 50, 0.3); animation: propagate 12s linear infinite; stroke-width: 0.8; } .far-wave { stroke: rgba(100, 10, 20, 0.2); animation: propagate 24s linear infinite; stroke-width: 0.5; } @keyframes propagate { 0% { transform: translateX(-100%) scaleY(1); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateX(100%) scaleY(1.2); opacity: 0; } } .cmb-scintilla { fill: rgba(255, 255, 255, 0.3); opacity: 0; animation: flicker 5s ease-in-out infinite; } @keyframes flicker { 0%, 100% { opacity: 0; transform: scale(0.8); } 50% { opacity: 0.5; transform: scale(1.1); } }</style>`;
+    // Static SVG: wave paths and scintilla dots rendered without embedded animations.
+    // Visual motion is provided by CSS background-position animation on the layer element
+    // (see globals.css .particle-drift-x), which is a single compositor-only operation
+    // instead of 55+ individual SVG animation re-rasterizations per frame.
     for (let i = 0; i < 40; i++) {
-      const x = (Math.random() * 1000).toFixed(1);
-      const y = (Math.random() * 1000).toFixed(1);
-      const del = (Math.random() * -10).toFixed(1);
-      svg += `<circle cx="${x}" cy="${y}" r="1" class="cmb-scintilla" style="animation-delay: ${del}s" />`;
+      const x = (Math.sin(i * 127.31 + 7.3) * 480 + 500).toFixed(1);
+      const y = (Math.cos(i * 311.17 + 2.1) * 480 + 500).toFixed(1);
+      const alpha = (0.15 + Math.abs(Math.sin(i * 5.17)) * 0.2).toFixed(3);
+      svg += `<circle cx="${x}" cy="${y}" r="1.2" fill="rgba(255,255,255,${alpha})" />`;
     }
-    const renderWaveLayer = (count: number, className: string, freqMod: number, amp: number) => {
+    const renderWaveLayer = (count: number, strokeColor: string, strokeWidth: string, freqMod: number, amp: number) => {
       let res = "";
       for (let i = 0; i < count; i++) {
-        const y_b = Math.random() * 1000;
-        const del = (Math.random() * -30).toFixed(1);
-        const freq = (Math.random() * 0.05 + 0.01) * freqMod;
+        const y_b = (i + 1) * (1000 / (count + 1));
+        const freq = (0.03 + i * 0.008) * freqMod;
         let d = `M 0 ${y_b.toFixed(1)} `;
-        for (let x = 0; x <= 1000; x += 100) d += `L ${x} ${(y_b + Math.sin(x * freq + i) * amp).toFixed(1)} `;
-        res += `<path d="${d}" fill="none" class="${className}" style="animation-delay:${del}s" />`;
+        for (let x = 0; x <= 1000; x += 50) d += `L ${x} ${(y_b + Math.sin(x * freq + i) * amp).toFixed(1)} `;
+        res += `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" opacity="0.7" />`;
       }
       return res;
     };
-    svg += renderWaveLayer(6, "near-wave", 2.0, 15);
-    svg += renderWaveLayer(5, "mid-wave", 1.0, 30);
-    svg += renderWaveLayer(4, "far-wave", 0.5, 60);
+    svg += renderWaveLayer(6, "rgba(0, 240, 255, 0.4)", "1.2", 2.0, 15);
+    svg += renderWaveLayer(5, "rgba(255, 20, 50, 0.3)", "0.8", 1.0, 30);
+    svg += renderWaveLayer(4, "rgba(100, 10, 20, 0.2)", "0.5", 0.5, 60);
   } else if (shader.particles === "voxels") {
-    svg += `<style>.voxel { animation: drop linear infinite; fill: ${baseFill}; transform-origin: center; } @keyframes drop { 0% { transform: translateY(-100px) rotate(0deg); opacity: 0;} 10% {opacity: 0.3;} 90% {opacity: 0.3;} 100% { transform: translateY(1100px) rotate(360deg); opacity: 0; } }</style>`;
+    // Static SVG: blocks placed at deterministic scattered positions.
+    // CSS background-position animation on the layer provides the falling effect.
     for (let i = 0; i < 15; i++) {
       const x = (Math.sin(i * 444) * 500 + 500).toFixed(1);
+      const y = (Math.sin(i * 222 + 33) * 500 + 500).toFixed(1);
       const s = (Math.abs(Math.sin(i * 33)) * 20 + 10).toFixed(1);
-      const dur = (Math.abs(Math.sin(i * 22)) * 15 + 10).toFixed(1);
-      const del = (Math.abs(Math.sin(i * 11)) * 15).toFixed(1);
-      svg += `<rect x='${x}' y='0' width='${s}' height='${s}' class='voxel' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
+      svg += `<rect x='${x}' y='${y}' width='${s}' height='${s}' fill='${baseFill}' opacity='0.3' />`;
     }
   } else if (shader.particles === "chalkdust") {
     const chalkColors = [baseFill, baseFill, "rgba(255, 130, 140, 0.6)", "rgba(150, 210, 255, 0.6)", "rgba(255, 220, 120, 0.6)"];
@@ -262,10 +264,14 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
       svg += `<path d="${d}" class="chalk-line" stroke="${color}" stroke-width="${strokeW}" pathLength="360" stroke-dasharray="360 360" style="animation-duration:${dur}s;animation-delay:${del}s;transform-origin:${cx}px ${cy}px;transform:rotate(${rot}deg)" />`;
     }
   } else if (shader.particles === "void") {
-    svg += `<style>.rain { animation: drop linear infinite; fill: #00f0ff; opacity: 0; } @keyframes drop { 0% { transform: translateY(-100px) scaleY(0.5); opacity: 0; } 10% { opacity: 0.8; } 90% { opacity: 0.8; } 100% { transform: translateY(1100px) scaleY(2); opacity: 0; } }</style>`;
+    // Static SVG: rain bars placed at staggered Y positions across the tile.
+    // CSS background-position animation scrolls the tile vertically for rain effect.
     for (let i = 0; i < 60; i++) {
-      const x = (Math.random() * 1000).toFixed(1), h = (Math.random() * 40 + 20).toFixed(1), dur = (Math.random() * 0.8 + 0.6).toFixed(1), del = (Math.random() * -3).toFixed(1);
-      svg += `<rect x='${x}' y='0' width='1' height='${h}' class='rain' style='animation-duration:${dur}s;animation-delay:${del}s' />`;
+      const x = (Math.sin(i * 127.31 + 3.7) * 490 + 500).toFixed(1);
+      const y = (Math.sin(i * 311.17 + 1.3) * 490 + 500).toFixed(1);
+      const h = (Math.abs(Math.sin(i * 29.13)) * 40 + 20).toFixed(1);
+      const alpha = (0.3 + Math.abs(Math.sin(i * 7.71)) * 0.5).toFixed(3);
+      svg += `<rect x='${x}' y='${y}' width='1' height='${h}' fill='#00f0ff' opacity='${alpha}' />`;
     }
   } else if (shader.particles === "quantum") {
     const buildOrbLayer = (
@@ -325,7 +331,7 @@ function generateProceduralParticles(shader: SurfaceMaterialShader, ambient: Rgb
 function computeRuntime(shader: SurfaceMaterialShader, devicePixelRatio: number): SurfaceRuntime {
   const dpr = clamp(devicePixelRatio, 1, 2.5);
   const mX = shader.mode === "glass" ? 1 : 0;
-  const bPx = clamp(Math.sqrt(dpr) * shader.blurPx * mX, 0, 28);
+  const bPx = clamp(Math.sqrt(dpr) * shader.blurPx * mX, 0, 24);
   const sPct = clamp(100 + (shader.saturatePct - 100) * mX, 90, 220);
   const rG = clamp(1 + shader.edgeIntensity * 0.22 * mX, 1, 1.26);
   const aS = clamp((shader.opacityScale / rG) * (mX > 0 ? 1 : 1.12), 0.68, 1.55);

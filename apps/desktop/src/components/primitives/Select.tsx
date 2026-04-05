@@ -62,8 +62,10 @@ export function Select(props: SelectProps) {
     props.onChange(id);
   };
 
-  // Re-calculate position on scroll/resize for the Portal
+  // Re-calculate position on scroll/resize for the Portal.
+  // Throttled via rAF to avoid forcing layout recalc on every scroll event.
   const [coords, setCoords] = createSignal({ top: 0, left: 0, width: 0 });
+  let coordsRafId = 0;
 
   const updateCoords = () => {
     if (triggerRef) {
@@ -76,20 +78,30 @@ export function Select(props: SelectProps) {
     }
   };
 
+  const scheduleUpdateCoords = () => {
+    if (coordsRafId) return;
+    coordsRafId = requestAnimationFrame(() => {
+      coordsRafId = 0;
+      updateCoords();
+    });
+  };
+
   createEffect(() => {
     if (isOpen()) {
       updateCoords();
-      window.addEventListener("scroll", updateCoords, true);
-      window.addEventListener("resize", updateCoords);
+      window.addEventListener("scroll", scheduleUpdateCoords, true);
+      window.addEventListener("resize", scheduleUpdateCoords);
     } else {
-      window.removeEventListener("scroll", updateCoords, true);
-      window.removeEventListener("resize", updateCoords);
+      window.removeEventListener("scroll", scheduleUpdateCoords, true);
+      window.removeEventListener("resize", scheduleUpdateCoords);
+      if (coordsRafId) { cancelAnimationFrame(coordsRafId); coordsRafId = 0; }
     }
   });
 
   onCleanup(() => {
-    window.removeEventListener("scroll", updateCoords, true);
-    window.removeEventListener("resize", updateCoords);
+    window.removeEventListener("scroll", scheduleUpdateCoords, true);
+    window.removeEventListener("resize", scheduleUpdateCoords);
+    if (coordsRafId) { cancelAnimationFrame(coordsRafId); coordsRafId = 0; }
   });
 
   return (
