@@ -866,26 +866,6 @@ export function DiffShell(props: DiffShellProps) {
             </button>
           </Show>
 
-          <Show when={hunkJumpTargets().length > 0}>
-            <select
-              class="diff-hunk-select"
-              value={String(selectedHunkIndex())}
-              onChange={(event) => {
-                const index = Number.parseInt(event.currentTarget.value, 10);
-                setSelectedHunkIndex(index);
-                const target = hunkJumpTargets().find((item) => item.index === index);
-                if (target) {
-                  jumpToLine(target.lineNumber);
-                }
-              }}
-            >
-              <option value="-1">Jump to hunk</option>
-              {hunkJumpTargets().map((target) => (
-                <option value={target.index}>{target.label}</option>
-              ))}
-            </select>
-          </Show>
-
           <input
             class="diff-search"
             placeholder="Search diff..."
@@ -913,13 +893,54 @@ export function DiffShell(props: DiffShellProps) {
         </div>
       </Show>
 
-      <div
-        class="diff-viewport"
-        ref={(element) => {
-          viewportElement = element;
-        }}
-        onScroll={onViewportScroll}
-      >
+      <div class="diff-viewport-container">
+        <Show when={hunkJumpTargets().length > 0}>
+          <div class="diff-hunk-rail-container">
+            <div class="diff-hunk-rail">
+              {hunkJumpTargets().map((target) => {
+                const totalHeight = mode() === "canvas" ? canvasVirtualHeight() : domVirtualWindow().totalHeightPx;
+                const relativeY = ((target.lineNumber - 1) * LINE_HEIGHT_PX) / Math.max(totalHeight, 1);
+                
+                // Active/Lens Influence Logic
+                // We use the viewport scroll position to determine which nodes are high-intensity
+                const viewportCenterY = (viewportScrollTop() + viewportHeightPx() / 2) / Math.max(totalHeight, 1);
+                const distance = Math.abs(relativeY - viewportCenterY);
+                const lensRadius = 0.15; // Influence radius in percent of total height
+                const influence = Math.exp(-8 * Math.pow(distance / lensRadius, 2));
+
+                return (
+                  <button
+                    class="hunk-node"
+                    style={{
+                      top: `${relativeY * 100}%`,
+                      transform: `translate(-50%, -50%) scale(${1 + influence * 1.2})`,
+                      opacity: 0.2 + influence * 0.8
+                    }}
+                    onClick={() => jumpToLine(target.lineNumber)}
+                    title={target.label}
+                  >
+                    <div class="hunk-node-pulse" style={{ opacity: influence }} />
+                  </button>
+                );
+              })}
+              <div 
+                class="diff-hunk-rail-active-marker" 
+                style={{ 
+                  top: `${(viewportScrollTop() / Math.max(mode() === "canvas" ? canvasVirtualHeight() : domVirtualWindow().totalHeightPx, 1)) * 100}%`,
+                  height: `${(viewportHeightPx() / Math.max(mode() === "canvas" ? canvasVirtualHeight() : domVirtualWindow().totalHeightPx, 1)) * 100}%`
+                }} 
+              />
+            </div>
+          </div>
+        </Show>
+
+        <div
+          class="diff-viewport"
+          ref={(element) => {
+            viewportElement = element;
+          }}
+          onScroll={onViewportScroll}
+        >
         <Show when={props.error}>
           <div class="diff-viewport-dom">{props.error}</div>
         </Show>
@@ -980,6 +1001,7 @@ export function DiffShell(props: DiffShellProps) {
             </Show>
           </Show>
         </Show>
+        </div>
       </div>
 
       <Show when={copyMessage()}>

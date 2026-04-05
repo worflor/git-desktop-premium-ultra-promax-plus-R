@@ -83,7 +83,6 @@ svg:hover circle {
   100% {
     transform: translateX(0);
     opacity: 0.85;
-    filter: none;
   }
 
   50% {
@@ -98,7 +97,6 @@ svg:hover circle {
   100% {
     transform: translateX(0);
     opacity: 0.85;
-    filter: none;
   }
 
   50% {
@@ -112,7 +110,6 @@ svg:hover circle {
   0%,
   100% {
     transform: scale(1);
-    filter: saturate(1);
     opacity: 0.9;
   }
 
@@ -508,7 +505,6 @@ svg:hover circle {
   animation: settings-orbit-ccw 4.5s infinite cubic-bezier(0.45, 0, 0.55, 1);
 }
 
-.is-active.icon-settings,
 .icon-settings.is-active {
   animation: history-system-pulse 3s infinite ease-in-out;
 }

@@ -15,9 +15,11 @@ if (!root) {
   throw new Error("App root element not found.");
 }
 
+// Apply the full theme synchronously — CSS variables must be set before the
+// first render so components never see a frame without them.
 const bootstrappedTheme = document.documentElement.getAttribute("data-theme");
 if (bootstrappedTheme && bootstrappedTheme.trim().length > 0) {
-  applyTheme(bootstrappedTheme, { deferMaterial: true, force: true });
+  applyTheme(bootstrappedTheme, { force: true });
 }
 
 function AppRoot(props: RouteSectionProps) {
@@ -63,3 +65,14 @@ render(() => (
     </svg>
   </>
 ), root!);
+
+// Show the window after the first painted frame. The window starts hidden
+// (visible: false in tauri.conf.json) so the user only ever sees the fully
+// themed, fully rendered state — never any intermediate construction step.
+if ("__TAURI_INTERNALS__" in window) {
+  requestAnimationFrame(() => {
+    import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
+      void getCurrentWindow().show();
+    });
+  });
+}

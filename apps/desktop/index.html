@@ -13,9 +13,12 @@
         margin: 0;
       }
 
+      /* Matches the Tauri window backgroundColor — prevents any flash between
+         native window creation and WebView paint. The bootstrap script below
+         immediately overwrites this with the real cached theme gradient. */
       html,
       body {
-        background: radial-gradient(circle at 14% 10%, #1a2333 0%, #0d1118 44%, #0a0d12 100%);
+        background: #0a0d12;
       }
     </style>
     <script>
