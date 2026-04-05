@@ -851,20 +851,35 @@ export function HistoryPage(props: HistoryPageProps = {}) {
               <For each={overviewGraph().nodes}>
                 {(node, index) => {
                   const metric = () => lensMetrics()[index()];
+                  const totalNodes = () => overviewGraph().nodes.length;
+                  const isFirstNode = () => index() === 0;
+                  const isLastNode = () => index() === totalNodes() - 1;
+                  const leftPosition = () => {
+                    if (isFirstNode()) return "0%";
+                    if (isLastNode()) return "100%";
+                    return `${metric()?.centerPercent ?? 50}%`;
+                  };
+                  const translateX = () => {
+                    if (isFirstNode()) return "0%";
+                    if (isLastNode()) return "-100%";
+                    return "-50%";
+                  };
                   return (
                     <button
                       type="button"
                       class={`history-topology-node ${selectedCommitHash() === node.commitHash ? "is-active" : ""} ${hoveredCommitHash() === node.commitHash ? "is-hovered" : ""} ${node.isMerge ? "is-merge" : ""}`}
                       style={{
-                        left: `${metric()?.x ?? 0}px`,
+                        left: leftPosition(),
                         top: `${metric()?.y ?? 0}px`,
-                        transform: `translate(-50%, -50%) scale(${metric()?.scale ?? 1})`,
+                        transform: `translate(${translateX()}, -50%) scale(${metric()?.scale ?? 1})`,
                         "z-index": selectedCommitHash() === node.commitHash ? 12 : hoveredCommitHash() === node.commitHash ? 8 : 2
                       }}
                       onClick={() => {
                         setSelectedCommitHash(node.commitHash);
                         const m = metric();
-                        if (m) setHoverLensX(m.x);
+                        if (m && overviewContainer) {
+                          setHoverLensX((m.centerPercent / 100) * overviewContainer.clientWidth);
+                        }
                       }}
                       onPointerEnter={() => setHoveredCommitHash(node.commitHash)}
                       title={`${node.shortHash}: ${node.subject}`}
