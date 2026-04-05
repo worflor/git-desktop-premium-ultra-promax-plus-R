@@ -56,12 +56,13 @@ const HISTORY_DEFAULT_LIMIT = 50;
 const HISTORY_MAX_LIMIT = 500;
 const HISTORY_CACHE_TTL_MS = 1500;
 const TIMELINE_NODE_RADIUS_PX = 3;
-const TIMELINE_NODE_BOX_SIZE_PX = 8;
+const TIMELINE_NODE_DIAMETER_PX = TIMELINE_NODE_RADIUS_PX * 2;
+const TIMELINE_LEFT_PADDING_PX = 6;
 const TIMELINE_TRACK_VERTICAL_INSET_PX = 8;
 const TIMELINE_STRIP_HORIZONTAL_PADDING_PX = 4;
 const TIMELINE_CONFIG: TimelineConfig = {
-  EDGE_INSET_LEFT_PX: TIMELINE_NODE_BOX_SIZE_PX / 2 + 6,
-  EDGE_INSET_RIGHT_PX: TIMELINE_NODE_BOX_SIZE_PX / 2,
+  EDGE_INSET_LEFT_PX: TIMELINE_LEFT_PADDING_PX + TIMELINE_NODE_RADIUS_PX,
+  EDGE_INSET_RIGHT_PX: TIMELINE_NODE_RADIUS_PX,
   LENS_RADIUS_MIN: 32,
   LENS_RADIUS_MAX: 64,
   TEMPORAL_BLEND: 0.32,
@@ -114,18 +115,20 @@ function projectTimelineBaseXs(
   if (nodeCount === 0) return [];
   if (nodeCount === 1) return [width * 0.5];
 
-  const usableWidth = Math.max(0, width - edgeInsetLeftPx - edgeInsetRightPx);
-  const rawBasePositions = Array.from({ length: nodeCount }, (_, index) => {
-    const centerPercent = percents[index] ?? 50;
-    return (centerPercent / 100) * usableWidth;
-  });
-  const minBaseX = Math.min(...rawBasePositions);
-  const maxBaseX = Math.max(...rawBasePositions);
-  const baseRange = Math.max(maxBaseX - minBaseX, 1);
+  const minX = Math.max(0, edgeInsetLeftPx);
+  const maxX = Math.max(minX, width - edgeInsetRightPx);
+  const drawableWidth = Math.max(0, maxX - minX);
+  const normalizedPercents = Array.from({ length: nodeCount }, (_, index) => percents[index] ?? 50);
+  const minPercent = Math.min(...normalizedPercents);
+  const maxPercent = Math.max(...normalizedPercents);
+  const percentRange = Math.max(maxPercent - minPercent, 1);
 
-  return rawBasePositions.map(
-    (rawBaseX) => edgeInsetLeftPx + ((rawBaseX - minBaseX) / baseRange) * usableWidth
-  );
+  return normalizedPercents.map((percent, index) => {
+    if (index === 0) return minX;
+    if (index === nodeCount - 1) return maxX;
+    const normalized = (percent - minPercent) / percentRange;
+    return minX + normalized * drawableWidth;
+  });
 }
 
 function CommitTime(props: { isoString: string; style?: string; class?: string; readOnly?: boolean }) {
@@ -352,6 +355,11 @@ export function HistoryPage(props: HistoryPageProps = {}) {
   let overviewContainer: HTMLDivElement | undefined;
   let previousRepositoryPath: string | null | undefined;
 
+  const measureOverviewWidth = () => {
+    const width = overviewContainer?.getBoundingClientRect().width ?? 0;
+    return width > 0 ? Math.round(width) : 0;
+  };
+
   const activeRepo = () => repository.activeRepositoryPath();
   const commitDetailCacheKey = (repositoryPath: string, commitHash: string) =>
     `${repositoryPath}::${commitHash}`;
@@ -373,8 +381,12 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       Math.max(overviewGraph().laneCount, 1)
   );
   const effectiveOverviewWidth = createMemo(() => {
-    const w = overviewWidth();
-    return w > 1 ? w : (overviewContainer?.getBoundingClientRect().width ?? 600);
+    const liveWidth = measureOverviewWidth();
+    if (liveWidth > 1) {
+      return liveWidth;
+    }
+    const cachedWidth = overviewWidth();
+    return cachedWidth > 1 ? cachedWidth : 600;
   });
   // ─── Timeline Architecture Standards ──────────────────────────────
   const timelineBasePercents = createMemo<number[]>(() => computeTimelineBasePercents(overviewEntries(), TIMELINE_CONFIG));
@@ -394,8 +406,9 @@ export function HistoryPage(props: HistoryPageProps = {}) {
       return { left: 0, right: width };
     }
 
-    const left = baseXs[0] ?? 0;
-    const right = baseXs[baseXs.length - 1] ?? width;
+    const nodeRadius = TIMELINE_NODE_DIAMETER_PX / 2;
+    const left = Math.max((baseXs[0] ?? 0) - nodeRadius, 0);
+    const right = Math.min((baseXs[baseXs.length - 1] ?? width) + nodeRadius, width);
     return { left, right };
   });
 
@@ -628,12 +641,20 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     }
 
     const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? container.clientWidth;
+      const observedWidth = entries[0]?.contentRect.width ?? 0;
+      const width = observedWidth > 0 ? Math.round(observedWidth) : measureOverviewWidth();
       setOverviewWidth(width);
     });
     observer.observe(container);
-    setOverviewWidth(container.clientWidth);
+    setOverviewWidth(measureOverviewWidth());
     onCleanup(() => observer.disconnect());
+  });
+
+  createEffect(() => {
+    overviewEntries().length;
+    requestAnimationFrame(() => {
+      setOverviewWidth(measureOverviewWidth());
+    });
   });
 
   createEffect(() => {
@@ -817,22 +838,29 @@ export function HistoryPage(props: HistoryPageProps = {}) {
                 }
               }}
             >
-              <div
-                class="history-topology-rail"
-                style={{
-                  left: `${timelineRailBounds().left}px`,
-                  right: `${Math.max(effectiveOverviewWidth() - timelineRailBounds().right, 0)}px`,
-                  top: `${TIMELINE_TRACK_VERTICAL_INSET_PX + overviewLaneStep() / 2}px`
-                }}
-              />
               <svg
                 class="history-topology-svg"
                 width={effectiveOverviewWidth()}
                 height={overviewHeight()}
                 viewBox={`0 0 ${effectiveOverviewWidth()} ${overviewHeight()}`}
                 preserveAspectRatio="none"
-                style="pointer-events: none; overflow: visible;"
+                style={{
+                  "pointer-events": "none",
+                  overflow: "visible",
+                  width: `${effectiveOverviewWidth()}px`,
+                  height: `${overviewHeight()}px`
+                }}
               >
+                <line
+                  x1={timelineRailBounds().left}
+                  y1={TIMELINE_TRACK_VERTICAL_INSET_PX + overviewLaneStep() / 2}
+                  x2={timelineRailBounds().right}
+                  y2={TIMELINE_TRACK_VERTICAL_INSET_PX + overviewLaneStep() / 2}
+                  stroke="var(--chrome-accent)"
+                  stroke-opacity="0.22"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
                 <For each={overviewGraph().edges}>
                   {(edge) => {
                     const nodeRadius = TIMELINE_NODE_RADIUS_PX;
