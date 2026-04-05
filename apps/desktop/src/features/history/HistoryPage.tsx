@@ -798,11 +798,12 @@ export function HistoryPage(props: HistoryPageProps = {}) {
 
                 const isSelected = selectedCommitHash() === node.commitHash;
                 const isHovered = hoveredCommitHash() === node.commitHash;
+                const nodeScale = isSelected ? metric.scale * 1.28 : metric.scale;
                 return (
                   <button
                     type="button"
                     class={`history-topology-node ${isSelected ? "is-active" : ""} ${isHovered ? "is-hovered" : ""} ${node.isMerge ? "is-merge" : ""}`}
-                    style={`left: calc(${metric.centerPercent}% - 3px); top: ${8 + node.lane * overviewLaneStep() - 3}px; width: 6px; height: 6px; transform: translateX(${metric.shiftPx}px) scale(${metric.scale}); z-index: ${isHovered ? 5 : isSelected ? 4 : 2};`}
+                    style={`left: calc(${metric.centerPercent}% - 3px); top: ${8 + node.lane * overviewLaneStep() - 3}px; width: 6px; height: 6px; transform: translateX(${metric.shiftPx}px) scale(${nodeScale}); z-index: ${isSelected ? 8 : isHovered ? 6 : 2};`}
                     onClick={() => {
                       setSelectedCommitHash(node.commitHash);
                       const clickedCenter = (metric.centerPercent / 100) * effectiveOverviewWidth() + metric.shiftPx;
