@@ -4,8 +4,9 @@ import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
 import { LoadingStateSkeleton } from "@/components/composite/LoadingStateSkeleton";
 import { Icon } from "@/components/icons/Icon";
-import { createBranch, listBranches, checkoutBranch } from "@/lib/backend/commands";
+import { createBranch, listBranches, checkoutBranch, listTags, deleteTag } from "@/lib/backend/commands";
 import { recordUiTiming } from "@/lib/telemetry/uiTiming";
+import type { TagEntryData } from "@/lib/backend/dtos";
 
 interface BranchesPageProps {
   embedded?: boolean;
@@ -27,6 +28,34 @@ export function BranchesPage(props: BranchesPageProps = {}) {
     }
     return listBranches(path);
   });
+
+  const [tagsResult, { refetch: refetchTags }] = createResource(activeRepo, async (path) => {
+    if (!path) {
+      return null;
+    }
+    return listTags(path);
+  });
+
+  const [hoveredTag, setHoveredTag] = createSignal<string | null>(null);
+
+  const onDeleteTag = async (tagName: string) => {
+    const repo = activeRepo();
+    if (!repo) return;
+
+    setActionError(null);
+    setActionRunning(true);
+    try {
+      const result = await deleteTag(repo, tagName);
+      if (activeRepo() !== repo) return;
+      if (!result.ok) {
+        setActionError(result.error.message);
+        return;
+      }
+      void refetchTags();
+    } finally {
+      setActionRunning(false);
+    }
+  };
 
   createEffect(() => {
     const repositoryPath = activeRepo();
@@ -170,6 +199,65 @@ export function BranchesPage(props: BranchesPageProps = {}) {
                   </li>
                 ))}
             </ul>
+
+            {/* Tags Section */}
+            <Show when={tagsResult.latest?.ok}>
+              <div class="tags-section-divider" style="margin-top: 20px; margin-bottom: 12px; display: flex; align-items: center; gap: 10px;">
+                <div style="flex: 1; height: 1px; background: rgba(var(--chrome-border-rgb), 0.15);" />
+                <span style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                  <Icon name="tag" size={12} tone="muted" />
+                  Tags
+                  <span style="font-size: 10px; color: var(--text-muted); background: rgba(var(--chrome-border-rgb), 0.1); padding: 1px 6px; border-radius: 10px; font-weight: 600;">{tagsResult.latest?.ok ? tagsResult.latest.data.tags.length : 0}</span>
+                </span>
+                <div style="flex: 1; height: 1px; background: rgba(var(--chrome-border-rgb), 0.15);" />
+              </div>
+
+              <Show when={tagsResult.latest?.ok && tagsResult.latest.data.tags.length === 0}>
+                <div style="padding: 12px; text-align: center; font-size: 11px; color: var(--text-muted); opacity: 0.7;">
+                  No tags yet
+                </div>
+              </Show>
+
+              <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px;">
+                {tagsResult.latest?.ok &&
+                  tagsResult.latest.data.tags.map((tag: TagEntryData) => (
+                    <li
+                      class="tag-list-row"
+                      style="display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-radius: 6px; background: var(--surface-1); border: 1px solid rgba(var(--chrome-border-rgb), 0.08); transition: background 100ms;"
+                      onMouseEnter={() => setHoveredTag(tag.name)}
+                      onMouseLeave={() => setHoveredTag(null)}
+                    >
+                      <div style="display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1;">
+                        <Icon name="tag" size={12} tone="muted" />
+                        <span style="font-size: 13px; font-family: var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-normal);">
+                          {tag.name}
+                        </span>
+                        <Show when={tag.targetHash}>
+                          <span style="font-size: 10px; font-family: var(--font-mono); color: var(--text-muted); opacity: 0.7;">
+                            {tag.targetHash}
+                          </span>
+                        </Show>
+                        <Show when={tag.tagType === "annotated"}>
+                          <span style="font-size: 9px; padding: 1px 5px; border-radius: 3px; background: rgba(var(--accent-rgb), 0.08); color: var(--accent-bright); font-weight: 600;">
+                            annotated
+                          </span>
+                        </Show>
+                      </div>
+                      <Show when={hoveredTag() === tag.name}>
+                        <button
+                          class="ghost-btn"
+                          style="padding: 2px 4px; font-size: 10px; color: var(--text-muted); opacity: 0.6; min-width: 0;"
+                          disabled={actionRunning()}
+                          onClick={() => void onDeleteTag(tag.name)}
+                          title={`Delete tag ${tag.name}`}
+                        >
+                          ✕
+                        </button>
+                      </Show>
+                    </li>
+                  ))}
+              </ul>
+            </Show>
           </div>
 
           {/* Sidebar Action Panel */}

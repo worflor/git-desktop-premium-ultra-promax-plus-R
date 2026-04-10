@@ -3,8 +3,9 @@ import { createStore } from "solid-js/store";
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { EmptyStateCard } from "@/components/composite/EmptyStateCard";
 import { ErrorStateCard } from "@/components/composite/ErrorStateCard";
-import type { CommitDetailData, CommitHistoryData, CommitHistoryEntry } from "@/lib/backend/dtos";
-import { getCommitDetail, listCommitHistory } from "@/lib/backend/commands";
+import { Icon } from "@/components/icons/Icon";
+import type { CommitDetailData, CommitHistoryData, CommitHistoryEntry, ReflogEntryData, RebaseTodoEntry } from "@/lib/backend/dtos";
+import { getCommitDetail, listCommitHistory, createTag, listReflog, getRebasePlan, startInteractiveRebase } from "@/lib/backend/commands";
 import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 import { formatCommitDate, formatFullDate, useDateFormatPreference } from "@/lib/ui/date";
 
@@ -352,6 +353,17 @@ export function HistoryPage(props: HistoryPageProps = {}) {
   const [hoverLensX, setHoverLensX] = createSignal<number | null>(null);
   const [isScrubbing, setIsScrubbing] = createSignal(false);
   const [hoveredCommitHash, setHoveredCommitHash] = createSignal<string | null>(null);
+  const [tagInputVisible, setTagInputVisible] = createSignal(false);
+  const [tagInputValue, setTagInputValue] = createSignal("");
+  const [tagError, setTagError] = createSignal<string | null>(null);
+  const [reflogEntries, setReflogEntries] = createSignal<ReflogEntryData[]>([]);
+  const [reflogLoaded, setReflogLoaded] = createSignal(false);
+  const [rebaseRangeEnd, setRebaseRangeEnd] = createSignal<string | null>(null);
+  const [rebasePlan, setRebasePlan] = createSignal<RebaseTodoEntry[] | null>(null);
+  const [rebaseRunning, setRebaseRunning] = createSignal(false);
+  const [rebaseError, setRebaseError] = createSignal<string | null>(null);
+
+  const isRebaseMode = () => rebasePlan() !== null;
   let overviewContainer: HTMLDivElement | undefined;
   let previousRepositoryPath: string | null | undefined;
 
@@ -637,6 +649,102 @@ export function HistoryPage(props: HistoryPageProps = {}) {
     } finally {
       pendingCommitDetailRequests.delete(cacheKey);
     }
+  };
+
+  const onCreateTagInline = async () => {
+    const repo = activeRepo();
+    const commitHash = selectedCommitHash();
+    const tagName = tagInputValue().trim();
+    if (!repo || !commitHash || !tagName) return;
+
+    setTagError(null);
+    const result = await createTag(repo, tagName, commitHash);
+    if (!result.ok) {
+      setTagError(result.error.message);
+      return;
+    }
+
+    setTagInputValue("");
+    setTagInputVisible(false);
+    setTagError(null);
+  };
+
+  const loadReflog = async () => {
+    const repo = activeRepo();
+    if (!repo || reflogLoaded()) return;
+
+    const result = await listReflog(repo, 50);
+    if (result.ok) {
+      const historyHashes = new Set(
+        (historyData()?.entries ?? []).map((e) => e.commitHash)
+      );
+      const uniqueReflog = result.data.entries.filter(
+        (e) => !historyHashes.has(e.commitHash)
+      );
+      setReflogEntries(uniqueReflog);
+      setReflogLoaded(true);
+    }
+  };
+
+  const onCommitClick = async (commitHash: string, shiftKey: boolean) => {
+    if (shiftKey && selectedCommitHash() && selectedCommitHash() !== commitHash) {
+      const repo = activeRepo();
+      if (!repo) return;
+
+      setRebaseRangeEnd(commitHash);
+      setRebaseError(null);
+      const result = await getRebasePlan(repo, commitHash);
+      if (result.ok && result.data.entries.length > 0) {
+        setRebasePlan(result.data.entries);
+      } else {
+        setRebaseRangeEnd(null);
+        setRebasePlan(null);
+        setSelectedCommitHash(commitHash);
+      }
+    } else {
+      setRebasePlan(null);
+      setRebaseRangeEnd(null);
+      setRebaseError(null);
+      setSelectedCommitHash(commitHash);
+    }
+  };
+
+  const onUpdateRebaseTodo = (index: number, action: string) => {
+    const plan = rebasePlan();
+    if (!plan) return;
+    const updated = [...plan];
+    updated[index] = { ...updated[index]!, action };
+    setRebasePlan(updated);
+  };
+
+  const onExecuteRebase = async () => {
+    const repo = activeRepo();
+    const ontoRef = rebaseRangeEnd();
+    const plan = rebasePlan();
+    if (!repo || !ontoRef || !plan) return;
+
+    setRebaseRunning(true);
+    setRebaseError(null);
+
+    const result = await startInteractiveRebase(repo, ontoRef, plan);
+
+    setRebaseRunning(false);
+
+    if (!result.ok) {
+      setRebaseError(result.error.message);
+      return;
+    }
+
+    setRebasePlan(null);
+    setRebaseRangeEnd(null);
+    setSelectedCommitHash(null);
+    void loadHistory(repo, parseInt(historyLimitInput(), 10) || HISTORY_DEFAULT_LIMIT);
+  };
+
+  const onCancelRebase = () => {
+    setRebasePlan(null);
+    setRebaseRangeEnd(null);
+    setRebaseError(null);
   };
 
   createEffect(() => {
@@ -964,7 +1072,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
                           gap: "4px",
                           transition: "all 0.16s ease"
                         }}
-                        onClick={() => setSelectedCommitHash(entry.commitHash)}
+                        onClick={(e: MouseEvent) => void onCommitClick(entry.commitHash, e.shiftKey)}
                         onPointerEnter={() => setHoveredCommitHash(entry.commitHash)}
                         onPointerLeave={() => setHoveredCommitHash(null)}
                       >
@@ -974,8 +1082,16 @@ export function HistoryPage(props: HistoryPageProps = {}) {
                           </span>
                           <CommitTime isoString={entry.authoredAt} style="color: var(--text-muted); opacity: 0.8;" readOnly={true} />
                         </div>
-                        <div style={`font-size: 13px; font-weight: ${isSelected ? "600" : "500"}; color: ${isSelected ? "var(--text-strong)" : "var(--text-normal)"}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;`}>
-                          {entry.subject}
+                        <div style={`font-size: 13px; font-weight: ${isSelected ? "600" : "500"}; color: ${isSelected ? "var(--text-strong)" : "var(--text-normal)"}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px;`}>
+                          <span style="overflow: hidden; text-overflow: ellipsis;">{entry.subject}</span>
+                          {entry.refNames
+                            .filter((ref: string) => ref.startsWith("tag: "))
+                            .map((ref: string) => (
+                              <span class="tag-ref-pill" style="flex-shrink: 0; display: inline-flex; align-items: center; gap: 3px; font-size: 9px; padding: 1px 6px; border-radius: 3px; background: rgba(var(--accent-rgb), 0.08); color: var(--accent-bright); font-weight: 600; font-family: var(--font-mono);">
+                                <Icon name="tag" size={12} tone="accent" />
+                                {ref.replace("tag: ", "")}
+                              </span>
+                            ))}
                         </div>
                         <div style="font-size: 11px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
                           <div style="display: flex; gap: 4px; align-items: center;">
@@ -993,10 +1109,155 @@ export function HistoryPage(props: HistoryPageProps = {}) {
                 }}
               </For>
             </ul>
+
+            {/* Reflog — ghost section at the edge of history */}
+            <Show when={!reflogLoaded()}>
+              <div
+                style="padding: 12px 16px; text-align: center;"
+                ref={(el: HTMLDivElement) => {
+                  if (typeof IntersectionObserver === "undefined") return;
+                  const observer = new IntersectionObserver((entries) => {
+                    if (entries[0]?.isIntersecting) {
+                      observer.disconnect();
+                      void loadReflog();
+                    }
+                  }, { threshold: 0.1 });
+                  observer.observe(el);
+                }}
+              >
+                <span style="font-size: 10px; color: var(--text-muted); opacity: 0.4;">scroll to reveal reflog</span>
+              </div>
+            </Show>
+
+            <Show when={reflogLoaded() && reflogEntries().length > 0}>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 12px 16px;">
+                <div style="flex: 1; height: 1px; background: rgba(var(--chrome-border-rgb), 0.12); opacity: 0.6;" />
+                <span style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); opacity: 0.5; font-weight: 600;">reflog</span>
+                <div style="flex: 1; height: 1px; background: rgba(var(--chrome-border-rgb), 0.12); opacity: 0.6;" />
+              </div>
+              <ul style="margin: 0; padding: 0; list-style: none;">
+                <For each={reflogEntries()}>
+                  {(entry) => {
+                    const actionType = () => {
+                      const s = entry.actionSummary.toLowerCase();
+                      if (s.startsWith("commit")) return "commit";
+                      if (s.startsWith("checkout")) return "checkout";
+                      if (s.startsWith("rebase")) return "rebase";
+                      if (s.startsWith("reset")) return "reset";
+                      if (s.startsWith("pull")) return "pull";
+                      if (s.startsWith("merge")) return "merge";
+                      return "other";
+                    };
+                    const actionColor = () => {
+                      switch (actionType()) {
+                        case "commit": return "var(--state-added)";
+                        case "checkout": return "var(--accent-bright)";
+                        case "rebase": return "var(--state-modified)";
+                        case "reset": return "var(--state-deleted)";
+                        default: return "var(--text-muted)";
+                      }
+                    };
+                    return (
+                      <li>
+                        <button
+                          type="button"
+                          style={{
+                            width: "100%",
+                            "text-align": "left",
+                            padding: "8px 12px",
+                            background: selectedCommitHash() === entry.commitHash ? "rgba(var(--accent-rgb), 0.08)" : "transparent",
+                            border: "none",
+                            "border-bottom": "1px solid rgba(var(--chrome-border-rgb), 0.05)",
+                            "border-left": `2px solid ${selectedCommitHash() === entry.commitHash ? "var(--accent-bright)" : "transparent"}`,
+                            cursor: "pointer",
+                            display: "flex",
+                            "flex-direction": "column",
+                            gap: "3px",
+                            opacity: "0.65",
+                            transition: "all 0.16s ease"
+                          }}
+                          onClick={() => setSelectedCommitHash(entry.commitHash)}
+                        >
+                          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10px;">
+                            <span style="display: flex; align-items: center; gap: 6px;">
+                              <span style={`font-size: 8px; padding: 1px 5px; border-radius: 3px; background: rgba(var(--chrome-border-rgb), 0.08); color: ${actionColor()}; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;`}>
+                                {actionType()}
+                              </span>
+                              <span style="font-family: var(--font-mono); color: var(--text-muted); opacity: 0.6;">
+                                {entry.refSelector}
+                              </span>
+                            </span>
+                            <span style="font-family: var(--font-mono); color: var(--text-muted); opacity: 0.5;">
+                              {entry.shortHash}
+                            </span>
+                          </div>
+                          <div style="font-size: 12px; color: var(--text-normal); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            {entry.actionSummary}
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  }}
+                </For>
+              </ul>
+            </Show>
           </article>
 
           <article style="flex: 1; min-width: 0; background: var(--surface-0); display: flex; flex-direction: column; overflow: hidden;">
-            <Show when={commitDetailError() && !commitDetailData()}>
+            <Show when={isRebaseMode()}>
+              <div style="flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column;">
+                <div style="margin-bottom: 16px;">
+                  <h3 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 600; color: var(--text-strong);">Interactive Rebase</h3>
+                  <p style="margin: 0; font-size: 11px; color: var(--text-muted);">
+                    Rebase onto <span style="font-family: var(--font-mono); background: rgba(var(--chrome-border-rgb), 0.1); padding: 1px 5px; border-radius: 3px;">{rebaseRangeEnd()?.substring(0, 8)}</span> — drag to reorder, change actions
+                  </p>
+                </div>
+
+                <Show when={rebaseError()}>
+                  <div style="margin-bottom: 12px; font-size: 11px; color: var(--state-conflicted); padding: 8px; border-radius: 4px; background: rgba(var(--state-conflicted-rgb, 248,81,73), 0.1); border: 1px solid rgba(var(--state-conflicted-rgb, 248,81,73), 0.2);">
+                    {rebaseError()}
+                  </div>
+                </Show>
+
+                <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; flex: 1;">
+                  <For each={rebasePlan() ?? []}>
+                    {(entry, index) => (
+                      <li style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(var(--chrome-border-rgb), 0.04); border-radius: 6px; border: 1px solid rgba(var(--chrome-border-rgb), 0.08);">
+                        <select
+                          class="custom-select-trigger"
+                          style="padding: 2px 6px; font-size: 10px; min-height: 22px; width: 70px; font-family: var(--font-mono); font-weight: 600;"
+                          value={entry.action}
+                          onChange={(e) => onUpdateRebaseTodo(index(), e.currentTarget.value)}
+                        >
+                          <option value="pick">pick</option>
+                          <option value="reword">reword</option>
+                          <option value="squash">squash</option>
+                          <option value="fixup">fixup</option>
+                          <option value="drop">drop</option>
+                        </select>
+                        <span style="font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); flex-shrink: 0;">
+                          {entry.commitHash.substring(0, 8)}
+                        </span>
+                        <span style="font-size: 12px; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
+                          {entry.subject}
+                        </span>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+
+                <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end;">
+                  <button class="ghost-btn" onClick={onCancelRebase} disabled={rebaseRunning()}>
+                    Cancel
+                  </button>
+                  <button class="primary-btn" onClick={() => void onExecuteRebase()} disabled={rebaseRunning()}>
+                    {rebaseRunning() ? "Rebasing..." : "Start Rebase"}
+                  </button>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={!isRebaseMode() && commitDetailError() && !commitDetailData()}>
               <div style="padding: 16px;">
                 <ErrorStateCard
                   title="Commit detail failed"
@@ -1005,7 +1266,7 @@ export function HistoryPage(props: HistoryPageProps = {}) {
               </div>
             </Show>
 
-            <Show when={commitDetailData()}>
+            <Show when={!isRebaseMode() && commitDetailData()}>
               <div style="flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column;">
                 <div style="margin-bottom: 24px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
                   <div style="min-width: 0;">
@@ -1026,6 +1287,44 @@ export function HistoryPage(props: HistoryPageProps = {}) {
                       <span style="opacity: 0.5;">|</span>
                       <span style="font-family: var(--font-mono); background: rgba(var(--chrome-border-rgb), 0.1); padding: 2px 6px; border-radius: 4px;">
                         {commitDetailData() ? commitDetailData()!.shortHash : ""}
+                      </span>
+                      <span style="opacity: 0.5;">|</span>
+                      <span class="inline-tag-affordance" style="display: inline-flex; align-items: center; gap: 4px;">
+                        <Show when={!tagInputVisible()}>
+                          <button
+                            class="ghost-btn inline-tag-trigger"
+                            style="padding: 2px 4px; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); opacity: 0.6; transition: opacity 150ms;"
+                            onClick={() => { setTagInputVisible(true); setTagError(null); }}
+                            title="Tag this commit"
+                          >
+                            <Icon name="tag" size={12} tone="muted" />
+                          </button>
+                        </Show>
+                        <Show when={tagInputVisible()}>
+                          <span style="display: inline-flex; align-items: center; gap: 4px; animation: tag-input-expand 150ms ease;">
+                            <Icon name="tag" size={12} tone="accent" />
+                            <input
+                              class="path-input"
+                              placeholder="tag name"
+                              style="width: 120px; font-size: 11px; padding: 2px 6px; font-family: var(--font-mono); height: 22px;"
+                              value={tagInputValue()}
+                              onInput={(e) => setTagInputValue(e.currentTarget.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  void onCreateTagInline();
+                                } else if (e.key === "Escape") {
+                                  setTagInputVisible(false);
+                                  setTagInputValue("");
+                                  setTagError(null);
+                                }
+                              }}
+                              ref={(el) => requestAnimationFrame(() => el.focus())}
+                            />
+                          </span>
+                        </Show>
+                        <Show when={tagError()}>
+                          <span style="font-size: 10px; color: var(--state-conflicted);">{tagError()}</span>
+                        </Show>
                       </span>
                     </div>
                   </div>

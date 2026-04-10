@@ -11,7 +11,9 @@ use crate::models::git::GitCapabilities;
 use crate::models::operations::{
     BranchInfoData, BranchListData, CommitDetailData, CommitFileStatData, CommitHistoryData,
     CommitHistoryEntryData, ConflictResolutionData, StashEntryData, StashListData,
-    StashOperationData, SyncData, WorktreeData, WorktreeListData,
+    BlameLineData, CommitSearchData, CommitSearchResultData, FileBlameData, RebasePlanData,
+    RebaseTodoEntry, ReflogData, ReflogEntryData, StashOperationData, SyncData, TagEntryData,
+    TagListData, WorktreeData, WorktreeListData,
 };
 use crate::models::repository::{RepositoryStatusData, RepositoryStatusFile};
 
@@ -1063,6 +1065,535 @@ pub fn drop_stash(repository_path: &str, stash_ref: &str) -> Result<StashOperati
             output.stdout
         },
     })
+}
+
+pub fn clone_repository(url: &str, target_path: &str) -> Result<String, AppError> {
+    ensure_git_ready()?;
+
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(AppError::InvalidInput(
+            "repository URL is required for clone operation".to_string(),
+        ));
+    }
+
+    let target_path = target_path.trim();
+    if target_path.is_empty() {
+        return Err(AppError::InvalidInput(
+            "target path is required for clone operation".to_string(),
+        ));
+    }
+
+    let output = run_git(None, &["clone", url, target_path])?;
+    Ok(output.stdout)
+}
+
+pub fn init_repository(target_path: &str) -> Result<String, AppError> {
+    ensure_git_ready()?;
+
+    let target_path = target_path.trim();
+    if target_path.is_empty() {
+        return Err(AppError::InvalidInput(
+            "target path is required for init operation".to_string(),
+        ));
+    }
+
+    let output = run_git(None, &["init", target_path])?;
+    Ok(output.stdout)
+}
+
+pub fn get_rebase_plan(
+    repository_path: &str,
+    onto_ref: &str,
+) -> Result<RebasePlanData, AppError> {
+    ensure_git_ready()?;
+
+    let onto_ref = onto_ref.trim();
+    if onto_ref.is_empty() {
+        return Err(AppError::InvalidInput(
+            "onto ref is required for rebase plan".to_string(),
+        ));
+    }
+
+    let range = format!("{onto_ref}..HEAD");
+    let args = [
+        "log",
+        "--oneline",
+        "--reverse",
+        "--format=%H%x1f%h%x1f%s",
+        &range,
+    ];
+    let output = run_git(Some(repository_path), &args)?;
+
+    let mut entries = Vec::<RebaseTodoEntry>::new();
+    for line in output.stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut fields = trimmed.splitn(3, '\x1f');
+        let commit_hash = fields.next().unwrap_or_default().trim().to_string();
+        let _short_hash = fields.next().unwrap_or_default().trim().to_string();
+        let subject = fields.next().unwrap_or_default().trim().to_string();
+        if commit_hash.is_empty() {
+            continue;
+        }
+        entries.push(RebaseTodoEntry {
+            action: "pick".to_string(),
+            commit_hash,
+            subject,
+        });
+    }
+
+    Ok(RebasePlanData {
+        onto_ref: onto_ref.to_string(),
+        entries,
+    })
+}
+
+pub fn start_interactive_rebase(
+    repository_path: &str,
+    onto_ref: &str,
+    todo_entries: &[RebaseTodoEntry],
+) -> Result<String, AppError> {
+    ensure_git_ready()?;
+
+    let onto_ref = onto_ref.trim();
+    if onto_ref.is_empty() {
+        return Err(AppError::InvalidInput(
+            "onto ref is required for interactive rebase".to_string(),
+        ));
+    }
+
+    if todo_entries.is_empty() {
+        return Err(AppError::InvalidInput(
+            "at least one todo entry is required for interactive rebase".to_string(),
+        ));
+    }
+
+    let mut todo_content = String::new();
+    for entry in todo_entries {
+        let short_hash = if entry.commit_hash.len() >= 8 {
+            &entry.commit_hash[..8]
+        } else {
+            &entry.commit_hash
+        };
+        todo_content.push_str(&format!("{} {} {}\n", entry.action, short_hash, entry.subject));
+    }
+
+    let temp_dir = std::env::temp_dir();
+    let todo_path = temp_dir.join(format!("gdpu-rebase-todo-{}", std::process::id()));
+    std::fs::write(&todo_path, &todo_content).map_err(|e| {
+        AppError::Internal(format!("failed to write rebase todo file: {e}"))
+    })?;
+
+    let editor_cmd = if cfg!(target_os = "windows") {
+        format!(
+            "cmd /c copy /y \"{}\" ",
+            todo_path.display()
+        )
+    } else {
+        format!("cp \"{}\" ", todo_path.display())
+    };
+
+    let mut command = std::process::Command::new("git");
+    command
+        .current_dir(repository_path)
+        .env("GIT_SEQUENCE_EDITOR", &editor_cmd)
+        .args(["rebase", "-i", onto_ref]);
+
+    let output = command.output().map_err(|e| {
+        AppError::CommandExecution(format!("failed to start interactive rebase: {e}"))
+    })?;
+
+    let _ = std::fs::remove_file(&todo_path);
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        if stderr.contains("CONFLICT") || stderr.contains("could not apply") {
+            return Ok(format!("conflict: {stderr}"));
+        }
+        return Err(AppError::GitCommand(stderr));
+    }
+
+    Ok(if stdout.is_empty() { stderr } else { stdout })
+}
+
+pub fn search_commits_by_message(
+    repository_path: &str,
+    query: &str,
+    limit: usize,
+) -> Result<CommitSearchData, AppError> {
+    ensure_git_ready()?;
+
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(CommitSearchData {
+            repository_path: repository_path.to_string(),
+            query: query.to_string(),
+            scope: "messages".to_string(),
+            results: vec![],
+        });
+    }
+
+    let bounded_limit = limit.clamp(1, 100);
+    let args = [
+        "log".to_string(),
+        format!("--grep={query}"),
+        "-i".to_string(),
+        format!("-n{bounded_limit}"),
+        "--date=iso-strict".to_string(),
+        "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1e".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_git(Some(repository_path), &refs)?;
+
+    let results = parse_search_results(&output.stdout);
+    Ok(CommitSearchData {
+        repository_path: repository_path.to_string(),
+        query: query.to_string(),
+        scope: "messages".to_string(),
+        results,
+    })
+}
+
+pub fn search_commits_by_code(
+    repository_path: &str,
+    query: &str,
+    is_regex: bool,
+    limit: usize,
+) -> Result<CommitSearchData, AppError> {
+    ensure_git_ready()?;
+
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(CommitSearchData {
+            repository_path: repository_path.to_string(),
+            query: query.to_string(),
+            scope: "code".to_string(),
+            results: vec![],
+        });
+    }
+
+    let bounded_limit = limit.clamp(1, 100);
+    let flag = if is_regex {
+        format!("-G{query}")
+    } else {
+        format!("-S{query}")
+    };
+    let args = [
+        "log".to_string(),
+        flag,
+        format!("-n{bounded_limit}"),
+        "--date=iso-strict".to_string(),
+        "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1e".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_git(Some(repository_path), &refs)?;
+
+    let results = parse_search_results(&output.stdout);
+    Ok(CommitSearchData {
+        repository_path: repository_path.to_string(),
+        query: query.to_string(),
+        scope: "code".to_string(),
+        results,
+    })
+}
+
+pub fn search_commits_by_file(
+    repository_path: &str,
+    file_path: &str,
+    limit: usize,
+) -> Result<CommitSearchData, AppError> {
+    ensure_git_ready()?;
+
+    let file_path = file_path.trim();
+    if file_path.is_empty() {
+        return Ok(CommitSearchData {
+            repository_path: repository_path.to_string(),
+            query: file_path.to_string(),
+            scope: "files".to_string(),
+            results: vec![],
+        });
+    }
+
+    let bounded_limit = limit.clamp(1, 100);
+    let args = [
+        "log".to_string(),
+        format!("-n{bounded_limit}"),
+        "--date=iso-strict".to_string(),
+        "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1e".to_string(),
+        "--".to_string(),
+        file_path.to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_git(Some(repository_path), &refs)?;
+
+    let results = parse_search_results(&output.stdout);
+    Ok(CommitSearchData {
+        repository_path: repository_path.to_string(),
+        query: file_path.to_string(),
+        scope: "files".to_string(),
+        results,
+    })
+}
+
+fn parse_search_results(stdout: &str) -> Vec<CommitSearchResultData> {
+    let mut results = Vec::new();
+    for record in stdout.split('\x1e') {
+        let row = record.trim();
+        if row.is_empty() {
+            continue;
+        }
+        let mut fields = row.splitn(5, '\x1f');
+        let commit_hash = fields.next().unwrap_or_default().trim().to_string();
+        let short_hash = fields.next().unwrap_or_default().trim().to_string();
+        let author_name = fields.next().unwrap_or_default().trim().to_string();
+        let authored_at = fields.next().unwrap_or_default().trim().to_string();
+        let subject = fields.next().unwrap_or_default().trim().to_string();
+        if commit_hash.is_empty() {
+            continue;
+        }
+        results.push(CommitSearchResultData {
+            commit_hash,
+            short_hash,
+            subject,
+            author_name,
+            authored_at,
+            match_context: None,
+        });
+    }
+    results
+}
+
+pub fn list_reflog(repository_path: &str, limit: usize) -> Result<ReflogData, AppError> {
+    ensure_git_ready()?;
+
+    let bounded_limit = limit.clamp(1, 200);
+    let args = [
+        "reflog".to_string(),
+        format!("-n{bounded_limit}"),
+        "--date=iso-strict".to_string(),
+        "--format=%H%x1f%h%x1f%gd%x1f%gs%x1f%an%x1f%ad%x1e".to_string(),
+    ];
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_git(Some(repository_path), &refs)?;
+
+    let mut entries = Vec::<ReflogEntryData>::new();
+    for record in output.stdout.split('\x1e') {
+        let row = record.trim();
+        if row.is_empty() {
+            continue;
+        }
+        let mut fields = row.splitn(6, '\x1f');
+        let commit_hash = fields.next().unwrap_or_default().trim().to_string();
+        let short_hash = fields.next().unwrap_or_default().trim().to_string();
+        let ref_selector = fields.next().unwrap_or_default().trim().to_string();
+        let action_summary = fields.next().unwrap_or_default().trim().to_string();
+        let author_name = fields.next().unwrap_or_default().trim().to_string();
+        let authored_at = fields.next().unwrap_or_default().trim().to_string();
+        if commit_hash.is_empty() {
+            continue;
+        }
+        entries.push(ReflogEntryData {
+            commit_hash,
+            short_hash,
+            ref_selector,
+            action_summary,
+            author_name,
+            authored_at,
+        });
+    }
+
+    Ok(ReflogData { entries })
+}
+
+pub fn get_file_blame(
+    repository_path: &str,
+    file_path: &str,
+    commit_ref: Option<&str>,
+) -> Result<FileBlameData, AppError> {
+    ensure_git_ready()?;
+
+    let file_path = file_path.trim();
+    if file_path.is_empty() {
+        return Err(AppError::InvalidInput(
+            "file path is required for blame operation".to_string(),
+        ));
+    }
+
+    let resolved_ref = commit_ref
+        .and_then(trimmed_non_empty)
+        .unwrap_or("HEAD");
+
+    let args = ["blame", "--porcelain", resolved_ref, "--", file_path];
+    let output = run_git(Some(repository_path), &args)?;
+
+    let mut lines = Vec::<BlameLineData>::new();
+    let mut current_hash = String::new();
+    let mut current_author = String::new();
+    let mut current_time = String::new();
+    let mut line_number: u32 = 0;
+
+    for raw_line in output.stdout.lines() {
+        if raw_line.starts_with('\t') {
+            let content = raw_line.strip_prefix('\t').unwrap_or(raw_line);
+            lines.push(BlameLineData {
+                line_number,
+                commit_hash: current_hash.clone(),
+                short_hash: if current_hash.len() >= 8 {
+                    current_hash[..8].to_string()
+                } else {
+                    current_hash.clone()
+                },
+                author_name: current_author.clone(),
+                authored_at: current_time.clone(),
+                line_content: content.to_string(),
+            });
+        } else if raw_line.len() >= 40 && raw_line.chars().next().map_or(false, |c| c.is_ascii_hexdigit()) {
+            let mut parts = raw_line.splitn(4, ' ');
+            let hash = parts.next().unwrap_or_default();
+            if hash.len() >= 40 {
+                current_hash = hash.to_string();
+                let _ = parts.next();
+                if let Some(result_line) = parts.next() {
+                    line_number = result_line.parse::<u32>().unwrap_or(0);
+                }
+            }
+        } else if let Some(author) = raw_line.strip_prefix("author ") {
+            current_author = author.trim().to_string();
+        } else if let Some(time) = raw_line.strip_prefix("author-time ") {
+            current_time = time.trim().to_string();
+        }
+    }
+
+    Ok(FileBlameData {
+        path: file_path.to_string(),
+        commit_ref: resolved_ref.to_string(),
+        lines,
+    })
+}
+
+pub fn list_tags(repository_path: &str) -> Result<TagListData, AppError> {
+    ensure_git_ready()?;
+
+    let args = [
+        "tag",
+        "-l",
+        "--sort=-creatordate",
+        "--format=%(refname:short)%x1f%(objecttype)%x1f%(*objectname:short)%x1f%(creatordate:iso-strict)%x1f%(creatorname)%x1f%(subject)%x1e",
+    ];
+    let output = run_git(Some(repository_path), &args)?;
+
+    let mut tags = Vec::<TagEntryData>::new();
+    for record in output.stdout.split('\x1e') {
+        let row = record.trim();
+        if row.is_empty() {
+            continue;
+        }
+
+        let mut fields = row.splitn(6, '\x1f');
+        let name = fields.next().unwrap_or_default().trim().to_string();
+        let object_type = fields.next().unwrap_or_default().trim().to_string();
+        let deref_hash = fields.next().unwrap_or_default().trim().to_string();
+        let created_at_raw = fields.next().unwrap_or_default().trim().to_string();
+        let creator_name_raw = fields.next().unwrap_or_default().trim().to_string();
+        let subject_raw = fields.next().unwrap_or_default().trim().to_string();
+
+        if name.is_empty() {
+            continue;
+        }
+
+        let tag_type = if object_type == "tag" {
+            "annotated".to_string()
+        } else {
+            "lightweight".to_string()
+        };
+
+        let target_hash = if deref_hash.is_empty() {
+            None
+        } else {
+            Some(deref_hash)
+        };
+
+        tags.push(TagEntryData {
+            name,
+            tag_type,
+            target_hash,
+            created_at: if created_at_raw.is_empty() {
+                None
+            } else {
+                Some(created_at_raw)
+            },
+            creator_name: if creator_name_raw.is_empty() {
+                None
+            } else {
+                Some(creator_name_raw)
+            },
+            subject: if subject_raw.is_empty() {
+                None
+            } else {
+                Some(subject_raw)
+            },
+        });
+    }
+
+    Ok(TagListData {
+        repository_path: repository_path.to_string(),
+        tags,
+    })
+}
+
+pub fn create_tag(
+    repository_path: &str,
+    tag_name: &str,
+    target_ref: &str,
+    message: Option<&str>,
+) -> Result<(), AppError> {
+    ensure_git_ready()?;
+
+    let tag_name = tag_name.trim();
+    if tag_name.is_empty() {
+        return Err(AppError::InvalidInput(
+            "tag name is required".to_string(),
+        ));
+    }
+
+    let target_ref = target_ref.trim();
+    if target_ref.is_empty() {
+        return Err(AppError::InvalidInput(
+            "target ref is required for tag creation".to_string(),
+        ));
+    }
+
+    let mut args = vec!["tag".to_string()];
+    if let Some(msg) = message.and_then(trimmed_non_empty) {
+        args.push("-a".to_string());
+        args.push("-m".to_string());
+        args.push(msg.to_string());
+    }
+    args.push(tag_name.to_string());
+    args.push(target_ref.to_string());
+
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_git(Some(repository_path), &refs)?;
+    Ok(())
+}
+
+pub fn delete_tag(repository_path: &str, tag_name: &str) -> Result<(), AppError> {
+    ensure_git_ready()?;
+
+    let tag_name = tag_name.trim();
+    if tag_name.is_empty() {
+        return Err(AppError::InvalidInput(
+            "tag name is required for delete operation".to_string(),
+        ));
+    }
+
+    run_git(Some(repository_path), &["tag", "-d", tag_name])?;
+    Ok(())
 }
 
 pub fn list_commit_history(

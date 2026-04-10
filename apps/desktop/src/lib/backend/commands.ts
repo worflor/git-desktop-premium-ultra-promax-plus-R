@@ -1,5 +1,14 @@
 import type { CommandResult } from "@/lib/contracts/command";
 import type {
+  RebasePlanData,
+  RebaseTodoEntry,
+  CommitSearchData,
+  ReflogData,
+  FileBlameData,
+  CloneRepositoryData,
+  InitRepositoryData,
+  TagListData,
+  TagOperationData,
   AiAuditMaintenanceData,
   AiDiffReviewCancelData,
   AiDiffReviewData,
@@ -106,6 +115,94 @@ export function deleteBranch(
   force = false
 ): Promise<CommandResult<BranchOperationData>> {
   return invokeCommand("delete_branch", { repositoryPath, branchName, force });
+}
+
+export function getRebasePlan(
+  repositoryPath: string,
+  ontoRef: string
+): Promise<CommandResult<RebasePlanData>> {
+  return invokeCommand("get_rebase_plan", { repositoryPath, ontoRef });
+}
+
+export function startInteractiveRebase(
+  repositoryPath: string,
+  ontoRef: string,
+  todoEntries: RebaseTodoEntry[]
+): Promise<CommandResult<ConflictResolutionData>> {
+  return invokeCommand("start_interactive_rebase", { repositoryPath, ontoRef, todoEntries });
+}
+
+export function searchCommitsByMessage(
+  repositoryPath: string,
+  query: string,
+  limit?: number
+): Promise<CommandResult<CommitSearchData>> {
+  return invokeCommand("search_commits_by_message", { repositoryPath, query, limit });
+}
+
+export function searchCommitsByCode(
+  repositoryPath: string,
+  query: string,
+  isRegex?: boolean,
+  limit?: number
+): Promise<CommandResult<CommitSearchData>> {
+  return invokeCommand("search_commits_by_code", { repositoryPath, query, isRegex, limit });
+}
+
+export function searchCommitsByFile(
+  repositoryPath: string,
+  filePath: string,
+  limit?: number
+): Promise<CommandResult<CommitSearchData>> {
+  return invokeCommand("search_commits_by_file", { repositoryPath, filePath, limit });
+}
+
+export function listReflog(
+  repositoryPath: string,
+  limit?: number
+): Promise<CommandResult<ReflogData>> {
+  return invokeCommand("list_reflog", { repositoryPath, limit });
+}
+
+export function getFileBlame(
+  repositoryPath: string,
+  filePath: string,
+  commitRef?: string
+): Promise<CommandResult<FileBlameData>> {
+  return invokeCommand("get_file_blame", { repositoryPath, filePath, commitRef });
+}
+
+export function cloneRepository(
+  url: string,
+  targetPath: string
+): Promise<CommandResult<CloneRepositoryData>> {
+  return invokeCommand("clone_repository", { url, targetPath });
+}
+
+export function initRepository(
+  targetPath: string
+): Promise<CommandResult<InitRepositoryData>> {
+  return invokeCommand("init_repository", { targetPath });
+}
+
+export function listTags(repositoryPath: string): Promise<CommandResult<TagListData>> {
+  return invokeCommand("list_tags", { repositoryPath });
+}
+
+export function createTag(
+  repositoryPath: string,
+  tagName: string,
+  targetRef: string,
+  message?: string
+): Promise<CommandResult<TagOperationData>> {
+  return invokeCommand("create_tag", { repositoryPath, tagName, targetRef, message });
+}
+
+export function deleteTag(
+  repositoryPath: string,
+  tagName: string
+): Promise<CommandResult<TagOperationData>> {
+  return invokeCommand("delete_tag", { repositoryPath, tagName });
 }
 
 export function listWorktrees(repositoryPath: string): Promise<CommandResult<WorktreeListData>> {

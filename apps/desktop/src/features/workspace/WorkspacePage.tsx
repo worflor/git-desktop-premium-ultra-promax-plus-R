@@ -21,7 +21,7 @@ import { recordUiTiming } from "@/lib/telemetry/uiTiming";
 import { useCompactLayoutMode } from "@/lib/ui/layoutMode";
 
 type WorkspaceMode = "changes" | "history" | "branches";
-type WorkspacePanel = "settings" | "sync";
+type WorkspacePanel = "settings" | "sync" | "search";
 
 interface ModeEntry {
   id: WorkspaceMode;
@@ -53,6 +53,11 @@ const BranchesPage = lazy(async () => {
 const SettingsPage = lazy(async () => {
   const module = await import("@/features/settings/SettingsPage");
   return { default: module.SettingsPage };
+});
+
+const SearchPanel = lazy(async () => {
+  const module = await import("@/features/search/SearchPanel");
+  return { default: module.SearchPanel };
 });
 
 function WorkspaceSyncTriggerIcon(props: { active: boolean }) {
@@ -95,7 +100,7 @@ function resolveModeFromPath(pathname: string): WorkspaceMode {
 
 function resolveWorkspacePanel(panel: string | string[] | null | undefined): WorkspacePanel | null {
   const value = Array.isArray(panel) ? panel[0] : panel;
-  return value === "settings" || value === "sync" ? value : null;
+  return value === "settings" || value === "sync" || value === "search" ? value : null;
 }
 
 export function WorkspacePage() {
@@ -134,6 +139,7 @@ export function WorkspacePage() {
 
   const isSettingsOpen = createMemo(() => activePanel() === "settings");
   const isSyncOpen = createMemo(() => activePanel() === "sync");
+  const isSearchOpen = createMemo(() => activePanel() === "search");
   const syncStatusData = createMemo(() => {
     const latest = syncStatus.latest;
     return latest?.ok ? latest.data : null;
@@ -311,6 +317,22 @@ export function WorkspacePage() {
               </Suspense>
             </Show>
           </div>
+        </section>
+      </div>
+
+      <div class={`settings-slide-layer ${isSearchOpen() ? "is-open" : ""}`} aria-hidden={!isSearchOpen()}>
+        <button
+          type="button"
+          class="settings-slide-backdrop"
+          aria-label="Close search"
+          onClick={closePanel}
+        />
+        <section class="settings-slide-panel" role="dialog" aria-modal="true" aria-labelledby="search-panel-title">
+          <Show when={isSearchOpen()}>
+            <Suspense fallback={<LoadingStateSkeleton />}>
+              <SearchPanel onClose={closePanel} />
+            </Suspense>
+          </Show>
         </section>
       </div>
     </div>

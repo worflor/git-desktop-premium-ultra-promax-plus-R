@@ -1,0 +1,2450 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import '../../backend/ai.dart';
+import '../../backend/ai_audit_store.dart';
+import '../../backend/command_telemetry_store.dart';
+import '../../backend/dtos.dart';
+import '../../app/preferences_state.dart';
+import '../../app/theme_state.dart';
+import '../../diagnostics/diagnostics_state.dart';
+import '../../ui/control_chrome.dart';
+import '../../ui/form_controls.dart';
+import '../../ui/material_surface.dart';
+import '../../ui/tokens.dart';
+
+const _guardrailStageLabels = ['Loose', 'Balanced', 'Strict', 'Paranoid'];
+const _guardrailStageColors = [
+  Color(0xFF4AD399),
+  Color(0xFF7AB8FF),
+  Color(0xFFEF7C75),
+  Color(0xFFB280FF),
+];
+
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  final Stopwatch _mountedAt = Stopwatch()..start();
+  String _diagnosticsFocus = 'command';
+  String? _actionMessage;
+  String? _actionError;
+  bool _dataMaintenanceBusy = false;
+  bool _aiProvidersLoading = false;
+  String? _aiProvidersError;
+  List<AiProviderStatus> _aiProviders = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      DiagnosticsState.instance.recordUiTiming(
+        event: 'settings.page.first-paint',
+        phase: 'mount',
+        durationMs: _mountedAt.elapsedMicroseconds / 1000,
+      );
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _refreshAiProviders();
+    });
+  }
+
+  Future<void> _refreshAiProviders({bool forceRefresh = true}) async {
+    setState(() {
+      _aiProvidersLoading = true;
+      _aiProvidersError = null;
+    });
+    final result = await listAiProviders(forceRefresh: forceRefresh);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _aiProvidersLoading = false;
+      if (result.ok) {
+        _aiProviders = result.data!.providers;
+        _aiProvidersError = null;
+      } else {
+        _aiProvidersError = result.error;
+      }
+    });
+  }
+
+  Future<void> _saveGuardrailStage(int stage) async {
+    setState(() {
+      _actionError = null;
+      _actionMessage = null;
+    });
+    try {
+      await context.read<PreferencesState>().setGuardrailStage(stage);
+      if (!mounted) {
+        return;
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = 'Failed to save guardrail profile.');
+    }
+  }
+
+  Future<void> _saveRetention(int retentionDays, int retentionMb) async {
+    setState(() {
+      _actionError = null;
+      _actionMessage = null;
+    });
+    try {
+      await context
+          .read<DiagnosticsState>()
+          .setRetentionPolicy(retentionDays, retentionMb);
+      if (!mounted) {
+        return;
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = 'Failed to save retention policy.');
+    }
+  }
+
+  Future<void> _saveUpdateChannel(String value) async {
+    setState(() {
+      _actionError = null;
+      _actionMessage = null;
+    });
+    try {
+      await context.read<PreferencesState>().setUpdateChannel(value);
+      if (!mounted) {
+        return;
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = 'Failed to save update channel.');
+    }
+  }
+
+  Future<void> _saveCrashReporting(bool value) async {
+    setState(() {
+      _actionError = null;
+      _actionMessage = null;
+    });
+    try {
+      await context.read<PreferencesState>().setCrashReportingEnabled(value);
+      if (!mounted) {
+        return;
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = 'Failed to save crash reporting policy.');
+    }
+  }
+
+  Future<void> _setAutoExpandLogs(bool value) async {
+    await context.read<PreferencesState>().setAutoExpandLogs(value);
+  }
+
+  Future<bool> _confirmLocalDataAction(String message) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _clearDiagnostics() async {
+    if (!await _confirmLocalDataAction(
+      'Clear local diagnostics samples and performance timings?',
+    )) {
+      return;
+    }
+
+    setState(() {
+      _dataMaintenanceBusy = true;
+      _actionError = null;
+      _actionMessage = null;
+    });
+    final diagnostics = DiagnosticsState.instance;
+    await diagnostics.clearAllDiagnostics();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _dataMaintenanceBusy = false;
+      _actionMessage = 'Cleared local diagnostics samples.';
+    });
+  }
+
+  Future<void> _clearAudit() async {
+    if (!await _confirmLocalDataAction(
+      'Clear local AI audit metadata records?',
+    )) {
+      return;
+    }
+
+    setState(() {
+      _dataMaintenanceBusy = true;
+      _actionError = null;
+      _actionMessage = null;
+    });
+    final count = await AiAuditStore.clearEntries();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _dataMaintenanceBusy = false;
+      _actionMessage =
+          'Cleared $count AI audit ${count == 1 ? "entry" : "entries"}.';
+    });
+  }
+
+  Future<void> _clearAllLocalData() async {
+    if (!await _confirmLocalDataAction(
+      'Clear all local diagnostics samples and AI audit metadata records?',
+    )) {
+      return;
+    }
+
+    setState(() {
+      _dataMaintenanceBusy = true;
+      _actionError = null;
+      _actionMessage = null;
+    });
+    final diagnostics = DiagnosticsState.instance;
+    await diagnostics.clearAllDiagnostics();
+    final count = await AiAuditStore.clearEntries();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _dataMaintenanceBusy = false;
+      _actionMessage =
+          'Cleared diagnostics and $count AI audit ${count == 1 ? "entry" : "entries"}.';
+    });
+  }
+
+  Future<void> _copyAllDiagnostics() async {
+    final snapshot = context
+        .read<DiagnosticsState>()
+        .buildSnapshot(focusedStream: _diagnosticsFocus);
+    await Clipboard.setData(
+      ClipboardData(text: jsonEncode(snapshot)),
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _actionError = null;
+      _actionMessage = 'Copied diagnostics snapshot to clipboard.';
+    });
+  }
+
+  void _showUpdateStubMessage() {
+    setState(() {
+      _actionError = null;
+      _actionMessage = 'Update actions are not wired in the Flutter build yet.';
+    });
+  }
+
+  List<_ProviderCard> _buildProviderCards() {
+    if (_aiProviders.isEmpty) {
+      return const [
+        _ProviderCard(
+          id: 'codex',
+          binaryLabel: 'codex',
+          status: 'Detecting...',
+          placeholder: true,
+        ),
+        _ProviderCard(
+          id: 'claude',
+          binaryLabel: 'claude',
+          status: 'Detecting...',
+          placeholder: true,
+        ),
+        _ProviderCard(
+          id: 'gemini',
+          binaryLabel: 'npx',
+          status: 'Detecting...',
+          placeholder: true,
+        ),
+        _ProviderCard(
+          id: 'opencode',
+          binaryLabel: 'opencode',
+          status: 'Detecting...',
+          placeholder: true,
+        ),
+      ];
+    }
+
+    return _aiProviders
+        .map(
+          (provider) => _ProviderCard(
+            id: provider.id,
+            binaryLabel: provider.resolvedBinary ?? provider.binary,
+            status: provider.available
+                ? provider.planName ?? 'Ready'
+                : 'Not detected',
+            detail: provider.healthCheck,
+            ready: provider.available,
+          ),
+        )
+        .toList();
+  }
+
+  String _formatSampleTime(String value) {
+    final parsed = DateTime.tryParse(value);
+    if (parsed == null) {
+      return value;
+    }
+    final local = parsed.toLocal();
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final minute = local.minute.toString().padLeft(2, '0');
+    final suffix = local.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $suffix';
+  }
+
+  List<_DiagnosticsOffender> _buildTopOffenders(
+    CommandLatencyReport commandReport,
+    DiffRenderMetricsReport diffReport,
+    UiTimingReport uiReport,
+  ) {
+    final offenders = <_DiagnosticsOffender>[];
+    if (commandReport.summaries.isNotEmpty) {
+      final ranked = [...commandReport.summaries]..sort((left, right) {
+          final leftFailureRate =
+              left.count == 0 ? 0.0 : left.failureCount / left.count;
+          final rightFailureRate =
+              right.count == 0 ? 0.0 : right.failureCount / right.count;
+          final leftScore = left.p95Ms * (1 + leftFailureRate * 3);
+          final rightScore = right.p95Ms * (1 + rightFailureRate * 3);
+          return rightScore.compareTo(leftScore);
+        });
+      final summary = ranked.first;
+      final failureRate =
+          summary.count == 0 ? 0.0 : summary.failureCount / summary.count;
+      final score = summary.p95Ms * (1 + failureRate * 3);
+      offenders.add(
+        _DiagnosticsOffender(
+          focus: 'command',
+          streamLabel: 'Command',
+          name: summary.command,
+          score: score,
+          metricLabel:
+              '${summary.p95Ms.toStringAsFixed(0)}ms p95 | ${(failureRate * 100).toStringAsFixed(0)}% fail',
+        ),
+      );
+    }
+
+    if (diffReport.modeSummaries.isNotEmpty) {
+      final ranked = [...diffReport.modeSummaries]..sort((left, right) {
+          double score(DiffRenderModeSummary summary) {
+            final fpsPenalty =
+                (60 - summary.scrollFpsP50).clamp(0, 60).toDouble();
+            return summary.firstPaintP95Ms +
+                summary.memoryP95Mb * 4 +
+                summary.fallbackRate * 600 +
+                summary.frameTimeP95Ms * 2.5 +
+                summary.jankyFrameRate * 500 +
+                fpsPenalty * 6;
+          }
+
+          return score(right).compareTo(score(left));
+        });
+      final summary = ranked.first;
+      final fpsPenalty = (60 - summary.scrollFpsP50).clamp(0, 60).toDouble();
+      final score = summary.firstPaintP95Ms +
+          summary.memoryP95Mb * 4 +
+          summary.fallbackRate * 600 +
+          summary.frameTimeP95Ms * 2.5 +
+          summary.jankyFrameRate * 500 +
+          fpsPenalty * 6;
+      offenders.add(
+        _DiagnosticsOffender(
+          focus: 'diff',
+          streamLabel: 'Diff Render',
+          name: '${summary.rendererMode} renderer',
+          score: score,
+          metricLabel:
+              '${(summary.jankyFrameRate * 100).toStringAsFixed(0)}% jank | ${summary.frameTimeP95Ms.toStringAsFixed(0)}ms frame p95',
+        ),
+      );
+    }
+
+    if (uiReport.summaries.isNotEmpty) {
+      final ranked = [...uiReport.summaries]..sort((left, right) {
+          final leftFailureRate =
+              left.count == 0 ? 0.0 : left.failureCount / left.count;
+          final rightFailureRate =
+              right.count == 0 ? 0.0 : right.failureCount / right.count;
+          final leftScore = left.p95Ms * (1 + leftFailureRate * 3);
+          final rightScore = right.p95Ms * (1 + rightFailureRate * 3);
+          return rightScore.compareTo(leftScore);
+        });
+      final summary = ranked.first;
+      final failureRate =
+          summary.count == 0 ? 0.0 : summary.failureCount / summary.count;
+      final score = summary.p95Ms * (1 + failureRate * 3);
+      offenders.add(
+        _DiagnosticsOffender(
+          focus: 'ui',
+          streamLabel: 'UI Timing',
+          name: '${summary.phase}:${summary.event}',
+          score: score,
+          metricLabel:
+              '${summary.p95Ms.toStringAsFixed(0)}ms p95 | ${(failureRate * 100).toStringAsFixed(0)}% fail',
+        ),
+      );
+    }
+
+    offenders.sort((left, right) => right.score.compareTo(left.score));
+    return offenders.take(3).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final themeState = context.watch<ThemeState>();
+    final preferences = context.watch<PreferencesState>();
+    final diagnostics = context.watch<DiagnosticsState>();
+    final commandReport = diagnostics.commandLatencyReport;
+    final backendCommandReport = diagnostics.backendCommandTelemetrySnapshot;
+    final diffReport = diagnostics.diffRenderMetricsReport;
+    final uiReport = diagnostics.uiTimingReport;
+    final topOffenders =
+        _buildTopOffenders(commandReport, diffReport, uiReport);
+    final providerCards = _buildProviderCards();
+
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        const _FeatureHeader(),
+        if (_actionMessage != null || _actionError != null) ...[
+          const SizedBox(height: 10),
+          _SettingsNotice(
+            message: _actionError ?? _actionMessage!,
+            error: _actionError != null,
+          ),
+        ],
+        const SizedBox(height: 10),
+        _ResponsiveCardRow(
+          gap: 10,
+          children: [
+            _StateCard(
+              title: 'Guardrails',
+              summary: 'Automated action assertion and safety thresholds.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _GuardrailStepper(
+                    stage: preferences.guardrailStage,
+                    onChanged: (stage) {
+                      _saveGuardrailStage(stage);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  _FitLine(
+                    _guardrailPhrase(preferences.guardrailStage),
+                    color: t.textMuted,
+                  ),
+                  const SizedBox(height: 2),
+                  _FitLine('Read-only: Disabled', color: t.textMuted),
+                ],
+              ),
+            ),
+            _StateCard(
+              title: 'Appearance',
+              summary: 'Global interface mood and atmosphere.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _ThemeSelect(
+                    value: themeState.themeId,
+                    onChanged: themeState.setTheme,
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.only(left: 8),
+                    decoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(
+                          color: t.chromeBorder.withValues(alpha: 0.20),
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                    child: _FitLine(
+                      _themeDescription(themeState.themeId),
+                      color: t.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            _StateCard(
+              title: 'Local Data Retention',
+              summary:
+                  'Retention policy for local diagnostics and AI audit records.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _InputWithUnit(
+                          unit: 'days',
+                          value: diagnostics.retentionDays,
+                          min: 1,
+                          max: 365,
+                          onChanged: (value) =>
+                              _saveRetention(value, diagnostics.retentionMb),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _InputWithUnit(
+                          unit: 'MB',
+                          value: diagnostics.retentionMb,
+                          min: 16,
+                          max: 4096,
+                          onChanged: (value) =>
+                              _saveRetention(diagnostics.retentionDays, value),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _FitLine(
+                    'Includes diagnostics, performance timings, and AI audit metadata.',
+                    color: t.textMuted,
+                  ),
+                  const SizedBox(height: 8),
+                  _HybridRetentionActions(
+                    busy: _dataMaintenanceBusy,
+                    onClearDiagnostics: () {
+                      _clearDiagnostics();
+                    },
+                    onClearAudit: () {
+                      _clearAudit();
+                    },
+                    onClearAll: () {
+                      _clearAllLocalData();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _StateCard(
+          title: 'Navigation and Dynamics',
+          summary: 'Keyboard architecture and interface behavior.',
+          wide: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ProfileSelect(
+                value: themeState.keybindingProfile,
+                onChanged: themeState.setKeybindingProfile,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Core shortcuts for the active profile.',
+                style: TextStyle(color: t.textMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              _ShortcutsTable(profile: themeState.keybindingProfile),
+              const SizedBox(height: 18),
+              const _SettingsSubtitle('Behavioural Dynamics'),
+              _CheckboxRow(
+                label: 'Auto-expand operation logs',
+                value: preferences.autoExpandLogs,
+                onChanged: (value) {
+                  _setAutoExpandLogs(value);
+                },
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  const _SettingsSubtitle('CLI Piggybacking'),
+                  const Spacer(),
+                  _GhostMiniButton(
+                    label: _aiProvidersLoading
+                        ? 'Refreshing...'
+                        : 'Refresh Providers',
+                    onTap: _aiProvidersLoading
+                        ? null
+                        : () {
+                            _refreshAiProviders();
+                          },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Routing and piping interface messages directly to local provider binaries.',
+                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
+              ),
+              if (_aiProvidersError != null && _aiProviders.isEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _aiProvidersError!,
+                  style: TextStyle(
+                    color: t.stateConflicted,
+                    fontSize: 11,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+              if (_aiProvidersLoading) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: t.accentBright,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _aiProviders.isEmpty
+                          ? 'Loading providers...'
+                          : 'Refreshing provider diagnostics...',
+                      style: TextStyle(color: t.textMuted, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 10),
+              _ProviderGrid(providers: providerCards),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        _StateCard(
+          title: 'Diagnostics',
+          summary:
+              'Comparative overview with focused drill-down for each diagnostic stream.',
+          wide: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Spacer(),
+                  _GhostMiniButton(
+                      label: 'Copy All', onTap: _copyAllDiagnostics),
+                ],
+              ),
+              const SizedBox(height: 8),
+              _ResponsiveCardRow(
+                gap: 8,
+                children: [
+                  _DiagnosticsTab(
+                    label: 'Command',
+                    meta:
+                        '${commandReport.totalSamples} samples | ${commandReport.commandCount} commands',
+                    active: _diagnosticsFocus == 'command',
+                    onTap: () => setState(() => _diagnosticsFocus = 'command'),
+                  ),
+                  _DiagnosticsTab(
+                    label: 'Diff Render',
+                    meta:
+                        '${diffReport.totalSessions} sessions | ${((1 - diffReport.fallbackRate) * 100).toStringAsFixed(0)}% stability',
+                    active: _diagnosticsFocus == 'diff',
+                    onTap: () => setState(() => _diagnosticsFocus = 'diff'),
+                  ),
+                  _DiagnosticsTab(
+                    label: 'UI Timing',
+                    meta:
+                        '${uiReport.totalSamples} samples | ${uiReport.eventCount} events',
+                    active: _diagnosticsFocus == 'ui',
+                    onTap: () => setState(() => _diagnosticsFocus = 'ui'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              const _SettingsSubtitle('Top Offenders'),
+              const SizedBox(height: 4),
+              if (topOffenders.isEmpty)
+                Text(
+                  'No offender ranking yet. Capture diagnostic activity to populate this list.',
+                  style: TextStyle(color: t.textMuted, fontSize: 12),
+                )
+              else
+                Column(
+                  children: [
+                    for (var i = 0; i < topOffenders.length; i++) ...[
+                      _DiagnosticsOffenderButton(
+                        rank: i + 1,
+                        offender: topOffenders[i],
+                        onTap: () => setState(
+                          () => _diagnosticsFocus = topOffenders[i].focus,
+                        ),
+                      ),
+                      if (i < topOffenders.length - 1)
+                        const SizedBox(height: 6),
+                    ],
+                  ],
+                ),
+              const SizedBox(height: 16),
+              _DiagnosticsFocusPanel(
+                focus: _diagnosticsFocus,
+                commandReport: commandReport,
+                backendCommandReport: backendCommandReport,
+                diffReport: diffReport,
+                uiReport: uiReport,
+                onRefresh: diagnostics.refreshSnapshots,
+                onClearCommand: diagnostics.clearCommandLatencyReport,
+                onClearDiff: diagnostics.clearDiffRenderMetricsReport,
+                onClearUi: diagnostics.clearUiTimingReport,
+                formatSampleTime: _formatSampleTime,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        _StateCard(
+          title: 'Release Channel',
+          summary: 'Update feed and crash diagnostics policy.',
+          wide: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ChannelSelect(
+                value: preferences.updateChannel,
+                onChanged: (value) {
+                  _saveUpdateChannel(value);
+                },
+              ),
+              const SizedBox(height: 10),
+              _CheckboxRow(
+                label: 'Capture local crash diagnostics',
+                value: preferences.crashReportingEnabled,
+                onChanged: (value) {
+                  _saveCrashReporting(value);
+                },
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _PrimaryButton(
+                    label: 'Check for Updates',
+                    onTap: _showUpdateStubMessage,
+                  ),
+                  const SizedBox(width: 8),
+                  _PrimaryButton(
+                    label: 'Install Available Update',
+                    enabled: false,
+                    onTap: _showUpdateStubMessage,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DiagnosticsOffender {
+  final String focus;
+  final String streamLabel;
+  final String name;
+  final double score;
+  final String metricLabel;
+
+  const _DiagnosticsOffender({
+    required this.focus,
+    required this.streamLabel,
+    required this.name,
+    required this.score,
+    required this.metricLabel,
+  });
+}
+
+class _SettingsNotice extends StatelessWidget {
+  final String message;
+  final bool error;
+
+  const _SettingsNotice({required this.message, required this.error});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final color = error ? t.stateDeleted : t.stateAdded;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(
+          color: error ? t.textStrong : color,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _DiagnosticsOffenderButton extends StatelessWidget {
+  final int rank;
+  final _DiagnosticsOffender offender;
+  final VoidCallback onTap;
+
+  const _DiagnosticsOffenderButton({
+    required this.rank,
+    required this.offender,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: t.rowBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: t.secondaryBtnBorder),
+        ),
+        child: Row(
+          children: [
+            Text(
+              '#$rank',
+              style: TextStyle(
+                color: t.accentBright,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    offender.streamLabel,
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    offender.name,
+                    style: TextStyle(
+                      color: t.textStrong,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              offender.metricLabel,
+              textAlign: TextAlign.right,
+              style: TextStyle(color: t.textMuted, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DiagnosticsFocusPanel extends StatelessWidget {
+  final String focus;
+  final CommandLatencyReport commandReport;
+  final CommandTelemetrySnapshotData backendCommandReport;
+  final DiffRenderMetricsReport diffReport;
+  final UiTimingReport uiReport;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onClearCommand;
+  final Future<void> Function() onClearDiff;
+  final Future<void> Function() onClearUi;
+  final String Function(String value) formatSampleTime;
+
+  const _DiagnosticsFocusPanel({
+    required this.focus,
+    required this.commandReport,
+    required this.backendCommandReport,
+    required this.diffReport,
+    required this.uiReport,
+    required this.onRefresh,
+    required this.onClearCommand,
+    required this.onClearDiff,
+    required this.onClearUi,
+    required this.formatSampleTime,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (focus == 'diff') {
+      return _DiffDiagnosticsPanel(
+        report: diffReport,
+        onRefresh: onRefresh,
+        onClear: onClearDiff,
+        formatSampleTime: formatSampleTime,
+      );
+    }
+    if (focus == 'ui') {
+      return _UiDiagnosticsPanel(
+        report: uiReport,
+        onRefresh: onRefresh,
+        onClear: onClearUi,
+        formatSampleTime: formatSampleTime,
+      );
+    }
+    return _CommandDiagnosticsPanel(
+      report: commandReport,
+      backendReport: backendCommandReport,
+      onRefresh: onRefresh,
+      onClear: onClearCommand,
+      formatSampleTime: formatSampleTime,
+    );
+  }
+}
+
+class _ResponsiveCardRow extends StatelessWidget {
+  final List<Widget> children;
+  final double gap;
+
+  const _ResponsiveCardRow({required this.children, this.gap = 10});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 560) {
+          return Column(
+            children: [
+              for (var i = 0; i < children.length; i++) ...[
+                children[i],
+                if (i < children.length - 1) SizedBox(height: gap),
+              ],
+            ],
+          );
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < children.length; i++) ...[
+              Expanded(child: children[i]),
+              if (i < children.length - 1) SizedBox(width: gap),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _FeatureHeader extends StatelessWidget {
+  const _FeatureHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Workspace Preferences',
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Configure global aesthetics, interface dynamics, and core operational safeguards for the entire workspace.',
+                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StateCard extends StatelessWidget {
+  final String title;
+  final String summary;
+  final Widget child;
+  final bool wide;
+
+  const _StateCard({
+    required this.title,
+    required this.summary,
+    required this.child,
+    this.wide = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return MaterialSurface(
+      tone: AppMaterialTone.surface1,
+      radius: 8,
+      borderAlpha: 0.18,
+      elevated: false,
+      innerHighlight: true,
+      hardShadow: true,
+      padding: const EdgeInsets.all(10),
+      constraints: BoxConstraints(minHeight: wide ? 0 : 168),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            summary,
+            style: TextStyle(color: t.textMuted, fontSize: 13, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _GuardrailStepper extends StatelessWidget {
+  final int stage;
+  final ValueChanged<int> onChanged;
+
+  const _GuardrailStepper({required this.stage, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final stageColor =
+        _guardrailStageColors[stage.clamp(0, _guardrailStageColors.length - 1)];
+    return Column(
+      children: [
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 6,
+            activeTrackColor: stageColor,
+            inactiveTrackColor: t.chromeBorder.withValues(alpha: 0.22),
+            thumbColor: t.sliderThumb,
+            overlayColor: stageColor.withValues(alpha: 0.16),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+            tickMarkShape: const RoundSliderTickMarkShape(tickMarkRadius: 2),
+            activeTickMarkColor: t.textStrong.withValues(alpha: 0.70),
+            inactiveTickMarkColor: t.textMuted.withValues(alpha: 0.35),
+          ),
+          child: Slider(
+            value: stage.toDouble(),
+            min: 0,
+            max: (_guardrailStageLabels.length - 1).toDouble(),
+            divisions: _guardrailStageLabels.length - 1,
+            onChanged: (value) => onChanged(value.round()),
+          ),
+        ),
+        const SizedBox(height: 2),
+        Row(
+          children: [
+            for (var i = 0; i < _guardrailStageLabels.length; i++)
+              Expanded(
+                child: Text(
+                  _guardrailStageLabels[i],
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: i == stage ? t.textStrong : t.textMuted,
+                    fontSize: 10,
+                    fontWeight: i == stage ? FontWeight.w600 : FontWeight.w500,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _InputWithUnit extends StatelessWidget {
+  final String unit;
+  final int value;
+  final int min;
+  final int max;
+  final ValueChanged<int> onChanged;
+
+  const _InputWithUnit({
+    required this.unit,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final controller = TextEditingController(text: '$value');
+    return AppInputShell(
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: AppTextField(
+              controller: controller,
+              height: 28,
+              mono: true,
+              fontSize: 12,
+              keyboardType: TextInputType.number,
+              padding: EdgeInsets.zero,
+              onSubmitted: (raw) {
+                final parsed = int.tryParse(raw.trim());
+                if (parsed != null) {
+                  onChanged(parsed.clamp(min, max));
+                }
+              },
+            ),
+          ),
+          Text(
+            unit,
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.75),
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HybridRetentionActions extends StatelessWidget {
+  final bool busy;
+  final VoidCallback onClearDiagnostics;
+  final VoidCallback onClearAudit;
+  final VoidCallback onClearAll;
+
+  const _HybridRetentionActions({
+    required this.busy,
+    required this.onClearDiagnostics,
+    required this.onClearAudit,
+    required this.onClearAll,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    const labels = ['Diag', 'Audit', 'All'];
+    final actions = [onClearDiagnostics, onClearAudit, onClearAll];
+    return IntrinsicWidth(
+      child: Container(
+        height: 26,
+        decoration: BoxDecoration(
+          color: t.rowBg,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.18)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < labels.length; i++) ...[
+              GestureDetector(
+                onTap: busy ? null : actions[i],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Center(
+                    child: Text(
+                      labels[i],
+                      style: TextStyle(
+                        color: busy
+                            ? t.textMuted.withValues(alpha: 0.6)
+                            : t.textNormal,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (i < labels.length - 1)
+                Container(
+                  width: 1,
+                  height: 16,
+                  color: t.chromeBorder.withValues(alpha: 0.14),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThemeSelect extends StatelessWidget {
+  final AppThemeId value;
+  final ValueChanged<AppThemeId> onChanged;
+
+  const _ThemeSelect({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final ids = themeOptions.map((option) => option.id).toList(growable: false);
+    return AppDropdownField<AppThemeId>(
+      value: ids.contains(value) ? value : defaultThemeId,
+      items: ids
+          .map(
+            (id) => DropdownMenuItem(
+              value: id,
+              child: Text(themeDefinitionFor(id).option.label),
+            ),
+          )
+          .toList(),
+      onChanged: (id) {
+        if (id != null) {
+          onChanged(id);
+        }
+      },
+    );
+  }
+}
+
+class _ChannelSelect extends StatelessWidget {
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  const _ChannelSelect({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      children: [
+        SizedBox(
+          width: 86,
+          child: Text('Channel',
+              style: TextStyle(color: t.textMuted, fontSize: 12)),
+        ),
+        SizedBox(
+          width: 160,
+          child: AppDropdownField<String>(
+            value: value,
+            items: const [
+              DropdownMenuItem(value: 'stable', child: Text('Stable')),
+              DropdownMenuItem(value: 'beta', child: Text('Beta')),
+            ],
+            onChanged: (id) {
+              if (id != null) {
+                onChanged(id);
+              }
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProfileSelect extends StatelessWidget {
+  final KeybindingProfile value;
+  final ValueChanged<KeybindingProfile> onChanged;
+
+  const _ProfileSelect({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Keybinding profile',
+          style: TextStyle(
+            color: t.textMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        AppDropdownField<KeybindingProfile>(
+          value: value,
+          height: 32,
+          fontWeight: FontWeight.w600,
+          menuColor: t.surface1,
+          items: const [
+            DropdownMenuItem(
+              value: KeybindingProfile.classic,
+              child: Text('Classic'),
+            ),
+            DropdownMenuItem(
+              value: KeybindingProfile.compact,
+              child: Text('Compact'),
+            ),
+          ],
+          onChanged: (profile) {
+            if (profile != null) {
+              onChanged(profile);
+            }
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _ShortcutsTable extends StatelessWidget {
+  final KeybindingProfile profile;
+
+  const _ShortcutsTable({required this.profile});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final rows = profile == KeybindingProfile.classic
+        ? const [
+            ('Changes', 'G C'),
+            ('History', 'G H'),
+            ('Branches', 'G B'),
+            ('Sync panel', 'G S'),
+            ('Search commits', '/'),
+            ('Close panel', 'Esc'),
+            ('Select range (rebase)', 'Shift+Click'),
+          ]
+        : const [
+            ('Changes', '1'),
+            ('History', '2'),
+            ('Branches', '3'),
+            ('Sync panel', '4'),
+            ('Search commits', '/'),
+            ('Close panel', 'Esc'),
+            ('Select range (rebase)', 'Shift+Click'),
+          ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth < 460
+            ? 1
+            : constraints.maxWidth < 720
+                ? 2
+                : 4;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: rows.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisExtent: 32,
+            crossAxisSpacing: 6,
+            mainAxisSpacing: 6,
+          ),
+          itemBuilder: (context, index) {
+            final row = rows[index];
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: t.chromeBorder.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(6),
+                border:
+                    Border.all(color: t.chromeBorder.withValues(alpha: 0.10)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      row.$1,
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 11,
+                        fontFamily: 'JetBrainsMono',
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    constraints: const BoxConstraints(minWidth: 20),
+                    height: 20,
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: t.surface2,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: t.chromeBorder.withValues(alpha: 0.30),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: t.chromeBorder.withValues(alpha: 0.15),
+                          offset: const Offset(0, 1.5),
+                          blurRadius: 0,
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      row.$2,
+                      style: TextStyle(
+                        color: t.textStrong,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'JetBrainsMono',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _ProviderNode extends StatelessWidget {
+  final String id;
+  final String status;
+  final String binaryLabel;
+  final String? detail;
+  final bool ready;
+  final bool placeholder;
+
+  const _ProviderNode({
+    required this.id,
+    required this.status,
+    required this.binaryLabel,
+    this.detail,
+    this.ready = false,
+    this.placeholder = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final statusColor = placeholder
+        ? t.textMuted
+        : ready
+            ? t.stateAdded
+            : t.stateConflicted;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: t.rowBg,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        children: [
+          Text(
+            id,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const Spacer(),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                status,
+                style: TextStyle(color: statusColor, fontSize: 10),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                binaryLabel,
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 10,
+                  fontFamily: 'JetBrainsMono',
+                ),
+              ),
+              if (detail != null && detail!.trim().isNotEmpty) ...[
+                const SizedBox(height: 2),
+                SizedBox(
+                  width: 180,
+                  child: Text(
+                    detail!,
+                    maxLines: 2,
+                    textAlign: TextAlign.end,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: t.textMuted, fontSize: 9),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProviderCard {
+  final String id;
+  final String binaryLabel;
+  final String status;
+  final String? detail;
+  final bool ready;
+  final bool placeholder;
+
+  const _ProviderCard({
+    required this.id,
+    required this.binaryLabel,
+    required this.status,
+    this.detail,
+    this.ready = false,
+    this.placeholder = false,
+  });
+}
+
+class _ProviderGrid extends StatelessWidget {
+  final List<_ProviderCard> providers;
+
+  const _ProviderGrid({required this.providers});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth < 620 ? 1 : 2;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: providers.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisExtent: 68,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+          ),
+          itemBuilder: (context, index) {
+            final p = providers[index];
+            return _ProviderNode(
+              id: p.id,
+              binaryLabel: p.binaryLabel,
+              status: p.status,
+              detail: p.detail,
+              ready: p.ready,
+              placeholder: p.placeholder,
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _SettingsSubtitle extends StatelessWidget {
+  final String label;
+
+  const _SettingsSubtitle(this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Text(
+      label,
+      style: TextStyle(
+        color: t.textMuted.withValues(alpha: 0.80),
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.8,
+      ),
+    );
+  }
+}
+
+class _GhostMiniButton extends StatefulWidget {
+  final String label;
+  final VoidCallback? onTap;
+
+  const _GhostMiniButton({required this.label, required this.onTap});
+
+  @override
+  State<_GhostMiniButton> createState() => _GhostMiniButtonState();
+}
+
+class _GhostMiniButtonState extends State<_GhostMiniButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final chrome = ghostButtonChrome(
+      t,
+      hovered: _hovered,
+      pressed: _pressed,
+      enabled: widget.onTap != null,
+      baseBorderColor: Colors.transparent,
+    );
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: widget.onTap != null
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        onTapDown: widget.onTap != null
+            ? (_) => setState(() => _pressed = true)
+            : null,
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) => setState(() => _pressed = false),
+        child: AnimatedScale(
+          duration: const Duration(milliseconds: 80),
+          scale: chrome.scale,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 80),
+            constraints: const BoxConstraints(minHeight: 24),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: chrome.background,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: chrome.borderColor),
+              boxShadow: chrome.shadows,
+            ),
+            child: Transform.translate(
+              offset: chrome.offset,
+              child: Text(
+                widget.label,
+                style: TextStyle(
+                  color: widget.onTap != null ? t.textNormal : t.textMuted,
+                  fontSize: 10,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DiagnosticsTab extends StatefulWidget {
+  final String label;
+  final String meta;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _DiagnosticsTab({
+    required this.label,
+    required this.meta,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  State<_DiagnosticsTab> createState() => _DiagnosticsTabState();
+}
+
+class _DiagnosticsTabState extends State<_DiagnosticsTab> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final chrome = modeButtonChrome(
+      t,
+      hovered: _hovered,
+      pressed: _pressed,
+      active: widget.active,
+    );
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) => setState(() => _pressed = false),
+        child: AnimatedScale(
+          duration: const Duration(milliseconds: 80),
+          scale: chrome.scale,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 80),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: chrome.background,
+              gradient: chrome.gradient,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: chrome.borderColor),
+              boxShadow: chrome.shadows,
+            ),
+            child: Transform.translate(
+              offset: chrome.offset,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: widget.active ? t.accentBright : t.textNormal,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(widget.meta,
+                      style: TextStyle(color: t.textMuted, fontSize: 10)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CommandDiagnosticsPanel extends StatelessWidget {
+  final CommandLatencyReport report;
+  final CommandTelemetrySnapshotData backendReport;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onClear;
+  final String Function(String value) formatSampleTime;
+
+  const _CommandDiagnosticsPanel({
+    required this.report,
+    required this.backendReport,
+    required this.onRefresh,
+    required this.onClear,
+    required this.formatSampleTime,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final summaries = report.summaries.take(10).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SettingsSubtitle('Command Diagnostics'),
+        const SizedBox(height: 4),
+        Text(
+          '${report.totalSamples} samples | ${report.commandCount} unique commands',
+          style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        _DiagnosticsActionRow(
+          onRefresh: onRefresh,
+          clearLabel: 'Clear Samples',
+          onClear: onClear,
+          clearEnabled: report.totalSamples > 0,
+        ),
+        const SizedBox(height: 12),
+        if (summaries.isEmpty)
+          Text(
+            'No command timings captured yet. Run normal actions to populate diagnostics.',
+            style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
+          )
+        else
+          Column(
+            children: [
+              for (final summary in summaries) ...[
+                _TelemetrySummaryRow(
+                  title: summary.command,
+                  cells: [
+                    _TelemetryCell(
+                      label: 'p50',
+                      value: '${summary.p50Ms.toStringAsFixed(1)}ms',
+                    ),
+                    _TelemetryCell(
+                      label: 'Reliability',
+                      value:
+                          '${((summary.successCount / summary.count) * 100).round()}%',
+                    ),
+                    _TelemetryCell(
+                      label: 'Range',
+                      value:
+                          '${summary.minMs.round()}-${summary.maxMs.round()}ms',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        if (report.recentSamples.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _RecentSamplesList(
+            title: 'Recent Operations',
+            items: report.recentSamples
+                .map(
+                  (sample) =>
+                      '${formatSampleTime(sample.recordedAt)} | ${sample.command} | ${(sample.backendDurationMs ?? sample.roundTripMs).toStringAsFixed(2)} ms | ${sample.ok ? "ok" : sample.errorCode}',
+                )
+                .toList(),
+          ),
+        ],
+        const SizedBox(height: 16),
+        const _SettingsSubtitle('Backend Command Telemetry'),
+        const SizedBox(height: 4),
+        Text(
+          '${backendReport.sampleCount} samples | ${backendReport.summaries.length} scoped commands',
+          style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        if (backendReport.summaries.isEmpty)
+          Text(
+            'No backend command samples captured yet. Run git and settings actions to populate this log.',
+            style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
+          )
+        else
+          Column(
+            children: [
+              for (final summary in backendReport.summaries.take(10)) ...[
+                _TelemetrySummaryRow(
+                  title: '${summary.scope}:${summary.command}',
+                  cells: [
+                    _TelemetryCell(label: 'p50', value: '${summary.p50Ms}ms'),
+                    _TelemetryCell(label: 'p95', value: '${summary.p95Ms}ms'),
+                    _TelemetryCell(
+                      label: 'Failures',
+                      value: '${summary.failureCount}/${summary.sampleCount}',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        if (backendReport.recentSamples.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _RecentSamplesList(
+            title: 'Recent Backend Operations',
+            items: backendReport.recentSamples.reversed
+                .take(10)
+                .map(
+                  (sample) =>
+                      '${formatSampleTime(sample.createdAt)} | ${sample.scope}:${sample.command} | ${sample.durationMs} ms | ${sample.ok ? "ok" : sample.errorCode}',
+                )
+                .toList(),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _DiffDiagnosticsPanel extends StatelessWidget {
+  final DiffRenderMetricsReport report;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onClear;
+  final String Function(String value) formatSampleTime;
+
+  const _DiffDiagnosticsPanel({
+    required this.report,
+    required this.onRefresh,
+    required this.onClear,
+    required this.formatSampleTime,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SettingsSubtitle('Diff Render Diagnostics'),
+        const SizedBox(height: 4),
+        Text(
+          '${report.totalSessions} sessions | jank ${(report.jankyFrameRate * 100).toStringAsFixed(0)}%',
+          style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        _DiagnosticsActionRow(
+          onRefresh: onRefresh,
+          clearLabel: 'Clear Diff Metrics',
+          onClear: onClear,
+          clearEnabled: report.totalSessions > 0,
+        ),
+        const SizedBox(height: 12),
+        if (report.modeSummaries.isEmpty)
+          Text(
+            'No diff render sessions captured yet. Open and scroll file diffs to populate this panel.',
+            style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
+          )
+        else
+          Column(
+            children: [
+              for (final summary in report.modeSummaries) ...[
+                _TelemetrySummaryRow(
+                  title: 'Renderer: ${summary.rendererMode}',
+                  cells: [
+                    _TelemetryCell(
+                      label: 'First Paint',
+                      value: '${summary.firstPaintP50Ms.toStringAsFixed(0)}ms',
+                    ),
+                    _TelemetryCell(
+                      label: 'Frame p95',
+                      value: '${summary.frameTimeP95Ms.toStringAsFixed(1)}ms',
+                    ),
+                    _TelemetryCell(
+                      label: 'Raster p95',
+                      value: '${summary.rasterTimeP95Ms.toStringAsFixed(1)}ms',
+                    ),
+                    _TelemetryCell(
+                      label: 'Jank',
+                      value:
+                          '${(summary.jankyFrameRate * 100).toStringAsFixed(0)}%',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        if (report.recentSamples.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _RecentSamplesList(
+            title: 'Recent Diff Sessions',
+            items: report.recentSamples
+                .map(
+                  (sample) =>
+                      '${formatSampleTime(sample.recordedAt)} | ${sample.rendererMode}:${sample.path} | frame ${sample.frameTimeP95Ms.toStringAsFixed(1)}ms | jank ${sample.frameCount == 0 ? "0" : ((sample.jankyFrameCount / sample.frameCount) * 100).toStringAsFixed(0)}%',
+                )
+                .toList(),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _UiDiagnosticsPanel extends StatelessWidget {
+  final UiTimingReport report;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onClear;
+  final String Function(String value) formatSampleTime;
+
+  const _UiDiagnosticsPanel({
+    required this.report,
+    required this.onRefresh,
+    required this.onClear,
+    required this.formatSampleTime,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final summaries = report.summaries.take(10).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SettingsSubtitle('UI Timing Diagnostics'),
+        const SizedBox(height: 4),
+        Text(
+          '${report.totalSamples} samples | ${report.eventCount} instrumented events',
+          style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
+        ),
+        const SizedBox(height: 10),
+        _DiagnosticsActionRow(
+          onRefresh: onRefresh,
+          clearLabel: 'Clear UI Timings',
+          onClear: onClear,
+          clearEnabled: report.totalSamples > 0,
+        ),
+        const SizedBox(height: 12),
+        if (summaries.isEmpty)
+          Text(
+            'No UI timing sessions captured yet. Open panels and navigate routes to populate this panel.',
+            style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
+          )
+        else
+          Column(
+            children: [
+              for (final summary in summaries) ...[
+                _TelemetrySummaryRow(
+                  title: '${summary.phase}: ${summary.event}',
+                  cells: [
+                    _TelemetryCell(
+                      label: 'p50',
+                      value: '${summary.p50Ms.toStringAsFixed(1)}ms',
+                    ),
+                    _TelemetryCell(
+                      label: 'Failures',
+                      value: '${summary.failureCount}',
+                    ),
+                    _TelemetryCell(
+                      label: 'Range',
+                      value:
+                          '${summary.minMs.round()}-${summary.maxMs.round()}ms',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
+            ],
+          ),
+        if (report.recentSamples.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _RecentSamplesList(
+            title: 'Recent UI Timings',
+            items: report.recentSamples
+                .map(
+                  (sample) =>
+                      '${formatSampleTime(sample.recordedAt)} | ${sample.phase}:${sample.event} | ${sample.durationMs.toStringAsFixed(2)} ms | ${sample.ok ? "ok" : sample.errorCode}',
+                )
+                .toList(),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _DiagnosticsActionRow extends StatelessWidget {
+  final Future<void> Function() onRefresh;
+  final String clearLabel;
+  final Future<void> Function() onClear;
+  final bool clearEnabled;
+
+  const _DiagnosticsActionRow({
+    required this.onRefresh,
+    required this.clearLabel,
+    required this.onClear,
+    required this.clearEnabled,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _GhostMiniButton(
+          label: 'Refresh Snapshot',
+          onTap: () {
+            onRefresh();
+          },
+        ),
+        const SizedBox(width: 8),
+        _PrimaryButton(
+          label: clearLabel,
+          enabled: clearEnabled,
+          onTap: () {
+            onClear();
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _TelemetryCell {
+  final String label;
+  final String value;
+
+  const _TelemetryCell({required this.label, required this.value});
+}
+
+class _TelemetrySummaryRow extends StatelessWidget {
+  final String title;
+  final List<_TelemetryCell> cells;
+
+  const _TelemetrySummaryRow({required this.title, required this.cells});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: t.rowBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: t.secondaryBtnBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 420;
+              if (compact) {
+                return Column(
+                  children: [
+                    for (var i = 0; i < cells.length; i++) ...[
+                      _TelemetryCellView(cell: cells[i]),
+                      if (i < cells.length - 1) const SizedBox(height: 8),
+                    ],
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  for (var i = 0; i < cells.length; i++) ...[
+                    Expanded(child: _TelemetryCellView(cell: cells[i])),
+                    if (i < cells.length - 1) const SizedBox(width: 8),
+                  ],
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TelemetryCellView extends StatelessWidget {
+  final _TelemetryCell cell;
+
+  const _TelemetryCellView({required this.cell});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: t.surface0,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            cell.label,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            cell.value,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RecentSamplesList extends StatelessWidget {
+  final String title;
+  final List<String> items;
+
+  const _RecentSamplesList({required this.title, required this.items});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: t.surface0,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          for (var i = 0; i < items.length; i++) ...[
+            Text(
+              items[i],
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 11,
+                fontFamily: 'JetBrainsMono',
+              ),
+            ),
+            if (i < items.length - 1) const SizedBox(height: 4),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CheckboxRow extends StatelessWidget {
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _CheckboxRow({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final isCrafty = t.id == AppThemeId.crafty;
+    final isBlackboard = t.id == AppThemeId.blackboard;
+    return GestureDetector(
+      onTap: () => onChanged(!value),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 18,
+            height: 18,
+            decoration: BoxDecoration(
+              color: value
+                  ? (isBlackboard ? Colors.transparent : t.sliderThumb)
+                  : t.inputBg,
+              borderRadius:
+                  BorderRadius.circular(isCrafty ? 0 : (isBlackboard ? 2 : 4)),
+              border: Border.all(
+                color: value
+                    ? (isCrafty
+                        ? t.btnBorder
+                        : (isBlackboard ? Colors.white : t.accentBright))
+                    : t.inputBorder,
+                width: isCrafty ? 2 : 1,
+              ),
+              boxShadow: value && isCrafty
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.3),
+                        offset: const Offset(-2, -2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child:
+                value ? _ThemeCheckGlyph(tokens: t) : const SizedBox.shrink(),
+          ),
+          const SizedBox(width: 8),
+          Text(label, style: TextStyle(color: t.textNormal, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThemeCheckGlyph extends StatelessWidget {
+  final AppTokens tokens;
+
+  const _ThemeCheckGlyph({required this.tokens});
+
+  @override
+  Widget build(BuildContext context) {
+    if (tokens.id == AppThemeId.crafty) {
+      return Center(
+        child: Container(width: 10, height: 10, color: tokens.btnBorder),
+      );
+    }
+    if (tokens.id == AppThemeId.blackboard) {
+      return CustomPaint(
+        painter: _ChalkDiamondPainter(),
+        child: const SizedBox.expand(),
+      );
+    }
+    return Icon(Icons.check, size: 13, color: tokens.bg0);
+  }
+}
+
+class _ChalkDiamondPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..color = Colors.white;
+    final path = Path()
+      ..moveTo(size.width / 2, 4)
+      ..lineTo(size.width - 4, size.height / 2)
+      ..lineTo(size.width / 2, size.height - 4)
+      ..lineTo(4, size.height / 2)
+      ..close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _PrimaryButton extends StatefulWidget {
+  final String label;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _PrimaryButton({
+    required this.label,
+    this.enabled = true,
+    required this.onTap,
+  });
+
+  @override
+  State<_PrimaryButton> createState() => _PrimaryButtonState();
+}
+
+class _PrimaryButtonState extends State<_PrimaryButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final chrome = primaryButtonChrome(
+      t,
+      hovered: _hovered,
+      pressed: _pressed,
+      enabled: widget.enabled,
+    );
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor:
+          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: widget.enabled ? widget.onTap : null,
+        onTapDown:
+            widget.enabled ? (_) => setState(() => _pressed = true) : null,
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) => setState(() => _pressed = false),
+        child: Opacity(
+          opacity: widget.enabled ? 1 : 0.4,
+          child: AnimatedScale(
+            duration: const Duration(milliseconds: 80),
+            scale: chrome.scale,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 80),
+              height: 30,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: chrome.background,
+                gradient: chrome.gradient,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: chrome.borderColor,
+                ),
+                boxShadow: chrome.shadows,
+              ),
+              alignment: Alignment.center,
+              child: Transform.translate(
+                offset: chrome.offset,
+                child: Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: t.btnText,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FitLine extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  const _FitLine(this.text, {required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: TextStyle(color: color, fontSize: 11),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
+String _guardrailPhrase(int stage) {
+  switch (stage) {
+    case 0:
+      return 'Permissive review mode';
+    case 2:
+      return 'Tighter safety checks';
+    case 3:
+      return 'Maximum lock-down safeguards';
+    default:
+      return 'Practical everyday protections';
+  }
+}
+
+String _themeDescription(AppThemeId id) {
+  return themeDefinitionFor(id).option.description;
+}

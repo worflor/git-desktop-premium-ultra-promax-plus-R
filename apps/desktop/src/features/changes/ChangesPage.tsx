@@ -551,6 +551,7 @@ export function ChangesPage(props: ChangesPageProps = {}) {
                 filePath={activeDiffPath()}
                 manifest={activeDiffManifest()}
                 error={diffError()}
+                repositoryPath={activeRepo() ?? undefined}
               />
             </div>
           </Show>

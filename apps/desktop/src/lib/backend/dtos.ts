@@ -434,3 +434,87 @@ export interface LocalPullRequestOperationData {
   operation: string;
   pullRequest: LocalPullRequestData;
 }
+
+export interface RebaseTodoEntry {
+  action: string;
+  commitHash: string;
+  subject: string;
+}
+
+export interface RebasePlanData {
+  ontoRef: string;
+  entries: RebaseTodoEntry[];
+}
+
+export interface CommitSearchResultData {
+  commitHash: string;
+  shortHash: string;
+  subject: string;
+  authorName: string;
+  authoredAt: string;
+  matchContext?: string;
+}
+
+export interface CommitSearchData {
+  repositoryPath: string;
+  query: string;
+  scope: string;
+  results: CommitSearchResultData[];
+}
+
+export interface ReflogEntryData {
+  commitHash: string;
+  shortHash: string;
+  refSelector: string;
+  actionSummary: string;
+  authorName: string;
+  authoredAt: string;
+}
+
+export interface ReflogData {
+  entries: ReflogEntryData[];
+}
+
+export interface BlameLineData {
+  lineNumber: number;
+  commitHash: string;
+  shortHash: string;
+  authorName: string;
+  authoredAt: string;
+  lineContent: string;
+}
+
+export interface FileBlameData {
+  path: string;
+  commitRef: string;
+  lines: BlameLineData[];
+}
+
+export interface CloneRepositoryData {
+  repositoryPath: string;
+  remoteUrl: string;
+}
+
+export interface InitRepositoryData {
+  repositoryPath: string;
+}
+
+export interface TagEntryData {
+  name: string;
+  tagType: string;
+  targetHash?: string;
+  createdAt?: string;
+  creatorName?: string;
+  subject?: string;
+}
+
+export interface TagListData {
+  repositoryPath: string;
+  tags: TagEntryData[];
+}
+
+export interface TagOperationData {
+  repositoryPath: string;
+  tagName: string;
+  operation: string;
+}

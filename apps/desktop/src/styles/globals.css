@@ -2159,6 +2159,55 @@ ol {
   cursor: not-allowed;
 }
 
+/* ── Tags ── */
+
+.inline-tag-trigger:hover {
+  opacity: 1 !important;
+}
+
+.tag-list-row:hover {
+  background: rgba(var(--chrome-border-rgb), 0.06) !important;
+}
+
+.tag-ref-pill {
+  line-height: 1;
+}
+
+@keyframes tag-input-expand {
+  from { opacity: 0; transform: scaleX(0.7); transform-origin: left center; }
+  to   { opacity: 1; transform: scaleX(1);   transform-origin: left center; }
+}
+
+/* ── Blame ── */
+
+.diff-line {
+  position: relative;
+}
+
+.diff-line-number {
+  cursor: default;
+}
+
+@keyframes blame-fade-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Clone/Init ── */
+
+.sidebar-cloning-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  animation: cloning-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes cloning-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
 /* ── Custom Theme Slider ── */
 /* ── Consolidated Theme Sliders ──────────────────────────── */
 

@@ -2,7 +2,7 @@ import { createMemo, createResource, createSignal, For, onMount, Show } from "so
 import { useRepositoryContext } from "@/app/repository/RepositoryContext";
 import { BrandLockup } from "@/components/composite/BrandLockup";
 import { Icon } from "@/components/icons/Icon";
-import { listRecentRepositories, openRepository, pickRepositoryDirectory } from "@/lib/backend/commands";
+import { listRecentRepositories, openRepository, pickRepositoryDirectory, cloneRepository, initRepository } from "@/lib/backend/commands";
 
 function normalizePath(value: string): string {
   return value.replace(/\\/g, "/").toLowerCase();
@@ -13,12 +13,46 @@ function toProjectName(value: string): string {
   return parts[parts.length - 1] ?? value;
 }
 
+function isGitUrl(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("git@") ||
+    trimmed.startsWith("ssh://") ||
+    trimmed.endsWith(".git")
+  );
+}
+
+function extractRepoNameFromUrl(url: string): string {
+  const cleaned = url.trim().replace(/\.git$/, "").replace(/\/$/, "");
+  const parts = cleaned.split(/[/:]/).filter(Boolean);
+  return parts[parts.length - 1] ?? "repo";
+}
+
 export function SidebarRail() {
   const repository = useRepositoryContext();
   const [pathInput, setPathInput] = createSignal("");
+  const [cloneTargetPath, setCloneTargetPath] = createSignal("");
   const [repositoryError, setRepositoryError] = createSignal<string | null>(null);
   const [openRunning, setOpenRunning] = createSignal(false);
   const [showPathEntry, setShowPathEntry] = createSignal(false);
+  const [cloningEntry, setCloningEntry] = createSignal<string | null>(null);
+
+  const inputMode = createMemo<"open" | "clone" | "init">(() => {
+    const value = pathInput().trim();
+    if (!value) return "open";
+    if (isGitUrl(value)) return "clone";
+    return "open";
+  });
+
+  const buttonLabel = createMemo(() => {
+    if (openRunning()) return "…";
+    switch (inputMode()) {
+      case "clone": return "Clone";
+      default: return "Open";
+    }
+  });
   const [shouldLoadRecents, setShouldLoadRecents] = createSignal(false);
   const [recentRepositories, { refetch: refetchRecents }] = createResource(
     shouldLoadRecents,
@@ -77,8 +111,68 @@ export function SidebarRail() {
 
   const isPathFallbackError = (code: string) => code === "repo.not_found" || code === "repo.open_failed";
 
+  const onCloneRepository = async () => {
+    const url = pathInput().trim();
+    const target = cloneTargetPath().trim();
+    if (!url || !target) {
+      setRepositoryError("URL and target path required.");
+      return;
+    }
+
+    setRepositoryError(null);
+    setOpenRunning(true);
+    setCloningEntry(target);
+
+    const result = await cloneRepository(url, target);
+
+    setOpenRunning(false);
+    setCloningEntry(null);
+
+    if (!result.ok) {
+      setRepositoryError(result.error.message);
+      return;
+    }
+
+    setPathInput("");
+    setCloneTargetPath("");
+    repository.setActiveRepositoryPath(result.data.repositoryPath);
+    setShowPathEntry(false);
+    void refetchRecents();
+  };
+
+  const onInitRepository = async (path: string) => {
+    setRepositoryError(null);
+    setOpenRunning(true);
+
+    const result = await initRepository(path);
+
+    if (!result.ok) {
+      setOpenRunning(false);
+      setRepositoryError(result.error.message);
+      return;
+    }
+
+    const openResult = await openRepository(result.data.repositoryPath);
+    setOpenRunning(false);
+
+    if (!openResult.ok) {
+      setRepositoryError(openResult.error.message);
+      return;
+    }
+
+    setPathInput("");
+    repository.setActiveRepositoryPath(openResult.data.repositoryPath);
+    setShowPathEntry(false);
+    void refetchRecents();
+  };
+
   const onOpenRepository = async (rawPath?: string) => {
     const isManualOpen = typeof rawPath !== "string";
+
+    if (isManualOpen && inputMode() === "clone") {
+      return onCloneRepository();
+    }
+
     let path = (rawPath ?? pathInput()).trim();
 
     if (!path && isManualOpen) {
@@ -106,6 +200,12 @@ export function SidebarRail() {
         setPathInput(selected);
         result = await openRepository(selected);
       }
+    }
+
+    if (!result.ok && result.error.code === "repo.not_found") {
+      setOpenRunning(false);
+      setRepositoryError(`Not a git repository. Initialize one here?`);
+      return;
     }
 
     setOpenRunning(false);
@@ -147,28 +247,70 @@ export function SidebarRail() {
             <input
               id="sidebar-repo-input"
               class="path-input"
-              placeholder="/path/to/project"
+              placeholder={inputMode() === "clone" ? "Repository URL" : "/path/to/project or URL"}
               value={pathInput()}
-              onInput={(e) => setPathInput(e.currentTarget.value)}
+              onInput={(e) => {
+                setPathInput(e.currentTarget.value);
+                setRepositoryError(null);
+                if (isGitUrl(e.currentTarget.value.trim()) && !cloneTargetPath()) {
+                  const name = extractRepoNameFromUrl(e.currentTarget.value.trim());
+                  setCloneTargetPath(name);
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key !== "Enter") return;
                 e.preventDefault();
                 void onOpenRepository();
               }}
             />
+            <Show when={inputMode() === "clone"}>
+              <input
+                class="path-input"
+                placeholder="Clone to path"
+                style="margin-top: 4px; font-size: 11px;"
+                value={cloneTargetPath()}
+                onInput={(e) => setCloneTargetPath(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  void onOpenRepository();
+                }}
+              />
+            </Show>
             <button
               class="sidebar-project-add-btn"
               type="button"
               disabled={openRunning()}
               onClick={() => void onOpenRepository()}
             >
-              {openRunning() ? "…" : "Open"}
+              {buttonLabel()}
             </button>
           </div>
         </Show>
 
         <Show when={repositoryError()}>
-          {(msg) => <p class="sidebar-error-text">{msg()}</p>}
+          {(msg) => (
+            <div class="sidebar-error-text" style="display: flex; flex-direction: column; gap: 4px;">
+              <p style="margin: 0;">{msg()}</p>
+              <Show when={msg()?.includes("Initialize one here")}>
+                <button
+                  class="ghost-btn"
+                  style="font-size: 10px; padding: 2px 6px; align-self: flex-start; color: var(--accent-bright);"
+                  onClick={() => void onInitRepository(pathInput().trim())}
+                  disabled={openRunning()}
+                >
+                  Initialize repository
+                </button>
+              </Show>
+            </div>
+          )}
+        </Show>
+
+        <Show when={cloningEntry()}>
+          <div class="sidebar-cloning-entry" style="padding: 4px 12px; font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+            <span class="sidebar-cloning-pulse" />
+            <span>Cloning...</span>
+          </div>
         </Show>
 
         <ul class="sidebar-project-list">

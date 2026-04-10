@@ -16,8 +16,8 @@ import {
   type PreparedTextWithSegments
 } from "@chenglou/pretext";
 
-import type { FileDiffManifestData } from "@/lib/backend/dtos";
-import { getFileDiffChunk } from "@/lib/backend/commands";
+import type { FileDiffManifestData, BlameLineData } from "@/lib/backend/dtos";
+import { getFileDiffChunk, getFileBlame } from "@/lib/backend/commands";
 import { recordDiffRenderMetrics } from "@/lib/telemetry/diffRenderMetrics";
 
 type RenderMode = "dom" | "canvas";
@@ -41,6 +41,7 @@ interface DiffShellProps {
   filePath?: string;
   manifest?: FileDiffManifestData;
   error?: string | null;
+  repositoryPath?: string;
 }
 
 interface ParsedDiffLine {
@@ -273,6 +274,57 @@ export function DiffShell(props: DiffShellProps) {
   const [pretextFontProfile, setPretextFontProfile] = createSignal(PRETEXT_FONT_PROFILE_FALLBACK);
   const [viewportScrollTop, setViewportScrollTop] = createSignal(0);
   const [viewportHeightPx, setViewportHeightPx] = createSignal(0);
+
+  const [blameData, setBlameData] = createSignal<BlameLineData[] | null>(null);
+  const [blameHoveredLine, setBlameHoveredLine] = createSignal<number | null>(null);
+  const [blameFetchState, setBlameFetchState] = createSignal<"idle" | "loading" | "loaded" | "error">("idle");
+  let blameCacheKey = "";
+
+  const blameForLine = (lineNum: number): BlameLineData | undefined => {
+    const data = blameData();
+    if (!data) return undefined;
+    return data.find((entry) => entry.lineNumber === lineNum);
+  };
+
+  const onGutterPointerEnter = async (lineNum: number) => {
+    setBlameHoveredLine(lineNum);
+
+    if (blameFetchState() === "loaded" || blameFetchState() === "loading") return;
+
+    const filePath = props.filePath;
+    if (!filePath) return;
+
+    const repoPath = props.repositoryPath;
+    if (!repoPath) return;
+
+    const cacheKey = `${repoPath}::${filePath}`;
+    if (cacheKey === blameCacheKey && blameFetchState() !== "idle") return;
+
+    blameCacheKey = cacheKey;
+    setBlameFetchState("loading");
+
+    const result = await getFileBlame(repoPath, filePath);
+    if (!result.ok) {
+      setBlameFetchState("error");
+      return;
+    }
+
+    setBlameData(result.data.lines);
+    setBlameFetchState("loaded");
+  };
+
+  const formatBlameTime = (timestamp: string): string => {
+    const seconds = parseInt(timestamp, 10);
+    if (isNaN(seconds)) return "";
+    const date = new Date(seconds * 1000);
+    const now = Date.now();
+    const diffMs = now - date.getTime();
+    const days = Math.floor(diffMs / 86400000);
+    if (days < 1) return "today";
+    if (days < 30) return `${days}d`;
+    if (days < 365) return `${Math.floor(days / 30)}mo`;
+    return `${Math.floor(days / 365)}y`;
+  };
 
   let viewportElement: HTMLDivElement | undefined;
   let canvasElement: HTMLCanvasElement | undefined;
@@ -730,6 +782,9 @@ export function DiffShell(props: DiffShellProps) {
     setChunkError(null);
     setCopyMessage(null);
     setSelectedHunkIndex(-1);
+    setBlameData(null);
+    setBlameFetchState("idle");
+    blameCacheKey = "";
 
     if (!currentManifest) {
       setLoadedChunks([]);
@@ -981,12 +1036,34 @@ export function DiffShell(props: DiffShellProps) {
                     class="diff-viewport-virtual-slice"
                     style={{ transform: `translateY(${domVirtualWindow().offsetTopPx}px)` }}
                   >
-                    {domVirtualWindow().items.map((entry) => (
-                      <div class={`diff-line diff-line-${entry.kind}`}>
-                        <span class="diff-line-number">{entry.number}</span>
-                        <span class="diff-line-text">{entry.line || " "}</span>
-                      </div>
-                    ))}
+                    {domVirtualWindow().items.map((entry) => {
+                      const blame = () => blameHoveredLine() === entry.number ? blameForLine(entry.number) : undefined;
+                      return (
+                        <div class={`diff-line diff-line-${entry.kind}`}>
+                          <span
+                            class="diff-line-number"
+                            onPointerEnter={() => void onGutterPointerEnter(entry.number)}
+                            onPointerLeave={() => setBlameHoveredLine(null)}
+                          >
+                            {entry.number}
+                          </span>
+                          <Show when={blame()}>
+                            {(b) => (
+                              <span class="blame-annotation" style="position: absolute; left: 0; top: 0; height: 18px; display: flex; align-items: center; gap: 4px; padding: 0 6px; font-size: 10px; color: var(--text-muted); background: var(--surface-1); border-right: 1px solid rgba(var(--chrome-border-rgb), 0.15); z-index: 5; white-space: nowrap; animation: blame-fade-in 150ms ease; pointer-events: auto;">
+                                <span style="width: 16px; height: 16px; border-radius: 50%; background: rgba(var(--accent-rgb), 0.12); display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; color: var(--accent-bright); flex-shrink: 0;">
+                                  {b().authorName.charAt(0).toUpperCase()}
+                                </span>
+                                <span style="font-family: var(--font-mono); opacity: 0.7; cursor: pointer;" title={`View commit ${b().commitHash}`}>
+                                  {b().shortHash}
+                                </span>
+                                <span style="opacity: 0.5;">{formatBlameTime(b().authoredAt)}</span>
+                              </span>
+                            )}
+                          </Show>
+                          <span class="diff-line-text">{entry.line || " "}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

@@ -18,7 +18,9 @@ use crate::models::operations::{
     ConflictStateData, FileDiffChunkData, FileDiffData, FileDiffManifestData,
     IssueProviderListData, LocalIssueListData, LocalIssueOperationData, LocalPullRequestListData,
     LocalPullRequestOperationData, PathOperationData, PullRequestProviderListData,
-    StartupReadinessSnapshotData, StashListData, StashOperationData, SyncData, WorktreeListData,
+    CloneRepositoryData, CommitSearchData, FileBlameData, InitRepositoryData, RebasePlanData,
+    RebaseTodoEntry, ReflogData, StartupReadinessSnapshotData, StashListData,
+    StashOperationData, SyncData, TagListData, TagOperationData, WorktreeListData,
     WorktreeOperationData,
 };
 use crate::models::repository::{
@@ -520,6 +522,267 @@ pub fn drop_stash(
             command_ok("drop_stash", started_at, &state, data)
         }
         Err(error) => map_error_with_command("drop_stash", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn get_rebase_plan(
+    repository_path: String,
+    onto_ref: String,
+    state: State<'_, AppState>,
+) -> CommandResult<RebasePlanData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match git_provider::get_rebase_plan(&repository_path, &onto_ref) {
+        Ok(data) => command_ok("get_rebase_plan", started_at, &state, data),
+        Err(error) => map_error_with_command("get_rebase_plan", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn start_interactive_rebase(
+    repository_path: String,
+    onto_ref: String,
+    todo_entries: Vec<RebaseTodoEntry>,
+    state: State<'_, AppState>,
+) -> CommandResult<ConflictResolutionData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match git_provider::start_interactive_rebase(&repository_path, &onto_ref, &todo_entries) {
+        Ok(output) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("start_interactive_rebase", started_at, &state, error);
+            }
+            command_ok(
+                "start_interactive_rebase",
+                started_at,
+                &state,
+                ConflictResolutionData {
+                    repository_path,
+                    operation: "rebase".to_string(),
+                    action: "interactive".to_string(),
+                    output,
+                },
+            )
+        }
+        Err(error) => map_error_with_command("start_interactive_rebase", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn search_commits_by_message(
+    repository_path: String,
+    query: String,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> CommandResult<CommitSearchData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+    let limit = limit.unwrap_or(30).clamp(1, 100) as usize;
+
+    match git_provider::search_commits_by_message(&repository_path, &query, limit) {
+        Ok(data) => command_ok("search_commits_by_message", started_at, &state, data),
+        Err(error) => map_error_with_command("search_commits_by_message", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn search_commits_by_code(
+    repository_path: String,
+    query: String,
+    is_regex: Option<bool>,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> CommandResult<CommitSearchData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+    let limit = limit.unwrap_or(30).clamp(1, 100) as usize;
+    let is_regex = is_regex.unwrap_or(false);
+
+    match git_provider::search_commits_by_code(&repository_path, &query, is_regex, limit) {
+        Ok(data) => command_ok("search_commits_by_code", started_at, &state, data),
+        Err(error) => map_error_with_command("search_commits_by_code", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn search_commits_by_file(
+    repository_path: String,
+    file_path: String,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> CommandResult<CommitSearchData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+    let limit = limit.unwrap_or(30).clamp(1, 100) as usize;
+
+    match git_provider::search_commits_by_file(&repository_path, &file_path, limit) {
+        Ok(data) => command_ok("search_commits_by_file", started_at, &state, data),
+        Err(error) => map_error_with_command("search_commits_by_file", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn list_reflog(
+    repository_path: String,
+    limit: Option<u32>,
+    state: State<'_, AppState>,
+) -> CommandResult<ReflogData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+    let limit = limit.unwrap_or(50).clamp(1, 200) as usize;
+
+    match git_provider::list_reflog(&repository_path, limit) {
+        Ok(data) => command_ok("list_reflog", started_at, &state, data),
+        Err(error) => map_error_with_command("list_reflog", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn get_file_blame(
+    repository_path: String,
+    file_path: String,
+    commit_ref: Option<String>,
+    state: State<'_, AppState>,
+) -> CommandResult<FileBlameData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match git_provider::get_file_blame(&repository_path, &file_path, commit_ref.as_deref()) {
+        Ok(data) => command_ok("get_file_blame", started_at, &state, data),
+        Err(error) => map_error_with_command("get_file_blame", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn clone_repository(
+    url: String,
+    target_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<CloneRepositoryData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match git_provider::clone_repository(&url, &target_path) {
+        Ok(_) => command_ok(
+            "clone_repository",
+            started_at,
+            &state,
+            CloneRepositoryData {
+                repository_path: target_path,
+                remote_url: url,
+            },
+        ),
+        Err(error) => map_error_with_command("clone_repository", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn init_repository(
+    target_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<InitRepositoryData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match git_provider::init_repository(&target_path) {
+        Ok(_) => command_ok(
+            "init_repository",
+            started_at,
+            &state,
+            InitRepositoryData {
+                repository_path: target_path,
+            },
+        ),
+        Err(error) => map_error_with_command("init_repository", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn list_tags(
+    repository_path: String,
+    state: State<'_, AppState>,
+) -> CommandResult<TagListData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match git_provider::list_tags(&repository_path) {
+        Ok(data) => command_ok("list_tags", started_at, &state, data),
+        Err(error) => map_error_with_command("list_tags", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn create_tag(
+    repository_path: String,
+    tag_name: String,
+    target_ref: String,
+    message: Option<String>,
+    state: State<'_, AppState>,
+) -> CommandResult<TagOperationData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match git_provider::create_tag(&repository_path, &tag_name, &target_ref, message.as_deref()) {
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("create_tag", started_at, &state, error);
+            }
+            command_ok(
+                "create_tag",
+                started_at,
+                &state,
+                TagOperationData {
+                    repository_path,
+                    tag_name,
+                    operation: "create".to_string(),
+                },
+            )
+        }
+        Err(error) => map_error_with_command("create_tag", started_at, &state, error),
+    }
+}
+
+#[tauri::command(async)]
+pub fn delete_tag(
+    repository_path: String,
+    tag_name: String,
+    state: State<'_, AppState>,
+) -> CommandResult<TagOperationData> {
+    let started_at = Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    logging_service::set_request_context(request_id.as_str());
+
+    match git_provider::delete_tag(&repository_path, &tag_name) {
+        Ok(_) => {
+            if let Err(error) = invalidate_repository_read_models(&state, &repository_path) {
+                return map_error_with_command("delete_tag", started_at, &state, error);
+            }
+            command_ok(
+                "delete_tag",
+                started_at,
+                &state,
+                TagOperationData {
+                    repository_path,
+                    tag_name,
+                    operation: "delete".to_string(),
+                },
+            )
+        }
+        Err(error) => map_error_with_command("delete_tag", started_at, &state, error),
     }
 }
 

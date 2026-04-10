@@ -12,7 +12,8 @@ export type IconName =
   | "plus"
   | "sort"
   | "clear"
-  | "chevron-right";
+  | "chevron-right"
+  | "tag";
 
 const stroke = {
   fill: "none",
@@ -112,6 +113,12 @@ export const iconRegistry: Record<IconName, () => JSX.Element> = {
   "chevron-right": () => (
     <>
       <path {...stroke} d="M6 4.5L9.5 8 6 11.5" />
+    </>
+  ),
+  tag: () => (
+    <>
+      <path {...stroke} d="M2.5 2.5h5.8l5.2 5.2-5.5 5.5-5.5-5.5z" class="tag-body" />
+      <circle cx="5.5" cy="5.5" r="1" fill="currentColor" opacity="0.6" class="tag-dot" />
     </>
   )
 };

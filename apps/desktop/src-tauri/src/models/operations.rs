@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -466,8 +466,118 @@ pub struct StartupReadinessSnapshotData {
     pub checks: Vec<StartupReadinessCheckData>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebaseTodoEntry {
+    pub action: String,
+    pub commit_hash: String,
+    pub subject: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebasePlanData {
+    pub onto_ref: String,
+    pub entries: Vec<RebaseTodoEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitSearchResultData {
+    pub commit_hash: String,
+    pub short_hash: String,
+    pub subject: String,
+    pub author_name: String,
+    pub authored_at: String,
+    pub match_context: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitSearchData {
+    pub repository_path: String,
+    pub query: String,
+    pub scope: String,
+    pub results: Vec<CommitSearchResultData>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReflogEntryData {
+    pub commit_hash: String,
+    pub short_hash: String,
+    pub ref_selector: String,
+    pub action_summary: String,
+    pub author_name: String,
+    pub authored_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReflogData {
+    pub entries: Vec<ReflogEntryData>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameLineData {
+    pub line_number: u32,
+    pub commit_hash: String,
+    pub short_hash: String,
+    pub author_name: String,
+    pub authored_at: String,
+    pub line_content: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBlameData {
+    pub path: String,
+    pub commit_ref: String,
+    pub lines: Vec<BlameLineData>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneRepositoryData {
+    pub repository_path: String,
+    pub remote_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitRepositoryData {
+    pub repository_path: String,
+}
+
 pub type PullRequestProviderData = IssueProviderData;
 pub type PullRequestProviderListData = IssueProviderListData;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagEntryData {
+    pub name: String,
+    pub tag_type: String,
+    pub target_hash: Option<String>,
+    pub created_at: Option<String>,
+    pub creator_name: Option<String>,
+    pub subject: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagListData {
+    pub repository_path: String,
+    pub tags: Vec<TagEntryData>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagOperationData {
+    pub repository_path: String,
+    pub tag_name: String,
+    pub operation: String,
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

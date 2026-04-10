@@ -94,6 +94,12 @@ export function AppShellFrame(props: AppShellFrameProps) {
         return;
       }
 
+      if (event.key === "/") {
+        event.preventDefault();
+        void setSearchParams({ panel: "search" }, { replace: true });
+        return;
+      }
+
       const outcome = resolveNavigationHotkey(
         layout.keybindingProfile(),
         event.key,
