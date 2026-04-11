@@ -18,12 +18,7 @@ import '../../ui/material_surface.dart';
 import '../../ui/tokens.dart';
 
 const _guardrailStageLabels = ['Loose', 'Balanced', 'Strict', 'Paranoid'];
-const _guardrailStageColors = [
-  Color(0xFF4AD399),
-  Color(0xFF7AB8FF),
-  Color(0xFFEF7C75),
-  Color(0xFFB280FF),
-];
+const _guardrailStageColors = AppSeverityPalette.guardrailStages;
 
 enum _PromptSaveState { idle, typing, saving, saved, error }
 

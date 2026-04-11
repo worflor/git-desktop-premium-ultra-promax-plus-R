@@ -1952,7 +1952,7 @@ class _CommitReviewPane extends StatelessWidget {
                     ),
                     _ReviewVerdictChip(tokens: tokens, verdict: review.verdict),
                     const SizedBox(width: 6),
-                    _ReviewScorePill(tokens: tokens, score: review.score),
+                    _ReviewScorePill(tokens: tokens, score: review.score, verdict: review.verdict),
                     if (review.hasVerificationTrace) ...[
                       const SizedBox(width: 6),
                       _ReviewMetaChip(
@@ -2184,39 +2184,33 @@ class _ReviewVerdictChip extends StatelessWidget {
   }
 }
 
-Color _reviewVerdictColor(String verdict) {
-  return switch (verdict) {
-    'Ready' => const Color(0xFF4AD399),
-    'Mostly ready' => const Color(0xFF7AB8FF),
-    'Needs attention' => const Color(0xFFD39A2C),
-    'High risk' => const Color(0xFFEF7C75),
-    'Block' => const Color(0xFFB280FF),
-    _ => const Color(0xFF8CA0B3),
-  };
-}
+Color _reviewVerdictColor(String verdict) => AppSeverityPalette.fromVerdict(verdict);
 
 class _ReviewScorePill extends StatelessWidget {
   final AppTokens tokens;
   final int score;
+  final String verdict;
 
   const _ReviewScorePill({
     required this.tokens,
     required this.score,
+    required this.verdict,
   });
 
   @override
   Widget build(BuildContext context) {
+    final verdictColor = _reviewVerdictColor(verdict);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: tokens.rowBg,
+        color: verdictColor.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.16)),
+        border: Border.all(color: verdictColor.withValues(alpha: 0.18)),
       ),
       child: Text(
         '$score',
         style: TextStyle(
-          color: tokens.textStrong,
+          color: verdictColor,
           fontSize: 10.5,
           fontWeight: FontWeight.w700,
         ),
@@ -2361,94 +2355,117 @@ class _ReviewFindingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = switch (finding.severity) {
-      'block' => tokens.stateConflicted,
-      'risk' => tokens.stateDeleted,
-      'warn' => tokens.stateModified,
-      'note' => tokens.accentBright,
-      _ => tokens.textMuted,
+      'block' => AppSeverityPalette.critical,
+      'risk' => AppSeverityPalette.risk,
+      'warn' => AppSeverityPalette.caution,
+      'note' => AppSeverityPalette.info,
+      _ => AppSeverityPalette.neutral,
     };
     final meta = [
       if (finding.filePath != null) finding.filePath!,
       if (finding.hunkLabel != null) finding.hunkLabel!,
     ].join(' | ');
-    return Container(
-      padding: const EdgeInsets.all(10),
+    return IntrinsicHeight(
+      child: Container(
       decoration: BoxDecoration(
         color: tokens.rowBg,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.14)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 1),
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: accent,
-                  borderRadius: BorderRadius.circular(999),
-                ),
+          // Accent left edge — communicates severity at a glance.
+          Container(
+            width: 3,
+            decoration: BoxDecoration(
+              color: accent,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(8),
+                bottomLeft: Radius.circular(8),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  finding.title,
-                  style: TextStyle(
-                    color: tokens.textStrong,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              if (onOpenDiff != null) ...[
-                const SizedBox(width: 8),
-                _InlineActionLink(
-                  tokens: tokens,
-                  label: 'Open diff',
-                  onTap: onOpenDiff!,
-                ),
-              ],
-            ],
+            ),
           ),
-          if (meta.isNotEmpty) ...[
-            const SizedBox(height: 5),
-            Text(
-              meta,
-              style: TextStyle(
-                color: tokens.textMuted,
-                fontSize: 10.5,
-                fontFamily: 'JetBrainsMono',
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          finding.title,
+                          style: TextStyle(
+                            color: tokens.textStrong,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (onOpenDiff != null) ...[
+                        const SizedBox(width: 8),
+                        _InlineActionLink(
+                          tokens: tokens,
+                          label: 'Open diff',
+                          onTap: onOpenDiff!,
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (meta.isNotEmpty) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      meta,
+                      style: TextStyle(
+                        color: tokens.textMuted,
+                        fontSize: 10.5,
+                        fontFamily: 'JetBrainsMono',
+                      ),
+                    ),
+                  ],
+                  if (finding.evidence.trim().isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      finding.evidence,
+                      style: TextStyle(
+                        color: tokens.textNormal,
+                        fontSize: 11.2,
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                  if (finding.whyItMatters.trim().isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.only(left: 8),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          left: BorderSide(
+                            color: tokens.textMuted.withValues(alpha: 0.2),
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      child: Text(
+                        finding.whyItMatters,
+                        style: TextStyle(
+                          color: tokens.textMuted,
+                          fontSize: 11,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
-          ],
-          if (finding.evidence.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              finding.evidence,
-              style: TextStyle(
-                color: tokens.textNormal,
-                fontSize: 11.2,
-                height: 1.45,
-              ),
-            ),
-          ],
-          if (finding.whyItMatters.trim().isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              finding.whyItMatters,
-              style: TextStyle(
-                color: tokens.textMuted,
-                fontSize: 11,
-                height: 1.45,
-              ),
-            ),
-          ],
+          ),
         ],
       ),
+    ),
     );
   }
 }

@@ -1,5 +1,35 @@
 import 'package:flutter/material.dart';
 
+// ── Semantic severity palette ──────────────────────────────────────────
+// Theme-independent signal colors used for review verdicts, guardrail
+// stages, and any UI that communicates a confidence/risk level.
+// Order: safe → informational → cautious → risky → critical.
+class AppSeverityPalette {
+  AppSeverityPalette._();
+
+  static const safe     = Color(0xFF4AD399); // green  — ready / safe
+  static const info     = Color(0xFF7AB8FF); // blue   — balanced / informational
+  static const caution  = Color(0xFFD39A2C); // amber  — needs attention
+  static const risk     = Color(0xFFEF7C75); // coral  — high risk / danger
+  static const critical = Color(0xFFB280FF); // purple — block / extreme
+  static const neutral  = Color(0xFF8CA0B3); // slate  — unknown / fallback
+
+  /// The 4-stage guardrail scale (maps to guardrail slider positions).
+  static const guardrailStages = [safe, info, risk, critical];
+
+  /// Map a review verdict string to its severity color.
+  static Color fromVerdict(String verdict) {
+    return switch (verdict) {
+      'Ready'           => safe,
+      'Mostly ready'    => info,
+      'Needs attention' => caution,
+      'High risk'       => risk,
+      'Block'           => critical,
+      _                 => neutral,
+    };
+  }
+}
+
 enum AppThemeId {
   halo,
   nightwalker,
