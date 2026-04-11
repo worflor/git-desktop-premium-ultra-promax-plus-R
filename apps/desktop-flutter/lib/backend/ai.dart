@@ -13,7 +13,7 @@ import 'git.dart';
 const _providerSpecs = <_ProviderSpec>[
   _ProviderSpec(id: 'codex', binary: 'codex', kind: _ProviderKind.codex),
   _ProviderSpec(id: 'claude', binary: 'claude', kind: _ProviderKind.claude),
-  _ProviderSpec(id: 'gemini', binary: 'gemini', kind: _ProviderKind.gemini),
+  _ProviderSpec(id: 'gemini', binary: '', kind: _ProviderKind.geminiApi),
   _ProviderSpec(
     id: 'opencode',
     binary: 'opencode',
@@ -320,6 +320,33 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       diffSummary: bundle.diffBundle.promptBody,
     );
 
+    // --- API providers: direct HTTP, no CLI ---
+    if (provider.kind == _ProviderKind.geminiApi) {
+      final geminiModel = modelId.startsWith('gemini ')
+          ? modelId.substring('gemini '.length)
+          : modelId;
+      final apiResult = await _runGeminiApiRequest(prompt, geminiModel);
+      if (apiResult.text == null) {
+        return GitResult.err(apiResult.error ?? 'Gemini API returned no response.');
+      }
+      final message = _normalizeCommitMessage(apiResult.text!);
+      if (message.isEmpty) {
+        return GitResult.err('Gemini API returned an empty commit message.');
+      }
+      return GitResult.ok(
+        AiCommitMessageData(
+          providerId: provider.id,
+          modelId: modelId,
+          message: message,
+          scopeLabel: scopeLabel,
+          usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
+          promptCharacters: prompt.length,
+          diffCharacters: bundle.diffBundle.originalDiffCharacters,
+        ),
+      );
+    }
+
+    // --- CLI providers: process spawning ---
     final attempts = _buildProviderAttempts(provider.kind, modelId, readOnly: readOnly, resolvedCommand: availability.resolution!.command);
     String? providerOutput;
     String? lastError;
@@ -650,11 +677,26 @@ Future<_ProviderAvailability> _inspectProviderCached(
 }
 
 Future<_ProviderAvailability> _inspectProvider(_ProviderSpec provider) async {
-  _ProviderResolution? resolution = await _resolveProviderCommand(provider.binary);
-  // Gemini: if the direct binary isn't installed, fall back to npx.
-  if (resolution == null && provider.kind == _ProviderKind.gemini) {
-    resolution = await _resolveProviderCommand('npx');
+  // Gemini API: no binary needed, just check for oauth creds.
+  if (provider.kind == _ProviderKind.geminiApi) {
+    final hasRefresh = _geminiApiRefreshToken() != null;
+    return _ProviderAvailability(
+      ready: hasRefresh,
+      resolution: hasRefresh
+          ? _ProviderResolution(
+              command: 'http-api',
+              source: 'gemini-api-direct',
+              healthCheck: 'oauth',
+            )
+          : null,
+      auth: _ProviderAuthStatus(
+        ok: hasRefresh,
+        detail: hasRefresh ? 'gemini oauth creds found' : 'no ~/.gemini/oauth_creds.json',
+      ),
+    );
   }
+
+  _ProviderResolution? resolution = await _resolveProviderCommand(provider.binary);
   final auth = _providerAuthStatus(provider.kind);
   return _ProviderAvailability(
     ready: resolution != null && auth.ok,
@@ -700,7 +742,7 @@ Future<_ProviderModelDiscovery?> _discoverProviderModels(
       return _discoverCodexModels(resolution);
     case _ProviderKind.claude:
       return _discoverClaudeModels(resolution);
-    case _ProviderKind.gemini:
+    case _ProviderKind.geminiApi:
       return _discoverGeminiModels(resolution);
     case _ProviderKind.openCode:
       return _discoverOpenCodeModels(resolution);
@@ -1944,6 +1986,29 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   required String repositoryPath,
   bool readOnly = true,
 }) async {
+  // --- API providers: direct HTTP ---
+  if (provider.kind == _ProviderKind.geminiApi) {
+    final geminiModel = modelId.startsWith('gemini ')
+        ? modelId.substring('gemini '.length)
+        : modelId;
+    final apiResult = await _runGeminiApiRequest(prompt, geminiModel);
+    if (apiResult.text == null) {
+      return _ProviderPromptResult(
+        ok: false,
+        error: apiResult.error ?? 'Gemini API returned no response.',
+        outputPreview: apiResult.error ?? '',
+      );
+    }
+    return _ProviderPromptResult(
+      ok: true,
+      output: apiResult.text,
+      outputPreview: apiResult.text!.length > 200
+          ? '${apiResult.text!.substring(0, 200)}...'
+          : apiResult.text!,
+    );
+  }
+
+  // --- CLI providers: process spawning ---
   final attempts = _buildProviderAttempts(provider.kind, modelId, readOnly: readOnly, resolvedCommand: resolution.command);
   String? providerOutput;
   String? lastError;
@@ -2355,56 +2420,9 @@ List<_ProviderAttempt> _buildProviderAttempts(
           outputMode: _ProviderOutputMode.plainText,
         ),
       ];
-    case _ProviderKind.gemini:
-      // Strip the "gemini " display prefix before passing to -m flag.
-      final geminiModelArg = modelId.startsWith('gemini ')
-          ? modelId.substring('gemini '.length)
-          : modelId;
-      // When falling back to npx (gemini not installed globally), prepend the
-      // package reference so npx downloads/runs @google/gemini-cli.
-      final isNpx = resolvedCommand.toLowerCase().contains('npx');
-      final npxPrefix = isNpx ? ['--yes', '@google/gemini-cli'] : <String>[];
-      return [
-        _ProviderAttempt(
-          name: 'cli-json',
-          args: [
-            ...npxPrefix,
-            '-p',
-            '',
-            '-o',
-            'json',
-            '-m',
-            geminiModelArg,
-            if (readOnly) ...['--approval-mode', 'plan'],
-          ],
-          outputMode: _ProviderOutputMode.geminiJson,
-        ),
-        // Fallback without --approval-mode for older CLI versions.
-        _ProviderAttempt(
-          name: 'cli-json-compat',
-          args: [
-            ...npxPrefix,
-            '-p',
-            '',
-            '-o',
-            'json',
-            '-m',
-            geminiModelArg,
-          ],
-          outputMode: _ProviderOutputMode.geminiJson,
-        ),
-        _ProviderAttempt(
-          name: 'cli',
-          args: [
-            ...npxPrefix,
-            '-p',
-            '',
-            '-m',
-            geminiModelArg,
-          ],
-          outputMode: _ProviderOutputMode.plainText,
-        ),
-      ];
+    case _ProviderKind.geminiApi:
+      // API provider — no CLI attempts. Handled via _runGeminiApiRequest.
+      return [];
     case _ProviderKind.openCode:
       // OpenCode's native binary (Go) reads the message from stdin when no
       // positional args are given. We prefer stdin over positional args
@@ -2430,8 +2448,8 @@ Map<String, String> _providerEnvironment(_ProviderKind kind) {
   switch (kind) {
     case _ProviderKind.claude:
       return const {'CLAUDE_CODE_ENTRYPOINT': 'cli'};
-    case _ProviderKind.gemini:
-      return const {'CI': '1'};
+    case _ProviderKind.geminiApi:
+      return const {}; // API provider — no process environment needed.
     case _ProviderKind.codex:
     case _ProviderKind.openCode:
       return const {};
@@ -2630,7 +2648,7 @@ bool _looksLikeProviderError(_ProviderKind kind, String raw) {
       return lower.startsWith('codex error:');
     case _ProviderKind.claude:
       return lower.startsWith('claude error:');
-    case _ProviderKind.gemini:
+    case _ProviderKind.geminiApi:
       return lower.startsWith('gemini error:');
   }
 }
@@ -2648,7 +2666,7 @@ String _normalizeProviderError(_ProviderKind kind, String raw) {
       return _normalizeCodexError(normalized);
     case _ProviderKind.claude:
       return normalized;
-    case _ProviderKind.gemini:
+    case _ProviderKind.geminiApi:
       return _normalizeGeminiError(normalized);
   }
 }
@@ -3040,6 +3058,210 @@ Future<_CommandResult?> _runObservedProcess({
   }
 }
 
+// =========================================================================
+// Gemini API — direct HTTP provider (no CLI, no Node.js)
+//
+// Uses the same Cloud Code API and OAuth credentials as the official
+// Gemini CLI (@google/gemini-cli). The client ID and secret below are
+// the same public values embedded in the CLI's npm bundle — they are not
+// application secrets (Google's OAuth for native/desktop apps treats
+// client_secret as non-confidential, per RFC 8252 §8.5).
+// =========================================================================
+
+const _geminiApiEndpoint = 'https://cloudcode-pa.googleapis.com/v1internal';
+const _geminiApiClientId =
+    '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
+const _geminiApiClientSecret = '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';
+
+// Shared HTTP client for all Gemini API calls (connection pooling).
+final HttpClient _geminiApiHttpClient = HttpClient();
+
+// Cached state for the Gemini API session.
+String? _geminiApiAccessToken;
+DateTime? _geminiApiTokenExpiry;
+String? _geminiApiProjectId;
+
+/// Map display aliases to actual API model names.
+String _geminiApiModelName(String alias) {
+  switch (alias.toLowerCase()) {
+    case 'pro':
+      return 'gemini-2.5-pro';
+    case 'flash':
+      return 'gemini-2.5-flash';
+    case 'flash-lite':
+      return 'gemini-2.5-flash-lite';
+    case 'auto':
+      return 'gemini-2.5-flash';
+    default:
+      // Already a full model name (e.g. 'gemini-2.5-pro').
+      return alias;
+  }
+}
+
+/// Read the refresh token from ~/.gemini/oauth_creds.json.
+String? _geminiApiRefreshToken() {
+  final homeDir = _userHomeDir();
+  if (homeDir == null) return null;
+  final raw = _readJsonFile(p.join(homeDir, '.gemini', 'oauth_creds.json'));
+  if (raw is! Map<String, dynamic>) return null;
+  final token = raw['refresh_token'];
+  return (token is String && token.isNotEmpty) ? token : null;
+}
+
+/// Ensure we have a valid access token, refreshing if needed.
+Future<String?> _geminiApiEnsureToken() async {
+  if (_geminiApiAccessToken != null &&
+      _geminiApiTokenExpiry != null &&
+      DateTime.now().isBefore(_geminiApiTokenExpiry!.subtract(const Duration(seconds: 30)))) {
+    return _geminiApiAccessToken;
+  }
+
+  final refreshToken = _geminiApiRefreshToken();
+  if (refreshToken == null) return null;
+
+  try {
+    final request = await _geminiApiHttpClient.postUrl(
+      Uri.parse('https://oauth2.googleapis.com/token'),
+    );
+    request.headers.contentType = ContentType('application', 'x-www-form-urlencoded');
+    request.write(
+      'client_id=${Uri.encodeComponent(_geminiApiClientId)}'
+      '&client_secret=${Uri.encodeComponent(_geminiApiClientSecret)}'
+      '&refresh_token=${Uri.encodeComponent(refreshToken)}'
+      '&grant_type=refresh_token',
+    );
+    final response = await request.close();
+    final body = await response.transform(utf8.decoder).join();
+
+
+    if (response.statusCode != 200) return null;
+    final json = jsonDecode(body);
+    if (json is! Map || json['access_token'] is! String) return null;
+
+    _geminiApiAccessToken = json['access_token'] as String;
+    final expiresIn = json['expires_in'] is int ? json['expires_in'] as int : 3599;
+    _geminiApiTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
+    return _geminiApiAccessToken;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Get the project ID from the Gemini Code Assist API (cached).
+Future<String?> _geminiApiEnsureProject() async {
+  if (_geminiApiProjectId != null) return _geminiApiProjectId;
+
+  final token = await _geminiApiEnsureToken();
+  if (token == null) return null;
+
+  try {
+    final request = await _geminiApiHttpClient.postUrl(
+      Uri.parse('$_geminiApiEndpoint:loadCodeAssist'),
+    );
+    request.headers.set('Authorization', 'Bearer $token');
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode({
+      'metadata': {
+        'ideType': 'IDE_UNSPECIFIED',
+        'platform': 'PLATFORM_UNSPECIFIED',
+        'pluginType': 'GEMINI',
+      },
+    }));
+    final response = await request.close();
+    final body = await response.transform(utf8.decoder).join();
+
+
+    if (response.statusCode != 200) return null;
+    final json = jsonDecode(body);
+    if (json is! Map) return null;
+
+    _geminiApiProjectId = json['cloudaicompanionProject'] as String?;
+    return _geminiApiProjectId;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Call the Gemini Code Assist generateContent API directly.
+/// Returns the model's text response, or null on failure.
+Future<({String? text, String? error, int inputTokens, int outputTokens})>
+    _runGeminiApiRequest(String prompt, String modelAlias) async {
+  final token = await _geminiApiEnsureToken();
+  if (token == null) {
+    return (text: null, error: 'Gemini API token refresh failed.', inputTokens: 0, outputTokens: 0);
+  }
+
+  final project = await _geminiApiEnsureProject();
+  if (project == null) {
+    return (text: null, error: 'Gemini API project setup failed.', inputTokens: 0, outputTokens: 0);
+  }
+
+  final model = _geminiApiModelName(modelAlias);
+
+  try {
+    final request = await _geminiApiHttpClient.postUrl(
+      Uri.parse('$_geminiApiEndpoint:generateContent'),
+    );
+    request.headers.set('Authorization', 'Bearer $token');
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode({
+      'model': model,
+      'project': project,
+      'user_prompt_id': 'desktop-${DateTime.now().millisecondsSinceEpoch}',
+      'request': {
+        'contents': [
+          {
+            'role': 'user',
+            'parts': [
+              {'text': prompt},
+            ],
+          },
+        ],
+        'generationConfig': {
+          'temperature': 0.3,
+        },
+      },
+    }));
+
+    final response = await request.close();
+    final body = await response.transform(utf8.decoder).join();
+
+
+    if (response.statusCode != 200) {
+      // Try to extract a meaningful error message.
+      try {
+        final errJson = jsonDecode(body);
+        final message = errJson['error']?['message'] ?? 'HTTP ${response.statusCode}';
+        return (text: null, error: 'Gemini API: $message', inputTokens: 0, outputTokens: 0);
+      } catch (_) {
+        return (text: null, error: 'Gemini API error: HTTP ${response.statusCode}', inputTokens: 0, outputTokens: 0);
+      }
+    }
+
+    final json = jsonDecode(body);
+    if (json is! Map) {
+      return (text: null, error: 'Gemini API returned invalid JSON.', inputTokens: 0, outputTokens: 0);
+    }
+
+    // Extract text from response.candidates[0].content.parts[0].text
+    final candidates = (json['response'] as Map?)?['candidates'] as List?;
+    final text = (candidates?.firstOrNull as Map?)?['content']?['parts']
+        ?.firstWhere((p) => p['text'] != null, orElse: () => null)?['text'] as String?;
+
+    final usage = (json['response'] as Map?)?['usageMetadata'] as Map?;
+    final inputTokens = (usage?['promptTokenCount'] as int?) ?? 0;
+    final outputTokens = (usage?['candidatesTokenCount'] as int?) ?? 0;
+
+    if (text == null || text.trim().isEmpty) {
+      return (text: null, error: 'Gemini API returned no content.', inputTokens: inputTokens, outputTokens: outputTokens);
+    }
+
+    return (text: text, error: null, inputTokens: inputTokens, outputTokens: outputTokens);
+  } catch (e) {
+    return (text: null, error: 'Gemini API request failed: $e', inputTokens: 0, outputTokens: 0);
+  }
+}
+
 _ProcessInvocation _buildProcessInvocation(String command, List<String> args) {
   if (Platform.isWindows) {
     final lowered = command.toLowerCase();
@@ -3260,7 +3482,7 @@ _ProviderAuthStatus _providerAuthStatus(_ProviderKind kind) {
       return _codexAuthStatus();
     case _ProviderKind.claude:
       return _claudeAuthStatus();
-    case _ProviderKind.gemini:
+    case _ProviderKind.geminiApi:
       return _geminiAuthStatus();
     case _ProviderKind.openCode:
       return _openCodeAuthStatus();
@@ -3881,7 +4103,7 @@ class _ParsedDiffHunk {
   }
 }
 
-enum _ProviderKind { codex, claude, gemini, openCode }
+enum _ProviderKind { codex, claude, geminiApi, openCode }
 
 enum _ProviderOutputMode {
   plainText,
