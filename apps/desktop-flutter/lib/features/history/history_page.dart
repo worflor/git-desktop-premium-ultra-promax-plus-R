@@ -6,6 +6,7 @@ import '../../ui/control_chrome.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
+import '../../ui/resonance_text.dart';
 import '../../ui/tokens.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
@@ -1366,8 +1367,8 @@ class _CommitDetail extends StatelessWidget {
     final d = detail;
     return ListView(padding: const EdgeInsets.all(20), children: [
       // Subject (primary heading)
-      Text(d.subject,
-          style: TextStyle(
+      resonanceText(d.subject, t,
+          baseStyle: TextStyle(
               color: t.textStrong,
               fontSize: 18,
               fontWeight: FontWeight.w600,
@@ -1382,39 +1383,40 @@ class _CommitDetail extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           // Author avatar + name
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                color: t.chromeAccent.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(11),
+          if (d.authorName.isNotEmpty)
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: t.chromeAccent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Center(
+                    child: Text(
+                  d.authorName[0].toUpperCase(),
+                  style: TextStyle(
+                      color: t.textStrong,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700),
+                )),
               ),
-              child: Center(
-                  child: Text(
-                d.authorName.isNotEmpty ? d.authorName[0].toUpperCase() : '?',
-                style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700),
-              )),
-            ),
-            const SizedBox(width: 6),
-            Text(d.authorName,
-                style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500)),
-          ]),
-          Text('|',
+              const SizedBox(width: 6),
+              Text(d.authorName,
+                  style: TextStyle(
+                      color: t.textNormal,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500)),
+            ]),
+          Text('·',
               style: TextStyle(
-                  color: t.textMuted.withValues(alpha: 0.4), fontSize: 12)),
+                  color: t.textFaint, fontSize: 12)),
           // Date
           Text(_formatDate(d.authoredAt),
               style: TextStyle(color: t.textMuted, fontSize: 11)),
-          Text('|',
+          Text('·',
               style: TextStyle(
-                  color: t.textMuted.withValues(alpha: 0.4), fontSize: 12)),
+                  color: t.textFaint, fontSize: 12)),
           // Short hash
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1427,9 +1429,9 @@ class _CommitDetail extends StatelessWidget {
                     fontSize: 11,
                     fontFamily: 'JetBrainsMono')),
           ),
-          Text('|',
+          Text('·',
               style: TextStyle(
-                  color: t.textMuted.withValues(alpha: 0.4), fontSize: 12)),
+                  color: t.textFaint, fontSize: 12)),
           // Tag affordance
           GestureDetector(
             onTap: onToggleTag,
@@ -1510,8 +1512,8 @@ class _CommitDetail extends StatelessWidget {
 
       if (d.body.isNotEmpty) ...[
         const SizedBox(height: 16),
-        Text(d.body,
-            style: TextStyle(color: t.textNormal, fontSize: 12, height: 1.5)),
+        resonanceText(d.body, t,
+            baseStyle: TextStyle(color: t.textNormal, fontSize: 12, height: 1.5)),
       ],
 
       const SizedBox(height: 20),
@@ -1579,30 +1581,12 @@ class _CommitDetailTransition extends StatelessWidget {
     return Stack(
       children: [
         AnimatedSwitcher(
-          duration: const Duration(milliseconds: 120),
-          reverseDuration: const Duration(milliseconds: 80),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeOutCubic,
-          layoutBuilder: (currentChild, previousChildren) => Stack(
-            fit: StackFit.expand,
-            children: [
-              ...previousChildren,
-              if (currentChild != null) currentChild,
-            ],
-          ),
+          duration: const Duration(milliseconds: 150),
+          reverseDuration: const Duration(milliseconds: 60),
+          switchInCurve: Curves.easeOut,
+          switchOutCurve: Curves.easeIn,
           transitionBuilder: (child, animation) {
-            final curved =
-                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
-            return FadeTransition(
-              opacity: curved,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(0.012, 0),
-                  end: Offset.zero,
-                ).animate(curved),
-                child: child,
-              ),
-            );
+            return FadeTransition(opacity: animation, child: child);
           },
           child: _CommitDetail(
             key: ValueKey(detail.commitHash),
