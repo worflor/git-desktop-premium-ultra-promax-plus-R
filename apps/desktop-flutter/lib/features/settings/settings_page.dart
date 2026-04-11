@@ -343,21 +343,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Color _commitPromptStatusColor(AppTokens t) {
-    switch (_commitPromptSaveState) {
-      case _PromptSaveState.typing:
-        return t.stateStaged;
-      case _PromptSaveState.saving:
-        return t.accentBright;
-      case _PromptSaveState.saved:
-        return t.stateAdded;
-      case _PromptSaveState.error:
-        return t.stateConflicted;
-      case _PromptSaveState.idle:
-        return t.textMuted;
-    }
-  }
-
   Future<bool> _confirmLocalDataAction(String message) async {
     final result = await showDialog<bool>(
       context: context,
@@ -935,7 +920,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   aiSettings: aiSettings,
                   promptController: _commitPromptController,
                   promptStatusLabel: _commitPromptStatusLabel(),
-                  promptStatusColor: _commitPromptStatusColor(t),
                   onCategoryChanged: (value) {
                     if (value == null || value.isEmpty) {
                       return;
@@ -2005,27 +1989,13 @@ class _AiModelCategoryEditor extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              _InlineInfoChip(
-                label: category.id,
-                color: t.accentBright,
-              ),
-              _InlineInfoChip(
-                label:
-                    '${category.models.length} model${category.models.length == 1 ? '' : 's'}',
-                color: t.stateStaged,
-              ),
-              if (selectedModel != null)
-                _InlineInfoChip(
-                  label: selectedModel.providerLabel,
-                  color: t.stateAdded,
-                ),
-            ],
+          _AiMetaRow(
+            left: '${category.id} slot',
+            right: selectedModel != null
+                ? '${selectedModel.providerLabel} • ${category.models.length} models'
+                : '${category.models.length} models',
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           _EditableSlotTitle(
             controller: labelController,
             hintText: category.label,
@@ -2060,6 +2030,11 @@ class _AiModelCategoryEditor extends StatelessWidget {
             ),
           if (selectedModel != null) ...[
             const SizedBox(height: 8),
+            _AiSupportLine(
+              selectedModel.modelId,
+              strong: true,
+            ),
+            const SizedBox(height: 4),
             Text(
               selectedModel.description,
               style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.4),
@@ -2076,7 +2051,6 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
   final AiSettingsState aiSettings;
   final TextEditingController promptController;
   final String? promptStatusLabel;
-  final Color promptStatusColor;
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<String> onPromptChanged;
 
@@ -2085,7 +2059,6 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
     required this.aiSettings,
     required this.promptController,
     required this.promptStatusLabel,
-    required this.promptStatusColor,
     required this.onCategoryChanged,
     required this.onPromptChanged,
   });
@@ -2122,23 +2095,10 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  _InlineInfoChip(
-                    label: aiSettings.labelForCategory(
-                      selectedCategory.id,
-                      selectedCategory.label,
-                    ),
-                    color: t.accentBright,
-                  ),
-                  if (selectedModel != null)
-                    _InlineInfoChip(
-                      label: selectedModel.providerLabel,
-                      color: t.stateAdded,
-                    ),
-                ],
+              _AiMetaRow(
+                left:
+                    '${aiSettings.labelForCategory(selectedCategory.id, selectedCategory.label)} slot',
+                right: selectedModel?.providerLabel ?? 'No provider',
               ),
               if (selectedModel != null) ...[
                 const SizedBox(height: 8),
@@ -2180,14 +2140,17 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
         ),
         if (promptStatusLabel != null) ...[
           const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: _InlineInfoChip(
-              label: promptStatusLabel!,
-              color: promptStatusColor,
+          Text(
+            promptStatusLabel!,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
+        const SizedBox(height: 10),
+        const _SettingsSubtitle('Style Guide'),
         const SizedBox(height: 10),
         AppMultilineTextField(
           controller: promptController,
@@ -2222,28 +2185,68 @@ class _SettingsSubtitle extends StatelessWidget {
   }
 }
 
-class _InlineInfoChip extends StatelessWidget {
-  final String label;
-  final Color color;
+class _AiMetaRow extends StatelessWidget {
+  final String left;
+  final String right;
 
-  const _InlineInfoChip({required this.label, required this.color});
+  const _AiMetaRow({
+    required this.left,
+    required this.right,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.24)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 9.5,
-          fontWeight: FontWeight.w700,
+    final t = context.tokens;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            left,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.82),
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.8,
+            ),
+          ),
         ),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.end,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AiSupportLine extends StatelessWidget {
+  final String text;
+  final bool strong;
+
+  const _AiSupportLine(this.text, {this.strong = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Text(
+      text,
+      style: TextStyle(
+        color: strong ? t.textNormal : t.textMuted,
+        fontSize: 10.5,
+        fontWeight: strong ? FontWeight.w600 : FontWeight.w500,
+        fontFamily: 'JetBrainsMono',
       ),
     );
   }

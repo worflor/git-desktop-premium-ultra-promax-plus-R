@@ -1,6 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../backend/dtos.dart';
+import '../backend/git.dart';
 import '../components/icons/app_icons.dart';
 import '../features/branches/branches_page.dart';
 import '../features/changes/changes_page.dart';
@@ -349,7 +353,9 @@ class _Topbar extends StatelessWidget {
                     const SizedBox(height: 4),
                     _BranchPill(
                       branch: status.branch,
-                      onTap: () => onModeChanged(_WorkspaceMode.branches),
+                      repoPath: repo.activePath,
+                      onNavigate: () =>
+                          onModeChanged(_WorkspaceMode.branches),
                     ),
                   ],
                 ],
@@ -526,13 +532,17 @@ class _SyncModeBtn extends StatelessWidget {
   }
 }
 
+// ── Branch pill + emerging panel ─────────────────────────────────────────────
+
 class _BranchPill extends StatefulWidget {
   final String branch;
-  final VoidCallback onTap;
+  final String? repoPath;
+  final VoidCallback onNavigate;
 
   const _BranchPill({
     required this.branch,
-    required this.onTap,
+    required this.repoPath,
+    required this.onNavigate,
   });
 
   @override
@@ -541,39 +551,533 @@ class _BranchPill extends StatefulWidget {
 
 class _BranchPillState extends State<_BranchPill> {
   bool _hovered = false;
+  bool _open = false;
+  bool _loading = false;
+  bool _switching = false;
+  List<BranchInfo> _branches = const [];
+  OverlayEntry? _overlay;
+  final _pillKey = GlobalKey();
+
+  static const _openRadius = 7.0;
+
+  Future<void> _toggle() async {
+    if (_open) {
+      _close();
+      return;
+    }
+    if (widget.repoPath == null) {
+      widget.onNavigate();
+      return;
+    }
+    setState(() {
+      _open = true;
+      _loading = true;
+      _branches = const [];
+    });
+    _insertOverlay();
+
+    final result = await listBranches(widget.repoPath!);
+    if (!mounted) return;
+    setState(() {
+      _branches = result.data ?? [];
+      _loading = false;
+    });
+    _overlay?.markNeedsBuild();
+  }
+
+  void _close() {
+    _overlay?.remove();
+    _overlay = null;
+    if (mounted) setState(() => _open = false);
+  }
+
+  void _insertOverlay() {
+    final box = _pillKey.currentContext!.findRenderObject() as RenderBox;
+    final origin = box.localToGlobal(Offset.zero);
+    final pillSize = box.size;
+
+    _overlay = OverlayEntry(builder: (_) {
+      return _BranchPanelOverlay(
+        // Panel starts at pill's top — pill fades out, panel morphs in
+        top: origin.dy,
+        left: origin.dx,
+        pillHeight: pillSize.height,
+        minWidth: 240.0,
+        branches: _branches,
+        loading: _loading,
+        switching: _switching,
+        currentBranch: widget.branch,
+        onDismiss: _close,
+        onCheckout: _checkout,
+        onNavigate: () {
+          _close();
+          widget.onNavigate();
+        },
+      );
+    });
+
+    Overlay.of(context).insert(_overlay!);
+  }
+
+  Future<void> _checkout(String name) async {
+    if (widget.repoPath == null) return;
+    setState(() => _switching = true);
+    _overlay?.markNeedsBuild();
+    await checkoutBranch(widget.repoPath!, name);
+    if (!mounted) return;
+    _close();
+  }
+
+  @override
+  void dispose() {
+    _overlay?.remove();
+    _overlay = null;
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final borderColor = _open
+        ? t.inputFocusBorder.withValues(alpha: 0.45)
+        : t.secondaryBtnBorder;
+
+    // Fade out when open — panel takes over, morphing from this exact position
+    return AnimatedOpacity(
+      opacity: _open ? 0.0 : 1.0,
+      duration: const Duration(milliseconds: 100),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: _toggle,
+          child: AnimatedContainer(
+            key: _pillKey,
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: _hovered ? t.itemHoverBg : t.surface0,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: borderColor),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppIcon(name: 'git-branch', size: 11, color: t.accentBright),
+                const SizedBox(width: 5),
+                Text(
+                  widget.branch,
+                  style: TextStyle(
+                    color: t.textNormal,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                AppIcon(name: 'chevron-right', size: 10, color: t.textMuted),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Panel overlay ─────────────────────────────────────────────────────────────
+
+class _BranchPanelOverlay extends StatefulWidget {
+  final double top;
+  final double left;
+  final double pillHeight;
+  final double minWidth;
+  final List<BranchInfo> branches;
+  final bool loading;
+  final bool switching;
+  final String currentBranch;
+  final VoidCallback onDismiss;
+  final ValueChanged<String> onCheckout;
+  final VoidCallback onNavigate;
+
+  const _BranchPanelOverlay({
+    required this.top,
+    required this.left,
+    required this.pillHeight,
+    required this.minWidth,
+    required this.branches,
+    required this.loading,
+    required this.switching,
+    required this.currentBranch,
+    required this.onDismiss,
+    required this.onCheckout,
+    required this.onNavigate,
+  });
+
+  @override
+  State<_BranchPanelOverlay> createState() => _BranchPanelOverlayState();
+}
+
+class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _reveal;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _reveal = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
+    _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final borderColor = t.inputFocusBorder.withValues(alpha: 0.45);
+
+    return Stack(
+      children: [
+        // Dismiss tap-catcher
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: widget.onDismiss,
+          ),
+        ),
+        // Panel
+        Positioned(
+          top: widget.top,
+          left: widget.left,
+          child: FadeTransition(
+            opacity: _fade,
+            child: ClipRect(
+              child: AnimatedBuilder(
+                animation: _reveal,
+                builder: (_, child) => Align(
+                  alignment: Alignment.topCenter,
+                  heightFactor: _reveal.value,
+                  child: child,
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: Container(
+                    width: widget.minWidth,
+                    decoration: BoxDecoration(
+                      color: Color.alphaBlend(t.inputBg, t.bg0),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: borderColor),
+                      // offset.dy > blurRadius → shadow only goes downward
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black
+                              .withValues(alpha: t.isDark ? 0.45 : 0.18),
+                          blurRadius: 10,
+                          offset: const Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // ── Pill header — tapping here closes the panel ──
+                        GestureDetector(
+                          onTap: widget.onDismiss,
+                          child: MouseRegion(
+                            cursor: SystemMouseCursors.click,
+                            child: SizedBox(
+                              height: widget.pillHeight,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    AppIcon(
+                                        name: 'git-branch',
+                                        size: 11,
+                                        color: t.accentBright),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      widget.currentBranch,
+                                      style: TextStyle(
+                                        color: t.textNormal,
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    // Chevron pointing down (open state)
+                                    Transform.rotate(
+                                      angle: math.pi / 2,
+                                      child: AppIcon(
+                                          name: 'chevron-right',
+                                          size: 10,
+                                          color: t.textMuted),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Divider between pill header and branch list
+                        Container(
+                          height: 1,
+                          color: borderColor.withValues(alpha: 0.5),
+                        ),
+                        // ── Branch list ──────────────────────────────────
+                        _PanelBody(
+                          branches: widget.branches,
+                          loading: widget.loading,
+                          switching: widget.switching,
+                          currentBranch: widget.currentBranch,
+                          onCheckout: widget.onCheckout,
+                          onNavigate: widget.onNavigate,
+                          t: t,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PanelBody extends StatelessWidget {
+  final List<BranchInfo> branches;
+  final bool loading;
+  final bool switching;
+  final String currentBranch;
+  final ValueChanged<String> onCheckout;
+  final VoidCallback onNavigate;
+  final AppTokens t;
+
+  const _PanelBody({
+    required this.branches,
+    required this.loading,
+    required this.switching,
+    required this.currentBranch,
+    required this.onCheckout,
+    required this.onNavigate,
+    required this.t,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Center(
+          child: SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              color: t.accentBright.withValues(alpha: 0.6),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final sorted = [...branches]..sort((a, b) {
+        if (a.current) return -1;
+        if (b.current) return 1;
+        return a.name.compareTo(b.name);
+      });
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 4),
+        for (final branch in sorted)
+          _BranchRow(
+            branch: branch,
+            isCurrent: branch.current,
+            switching: switching,
+            t: t,
+            onTap: branch.current
+                ? null
+                : () => onCheckout(branch.name),
+          ),
+        const SizedBox(height: 4),
+        Container(
+          height: 1,
+          color: t.chromeBorder.withValues(alpha: 0.12),
+          margin: const EdgeInsets.symmetric(horizontal: 8),
+        ),
+        _NavRow(t: t, onTap: onNavigate),
+      ],
+    );
+  }
+}
+
+class _BranchRow extends StatefulWidget {
+  final BranchInfo branch;
+  final bool isCurrent;
+  final bool switching;
+  final AppTokens t;
+  final VoidCallback? onTap;
+
+  const _BranchRow({
+    required this.branch,
+    required this.isCurrent,
+    required this.switching,
+    required this.t,
+    required this.onTap,
+  });
+
+  @override
+  State<_BranchRow> createState() => _BranchRowState();
+}
+
+class _BranchRowState extends State<_BranchRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    final b = widget.branch;
+    final canSwitch = widget.onTap != null && !widget.switching;
+
     return MouseRegion(
+      cursor:
+          canSwitch ? SystemMouseCursors.click : SystemMouseCursors.basic,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: canSwitch ? widget.onTap : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          color: _hovered && canSwitch
+              ? t.secondaryBtnHoverBg
+              : Colors.transparent,
+          child: Row(
+            children: [
+              // Current indicator dot
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: widget.isCurrent
+                      ? t.accentBright
+                      : t.chromeBorder.withValues(alpha: 0.35),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Branch name
+              Expanded(
+                child: Text(
+                  b.name,
+                  style: TextStyle(
+                    color: widget.isCurrent ? t.textStrong : t.textNormal,
+                    fontSize: 11,
+                    fontWeight: widget.isCurrent
+                        ? FontWeight.w600
+                        : FontWeight.w400,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              // Upstream tracking
+              if (b.upstream != null && (b.ahead > 0 || b.behind > 0)) ...[
+                const SizedBox(width: 6),
+                if (b.ahead > 0)
+                  Text(
+                    '↑${b.ahead}',
+                    style: TextStyle(
+                      color: t.accentBright.withValues(alpha: 0.75),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                if (b.ahead > 0 && b.behind > 0)
+                  const SizedBox(width: 3),
+                if (b.behind > 0)
+                  Text(
+                    '↓${b.behind}',
+                    style: TextStyle(
+                      color: t.stateModified.withValues(alpha: 0.80),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavRow extends StatefulWidget {
+  final AppTokens t;
+  final VoidCallback onTap;
+
+  const _NavRow({required this.t, required this.onTap});
+
+  @override
+  State<_NavRow> createState() => _NavRowState();
+}
+
+class _NavRowState extends State<_NavRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    return MouseRegion(
       cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
-            color: _hovered ? t.itemHoverBg : t.surface0,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: t.secondaryBtnBorder),
+            color: _hovered ? t.secondaryBtnHoverBg : Colors.transparent,
+            borderRadius: const BorderRadius.only(
+              bottomLeft: Radius.circular(6),
+              bottomRight: Radius.circular(6),
+            ),
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              AppIcon(name: 'git-branch', size: 11, color: t.accentBright),
-              const SizedBox(width: 5),
               Text(
-                widget.branch,
+                'View all branches',
                 style: TextStyle(
-                  color: t.textNormal,
+                  color: t.textMuted,
                   fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(width: 4),
-              AppIcon(name: 'chevron-right', size: 10, color: t.textMuted),
+              AppIcon(name: 'chevron-right', size: 9, color: t.textMuted),
             ],
           ),
         ),

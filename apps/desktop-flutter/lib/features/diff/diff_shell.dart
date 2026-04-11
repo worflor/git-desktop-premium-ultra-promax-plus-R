@@ -206,41 +206,70 @@ class _DiffFileHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final directory = _diffDisplayDirectory(filePath);
-    final summaryParts = <String>[
-      _diffStatusLabel(diffContent),
-      _changeBlockLabel(hunkCount),
-      if (directory != null) directory,
-    ];
-    return MaterialSurface(
-      tone: AppMaterialTone.surface1,
-      radius: 0,
-      border: Border(
-        bottom: BorderSide(color: tokens.chromeBorder.withValues(alpha: 0.12)),
+    final statusLabel = _diffStatusLabel(diffContent);
+    final hunkLabel = _changeBlockLabel(hunkCount);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: tokens.chromeBorder.withValues(alpha: 0.15),
+          ),
+        ),
       ),
-      elevated: false,
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 9),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            _diffDisplayName(filePath),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: tokens.textStrong,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
+          Tooltip(
+            message: directory != null ? filePath : '',
+            child: Text(
+              _diffDisplayName(filePath),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: tokens.textStrong,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            summaryParts.join(' | '),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: tokens.textMuted,
-              fontSize: 10,
-            ),
+          const SizedBox(height: 7),
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: tokens.accentBright,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                statusLabel,
+                style: TextStyle(
+                  color: tokens.textMuted,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                width: 1,
+                height: 9,
+                color: tokens.chromeBorder.withValues(alpha: 0.35),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                hunkLabel,
+                style: TextStyle(
+                  color: tokens.textMuted,
+                  fontSize: 10,
+                ),
+              ),
+            ],
           ),
         ],
       ),
