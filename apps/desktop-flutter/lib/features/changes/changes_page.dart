@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -63,6 +64,9 @@ class _ChangesPageState extends State<ChangesPage> {
   List<AiModelCategoryData> _commitAiCategories = const [];
   String? _actionMessage;
   String? _actionError;
+  double _leftPanelWidth = 320.0;
+  static const _minLeftPanelWidth = 220.0;
+  static const _maxLeftPanelWidth = 520.0;
 
   @override
   void initState() {
@@ -712,7 +716,7 @@ class _ChangesPageState extends State<ChangesPage> {
                     BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
               ),
               elevated: false,
-              width: 320,
+              width: _leftPanelWidth,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -840,7 +844,7 @@ class _ChangesPageState extends State<ChangesPage> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 8),
                         Row(
                           children: [
                             Expanded(
@@ -904,6 +908,13 @@ class _ChangesPageState extends State<ChangesPage> {
                   ),
                 ],
               ),
+            ),
+            _PanelDivider(
+              tokens: t,
+              onDrag: (dx) => setState(() {
+                _leftPanelWidth = (_leftPanelWidth + dx)
+                    .clamp(_minLeftPanelWidth, _maxLeftPanelWidth);
+              }),
             ),
             Expanded(
               child: Builder(
@@ -1672,58 +1683,86 @@ class _CommitComposerField extends StatelessWidget {
       listenable: Listenable.merge([focusNode, controller]),
       builder: (context, child) {
         final hasText = controller.text.trim().isNotEmpty;
+        final isFocused = focusNode.hasFocus;
+        // Inner border radius shrinks slightly to sit flush against the outer
+        // border without leaving a gap at the rounded corners.
+        final innerRadius = math.max(0.0, effectiveRadius - 1.5);
         return AnimatedContainer(
           duration: const Duration(milliseconds: 110),
-          height: 112,
+          height: 118,
           decoration: BoxDecoration(
             color: tokens.inputBg,
             borderRadius: BorderRadius.circular(effectiveRadius),
             border: Border.all(
-              color: (focusNode.hasFocus
-                      ? tokens.inputFocusBorder
+              color: (isFocused
+                      ? tokens.inputFocusBorder.withValues(alpha: 0.70)
                       : tokens.inputBorder)
                   .withValues(alpha: enabled ? 1 : 0.45),
             ),
           ),
-          child: Stack(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                child: TextField(
-                  controller: controller,
-                  focusNode: focusNode,
-                  enabled: enabled,
-                  minLines: null,
-                  maxLines: null,
-                  expands: true,
-                  onChanged: onChanged,
-                  cursorColor: tokens.accentBright,
-                  style: TextStyle(
-                    color: tokens.textStrong,
-                    fontSize: 12,
-                  ),
-                  decoration: InputDecoration.collapsed(
-                    hintText: 'Commit message...',
-                    hintStyle: TextStyle(
-                      color: tokens.textMuted.withValues(alpha: 0.5),
-                      fontSize: 12,
+          // ClipRRect keeps the toolbar's bottom corners inside the field's
+          // rounded border — no visual overflow.
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(innerRadius),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── Text entry area ────────────────────────────
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 9, 12, 4),
+                    child: TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      enabled: enabled,
+                      minLines: null,
+                      maxLines: null,
+                      expands: true,
+                      onChanged: onChanged,
+                      cursorColor: tokens.accentBright,
+                      style: TextStyle(
+                        color: tokens.textStrong,
+                        fontSize: 12,
+                      ),
+                      decoration: InputDecoration.collapsed(
+                        hintText: 'Commit message...',
+                        hintStyle: TextStyle(
+                          color: tokens.textMuted.withValues(alpha: 0.55),
+                          fontSize: 12,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-              Positioned(
-                right: 10,
-                bottom: 10,
-                child: _CommitAiOverlayButton(
-                  tokens: tokens,
-                  enabled: aiEnabled,
-                  loading: aiLoading,
-                  tooltip: aiTooltip,
-                  obstructed: hasText,
-                  onTap: onGenerate,
+                // ── Action toolbar ─────────────────────────────
+                Container(
+                  height: 32,
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(
+                        color:
+                            tokens.chromeBorder.withValues(alpha: 0.10),
+                      ),
+                    ),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      _CommitAiToolbarBtn(
+                        tokens: tokens,
+                        enabled: aiEnabled,
+                        loading: aiLoading,
+                        tooltip: aiTooltip,
+                        hasText: hasText,
+                        fieldRadius: effectiveRadius,
+                        onTap: onGenerate,
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -1731,58 +1770,58 @@ class _CommitComposerField extends StatelessWidget {
   }
 }
 
-class _CommitAiOverlayButton extends StatefulWidget {
+// ── AI toolbar button (lives inside the commit composer's bottom toolbar) ──────
+
+class _CommitAiToolbarBtn extends StatefulWidget {
   final AppTokens tokens;
   final bool enabled;
   final bool loading;
   final String tooltip;
-  final bool obstructed;
+  final bool hasText; // de-emphasise when the user already typed something
+  final double fieldRadius;
   final VoidCallback onTap;
 
-  const _CommitAiOverlayButton({
+  const _CommitAiToolbarBtn({
     required this.tokens,
     required this.enabled,
     required this.loading,
     required this.tooltip,
-    required this.obstructed,
+    required this.hasText,
+    required this.fieldRadius,
     required this.onTap,
   });
 
   @override
-  State<_CommitAiOverlayButton> createState() => _CommitAiOverlayButtonState();
+  State<_CommitAiToolbarBtn> createState() => _CommitAiToolbarBtnState();
 }
 
-class _CommitAiOverlayButtonState extends State<_CommitAiOverlayButton> {
+class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
   bool _hovered = false;
   bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
-    final showFullChrome = _hovered || _pressed || !widget.obstructed;
-    final shellAlpha = widget.enabled
-        ? (_pressed
-            ? 0.26
-            : _hovered
-                ? 0.22
-                : (widget.obstructed ? 0.1 : 0.18))
-        : (widget.obstructed ? 0.05 : 0.1);
-    final borderAlpha = widget.enabled
-        ? (_hovered ? 0.44 : (widget.obstructed ? 0.12 : 0.26))
-        : (widget.obstructed ? 0.1 : 0.2);
-    final background = widget.enabled
-        ? widget.tokens.bg0.withValues(alpha: showFullChrome ? 0.92 : 0.46)
-        : widget.tokens.bg0.withValues(alpha: 0.38);
-    final border = widget.enabled
-        ? widget.tokens.accentBright.withValues(alpha: borderAlpha)
-        : widget.tokens.chromeBorder.withValues(alpha: borderAlpha);
-    final iconColor = widget.enabled
-        ? widget.tokens.accentBright
-            .withValues(alpha: showFullChrome ? 1 : 0.74)
-        : widget.tokens.textMuted.withValues(alpha: 0.65);
+    final t = widget.tokens;
+    final btnRadius = (widget.fieldRadius * 0.65).clamp(5.0, 8.0);
+
+    // Icon colour: full accent when empty & enabled, dimmed when there's
+    // already text (de-emphasise without hiding), muted when disabled.
+    final iconOpacity = !widget.enabled
+        ? 0.30
+        : widget.hasText && !_hovered
+            ? 0.50
+            : 1.0;
+
+    // Background: transparent normally, subtle tint on hover/press.
+    final bgAlpha = _pressed
+        ? 0.16
+        : _hovered
+            ? 0.10
+            : 0.0;
 
     return Tooltip(
       message: widget.tooltip,
-      waitDuration: const Duration(milliseconds: 250),
+      waitDuration: const Duration(milliseconds: 300),
       child: MouseRegion(
         cursor: widget.enabled
             ? SystemMouseCursors.click
@@ -1801,55 +1840,84 @@ class _CommitAiOverlayButtonState extends State<_CommitAiOverlayButton> {
           onTapUp:
               widget.enabled ? (_) => setState(() => _pressed = false) : null,
           onTap: widget.enabled ? widget.onTap : null,
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 140),
-            opacity: showFullChrome ? 1 : 0.8,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 130),
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+              color: t.accentBright.withValues(alpha: bgAlpha),
+              borderRadius: BorderRadius.circular(btnRadius),
+            ),
+            child: Center(
+              child: widget.loading
+                  ? SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: t.accentBright.withValues(alpha: iconOpacity),
+                      ),
+                    )
+                  : AnimatedOpacity(
+                      duration: const Duration(milliseconds: 150),
+                      opacity: iconOpacity,
+                      child: Icon(
+                        Icons.auto_awesome_rounded,
+                        size: 14,
+                        color: t.accentBright,
+                      ),
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Panel divider ─────────────────────────────────────────────────────────────
+
+class _PanelDivider extends StatefulWidget {
+  final AppTokens tokens;
+  final ValueChanged<double> onDrag;
+
+  const _PanelDivider({required this.tokens, required this.onDrag});
+
+  @override
+  State<_PanelDivider> createState() => _PanelDividerState();
+}
+
+class _PanelDividerState extends State<_PanelDivider> {
+  bool _hovered = false;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final isActive = _hovered || _dragging;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() {
+        _hovered = false;
+        // don't clear _dragging here — pointer can leave during drag
+      }),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: (_) => setState(() => _dragging = true),
+        onPanEnd: (_) => setState(() => _dragging = false),
+        onPanCancel: () => setState(() => _dragging = false),
+        onPanUpdate: (details) => widget.onDrag(details.delta.dx),
+        child: SizedBox(
+          width: 8,
+          child: Center(
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 140),
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: background,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: border),
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    widget.tokens.accentBright.withValues(alpha: shellAlpha),
-                    widget.tokens.bg0.withValues(
-                      alpha: showFullChrome ? 0.92 : 0.34,
-                    ),
-                  ],
-                ),
-                boxShadow: widget.enabled && (_hovered || !widget.obstructed)
-                    ? [
-                        BoxShadow(
-                          color: widget.tokens.accentBright.withValues(
-                            alpha: _hovered ? 0.18 : 0.1,
-                          ),
-                          blurRadius: _hovered ? 20 : 14,
-                          spreadRadius: -8,
-                        ),
-                      ]
-                    : null,
-              ),
-              child: Center(
-                child: widget.loading
-                    ? SizedBox(
-                        width: 15,
-                        height: 15,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.6,
-                          color: iconColor,
-                        ),
-                      )
-                    : Icon(
-                        Icons.auto_awesome_rounded,
-                        size: 17,
-                        color: iconColor,
-                      ),
-              ),
+              width: _dragging ? 2.0 : 1.0,
+              color: isActive
+                  ? t.accentBright
+                      .withValues(alpha: _dragging ? 0.55 : 0.30)
+                  : t.chromeBorder.withValues(alpha: 0.18),
             ),
           ),
         ),

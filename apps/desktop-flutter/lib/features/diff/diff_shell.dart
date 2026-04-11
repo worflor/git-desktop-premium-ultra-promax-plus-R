@@ -283,6 +283,8 @@ class _DiffShellState extends State<DiffShell> {
   String _searchTerm = '';
   bool _searchVisible = false;
   final _scrollCtrl = ScrollController();
+  final _hScrollCtrl = ScrollController();
+  double _maxLineWidth = 800.0;
   final Stopwatch _sessionStopwatch = Stopwatch();
   final List<double> _scrollFpsSamples = [];
   final List<double> _frameTotalSamples = [];
@@ -354,6 +356,7 @@ class _DiffShellState extends State<DiffShell> {
           : parsedLines;
       _hunks = _extractHunks(_lines);
       _refreshDisplayLines();
+      _computeMaxLineWidth();
       _beginTelemetrySession();
     } else {
       _flushRenderMetrics();
@@ -363,6 +366,7 @@ class _DiffShellState extends State<DiffShell> {
       _useAnimatedTextMode = false;
       _sessionChangedLines = 0;
       _sessionPayloadBytes = 0;
+      _maxLineWidth = 800.0;
     }
   }
 
@@ -527,6 +531,7 @@ class _DiffShellState extends State<DiffShell> {
     SchedulerBinding.instance.removeTimingsCallback(_frameTimingsCallback);
     _searchCtrl.dispose();
     _scrollCtrl.dispose();
+    _hScrollCtrl.dispose();
     super.dispose();
   }
 
@@ -586,6 +591,34 @@ class _DiffShellState extends State<DiffShell> {
     }
     _displayLines =
         sourceLines.where((line) => line.lowerText.contains(term)).toList();
+  }
+
+  void _computeMaxLineWidth() {
+    // Gutter is 56px wide; horizontal padding inside lineContent is 8px each side.
+    // JetBrains Mono at 12px — measure real char width via TextPainter so this
+    // stays accurate if the font size or family ever changes.
+    final painter = TextPainter(
+      text: const TextSpan(
+        text: 'M',
+        style: TextStyle(fontFamily: 'JetBrainsMono', fontSize: 12),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final charWidth = painter.width > 0 ? painter.width : 7.5;
+
+    const gutterW = 56.0;
+    const sidePad = 16.0; // 8px × 2
+    const minW = 400.0;
+    const maxW = 12000.0;
+
+    // Compute from _lines (all lines) so the scroll range doesn't jump
+    // when the user filters with search.
+    int maxChars = 0;
+    for (final line in _lines) {
+      if (line.text.length > maxChars) maxChars = line.text.length;
+    }
+    _maxLineWidth = (gutterW + sidePad + maxChars * charWidth).clamp(minW, maxW);
   }
 
   List<_ParsedLine> _trimLeadingMetaLines(List<_ParsedLine> lines) {
@@ -754,33 +787,53 @@ class _DiffShellState extends State<DiffShell> {
           child: ScrollConfiguration(
             behavior:
                 ScrollConfiguration.of(context).copyWith(scrollbars: true),
-            child: ListView.builder(
-              controller: _searchVisible ? null : _scrollCtrl,
-              padding: const EdgeInsets.only(bottom: 16),
-              itemCount: displayLines.length,
-              itemExtent: 18,
-              itemBuilder: (ctx, i) {
-                final line = displayLines[i];
-                return _DiffLine(
-                  line: line,
-                  tokens: t,
-                  blameEntry: line.lineNumNew != null
-                      ? _blameFor(line.lineNumNew!)
-                      : null,
-                  hovered: _hoveredLine == line.lineNumNew &&
-                      line.lineNumNew != null,
-                  onGutterEnter: _canShowInlineBlame && line.lineNumNew != null
-                      ? () {
-                          setState(() => _hoveredLine = line.lineNumNew!);
-                          _scheduleBlameLoad(line.lineNumNew!);
-                        }
-                      : null,
-                  onGutterExit: () {
-                    _blameHoverTimer?.cancel();
-                    setState(() => _hoveredLine = null);
-                  },
-                  searchTerm: _searchTerm,
-                  useAnimatedTextMode: _useAnimatedTextMode,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // Content is at least as wide as the viewport so there's no
+                // unnecessary horizontal scroll when lines are short.
+                final contentWidth =
+                    _maxLineWidth > constraints.maxWidth
+                        ? _maxLineWidth
+                        : constraints.maxWidth;
+                return SingleChildScrollView(
+                  controller: _hScrollCtrl,
+                  scrollDirection: Axis.horizontal,
+                  physics: const ClampingScrollPhysics(),
+                  child: SizedBox(
+                    width: contentWidth,
+                    child: ListView.builder(
+                      controller: _searchVisible ? null : _scrollCtrl,
+                      padding: const EdgeInsets.only(bottom: 16),
+                      itemCount: displayLines.length,
+                      itemExtent: 18,
+                      itemBuilder: (ctx, i) {
+                        final line = displayLines[i];
+                        return _DiffLine(
+                          line: line,
+                          tokens: t,
+                          blameEntry: line.lineNumNew != null
+                              ? _blameFor(line.lineNumNew!)
+                              : null,
+                          hovered: _hoveredLine == line.lineNumNew &&
+                              line.lineNumNew != null,
+                          onGutterEnter:
+                              _canShowInlineBlame && line.lineNumNew != null
+                                  ? () {
+                                      setState(
+                                          () => _hoveredLine = line.lineNumNew!);
+                                      _scheduleBlameLoad(line.lineNumNew!);
+                                    }
+                                  : null,
+                          onGutterExit: () {
+                            _blameHoverTimer?.cancel();
+                            setState(() => _hoveredLine = null);
+                          },
+                          searchTerm: _searchTerm,
+                          useAnimatedTextMode: _useAnimatedTextMode,
+                        );
+                      },
+                    ),
+                  ),
                 );
               },
             ),
