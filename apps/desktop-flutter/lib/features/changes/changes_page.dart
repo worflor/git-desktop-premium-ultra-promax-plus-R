@@ -721,36 +721,38 @@ class _ChangesPageState extends State<ChangesPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+                    padding: const EdgeInsets.fromLTRB(14, 10, 10, 4),
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(
-                          child: _ActionBtn(
-                            label: 'Include all',
-                            t: t,
-                            enabled: !_actionRunning &&
-                                includedCount != status.files.length,
-                            primary: false,
-                            onTap: () => _includeAll(status),
+                          child: Text(
+                            includedCount == 0
+                                ? 'No files selected'
+                                : includedCount == status.files.length
+                                    ? 'All ${status.files.length} file${status.files.length == 1 ? "" : "s"}'
+                                    : '$includedCount of ${status.files.length} files',
+                            style: TextStyle(
+                              color: includedCount == 0
+                                  ? t.textMuted.withValues(alpha: 0.55)
+                                  : t.textMuted,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: _ActionBtn(
-                            label: 'Use staged',
-                            t: t,
-                            enabled: !_actionRunning &&
-                                stagedCount > 0 &&
-                                !_samePathSet(
-                                  _includedPaths,
-                                  status.files
-                                      .where((file) => _isDirty(file.staged))
-                                      .map((file) => file.path)
-                                      .toSet(),
-                                ),
-                            primary: false,
-                            onTap: () => _includeOnlyStaged(status),
-                          ),
+                        _SmartSelectBtn(
+                          allSelected: status.files.isNotEmpty &&
+                              includedCount == status.files.length,
+                          enabled: !_actionRunning && status.files.isNotEmpty,
+                          tokens: t,
+                          onTap: includedCount == status.files.length
+                              ? () => setState(() {
+                                    _includedPaths.clear();
+                                    _actionError = null;
+                                    _actionMessage = null;
+                                  })
+                              : () => _includeAll(status),
                         ),
                       ],
                     ),
@@ -1867,6 +1869,74 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
                         color: t.accentBright,
                       ),
                     ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Smart select toggle (file list header) ────────────────────────────────────
+
+class _SmartSelectBtn extends StatefulWidget {
+  final bool allSelected;
+  final bool enabled;
+  final AppTokens tokens;
+  final VoidCallback onTap;
+
+  const _SmartSelectBtn({
+    required this.allSelected,
+    required this.enabled,
+    required this.tokens,
+    required this.onTap,
+  });
+
+  @override
+  State<_SmartSelectBtn> createState() => _SmartSelectBtnState();
+}
+
+class _SmartSelectBtnState extends State<_SmartSelectBtn> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final label = widget.allSelected ? 'Deselect all' : 'Select all';
+    return MouseRegion(
+      cursor: widget.enabled
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.enabled ? widget.onTap : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 110),
+          height: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          decoration: BoxDecoration(
+            color: _hovered && widget.enabled
+                ? t.secondaryBtnHoverBg
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: t.secondaryBtnBorder
+                  .withValues(alpha: widget.enabled ? 0.75 : 0.30),
+            ),
+          ),
+          child: Center(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 130),
+              child: Text(
+                label,
+                key: ValueKey(label),
+                style: TextStyle(
+                  color: widget.enabled ? t.textNormal : t.textMuted,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ),
           ),
         ),
