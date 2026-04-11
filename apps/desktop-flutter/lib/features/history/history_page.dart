@@ -969,7 +969,7 @@ class _HistoryPageState extends State<HistoryPage> {
                       tokens: t,
                       isSelected: isSelected,
                       inRange: inRange,
-                      cachedDetail: _detailCache[commit.commitHash],
+                      cachedDetail: _detailCache['$repoPath::${commit.commitHash}'],
                       onTap: (shift) => _onCommitTap(i, shift),
                     );
                   }

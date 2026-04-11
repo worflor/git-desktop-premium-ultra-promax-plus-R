@@ -559,14 +559,10 @@ class _ParticleBackdropPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..isAntiAlias = true;
 
+    // Consume the same RNG sequence as the old haze circles so that
+    // removing them doesn't shift the star positions below.
     for (var haze = 0; haze < 3; haze++) {
-      final hazeX = 120 + rng.next() * 760;
-      final hazeY = 120 + rng.next() * 760;
-      final hazeRadius = 90 + rng.next() * 180;
-      final hazeColor =
-          haze.isEven ? const Color(0xFF7AA4FF) : const Color(0xFFB682FF);
-      fillPaint.color = hazeColor.withValues(alpha: alpha * 0.025);
-      canvas.drawCircle(Offset(hazeX, hazeY), hazeRadius, fillPaint);
+      rng.next(); rng.next(); rng.next(); // hazeX, hazeY, hazeRadius
     }
 
     for (var i = 0; i < count; i++) {
@@ -940,48 +936,23 @@ class _ParticleBackdropPainter extends CustomPainter {
       ..strokeWidth = 1
       ..isAntiAlias = true;
 
+    // Consume the same RNG sequence as the old node/ring geometry so that
+    // changing this doesn't shift the remaining spark positions.
     final nodeCount = (count / 6).round().clamp(2, 5).toInt();
     for (var nodeIndex = 0; nodeIndex < nodeCount; nodeIndex++) {
-      final cx = 180 + rng.next() * 640;
-      final cy = 180 + rng.next() * 640;
-      final coreRadius = 24 + rng.next() * 44 * radiusScale;
-      final ringRadius = coreRadius + 18 + rng.next() * 40;
+      rng.next(); rng.next(); // cx, cy
+      rng.next(); // coreRadius
+      rng.next(); // ringRadius rand
       final orbitCount = 4 + (rng.next() * 5).floor() + orbitStride ~/ 2;
-
-      fillPaint.color = const Color(0xFF03080A).withValues(alpha: alpha * 0.22);
-      canvas.drawCircle(Offset(cx, cy), coreRadius, fillPaint);
-
-      strokePaint
-        ..color = const Color(0xFF00FFB9).withValues(alpha: alpha * 0.18)
-        ..strokeWidth = 0.9 + rng.next() * 0.9;
-      canvas.drawCircle(Offset(cx, cy), ringRadius, strokePaint);
-
-      if (rng.next() > 0.45) {
-        strokePaint
-          ..color = const Color(0xFF78FFEA).withValues(alpha: alpha * 0.11)
-          ..strokeWidth = 0.8;
-        canvas.drawCircle(
-            Offset(cx, cy), ringRadius + 14 + rng.next() * 20, strokePaint);
-      }
-
+      rng.next(); // strokeWidth rand
+      rng.next(); // outer ring gate
+      rng.next(); // outer ring radius rand
       for (var orbitIndex = 0; orbitIndex < orbitCount; orbitIndex++) {
-        final angle = rng.next() * math.pi * 2;
-        final orbit = ringRadius + rng.next() * orbitRadius * 0.22;
-        final x = cx + math.cos(angle) * orbit;
-        final y = cy + math.sin(angle) * orbit;
-        final r = 0.7 + rng.next() * 1.6 * radiusScale;
-        final haloColor = orbitIndex.isEven
-            ? const Color(0xFF50FFD2)
-            : const Color(0xFF9E6CFF);
-
-        fillPaint.color = haloColor.withValues(alpha: alpha * 0.26);
-        canvas.drawCircle(Offset(x, y), r * 2.2, fillPaint);
-        fillPaint.color = haloColor.withValues(alpha: alpha * 0.72);
-        canvas.drawCircle(Offset(x, y), r, fillPaint);
+        rng.next(); rng.next(); rng.next(); // angle, orbit, r
       }
     }
 
-    final sparkCount = (count / 2).round();
+    final sparkCount = count;
     for (var i = 0; i < sparkCount; i++) {
       final x = rng.next() * 1000;
       final y = rng.next() * 1000;

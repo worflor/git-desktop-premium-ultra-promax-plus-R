@@ -90,39 +90,34 @@ class _SettingsPageState extends State<SettingsPage> {
     super.dispose();
   }
 
-  Future<void> _refreshAiDiagnostics({bool forceRefresh = true}) async {
+  Future<void> _refreshAiDiagnostics({bool forceRefresh = false}) async {
+    final aiSettings = context.read<AiSettingsState>();
     setState(() {
-      _aiProvidersLoading = true;
-      _aiModelOptionsLoading = true;
-      _aiProvidersError = null;
-      _aiModelOptionsError = null;
+      _aiProviders = aiSettings.runtimeProviders;
+      _aiModelCategories = aiSettings.runtimeModelCategories;
+      _aiProvidersLoading = forceRefresh || _aiProviders.isEmpty;
+      _aiModelOptionsLoading = forceRefresh || _aiModelCategories.isEmpty;
+      _aiProvidersError = aiSettings.runtimeProvidersError;
+      _aiModelOptionsError = aiSettings.runtimeModelCategoriesError;
     });
-    final providerResult = await listAiProviders(forceRefresh: forceRefresh);
-    final modelResult = await listAiModelOptions(forceRefresh: forceRefresh);
+
+    await Future.wait([
+      aiSettings.refreshProviders(forceRefresh: forceRefresh),
+      aiSettings.refreshModelCategories(forceRefresh: forceRefresh),
+    ]);
     if (!mounted) {
       return;
     }
-    if (modelResult.ok) {
-      await context
-          .read<AiSettingsState>()
-          .syncModelCategories(modelResult.data!.categories);
-    }
+
     setState(() {
       _aiProvidersLoading = false;
       _aiModelOptionsLoading = false;
-      if (providerResult.ok) {
-        _aiProviders = providerResult.data!.providers;
-        _aiProvidersError = null;
-      } else {
-        _aiProvidersError = providerResult.error;
-      }
-
-      if (modelResult.ok) {
-        _aiModelCategories = modelResult.data!.categories;
-        _aiModelOptionsError = null;
+      _aiProviders = aiSettings.runtimeProviders;
+      _aiProvidersError = aiSettings.runtimeProvidersError;
+      _aiModelCategories = aiSettings.runtimeModelCategories;
+      _aiModelOptionsError = aiSettings.runtimeModelCategoriesError;
+      if (_aiModelCategories.isNotEmpty) {
         _syncCategoryControllers();
-      } else {
-        _aiModelOptionsError = modelResult.error;
       }
     });
   }
@@ -226,6 +221,10 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _setAutoExpandLogs(bool value) async {
     await context.read<PreferencesState>().setAutoExpandLogs(value);
+  }
+
+  Future<void> _setAiReadOnlyDefault(bool value) async {
+    await context.read<PreferencesState>().setAiReadOnlyDefault(value);
   }
 
   Future<void> _saveModelSelection(String categoryId, String value) async {
@@ -767,8 +766,6 @@ class _SettingsPageState extends State<SettingsPage> {
                     _guardrailPhrase(preferences.guardrailStage),
                     color: t.textMuted,
                   ),
-                  const SizedBox(height: 2),
-                  _FitLine('Read-only: Disabled', color: t.textMuted),
                 ],
               ),
             ),
@@ -885,6 +882,13 @@ class _SettingsPageState extends State<SettingsPage> {
                   _setAutoExpandLogs(value);
                 },
               ),
+              _CheckboxRow(
+                label: 'AI read-only mode',
+                value: preferences.aiReadOnlyDefault,
+                onChanged: (value) {
+                  _setAiReadOnlyDefault(value);
+                },
+              ),
               const SizedBox(height: 18),
               Row(
                 children: [
@@ -895,7 +899,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     onTap: _aiProvidersLoading
                         ? null
                         : () {
-                            _refreshAiDiagnostics();
+                            _refreshAiDiagnostics(forceRefresh: true);
                           },
                   ),
                 ],

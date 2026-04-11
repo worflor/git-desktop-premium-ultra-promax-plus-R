@@ -66,6 +66,7 @@ class _ChangesPageState extends State<ChangesPage> {
   List<AiModelCategoryData> _commitAiCategories = const [];
   bool _reviewActive = false;
   bool _reviewTraceExpanded = false;
+  bool _reviewReasoningExpanded = false;
   String? _reviewScopeKey;
   AiCommitReviewData? _reviewResult;
   String? _reviewError;
@@ -89,6 +90,7 @@ class _ChangesPageState extends State<ChangesPage> {
         durationMs: _mountedAt.elapsedMicroseconds / 1000,
       );
       _refreshCommitAiConfig();
+      unawaited(context.read<AiSettingsState>().refreshProviders());
     });
   }
 
@@ -129,9 +131,26 @@ class _ChangesPageState extends State<ChangesPage> {
     _reviewRunning = false;
     _reviewActive = false;
     _reviewTraceExpanded = false;
+    _reviewReasoningExpanded = false;
     _reviewScopeKey = null;
     _reviewResult = null;
     _reviewError = null;
+  }
+
+  void _hideReviewPane() {
+    _reviewActive = false;
+  }
+
+  void _cancelReviewRequest() {
+    setState(() {
+      _reviewRunning = false;
+      _reviewActive = false;
+      _reviewScopeKey = null;
+      _reviewError = null;
+      _reviewResult = null;
+      _reviewTraceExpanded = false;
+      _reviewReasoningExpanded = false;
+    });
   }
 
   int _includedDirtyCount(RepositoryStatus status) {
@@ -183,7 +202,7 @@ class _ChangesPageState extends State<ChangesPage> {
   Future<void> _loadDiff(String repo, String path) async {
     final stopwatch = Stopwatch()..start();
     setState(() {
-      _clearReviewState();
+      _hideReviewPane();
       _selectedDiffPath = path;
       _diffLoading = true;
       _diffError = null;
@@ -213,7 +232,7 @@ class _ChangesPageState extends State<ChangesPage> {
 
   void _inspectSingleDiff(String repo, String path) {
     setState(() {
-      _clearReviewState();
+      _hideReviewPane();
       _inspectionDiffPath = path;
     });
     unawaited(_loadDiff(repo, path));
@@ -314,7 +333,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final targetSection =
         _multiDiffSections.where((section) => section.path == path).firstOrNull;
     setState(() {
-      _clearReviewState();
+      _hideReviewPane();
       _inspectionDiffPath = null;
       _selectedDiffPath = null;
       _multiDiffCurrentPath = path;
@@ -413,8 +432,9 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   String _reviewAiTooltip(AiSettingsState aiSettings, int includedCount) {
+    final hasPersistentReview = _hasReviewStateForCurrentSelection();
     if (_reviewRunning) {
-      return 'Reviewing commit...';
+      return _reviewActive ? 'Checking these changes...' : 'Show review';
     }
     if (_commitAiLoading) {
       return 'Preparing commit review...';
@@ -426,7 +446,42 @@ class _ChangesPageState extends State<ChangesPage> {
       return _commitAiError ??
           'Configure review AI in Settings > Behavioural Dynamics > Review Commit.';
     }
+    if (hasPersistentReview) {
+      return _reviewActive ? 'Review commit' : 'Show review';
+    }
     return 'Review commit';
+  }
+
+  bool _hasReviewStateForCurrentSelection() {
+    final scopeKey = _currentReviewScopeKey();
+    if (scopeKey == null || _reviewScopeKey != scopeKey) {
+      return false;
+    }
+    return _reviewRunning || _reviewResult != null || _reviewError != null;
+  }
+
+  String? _currentReviewScopeKey() {
+    final repo = context.read<RepositoryState>();
+    final status = repo.status;
+    if (status == null) {
+      return null;
+    }
+    final included = status.files
+        .where((file) => _includedPaths.contains(file.path))
+        .toList();
+    if (included.isEmpty) {
+      return null;
+    }
+    return _buildMultiDiffScopeKey(included);
+  }
+
+  void _showExistingReview() {
+    if (!_hasReviewStateForCurrentSelection()) {
+      return;
+    }
+    setState(() {
+      _reviewActive = true;
+    });
   }
 
   String _reviewModelLabel(AiSettingsState aiSettings) {
@@ -466,29 +521,31 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   Future<void> _refreshCommitAiConfig({bool forceRefresh = false}) async {
-    setState(() {
-      _commitAiLoading = true;
-      _commitAiError = null;
-    });
-    final result = await listAiModelOptions(forceRefresh: forceRefresh);
-    if (!mounted) {
+    final aiSettings = context.read<AiSettingsState>();
+    if (!forceRefresh && aiSettings.runtimeModelCategories.isNotEmpty) {
+      setState(() {
+        _commitAiCategories = aiSettings.runtimeModelCategories;
+        _commitAiLoading = false;
+        _commitAiError = aiSettings.runtimeModelCategoriesError;
+      });
       return;
     }
-    if (result.ok) {
-      await context
-          .read<AiSettingsState>()
-          .syncModelCategories(result.data!.categories);
-    }
+    setState(() {
+      _commitAiLoading =
+          forceRefresh || aiSettings.runtimeModelCategories.isEmpty;
+      _commitAiError = aiSettings.runtimeModelCategoriesError;
+    });
+    await aiSettings.refreshModelCategories(forceRefresh: forceRefresh);
     if (!mounted) {
       return;
     }
     setState(() {
       _commitAiLoading = false;
-      if (result.ok) {
-        _commitAiCategories = result.data!.categories;
+      if (aiSettings.runtimeModelCategories.isNotEmpty) {
+        _commitAiCategories = aiSettings.runtimeModelCategories;
         _commitAiError = null;
       } else {
-        _commitAiError = result.error;
+        _commitAiError = aiSettings.runtimeModelCategoriesError;
       }
     });
   }
@@ -496,34 +553,37 @@ class _ChangesPageState extends State<ChangesPage> {
   Future<List<AiModelCategoryData>?> _resolveCommitAiCategories({
     bool forceRefresh = false,
   }) async {
+    final aiSettings = context.read<AiSettingsState>();
+    if (!forceRefresh && aiSettings.runtimeModelCategories.isNotEmpty) {
+      if (_commitAiCategories != aiSettings.runtimeModelCategories) {
+        setState(() {
+          _commitAiCategories = aiSettings.runtimeModelCategories;
+          _commitAiError = aiSettings.runtimeModelCategoriesError;
+        });
+      }
+      return aiSettings.runtimeModelCategories;
+    }
     if (!forceRefresh &&
         _commitAiCategories.any((category) => category.models.isNotEmpty)) {
       return _commitAiCategories;
     }
 
-    final result = await listAiModelOptions(forceRefresh: forceRefresh);
+    final ok = await aiSettings.refreshModelCategories(forceRefresh: forceRefresh);
     if (!mounted) {
       return null;
     }
-    if (!result.ok) {
+    if (!ok) {
       setState(() {
-        _commitAiError = result.error;
+        _commitAiError = aiSettings.runtimeModelCategoriesError;
       });
       return null;
     }
 
-    await context
-        .read<AiSettingsState>()
-        .syncModelCategories(result.data!.categories);
-    if (!mounted) {
-      return null;
-    }
-
     setState(() {
-      _commitAiCategories = result.data!.categories;
+      _commitAiCategories = aiSettings.runtimeModelCategories;
       _commitAiError = null;
     });
-    return result.data!.categories;
+    return aiSettings.runtimeModelCategories;
   }
 
   Future<void> _generateCommitMessage(
@@ -561,6 +621,7 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     final aiSettings = context.read<AiSettingsState>();
+    final preferences = context.read<PreferencesState>();
     final selectedCategory = categories
             .where(
               (category) =>
@@ -607,6 +668,7 @@ class _ChangesPageState extends State<ChangesPage> {
       scopedPaths: included.map((file) => file.path).toList(),
       customPrompt: aiSettings.commitMessagePrompt,
       existingMessage: _commitMsgCtrl.text.trim(),
+      readOnly: preferences.aiReadOnlyDefault,
     );
     if (!mounted) {
       return;
@@ -642,6 +704,14 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     final scopeKey = _buildMultiDiffScopeKey(included);
+    if (_reviewScopeKey == scopeKey &&
+        (_reviewRunning || _reviewResult != null || _reviewError != null)) {
+      setState(() {
+        _reviewActive = true;
+      });
+      return;
+    }
+
     setState(() {
       _reviewRunning = true;
       _reviewActive = true;
@@ -649,6 +719,7 @@ class _ChangesPageState extends State<ChangesPage> {
       _reviewError = null;
       _reviewResult = null;
       _reviewTraceExpanded = false;
+      _reviewReasoningExpanded = false;
       _actionError = null;
       _actionMessage = null;
     });
@@ -714,11 +785,17 @@ class _ChangesPageState extends State<ChangesPage> {
       customPrompt: aiSettings.reviewCommitPrompt,
       guardrailStage: preferences.guardrailStage,
       doubleCheckEnabled: aiSettings.reviewCommitDoubleCheckEnabled,
+      readOnly: preferences.aiReadOnlyDefault,
     );
     if (!mounted) {
       return;
     }
     if (_reviewScopeKey != scopeKey) {
+      // Scope changed while this review was in flight — discard result but
+      // still clear the running flag so UI doesn't get stuck.
+      setState(() {
+        _reviewRunning = false;
+      });
       return;
     }
 
@@ -728,10 +805,71 @@ class _ChangesPageState extends State<ChangesPage> {
         _reviewResult = result.data;
         _reviewError = null;
         _reviewActive = true;
+        _reviewReasoningExpanded = result.data!.findings.isEmpty;
       } else {
         _reviewError = result.error;
         _reviewActive = true;
       }
+    });
+  }
+
+  void _openReviewFinding(
+    String repoPath,
+    String path,
+    RepositoryStatus status, {
+    String? hunkLabel,
+  }) {
+    final startLine = _parseHunkStartLine(hunkLabel);
+    final includedCount = _includedDirtyCount(status);
+    if (_includedPaths.contains(path) && includedCount > 1) {
+      _jumpToMultiDiffPath(path, fallbackStartLine: startLine);
+      return;
+    }
+    _inspectSingleDiff(repoPath, path);
+  }
+
+  /// Parses a git hunk label like "@@ -14,6 +14,7 @@" and returns the
+  /// new-file start line, which can be used to jump the diff viewer.
+  static int? _parseHunkStartLine(String? hunkLabel) {
+    if (hunkLabel == null) return null;
+    final match = RegExp(r'\+(\d+)').firstMatch(hunkLabel);
+    return match != null ? int.tryParse(match.group(1)!) : null;
+  }
+
+  Future<void> _copyReviewReport(AiCommitReviewData review) async {
+    final buffer = StringBuffer()
+      ..writeln('${review.verdict} | ${review.score}')
+      ..writeln(review.summary)
+      ..writeln()
+      ..writeln('RR')
+      ..writeln(review.reasoningReport);
+    if (review.findings.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('Findings');
+      for (final finding in review.findings) {
+        buffer.writeln('- ${finding.title}');
+        if (finding.filePath != null || finding.hunkLabel != null) {
+          final meta = [
+            if (finding.filePath != null) finding.filePath!,
+            if (finding.hunkLabel != null) finding.hunkLabel!,
+          ].join(' | ');
+          buffer.writeln('  $meta');
+        }
+        if (finding.evidence.trim().isNotEmpty) {
+          buffer.writeln('  Evidence: ${finding.evidence}');
+        }
+        if (finding.whyItMatters.trim().isNotEmpty) {
+          buffer.writeln('  Why: ${finding.whyItMatters}');
+        }
+      }
+    }
+    await Clipboard.setData(ClipboardData(text: buffer.toString().trim()));
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _actionError = null;
+      _actionMessage = 'Copied review report.';
     });
   }
 
@@ -894,6 +1032,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final primaryAction = _primaryActionFor(status);
     final hasCommitAiSelection = _hasCommitAiSelection(aiSettings);
     final hasReviewAiSelection = _hasReviewAiSelection(aiSettings);
+    final hasPersistentReview = _hasReviewStateForCurrentSelection();
     final canCommit = !_actionRunning &&
         !_generateRunning &&
         !_reviewRunning &&
@@ -910,7 +1049,7 @@ class _ChangesPageState extends State<ChangesPage> {
         !_reviewRunning &&
         !_commitAiLoading &&
         includedCount > 0 &&
-        hasReviewAiSelection;
+        (hasReviewAiSelection || hasPersistentReview);
 
     return Stack(
       children: [
@@ -1056,7 +1195,13 @@ class _ChangesPageState extends State<ChangesPage> {
                               repoPath,
                               status,
                             ),
-                            onReview: () => _reviewCommit(repoPath, status),
+                            onReview: () {
+                              if (hasPersistentReview) {
+                                _showExistingReview();
+                                return;
+                              }
+                              _reviewCommit(repoPath, status);
+                            },
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -1088,11 +1233,16 @@ class _ChangesPageState extends State<ChangesPage> {
                         if (_actionError != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              _actionError!,
-                              style: TextStyle(
-                                color: t.stateConflicted,
-                                fontSize: 10.5,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 80),
+                              child: SingleChildScrollView(
+                                child: Text(
+                                  _actionError!,
+                                  style: TextStyle(
+                                    color: t.stateConflicted,
+                                    fontSize: 10.5,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
@@ -1128,13 +1278,24 @@ class _ChangesPageState extends State<ChangesPage> {
                         error: _reviewError,
                         result: _reviewResult,
                         traceExpanded: _reviewTraceExpanded,
+                        reasoningExpanded: _reviewReasoningExpanded,
                         onToggleTrace: () => setState(
                           () => _reviewTraceExpanded = !_reviewTraceExpanded,
                         ),
+                        onToggleReasoning: () => setState(
+                          () => _reviewReasoningExpanded =
+                              !_reviewReasoningExpanded,
+                        ),
+                        onCancel: _cancelReviewRequest,
                         onBack: () => setState(() {
                           _clearReviewState();
                         }),
                         onRerun: () => _reviewCommit(repoPath, status),
+                        onCopy: _reviewResult == null
+                            ? null
+                            : () => _copyReviewReport(_reviewResult!),
+                        onOpenFinding: (path, hunkLabel) =>
+                            _openReviewFinding(repoPath, path, status, hunkLabel: hunkLabel),
                       ),
                     );
                   }
@@ -1577,9 +1738,14 @@ class _CommitReviewPane extends StatelessWidget {
   final String? error;
   final AiCommitReviewData? result;
   final bool traceExpanded;
+  final bool reasoningExpanded;
   final VoidCallback onToggleTrace;
+  final VoidCallback onToggleReasoning;
+  final VoidCallback onCancel;
   final VoidCallback onBack;
   final VoidCallback onRerun;
+  final VoidCallback? onCopy;
+  final void Function(String path, String? hunkLabel) onOpenFinding;
 
   const _CommitReviewPane({
     required this.tokens,
@@ -1590,33 +1756,100 @@ class _CommitReviewPane extends StatelessWidget {
     required this.error,
     required this.result,
     required this.traceExpanded,
+    required this.reasoningExpanded,
     required this.onToggleTrace,
+    required this.onToggleReasoning,
+    required this.onCancel,
     required this.onBack,
     required this.onRerun,
+    required this.onCopy,
+    required this.onOpenFinding,
   });
 
   @override
   Widget build(BuildContext context) {
     if (loading) {
-      return Center(
+      return _reviewShell(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.8,
-                color: tokens.accentBright,
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: tokens.chromeBorder.withValues(alpha: 0.15),
+                  ),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Review commit',
+                    style: TextStyle(
+                      color: tokens.textStrong,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '$includedCount included file${includedCount == 1 ? '' : 's'}',
+                    style: TextStyle(
+                      color: tokens.textMuted,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '$guardrailLabel | $modelLabel',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: tokens.textMuted,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              'Reviewing commit scope...',
-              style: TextStyle(
-                color: tokens.textStrong,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 18, 24, 18),
+                child: Column(
+                  children: [
+                    const Spacer(),
+                    Text(
+                      'Checking these changes...',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: tokens.textStrong,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Looking for issues before you commit.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: tokens.textMuted,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Align(
+                      alignment: Alignment.center,
+                      child: _GhostActionChip(
+                        tokens: tokens,
+                        label: 'Cancel',
+                        onTap: onCancel,
+                      ),
+                    ),
+                    const Spacer(),
+                  ],
+                ),
               ),
             ),
           ],
@@ -1626,39 +1859,45 @@ class _CommitReviewPane extends StatelessWidget {
 
     if (error != null && result == null) {
       return _reviewShell(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Review unavailable',
-                  style: TextStyle(
-                    color: tokens.textStrong,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
+        child: Column(
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Review unavailable',
+                      style: TextStyle(
+                        color: tokens.textStrong,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      error!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: tokens.textMuted,
+                        fontSize: 11.5,
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  error!,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: tokens.textMuted,
-                    fontSize: 11.5,
-                    height: 1.45,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _GhostActionChip(
-                  tokens: tokens,
-                  label: 'Back to diff',
-                  onTap: onBack,
-                ),
-              ],
+              ),
             ),
-          ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+              child: _GhostActionChip(
+                tokens: tokens,
+                label: 'Back to diff',
+                onTap: onBack,
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -1714,6 +1953,22 @@ class _CommitReviewPane extends StatelessWidget {
                     _ReviewVerdictChip(tokens: tokens, verdict: review.verdict),
                     const SizedBox(width: 6),
                     _ReviewScorePill(tokens: tokens, score: review.score),
+                    if (review.hasVerificationTrace) ...[
+                      const SizedBox(width: 6),
+                      _ReviewMetaChip(
+                        tokens: tokens,
+                        label: 'Verified',
+                        color: tokens.stateAdded,
+                      ),
+                    ] else if (review.twoStepEnabled &&
+                        review.verificationFailed) ...[
+                      const SizedBox(width: 6),
+                      _ReviewMetaChip(
+                        tokens: tokens,
+                        label: 'Draft only',
+                        color: tokens.stateModified,
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -1736,6 +1991,14 @@ class _CommitReviewPane extends StatelessWidget {
                       label: 'Run again',
                       onTap: onRerun,
                     ),
+                    if (onCopy != null) ...[
+                      const SizedBox(width: 8),
+                      _GhostActionChip(
+                        tokens: tokens,
+                        label: 'Copy',
+                        onTap: onCopy!,
+                      ),
+                    ],
                     const SizedBox(width: 8),
                     _GhostActionChip(
                       tokens: tokens,
@@ -1762,13 +2025,39 @@ class _CommitReviewPane extends StatelessWidget {
                         color: tokens.stateConflicted.withValues(alpha: 0.22),
                       ),
                     ),
-                    child: Text(
-                      '${review.verificationError} Draft review is shown below.',
-                      style: TextStyle(
-                        color: tokens.textStrong,
-                        fontSize: 11,
-                        height: 1.4,
-                      ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${review.verificationError} Draft review is shown below.',
+                            style: TextStyle(
+                              color: tokens.textStrong,
+                              fontSize: 11,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        _GhostActionChip(
+                          tokens: tokens,
+                          label: traceExpanded ? 'Hide trace' : 'Show trace',
+                          onTap: onToggleTrace,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (!review.verificationFailed &&
+                    review.hasVerificationTrace &&
+                    !traceExpanded) ...[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: _GhostActionChip(
+                      tokens: tokens,
+                      label: 'Show verification trace',
+                      onTap: onToggleTrace,
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -1777,20 +2066,23 @@ class _CommitReviewPane extends StatelessWidget {
                   review.summary,
                   style: TextStyle(
                     color: tokens.textStrong,
-                    fontSize: 12,
+                    fontSize: 11.8,
                     fontWeight: FontWeight.w700,
                     height: 1.35,
                   ),
                 ),
                 const SizedBox(height: 10),
-                _ReviewSectionCard(
+                _ReviewDisclosureCard(
                   tokens: tokens,
-                  label: 'RR',
+                  label: 'Why this review landed here',
+                  expanded: reasoningExpanded,
+                  preview: review.reasoningReport,
+                  onToggle: onToggleReasoning,
                   child: Text(
                     review.reasoningReport,
                     style: TextStyle(
                       color: tokens.textNormal,
-                      fontSize: 11.5,
+                      fontSize: 11.2,
                       height: 1.5,
                     ),
                   ),
@@ -1821,6 +2113,9 @@ class _CommitReviewPane extends StatelessWidget {
                       child: _ReviewFindingCard(
                         tokens: tokens,
                         finding: finding,
+                        onOpenDiff: finding.filePath == null
+                            ? null
+                            : () => onOpenFinding(finding.filePath!, finding.hunkLabel),
                       ),
                     ),
                   ),
@@ -1869,14 +2164,7 @@ class _ReviewVerdictChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = switch (verdict) {
-      'Ready' => tokens.stateAdded,
-      'Mostly ready' => tokens.accentBright,
-      'Needs attention' => tokens.stateModified,
-      'High risk' => tokens.stateDeleted,
-      'Block' => tokens.stateConflicted,
-      _ => tokens.textMuted,
-    };
+    final color = _reviewVerdictColor(verdict);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
@@ -1894,6 +2182,17 @@ class _ReviewVerdictChip extends StatelessWidget {
       ),
     );
   }
+}
+
+Color _reviewVerdictColor(String verdict) {
+  return switch (verdict) {
+    'Ready' => const Color(0xFF4AD399),
+    'Mostly ready' => const Color(0xFF7AB8FF),
+    'Needs attention' => const Color(0xFFD39A2C),
+    'High risk' => const Color(0xFFEF7C75),
+    'Block' => const Color(0xFFB280FF),
+    _ => const Color(0xFF8CA0B3),
+  };
 }
 
 class _ReviewScorePill extends StatelessWidget {
@@ -1926,14 +2225,52 @@ class _ReviewScorePill extends StatelessWidget {
   }
 }
 
-class _ReviewSectionCard extends StatelessWidget {
+class _ReviewMetaChip extends StatelessWidget {
   final AppTokens tokens;
   final String label;
-  final Widget child;
+  final Color color;
 
-  const _ReviewSectionCard({
+  const _ReviewMetaChip({
     required this.tokens,
     required this.label,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 10.2,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewDisclosureCard extends StatelessWidget {
+  final AppTokens tokens;
+  final String label;
+  final bool expanded;
+  final String preview;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  const _ReviewDisclosureCard({
+    required this.tokens,
+    required this.label,
+    required this.expanded,
+    required this.preview,
+    required this.onToggle,
     required this.child,
   });
 
@@ -1941,7 +2278,6 @@ class _ReviewSectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: tokens.rowBg,
         borderRadius: BorderRadius.circular(8),
@@ -1950,29 +2286,76 @@ class _ReviewSectionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: tokens.textMuted,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
+          InkWell(
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label,
+                          style: TextStyle(
+                            color: tokens.textMuted,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (!expanded) ...[
+                          const SizedBox(height: 5),
+                          Text(
+                            _oneLinePreview(preview),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: tokens.textNormal,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                    color: tokens.textMuted,
+                    size: 16,
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 8),
-          child,
+          if (expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: child,
+            ),
         ],
       ),
     );
+  }
+
+  String _oneLinePreview(String value) {
+    final normalized = value.replaceAll('\n', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= 120) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 117)}...';
   }
 }
 
 class _ReviewFindingCard extends StatelessWidget {
   final AppTokens tokens;
   final AiCommitReviewFindingData finding;
+  final VoidCallback? onOpenDiff;
 
   const _ReviewFindingCard({
     required this.tokens,
     required this.finding,
+    this.onOpenDiff,
   });
 
   @override
@@ -2021,6 +2404,14 @@ class _ReviewFindingCard extends StatelessWidget {
                   ),
                 ),
               ),
+              if (onOpenDiff != null) ...[
+                const SizedBox(width: 8),
+                _InlineActionLink(
+                  tokens: tokens,
+                  label: 'Open diff',
+                  onTap: onOpenDiff!,
+                ),
+              ],
             ],
           ),
           if (meta.isNotEmpty) ...[
@@ -2201,21 +2592,114 @@ class _GhostActionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return _GhostActionChipButton(
+      tokens: tokens,
+      label: label,
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-        decoration: BoxDecoration(
-          color: tokens.rowBg,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.16)),
+    );
+  }
+}
+
+class _GhostActionChipButton extends StatefulWidget {
+  final AppTokens tokens;
+  final String label;
+  final VoidCallback onTap;
+
+  const _GhostActionChipButton({
+    required this.tokens,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  State<_GhostActionChipButton> createState() => _GhostActionChipButtonState();
+}
+
+class _GhostActionChipButtonState extends State<_GhostActionChipButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final chrome = ghostButtonChrome(
+      widget.tokens,
+      hovered: _hovered,
+      pressed: _pressed,
+      enabled: true,
+      baseBorderColor: widget.tokens.chromeBorder.withValues(alpha: 0.16),
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() {
+        _hovered = false;
+        _pressed = false;
+      }),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) => setState(() => _pressed = false),
+        child: AnimatedScale(
+          duration: const Duration(milliseconds: 80),
+          scale: chrome.scale,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 80),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: chrome.background,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: chrome.borderColor),
+              boxShadow: chrome.shadows,
+            ),
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                color: widget.tokens.textMuted,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _InlineActionLink extends StatefulWidget {
+  final AppTokens tokens;
+  final String label;
+  final VoidCallback onTap;
+
+  const _InlineActionLink({
+    required this.tokens,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  State<_InlineActionLink> createState() => _InlineActionLinkState();
+}
+
+class _InlineActionLinkState extends State<_InlineActionLink> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _hovered ? widget.tokens.textStrong : widget.tokens.accentBright;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
         child: Text(
-          label,
+          widget.label,
           style: TextStyle(
-            color: tokens.textMuted,
-            fontSize: 10.5,
-            fontWeight: FontWeight.w600,
+            color: color,
+            fontSize: 10.2,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),
@@ -2723,6 +3207,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     with TickerProviderStateMixin {
   late AnimationController _pulseCtrl;
   late AnimationController _doneCtrl;
+  final ScrollController _scrollCtrl = ScrollController();
 
   @override
   void initState() {
@@ -2735,18 +3220,16 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
-    if (widget.aiLoading || widget.reviewLoading) _pulseCtrl.repeat(reverse: true);
+    if (widget.aiLoading) _pulseCtrl.repeat(reverse: true);
   }
 
   @override
   void didUpdateWidget(_CommitComposerField old) {
     super.didUpdateWidget(old);
-    final wasLoading = old.aiLoading || old.reviewLoading;
-    final isLoading = widget.aiLoading || widget.reviewLoading;
-    if (isLoading && !wasLoading) {
+    if (widget.aiLoading && !old.aiLoading) {
       _doneCtrl.stop();
       _pulseCtrl.repeat(reverse: true);
-    } else if (!isLoading && wasLoading) {
+    } else if (!widget.aiLoading && old.aiLoading) {
       _pulseCtrl.stop();
       _doneCtrl.forward(from: 0);
     }
@@ -2756,6 +3239,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
   void dispose() {
     _pulseCtrl.dispose();
     _doneCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -2790,7 +3274,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
         Color borderColor;
         double borderWidth;
 
-        if (widget.aiLoading || widget.reviewLoading) {
+        if (widget.aiLoading) {
           // Pulse: width 1→1.5px + accent breathes 40%→100% alpha
           final pulse = _pulseCtrl.value;
           borderColor = tokens.accentBright.withValues(alpha: 0.40 + pulse * 0.60);
@@ -2820,30 +3304,50 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
               children: [
                 // ── Text fills the full field ──────────────────
                 Positioned.fill(
-                  child: TextField(
-                    controller: widget.controller,
-                    focusNode: widget.focusNode,
-                    enabled: widget.enabled,
-                    minLines: null,
-                    maxLines: null,
-                    expands: true,
-                    onChanged: widget.onChanged,
-                    cursorColor: tokens.accentBright,
-                    textAlignVertical: TextAlignVertical.top,
-                    style: TextStyle(
-                      color: tokens.textStrong,
-                      fontSize: 12,
+                  child: ScrollbarTheme(
+                    data: ScrollbarThemeData(
+                      thumbColor: WidgetStateProperty.all(
+                        tokens.textMuted.withValues(alpha: 0.28),
+                      ),
+                      thickness: WidgetStateProperty.all(3),
+                      radius: const Radius.circular(2),
+                      // Hug the right edge — no inset margin
+                      crossAxisMargin: 2,
+                      mainAxisMargin: 4,
                     ),
-                    decoration: InputDecoration(
-                      isCollapsed: true,
-                      contentPadding: const EdgeInsets.fromLTRB(12, 9, 12, 8),
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      hintText: 'Commit message...',
-                      hintStyle: TextStyle(
-                        color: tokens.textMuted.withValues(alpha: 0.55),
-                        fontSize: 12,
+                    child: Scrollbar(
+                      controller: _scrollCtrl,
+                      child: ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(context)
+                            .copyWith(scrollbars: false),
+                        child: TextField(
+                          controller: widget.controller,
+                          focusNode: widget.focusNode,
+                          scrollController: _scrollCtrl,
+                          enabled: widget.enabled,
+                          minLines: null,
+                          maxLines: null,
+                          expands: true,
+                          onChanged: widget.onChanged,
+                          cursorColor: tokens.accentBright,
+                          textAlignVertical: TextAlignVertical.top,
+                          style: TextStyle(
+                            color: tokens.textStrong,
+                            fontSize: 12,
+                          ),
+                          decoration: InputDecoration(
+                            isCollapsed: true,
+                            contentPadding: const EdgeInsets.all(6),
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                            hintText: 'Commit message...',
+                            hintStyle: TextStyle(
+                              color: tokens.textMuted.withValues(alpha: 0.55),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../backend/ai.dart';
 import '../backend/ai_settings_store.dart';
 import '../backend/dtos.dart';
 
@@ -17,6 +18,14 @@ class AiSettingsState extends ChangeNotifier {
   String _reviewCommitPrompt = '';
   String _reviewCommitPromptPath = '';
   bool _reviewCommitDoubleCheckEnabled = false;
+  List<AiProviderStatus> _runtimeProviders = const [];
+  String? _runtimeProvidersError;
+  bool _runtimeProvidersLoading = false;
+  List<AiModelCategoryData> _runtimeModelCategories = const [];
+  String? _runtimeModelCategoriesError;
+  bool _runtimeModelCategoriesLoading = false;
+  Future<bool>? _providerRefreshFuture;
+  Future<bool>? _modelCategoryRefreshFuture;
 
   bool get isLoaded => _loaded;
   Map<String, String> get modelSelections => Map.unmodifiable(_modelSelections);
@@ -29,6 +38,14 @@ class AiSettingsState extends ChangeNotifier {
   String get reviewCommitPrompt => _reviewCommitPrompt;
   String get reviewCommitPromptPath => _reviewCommitPromptPath;
   bool get reviewCommitDoubleCheckEnabled => _reviewCommitDoubleCheckEnabled;
+  List<AiProviderStatus> get runtimeProviders =>
+      List.unmodifiable(_runtimeProviders);
+  String? get runtimeProvidersError => _runtimeProvidersError;
+  bool get runtimeProvidersLoading => _runtimeProvidersLoading;
+  List<AiModelCategoryData> get runtimeModelCategories =>
+      List.unmodifiable(_runtimeModelCategories);
+  String? get runtimeModelCategoriesError => _runtimeModelCategoriesError;
+  bool get runtimeModelCategoriesLoading => _runtimeModelCategoriesLoading;
 
   Future<void> load() async {
     if (_loaded) {
@@ -180,6 +197,81 @@ class AiSettingsState extends ChangeNotifier {
     _reviewCommitDoubleCheckEnabled = value;
     await _persistSnapshot();
     notifyListeners();
+  }
+
+  Future<bool> refreshProviders({bool forceRefresh = false}) {
+    if (!forceRefresh && _runtimeProviders.isNotEmpty) {
+      return SynchronousFuture(true);
+    }
+    final inFlight = _providerRefreshFuture;
+    if (inFlight != null) {
+      return inFlight;
+    }
+
+    _runtimeProvidersLoading = true;
+    if (forceRefresh) {
+      _runtimeProvidersError = null;
+    }
+    notifyListeners();
+
+    final future = _runProviderRefresh(forceRefresh: forceRefresh);
+    _providerRefreshFuture = future;
+    return future;
+  }
+
+  Future<bool> _runProviderRefresh({required bool forceRefresh}) async {
+    try {
+      final result = await listAiProviders(forceRefresh: forceRefresh);
+      if (result.ok) {
+        _runtimeProviders = result.data!.providers;
+        _runtimeProvidersError = null;
+      } else {
+        _runtimeProvidersError = result.error;
+      }
+      return result.ok;
+    } finally {
+      _runtimeProvidersLoading = false;
+      _providerRefreshFuture = null;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> refreshModelCategories({bool forceRefresh = false}) {
+    if (!forceRefresh && _runtimeModelCategories.isNotEmpty) {
+      return SynchronousFuture(true);
+    }
+    final inFlight = _modelCategoryRefreshFuture;
+    if (inFlight != null) {
+      return inFlight;
+    }
+
+    _runtimeModelCategoriesLoading = true;
+    if (forceRefresh) {
+      _runtimeModelCategoriesError = null;
+    }
+    notifyListeners();
+
+    final future = _runModelCategoryRefresh(forceRefresh: forceRefresh);
+    _modelCategoryRefreshFuture = future;
+    return future;
+  }
+
+  Future<bool> _runModelCategoryRefresh({required bool forceRefresh}) async {
+    try {
+      final result = await listAiModelOptions(forceRefresh: forceRefresh);
+      if (result.ok) {
+        _runtimeModelCategories = result.data!.categories;
+        _runtimeModelCategoriesError = null;
+        await syncModelCategories(result.data!.categories);
+      } else {
+        _runtimeModelCategoriesError = result.error;
+      }
+      return result.ok;
+    } finally {
+      _runtimeModelCategoriesLoading = false;
+      _modelCategoryRefreshFuture = null;
+      notifyListeners();
+    }
   }
 
   Future<void> _persistSnapshot() {

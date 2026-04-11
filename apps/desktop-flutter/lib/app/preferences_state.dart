@@ -17,6 +17,7 @@ class PreferencesState extends ChangeNotifier {
   String _updateChannel = 'stable';
   bool _crashReportingEnabled = false;
   bool _autoExpandLogs = false;
+  bool _aiReadOnlyDefault = true;
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
@@ -25,6 +26,7 @@ class PreferencesState extends ChangeNotifier {
   String get updateChannel => _updateChannel;
   bool get crashReportingEnabled => _crashReportingEnabled;
   bool get autoExpandLogs => _autoExpandLogs;
+  bool get aiReadOnlyDefault => _aiReadOnlyDefault;
 
   Future<void> load() async {
     if (_loaded) {
@@ -36,6 +38,7 @@ class PreferencesState extends ChangeNotifier {
     _updateChannel = _normalizeUpdateChannel(settings.updateChannel);
     _crashReportingEnabled = settings.crashReportingEnabled;
     _autoExpandLogs = settings.autoExpandOperationLogs;
+    _aiReadOnlyDefault = settings.aiReadOnlyDefault;
     _loaded = true;
     notifyListeners();
   }
@@ -71,7 +74,7 @@ class PreferencesState extends ChangeNotifier {
       await SettingsStore.persist(
         AppSettingsSnapshot(
           guardrailValue: _guardrailValue,
-          aiReadOnlyDefault: settings.aiReadOnlyDefault,
+          aiReadOnlyDefault: _aiReadOnlyDefault,
           telemetryRetentionDays: settings.telemetryRetentionDays,
           telemetryRetentionMb: settings.telemetryRetentionMb,
           updateChannel: settings.updateChannel,
@@ -82,7 +85,7 @@ class PreferencesState extends ChangeNotifier {
           sidebarPosition: settings.sidebarPosition,
           utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
           utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-          autoExpandOperationLogs: settings.autoExpandOperationLogs,
+          autoExpandOperationLogs: _autoExpandLogs,
         ),
       );
       notifyListeners();
@@ -133,7 +136,7 @@ class PreferencesState extends ChangeNotifier {
       await SettingsStore.persist(
         AppSettingsSnapshot(
           guardrailValue: settings.guardrailValue,
-          aiReadOnlyDefault: settings.aiReadOnlyDefault,
+          aiReadOnlyDefault: _aiReadOnlyDefault,
           telemetryRetentionDays: settings.telemetryRetentionDays,
           telemetryRetentionMb: settings.telemetryRetentionMb,
           updateChannel: _updateChannel,
@@ -144,7 +147,7 @@ class PreferencesState extends ChangeNotifier {
           sidebarPosition: settings.sidebarPosition,
           utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
           utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-          autoExpandOperationLogs: settings.autoExpandOperationLogs,
+          autoExpandOperationLogs: _autoExpandLogs,
         ),
       );
       notifyListeners();
@@ -194,7 +197,7 @@ class PreferencesState extends ChangeNotifier {
       await SettingsStore.persist(
         AppSettingsSnapshot(
           guardrailValue: settings.guardrailValue,
-          aiReadOnlyDefault: settings.aiReadOnlyDefault,
+          aiReadOnlyDefault: _aiReadOnlyDefault,
           telemetryRetentionDays: settings.telemetryRetentionDays,
           telemetryRetentionMb: settings.telemetryRetentionMb,
           updateChannel: settings.updateChannel,
@@ -205,7 +208,7 @@ class PreferencesState extends ChangeNotifier {
           sidebarPosition: settings.sidebarPosition,
           utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
           utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-          autoExpandOperationLogs: settings.autoExpandOperationLogs,
+          autoExpandOperationLogs: _autoExpandLogs,
         ),
       );
       notifyListeners();
@@ -249,7 +252,34 @@ class PreferencesState extends ChangeNotifier {
     await SettingsStore.persist(
       AppSettingsSnapshot(
         guardrailValue: settings.guardrailValue,
-        aiReadOnlyDefault: settings.aiReadOnlyDefault,
+        aiReadOnlyDefault: _aiReadOnlyDefault,
+        telemetryRetentionDays: settings.telemetryRetentionDays,
+        telemetryRetentionMb: settings.telemetryRetentionMb,
+        updateChannel: settings.updateChannel,
+        crashReportingEnabled: settings.crashReportingEnabled,
+        themeId: settings.themeId,
+        keybindingProfile: settings.keybindingProfile,
+        sidebarWidthPx: settings.sidebarWidthPx,
+        sidebarPosition: settings.sidebarPosition,
+        utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
+        utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
+        autoExpandOperationLogs: _autoExpandLogs,
+      ),
+    );
+    notifyListeners();
+  }
+
+  Future<void> setAiReadOnlyDefault(bool value) async {
+    if (_aiReadOnlyDefault == value) {
+      return;
+    }
+
+    _aiReadOnlyDefault = value;
+    final settings = await SettingsStore.load();
+    await SettingsStore.persist(
+      AppSettingsSnapshot(
+        guardrailValue: settings.guardrailValue,
+        aiReadOnlyDefault: _aiReadOnlyDefault,
         telemetryRetentionDays: settings.telemetryRetentionDays,
         telemetryRetentionMb: settings.telemetryRetentionMb,
         updateChannel: settings.updateChannel,
