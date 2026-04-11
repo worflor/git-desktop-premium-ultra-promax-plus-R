@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
+import '../../ui/resonance_text.dart';
 import '../../ui/tokens.dart';
 import '../../backend/ai.dart';
 import '../../backend/git.dart';
@@ -1975,14 +1976,23 @@ class _CommitReviewPane extends StatelessWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        '$guardrailLabel | $modelLabel',
+                      child: Text.rich(
+                        TextSpan(
+                          style: TextStyle(
+                            color: tokens.textMuted,
+                            fontSize: 10.5,
+                          ),
+                          children: [
+                            TextSpan(text: guardrailLabel),
+                            TextSpan(
+                              text: '  ·  ',
+                              style: TextStyle(color: tokens.textFaint),
+                            ),
+                            TextSpan(text: modelLabel),
+                          ],
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: tokens.textMuted,
-                          fontSize: 10.5,
-                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -2062,9 +2072,10 @@ class _CommitReviewPane extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                 ],
-                Text(
+                resonanceText(
                   review.summary,
-                  style: TextStyle(
+                  tokens,
+                  baseStyle: TextStyle(
                     color: tokens.textStrong,
                     fontSize: 11.8,
                     fontWeight: FontWeight.w700,
@@ -2078,9 +2089,10 @@ class _CommitReviewPane extends StatelessWidget {
                   expanded: reasoningExpanded,
                   preview: review.reasoningReport,
                   onToggle: onToggleReasoning,
-                  child: Text(
+                  child: resonanceText(
                     review.reasoningReport,
-                    style: TextStyle(
+                    tokens,
+                    baseStyle: TextStyle(
                       color: tokens.textNormal,
                       fontSize: 11.2,
                       height: 1.5,
@@ -2428,9 +2440,10 @@ class _ReviewFindingCard extends StatelessWidget {
                   ],
                   if (finding.evidence.trim().isNotEmpty) ...[
                     const SizedBox(height: 8),
-                    Text(
+                    resonanceText(
                       finding.evidence,
-                      style: TextStyle(
+                      tokens,
+                      baseStyle: TextStyle(
                         color: tokens.textNormal,
                         fontSize: 11.2,
                         height: 1.45,
@@ -2449,9 +2462,10 @@ class _ReviewFindingCard extends StatelessWidget {
                           ),
                         ),
                       ),
-                      child: Text(
+                      child: resonanceText(
                         finding.whyItMatters,
-                        style: TextStyle(
+                        tokens,
+                        baseStyle: TextStyle(
                           color: tokens.textMuted,
                           fontSize: 11,
                           height: 1.45,
