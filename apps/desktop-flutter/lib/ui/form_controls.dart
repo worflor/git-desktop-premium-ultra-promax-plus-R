@@ -216,3 +216,120 @@ class AppDropdownField<T> extends StatelessWidget {
     );
   }
 }
+
+class AppMultilineTextField extends StatefulWidget {
+  final TextEditingController controller;
+  final String? hintText;
+  final double minHeight;
+  final double maxHeight;
+  final double fontSize;
+  final bool autofocus;
+  final bool enabled;
+  final bool mono;
+  final ValueChanged<String>? onChanged;
+  final FocusNode? focusNode;
+  final EdgeInsetsGeometry padding;
+
+  const AppMultilineTextField({
+    super.key,
+    required this.controller,
+    this.hintText,
+    this.minHeight = 96,
+    this.maxHeight = 220,
+    this.fontSize = 12,
+    this.autofocus = false,
+    this.enabled = true,
+    this.mono = false,
+    this.onChanged,
+    this.focusNode,
+    this.padding = const EdgeInsets.fromLTRB(10, 10, 10, 10),
+  });
+
+  @override
+  State<AppMultilineTextField> createState() => _AppMultilineTextFieldState();
+}
+
+class _AppMultilineTextFieldState extends State<AppMultilineTextField> {
+  late FocusNode _focusNode;
+  late bool _ownsFocusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _ownsFocusNode = widget.focusNode == null;
+    _focusNode = widget.focusNode ?? FocusNode();
+    _focusNode.addListener(_handleFocusChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant AppMultilineTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.focusNode == widget.focusNode) {
+      return;
+    }
+    _focusNode.removeListener(_handleFocusChanged);
+    if (_ownsFocusNode) {
+      _focusNode.dispose();
+    }
+    _ownsFocusNode = widget.focusNode == null;
+    _focusNode = widget.focusNode ?? FocusNode();
+    _focusNode.addListener(_handleFocusChanged);
+  }
+
+  void _handleFocusChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_handleFocusChanged);
+    if (_ownsFocusNode) {
+      _focusNode.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return AppInputShell(
+      height: widget.minHeight,
+      padding: widget.padding,
+      focused: _focusNode.hasFocus,
+      enabled: widget.enabled,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minHeight: widget.minHeight - 20,
+          maxHeight: widget.maxHeight,
+        ),
+        child: Scrollbar(
+          child: TextField(
+            controller: widget.controller,
+            focusNode: _focusNode,
+            autofocus: widget.autofocus,
+            enabled: widget.enabled,
+            minLines: null,
+            maxLines: null,
+            expands: true,
+            onChanged: widget.onChanged,
+            cursorColor: t.accentBright,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: widget.fontSize,
+              fontFamily: widget.mono ? 'JetBrains Mono' : null,
+            ),
+            decoration: InputDecoration.collapsed(
+              hintText: widget.hintText,
+              hintStyle: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.5),
+                fontSize: widget.fontSize,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

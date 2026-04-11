@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'app/app_identity.dart';
+import 'app/ai_settings_state.dart';
 import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
 import 'app/hyper_reactivity.dart';
@@ -42,6 +43,9 @@ void main() async {
   final preferencesState = PreferencesState();
   await preferencesState.load();
 
+  final aiSettingsState = AiSettingsState();
+  await aiSettingsState.load();
+
   final diagnosticsState = DiagnosticsState.instance;
   await diagnosticsState.load();
 
@@ -51,6 +55,7 @@ void main() async {
         ChangeNotifierProvider.value(value: themeState),
         ChangeNotifierProvider.value(value: repoState),
         ChangeNotifierProvider.value(value: preferencesState),
+        ChangeNotifierProvider.value(value: aiSettingsState),
         ChangeNotifierProvider.value(value: diagnosticsState),
         ChangeNotifierProvider.value(value: appIdentityState),
         ChangeNotifierProvider(create: (_) => HyperReactivity()),
@@ -558,9 +563,8 @@ class _ParticleBackdropPainter extends CustomPainter {
       final hazeX = 120 + rng.next() * 760;
       final hazeY = 120 + rng.next() * 760;
       final hazeRadius = 90 + rng.next() * 180;
-      final hazeColor = haze.isEven
-          ? const Color(0xFF7AA4FF)
-          : const Color(0xFFB682FF);
+      final hazeColor =
+          haze.isEven ? const Color(0xFF7AA4FF) : const Color(0xFFB682FF);
       fillPaint.color = hazeColor.withValues(alpha: alpha * 0.025);
       canvas.drawCircle(Offset(hazeX, hazeY), hazeRadius, fillPaint);
     }
@@ -956,7 +960,8 @@ class _ParticleBackdropPainter extends CustomPainter {
         strokePaint
           ..color = const Color(0xFF78FFEA).withValues(alpha: alpha * 0.11)
           ..strokeWidth = 0.8;
-        canvas.drawCircle(Offset(cx, cy), ringRadius + 14 + rng.next() * 20, strokePaint);
+        canvas.drawCircle(
+            Offset(cx, cy), ringRadius + 14 + rng.next() * 20, strokePaint);
       }
 
       for (var orbitIndex = 0; orbitIndex < orbitCount; orbitIndex++) {
@@ -981,10 +986,10 @@ class _ParticleBackdropPainter extends CustomPainter {
       final x = rng.next() * 1000;
       final y = rng.next() * 1000;
       final r = 0.35 + rng.next() * 1.05 * radiusScale;
-      final color = rng.next() > 0.72
-          ? const Color(0xFF9E6CFF)
-          : const Color(0xFF50FFD2);
-      fillPaint.color = color.withValues(alpha: alpha * (0.18 + rng.next() * 0.24));
+      final color =
+          rng.next() > 0.72 ? const Color(0xFF9E6CFF) : const Color(0xFF50FFD2);
+      fillPaint.color =
+          color.withValues(alpha: alpha * (0.18 + rng.next() * 0.24));
       canvas.drawCircle(Offset(x, y), r * 1.8, fillPaint);
     }
   }

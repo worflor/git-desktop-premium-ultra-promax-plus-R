@@ -1435,17 +1435,39 @@ class _CommitDetail extends StatelessWidget {
             onTap: onToggleTag,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
-              padding: const EdgeInsets.all(4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: tagInputVisible ? t.itemActiveBg : Colors.transparent,
-                borderRadius: BorderRadius.circular(5),
-              ),
-              child: AppIcon(
-                  name: 'tag',
-                  size: 12,
+                color: tagInputVisible
+                    ? t.itemActiveBg
+                    : t.chromeAccent.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
                   color: tagInputVisible
-                      ? t.accentBright
-                      : t.textMuted.withValues(alpha: 0.6)),
+                      ? t.itemActiveBorder
+                      : t.chromeAccent.withValues(alpha: 0.12),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AppIcon(
+                    name: 'tag',
+                    size: 12,
+                    color: tagInputVisible
+                        ? t.accentBright
+                        : t.textMuted.withValues(alpha: 0.8),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    tagInputVisible ? 'Close tag' : 'Create tag',
+                    style: TextStyle(
+                      color: tagInputVisible ? t.accentBright : t.textNormal,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

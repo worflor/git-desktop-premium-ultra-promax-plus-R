@@ -330,16 +330,29 @@ class _Topbar extends StatelessWidget {
           Expanded(
             child: Padding(
               padding: const EdgeInsets.only(left: 10),
-              child: Text(
-                repoName ?? 'No repository open',
-                style: TextStyle(
-                  color: repoName != null
-                      ? t.textStrong
-                      : t.textMuted.withValues(alpha: 0.5),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    repoName ?? 'No repository open',
+                    style: TextStyle(
+                      color: repoName != null
+                          ? t.textStrong
+                          : t.textMuted.withValues(alpha: 0.5),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (status != null) ...[
+                    const SizedBox(height: 4),
+                    _BranchPill(
+                      branch: status.branch,
+                      onTap: () => onModeChanged(_WorkspaceMode.branches),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
@@ -509,6 +522,62 @@ class _SyncModeBtn extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+class _BranchPill extends StatefulWidget {
+  final String branch;
+  final VoidCallback onTap;
+
+  const _BranchPill({
+    required this.branch,
+    required this.onTap,
+  });
+
+  @override
+  State<_BranchPill> createState() => _BranchPillState();
+}
+
+class _BranchPillState extends State<_BranchPill> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: _hovered ? t.itemHoverBg : t.surface0,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: t.secondaryBtnBorder),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppIcon(name: 'git-branch', size: 11, color: t.accentBright),
+              const SizedBox(width: 5),
+              Text(
+                widget.branch,
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 4),
+              AppIcon(name: 'chevron-right', size: 10, color: t.textMuted),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

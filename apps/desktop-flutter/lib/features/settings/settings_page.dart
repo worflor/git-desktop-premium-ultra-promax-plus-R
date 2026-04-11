@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +8,7 @@ import '../../backend/ai.dart';
 import '../../backend/ai_audit_store.dart';
 import '../../backend/command_telemetry_store.dart';
 import '../../backend/dtos.dart';
+import '../../app/ai_settings_state.dart';
 import '../../app/preferences_state.dart';
 import '../../app/theme_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
@@ -23,6 +25,8 @@ const _guardrailStageColors = [
   Color(0xFFB280FF),
 ];
 
+enum _PromptSaveState { idle, typing, saving, saved, error }
+
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -32,13 +36,21 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final Stopwatch _mountedAt = Stopwatch()..start();
+  final Map<String, TextEditingController> _categoryLabelControllers = {};
+  final TextEditingController _commitPromptController = TextEditingController();
   String _diagnosticsFocus = 'command';
   String? _actionMessage;
   String? _actionError;
   bool _dataMaintenanceBusy = false;
   bool _aiProvidersLoading = false;
+  bool _aiModelOptionsLoading = false;
   String? _aiProvidersError;
+  String? _aiModelOptionsError;
   List<AiProviderStatus> _aiProviders = const [];
+  List<AiModelCategoryData> _aiModelCategories = const [];
+  Timer? _commitPromptSaveDebounce;
+  _PromptSaveState _commitPromptSaveState = _PromptSaveState.idle;
+  DateTime? _commitPromptSavedAt;
 
   @override
   void initState() {
@@ -57,28 +69,80 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) {
         return;
       }
-      _refreshAiProviders();
+      final aiSettings = context.read<AiSettingsState>();
+      _commitPromptController.text = aiSettings.commitMessagePrompt;
+      _refreshAiDiagnostics();
     });
   }
 
-  Future<void> _refreshAiProviders({bool forceRefresh = true}) async {
+  @override
+  void dispose() {
+    _commitPromptSaveDebounce?.cancel();
+    _commitPromptController.dispose();
+    for (final controller in _categoryLabelControllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _refreshAiDiagnostics({bool forceRefresh = true}) async {
     setState(() {
       _aiProvidersLoading = true;
+      _aiModelOptionsLoading = true;
       _aiProvidersError = null;
+      _aiModelOptionsError = null;
     });
-    final result = await listAiProviders(forceRefresh: forceRefresh);
+    final providerResult = await listAiProviders(forceRefresh: forceRefresh);
+    final modelResult = await listAiModelOptions(forceRefresh: forceRefresh);
     if (!mounted) {
       return;
     }
+    if (modelResult.ok) {
+      await context
+          .read<AiSettingsState>()
+          .syncModelCategories(modelResult.data!.categories);
+    }
     setState(() {
       _aiProvidersLoading = false;
-      if (result.ok) {
-        _aiProviders = result.data!.providers;
+      _aiModelOptionsLoading = false;
+      if (providerResult.ok) {
+        _aiProviders = providerResult.data!.providers;
         _aiProvidersError = null;
       } else {
-        _aiProvidersError = result.error;
+        _aiProvidersError = providerResult.error;
+      }
+
+      if (modelResult.ok) {
+        _aiModelCategories = modelResult.data!.categories;
+        _aiModelOptionsError = null;
+        _syncCategoryControllers();
+      } else {
+        _aiModelOptionsError = modelResult.error;
       }
     });
+  }
+
+  void _syncCategoryControllers() {
+    final aiSettings = context.read<AiSettingsState>();
+    final activeIds = _aiModelCategories.map((category) => category.id).toSet();
+    final staleIds = _categoryLabelControllers.keys
+        .where((id) => !activeIds.contains(id))
+        .toList();
+    for (final id in staleIds) {
+      _categoryLabelControllers.remove(id)?.dispose();
+    }
+
+    for (final category in _aiModelCategories) {
+      final resolvedLabel =
+          aiSettings.labelForCategory(category.id, category.label);
+      final controller = _categoryLabelControllers.putIfAbsent(
+        category.id,
+        () => TextEditingController(text: resolvedLabel),
+      );
+      if (controller.text != resolvedLabel) {
+        controller.text = resolvedLabel;
+      }
+    }
   }
 
   Future<void> _saveGuardrailStage(int stage) async {
@@ -157,6 +221,171 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _setAutoExpandLogs(bool value) async {
     await context.read<PreferencesState>().setAutoExpandLogs(value);
+  }
+
+  Future<void> _saveModelSelection(String categoryId, String value) async {
+    try {
+      await context
+          .read<AiSettingsState>()
+          .setModelSelection(categoryId, value);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = null;
+        _actionMessage = 'Saved AI model selection.';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = 'Failed to save AI model selection.');
+    }
+  }
+
+  Future<void> _saveModelCategoryLabel(
+    String categoryId,
+    String value,
+  ) async {
+    try {
+      await context.read<AiSettingsState>().setCategoryLabel(categoryId, value);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = null;
+        _actionMessage = 'Saved model alias.';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = 'Failed to save model alias.');
+    }
+  }
+
+  Future<void> _saveCommitMessageModelCategory(String value) async {
+    try {
+      await context
+          .read<AiSettingsState>()
+          .setCommitMessageModelCategoryId(value);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = null;
+        _actionMessage = 'Saved commit message model slot.';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(
+        () => _actionError = 'Failed to save commit message model slot.',
+      );
+    }
+  }
+
+  void _scheduleCommitPromptSave(String value) {
+    _commitPromptSaveDebounce?.cancel();
+    if (mounted) {
+      setState(() {
+        _commitPromptSaveState = _PromptSaveState.typing;
+      });
+    }
+    _commitPromptSaveDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) {
+        setState(() {
+          _commitPromptSaveState = _PromptSaveState.saving;
+        });
+      }
+      unawaited(_saveCommitPrompt(value));
+    });
+  }
+
+  Future<void> _saveCommitPrompt(String value) async {
+    try {
+      await context.read<AiSettingsState>().setCommitMessagePrompt(value);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = null;
+        _actionMessage = value.trim().isEmpty
+            ? 'Cleared commit message custom prompt.'
+            : 'Saved commit message custom prompt.';
+        _commitPromptSaveState = _PromptSaveState.saved;
+        _commitPromptSavedAt = DateTime.now();
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(
+        () {
+          _actionError = 'Failed to save commit message custom prompt.';
+          _commitPromptSaveState = _PromptSaveState.error;
+        },
+      );
+    }
+  }
+
+  String _commitPromptStatusLabel() {
+    switch (_commitPromptSaveState) {
+      case _PromptSaveState.typing:
+        return 'Editing';
+      case _PromptSaveState.saving:
+        return 'Autosaving';
+      case _PromptSaveState.saved:
+        if (_commitPromptSavedAt == null) {
+          return 'Saved';
+        }
+        final time = _commitPromptSavedAt!;
+        final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+        final minute = time.minute.toString().padLeft(2, '0');
+        final suffix = time.hour >= 12 ? 'PM' : 'AM';
+        return 'Saved $hour:$minute $suffix';
+      case _PromptSaveState.error:
+        return 'Save failed';
+      case _PromptSaveState.idle:
+        return _commitPromptController.text.trim().isEmpty
+            ? 'Wrapper only'
+            : 'Ready';
+    }
+  }
+
+  Color _commitPromptStatusColor(AppTokens t) {
+    switch (_commitPromptSaveState) {
+      case _PromptSaveState.typing:
+        return t.stateStaged;
+      case _PromptSaveState.saving:
+        return t.accentBright;
+      case _PromptSaveState.saved:
+        return t.stateAdded;
+      case _PromptSaveState.error:
+        return t.stateConflicted;
+      case _PromptSaveState.idle:
+        return t.textMuted;
+    }
+  }
+
+  String _commitPromptStatusDetail() {
+    switch (_commitPromptSaveState) {
+      case _PromptSaveState.typing:
+        return 'Changes will persist automatically after a short pause.';
+      case _PromptSaveState.saving:
+        return 'Writing the prompt file now.';
+      case _PromptSaveState.saved:
+        return _commitPromptController.text.trim().isEmpty
+            ? 'The custom file is cleared, so commit generation uses only the shared wrapper prompt.'
+            : 'The custom file is current and will be blended with the shared wrapper prompt.';
+      case _PromptSaveState.error:
+        return 'The prompt could not be written to disk.';
+      case _PromptSaveState.idle:
+        return _commitPromptController.text.trim().isEmpty
+            ? 'No custom guidance yet. Commit generation will use only the shared wrapper prompt.'
+            : 'Custom guidance is loaded and ready.';
+    }
   }
 
   Future<bool> _confirmLocalDataAction(String message) async {
@@ -432,6 +661,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final themeState = context.watch<ThemeState>();
+    final aiSettings = context.watch<AiSettingsState>();
     final preferences = context.watch<PreferencesState>();
     final diagnostics = context.watch<DiagnosticsState>();
     final commandReport = diagnostics.commandLatencyReport;
@@ -441,6 +671,10 @@ class _SettingsPageState extends State<SettingsPage> {
     final topOffenders =
         _buildTopOffenders(commandReport, diffReport, uiReport);
     final providerCards = _buildProviderCards();
+    if (_commitPromptController.text != aiSettings.commitMessagePrompt) {
+      _commitPromptController.text = aiSettings.commitMessagePrompt;
+    }
+    _syncCategoryControllers();
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -603,7 +837,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     onTap: _aiProvidersLoading
                         ? null
                         : () {
-                            _refreshAiProviders();
+                            _refreshAiDiagnostics();
                           },
                   ),
                 ],
@@ -648,6 +882,131 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
               const SizedBox(height: 10),
               _ProviderGrid(providers: providerCards),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        _StateCard(
+          title: 'AI Integrations',
+          summary:
+              'Model slots, inline aliases, and commit-message generation preferences.',
+          wide: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const _SettingsSubtitle('Model Slots'),
+                  const Spacer(),
+                  _GhostMiniButton(
+                    label: _aiProvidersLoading || _aiModelOptionsLoading
+                        ? 'Refreshing...'
+                        : 'Refresh AI',
+                    onTap: _aiProvidersLoading || _aiModelOptionsLoading
+                        ? null
+                        : () {
+                            _refreshAiDiagnostics();
+                          },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Fast and quality slots can be renamed inline and routed to any detected provider model.',
+                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
+              ),
+              if (_aiModelOptionsError != null &&
+                  _aiModelCategories.isEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _aiModelOptionsError!,
+                  style: TextStyle(
+                    color: t.stateConflicted,
+                    fontSize: 11,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+              if (_aiModelOptionsLoading && _aiModelCategories.isEmpty) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: t.accentBright,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Loading model categories...',
+                      style: TextStyle(color: t.textMuted, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ] else if (_aiModelCategories.isEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'No model options are available yet. Detect a compatible local AI CLI first.',
+                  style: TextStyle(color: t.textMuted, fontSize: 12),
+                ),
+              ] else ...[
+                const SizedBox(height: 10),
+                for (final category in _aiModelCategories) ...[
+                  _AiModelCategoryEditor(
+                    category: category,
+                    labelController: _categoryLabelControllers[category.id]!,
+                    selectedValue: aiSettings.modelSelections[category.id] ??
+                        (category.models.isNotEmpty
+                            ? category.models.first.value
+                            : ''),
+                    onLabelChanged: (value) {
+                      _saveModelCategoryLabel(category.id, value);
+                    },
+                    onModelChanged: category.models.isEmpty
+                        ? null
+                        : (value) {
+                            if (value == null || value.isEmpty) {
+                              return;
+                            }
+                            _saveModelSelection(category.id, value);
+                          },
+                  ),
+                  if (category != _aiModelCategories.last)
+                    const SizedBox(height: 10),
+                ],
+              ],
+              const SizedBox(height: 18),
+              const _SettingsSubtitle('Commit Messages'),
+              const SizedBox(height: 8),
+              Text(
+                'Choose which model slot drives commit messages and set optional long-form style guidance.',
+                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              if (_aiModelCategories.isNotEmpty)
+                _AiCommitIntegrationEditor(
+                  categories: _aiModelCategories,
+                  aiSettings: aiSettings,
+                  promptController: _commitPromptController,
+                  promptStatusLabel: _commitPromptStatusLabel(),
+                  promptStatusColor: _commitPromptStatusColor(t),
+                  promptStatusDetail: _commitPromptStatusDetail(),
+                  onCategoryChanged: (value) {
+                    if (value == null || value.isEmpty) {
+                      return;
+                    }
+                    _saveCommitMessageModelCategory(value);
+                  },
+                  onPromptChanged: _scheduleCommitPromptSave,
+                )
+              else
+                Text(
+                  'Model-slot settings will appear here once provider models are available.',
+                  style: TextStyle(color: t.textMuted, fontSize: 12),
+                ),
             ],
           ),
         ),
@@ -1593,6 +1952,274 @@ class _ProviderGrid extends StatelessWidget {
   }
 }
 
+class _AiModelCategoryEditor extends StatelessWidget {
+  final AiModelCategoryData category;
+  final TextEditingController labelController;
+  final String selectedValue;
+  final ValueChanged<String> onLabelChanged;
+  final ValueChanged<String?>? onModelChanged;
+
+  const _AiModelCategoryEditor({
+    required this.category,
+    required this.labelController,
+    required this.selectedValue,
+    required this.onLabelChanged,
+    required this.onModelChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    AiModelOptionData? selectedModel;
+    for (final model in category.models) {
+      if (model.value == selectedValue) {
+        selectedModel = model;
+        break;
+      }
+    }
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: t.rowBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              _InlineInfoChip(
+                label: category.id,
+                color: t.accentBright,
+              ),
+              _InlineInfoChip(
+                label:
+                    '${category.models.length} model${category.models.length == 1 ? '' : 's'}',
+                color: t.stateStaged,
+              ),
+              if (selectedModel != null)
+                _InlineInfoChip(
+                  label: selectedModel.providerLabel,
+                  color: t.stateAdded,
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          AppTextField(
+            controller: labelController,
+            hintText: category.label,
+            onChanged: onLabelChanged,
+          ),
+          if (category.description != null &&
+              category.description!.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              category.description!,
+              style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.4),
+            ),
+          ],
+          const SizedBox(height: 10),
+          if (category.models.isEmpty)
+            Text(
+              'No live models discovered for this slot yet.',
+              style: TextStyle(color: t.textMuted, fontSize: 11),
+            )
+          else
+            AppDropdownField<String>(
+              value: selectedValue,
+              items: category.models
+                  .map(
+                    (model) => DropdownMenuItem<String>(
+                      value: model.value,
+                      child: Text(model.label),
+                    ),
+                  )
+                  .toList(),
+              onChanged: onModelChanged ?? (_) {},
+            ),
+          if (selectedModel != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              selectedModel.description,
+              style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.4),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Live model id: ${selectedModel.modelId}',
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono',
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AiCommitIntegrationEditor extends StatelessWidget {
+  final List<AiModelCategoryData> categories;
+  final AiSettingsState aiSettings;
+  final TextEditingController promptController;
+  final String promptStatusLabel;
+  final Color promptStatusColor;
+  final String promptStatusDetail;
+  final ValueChanged<String?> onCategoryChanged;
+  final ValueChanged<String> onPromptChanged;
+
+  const _AiCommitIntegrationEditor({
+    required this.categories,
+    required this.aiSettings,
+    required this.promptController,
+    required this.promptStatusLabel,
+    required this.promptStatusColor,
+    required this.promptStatusDetail,
+    required this.onCategoryChanged,
+    required this.onPromptChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final selectedCategoryId = categories.any(
+      (category) => category.id == aiSettings.commitMessageModelCategoryId,
+    )
+        ? aiSettings.commitMessageModelCategoryId
+        : categories.first.id;
+    final selectedCategory =
+        categories.where((category) => category.id == selectedCategoryId).first;
+    AiModelOptionData? selectedModel;
+    for (final model in selectedCategory.models) {
+      if (model.value == aiSettings.modelSelections[selectedCategory.id]) {
+        selectedModel = model;
+        break;
+      }
+    }
+    selectedModel ??=
+        selectedCategory.models.isEmpty ? null : selectedCategory.models.first;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: t.rowBg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  _InlineInfoChip(
+                    label: aiSettings.labelForCategory(
+                      selectedCategory.id,
+                      selectedCategory.label,
+                    ),
+                    color: t.accentBright,
+                  ),
+                  if (selectedModel != null)
+                    _InlineInfoChip(
+                      label: selectedModel.providerLabel,
+                      color: t.stateAdded,
+                    ),
+                ],
+              ),
+              if (selectedModel != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  selectedModel.modelId,
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  selectedModel.description,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 11,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        AppDropdownField<String>(
+          value: selectedCategoryId,
+          items: categories
+              .map(
+                (category) => DropdownMenuItem<String>(
+                  value: category.id,
+                  child: Text(
+                    aiSettings.labelForCategory(category.id, category.label),
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: onCategoryChanged,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                'Autosaves to ${aiSettings.commitMessagePromptPath}',
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 11,
+                  fontFamily: 'JetBrainsMono',
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            _InlineInfoChip(
+              label: promptStatusLabel,
+              color: promptStatusColor,
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          promptStatusDetail,
+          style: TextStyle(color: t.textMuted, fontSize: 10.5, height: 1.35),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Leave blank to clear the file and fall back to the shared commit wrapper prompt.',
+          style: TextStyle(
+            color: t.textMuted.withValues(alpha: 0.82),
+            fontSize: 10.5,
+            height: 1.35,
+          ),
+        ),
+        const SizedBox(height: 10),
+        AppMultilineTextField(
+          controller: promptController,
+          hintText:
+              'Optional long-form guidance for commit message voice, structure, or formatting.',
+          minHeight: 120,
+          maxHeight: 220,
+          onChanged: onPromptChanged,
+        ),
+      ],
+    );
+  }
+}
+
 class _SettingsSubtitle extends StatelessWidget {
   final String label;
 
@@ -1608,6 +2235,33 @@ class _SettingsSubtitle extends StatelessWidget {
         fontSize: 10,
         fontWeight: FontWeight.w700,
         letterSpacing: 0.8,
+      ),
+    );
+  }
+}
+
+class _InlineInfoChip extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _InlineInfoChip({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }

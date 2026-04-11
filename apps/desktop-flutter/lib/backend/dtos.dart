@@ -313,6 +313,94 @@ class AiProviderListData {
       );
 }
 
+class AiModelOptionData {
+  final String value;
+  final String modelId;
+  final String providerId;
+  final String providerLabel;
+  final String? planName;
+  final String label;
+  final String description;
+
+  const AiModelOptionData({
+    required this.value,
+    required this.modelId,
+    required this.providerId,
+    required this.providerLabel,
+    this.planName,
+    required this.label,
+    required this.description,
+  });
+
+  factory AiModelOptionData.fromJson(Map<String, dynamic> j) =>
+      AiModelOptionData(
+        value: j['value'] ?? '',
+        modelId: j['model_id'] ?? j['modelId'] ?? '',
+        providerId: j['provider_id'] ?? j['providerId'] ?? '',
+        providerLabel: j['provider_label'] ?? j['providerLabel'] ?? '',
+        planName: j['plan_name'] ?? j['planName'],
+        label: j['label'] ?? '',
+        description: j['description'] ?? '',
+      );
+}
+
+class AiModelCategoryData {
+  final String id;
+  final String label;
+  final String? description;
+  final List<AiModelOptionData> models;
+
+  const AiModelCategoryData({
+    required this.id,
+    required this.label,
+    this.description,
+    required this.models,
+  });
+
+  factory AiModelCategoryData.fromJson(Map<String, dynamic> j) =>
+      AiModelCategoryData(
+        id: j['id'] ?? '',
+        label: j['label'] ?? '',
+        description: j['description'],
+        models: (j['models'] as List? ?? [])
+            .map((model) => AiModelOptionData.fromJson(model))
+            .toList(),
+      );
+}
+
+class AiModelOptionListData {
+  final List<AiModelCategoryData> categories;
+
+  const AiModelOptionListData({required this.categories});
+
+  factory AiModelOptionListData.fromJson(Map<String, dynamic> j) =>
+      AiModelOptionListData(
+        categories: (j['categories'] as List? ?? [])
+            .map((category) => AiModelCategoryData.fromJson(category))
+            .toList(),
+      );
+}
+
+class AiCommitMessageData {
+  final String providerId;
+  final String modelId;
+  final String message;
+  final String scopeLabel;
+  final bool usedCondensedDiff;
+  final int promptCharacters;
+  final int diffCharacters;
+
+  const AiCommitMessageData({
+    required this.providerId,
+    required this.modelId,
+    required this.message,
+    required this.scopeLabel,
+    required this.usedCondensedDiff,
+    required this.promptCharacters,
+    required this.diffCharacters,
+  });
+}
+
 class RebaseTodoEntry {
   final String action;
   final String commitHash;

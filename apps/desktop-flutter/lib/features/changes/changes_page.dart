@@ -1,17 +1,31 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../ui/control_chrome.dart';
-import '../../ui/form_controls.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
 import '../../ui/tokens.dart';
+import '../../backend/ai.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
+import '../../app/ai_settings_state.dart';
 import '../../app/repository_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../diff/diff_shell.dart';
+
+enum _CommitRunMode { commitOnly, commitAndSync }
+
+class _PrimaryCommitAction {
+  final String label;
+  final String detail;
+  final bool syncAfterCommit;
+
+  const _PrimaryCommitAction({
+    required this.label,
+    required this.detail,
+    required this.syncAfterCommit,
+  });
+}
 
 class ChangesPage extends StatefulWidget {
   const ChangesPage({super.key});
@@ -21,26 +35,23 @@ class ChangesPage extends StatefulWidget {
 
 class _ChangesPageState extends State<ChangesPage> {
   final Stopwatch _mountedAt = Stopwatch()..start();
-  final Set<String> _selected = {};
+  final Set<String> _includedPaths = {};
+  final _commitMsgCtrl = TextEditingController();
+  final _commitMsgFocusNode = FocusNode();
+
+  String? _draftKey;
   String? _selectedDiffPath;
   String? _visibleDiffPath;
   String? _diffContent;
   bool _diffLoading = false;
   String? _diffError;
-  final _commitMsgCtrl = TextEditingController();
   bool _actionRunning = false;
+  bool _generateRunning = false;
+  bool _commitAiLoading = false;
+  String? _commitAiError;
+  List<AiModelCategoryData> _commitAiCategories = const [];
   String? _actionMessage;
   String? _actionError;
-
-  // Drag-to-select state
-  final _listScrollCtrl = ScrollController();
-  String? _dragCandidatePath;
-  Offset? _dragCandidatePoint;
-  bool _isDragging = false;
-  bool? _dragSelectMode; // true = select, false = deselect
-  final Set<String> _dragVisited = {};
-  static const double _kItemH = 42.0; // approximate row height
-  static const double _kListPaddingH = 8.0;
 
   @override
   void initState() {
@@ -54,73 +65,86 @@ class _ChangesPageState extends State<ChangesPage> {
         phase: 'mount',
         durationMs: _mountedAt.elapsedMicroseconds / 1000,
       );
+      _refreshCommitAiConfig();
     });
   }
 
   @override
   void dispose() {
     _commitMsgCtrl.dispose();
-    _listScrollCtrl.dispose();
+    _commitMsgFocusNode.dispose();
     super.dispose();
   }
 
-  bool _isDirty(String s) => s.isNotEmpty && s.trim().isNotEmpty;
+  bool _isDirty(String s) => s.trim().isNotEmpty;
 
-  void _applyDragSelection(String path, bool select) {
-    setState(() {
-      if (select) {
-        _selected.add(path);
-      } else {
-        _selected.remove(path);
-      }
-    });
+  String _buildDraftKey(RepositoryStatus status) {
+    final files = status.files
+        .map((file) => '${file.path}|${file.staged}|${file.unstaged}')
+        .join('||');
+    return '${status.branch}|${status.upstream}|$files';
   }
 
-  void _onDragPointerDown(String path, PointerDownEvent event) {
-    if (event.kind != PointerDeviceKind.mouse ||
-        (event.buttons & kPrimaryButton) == 0) {
-      _onDragPointerUp();
+  void _syncDraftFromStatus(RepositoryStatus status) {
+    final nextKey = _buildDraftKey(status);
+    if (_draftKey == nextKey) {
       return;
     }
-    _dragCandidatePath = path;
-    _dragCandidatePoint = event.localPosition;
-    _isDragging = false;
-    _dragSelectMode = null;
-    _dragVisited.clear();
+    _draftKey = nextKey;
+    final staged = status.files
+        .where((file) => _isDirty(file.staged))
+        .map((file) => file.path)
+        .toSet();
+    _includedPaths
+      ..clear()
+      ..addAll(
+          staged.isNotEmpty ? staged : status.files.map((file) => file.path));
   }
 
-  void _onDragPointerMove(Offset pos, List<RepositoryStatusFile> files) {
-    if (_dragCandidatePath == null || _dragCandidatePoint == null) return;
-    final dx = (pos.dx - _dragCandidatePoint!.dx).abs();
-    final dy = (pos.dy - _dragCandidatePoint!.dy).abs();
-    if (!_isDragging && (dx >= 4 || dy >= 4)) {
-      _isDragging = true;
-      _dragSelectMode = !_selected.contains(_dragCandidatePath!);
-      _dragVisited.add(_dragCandidatePath!);
-      _applyDragSelection(_dragCandidatePath!, _dragSelectMode!);
-    }
-    if (!_isDragging) return;
-
-    // Determine which item is under the pointer using the scroll controller
-    final scrollOff = _listScrollCtrl.hasClients ? _listScrollCtrl.offset : 0.0;
-    // pos.dy is in the local coord of the Listener (the Expanded list area)
-    final virtualY = pos.dy + scrollOff - _kListPaddingH;
-    final idx = (virtualY / _kItemH).floor();
-    if (idx >= 0 && idx < files.length) {
-      final path = files[idx].path;
-      if (!_dragVisited.contains(path)) {
-        _dragVisited.add(path);
-        _applyDragSelection(path, _dragSelectMode!);
-      }
-    }
+  int _includedDirtyCount(RepositoryStatus status) {
+    return status.files
+        .where((file) => _includedPaths.contains(file.path))
+        .length;
   }
 
-  void _onDragPointerUp() {
-    _dragCandidatePath = null;
-    _dragCandidatePoint = null;
-    _isDragging = false;
-    _dragSelectMode = null;
-    _dragVisited.clear();
+  List<String> _stagedExcludedPaths(RepositoryStatus status) {
+    return status.files
+        .where(
+          (file) =>
+              !_includedPaths.contains(file.path) && _isDirty(file.staged),
+        )
+        .map((file) => file.path)
+        .toList();
+  }
+
+  _PrimaryCommitAction _primaryActionFor(RepositoryStatus status) {
+    final branch = status.branch;
+    if (branch == 'HEAD' || branch.startsWith('(')) {
+      return const _PrimaryCommitAction(
+        label: 'Commit changes',
+        detail: 'Detached HEAD: commit locally without syncing.',
+        syncAfterCommit: false,
+      );
+    }
+    if (status.upstream == null) {
+      return const _PrimaryCommitAction(
+        label: 'Commit & publish',
+        detail: 'Create the commit and publish this branch in one step.',
+        syncAfterCommit: true,
+      );
+    }
+    if (status.ahead > 0 || status.behind > 0) {
+      return const _PrimaryCommitAction(
+        label: 'Commit & sync',
+        detail: 'Create the commit, then reconcile and ship the branch.',
+        syncAfterCommit: true,
+      );
+    }
+    return const _PrimaryCommitAction(
+      label: 'Commit & push',
+      detail: 'Create the commit and push it immediately.',
+      syncAfterCommit: true,
+    );
   }
 
   Future<void> _loadDiff(String repo, String path) async {
@@ -131,8 +155,9 @@ class _ChangesPageState extends State<ChangesPage> {
       _diffError = null;
     });
     final r = await getFileDiff(repo, path);
-    if (!mounted) return;
-    if (_selectedDiffPath != path) return;
+    if (!mounted || _selectedDiffPath != path) {
+      return;
+    }
     setState(() {
       _diffLoading = false;
       if (r.ok) {
@@ -152,77 +177,347 @@ class _ChangesPageState extends State<ChangesPage> {
     );
   }
 
-  Future<void> _stage(String repo) async {
-    if (_selected.isEmpty) return;
+  void _toggleIncluded(String path, bool include) {
     setState(() {
-      _actionRunning = true;
+      if (include) {
+        _includedPaths.add(path);
+      } else {
+        _includedPaths.remove(path);
+      }
       _actionError = null;
       _actionMessage = null;
     });
-    final r = await stagePaths(repo, _selected.toList());
-    if (!mounted) return;
-    setState(() {
-      _actionRunning = false;
-      if (r.ok) {
-        _actionMessage = 'Staged ${_selected.length} path(s).';
-        _selected.clear();
-      } else {
-        _actionError = r.error;
-      }
-    });
-    await context.read<RepositoryState>().refreshStatus();
   }
 
-  Future<void> _unstage(String repo) async {
-    if (_selected.isEmpty) return;
+  void _includeAll(RepositoryStatus status) {
     setState(() {
-      _actionRunning = true;
+      _includedPaths
+        ..clear()
+        ..addAll(status.files.map((file) => file.path));
       _actionError = null;
       _actionMessage = null;
     });
-    final r = await unstagePaths(repo, _selected.toList());
-    if (!mounted) return;
-    setState(() {
-      _actionRunning = false;
-      if (r.ok) {
-        _actionMessage = 'Unstaged ${_selected.length} path(s).';
-        _selected.clear();
-      } else {
-        _actionError = r.error;
-      }
-    });
-    await context.read<RepositoryState>().refreshStatus();
   }
 
-  Future<void> _commit(String repo, String branch) async {
-    final msg = _commitMsgCtrl.text.trim();
-    if (msg.isEmpty) return;
+  void _includeOnlyStaged(RepositoryStatus status) {
+    final staged = status.files
+        .where((file) => _isDirty(file.staged))
+        .map((file) => file.path)
+        .toSet();
+    setState(() {
+      _includedPaths
+        ..clear()
+        ..addAll(staged);
+      _actionError = null;
+      _actionMessage = null;
+    });
+  }
+
+  Future<RepositoryStatus?> _refreshAndReadStatus() async {
+    final repo = context.read<RepositoryState>();
+    await repo.refreshStatus();
+    return repo.status;
+  }
+
+  bool _hasCommitAiSelection(AiSettingsState aiSettings) {
+    for (final category in _commitAiCategories) {
+      if (category.models.isEmpty) {
+        continue;
+      }
+      if (category.id == aiSettings.commitMessageModelCategoryId) {
+        return true;
+      }
+    }
+    return _commitAiCategories.any((category) => category.models.isNotEmpty);
+  }
+
+  String _commitAiTooltip(AiSettingsState aiSettings, int includedCount) {
+    if (_generateRunning) {
+      return 'Generating commit message...';
+    }
+    if (_commitAiLoading) {
+      return 'Preparing commit-message AI...';
+    }
+    if (includedCount == 0) {
+      return 'Select at least one file to generate a commit message.';
+    }
+    if (!_hasCommitAiSelection(aiSettings)) {
+      return _commitAiError ??
+          'Configure commit-message AI in Settings > AI Integrations.';
+    }
+    return 'Generate commit message';
+  }
+
+  Future<void> _refreshCommitAiConfig({bool forceRefresh = false}) async {
+    setState(() {
+      _commitAiLoading = true;
+      _commitAiError = null;
+    });
+    final result = await listAiModelOptions(forceRefresh: forceRefresh);
+    if (!mounted) {
+      return;
+    }
+    if (result.ok) {
+      await context
+          .read<AiSettingsState>()
+          .syncModelCategories(result.data!.categories);
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _commitAiLoading = false;
+      if (result.ok) {
+        _commitAiCategories = result.data!.categories;
+        _commitAiError = null;
+      } else {
+        _commitAiError = result.error;
+      }
+    });
+  }
+
+  Future<List<AiModelCategoryData>?> _resolveCommitAiCategories({
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh &&
+        _commitAiCategories.any((category) => category.models.isNotEmpty)) {
+      return _commitAiCategories;
+    }
+
+    final result = await listAiModelOptions(forceRefresh: forceRefresh);
+    if (!mounted) {
+      return null;
+    }
+    if (!result.ok) {
+      setState(() {
+        _commitAiError = result.error;
+      });
+      return null;
+    }
+
+    await context
+        .read<AiSettingsState>()
+        .syncModelCategories(result.data!.categories);
+    if (!mounted) {
+      return null;
+    }
+
+    setState(() {
+      _commitAiCategories = result.data!.categories;
+      _commitAiError = null;
+    });
+    return result.data!.categories;
+  }
+
+  Future<void> _generateCommitMessage(
+    String repoPath,
+    RepositoryStatus status,
+  ) async {
+    final included = status.files
+        .where((file) => _includedPaths.contains(file.path))
+        .toList();
+    if (included.isEmpty) {
+      setState(() {
+        _actionError = 'Choose at least one file before generating.';
+        _actionMessage = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _generateRunning = true;
+      _actionError = null;
+      _actionMessage = null;
+    });
+
+    final categories = await _resolveCommitAiCategories();
+    if (!mounted) {
+      return;
+    }
+    if (categories == null) {
+      setState(() {
+        _generateRunning = false;
+        _actionError =
+            _commitAiError ?? 'Commit-message AI is not available yet.';
+      });
+      return;
+    }
+
+    final aiSettings = context.read<AiSettingsState>();
+    final selectedCategory = categories
+            .where(
+              (category) =>
+                  category.id == aiSettings.commitMessageModelCategoryId &&
+                  category.models.isNotEmpty,
+            )
+            .firstOrNull ??
+        categories.where((category) => category.models.isNotEmpty).firstOrNull;
+
+    if (selectedCategory == null) {
+      setState(() {
+        _generateRunning = false;
+        _actionError =
+            'No runtime-discovered models are available for commit messages.';
+      });
+      return;
+    }
+
+    final selectedModel = selectedCategory.models
+            .where(
+              (model) =>
+                  model.value ==
+                  aiSettings.modelSelections[selectedCategory.id],
+            )
+            .firstOrNull ??
+        selectedCategory.models.first;
+
+    final includeStaged = included.any((file) => _isDirty(file.staged));
+    final includeUnstaged = included.any((file) => _isDirty(file.unstaged));
+    final scopeLabel = included.length == status.files.length
+        ? 'all included files'
+        : '${included.length} included file${included.length == 1 ? '' : 's'}';
+
+    final result = await generateCommitMessage(
+      repositoryPath: repoPath,
+      modelValue: selectedModel.value,
+      modelCategoryLabel: aiSettings.labelForCategory(
+        selectedCategory.id,
+        selectedCategory.label,
+      ),
+      scopeLabel: scopeLabel,
+      includeStaged: includeStaged,
+      includeUnstaged: includeUnstaged,
+      scopedPaths: included.map((file) => file.path).toList(),
+      customPrompt: aiSettings.commitMessagePrompt,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _generateRunning = false;
+      if (result.ok) {
+        _commitMsgCtrl.text = result.data!.message;
+        _commitMsgCtrl.selection = TextSelection.collapsed(
+          offset: _commitMsgCtrl.text.length,
+        );
+        _actionMessage =
+            'Generated commit message with ${selectedModel.modelId}.';
+      } else {
+        _actionError = result.error;
+      }
+    });
+  }
+
+  Future<void> _commit(
+    String repoPath,
+    RepositoryStatus status, {
+    required _CommitRunMode mode,
+  }) async {
+    final message = _commitMsgCtrl.text.trim();
+    final included = status.files
+        .where((file) => _includedPaths.contains(file.path))
+        .map((file) => file.path)
+        .toList();
+
+    if (included.isEmpty) {
+      setState(
+          () => _actionError = 'Choose at least one file for the next commit.');
+      return;
+    }
+    if (message.isEmpty) {
+      setState(() => _actionError = 'Write a commit message first.');
+      return;
+    }
+
     setState(() {
       _actionRunning = true;
       _actionError = null;
       _actionMessage = null;
     });
-    final r = await createCommit(repo, msg);
-    if (!mounted) return;
+
+    final stageResult = await stagePaths(repoPath, included);
+    if (!mounted) {
+      return;
+    }
+    if (!stageResult.ok) {
+      setState(() {
+        _actionRunning = false;
+        _actionError = stageResult.error;
+      });
+      return;
+    }
+
+    final stagedExcluded = _stagedExcludedPaths(status);
+    if (stagedExcluded.isNotEmpty) {
+      final unstageResult = await unstagePaths(repoPath, stagedExcluded);
+      if (!mounted) {
+        return;
+      }
+      if (!unstageResult.ok) {
+        setState(() {
+          _actionRunning = false;
+          _actionError = unstageResult.error;
+        });
+        return;
+      }
+    }
+
+    final commitResult = await createCommit(repoPath, message);
+    if (!mounted) {
+      return;
+    }
+    if (!commitResult.ok) {
+      setState(() {
+        _actionRunning = false;
+        _actionError = commitResult.error;
+      });
+      await _refreshAndReadStatus();
+      return;
+    }
+
+    final committed = commitResult.data!;
+    final shortHash = committed.commitHash.length >= 8
+        ? committed.commitHash.substring(0, 8)
+        : committed.commitHash;
+    var successMessage = 'Committed ${committed.summary} ($shortHash).';
+    String? syncError;
+
+    final refreshed = await _refreshAndReadStatus();
+    if (!mounted) {
+      return;
+    }
+
+    if (mode == _CommitRunMode.commitAndSync && refreshed != null) {
+      final syncResult = await syncRemote(repoPath, refreshed);
+      if (!mounted) {
+        return;
+      }
+      if (syncResult.ok) {
+        final operation = syncResult.data!.operation;
+        successMessage =
+            'Committed ${committed.summary} ($shortHash) and ran $operation.';
+      } else {
+        syncError = 'Commit succeeded, but sync failed: ${syncResult.error}';
+      }
+      await _refreshAndReadStatus();
+      if (!mounted) {
+        return;
+      }
+    }
+
     setState(() {
       _actionRunning = false;
-      if (r.ok) {
-        final d = r.data!;
-        final shortHash = d.commitHash.length >= 8
-            ? d.commitHash.substring(0, 8)
-            : d.commitHash;
-        _actionMessage = '${d.summary} ($shortHash)';
-        _commitMsgCtrl.clear();
-      } else {
-        _actionError = r.error;
-      }
+      _commitMsgCtrl.clear();
+      _actionMessage = successMessage;
+      _actionError = syncError;
     });
-    await context.read<RepositoryState>().refreshStatus();
   }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final aiSettings = context.watch<AiSettingsState>();
     final repo = context.watch<RepositoryState>();
     final repoPath = repo.activePath;
     final status = repo.status;
@@ -242,6 +537,9 @@ class _ChangesPageState extends State<ChangesPage> {
         message: 'Reading the working tree.',
       );
     }
+
+    _syncDraftFromStatus(status);
+
     if (status.files.isEmpty) {
       return const AppStatusView(
         title: 'Working tree clean',
@@ -249,215 +547,308 @@ class _ChangesPageState extends State<ChangesPage> {
       );
     }
 
-    final stagedCount = status.files.where((f) => _isDirty(f.staged)).length;
-    final unstagedCount =
-        status.files.where((f) => _isDirty(f.unstaged)).length;
+    final stagedCount =
+        status.files.where((file) => _isDirty(file.staged)).length;
+    final includedCount = _includedDirtyCount(status);
+    final primaryAction = _primaryActionFor(status);
+    final hasCommitAiSelection = _hasCommitAiSelection(aiSettings);
+    final canCommit = !_actionRunning &&
+        !_generateRunning &&
+        _commitMsgCtrl.text.trim().isNotEmpty &&
+        includedCount > 0;
+    final canGenerate = !_actionRunning &&
+        !_generateRunning &&
+        !_commitAiLoading &&
+        includedCount > 0 &&
+        hasCommitAiSelection;
 
-    return Stack(children: [
-      Row(children: [
-        // Left panel — file list
-        MaterialSurface(
-          tone: AppMaterialTone.surface1,
-          radius: 0,
-          border: Border(
-            right: BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
-          ),
-          elevated: false,
-          width: 280,
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Header
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-              child: Row(children: [
-                Text('Changes',
-                    style: TextStyle(
-                        color: t.textStrong,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.04)),
-                const SizedBox(width: 8),
-                _StatusChip(label: '$stagedCount S', color: t.stateStaged),
-                const SizedBox(width: 4),
-                _StatusChip(label: '$unstagedCount U', color: t.stateDeleted),
-              ]),
-            ),
-            // Actions
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Row(children: [
-                Expanded(
-                    child: _ActionBtn(
-                        label: 'Stage',
-                        t: t,
-                        enabled: _selected.isNotEmpty && !_actionRunning,
-                        onTap: () => _stage(repoPath))),
-                const SizedBox(width: 4),
-                Expanded(
-                    child: _ActionBtn(
-                        label: 'Unstage',
-                        t: t,
-                        enabled: _selected.isNotEmpty && !_actionRunning,
-                        onTap: () => _unstage(repoPath))),
-              ]),
-            ),
-            // File list
-            Expanded(
-              child: Listener(
-                onPointerMove: (e) =>
-                    _onDragPointerMove(e.localPosition, status.files),
-                onPointerUp: (_) => _onDragPointerUp(),
-                onPointerCancel: (_) => _onDragPointerUp(),
-                child: ListView.builder(
-                  controller: _listScrollCtrl,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  itemCount: status.files.length,
-                  itemBuilder: (ctx, i) {
-                    final file = status.files[i];
-                    final isSelected = _selectedDiffPath == file.path;
-                    final isChecked = _selected.contains(file.path);
-                    return _FileRow(
-                      file: file,
-                      tokens: t,
-                      isSelected: isSelected,
-                      isChecked: isChecked,
-                      onTap: () => _loadDiff(repoPath, file.path),
-                      onCheck: (v) => setState(() {
-                        if (v)
-                          _selected.add(file.path);
-                        else
-                          _selected.remove(file.path);
-                      }),
-                      onPointerDown: (event) =>
-                          _onDragPointerDown(file.path, event),
-                    );
-                  },
-                ),
-              ),
-            ),
-            // Commit footer
+    return Stack(
+      children: [
+        Row(
+          children: [
             MaterialSurface(
-              tone: AppMaterialTone.surface0,
+              tone: AppMaterialTone.surface1,
               radius: 0,
               border: Border(
-                top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
+                right:
+                    BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
               ),
               elevated: false,
-              padding: const EdgeInsets.all(12),
-              child: Column(children: [
-                Focus(
-                  onKeyEvent: (node, event) {
-                    if (event is KeyDownEvent &&
-                        event.logicalKey == LogicalKeyboardKey.enter &&
-                        (HardwareKeyboard.instance.isControlPressed ||
-                            HardwareKeyboard.instance.isMetaPressed)) {
-                      _commit(repoPath, status.branch);
-                      return KeyEventResult.handled;
-                    }
-                    return KeyEventResult.ignored;
-                  },
-                  child: AppTextField(
-                    controller: _commitMsgCtrl,
-                    height: 34,
-                    fontSize: 12,
-                    hintText: 'Commit message...',
-                    onSubmitted: (_) => _commit(repoPath, status.branch),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  height: 30,
-                  child: _ActionBtn(
-                    label: _actionRunning
-                        ? 'Committing...'
-                        : 'Commit to ${status.branch}',
-                    t: t,
-                    enabled: !_actionRunning,
-                    onTap: () => _commit(repoPath, status.branch),
-                  ),
-                ),
-                if (_actionMessage != null)
+              width: 320,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(_actionMessage!,
-                          style: TextStyle(color: t.stateAdded, fontSize: 10))),
-                if (_actionError != null)
-                  Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(_actionError!,
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Next Commit',
                           style: TextStyle(
-                              color: t.stateConflicted, fontSize: 10))),
-              ]),
-            ),
-          ]),
-        ),
-
-        // Right panel — diff
-        Expanded(
-          child: MaterialSurface(
-            tone: AppMaterialTone.surface0,
-            radius: 0,
-            borderAlpha: 0,
-            elevated: false,
-            child: _selectedDiffPath == null
-                ? const AppStatusView(
-                    title: 'No file selected',
-                    message: 'Select a changed file to inspect its diff.',
-                    compact: true,
-                  )
-                : DiffShell(
-                    key: ValueKey(_visibleDiffPath ?? _selectedDiffPath!),
-                    filePath: _visibleDiffPath ?? _selectedDiffPath!,
-                    diffContent: _diffContent,
-                    loading: _diffLoading,
-                    error: _diffError,
-                    tokens: t,
-                    repositoryPath: repoPath,
+                            color: t.textStrong,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.04,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          stagedCount > 0
+                              ? '$includedCount selected · $stagedCount staged'
+                              : '$includedCount selected',
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 11,
+                            height: 1.2,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _ActionBtn(
+                            label: 'Include all',
+                            t: t,
+                            enabled: !_actionRunning &&
+                                includedCount != status.files.length,
+                            primary: false,
+                            onTap: () => _includeAll(status),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: _ActionBtn(
+                            label: 'Use staged',
+                            t: t,
+                            enabled: !_actionRunning &&
+                                stagedCount > 0 &&
+                                !_samePathSet(
+                                  _includedPaths,
+                                  status.files
+                                      .where((file) => _isDirty(file.staged))
+                                      .map((file) => file.path)
+                                      .toSet(),
+                                ),
+                            primary: false,
+                            onTap: () => _includeOnlyStaged(status),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      itemCount: status.files.length,
+                      itemBuilder: (ctx, i) {
+                        final file = status.files[i];
+                        return _FileRow(
+                          file: file,
+                          tokens: t,
+                          isDiffSelected: _selectedDiffPath == file.path,
+                          included: _includedPaths.contains(file.path),
+                          onTap: () => _loadDiff(repoPath, file.path),
+                          onIncludeChanged: (value) =>
+                              _toggleIncluded(file.path, value),
+                        );
+                      },
+                    ),
+                  ),
+                  MaterialSurface(
+                    tone: AppMaterialTone.surface0,
+                    radius: 0,
+                    border: Border(
+                      top: BorderSide(
+                          color: t.chromeBorder.withValues(alpha: 0.15)),
+                    ),
+                    elevated: false,
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          includedCount == 0
+                              ? 'Nothing selected'
+                              : '$includedCount file${includedCount == 1 ? '' : 's'} selected.',
+                          style: TextStyle(
+                            color:
+                                includedCount == 0 ? t.textMuted : t.textNormal,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Focus(
+                          onKeyEvent: (node, event) {
+                            if (event is! KeyDownEvent ||
+                                event.logicalKey != LogicalKeyboardKey.enter) {
+                              return KeyEventResult.ignored;
+                            }
+                            if (HardwareKeyboard.instance.isControlPressed ||
+                                HardwareKeyboard.instance.isMetaPressed) {
+                              _commit(
+                                repoPath,
+                                status,
+                                mode: primaryAction.syncAfterCommit
+                                    ? _CommitRunMode.commitAndSync
+                                    : _CommitRunMode.commitOnly,
+                              );
+                              return KeyEventResult.handled;
+                            }
+                            return KeyEventResult.ignored;
+                          },
+                          child: _CommitComposerField(
+                            tokens: t,
+                            controller: _commitMsgCtrl,
+                            focusNode: _commitMsgFocusNode,
+                            enabled: !_actionRunning,
+                            onChanged: (_) => setState(() {}),
+                            aiEnabled: canGenerate,
+                            aiLoading: _generateRunning || _commitAiLoading,
+                            aiTooltip:
+                                _commitAiTooltip(aiSettings, includedCount),
+                            onGenerate: () => _generateCommitMessage(
+                              repoPath,
+                              status,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _ActionBtn(
+                                label: _actionRunning
+                                    ? 'Committing...'
+                                    : 'Commit only',
+                                t: t,
+                                enabled: canCommit,
+                                primary: false,
+                                onTap: () => _commit(
+                                  repoPath,
+                                  status,
+                                  mode: _CommitRunMode.commitOnly,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _ActionBtn(
+                                label: _actionRunning
+                                    ? 'Working...'
+                                    : primaryAction.label,
+                                t: t,
+                                enabled: canCommit,
+                                onTap: () => _commit(
+                                  repoPath,
+                                  status,
+                                  mode: primaryAction.syncAfterCommit
+                                      ? _CommitRunMode.commitAndSync
+                                      : _CommitRunMode.commitOnly,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_actionMessage != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              _actionMessage!,
+                              style: TextStyle(
+                                color: t.stateAdded,
+                                fontSize: 10.5,
+                              ),
+                            ),
+                          ),
+                        if (_actionError != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              _actionError!,
+                              style: TextStyle(
+                                color: t.stateConflicted,
+                                fontSize: 10.5,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: MaterialSurface(
+                tone: AppMaterialTone.surface0,
+                radius: 0,
+                borderAlpha: 0,
+                elevated: false,
+                child: _selectedDiffPath == null
+                    ? const AppStatusView(
+                        title: 'No file selected',
+                        message: 'Select a changed file to inspect its diff.',
+                        compact: true,
+                      )
+                    : DiffShell(
+                        key: ValueKey(_visibleDiffPath ?? _selectedDiffPath!),
+                        filePath: _visibleDiffPath ?? _selectedDiffPath!,
+                        diffContent: _diffContent,
+                        loading: _diffLoading,
+                        error: _diffError,
+                        tokens: t,
+                        repositoryPath: repoPath,
+                      ),
+              ),
+            ),
+          ],
+        ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: AnimatedOpacity(
+            opacity: repo.statusLoading ? 1 : 0,
+            duration: const Duration(milliseconds: 80),
+            child: TopProgressLine(color: t.accentBright),
           ),
         ),
-      ]),
-      Positioned(
-        top: 0,
-        left: 0,
-        right: 0,
-        child: AnimatedOpacity(
-          opacity: repo.statusLoading ? 1 : 0,
-          duration: const Duration(milliseconds: 80),
-          child: TopProgressLine(color: t.accentBright),
-        ),
-      ),
-    ]);
+      ],
+    );
   }
 }
 
-class _StatusChip extends StatelessWidget {
-  final String label;
-  final Color color;
-  const _StatusChip({required this.label, required this.color});
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-        decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(4)),
-        child: Text(label,
-            style: TextStyle(
-                color: color, fontSize: 10, fontWeight: FontWeight.w700)),
-      );
+bool _samePathSet(Set<String> a, Set<String> b) {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (final value in a) {
+    if (!b.contains(value)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 class _ActionBtn extends StatefulWidget {
   final String label;
   final AppTokens t;
   final bool enabled;
+  final bool primary;
   final VoidCallback onTap;
-  const _ActionBtn(
-      {required this.label,
-      required this.t,
-      required this.enabled,
-      required this.onTap});
+
+  const _ActionBtn({
+    required this.label,
+    required this.t,
+    required this.enabled,
+    required this.onTap,
+    this.primary = true,
+  });
+
   @override
   State<_ActionBtn> createState() => _ActionBtnState();
 }
@@ -465,15 +856,25 @@ class _ActionBtn extends StatefulWidget {
 class _ActionBtnState extends State<_ActionBtn> {
   bool _hovered = false;
   bool _pressed = false;
+
   @override
   Widget build(BuildContext context) {
     final t = widget.t;
-    final chrome = primaryButtonChrome(
-      t,
-      hovered: _hovered,
-      pressed: _pressed,
-      enabled: widget.enabled,
-    );
+    final chrome = widget.primary
+        ? primaryButtonChrome(
+            t,
+            hovered: _hovered,
+            pressed: _pressed,
+            enabled: widget.enabled,
+          )
+        : ghostButtonChrome(
+            t,
+            hovered: _hovered,
+            pressed: _pressed,
+            enabled: widget.enabled,
+            baseBorderColor: t.secondaryBtnBorder,
+          );
+
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
@@ -487,7 +888,7 @@ class _ActionBtnState extends State<_ActionBtn> {
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 100),
-          height: 24,
+          height: 28,
           decoration: BoxDecoration(
             color: chrome.background,
             gradient: chrome.gradient,
@@ -498,11 +899,17 @@ class _ActionBtnState extends State<_ActionBtn> {
           child: Transform.translate(
             offset: chrome.offset,
             child: Center(
-                child: Text(widget.label,
-                    style: TextStyle(
-                        color: widget.enabled ? t.btnText : t.textMuted,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600))),
+              child: Text(
+                widget.label,
+                style: TextStyle(
+                  color: widget.primary
+                      ? (widget.enabled ? t.btnText : t.textMuted)
+                      : (widget.enabled ? t.textNormal : t.textMuted),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -513,91 +920,132 @@ class _ActionBtnState extends State<_ActionBtn> {
 class _FileRow extends StatefulWidget {
   final RepositoryStatusFile file;
   final AppTokens tokens;
-  final bool isSelected;
-  final bool isChecked;
+  final bool isDiffSelected;
+  final bool included;
   final VoidCallback onTap;
-  final ValueChanged<bool> onCheck;
-  final ValueChanged<PointerDownEvent>? onPointerDown;
-  const _FileRow(
-      {required this.file,
-      required this.tokens,
-      required this.isSelected,
-      required this.isChecked,
-      required this.onTap,
-      required this.onCheck,
-      this.onPointerDown});
+  final ValueChanged<bool> onIncludeChanged;
+
+  const _FileRow({
+    required this.file,
+    required this.tokens,
+    required this.isDiffSelected,
+    required this.included,
+    required this.onTap,
+    required this.onIncludeChanged,
+  });
+
   @override
   State<_FileRow> createState() => _FileRowState();
 }
 
 class _FileRowState extends State<_FileRow> {
   bool _hovered = false;
+
+  List<_ChangeBadgeSpec> _buildBadges(AppTokens t, RepositoryStatusFile file) {
+    final badges = <_ChangeBadgeSpec>[];
+    final staged = _describeGitChange(file.staged, staged: true, tokens: t);
+    final unstaged =
+        _describeGitChange(file.unstaged, staged: false, tokens: t);
+
+    if (staged != null) {
+      badges.add(staged);
+    }
+    if (unstaged != null) {
+      badges.add(unstaged);
+    }
+    return badges;
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
-    final f = widget.file;
-    final filename = f.path.split('/').last;
-    final dir = f.path.contains('/')
-        ? f.path.substring(0, f.path.lastIndexOf('/'))
+    final file = widget.file;
+    final filename = file.path.split('/').last;
+    final dir = file.path.contains('/')
+        ? file.path.substring(0, file.path.lastIndexOf('/'))
         : '';
+    final badges = _buildBadges(t, file);
+
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       cursor: SystemMouseCursors.click,
-      child: Listener(
-        onPointerDown: widget.onPointerDown != null
-            ? (e) => widget.onPointerDown!(e)
-            : null,
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
-            margin: const EdgeInsets.symmetric(vertical: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            decoration: BoxDecoration(
-              color: widget.isSelected
-                  ? t.chromeBorder.withValues(alpha: 0.10)
-                  : (_hovered ? t.itemHoverBg : Colors.transparent),
-              borderRadius: BorderRadius.circular(5),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          margin: const EdgeInsets.symmetric(vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          decoration: BoxDecoration(
+            color: widget.isDiffSelected
+                ? t.chromeBorder.withValues(alpha: 0.1)
+                : (widget.included
+                    ? t.stateAdded.withValues(alpha: 0.05)
+                    : (_hovered ? t.itemHoverBg : Colors.transparent)),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: widget.included
+                  ? t.stateAdded.withValues(alpha: 0.18)
+                  : Colors.transparent,
             ),
-            child: Row(children: [
+          ),
+          child: Row(
+            children: [
               SizedBox(
                 width: 18,
                 height: 18,
                 child: Checkbox(
-                  value: widget.isChecked,
-                  onChanged: (v) => widget.onCheck(v ?? false),
+                  value: widget.included,
+                  onChanged: (value) => widget.onIncludeChanged(value ?? false),
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   visualDensity: VisualDensity.compact,
                   activeColor: t.accentBright,
                   checkColor: t.bg0,
-                  side: BorderSide(color: t.chromeBorder.withOpacity(0.5)),
+                  side:
+                      BorderSide(color: t.chromeBorder.withValues(alpha: 0.5)),
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(filename,
-                          style: TextStyle(color: t.textNormal, fontSize: 12),
-                          overflow: TextOverflow.ellipsis),
-                      if (dir.isNotEmpty)
-                        Text(dir,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      filename,
+                      style: TextStyle(color: t.textNormal, fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            dir.isEmpty ? 'Repository root' : dir,
                             style: TextStyle(
-                                color: t.textMuted,
-                                fontSize: 10,
-                                fontFamily: 'JetBrainsMono'),
-                            overflow: TextOverflow.ellipsis),
-                    ]),
+                              color: t.textMuted,
+                              fontSize: 10,
+                              fontFamily: 'JetBrainsMono',
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-              if (f.staged.isNotEmpty)
-                _StatusBadge(label: 'S', color: t.stateStaged),
-              if (f.unstaged.isNotEmpty) ...[
-                const SizedBox(width: 4),
-                _StatusBadge(label: 'U', color: t.stateDeleted),
-              ],
-            ]),
+              const SizedBox(width: 8),
+              if (badges.isNotEmpty)
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    for (final badge in badges)
+                      _StateBadge(label: badge.label, color: badge.color),
+                  ],
+                ),
+            ],
           ),
         ),
       ),
@@ -605,25 +1053,280 @@ class _FileRowState extends State<_FileRow> {
   }
 }
 
-class _StatusBadge extends StatelessWidget {
+class _ChangeBadgeSpec {
   final String label;
   final Color color;
-  const _StatusBadge({required this.label, required this.color});
-  @override
-  Widget build(BuildContext context) => Container(
-        width: 14,
-        height: 14,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(3),
-          border: Border.all(color: color.withValues(alpha: 0.25)),
-          boxShadow: [
-            BoxShadow(color: color.withValues(alpha: 0.12), blurRadius: 10),
-          ],
-        ),
-        child: Center(
-            child: Text(label,
-                style: TextStyle(
-                    color: color, fontSize: 9, fontWeight: FontWeight.w900))),
+
+  const _ChangeBadgeSpec({required this.label, required this.color});
+}
+
+_ChangeBadgeSpec? _describeGitChange(
+  String code, {
+  required bool staged,
+  required AppTokens tokens,
+}) {
+  switch (code.trim()) {
+    case 'M':
+      return _ChangeBadgeSpec(
+        label: staged ? 'Staged edit' : 'Edited',
+        color: staged ? tokens.stateStaged : tokens.stateModified,
       );
+    case 'A':
+      return _ChangeBadgeSpec(
+        label: staged ? 'Staged add' : 'Added',
+        color: tokens.stateAdded,
+      );
+    case 'D':
+      return _ChangeBadgeSpec(
+        label: staged ? 'Staged delete' : 'Deleted',
+        color: tokens.stateDeleted,
+      );
+    case 'R':
+      return _ChangeBadgeSpec(
+        label: staged ? 'Staged rename' : 'Renamed',
+        color: tokens.accentBright,
+      );
+    case 'C':
+      return _ChangeBadgeSpec(
+        label: staged ? 'Staged copy' : 'Copied',
+        color: tokens.accentBright,
+      );
+    case 'U':
+      return _ChangeBadgeSpec(
+        label: 'Conflict',
+        color: tokens.stateConflicted,
+      );
+    case '?':
+      return _ChangeBadgeSpec(
+        label: 'Untracked',
+        color: tokens.stateAdded,
+      );
+    default:
+      return null;
+  }
+}
+
+class _StateBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _StateBadge({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _CommitComposerField extends StatelessWidget {
+  final AppTokens tokens;
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool enabled;
+  final ValueChanged<String> onChanged;
+  final bool aiEnabled;
+  final bool aiLoading;
+  final String aiTooltip;
+  final VoidCallback onGenerate;
+
+  const _CommitComposerField({
+    required this.tokens,
+    required this.controller,
+    required this.focusNode,
+    required this.enabled,
+    required this.onChanged,
+    required this.aiEnabled,
+    required this.aiLoading,
+    required this.aiTooltip,
+    required this.onGenerate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = themeDefinitionFor(tokens.id)
+        .shader
+        .geometry
+        .radius
+        .clamp(0, 18)
+        .toDouble();
+    final effectiveRadius = (radius * 0.75).clamp(0.0, 14.0);
+
+    return ListenableBuilder(
+      listenable: focusNode,
+      builder: (context, child) {
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 110),
+          height: 112,
+          decoration: BoxDecoration(
+            color: tokens.inputBg,
+            borderRadius: BorderRadius.circular(effectiveRadius),
+            border: Border.all(
+              color: (focusNode.hasFocus
+                      ? tokens.inputFocusBorder
+                      : tokens.inputBorder)
+                  .withValues(alpha: enabled ? 1 : 0.45),
+            ),
+          ),
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 52, 10),
+                child: TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  enabled: enabled,
+                  minLines: null,
+                  maxLines: null,
+                  expands: true,
+                  onChanged: onChanged,
+                  cursorColor: tokens.accentBright,
+                  style: TextStyle(
+                    color: tokens.textStrong,
+                    fontSize: 12,
+                  ),
+                  decoration: InputDecoration.collapsed(
+                    hintText: 'Commit message...',
+                    hintStyle: TextStyle(
+                      color: tokens.textMuted.withValues(alpha: 0.5),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: _CommitAiOverlayButton(
+                  tokens: tokens,
+                  enabled: aiEnabled,
+                  loading: aiLoading,
+                  tooltip: aiTooltip,
+                  onTap: onGenerate,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CommitAiOverlayButton extends StatefulWidget {
+  final AppTokens tokens;
+  final bool enabled;
+  final bool loading;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _CommitAiOverlayButton({
+    required this.tokens,
+    required this.enabled,
+    required this.loading,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  State<_CommitAiOverlayButton> createState() => _CommitAiOverlayButtonState();
+}
+
+class _CommitAiOverlayButtonState extends State<_CommitAiOverlayButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final background = widget.enabled
+        ? (_pressed
+            ? widget.tokens.accentBright.withValues(alpha: 0.24)
+            : _hovered
+                ? widget.tokens.accentBright.withValues(alpha: 0.18)
+                : widget.tokens.bg0.withValues(alpha: 0.92))
+        : widget.tokens.bg0.withValues(alpha: 0.72);
+    final border = widget.enabled
+        ? widget.tokens.accentBright.withValues(alpha: _hovered ? 0.42 : 0.26)
+        : widget.tokens.chromeBorder.withValues(alpha: 0.24);
+    final iconColor = widget.enabled
+        ? widget.tokens.accentBright
+        : widget.tokens.textMuted.withValues(alpha: 0.65);
+
+    return Tooltip(
+      message: widget.tooltip,
+      waitDuration: const Duration(milliseconds: 250),
+      child: MouseRegion(
+        cursor: widget.enabled
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() {
+          _hovered = false;
+          _pressed = false;
+        }),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown:
+              widget.enabled ? (_) => setState(() => _pressed = true) : null,
+          onTapCancel:
+              widget.enabled ? () => setState(() => _pressed = false) : null,
+          onTapUp:
+              widget.enabled ? (_) => setState(() => _pressed = false) : null,
+          onTap: widget.enabled ? widget.onTap : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 110),
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: border),
+              boxShadow: widget.enabled && _hovered
+                  ? [
+                      BoxShadow(
+                        color:
+                            widget.tokens.accentBright.withValues(alpha: 0.12),
+                        blurRadius: 12,
+                        spreadRadius: -6,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Center(
+              child: widget.loading
+                  ? SizedBox(
+                      width: 13,
+                      height: 13,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: iconColor,
+                      ),
+                    )
+                  : Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 15,
+                      color: iconColor,
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+extension<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }

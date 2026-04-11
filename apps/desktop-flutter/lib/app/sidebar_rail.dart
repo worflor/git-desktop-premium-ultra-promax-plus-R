@@ -41,6 +41,8 @@ String _toProjectName(String path) {
 
 String _normalizePath(String path) => path.replaceAll('\\', '/').toLowerCase();
 
+enum _RepositoryEntryMode { open, clone, create }
+
 class SidebarRail extends StatefulWidget {
   const SidebarRail({super.key});
 
@@ -53,7 +55,7 @@ class _SidebarRailState extends State<SidebarRail> {
   final _cloneTargetController = TextEditingController();
   bool _showPathEntry = false;
   bool _running = false;
-  bool _isCloneMode = false;
+  _RepositoryEntryMode _entryMode = _RepositoryEntryMode.open;
   String? _error;
   String? _cloningEntry;
 
@@ -65,30 +67,34 @@ class _SidebarRailState extends State<SidebarRail> {
   }
 
   void _onInputChanged(String value) {
-    final isUrl = _isGitUrl(value);
-    if (isUrl && _cloneTargetController.text.isEmpty) {
+    if (_entryMode == _RepositoryEntryMode.clone &&
+        _isGitUrl(value) &&
+        _cloneTargetController.text.isEmpty) {
       _cloneTargetController.text = _extractRepoName(value);
     }
     setState(() {
-      _isCloneMode = isUrl;
       _error = null;
     });
   }
 
-  Future<String?> _pickDirectory() {
-    return FilePicker.platform.getDirectoryPath(dialogTitle: 'Open Repository');
+  Future<String?> _pickDirectory(String title) {
+    return FilePicker.platform.getDirectoryPath(dialogTitle: title);
   }
 
   Future<void> _onOpen() async {
-    if (_isCloneMode) {
+    if (_entryMode == _RepositoryEntryMode.clone) {
       await _onClone();
+      return;
+    }
+    if (_entryMode == _RepositoryEntryMode.create) {
+      await _onInit();
       return;
     }
 
     final repo = context.read<RepositoryState>();
     var path = _pathController.text.trim();
     if (path.isEmpty) {
-      final picked = await _pickDirectory();
+      final picked = await _pickDirectory('Open Repository');
       if (picked == null) return;
       path = picked;
       _pathController.text = path;
@@ -114,7 +120,7 @@ class _SidebarRailState extends State<SidebarRail> {
       _showPathEntry = false;
       _pathController.clear();
       _cloneTargetController.clear();
-      _isCloneMode = false;
+      _entryMode = _RepositoryEntryMode.open;
     });
   }
 
@@ -143,20 +149,34 @@ class _SidebarRailState extends State<SidebarRail> {
     }
 
     final repo = context.read<RepositoryState>();
-    await repo.setActivePath(result.data!);
+    final err = await repo.setActivePath(result.data!);
     if (!mounted) return;
+    if (err != null) {
+      setState(() {
+        _running = false;
+        _cloningEntry = null;
+        _error = err;
+      });
+      return;
+    }
     setState(() {
       _running = false;
       _cloningEntry = null;
       _showPathEntry = false;
       _pathController.clear();
       _cloneTargetController.clear();
-      _isCloneMode = false;
+      _entryMode = _RepositoryEntryMode.open;
     });
   }
 
   Future<void> _onInit() async {
-    final path = _pathController.text.trim();
+    var path = _pathController.text.trim();
+    if (path.isEmpty) {
+      final picked = await _pickDirectory('Create Repository');
+      if (picked == null) return;
+      path = picked;
+      _pathController.text = path;
+    }
     if (path.isEmpty) return;
 
     setState(() {
@@ -174,14 +194,21 @@ class _SidebarRailState extends State<SidebarRail> {
     }
 
     final repo = context.read<RepositoryState>();
-    await repo.setActivePath(result.data!);
+    final err = await repo.setActivePath(result.data!);
     if (!mounted) return;
+    if (err != null) {
+      setState(() {
+        _running = false;
+        _error = err;
+      });
+      return;
+    }
     setState(() {
       _running = false;
       _showPathEntry = false;
       _pathController.clear();
       _cloneTargetController.clear();
-      _isCloneMode = false;
+      _entryMode = _RepositoryEntryMode.open;
     });
   }
 
@@ -215,7 +242,7 @@ class _SidebarRailState extends State<SidebarRail> {
               if (_showPathEntry) {
                 _pathController.clear();
                 _cloneTargetController.clear();
-                _isCloneMode = false;
+                _entryMode = _RepositoryEntryMode.open;
               }
             }),
           ),
@@ -223,12 +250,18 @@ class _SidebarRailState extends State<SidebarRail> {
             _PathEntry(
               pathController: _pathController,
               cloneTargetController: _cloneTargetController,
-              isCloneMode: _isCloneMode,
+              mode: _entryMode,
               running: _running,
               error: _error,
               onInputChanged: _onInputChanged,
+              onModeChanged: (mode) => setState(() {
+                _entryMode = mode;
+                _error = null;
+                if (mode != _RepositoryEntryMode.clone) {
+                  _cloneTargetController.clear();
+                }
+              }),
               onOpen: _onOpen,
-              onInit: _onInit,
             ),
           if (_error != null && !_showPathEntry)
             Padding(
@@ -319,27 +352,35 @@ class _ProjectsHeader extends StatelessWidget {
 class _PathEntry extends StatelessWidget {
   final TextEditingController pathController;
   final TextEditingController cloneTargetController;
-  final bool isCloneMode;
+  final _RepositoryEntryMode mode;
   final bool running;
   final String? error;
   final ValueChanged<String> onInputChanged;
+  final ValueChanged<_RepositoryEntryMode> onModeChanged;
   final VoidCallback onOpen;
-  final VoidCallback onInit;
 
   const _PathEntry({
     required this.pathController,
     required this.cloneTargetController,
-    required this.isCloneMode,
+    required this.mode,
     required this.running,
     this.error,
     required this.onInputChanged,
+    required this.onModeChanged,
     required this.onOpen,
-    required this.onInit,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final isCloneMode = mode == _RepositoryEntryMode.clone;
+    final isCreateMode = mode == _RepositoryEntryMode.create;
+    final primaryLabel =
+        isCloneMode ? 'Clone' : (isCreateMode ? 'Create' : 'Open');
+    final pathPlaceholder = isCloneMode
+        ? 'Repository URL'
+        : (isCreateMode ? '/path/to/folder' : '/path/to/project');
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Column(
@@ -348,21 +389,47 @@ class _PathEntry extends StatelessWidget {
           Row(
             children: [
               Expanded(
+                child: _ModeChoiceBtn(
+                  label: 'Open',
+                  active: mode == _RepositoryEntryMode.open,
+                  onTap: () => onModeChanged(_RepositoryEntryMode.open),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _ModeChoiceBtn(
+                  label: 'Clone',
+                  active: isCloneMode,
+                  onTap: () => onModeChanged(_RepositoryEntryMode.clone),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: _ModeChoiceBtn(
+                  label: 'Create',
+                  active: isCreateMode,
+                  onTap: () => onModeChanged(_RepositoryEntryMode.create),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
                 child: _StyledInput(
                   controller: pathController,
-                  placeholder: isCloneMode
-                      ? 'Repository URL'
-                      : '/path/to/project or URL',
+                  placeholder: pathPlaceholder,
                   onChanged: onInputChanged,
                   onSubmitted: (_) => onOpen(),
                 ),
               ),
               const SizedBox(width: 4),
               SizedBox(
-                width: isCloneMode ? 54 : 48,
+                width: isCloneMode ? 58 : 56,
                 height: 26,
                 child: _PrimaryButton(
-                  label: running ? '...' : (isCloneMode ? 'Clone' : 'Open'),
+                  label: running ? '...' : primaryLabel,
                   enabled: !running,
                   onTap: onOpen,
                 ),
@@ -373,7 +440,7 @@ class _PathEntry extends StatelessWidget {
             const SizedBox(height: 4),
             _StyledInput(
               controller: cloneTargetController,
-              placeholder: 'Clone to path',
+              placeholder: 'Clone to folder path',
               fontSize: 11,
               onSubmitted: (_) => onOpen(),
             ),
@@ -385,15 +452,58 @@ class _PathEntry extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: GestureDetector(
-                  onTap: running ? null : onInit,
+                  onTap: running
+                      ? null
+                      : () => onModeChanged(_RepositoryEntryMode.create),
                   child: Text(
-                    'Initialize repository',
+                    'Switch to Create repo',
                     style: TextStyle(color: t.accentBright, fontSize: 10),
                   ),
                 ),
               ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _ModeChoiceBtn extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _ModeChoiceBtn({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        height: 24,
+        decoration: BoxDecoration(
+          color: active ? t.itemActiveBg : t.surface0,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: active ? t.itemActiveBorder : t.secondaryBtnBorder,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active ? t.textStrong : t.textMuted,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
       ),
     );
   }

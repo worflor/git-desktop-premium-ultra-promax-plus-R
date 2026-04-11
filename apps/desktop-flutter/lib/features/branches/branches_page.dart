@@ -160,10 +160,8 @@ class _BranchesPageState extends State<BranchesPage> {
     if (_lastRepo != repoPath) {
       _lastRepo = repoPath;
       _newBranchCtrl.clear();
-      setState(() {
-        _actionError = null;
-        _actionRunning = false;
-      });
+      _actionError = null;
+      _actionRunning = false;
       WidgetsBinding.instance.addPostFrameCallback((_) => _load(repoPath));
     }
 
@@ -506,24 +504,27 @@ class _BranchCardState extends State<_BranchCard> {
                     style: TextStyle(color: t.stateModified, fontSize: 10))),
           // Checkout button (invisible but present for current branch — keeps layout stable)
           const SizedBox(width: 8),
-          Opacity(
-            opacity: b.current ? 0.0 : 1.0,
-            child: IgnorePointer(
-              ignoring: b.current,
-              child: SizedBox(
-                width: 80,
-                height: 24,
-                child: _ChromeButton(
-                  label: 'Checkout',
-                  compact: true,
-                  enabled: !(b.current || widget.actionRunning),
-                  onPressed: (b.current || widget.actionRunning)
-                      ? null
-                      : widget.onCheckout,
+          if (!b.current) ...[
+            if (widget.onDelete != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: _BranchIconAction(
+                  icon: 'trash',
+                  enabled: !widget.actionRunning,
+                  onTap: widget.onDelete!,
                 ),
               ),
+            SizedBox(
+              width: 80,
+              height: 24,
+              child: _ChromeButton(
+                label: 'Checkout',
+                compact: true,
+                enabled: !widget.actionRunning,
+                onPressed: widget.actionRunning ? null : widget.onCheckout,
+              ),
             ),
-          ),
+          ],
         ]),
       ),
     );
@@ -684,6 +685,62 @@ class _ChromeButtonState extends State<_ChromeButton> {
                   ),
                 ),
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BranchIconAction extends StatefulWidget {
+  final String icon;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _BranchIconAction({
+    required this.icon,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  State<_BranchIconAction> createState() => _BranchIconActionState();
+}
+
+class _BranchIconActionState extends State<_BranchIconAction> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor:
+          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: widget.enabled ? widget.onTap : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            color: _hovered
+                ? t.stateConflicted.withOpacity(0.08)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(
+              color: _hovered
+                  ? t.stateConflicted.withOpacity(0.16)
+                  : Colors.transparent,
+            ),
+          ),
+          child: Center(
+            child: AppIcon(
+              name: widget.icon,
+              size: 12,
+              color: widget.enabled ? t.stateConflicted : t.textMuted,
             ),
           ),
         ),
