@@ -38,6 +38,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final Stopwatch _mountedAt = Stopwatch()..start();
   final Map<String, TextEditingController> _categoryLabelControllers = {};
   final TextEditingController _commitPromptController = TextEditingController();
+  final TextEditingController _reviewPromptController = TextEditingController();
   String _diagnosticsFocus = 'command';
   String? _actionMessage;
   String? _actionError;
@@ -49,7 +50,9 @@ class _SettingsPageState extends State<SettingsPage> {
   List<AiProviderStatus> _aiProviders = const [];
   List<AiModelCategoryData> _aiModelCategories = const [];
   Timer? _commitPromptSaveDebounce;
+  Timer? _reviewPromptSaveDebounce;
   _PromptSaveState _commitPromptSaveState = _PromptSaveState.idle;
+  _PromptSaveState _reviewPromptSaveState = _PromptSaveState.idle;
 
   @override
   void initState() {
@@ -70,6 +73,7 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       final aiSettings = context.read<AiSettingsState>();
       _commitPromptController.text = aiSettings.commitMessagePrompt;
+      _reviewPromptController.text = aiSettings.reviewCommitPrompt;
       _refreshAiDiagnostics();
     });
   }
@@ -77,7 +81,9 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     _commitPromptSaveDebounce?.cancel();
+    _reviewPromptSaveDebounce?.cancel();
     _commitPromptController.dispose();
+    _reviewPromptController.dispose();
     for (final controller in _categoryLabelControllers.values) {
       controller.dispose();
     }
@@ -285,6 +291,24 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _saveReviewCommitModelCategory(String value) async {
+    try {
+      await context.read<AiSettingsState>().setReviewCommitModelCategoryId(value);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = null;
+        _actionMessage = 'Saved review model slot.';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = 'Failed to save review model slot.');
+    }
+  }
+
   void _scheduleCommitPromptSave(String value) {
     _commitPromptSaveDebounce?.cancel();
     if (mounted) {
@@ -299,6 +323,23 @@ class _SettingsPageState extends State<SettingsPage> {
         });
       }
       unawaited(_saveCommitPrompt(value));
+    });
+  }
+
+  void _scheduleReviewPromptSave(String value) {
+    _reviewPromptSaveDebounce?.cancel();
+    if (mounted) {
+      setState(() {
+        _reviewPromptSaveState = _PromptSaveState.typing;
+      });
+    }
+    _reviewPromptSaveDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) {
+        setState(() {
+          _reviewPromptSaveState = _PromptSaveState.saving;
+        });
+      }
+      unawaited(_saveReviewPrompt(value));
     });
   }
 
@@ -328,8 +369,68 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _saveReviewPrompt(String value) async {
+    try {
+      await context.read<AiSettingsState>().setReviewCommitPrompt(value);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = null;
+        _actionMessage = value.trim().isEmpty
+            ? 'Cleared review guide.'
+            : 'Saved review guide.';
+        _reviewPromptSaveState = _PromptSaveState.saved;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = 'Failed to save review guide.';
+        _reviewPromptSaveState = _PromptSaveState.error;
+      });
+    }
+  }
+
+  Future<void> _saveReviewDoubleCheck(bool value) async {
+    try {
+      await context
+          .read<AiSettingsState>()
+          .setReviewCommitDoubleCheckEnabled(value);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _actionError = null;
+        _actionMessage =
+            value ? 'Enabled double-check review.' : 'Disabled double-check review.';
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _actionError = 'Failed to save review double-check mode.');
+    }
+  }
+
   String? _commitPromptStatusLabel() {
     switch (_commitPromptSaveState) {
+      case _PromptSaveState.typing:
+        return 'Editing';
+      case _PromptSaveState.saving:
+        return 'Saving';
+      case _PromptSaveState.saved:
+        return null;
+      case _PromptSaveState.error:
+        return 'Save failed';
+      case _PromptSaveState.idle:
+        return null;
+    }
+  }
+
+  String? _reviewPromptStatusLabel() {
+    switch (_reviewPromptSaveState) {
       case _PromptSaveState.typing:
         return 'Editing';
       case _PromptSaveState.saving:
@@ -629,6 +730,9 @@ class _SettingsPageState extends State<SettingsPage> {
     if (_commitPromptController.text != aiSettings.commitMessagePrompt) {
       _commitPromptController.text = aiSettings.commitMessagePrompt;
     }
+    if (_reviewPromptController.text != aiSettings.reviewCommitPrompt) {
+      _reviewPromptController.text = aiSettings.reviewCommitPrompt;
+    }
     _syncCategoryControllers();
 
     return ListView(
@@ -927,6 +1031,34 @@ class _SettingsPageState extends State<SettingsPage> {
                     _saveCommitMessageModelCategory(value);
                   },
                   onPromptChanged: _scheduleCommitPromptSave,
+                )
+              else
+                Text(
+                  'Model-slot settings will appear here once provider models are available.',
+                  style: TextStyle(color: t.textMuted, fontSize: 12),
+                ),
+              const SizedBox(height: 18),
+              const _SettingsSubtitle('Review Commit'),
+              const SizedBox(height: 8),
+              Text(
+                'Review the current commit scope before you commit.',
+                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              if (_aiModelCategories.isNotEmpty)
+                _AiReviewIntegrationEditor(
+                  categories: _aiModelCategories,
+                  aiSettings: aiSettings,
+                  promptController: _reviewPromptController,
+                  promptStatusLabel: _reviewPromptStatusLabel(),
+                  onCategoryChanged: (value) {
+                    if (value == null || value.isEmpty) {
+                      return;
+                    }
+                    _saveReviewCommitModelCategory(value);
+                  },
+                  onPromptChanged: _scheduleReviewPromptSave,
+                  onDoubleCheckChanged: _saveReviewDoubleCheck,
                 )
               else
                 Text(
@@ -2159,6 +2291,143 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
           minHeight: 120,
           maxHeight: 220,
           onChanged: onPromptChanged,
+        ),
+      ],
+    );
+  }
+}
+
+class _AiReviewIntegrationEditor extends StatelessWidget {
+  final List<AiModelCategoryData> categories;
+  final AiSettingsState aiSettings;
+  final TextEditingController promptController;
+  final String? promptStatusLabel;
+  final ValueChanged<String?> onCategoryChanged;
+  final ValueChanged<String> onPromptChanged;
+  final ValueChanged<bool> onDoubleCheckChanged;
+
+  const _AiReviewIntegrationEditor({
+    required this.categories,
+    required this.aiSettings,
+    required this.promptController,
+    required this.promptStatusLabel,
+    required this.onCategoryChanged,
+    required this.onPromptChanged,
+    required this.onDoubleCheckChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final selectedCategoryId = categories.any(
+      (category) => category.id == aiSettings.reviewCommitModelCategoryId,
+    )
+        ? aiSettings.reviewCommitModelCategoryId
+        : categories.first.id;
+    final selectedCategory =
+        categories.where((category) => category.id == selectedCategoryId).first;
+    AiModelOptionData? selectedModel;
+    for (final model in selectedCategory.models) {
+      if (model.value == aiSettings.modelSelections[selectedCategory.id]) {
+        selectedModel = model;
+        break;
+      }
+    }
+    selectedModel ??=
+        selectedCategory.models.isEmpty ? null : selectedCategory.models.first;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: t.rowBg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _AiMetaRow(
+                left:
+                    '${aiSettings.labelForCategory(selectedCategory.id, selectedCategory.label)} slot',
+                right: selectedModel?.providerLabel ?? 'No provider',
+              ),
+              if (selectedModel != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  selectedModel.modelId,
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  selectedModel.description,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 11,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        AppDropdownField<String>(
+          value: selectedCategoryId,
+          items: categories
+              .map(
+                (category) => DropdownMenuItem<String>(
+                  value: category.id,
+                  child: Text(
+                    aiSettings.labelForCategory(category.id, category.label),
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: onCategoryChanged,
+        ),
+        if (promptStatusLabel != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            promptStatusLabel!,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+        const SizedBox(height: 10),
+        _CheckboxRow(
+          label: 'Double-check review',
+          value: aiSettings.reviewCommitDoubleCheckEnabled,
+          onChanged: onDoubleCheckChanged,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Run a second verification pass before showing the final report.',
+          style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.35),
+        ),
+        const SizedBox(height: 10),
+        const _SettingsSubtitle('Review Guide'),
+        const SizedBox(height: 10),
+        AppMultilineTextField(
+          controller: promptController,
+          hintText: 'Optional guidance for what the review should care about.',
+          minHeight: 120,
+          maxHeight: 220,
+          onChanged: onPromptChanged,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Leave blank to use the built-in review guide.',
+          style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.35),
         ),
       ],
     );

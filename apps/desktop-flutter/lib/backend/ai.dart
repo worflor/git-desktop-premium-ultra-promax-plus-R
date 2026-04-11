@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:path/path.dart' as p;
 
+import 'ai_audit_store.dart';
 import '../diagnostics/diagnostics_state.dart';
 import 'dtos.dart';
 import 'git.dart';
@@ -214,6 +216,7 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
   required bool includeUnstaged,
   List<String> scopedPaths = const [],
   String customPrompt = '',
+  String existingMessage = '',
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
@@ -263,6 +266,13 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       modelCategoryLabel: modelCategoryLabel,
       scopeLabel: scopeLabel,
       customPrompt: customPrompt,
+      existingMessage: existingMessage,
+      totalCommits: bundle.totalCommits,
+      recentLog: bundle.recentLog,
+      authorName: bundle.authorName,
+      lastCommitAge: bundle.lastCommitAge,
+      projectAge: bundle.projectAge,
+      uniqueContributors: bundle.uniqueContributors,
       statusSummary: bundle.statusSummary,
       statSummary: bundle.statSummary,
       diffSummary: bundle.diffBundle.promptBody,
@@ -330,6 +340,249 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
     );
   } catch (error) {
     return GitResult.err('Commit message generation failed: $error');
+  }
+}
+
+Future<GitResult<AiCommitReviewData>> reviewCommit({
+  required String repositoryPath,
+  required String modelValue,
+  required String modelCategoryLabel,
+  required String scopeLabel,
+  required bool includeStaged,
+  required bool includeUnstaged,
+  List<String> scopedPaths = const [],
+  String customPrompt = '',
+  required int guardrailStage,
+  bool doubleCheckEnabled = false,
+}) async {
+  try {
+    if (repositoryPath.trim().isEmpty) {
+      return GitResult.err('Repository path is required.');
+    }
+    if (modelValue.trim().isEmpty || !modelValue.contains(':')) {
+      return GitResult.err('Select a valid AI model before reviewing.');
+    }
+    if (!includeStaged && !includeUnstaged) {
+      return GitResult.err('No diff scope is available for review.');
+    }
+
+    final separator = modelValue.indexOf(':');
+    final providerId = modelValue.substring(0, separator).trim();
+    final modelId = modelValue.substring(separator + 1).trim();
+    final provider =
+        _providerSpecs.where((item) => item.id == providerId).firstOrNull;
+    if (provider == null) {
+      return GitResult.err('Unknown AI provider: $providerId');
+    }
+    if (modelId.isEmpty) {
+      return GitResult.err('Selected model is missing a model id.');
+    }
+
+    final availability = await _inspectProviderCached(provider);
+    if (!availability.ready || availability.resolution == null) {
+      return GitResult.err(
+        'Provider ${provider.id} is not ready. ${_formatProviderHealth(availability)}',
+      );
+    }
+
+    final diffContext = await _collectCommitMessageContext(
+      repositoryPath: repositoryPath,
+      scopeLabel: scopeLabel,
+      scopedPaths: scopedPaths,
+      includeStaged: includeStaged,
+      includeUnstaged: includeUnstaged,
+    );
+    if (!diffContext.ok) {
+      return GitResult.err(diffContext.error!);
+    }
+
+    final bundle = diffContext.data!;
+    final profile = _guardrailProfileForStage(guardrailStage);
+    final draftSpec = _ReviewPromptSpec(
+      branchName: bundle.branchName,
+      modelCategoryLabel: modelCategoryLabel,
+      scopeLabel: scopeLabel,
+      customPrompt: customPrompt,
+      statusSummary: bundle.statusSummary,
+      statSummary: bundle.statSummary,
+      diffSummary: bundle.diffBundle.promptBody,
+      passMode: _ReviewPassMode.draft,
+    );
+    final draftPrompt = _buildCommitReviewPrompt(
+      spec: draftSpec,
+      profile: profile,
+    );
+
+    final providerOutput = await _runProviderPrompt(
+      provider: provider,
+      resolution: availability.resolution!,
+      modelId: modelId,
+      prompt: draftPrompt,
+      repositoryPath: repositoryPath,
+    );
+    await _recordReviewAudit(
+      event: 'review_commit_draft',
+      providerId: provider.id,
+      repositoryPath: repositoryPath,
+      scopeLabel: scopeLabel,
+      promptPreview: draftPrompt,
+      outputPreview: providerOutput.outputPreview,
+      ok: providerOutput.ok,
+      errorCode: providerOutput.ok ? null : providerOutput.error,
+    );
+    if (!providerOutput.ok || providerOutput.output == null) {
+      return GitResult.err(providerOutput.error ?? 'Review did not return.');
+    }
+
+    final draftReview = _parseDraftReview(providerOutput.output!);
+    if (draftReview == null) {
+      return GitResult.err(
+        'Review output could not be parsed. Try again or use a stronger model.',
+      );
+    }
+
+    if (!doubleCheckEnabled) {
+      return GitResult.ok(
+        AiCommitReviewData(
+          providerId: provider.id,
+          modelId: modelId,
+          scopeLabel: scopeLabel,
+          usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
+          promptCharacters: draftPrompt.length,
+          diffCharacters: bundle.diffBundle.originalDiffCharacters,
+          verdict: draftReview.verdict,
+          score: draftReview.score,
+          summary: draftReview.summary,
+          reasoningReport: draftReview.reasoningReport,
+          findings: draftReview.findings,
+          twoStepEnabled: false,
+          hasVerificationTrace: false,
+        ),
+      );
+    }
+
+    final verifySpec = _ReviewPromptSpec(
+      branchName: bundle.branchName,
+      modelCategoryLabel: modelCategoryLabel,
+      scopeLabel: scopeLabel,
+      customPrompt: customPrompt,
+      statusSummary: bundle.statusSummary,
+      statSummary: bundle.statSummary,
+      diffSummary: bundle.diffBundle.promptBody,
+      passMode: _ReviewPassMode.verify,
+      priorReview: _serializeDraftReview(draftReview),
+    );
+    final verifyPrompt = _buildCommitReviewPrompt(
+      spec: verifySpec,
+      profile: profile,
+    );
+    final verifyOutput = await _runProviderPrompt(
+      provider: provider,
+      resolution: availability.resolution!,
+      modelId: modelId,
+      prompt: verifyPrompt,
+      repositoryPath: repositoryPath,
+    );
+    await _recordReviewAudit(
+      event: 'review_commit_verify',
+      providerId: provider.id,
+      repositoryPath: repositoryPath,
+      scopeLabel: scopeLabel,
+      promptPreview: verifyPrompt,
+      outputPreview: verifyOutput.outputPreview,
+      ok: verifyOutput.ok,
+      errorCode: verifyOutput.ok ? null : verifyOutput.error,
+    );
+
+    if (!verifyOutput.ok || verifyOutput.output == null) {
+      final fallback = AiCommitReviewData(
+        providerId: provider.id,
+        modelId: modelId,
+        scopeLabel: scopeLabel,
+        usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
+        promptCharacters: draftPrompt.length + verifyPrompt.length,
+        diffCharacters: bundle.diffBundle.originalDiffCharacters,
+        verdict: draftReview.verdict,
+        score: draftReview.score,
+        summary: draftReview.summary,
+        reasoningReport: draftReview.reasoningReport,
+        findings: draftReview.findings,
+        twoStepEnabled: true,
+        hasVerificationTrace: false,
+        verificationFailed: true,
+        verificationError:
+            verifyOutput.error ?? 'Verification did not return a result.',
+        draftFindings: draftReview.findings,
+        draftSummary: draftReview.summary,
+        draftReasoningReport: draftReview.reasoningReport,
+      );
+      return GitResult.ok(fallback);
+    }
+
+    final verification = _parseVerificationReview(verifyOutput.output!);
+    if (verification == null) {
+      return GitResult.ok(
+        AiCommitReviewData(
+          providerId: provider.id,
+          modelId: modelId,
+          scopeLabel: scopeLabel,
+          usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
+          promptCharacters: draftPrompt.length + verifyPrompt.length,
+          diffCharacters: bundle.diffBundle.originalDiffCharacters,
+          verdict: draftReview.verdict,
+          score: draftReview.score,
+          summary: draftReview.summary,
+          reasoningReport: draftReview.reasoningReport,
+          findings: draftReview.findings,
+          twoStepEnabled: true,
+          hasVerificationTrace: false,
+          verificationFailed: true,
+          verificationError:
+              'Verification output could not be parsed. Showing draft review.',
+          draftFindings: draftReview.findings,
+          draftSummary: draftReview.summary,
+          draftReasoningReport: draftReview.reasoningReport,
+        ),
+      );
+    }
+
+    final merged = _mergeVerifiedReview(
+      draft: draftReview,
+      verification: verification,
+    );
+    await _recordReviewAudit(
+      event: 'review_commit_final',
+      providerId: provider.id,
+      repositoryPath: repositoryPath,
+      scopeLabel: scopeLabel,
+      promptPreview: '',
+      outputPreview: _serializeFinalReview(merged),
+      ok: true,
+    );
+
+    return GitResult.ok(
+      AiCommitReviewData(
+        providerId: provider.id,
+        modelId: modelId,
+        scopeLabel: scopeLabel,
+        usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
+        promptCharacters: draftPrompt.length + verifyPrompt.length,
+        diffCharacters: bundle.diffBundle.originalDiffCharacters,
+        verdict: merged.verdict,
+        score: merged.score,
+        summary: merged.summary,
+        reasoningReport: merged.reasoningReport,
+        findings: merged.findings,
+        twoStepEnabled: true,
+        hasVerificationTrace: true,
+        draftFindings: draftReview.findings,
+        draftSummary: draftReview.summary,
+        draftReasoningReport: draftReview.reasoningReport,
+        verificationNotes: verification.verificationNotes,
+      ),
+    );
+  } catch (error) {
+    return GitResult.err('Commit review failed: $error');
   }
 }
 
@@ -873,12 +1126,65 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     unstagedStat: unstagedStat.data ?? '',
   );
 
+  // ── Git telemetry — all non-blocking, failures silently degrade ─────────
+  // Count first so every sample size is derived from real repo state.
+  final countResult = await _runGitCommand(
+    repositoryPath,
+    ['rev-list', '--count', 'HEAD'],
+  );
+  final totalCommits = int.tryParse((countResult.data ?? '').trim()) ?? 0;
+
+  // Sample sizes derived from what actually exists — no invented constants.
+  final logSample = math.min(totalCommits, 10);
+  final authorSample = math.min(totalCommits, 50);
+
+  // Fetch everything in parallel — adds zero sequential latency.
+  final telemetry = totalCommits > 0
+      ? await Future.wait([
+          // Style signal: recent subject lines
+          _runGitCommand(repositoryPath, ['log', '--format=%h %s', '-$logSample']),
+          // Author identity
+          _runGitCommand(repositoryPath, ['log', '--format=%an', '-1']),
+          // Cadence: how long ago was the last commit
+          _runGitCommand(repositoryPath, ['log', '--format=%cr', '-1']),
+          // Project age: when did it all start
+          _runGitCommand(repositoryPath, ['log', '--max-parents=0', '--format=%cr', 'HEAD']),
+          // Contributor sample: who's been committing recently
+          _runGitCommand(repositoryPath, ['log', '--format=%an', '-$authorSample']),
+        ])
+      : <GitResult<String>>[];
+
+  String recentLog = '';
+  String authorName = '';
+  String lastCommitAge = '';
+  String projectAge = '';
+  int uniqueContributors = 0;
+
+  if (telemetry.length == 5) {
+    recentLog = (telemetry[0].data ?? '').trim();
+    authorName = (telemetry[1].data ?? '').trim();
+    lastCommitAge = (telemetry[2].data ?? '').trim();
+    projectAge = (telemetry[3].data ?? '').trim();
+    final authorLines = (telemetry[4].data ?? '')
+        .split('\n')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toSet();
+    uniqueContributors = authorLines.length;
+  }
+
   return _CommitDiffContextResult.ok(
     _CommitDiffContext(
       branchName: (branch.data ?? 'HEAD').trim(),
       statusSummary: (status.data ?? '').trim(),
       statSummary: statSummary.trim(),
       diffBundle: diffBundle,
+      totalCommits: totalCommits,
+      recentLog: recentLog,
+      authorName: authorName,
+      lastCommitAge: lastCommitAge,
+      projectAge: projectAge,
+      uniqueContributors: uniqueContributors,
     ),
   );
 }
@@ -1096,6 +1402,13 @@ String _buildCommitMessagePrompt({
   required String statusSummary,
   required String statSummary,
   required String diffSummary,
+  String existingMessage = '',
+  int totalCommits = 0,
+  String recentLog = '',
+  String authorName = '',
+  String lastCommitAge = '',
+  String projectAge = '',
+  int uniqueContributors = 0,
 }) {
   final buffer = StringBuffer();
   buffer.writeln(
@@ -1105,8 +1418,7 @@ String _buildCommitMessagePrompt({
     'Return only the commit message text. Do not add commentary, labels, quotes, or code fences.',
   );
   buffer.writeln(
-    'Respect the user'
-    's natural tone and structure preferences when they are provided, but do not invent facts or generic corporate phrasing.',
+    'If <user_instructions> are present, follow them exactly — they override all defaults including format, tone, length, and style.',
   );
   buffer.writeln(
     'Prefer a concise summary line. Add a blank line and body only when the diff clearly warrants extra detail.',
@@ -1117,14 +1429,25 @@ String _buildCommitMessagePrompt({
   buffer.writeln();
   buffer.writeln('<generation_context>');
   buffer.writeln('Branch: $branchName');
+  if (authorName.isNotEmpty) buffer.writeln('Author: $authorName');
+  if (totalCommits > 0) buffer.writeln('Total commits: $totalCommits');
+  if (projectAge.isNotEmpty) buffer.writeln('Project started: $projectAge');
+  if (lastCommitAge.isNotEmpty) buffer.writeln('Last commit: $lastCommitAge');
+  if (uniqueContributors > 0) buffer.writeln('Contributors (sampled): $uniqueContributors');
   buffer.writeln('Model slot: $modelCategoryLabel');
-  buffer.writeln('Requested scope: $scopeLabel');
+  buffer.writeln('Scope: $scopeLabel');
   buffer.writeln('</generation_context>');
-  if (customPrompt.trim().isNotEmpty) {
+  if (recentLog.isNotEmpty) {
     buffer.writeln();
-    buffer.writeln('<user_preferences>');
-    buffer.writeln(customPrompt.trim());
-    buffer.writeln('</user_preferences>');
+    buffer.writeln('<commit_history>');
+    buffer.writeln(recentLog);
+    buffer.writeln('</commit_history>');
+  }
+  if (existingMessage.trim().isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln('<existing_draft>');
+    buffer.writeln(existingMessage.trim());
+    buffer.writeln('</existing_draft>');
   }
   if (statusSummary.trim().isNotEmpty) {
     buffer.writeln();
@@ -1138,6 +1461,14 @@ String _buildCommitMessagePrompt({
     buffer.writeln(statSummary.trim());
     buffer.writeln('</diffstat>');
   }
+  // User instructions go last before the diff — maximum recency weight,
+  // acts as a final directive the model reads immediately before generating.
+  if (customPrompt.trim().isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln('<user_instructions>');
+    buffer.writeln(customPrompt.trim());
+    buffer.writeln('</user_instructions>');
+  }
   buffer.writeln();
   buffer.writeln('<diff_context>');
   buffer.writeln(diffSummary.trim());
@@ -1148,6 +1479,689 @@ String _buildCommitMessagePrompt({
     payload = payload.substring(0, _maxPromptChars);
   }
   return payload;
+}
+
+ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
+  switch (stage.clamp(0, 3)) {
+    case 0:
+      return const ReviewGuardrailProfile(
+        id: 'loose',
+        seat: 'restrained sanity checker',
+        reviewRadius: 'Keep the review local to the changed code and obvious nearby effects.',
+        primaryFear:
+            'Your main job is to catch concrete logic bugs and likely breakage in the code at hand.',
+        silenceRule:
+            'Stay silent on cosmetic opinions, abstract architecture critiques, and weakly supported inconsistency commentary.',
+        verdictBar:
+            'Only downgrade the commit when the evidence supports a credible, likely problem.',
+        priorityConcernClasses: [
+          ReviewConcernClass.logicBug,
+          ReviewConcernClass.regressionRisk,
+        ],
+        suppressedConcernClasses: [
+          ReviewConcernClass.integrationMismatch,
+          ReviewConcernClass.redundantPattern,
+          ReviewConcernClass.inconsistentPattern,
+          ReviewConcernClass.maintainabilityHazard,
+        ],
+        allowIntegrationEscalation: false,
+        allowDesignSmellEscalation: false,
+        requireConcreteEvidence: true,
+      );
+    case 1:
+      return const ReviewGuardrailProfile(
+        id: 'balanced',
+        seat: 'practical reviewer',
+        reviewRadius:
+            'Review the changed code and its likely integration surface in the surrounding system.',
+        primaryFear:
+            'Your job is to catch correctness issues, regression risk, and meaningful inconsistency that weakens the change.',
+        silenceRule:
+            'Skip cosmetic nits and generic opinions. Surface only issues with practical engineering consequence.',
+        verdictBar:
+            'Downgrade when the evidence supports meaningful correctness, integration, or code-health risk.',
+        priorityConcernClasses: [
+          ReviewConcernClass.logicBug,
+          ReviewConcernClass.regressionRisk,
+          ReviewConcernClass.integrationMismatch,
+          ReviewConcernClass.redundantPattern,
+          ReviewConcernClass.inconsistentPattern,
+        ],
+        suppressedConcernClasses: [],
+        allowIntegrationEscalation: true,
+        allowDesignSmellEscalation: true,
+        requireConcreteEvidence: true,
+      );
+    case 2:
+      return const ReviewGuardrailProfile(
+        id: 'strict',
+        seat: 'careful maintainer',
+        reviewRadius:
+            'Review the changed code, nearby integration points, and hidden assumptions implied by the diff.',
+        primaryFear:
+            'Your job is to catch incomplete handling, hidden coupling, edge cases, and long-tail risks before commit.',
+        silenceRule:
+            'Do not nitpick aesthetics, but you should surface subtle risks when they are grounded in the diff.',
+        verdictBar:
+            'A commit is not ready when hidden assumptions or incomplete safeguards create material risk.',
+        priorityConcernClasses: [
+          ReviewConcernClass.logicBug,
+          ReviewConcernClass.regressionRisk,
+          ReviewConcernClass.integrationMismatch,
+          ReviewConcernClass.redundantPattern,
+          ReviewConcernClass.inconsistentPattern,
+          ReviewConcernClass.hiddenAssumption,
+          ReviewConcernClass.maintainabilityHazard,
+        ],
+        suppressedConcernClasses: [],
+        allowIntegrationEscalation: true,
+        allowDesignSmellEscalation: true,
+        requireConcreteEvidence: true,
+      );
+    default:
+      return const ReviewGuardrailProfile(
+        id: 'paranoid',
+        seat: 'final gate reviewer',
+        reviewRadius:
+            'Review the changed code, integration surface, and any broader operational or safety consequences supported by the diff.',
+        primaryFear:
+            'Your job is to prevent harmful surprises such as destructive behavior, data loss, corruption, security exposure, and silent regressions.',
+        silenceRule:
+            'Do not invent threats, but when the diff credibly points toward a serious risk class you should surface it clearly.',
+        verdictBar:
+            'Downgrade aggressively when the evidence points to a high-impact failure class, even if the bug is not fully proven.',
+        priorityConcernClasses: [
+          ReviewConcernClass.logicBug,
+          ReviewConcernClass.regressionRisk,
+          ReviewConcernClass.integrationMismatch,
+          ReviewConcernClass.redundantPattern,
+          ReviewConcernClass.inconsistentPattern,
+          ReviewConcernClass.hiddenAssumption,
+          ReviewConcernClass.maintainabilityHazard,
+          ReviewConcernClass.destructiveRisk,
+          ReviewConcernClass.securityRisk,
+          ReviewConcernClass.stateCorruptionRisk,
+        ],
+        suppressedConcernClasses: [],
+        allowIntegrationEscalation: true,
+        allowDesignSmellEscalation: true,
+        requireConcreteEvidence: true,
+      );
+  }
+}
+
+String _buildCommitReviewPrompt({
+  required _ReviewPromptSpec spec,
+  required ReviewGuardrailProfile profile,
+}) {
+  final buffer = StringBuffer();
+  buffer.writeln(_buildReviewWakeBlock(profile, spec.passMode));
+  buffer.writeln();
+  buffer.writeln('<scope_and_jurisdiction>');
+  buffer.writeln('Branch: ${spec.branchName}');
+  buffer.writeln('Model slot: ${spec.modelCategoryLabel}');
+  buffer.writeln('Requested scope: ${spec.scopeLabel}');
+  buffer.writeln(profile.reviewRadius);
+  buffer.writeln(
+    spec.passMode == _ReviewPassMode.verify
+        ? 'You are verifying a prior draft review for the same commit scope.'
+        : 'You are reviewing a proposed commit immediately before it is created.',
+  );
+  buffer.writeln('</scope_and_jurisdiction>');
+  buffer.writeln();
+  buffer.writeln('<evidence_rules>');
+  buffer.writeln(
+    'Ground every finding in the visible diff. Prefer omission over speculation.',
+  );
+  if (profile.requireConcreteEvidence) {
+    buffer.writeln(
+      'Do not report a concern unless you can cite concrete evidence from the diff or its immediate implications.',
+    );
+  }
+  buffer.writeln(
+    'Do not edit code, rewrite the patch, or offer style-only commentary.',
+  );
+  buffer.writeln('</evidence_rules>');
+  buffer.writeln();
+  buffer.writeln('<escalation_rules>');
+  buffer.writeln(profile.primaryFear);
+  buffer.writeln(profile.silenceRule);
+  buffer.writeln(profile.verdictBar);
+  buffer.writeln(
+    'Prioritize these concern classes: ${_concernClassLabels(profile.priorityConcernClasses).join(', ')}.',
+  );
+  if (profile.suppressedConcernClasses.isNotEmpty) {
+    buffer.writeln(
+      'Keep these concern classes suppressed unless they directly create real breakage: ${_concernClassLabels(profile.suppressedConcernClasses).join(', ')}.',
+    );
+  }
+  if (profile.allowIntegrationEscalation) {
+    buffer.writeln(
+      'Integration mismatch can affect the verdict when it creates practical risk.',
+    );
+  }
+  if (profile.allowDesignSmellEscalation) {
+    buffer.writeln(
+      'Redundancy or inconsistent patterns can affect the verdict when they weaken the change materially.',
+    );
+  }
+  buffer.writeln('</escalation_rules>');
+  buffer.writeln();
+  buffer.writeln(_reviewOutputSchemaInstructions(spec.passMode));
+  if (spec.customPrompt.trim().isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln('<user_review_guide>');
+    buffer.writeln(
+      'Apply this optional review guidance when it does not conflict with the required output schema.',
+    );
+    buffer.writeln(spec.customPrompt.trim());
+    buffer.writeln('</user_review_guide>');
+  }
+  if (spec.priorReview != null && spec.priorReview!.trim().isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln('<prior_review>');
+    buffer.writeln(spec.priorReview!.trim());
+    buffer.writeln('</prior_review>');
+  }
+  if (spec.statusSummary.trim().isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln('<status_summary>');
+    buffer.writeln(spec.statusSummary.trim());
+    buffer.writeln('</status_summary>');
+  }
+  if (spec.statSummary.trim().isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln('<diffstat>');
+    buffer.writeln(spec.statSummary.trim());
+    buffer.writeln('</diffstat>');
+  }
+  buffer.writeln();
+  buffer.writeln('<diff_context>');
+  buffer.writeln(spec.diffSummary.trim());
+  buffer.writeln('</diff_context>');
+
+  var payload = buffer.toString().trim();
+  if (payload.length > _maxPromptChars) {
+    payload = payload.substring(0, _maxPromptChars);
+  }
+  return payload;
+}
+
+String _buildReviewWakeBlock(
+  ReviewGuardrailProfile profile,
+  _ReviewPassMode passMode,
+) {
+  final buffer = StringBuffer();
+  buffer.writeln('<wake>');
+  if (passMode == _ReviewPassMode.verify) {
+    buffer.writeln(
+      'You are the ${profile.seat} returning for a second pass.',
+    );
+    buffer.writeln(
+      'Your responsibility is to challenge omissions, overclaims, severity mistakes, and hidden corners the first pass may have missed.',
+    );
+  } else {
+    buffer.writeln('You are the ${profile.seat} for this commit review.');
+    buffer.writeln(
+      'Your responsibility is to judge whether this change is safe and coherent enough to commit.',
+    );
+  }
+  buffer.writeln(profile.primaryFear);
+  buffer.writeln(profile.silenceRule);
+  buffer.writeln(profile.verdictBar);
+  buffer.writeln('</wake>');
+  return buffer.toString();
+}
+
+String _reviewOutputSchemaInstructions(_ReviewPassMode passMode) {
+  if (passMode == _ReviewPassMode.verify) {
+    return '''
+<output_schema>
+Return XML-like text only. Do not include prose before or after the schema.
+Use exactly this shape:
+<verification_result>
+<confirmed_ids>F1,F2</confirmed_ids>
+<rejected_ids>F3</rejected_ids>
+<verification_notes>Short explanation of what changed after verification.</verification_notes>
+<score_adjustment>-4</score_adjustment>
+<verdict_adjustment>Needs attention</verdict_adjustment>
+<final_summary>One sentence final summary.</final_summary>
+<final_reasoning_report>Short RR report.</final_reasoning_report>
+<new_findings>
+<finding id="V1" severity="warn" file="path/or/-" hunk="@@ ... @@ or -">
+<title>Short title</title>
+<evidence>Concrete evidence from the diff</evidence>
+<why>Why it matters</why>
+</finding>
+</new_findings>
+</verification_result>
+If there are no confirmed or rejected ids, leave the tag empty.
+If there are no new findings, keep <new_findings></new_findings> empty.
+</output_schema>''';
+  }
+
+  return '''
+<output_schema>
+Return XML-like text only. Do not include prose before or after the schema.
+Use exactly this shape:
+<review_result>
+<verdict>Ready|Mostly ready|Needs attention|High risk|Block</verdict>
+<score>0-100 integer</score>
+<summary>One sentence summary.</summary>
+<reasoning_report>Short RR report.</reasoning_report>
+<findings>
+<finding id="F1" severity="note|warn|risk|block" file="path/or/-" hunk="@@ ... @@ or -">
+<title>Short title</title>
+<evidence>Concrete evidence from the diff</evidence>
+<why>Why it matters</why>
+</finding>
+</findings>
+</review_result>
+If there are no findings, keep <findings></findings> empty.
+</output_schema>''';
+}
+
+List<String> _concernClassLabels(List<ReviewConcernClass> values) {
+  return values.map((value) {
+    switch (value) {
+      case ReviewConcernClass.logicBug:
+        return 'logic bug';
+      case ReviewConcernClass.regressionRisk:
+        return 'regression risk';
+      case ReviewConcernClass.integrationMismatch:
+        return 'integration mismatch';
+      case ReviewConcernClass.redundantPattern:
+        return 'redundant pattern';
+      case ReviewConcernClass.inconsistentPattern:
+        return 'inconsistent pattern';
+      case ReviewConcernClass.hiddenAssumption:
+        return 'hidden assumption';
+      case ReviewConcernClass.maintainabilityHazard:
+        return 'maintainability hazard';
+      case ReviewConcernClass.destructiveRisk:
+        return 'destructive risk';
+      case ReviewConcernClass.securityRisk:
+        return 'security risk';
+      case ReviewConcernClass.stateCorruptionRisk:
+        return 'state corruption risk';
+    }
+  }).toList();
+}
+
+Future<_ProviderPromptResult> _runProviderPrompt({
+  required _ProviderSpec provider,
+  required _ProviderResolution resolution,
+  required String modelId,
+  required String prompt,
+  required String repositoryPath,
+}) async {
+  final attempts = _buildProviderAttempts(provider.kind, modelId);
+  String? providerOutput;
+  String? lastError;
+  for (final attempt in attempts) {
+    final result = await _runObservedProcess(
+      commandLabel: 'ai.${provider.id}.${attempt.name}',
+      scope: 'ai',
+      command: resolution.command,
+      args: attempt.args,
+      timeout: _providerRuntimeTimeout,
+      workingDirectory: repositoryPath,
+      stdinPayload: prompt,
+      environment: _providerEnvironment(provider.kind),
+    );
+
+    if (result == null) {
+      lastError = 'Provider command timed out.';
+      continue;
+    }
+
+    final formatted = _formatProviderOutput(
+      attempt.outputMode,
+      result.stdout,
+      result.stderr,
+    );
+    if (result.exitCode == 0 &&
+        formatted != null &&
+        formatted.trim().isNotEmpty) {
+      providerOutput = formatted;
+      break;
+    }
+
+    lastError = formatted?.trim().isNotEmpty == true
+        ? formatted
+        : result.stderr.trim().isNotEmpty
+            ? result.stderr.trim()
+            : 'Provider exited with code ${result.exitCode}.';
+  }
+
+  if (providerOutput == null) {
+    return _ProviderPromptResult(
+      ok: false,
+      error: lastError ?? 'Provider did not return output.',
+      outputPreview: lastError ?? '',
+    );
+  }
+
+  return _ProviderPromptResult(
+    ok: true,
+    output: providerOutput,
+    outputPreview: providerOutput,
+  );
+}
+
+_ParsedReviewResult? _parseDraftReview(String raw) {
+  final normalized = _normalizeModelMarkup(raw);
+  final verdict = _extractTag(normalized, 'verdict');
+  final scoreRaw = _extractTag(normalized, 'score');
+  final summary = _extractTag(normalized, 'summary');
+  final rr = _extractTag(normalized, 'reasoning_report');
+  if (verdict == null || scoreRaw == null || summary == null || rr == null) {
+    return null;
+  }
+  final score = int.tryParse(scoreRaw.trim());
+  if (score == null) {
+    return null;
+  }
+  final findingsBlock = _extractTag(normalized, 'findings') ?? '';
+  final findings = _parseFindingTags(findingsBlock, origin: 'draft');
+  return _ParsedReviewResult(
+    verdict: _normalizeVerdict(verdict),
+    score: score.clamp(0, 100),
+    summary: summary.trim(),
+    reasoningReport: rr.trim(),
+    findings: findings,
+  );
+}
+
+AiCommitReviewVerificationData? _parseVerificationReview(String raw) {
+  final normalized = _normalizeModelMarkup(raw);
+  final notes = _extractTag(normalized, 'verification_notes');
+  final scoreAdjustmentRaw = _extractTag(normalized, 'score_adjustment');
+  final finalSummary = _extractTag(normalized, 'final_summary');
+  final finalReasoningReport = _extractTag(normalized, 'final_reasoning_report');
+  if (notes == null ||
+      scoreAdjustmentRaw == null ||
+      finalSummary == null ||
+      finalReasoningReport == null) {
+    return null;
+  }
+  final scoreAdjustment = int.tryParse(scoreAdjustmentRaw.trim());
+  if (scoreAdjustment == null) {
+    return null;
+  }
+  final confirmedIds =
+      _splitIdList(_extractTag(normalized, 'confirmed_ids') ?? '');
+  final rejectedIds =
+      _splitIdList(_extractTag(normalized, 'rejected_ids') ?? '');
+  final newFindings = _parseFindingTags(
+    _extractTag(normalized, 'new_findings') ?? '',
+    origin: 'verification',
+  );
+  final verdictAdjustment = _extractTag(normalized, 'verdict_adjustment');
+  return AiCommitReviewVerificationData(
+    confirmedFindingIds: confirmedIds,
+    rejectedFindingIds: rejectedIds,
+    newFindings: newFindings,
+    scoreAdjustment: scoreAdjustment,
+    verdictAdjustment:
+        verdictAdjustment == null || verdictAdjustment.trim().isEmpty
+            ? null
+            : _normalizeVerdict(verdictAdjustment),
+    verificationNotes: notes.trim(),
+    finalSummary: finalSummary.trim(),
+    finalReasoningReport: finalReasoningReport.trim(),
+  );
+}
+
+List<AiCommitReviewFindingData> _parseFindingTags(
+  String block, {
+  required String origin,
+}) {
+  final matches = RegExp(
+    r'<finding\b([^>]*)>([\s\S]*?)</finding>',
+    caseSensitive: false,
+  ).allMatches(block);
+  final findings = <AiCommitReviewFindingData>[];
+  var index = 0;
+  for (final match in matches) {
+    final attrs = _parseXmlAttributes(match.group(1) ?? '');
+    final body = match.group(2) ?? '';
+    index += 1;
+    findings.add(
+      AiCommitReviewFindingData(
+        id: (attrs['id']?.trim().isNotEmpty ?? false)
+            ? attrs['id']!.trim()
+            : '${origin == 'draft' ? 'F' : 'V'}$index',
+        severity: _normalizeSeverity(attrs['severity']),
+        title: (_extractTag(body, 'title') ?? 'Finding $index').trim(),
+        evidence: (_extractTag(body, 'evidence') ?? '').trim(),
+        whyItMatters: (_extractTag(body, 'why') ?? '').trim(),
+        filePath: _normalizedOptionalTagAttribute(attrs['file']),
+        hunkLabel: _normalizedOptionalTagAttribute(attrs['hunk']),
+        origin: origin,
+      ),
+    );
+  }
+  return findings;
+}
+
+_MergedReviewResult _mergeVerifiedReview({
+  required _ParsedReviewResult draft,
+  required AiCommitReviewVerificationData verification,
+}) {
+  final active = <String, AiCommitReviewFindingData>{};
+  for (final finding in draft.findings) {
+    active[finding.id] = finding;
+  }
+  for (final id in verification.rejectedFindingIds) {
+    active.remove(id);
+  }
+  for (final finding in verification.newFindings) {
+    active[finding.id] = finding;
+  }
+
+  final mergedFindings = active.values.map((finding) {
+    if (verification.confirmedFindingIds.contains(finding.id)) {
+      return AiCommitReviewFindingData(
+        id: finding.id,
+        severity: finding.severity,
+        title: finding.title,
+        evidence: finding.evidence,
+        whyItMatters: finding.whyItMatters,
+        filePath: finding.filePath,
+        hunkLabel: finding.hunkLabel,
+        origin: 'merged',
+      );
+    }
+    return finding.origin == 'verification'
+        ? finding
+        : AiCommitReviewFindingData(
+            id: finding.id,
+            severity: finding.severity,
+            title: finding.title,
+            evidence: finding.evidence,
+            whyItMatters: finding.whyItMatters,
+            filePath: finding.filePath,
+            hunkLabel: finding.hunkLabel,
+            origin: 'merged',
+          );
+  }).toList()
+    ..sort((left, right) =>
+        _severityWeight(right.severity).compareTo(_severityWeight(left.severity)));
+
+  final baseScore = (draft.score + verification.scoreAdjustment).clamp(0, 100);
+  final verdict = verification.verdictAdjustment ?? draft.verdict;
+  return _MergedReviewResult(
+    verdict: verdict,
+    score: baseScore,
+    summary: verification.finalSummary,
+    reasoningReport: verification.finalReasoningReport,
+    findings: mergedFindings,
+  );
+}
+
+String _serializeDraftReview(_ParsedReviewResult draft) {
+  final buffer = StringBuffer();
+  buffer.writeln('<draft_review>');
+  buffer.writeln('<verdict>${draft.verdict}</verdict>');
+  buffer.writeln('<score>${draft.score}</score>');
+  buffer.writeln('<summary>${draft.summary}</summary>');
+  buffer.writeln('<reasoning_report>${draft.reasoningReport}</reasoning_report>');
+  buffer.writeln('<findings>');
+  for (final finding in draft.findings) {
+    buffer.writeln(
+      '<finding id="${finding.id}" severity="${finding.severity}" file="${finding.filePath ?? '-'}" hunk="${finding.hunkLabel ?? '-'}">',
+    );
+    buffer.writeln('<title>${finding.title}</title>');
+    buffer.writeln('<evidence>${finding.evidence}</evidence>');
+    buffer.writeln('<why>${finding.whyItMatters}</why>');
+    buffer.writeln('</finding>');
+  }
+  buffer.writeln('</findings>');
+  buffer.writeln('</draft_review>');
+  return buffer.toString();
+}
+
+String _serializeFinalReview(_MergedReviewResult result) {
+  final findingSummary = result.findings
+      .take(6)
+      .map((finding) => '[${finding.severity}] ${finding.title}')
+      .join(' | ');
+  return '${result.verdict} | ${result.score} | ${result.summary} | $findingSummary';
+}
+
+String _normalizeModelMarkup(String value) {
+  var normalized = value.replaceAll('\r\n', '\n').trim();
+  if (normalized.startsWith('```')) {
+    final lines = normalized.split('\n');
+    if (lines.length >= 3) {
+      normalized = lines.sublist(1, lines.length - 1).join('\n').trim();
+    }
+  }
+  return normalized;
+}
+
+String? _extractTag(String input, String tag) {
+  final match = RegExp(
+    '<$tag>([\\s\\S]*?)</$tag>',
+    caseSensitive: false,
+  ).firstMatch(input);
+  return match?.group(1);
+}
+
+Map<String, String> _parseXmlAttributes(String raw) {
+  final attrs = <String, String>{};
+  final matches = RegExp(r'(\w+)="([^"]*)"').allMatches(raw);
+  for (final match in matches) {
+    final key = match.group(1);
+    final value = match.group(2);
+    if (key != null && value != null) {
+      attrs[key] = value;
+    }
+  }
+  return attrs;
+}
+
+List<String> _splitIdList(String raw) {
+  return raw
+      .split(',')
+      .map((value) => value.trim())
+      .where((value) => value.isNotEmpty)
+      .toList();
+}
+
+String _normalizeVerdict(String raw) {
+  final lower = raw.trim().toLowerCase();
+  switch (lower) {
+    case 'ready':
+      return 'Ready';
+    case 'mostly ready':
+      return 'Mostly ready';
+    case 'needs attention':
+      return 'Needs attention';
+    case 'high risk':
+      return 'High risk';
+    case 'block':
+      return 'Block';
+    default:
+      return 'Needs attention';
+  }
+}
+
+String _normalizeSeverity(String? raw) {
+  final lower = (raw ?? '').trim().toLowerCase();
+  switch (lower) {
+    case 'note':
+      return 'note';
+    case 'warn':
+      return 'warn';
+    case 'risk':
+      return 'risk';
+    case 'block':
+      return 'block';
+    default:
+      return 'warn';
+  }
+}
+
+String? _normalizedOptionalTagAttribute(String? raw) {
+  if (raw == null) {
+    return null;
+  }
+  final normalized = raw.trim();
+  if (normalized.isEmpty || normalized == '-') {
+    return null;
+  }
+  return normalized;
+}
+
+int _severityWeight(String severity) {
+  switch (severity) {
+    case 'block':
+      return 4;
+    case 'risk':
+      return 3;
+    case 'warn':
+      return 2;
+    case 'note':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+Future<void> _recordReviewAudit({
+  required String event,
+  required String providerId,
+  required String repositoryPath,
+  required String scopeLabel,
+  required String promptPreview,
+  required String outputPreview,
+  required bool ok,
+  String? errorCode,
+}) {
+  return AiAuditStore.recordEntry(
+    AiAuditEntryData(
+      id: '${DateTime.now().microsecondsSinceEpoch}-$event',
+      event: event,
+      providerId: providerId,
+      repositoryHint: p.basename(repositoryPath),
+      diffScopePath: scopeLabel,
+      promptPreview: _previewText(promptPreview),
+      outputPreview: _previewText(outputPreview),
+      ok: ok,
+      errorCode: errorCode,
+      createdAt: DateTime.now().toIso8601String(),
+    ),
+  );
+}
+
+String _previewText(String value, {int maxLength = 800}) {
+  final normalized = value.replaceAll('\r\n', '\n').trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return '${normalized.substring(0, maxLength - 3)}...';
 }
 
 List<_ProviderAttempt> _buildProviderAttempts(
@@ -2055,6 +3069,20 @@ class _ProviderAttempt {
   });
 }
 
+class _ProviderPromptResult {
+  final bool ok;
+  final String? output;
+  final String? error;
+  final String outputPreview;
+
+  const _ProviderPromptResult({
+    required this.ok,
+    this.output,
+    this.error,
+    required this.outputPreview,
+  });
+}
+
 class _ClaudeOAuthCredentials {
   final bool hasAccessToken;
   final String subscriptionType;
@@ -2071,12 +3099,24 @@ class _CommitDiffContext {
   final String statusSummary;
   final String statSummary;
   final _DiffPromptBundle diffBundle;
+  final int totalCommits;
+  final String recentLog;
+  final String authorName;
+  final String lastCommitAge;
+  final String projectAge;
+  final int uniqueContributors;
 
   const _CommitDiffContext({
     required this.branchName,
     required this.statusSummary,
     required this.statSummary,
     required this.diffBundle,
+    this.totalCommits = 0,
+    this.recentLog = '',
+    this.authorName = '',
+    this.lastCommitAge = '',
+    this.projectAge = '',
+    this.uniqueContributors = 0,
   });
 }
 
@@ -2089,6 +3129,30 @@ class _CommitDiffContextResult {
   const _CommitDiffContextResult.err(this.error) : data = null;
 }
 
+class _ReviewPromptSpec {
+  final String branchName;
+  final String modelCategoryLabel;
+  final String scopeLabel;
+  final String customPrompt;
+  final String statusSummary;
+  final String statSummary;
+  final String diffSummary;
+  final _ReviewPassMode passMode;
+  final String? priorReview;
+
+  const _ReviewPromptSpec({
+    required this.branchName,
+    required this.modelCategoryLabel,
+    required this.scopeLabel,
+    required this.customPrompt,
+    required this.statusSummary,
+    required this.statSummary,
+    required this.diffSummary,
+    required this.passMode,
+    this.priorReview,
+  });
+}
+
 class _DiffPromptBundle {
   final String promptBody;
   final bool usedCondensedDiff;
@@ -2098,6 +3162,38 @@ class _DiffPromptBundle {
     required this.promptBody,
     required this.usedCondensedDiff,
     required this.originalDiffCharacters,
+  });
+}
+
+class _ParsedReviewResult {
+  final String verdict;
+  final int score;
+  final String summary;
+  final String reasoningReport;
+  final List<AiCommitReviewFindingData> findings;
+
+  const _ParsedReviewResult({
+    required this.verdict,
+    required this.score,
+    required this.summary,
+    required this.reasoningReport,
+    required this.findings,
+  });
+}
+
+class _MergedReviewResult {
+  final String verdict;
+  final int score;
+  final String summary;
+  final String reasoningReport;
+  final List<AiCommitReviewFindingData> findings;
+
+  const _MergedReviewResult({
+    required this.verdict,
+    required this.score,
+    required this.summary,
+    required this.reasoningReport,
+    required this.findings,
   });
 }
 
@@ -2135,6 +3231,49 @@ enum _ProviderOutputMode {
   claudeJson,
   geminiJson,
   openCodeJsonl,
+}
+
+enum _ReviewPassMode { draft, verify }
+
+enum ReviewConcernClass {
+  logicBug,
+  regressionRisk,
+  integrationMismatch,
+  redundantPattern,
+  inconsistentPattern,
+  hiddenAssumption,
+  maintainabilityHazard,
+  destructiveRisk,
+  securityRisk,
+  stateCorruptionRisk,
+}
+
+class ReviewGuardrailProfile {
+  final String id;
+  final String seat;
+  final String reviewRadius;
+  final String primaryFear;
+  final String silenceRule;
+  final String verdictBar;
+  final List<ReviewConcernClass> priorityConcernClasses;
+  final List<ReviewConcernClass> suppressedConcernClasses;
+  final bool allowIntegrationEscalation;
+  final bool allowDesignSmellEscalation;
+  final bool requireConcreteEvidence;
+
+  const ReviewGuardrailProfile({
+    required this.id,
+    required this.seat,
+    required this.reviewRadius,
+    required this.primaryFear,
+    required this.silenceRule,
+    required this.verdictBar,
+    required this.priorityConcernClasses,
+    required this.suppressedConcernClasses,
+    required this.allowIntegrationEscalation,
+    required this.allowDesignSmellEscalation,
+    required this.requireConcreteEvidence,
+  });
 }
 
 extension<T> on Iterable<T> {

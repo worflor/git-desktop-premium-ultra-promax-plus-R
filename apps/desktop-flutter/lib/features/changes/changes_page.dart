@@ -12,6 +12,7 @@ import '../../backend/ai.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
 import '../../app/ai_settings_state.dart';
+import '../../app/preferences_state.dart';
 import '../../app/repository_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../diff/diff_shell.dart';
@@ -59,9 +60,15 @@ class _ChangesPageState extends State<ChangesPage> {
   int _multiDiffJumpRequestId = 0;
   bool _actionRunning = false;
   bool _generateRunning = false;
+  bool _reviewRunning = false;
   bool _commitAiLoading = false;
   String? _commitAiError;
   List<AiModelCategoryData> _commitAiCategories = const [];
+  bool _reviewActive = false;
+  bool _reviewTraceExpanded = false;
+  String? _reviewScopeKey;
+  AiCommitReviewData? _reviewResult;
+  String? _reviewError;
   String? _actionMessage;
   String? _actionError;
   double _leftPanelWidth = 320.0;
@@ -115,6 +122,16 @@ class _ChangesPageState extends State<ChangesPage> {
       ..clear()
       ..addAll(
           staged.isNotEmpty ? staged : status.files.map((file) => file.path));
+    _clearReviewState();
+  }
+
+  void _clearReviewState() {
+    _reviewRunning = false;
+    _reviewActive = false;
+    _reviewTraceExpanded = false;
+    _reviewScopeKey = null;
+    _reviewResult = null;
+    _reviewError = null;
   }
 
   int _includedDirtyCount(RepositoryStatus status) {
@@ -166,6 +183,7 @@ class _ChangesPageState extends State<ChangesPage> {
   Future<void> _loadDiff(String repo, String path) async {
     final stopwatch = Stopwatch()..start();
     setState(() {
+      _clearReviewState();
       _selectedDiffPath = path;
       _diffLoading = true;
       _diffError = null;
@@ -195,6 +213,7 @@ class _ChangesPageState extends State<ChangesPage> {
 
   void _inspectSingleDiff(String repo, String path) {
     setState(() {
+      _clearReviewState();
       _inspectionDiffPath = path;
     });
     unawaited(_loadDiff(repo, path));
@@ -295,6 +314,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final targetSection =
         _multiDiffSections.where((section) => section.path == path).firstOrNull;
     setState(() {
+      _clearReviewState();
       _inspectionDiffPath = null;
       _selectedDiffPath = null;
       _multiDiffCurrentPath = path;
@@ -308,6 +328,7 @@ class _ChangesPageState extends State<ChangesPage> {
 
   void _toggleIncluded(String path, bool include) {
     setState(() {
+      _clearReviewState();
       if (include) {
         _includedPaths.add(path);
       } else {
@@ -320,6 +341,7 @@ class _ChangesPageState extends State<ChangesPage> {
 
   void _includeAll(RepositoryStatus status) {
     setState(() {
+      _clearReviewState();
       _includedPaths
         ..clear()
         ..addAll(status.files.map((file) => file.path));
@@ -334,6 +356,7 @@ class _ChangesPageState extends State<ChangesPage> {
         .map((file) => file.path)
         .toSet();
     setState(() {
+      _clearReviewState();
       _includedPaths
         ..clear()
         ..addAll(staged);
@@ -360,6 +383,18 @@ class _ChangesPageState extends State<ChangesPage> {
     return _commitAiCategories.any((category) => category.models.isNotEmpty);
   }
 
+  bool _hasReviewAiSelection(AiSettingsState aiSettings) {
+    for (final category in _commitAiCategories) {
+      if (category.models.isEmpty) {
+        continue;
+      }
+      if (category.id == aiSettings.reviewCommitModelCategoryId) {
+        return true;
+      }
+    }
+    return _commitAiCategories.any((category) => category.models.isNotEmpty);
+  }
+
   String _commitAiTooltip(AiSettingsState aiSettings, int includedCount) {
     if (_generateRunning) {
       return 'Generating commit message...';
@@ -375,6 +410,59 @@ class _ChangesPageState extends State<ChangesPage> {
           'Configure commit-message AI in Settings > Behavioural Dynamics > Commit Messages.';
     }
     return 'Generate commit message';
+  }
+
+  String _reviewAiTooltip(AiSettingsState aiSettings, int includedCount) {
+    if (_reviewRunning) {
+      return 'Reviewing commit...';
+    }
+    if (_commitAiLoading) {
+      return 'Preparing commit review...';
+    }
+    if (includedCount == 0) {
+      return 'Select at least one file to review.';
+    }
+    if (!_hasReviewAiSelection(aiSettings)) {
+      return _commitAiError ??
+          'Configure review AI in Settings > Behavioural Dynamics > Review Commit.';
+    }
+    return 'Review commit';
+  }
+
+  String _reviewModelLabel(AiSettingsState aiSettings) {
+    final selectedCategory = _commitAiCategories
+            .where(
+              (category) =>
+                  category.id == aiSettings.reviewCommitModelCategoryId &&
+                  category.models.isNotEmpty,
+            )
+            .firstOrNull ??
+        _commitAiCategories.where((category) => category.models.isNotEmpty).firstOrNull;
+    if (selectedCategory == null) {
+      return 'No model';
+    }
+    final selectedModel = selectedCategory.models
+            .where(
+              (model) =>
+                  model.value ==
+                  aiSettings.modelSelections[selectedCategory.id],
+            )
+            .firstOrNull ??
+        selectedCategory.models.first;
+    return '${selectedModel.providerLabel} | ${selectedModel.modelId}';
+  }
+
+  String _guardrailLabelForStage(int stage) {
+    switch (stage.clamp(0, 3)) {
+      case 0:
+        return 'Loose';
+      case 1:
+        return 'Balanced';
+      case 2:
+        return 'Strict';
+      default:
+        return 'Paranoid';
+    }
   }
 
   Future<void> _refreshCommitAiConfig({bool forceRefresh = false}) async {
@@ -518,6 +606,7 @@ class _ChangesPageState extends State<ChangesPage> {
       includeUnstaged: includeUnstaged,
       scopedPaths: included.map((file) => file.path).toList(),
       customPrompt: aiSettings.commitMessagePrompt,
+      existingMessage: _commitMsgCtrl.text.trim(),
     );
     if (!mounted) {
       return;
@@ -533,6 +622,115 @@ class _ChangesPageState extends State<ChangesPage> {
         _actionMessage = null;
       } else {
         _actionError = result.error;
+      }
+    });
+  }
+
+  Future<void> _reviewCommit(
+    String repoPath,
+    RepositoryStatus status,
+  ) async {
+    final included = status.files
+        .where((file) => _includedPaths.contains(file.path))
+        .toList();
+    if (included.isEmpty) {
+      setState(() {
+        _actionError = 'Choose at least one file before reviewing.';
+        _actionMessage = null;
+      });
+      return;
+    }
+
+    final scopeKey = _buildMultiDiffScopeKey(included);
+    setState(() {
+      _reviewRunning = true;
+      _reviewActive = true;
+      _reviewScopeKey = scopeKey;
+      _reviewError = null;
+      _reviewResult = null;
+      _reviewTraceExpanded = false;
+      _actionError = null;
+      _actionMessage = null;
+    });
+
+    final categories = await _resolveCommitAiCategories();
+    if (!mounted) {
+      return;
+    }
+    if (categories == null) {
+      setState(() {
+        _reviewRunning = false;
+        _reviewError = _commitAiError ?? 'Review AI is not available yet.';
+      });
+      return;
+    }
+
+    final aiSettings = context.read<AiSettingsState>();
+    final preferences = context.read<PreferencesState>();
+    final selectedCategory = categories
+            .where(
+              (category) =>
+                  category.id == aiSettings.reviewCommitModelCategoryId &&
+                  category.models.isNotEmpty,
+            )
+            .firstOrNull ??
+        categories.where((category) => category.models.isNotEmpty).firstOrNull;
+
+    if (selectedCategory == null) {
+      setState(() {
+        _reviewRunning = false;
+        _reviewError =
+            'No runtime-discovered models are available for commit review.';
+      });
+      return;
+    }
+
+    final selectedModel = selectedCategory.models
+            .where(
+              (model) =>
+                  model.value ==
+                  aiSettings.modelSelections[selectedCategory.id],
+            )
+            .firstOrNull ??
+        selectedCategory.models.first;
+
+    final includeStaged = included.any((file) => _isDirty(file.staged));
+    final includeUnstaged = included.any((file) => _isDirty(file.unstaged));
+    final scopeLabel = included.length == status.files.length
+        ? 'all included files'
+        : '${included.length} included file${included.length == 1 ? '' : 's'}';
+
+    final result = await reviewCommit(
+      repositoryPath: repoPath,
+      modelValue: selectedModel.value,
+      modelCategoryLabel: aiSettings.labelForCategory(
+        selectedCategory.id,
+        selectedCategory.label,
+      ),
+      scopeLabel: scopeLabel,
+      includeStaged: includeStaged,
+      includeUnstaged: includeUnstaged,
+      scopedPaths: included.map((file) => file.path).toList(),
+      customPrompt: aiSettings.reviewCommitPrompt,
+      guardrailStage: preferences.guardrailStage,
+      doubleCheckEnabled: aiSettings.reviewCommitDoubleCheckEnabled,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (_reviewScopeKey != scopeKey) {
+      return;
+    }
+
+    setState(() {
+      _reviewRunning = false;
+      if (result.ok) {
+        _reviewResult = result.data;
+        _reviewError = null;
+        _reviewActive = true;
+      } else {
+        _reviewError = result.error;
+        _reviewActive = true;
       }
     });
   }
@@ -646,6 +844,7 @@ class _ChangesPageState extends State<ChangesPage> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final aiSettings = context.watch<AiSettingsState>();
+    final preferences = context.watch<PreferencesState>();
     final repo = context.watch<RepositoryState>();
     final repoPath = repo.activePath;
     final status = repo.status;
@@ -694,15 +893,24 @@ class _ChangesPageState extends State<ChangesPage> {
             : (_visibleDiffPath ?? _selectedDiffPath);
     final primaryAction = _primaryActionFor(status);
     final hasCommitAiSelection = _hasCommitAiSelection(aiSettings);
+    final hasReviewAiSelection = _hasReviewAiSelection(aiSettings);
     final canCommit = !_actionRunning &&
         !_generateRunning &&
+        !_reviewRunning &&
         _commitMsgCtrl.text.trim().isNotEmpty &&
         includedCount > 0;
     final canGenerate = !_actionRunning &&
         !_generateRunning &&
+        !_reviewRunning &&
         !_commitAiLoading &&
         includedCount > 0 &&
         hasCommitAiSelection;
+    final canReview = !_actionRunning &&
+        !_generateRunning &&
+        !_reviewRunning &&
+        !_commitAiLoading &&
+        includedCount > 0 &&
+        hasReviewAiSelection;
 
     return Stack(
       children: [
@@ -840,10 +1048,15 @@ class _ChangesPageState extends State<ChangesPage> {
                             aiLoading: _generateRunning || _commitAiLoading,
                             aiTooltip:
                                 _commitAiTooltip(aiSettings, includedCount),
+                            reviewEnabled: canReview,
+                            reviewLoading: _reviewRunning,
+                            reviewTooltip:
+                                _reviewAiTooltip(aiSettings, includedCount),
                             onGenerate: () => _generateCommitMessage(
                               repoPath,
                               status,
                             ),
+                            onReview: () => _reviewCommit(repoPath, status),
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -859,6 +1072,7 @@ class _ChangesPageState extends State<ChangesPage> {
                           commitOnlyMode: _commitOnlyMode,
                           t: t,
                           enabled: canCommit,
+                          aiGenerating: _generateRunning || _commitAiLoading,
                           onCommit: () => _commit(
                             repoPath,
                             status,
@@ -898,6 +1112,32 @@ class _ChangesPageState extends State<ChangesPage> {
             Expanded(
               child: Builder(
                 builder: (context) {
+                  if (_reviewActive) {
+                    return MaterialSurface(
+                      tone: AppMaterialTone.surface0,
+                      radius: 0,
+                      borderAlpha: 0,
+                      elevated: false,
+                      child: _CommitReviewPane(
+                        tokens: t,
+                        includedCount: includedCount,
+                        modelLabel: _reviewModelLabel(aiSettings),
+                        guardrailLabel:
+                            _guardrailLabelForStage(preferences.guardrailStage),
+                        loading: _reviewRunning,
+                        error: _reviewError,
+                        result: _reviewResult,
+                        traceExpanded: _reviewTraceExpanded,
+                        onToggleTrace: () => setState(
+                          () => _reviewTraceExpanded = !_reviewTraceExpanded,
+                        ),
+                        onBack: () => setState(() {
+                          _clearReviewState();
+                        }),
+                        onRerun: () => _reviewCommit(repoPath, status),
+                      ),
+                    );
+                  }
                   if (showMultiDiff) {
                     _primeMultiDiff(repoPath, includedFiles);
                     final timelineSections = _buildTimelineSections(
@@ -1328,6 +1568,661 @@ class _MultiDiffProgressRailPainter extends CustomPainter {
   }
 }
 
+class _CommitReviewPane extends StatelessWidget {
+  final AppTokens tokens;
+  final int includedCount;
+  final String modelLabel;
+  final String guardrailLabel;
+  final bool loading;
+  final String? error;
+  final AiCommitReviewData? result;
+  final bool traceExpanded;
+  final VoidCallback onToggleTrace;
+  final VoidCallback onBack;
+  final VoidCallback onRerun;
+
+  const _CommitReviewPane({
+    required this.tokens,
+    required this.includedCount,
+    required this.modelLabel,
+    required this.guardrailLabel,
+    required this.loading,
+    required this.error,
+    required this.result,
+    required this.traceExpanded,
+    required this.onToggleTrace,
+    required this.onBack,
+    required this.onRerun,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.8,
+                color: tokens.accentBright,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Reviewing commit scope...',
+              style: TextStyle(
+                color: tokens.textStrong,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (error != null && result == null) {
+      return _reviewShell(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Review unavailable',
+                  style: TextStyle(
+                    color: tokens.textStrong,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  error!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: tokens.textMuted,
+                    fontSize: 11.5,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _GhostActionChip(
+                  tokens: tokens,
+                  label: 'Back to diff',
+                  onTap: onBack,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final review = result;
+    if (review == null) {
+      return _reviewShell(
+        child: const SizedBox.shrink(),
+      );
+    }
+
+    return _reviewShell(
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: tokens.chromeBorder.withValues(alpha: 0.15),
+                ),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Review commit',
+                            style: TextStyle(
+                              color: tokens.textStrong,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            '$includedCount included file${includedCount == 1 ? '' : 's'}',
+                            style: TextStyle(
+                              color: tokens.textMuted,
+                              fontSize: 10.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    _ReviewVerdictChip(tokens: tokens, verdict: review.verdict),
+                    const SizedBox(width: 6),
+                    _ReviewScorePill(tokens: tokens, score: review.score),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '$guardrailLabel | $modelLabel',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: tokens.textMuted,
+                          fontSize: 10.5,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    _GhostActionChip(
+                      tokens: tokens,
+                      label: 'Run again',
+                      onTap: onRerun,
+                    ),
+                    const SizedBox(width: 8),
+                    _GhostActionChip(
+                      tokens: tokens,
+                      label: 'Back to diff',
+                      onTap: onBack,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+              children: [
+                if (review.verificationFailed &&
+                    review.verificationError != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: tokens.stateConflicted.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: tokens.stateConflicted.withValues(alpha: 0.22),
+                      ),
+                    ),
+                    child: Text(
+                      '${review.verificationError} Draft review is shown below.',
+                      style: TextStyle(
+                        color: tokens.textStrong,
+                        fontSize: 11,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                Text(
+                  review.summary,
+                  style: TextStyle(
+                    color: tokens.textStrong,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _ReviewSectionCard(
+                  tokens: tokens,
+                  label: 'RR',
+                  child: Text(
+                    review.reasoningReport,
+                    style: TextStyle(
+                      color: tokens.textNormal,
+                      fontSize: 11.5,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  review.findings.isEmpty ? 'No findings' : 'Findings',
+                  style: TextStyle(
+                    color: tokens.textStrong,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (review.findings.isEmpty)
+                  Text(
+                    'No evidence-backed issues were surfaced for this commit scope.',
+                    style: TextStyle(
+                      color: tokens.textMuted,
+                      fontSize: 11.5,
+                      height: 1.45,
+                    ),
+                  )
+                else
+                  ...review.findings.map(
+                    (finding) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _ReviewFindingCard(
+                        tokens: tokens,
+                        finding: finding,
+                      ),
+                    ),
+                  ),
+                if (review.twoStepEnabled &&
+                    (review.hasVerificationTrace ||
+                        review.verificationFailed ||
+                        review.draftFindings.isNotEmpty)) ...[
+                  const SizedBox(height: 8),
+                  _TracePanel(
+                    tokens: tokens,
+                    expanded: traceExpanded,
+                    onToggle: onToggleTrace,
+                    verificationNotes: review.verificationNotes,
+                    draftSummary: review.draftSummary,
+                    draftReasoningReport: review.draftReasoningReport,
+                    draftFindings: review.draftFindings,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _reviewShell({required Widget child}) {
+    return MaterialSurface(
+      tone: AppMaterialTone.surface0,
+      radius: 0,
+      borderAlpha: 0,
+      elevated: false,
+      child: child,
+    );
+  }
+}
+
+class _ReviewVerdictChip extends StatelessWidget {
+  final AppTokens tokens;
+  final String verdict;
+
+  const _ReviewVerdictChip({
+    required this.tokens,
+    required this.verdict,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (verdict) {
+      'Ready' => tokens.stateAdded,
+      'Mostly ready' => tokens.accentBright,
+      'Needs attention' => tokens.stateModified,
+      'High risk' => tokens.stateDeleted,
+      'Block' => tokens.stateConflicted,
+      _ => tokens.textMuted,
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
+      ),
+      child: Text(
+        verdict,
+        style: TextStyle(
+          color: color,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewScorePill extends StatelessWidget {
+  final AppTokens tokens;
+  final int score;
+
+  const _ReviewScorePill({
+    required this.tokens,
+    required this.score,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: tokens.rowBg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.16)),
+      ),
+      child: Text(
+        '$score',
+        style: TextStyle(
+          color: tokens.textStrong,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewSectionCard extends StatelessWidget {
+  final AppTokens tokens;
+  final String label;
+  final Widget child;
+
+  const _ReviewSectionCard({
+    required this.tokens,
+    required this.label,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: tokens.rowBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: tokens.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewFindingCard extends StatelessWidget {
+  final AppTokens tokens;
+  final AiCommitReviewFindingData finding;
+
+  const _ReviewFindingCard({
+    required this.tokens,
+    required this.finding,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = switch (finding.severity) {
+      'block' => tokens.stateConflicted,
+      'risk' => tokens.stateDeleted,
+      'warn' => tokens.stateModified,
+      'note' => tokens.accentBright,
+      _ => tokens.textMuted,
+    };
+    final meta = [
+      if (finding.filePath != null) finding.filePath!,
+      if (finding.hunkLabel != null) finding.hunkLabel!,
+    ].join(' | ');
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: tokens.rowBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 1),
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  finding.title,
+                  style: TextStyle(
+                    color: tokens.textStrong,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (meta.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Text(
+              meta,
+              style: TextStyle(
+                color: tokens.textMuted,
+                fontSize: 10.5,
+                fontFamily: 'JetBrainsMono',
+              ),
+            ),
+          ],
+          if (finding.evidence.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              finding.evidence,
+              style: TextStyle(
+                color: tokens.textNormal,
+                fontSize: 11.2,
+                height: 1.45,
+              ),
+            ),
+          ],
+          if (finding.whyItMatters.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              finding.whyItMatters,
+              style: TextStyle(
+                color: tokens.textMuted,
+                fontSize: 11,
+                height: 1.45,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TracePanel extends StatelessWidget {
+  final AppTokens tokens;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final String? verificationNotes;
+  final String? draftSummary;
+  final String? draftReasoningReport;
+  final List<AiCommitReviewFindingData> draftFindings;
+
+  const _TracePanel({
+    required this.tokens,
+    required this.expanded,
+    required this.onToggle,
+    required this.verificationNotes,
+    required this.draftSummary,
+    required this.draftReasoningReport,
+    required this.draftFindings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: tokens.rowBg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.14)),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Verification trace',
+                      style: TextStyle(
+                        color: tokens.textStrong,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                    color: tokens.textMuted,
+                    size: 16,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (verificationNotes != null &&
+                      verificationNotes!.trim().isNotEmpty) ...[
+                    Text(
+                      verificationNotes!,
+                      style: TextStyle(
+                        color: tokens.textNormal,
+                        fontSize: 11,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  if (draftSummary != null && draftSummary!.trim().isNotEmpty) ...[
+                    Text(
+                      'Draft review',
+                      style: TextStyle(
+                        color: tokens.textMuted,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      draftSummary!,
+                      style: TextStyle(
+                        color: tokens.textStrong,
+                        fontSize: 11.2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  if (draftReasoningReport != null &&
+                      draftReasoningReport!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      draftReasoningReport!,
+                      style: TextStyle(
+                        color: tokens.textMuted,
+                        fontSize: 11,
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                  if (draftFindings.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    for (final finding in draftFindings.take(5))
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '• ${finding.title}',
+                          style: TextStyle(
+                            color: tokens.textMuted,
+                            fontSize: 10.8,
+                          ),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GhostActionChip extends StatelessWidget {
+  final AppTokens tokens;
+  final String label;
+  final VoidCallback onTap;
+
+  const _GhostActionChip({
+    required this.tokens,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: tokens.rowBg,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.16)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: tokens.textMuted,
+            fontSize: 10.5,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ActionBtn extends StatefulWidget {
   final String label;
   final AppTokens t;
@@ -1419,6 +2314,7 @@ class _SplitCommitBtn extends StatefulWidget {
   final bool commitOnlyMode;
   final AppTokens t;
   final bool enabled;
+  final bool aiGenerating;
   final VoidCallback onCommit;
   final VoidCallback onToggleMode;
 
@@ -1428,6 +2324,7 @@ class _SplitCommitBtn extends StatefulWidget {
     required this.commitOnlyMode,
     required this.t,
     required this.enabled,
+    required this.aiGenerating,
     required this.onCommit,
     required this.onToggleMode,
   });
@@ -1455,7 +2352,10 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
       enabled: widget.enabled,
     );
 
-    return Transform.translate(
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 180),
+      opacity: widget.aiGenerating && !_anyHovered ? 0.45 : 1.0,
+      child: Transform.translate(
       offset: chrome.offset,
       child: Transform.scale(
         scale: chrome.scale,
@@ -1560,6 +2460,7 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -1792,7 +2693,11 @@ class _CommitComposerField extends StatefulWidget {
   final bool aiEnabled;
   final bool aiLoading;
   final String aiTooltip;
+  final bool reviewEnabled;
+  final bool reviewLoading;
+  final String reviewTooltip;
   final VoidCallback onGenerate;
+  final VoidCallback onReview;
 
   const _CommitComposerField({
     required this.tokens,
@@ -1803,7 +2708,11 @@ class _CommitComposerField extends StatefulWidget {
     required this.aiEnabled,
     required this.aiLoading,
     required this.aiTooltip,
+    required this.reviewEnabled,
+    required this.reviewLoading,
+    required this.reviewTooltip,
     required this.onGenerate,
+    required this.onReview,
   });
 
   @override
@@ -1826,16 +2735,18 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
-    if (widget.aiLoading) _pulseCtrl.repeat(reverse: true);
+    if (widget.aiLoading || widget.reviewLoading) _pulseCtrl.repeat(reverse: true);
   }
 
   @override
   void didUpdateWidget(_CommitComposerField old) {
     super.didUpdateWidget(old);
-    if (widget.aiLoading && !old.aiLoading) {
+    final wasLoading = old.aiLoading || old.reviewLoading;
+    final isLoading = widget.aiLoading || widget.reviewLoading;
+    if (isLoading && !wasLoading) {
       _doneCtrl.stop();
       _pulseCtrl.repeat(reverse: true);
-    } else if (!widget.aiLoading && old.aiLoading) {
+    } else if (!isLoading && wasLoading) {
       _pulseCtrl.stop();
       _doneCtrl.forward(from: 0);
     }
@@ -1879,19 +2790,17 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
         Color borderColor;
         double borderWidth;
 
-        if (widget.aiLoading) {
-          // Pulse: breathe between 25% and 75% of inputFocusBorder
-          final pulse = _pulseCtrl.value; // 0→1 repeating
-          borderColor = tokens.inputFocusBorder
-              .withValues(alpha: 0.25 + pulse * 0.50);
-          borderWidth = 1.0;
+        if (widget.aiLoading || widget.reviewLoading) {
+          // Pulse: width 1→1.5px + accent breathes 40%→100% alpha
+          final pulse = _pulseCtrl.value;
+          borderColor = tokens.accentBright.withValues(alpha: 0.40 + pulse * 0.60);
+          borderWidth = 1.0 + pulse * 0.5;
         } else if (_doneCtrl.value > 0) {
-          // Bloom: width 1→1.8→1, alpha 1.0→0.70 via sin curve
+          // Bloom: width 1→2→1px + accent at full alpha fading out
           final t = _doneCtrl.value;
           final sine = math.sin(math.pi * t);
-          borderWidth = 1.0 + sine * 0.8;
-          borderColor = tokens.inputFocusBorder
-              .withValues(alpha: 1.0 - t * 0.30);
+          borderWidth = 1.0 + sine * 1.0;
+          borderColor = tokens.accentBright.withValues(alpha: 0.70 + sine * 0.30);
         } else {
           borderColor =
               baseBorder.withValues(alpha: widget.enabled ? 1 : 0.45);
@@ -1905,54 +2814,58 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
             borderRadius: BorderRadius.circular(effectiveRadius),
             border: Border.all(color: borderColor, width: borderWidth),
           ),
-          // ClipRRect keeps the toolbar's bottom corners inside the field's
-          // rounded border — no visual overflow.
           child: ClipRRect(
             borderRadius: BorderRadius.circular(innerRadius),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            child: Stack(
               children: [
-                // ── Text entry area ────────────────────────────
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 9, 12, 4),
-                    child: TextField(
-                      controller: widget.controller,
-                      focusNode: widget.focusNode,
-                      enabled: widget.enabled,
-                      minLines: null,
-                      maxLines: null,
-                      expands: true,
-                      onChanged: widget.onChanged,
-                      cursorColor: tokens.accentBright,
-                      style: TextStyle(
-                        color: tokens.textStrong,
+                // ── Text fills the full field ──────────────────
+                Positioned.fill(
+                  child: TextField(
+                    controller: widget.controller,
+                    focusNode: widget.focusNode,
+                    enabled: widget.enabled,
+                    minLines: null,
+                    maxLines: null,
+                    expands: true,
+                    onChanged: widget.onChanged,
+                    cursorColor: tokens.accentBright,
+                    textAlignVertical: TextAlignVertical.top,
+                    style: TextStyle(
+                      color: tokens.textStrong,
+                      fontSize: 12,
+                    ),
+                    decoration: InputDecoration(
+                      isCollapsed: true,
+                      contentPadding: const EdgeInsets.fromLTRB(12, 9, 12, 8),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      hintText: 'Commit message...',
+                      hintStyle: TextStyle(
+                        color: tokens.textMuted.withValues(alpha: 0.55),
                         fontSize: 12,
-                      ),
-                      decoration: InputDecoration.collapsed(
-                        hintText: 'Commit message...',
-                        hintStyle: TextStyle(
-                          color: tokens.textMuted.withValues(alpha: 0.55),
-                          fontSize: 12,
-                        ),
                       ),
                     ),
                   ),
                 ),
-                // ── Action toolbar ─────────────────────────────
-                Container(
-                  height: 32,
-                  decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(
-                        color: tokens.chromeBorder.withValues(alpha: 0.10),
-                      ),
-                    ),
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                // ── Floating AI button ─────────────────────────
+                Positioned(
+                  right: 7,
+                  bottom: 7,
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
+                      _CommitAiToolbarBtn(
+                        tokens: tokens,
+                        enabled: widget.reviewEnabled,
+                        loading: widget.reviewLoading,
+                        tooltip: widget.reviewTooltip,
+                        hasText: hasText,
+                        fieldRadius: effectiveRadius,
+                        icon: Icons.search_rounded,
+                        onTap: widget.onReview,
+                      ),
+                      const SizedBox(width: 4),
                       _CommitAiToolbarBtn(
                         tokens: tokens,
                         enabled: widget.aiEnabled,
@@ -1960,6 +2873,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                         tooltip: widget.aiTooltip,
                         hasText: hasText,
                         fieldRadius: effectiveRadius,
+                        icon: Icons.auto_awesome_rounded,
                         onTap: widget.onGenerate,
                       ),
                     ],
@@ -1983,6 +2897,7 @@ class _CommitAiToolbarBtn extends StatefulWidget {
   final String tooltip;
   final bool hasText; // de-emphasise when the user already typed something
   final double fieldRadius;
+  final IconData icon;
   final VoidCallback onTap;
 
   const _CommitAiToolbarBtn({
@@ -1992,6 +2907,7 @@ class _CommitAiToolbarBtn extends StatefulWidget {
     required this.tooltip,
     required this.hasText,
     required this.fieldRadius,
+    required this.icon,
     required this.onTap,
   });
 
@@ -2066,7 +2982,7 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
                       duration: const Duration(milliseconds: 150),
                       opacity: iconOpacity,
                       child: Icon(
-                        Icons.auto_awesome_rounded,
+                        widget.icon,
                         size: 14,
                         color: t.accentBright,
                       ),

@@ -401,6 +401,94 @@ class AiCommitMessageData {
   });
 }
 
+class AiCommitReviewFindingData {
+  final String id;
+  final String severity;
+  final String title;
+  final String evidence;
+  final String whyItMatters;
+  final String? filePath;
+  final String? hunkLabel;
+  final String origin;
+
+  const AiCommitReviewFindingData({
+    required this.id,
+    required this.severity,
+    required this.title,
+    required this.evidence,
+    required this.whyItMatters,
+    this.filePath,
+    this.hunkLabel,
+    required this.origin,
+  });
+}
+
+class AiCommitReviewVerificationData {
+  final List<String> confirmedFindingIds;
+  final List<String> rejectedFindingIds;
+  final List<AiCommitReviewFindingData> newFindings;
+  final int scoreAdjustment;
+  final String? verdictAdjustment;
+  final String verificationNotes;
+  final String finalSummary;
+  final String finalReasoningReport;
+
+  const AiCommitReviewVerificationData({
+    required this.confirmedFindingIds,
+    required this.rejectedFindingIds,
+    required this.newFindings,
+    required this.scoreAdjustment,
+    required this.verdictAdjustment,
+    required this.verificationNotes,
+    required this.finalSummary,
+    required this.finalReasoningReport,
+  });
+}
+
+class AiCommitReviewData {
+  final String providerId;
+  final String modelId;
+  final String scopeLabel;
+  final bool usedCondensedDiff;
+  final int promptCharacters;
+  final int diffCharacters;
+  final String verdict;
+  final int score;
+  final String summary;
+  final String reasoningReport;
+  final List<AiCommitReviewFindingData> findings;
+  final bool twoStepEnabled;
+  final bool hasVerificationTrace;
+  final bool verificationFailed;
+  final String? verificationError;
+  final List<AiCommitReviewFindingData> draftFindings;
+  final String? draftSummary;
+  final String? draftReasoningReport;
+  final String? verificationNotes;
+
+  const AiCommitReviewData({
+    required this.providerId,
+    required this.modelId,
+    required this.scopeLabel,
+    required this.usedCondensedDiff,
+    required this.promptCharacters,
+    required this.diffCharacters,
+    required this.verdict,
+    required this.score,
+    required this.summary,
+    required this.reasoningReport,
+    required this.findings,
+    required this.twoStepEnabled,
+    required this.hasVerificationTrace,
+    this.verificationFailed = false,
+    this.verificationError,
+    this.draftFindings = const [],
+    this.draftSummary,
+    this.draftReasoningReport,
+    this.verificationNotes,
+  });
+}
+
 class RebaseTodoEntry {
   final String action;
   final String commitHash;

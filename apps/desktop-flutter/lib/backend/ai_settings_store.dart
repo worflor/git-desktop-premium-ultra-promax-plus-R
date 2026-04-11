@@ -7,11 +7,15 @@ class AiSettingsSnapshot {
   final Map<String, String> modelSelections;
   final Map<String, String> modelCategoryLabels;
   final String commitMessageModelCategoryId;
+  final String reviewCommitModelCategoryId;
+  final bool reviewCommitDoubleCheckEnabled;
 
   const AiSettingsSnapshot({
     required this.modelSelections,
     required this.modelCategoryLabels,
     required this.commitMessageModelCategoryId,
+    required this.reviewCommitModelCategoryId,
+    required this.reviewCommitDoubleCheckEnabled,
   });
 
   factory AiSettingsSnapshot.defaults() => const AiSettingsSnapshot(
@@ -21,12 +25,16 @@ class AiSettingsSnapshot {
           'fast': 'Fast model',
         },
         commitMessageModelCategoryId: 'quality',
+        reviewCommitModelCategoryId: 'quality',
+        reviewCommitDoubleCheckEnabled: false,
       );
 
   Map<String, dynamic> toJson() => {
         'modelSelections': modelSelections,
         'modelCategoryLabels': modelCategoryLabels,
         'commitMessageModelCategoryId': commitMessageModelCategoryId,
+        'reviewCommitModelCategoryId': reviewCommitModelCategoryId,
+        'reviewCommitDoubleCheckEnabled': reviewCommitDoubleCheckEnabled,
       };
 
   factory AiSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -40,6 +48,14 @@ class AiSettingsSnapshot {
       commitMessageModelCategoryId: _stringOr(
         json['commitMessageModelCategoryId'],
         defaults.commitMessageModelCategoryId,
+      ),
+      reviewCommitModelCategoryId: _stringOr(
+        json['reviewCommitModelCategoryId'],
+        defaults.reviewCommitModelCategoryId,
+      ),
+      reviewCommitDoubleCheckEnabled: _boolOr(
+        json['reviewCommitDoubleCheckEnabled'],
+        defaults.reviewCommitDoubleCheckEnabled,
       ),
     );
   }
@@ -69,12 +85,17 @@ class AiSettingsSnapshot {
   static String _stringOr(dynamic value, String fallback) {
     return value is String && value.trim().isNotEmpty ? value.trim() : fallback;
   }
+
+  static bool _boolOr(dynamic value, bool fallback) {
+    return value is bool ? value : fallback;
+  }
 }
 
 class AiSettingsStore {
   static const String _settingsFileName = 'ai_settings.json';
   static const String _promptDirectoryName = 'prompts';
   static const String _commitPromptFileName = 'commit-message.md';
+  static const String _reviewPromptFileName = 'review-commit.md';
 
   static Future<AiSettingsSnapshot> load() async {
     final file = await _settingsFile();
@@ -144,6 +165,45 @@ class AiSettingsStore {
     final root = await _aiRootDir();
     return File(
       '${root.path}${Platform.pathSeparator}$_promptDirectoryName${Platform.pathSeparator}$_commitPromptFileName',
+    );
+  }
+
+  static Future<String> loadReviewCommitPrompt() async {
+    final file = await reviewCommitPromptFile();
+    if (!await file.exists()) {
+      return '';
+    }
+
+    try {
+      return await file.readAsString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static Future<void> persistReviewCommitPrompt(String value) async {
+    final file = await reviewCommitPromptFile();
+    final normalized = value.trimRight();
+    if (normalized.trim().isEmpty) {
+      if (await file.exists()) {
+        await file.delete();
+      }
+      return;
+    }
+
+    await file.parent.create(recursive: true);
+    await file.writeAsString('$normalized\n', flush: true);
+  }
+
+  static Future<String> reviewCommitPromptPath() async {
+    final file = await reviewCommitPromptFile();
+    return file.path;
+  }
+
+  static Future<File> reviewCommitPromptFile() async {
+    final root = await _aiRootDir();
+    return File(
+      '${root.path}${Platform.pathSeparator}$_promptDirectoryName${Platform.pathSeparator}$_reviewPromptFileName',
     );
   }
 

@@ -13,6 +13,10 @@ class AiSettingsState extends ChangeNotifier {
   String _commitMessageModelCategoryId = 'quality';
   String _commitMessagePrompt = '';
   String _commitMessagePromptPath = '';
+  String _reviewCommitModelCategoryId = 'quality';
+  String _reviewCommitPrompt = '';
+  String _reviewCommitPromptPath = '';
+  bool _reviewCommitDoubleCheckEnabled = false;
 
   bool get isLoaded => _loaded;
   Map<String, String> get modelSelections => Map.unmodifiable(_modelSelections);
@@ -21,6 +25,10 @@ class AiSettingsState extends ChangeNotifier {
   String get commitMessageModelCategoryId => _commitMessageModelCategoryId;
   String get commitMessagePrompt => _commitMessagePrompt;
   String get commitMessagePromptPath => _commitMessagePromptPath;
+  String get reviewCommitModelCategoryId => _reviewCommitModelCategoryId;
+  String get reviewCommitPrompt => _reviewCommitPrompt;
+  String get reviewCommitPromptPath => _reviewCommitPromptPath;
+  bool get reviewCommitDoubleCheckEnabled => _reviewCommitDoubleCheckEnabled;
 
   Future<void> load() async {
     if (_loaded) {
@@ -37,6 +45,10 @@ class AiSettingsState extends ChangeNotifier {
     _commitMessageModelCategoryId = snapshot.commitMessageModelCategoryId;
     _commitMessagePrompt = await AiSettingsStore.loadCommitMessagePrompt();
     _commitMessagePromptPath = await AiSettingsStore.commitMessagePromptPath();
+    _reviewCommitModelCategoryId = snapshot.reviewCommitModelCategoryId;
+    _reviewCommitPrompt = await AiSettingsStore.loadReviewCommitPrompt();
+    _reviewCommitPromptPath = await AiSettingsStore.reviewCommitPromptPath();
+    _reviewCommitDoubleCheckEnabled = snapshot.reviewCommitDoubleCheckEnabled;
     _loaded = true;
     notifyListeners();
   }
@@ -76,6 +88,10 @@ class AiSettingsState extends ChangeNotifier {
 
     if (!activeCategoryIds.contains(_commitMessageModelCategoryId)) {
       _commitMessageModelCategoryId = categories.first.id;
+      changed = true;
+    }
+    if (!activeCategoryIds.contains(_reviewCommitModelCategoryId)) {
+      _reviewCommitModelCategoryId = categories.first.id;
       changed = true;
     }
 
@@ -136,12 +152,44 @@ class AiSettingsState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setReviewCommitModelCategoryId(String categoryId) async {
+    if (_reviewCommitModelCategoryId == categoryId) {
+      return;
+    }
+
+    _reviewCommitModelCategoryId = categoryId;
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> setReviewCommitPrompt(String value) async {
+    if (_reviewCommitPrompt == value) {
+      return;
+    }
+
+    _reviewCommitPrompt = value;
+    await AiSettingsStore.persistReviewCommitPrompt(value);
+    notifyListeners();
+  }
+
+  Future<void> setReviewCommitDoubleCheckEnabled(bool value) async {
+    if (_reviewCommitDoubleCheckEnabled == value) {
+      return;
+    }
+
+    _reviewCommitDoubleCheckEnabled = value;
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
   Future<void> _persistSnapshot() {
     return AiSettingsStore.persist(
       AiSettingsSnapshot(
         modelSelections: _modelSelections,
         modelCategoryLabels: _modelCategoryLabels,
         commitMessageModelCategoryId: _commitMessageModelCategoryId,
+        reviewCommitModelCategoryId: _reviewCommitModelCategoryId,
+        reviewCommitDoubleCheckEnabled: _reviewCommitDoubleCheckEnabled,
       ),
     );
   }
