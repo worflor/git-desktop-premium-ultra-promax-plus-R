@@ -530,8 +530,7 @@ class _ChangesPageState extends State<ChangesPage> {
         _commitMsgCtrl.selection = TextSelection.collapsed(
           offset: _commitMsgCtrl.text.length,
         );
-        _actionMessage =
-            'Generated commit message with ${selectedModel.modelId}.';
+        _actionMessage = null;
       } else {
         _actionError = result.error;
       }
@@ -872,17 +871,6 @@ class _ChangesPageState extends State<ChangesPage> {
                           onToggleMode: () => setState(
                               () => _commitOnlyMode = !_commitOnlyMode),
                         ),
-                        if (_actionMessage != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              _actionMessage!,
-                              style: TextStyle(
-                                color: t.stateAdded,
-                                fontSize: 10.5,
-                              ),
-                            ),
-                          ),
                         if (_actionError != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 6),
@@ -1795,7 +1783,7 @@ class _StateBadge extends StatelessWidget {
   }
 }
 
-class _CommitComposerField extends StatelessWidget {
+class _CommitComposerField extends StatefulWidget {
   final AppTokens tokens;
   final TextEditingController controller;
   final FocusNode focusNode;
@@ -1819,7 +1807,50 @@ class _CommitComposerField extends StatelessWidget {
   });
 
   @override
+  State<_CommitComposerField> createState() => _CommitComposerFieldState();
+}
+
+class _CommitComposerFieldState extends State<_CommitComposerField>
+    with TickerProviderStateMixin {
+  late AnimationController _pulseCtrl;
+  late AnimationController _doneCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
+    _doneCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    if (widget.aiLoading) _pulseCtrl.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(_CommitComposerField old) {
+    super.didUpdateWidget(old);
+    if (widget.aiLoading && !old.aiLoading) {
+      _doneCtrl.stop();
+      _pulseCtrl.repeat(reverse: true);
+    } else if (!widget.aiLoading && old.aiLoading) {
+      _pulseCtrl.stop();
+      _doneCtrl.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulseCtrl.dispose();
+    _doneCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final tokens = widget.tokens;
     final radius = themeDefinitionFor(tokens.id)
         .shader
         .geometry
@@ -1828,26 +1859,51 @@ class _CommitComposerField extends StatelessWidget {
         .toDouble();
     final effectiveRadius = (radius * 0.75).clamp(0.0, 14.0);
 
-    return ListenableBuilder(
-      listenable: Listenable.merge([focusNode, controller]),
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        _pulseCtrl,
+        _doneCtrl,
+        widget.focusNode,
+        widget.controller,
+      ]),
       builder: (context, child) {
-        final hasText = controller.text.trim().isNotEmpty;
-        final isFocused = focusNode.hasFocus;
-        // Inner border radius shrinks slightly to sit flush against the outer
-        // border without leaving a gap at the rounded corners.
+        final hasText = widget.controller.text.trim().isNotEmpty;
+        final isFocused = widget.focusNode.hasFocus;
         final innerRadius = math.max(0.0, effectiveRadius - 1.5);
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 110),
+
+        // ── Border color + width ─────────────────────────────────
+        final Color baseBorder = isFocused
+            ? tokens.inputFocusBorder.withValues(alpha: 0.70)
+            : tokens.inputBorder;
+
+        Color borderColor;
+        double borderWidth;
+
+        if (widget.aiLoading) {
+          // Pulse: breathe between 25% and 75% of inputFocusBorder
+          final pulse = _pulseCtrl.value; // 0→1 repeating
+          borderColor = tokens.inputFocusBorder
+              .withValues(alpha: 0.25 + pulse * 0.50);
+          borderWidth = 1.0;
+        } else if (_doneCtrl.value > 0) {
+          // Bloom: width 1→1.8→1, alpha 1.0→0.70 via sin curve
+          final t = _doneCtrl.value;
+          final sine = math.sin(math.pi * t);
+          borderWidth = 1.0 + sine * 0.8;
+          borderColor = tokens.inputFocusBorder
+              .withValues(alpha: 1.0 - t * 0.30);
+        } else {
+          borderColor =
+              baseBorder.withValues(alpha: widget.enabled ? 1 : 0.45);
+          borderWidth = 1.0;
+        }
+
+        return Container(
           height: 118,
           decoration: BoxDecoration(
             color: tokens.inputBg,
             borderRadius: BorderRadius.circular(effectiveRadius),
-            border: Border.all(
-              color: (isFocused
-                      ? tokens.inputFocusBorder.withValues(alpha: 0.70)
-                      : tokens.inputBorder)
-                  .withValues(alpha: enabled ? 1 : 0.45),
-            ),
+            border: Border.all(color: borderColor, width: borderWidth),
           ),
           // ClipRRect keeps the toolbar's bottom corners inside the field's
           // rounded border — no visual overflow.
@@ -1861,13 +1917,13 @@ class _CommitComposerField extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(12, 9, 12, 4),
                     child: TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      enabled: enabled,
+                      controller: widget.controller,
+                      focusNode: widget.focusNode,
+                      enabled: widget.enabled,
                       minLines: null,
                       maxLines: null,
                       expands: true,
-                      onChanged: onChanged,
+                      onChanged: widget.onChanged,
                       cursorColor: tokens.accentBright,
                       style: TextStyle(
                         color: tokens.textStrong,
@@ -1899,12 +1955,12 @@ class _CommitComposerField extends StatelessWidget {
                     children: [
                       _CommitAiToolbarBtn(
                         tokens: tokens,
-                        enabled: aiEnabled,
-                        loading: aiLoading,
-                        tooltip: aiTooltip,
+                        enabled: widget.aiEnabled,
+                        loading: widget.aiLoading,
+                        tooltip: widget.aiTooltip,
                         hasText: hasText,
                         fieldRadius: effectiveRadius,
-                        onTap: onGenerate,
+                        onTap: widget.onGenerate,
                       ),
                     ],
                   ),
