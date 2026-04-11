@@ -50,7 +50,6 @@ class _SettingsPageState extends State<SettingsPage> {
   List<AiModelCategoryData> _aiModelCategories = const [];
   Timer? _commitPromptSaveDebounce;
   _PromptSaveState _commitPromptSaveState = _PromptSaveState.idle;
-  DateTime? _commitPromptSavedAt;
 
   @override
   void initState() {
@@ -315,7 +314,6 @@ class _SettingsPageState extends State<SettingsPage> {
             ? 'Cleared commit message custom prompt.'
             : 'Saved commit message custom prompt.';
         _commitPromptSaveState = _PromptSaveState.saved;
-        _commitPromptSavedAt = DateTime.now();
       });
     } catch (_) {
       if (!mounted) {
@@ -330,27 +328,18 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  String _commitPromptStatusLabel() {
+  String? _commitPromptStatusLabel() {
     switch (_commitPromptSaveState) {
       case _PromptSaveState.typing:
         return 'Editing';
       case _PromptSaveState.saving:
-        return 'Autosaving';
+        return 'Saving';
       case _PromptSaveState.saved:
-        if (_commitPromptSavedAt == null) {
-          return 'Saved';
-        }
-        final time = _commitPromptSavedAt!;
-        final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
-        final minute = time.minute.toString().padLeft(2, '0');
-        final suffix = time.hour >= 12 ? 'PM' : 'AM';
-        return 'Saved $hour:$minute $suffix';
+        return null;
       case _PromptSaveState.error:
         return 'Save failed';
       case _PromptSaveState.idle:
-        return _commitPromptController.text.trim().isEmpty
-            ? 'Wrapper only'
-            : 'Ready';
+        return null;
     }
   }
 
@@ -366,25 +355,6 @@ class _SettingsPageState extends State<SettingsPage> {
         return t.stateConflicted;
       case _PromptSaveState.idle:
         return t.textMuted;
-    }
-  }
-
-  String _commitPromptStatusDetail() {
-    switch (_commitPromptSaveState) {
-      case _PromptSaveState.typing:
-        return 'Changes will persist automatically after a short pause.';
-      case _PromptSaveState.saving:
-        return 'Writing the prompt file now.';
-      case _PromptSaveState.saved:
-        return _commitPromptController.text.trim().isEmpty
-            ? 'The custom file is cleared, so commit generation uses only the shared wrapper prompt.'
-            : 'The custom file is current and will be blended with the shared wrapper prompt.';
-      case _PromptSaveState.error:
-        return 'The prompt could not be written to disk.';
-      case _PromptSaveState.idle:
-        return _commitPromptController.text.trim().isEmpty
-            ? 'No custom guidance yet. Commit generation will use only the shared wrapper prompt.'
-            : 'Custom guidance is loaded and ready.';
     }
   }
 
@@ -800,7 +770,8 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 10),
         _StateCard(
           title: 'Navigation and Dynamics',
-          summary: 'Keyboard architecture, interface behavior, and local AI routing.',
+          summary:
+              'Keyboard architecture, interface behavior, and local AI routing.',
           wide: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -831,9 +802,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   const _SettingsSubtitle('CLI Piggybacking'),
                   const Spacer(),
                   _GhostMiniButton(
-                    label: _aiProvidersLoading
-                        ? 'Refreshing...'
-                        : 'Refresh AI',
+                    label: _aiProvidersLoading ? 'Refreshing...' : 'Refresh AI',
                     onTap: _aiProvidersLoading
                         ? null
                         : () {
@@ -956,7 +925,7 @@ class _SettingsPageState extends State<SettingsPage> {
               const _SettingsSubtitle('Commit Messages'),
               const SizedBox(height: 8),
               Text(
-                'Choose which model slot drives commit messages and set optional long-form style guidance.',
+                'Pick the model slot for commit messages and add optional style guidance.',
                 style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
               ),
               const SizedBox(height: 10),
@@ -967,7 +936,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   promptController: _commitPromptController,
                   promptStatusLabel: _commitPromptStatusLabel(),
                   promptStatusColor: _commitPromptStatusColor(t),
-                  promptStatusDetail: _commitPromptStatusDetail(),
                   onCategoryChanged: (value) {
                     if (value == null || value.isEmpty) {
                       return;
@@ -1939,6 +1907,69 @@ class _ProviderGrid extends StatelessWidget {
   }
 }
 
+class _EditableSlotTitle extends StatefulWidget {
+  final TextEditingController controller;
+  final String hintText;
+  final ValueChanged<String> onChanged;
+
+  const _EditableSlotTitle({
+    required this.controller,
+    required this.hintText,
+    required this.onChanged,
+  });
+
+  @override
+  State<_EditableSlotTitle> createState() => _EditableSlotTitleState();
+}
+
+class _EditableSlotTitleState extends State<_EditableSlotTitle> {
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode();
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final titleStyle = TextStyle(
+      color: t.textStrong,
+      fontSize: 16,
+      fontWeight: FontWeight.w700,
+      height: 1.1,
+    );
+
+    return TextField(
+      controller: widget.controller,
+      focusNode: _focusNode,
+      maxLines: 1,
+      onChanged: widget.onChanged,
+      cursorColor: t.accentBright,
+      style: titleStyle,
+      decoration: InputDecoration(
+        isCollapsed: true,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        disabledBorder: InputBorder.none,
+        contentPadding: EdgeInsets.zero,
+        hintText: widget.hintText,
+        hintStyle: titleStyle.copyWith(
+          color: t.textStrong.withValues(alpha: 0.82),
+        ),
+      ),
+    );
+  }
+}
+
 class _AiModelCategoryEditor extends StatelessWidget {
   final AiModelCategoryData category;
   final TextEditingController labelController;
@@ -1995,7 +2026,7 @@ class _AiModelCategoryEditor extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          AppTextField(
+          _EditableSlotTitle(
             controller: labelController,
             hintText: category.label,
             onChanged: onLabelChanged,
@@ -2033,15 +2064,6 @@ class _AiModelCategoryEditor extends StatelessWidget {
               selectedModel.description,
               style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.4),
             ),
-            const SizedBox(height: 4),
-            Text(
-              'Live model id: ${selectedModel.modelId}',
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 10,
-                fontFamily: 'JetBrainsMono',
-              ),
-            ),
           ],
         ],
       ),
@@ -2053,9 +2075,8 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
   final List<AiModelCategoryData> categories;
   final AiSettingsState aiSettings;
   final TextEditingController promptController;
-  final String promptStatusLabel;
+  final String? promptStatusLabel;
   final Color promptStatusColor;
-  final String promptStatusDetail;
   final ValueChanged<String?> onCategoryChanged;
   final ValueChanged<String> onPromptChanged;
 
@@ -2065,7 +2086,6 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
     required this.promptController,
     required this.promptStatusLabel,
     required this.promptStatusColor,
-    required this.promptStatusDetail,
     required this.onCategoryChanged,
     required this.onPromptChanged,
   });
@@ -2158,46 +2178,21 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
               .toList(),
           onChanged: onCategoryChanged,
         ),
-        const SizedBox(height: 8),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Text(
-                'Autosaves to ${aiSettings.commitMessagePromptPath}',
-                style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: 11,
-                  fontFamily: 'JetBrainsMono',
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            _InlineInfoChip(
-              label: promptStatusLabel,
+        if (promptStatusLabel != null) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: _InlineInfoChip(
+              label: promptStatusLabel!,
               color: promptStatusColor,
             ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          promptStatusDetail,
-          style: TextStyle(color: t.textMuted, fontSize: 10.5, height: 1.35),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Leave blank to clear the file and fall back to the shared commit wrapper prompt.',
-          style: TextStyle(
-            color: t.textMuted.withValues(alpha: 0.82),
-            fontSize: 10.5,
-            height: 1.35,
           ),
-        ),
+        ],
         const SizedBox(height: 10),
         AppMultilineTextField(
           controller: promptController,
           hintText:
-              'Optional long-form guidance for commit message voice, structure, or formatting.',
+              'Optional guidance for commit message tone, structure, or formatting.',
           minHeight: 120,
           maxHeight: 220,
           onChanged: onPromptChanged,

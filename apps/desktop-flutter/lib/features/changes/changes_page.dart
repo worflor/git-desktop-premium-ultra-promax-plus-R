@@ -67,6 +67,7 @@ class _ChangesPageState extends State<ChangesPage> {
   double _leftPanelWidth = 320.0;
   static const _minLeftPanelWidth = 220.0;
   static const _maxLeftPanelWidth = 520.0;
+  bool _commitOnlyMode = false;
 
   @override
   void initState() {
@@ -847,41 +848,29 @@ class _ChangesPageState extends State<ChangesPage> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _ActionBtn(
-                                label: _actionRunning
-                                    ? 'Committing...'
-                                    : 'Commit only',
-                                t: t,
-                                enabled: canCommit,
-                                primary: false,
-                                onTap: () => _commit(
-                                  repoPath,
-                                  status,
-                                  mode: _CommitRunMode.commitOnly,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _ActionBtn(
-                                label: _actionRunning
-                                    ? 'Working...'
-                                    : primaryAction.label,
-                                t: t,
-                                enabled: canCommit,
-                                onTap: () => _commit(
-                                  repoPath,
-                                  status,
-                                  mode: primaryAction.syncAfterCommit
-                                      ? _CommitRunMode.commitAndSync
-                                      : _CommitRunMode.commitOnly,
-                                ),
-                              ),
-                            ),
-                          ],
+                        _SplitCommitBtn(
+                          label: _actionRunning
+                              ? 'Working…'
+                              : (_commitOnlyMode
+                                  ? 'Commit only'
+                                  : primaryAction.label),
+                          alternateLabel: _commitOnlyMode
+                              ? primaryAction.label
+                              : 'Commit only',
+                          commitOnlyMode: _commitOnlyMode,
+                          t: t,
+                          enabled: canCommit,
+                          onCommit: () => _commit(
+                            repoPath,
+                            status,
+                            mode: _commitOnlyMode
+                                ? _CommitRunMode.commitOnly
+                                : (primaryAction.syncAfterCommit
+                                    ? _CommitRunMode.commitAndSync
+                                    : _CommitRunMode.commitOnly),
+                          ),
+                          onToggleMode: () => setState(
+                              () => _commitOnlyMode = !_commitOnlyMode),
                         ),
                         if (_actionMessage != null)
                           Padding(
@@ -1425,6 +1414,160 @@ class _ActionBtnState extends State<_ActionBtn> {
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Split commit button ───────────────────────────────────────────────────────
+
+class _SplitCommitBtn extends StatefulWidget {
+  final String label;
+  final String alternateLabel;
+  final bool commitOnlyMode;
+  final AppTokens t;
+  final bool enabled;
+  final VoidCallback onCommit;
+  final VoidCallback onToggleMode;
+
+  const _SplitCommitBtn({
+    required this.label,
+    required this.alternateLabel,
+    required this.commitOnlyMode,
+    required this.t,
+    required this.enabled,
+    required this.onCommit,
+    required this.onToggleMode,
+  });
+
+  @override
+  State<_SplitCommitBtn> createState() => _SplitCommitBtnState();
+}
+
+class _SplitCommitBtnState extends State<_SplitCommitBtn> {
+  bool _mainHovered = false;
+  bool _mainPressed = false;
+  bool _chevronHovered = false;
+  bool _chevronPressed = false;
+
+  bool get _anyHovered => _mainHovered || _chevronHovered;
+  bool get _anyPressed => _mainPressed && !_chevronPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    final chrome = primaryButtonChrome(
+      t,
+      hovered: _anyHovered,
+      pressed: _anyPressed,
+      enabled: widget.enabled,
+    );
+
+    return Transform.translate(
+      offset: chrome.offset,
+      child: Transform.scale(
+        scale: chrome.scale,
+        child: SizedBox(
+          height: 36,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            decoration: BoxDecoration(
+              color: chrome.background,
+              gradient: chrome.gradient,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: chrome.borderColor),
+              boxShadow: chrome.shadows,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(7),
+              child: Row(
+                children: [
+                  // ── Main action area ──────────────────────────────────────
+                  Expanded(
+                    child: MouseRegion(
+                      cursor: widget.enabled
+                          ? SystemMouseCursors.click
+                          : SystemMouseCursors.basic,
+                      onEnter: (_) => setState(() => _mainHovered = true),
+                      onExit: (_) => setState(() => _mainHovered = false),
+                      child: GestureDetector(
+                        onTap: widget.enabled ? widget.onCommit : null,
+                        onTapDown: widget.enabled
+                            ? (_) => setState(() => _mainPressed = true)
+                            : null,
+                        onTapCancel: () =>
+                            setState(() => _mainPressed = false),
+                        onTapUp: (_) =>
+                            setState(() => _mainPressed = false),
+                        child: Center(
+                          child: Text(
+                            widget.label,
+                            style: TextStyle(
+                              color: widget.enabled
+                                  ? t.btnText
+                                  : t.textMuted,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  // ── Divider ───────────────────────────────────────────────
+                  Container(
+                    width: 1,
+                    height: 18,
+                    color: t.chromeBorder
+                        .withValues(alpha: _anyHovered ? 0.35 : 0.22),
+                  ),
+                  // ── Mode toggle ───────────────────────────────────────────
+                  Tooltip(
+                    message: 'Switch to: ${widget.alternateLabel}',
+                    waitDuration: const Duration(milliseconds: 600),
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      onEnter: (_) =>
+                          setState(() => _chevronHovered = true),
+                      onExit: (_) =>
+                          setState(() => _chevronHovered = false),
+                      child: GestureDetector(
+                        onTap: widget.onToggleMode,
+                        onTapDown: (_) =>
+                            setState(() => _chevronPressed = true),
+                        onTapCancel: () =>
+                            setState(() => _chevronPressed = false),
+                        onTapUp: (_) =>
+                            setState(() => _chevronPressed = false),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 80),
+                          width: 32,
+                          color: widget.commitOnlyMode
+                              ? t.accentBright.withValues(alpha:
+                                  _chevronHovered ? 0.18 : 0.10)
+                              : Colors.white.withValues(
+                                  alpha: _chevronHovered ? 0.10 : 0.0),
+                          child: Center(
+                            child: Icon(
+                              widget.commitOnlyMode
+                                  ? Icons.sync_rounded
+                                  : Icons.commit_rounded,
+                              size: 14,
+                              color: (widget.commitOnlyMode
+                                      ? t.accentBright
+                                      : t.btnText)
+                                  .withValues(alpha: 0.80),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
