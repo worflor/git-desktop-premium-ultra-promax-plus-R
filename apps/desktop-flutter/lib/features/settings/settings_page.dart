@@ -800,7 +800,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 10),
         _StateCard(
           title: 'Navigation and Dynamics',
-          summary: 'Keyboard architecture and interface behavior.',
+          summary: 'Keyboard architecture, interface behavior, and local AI routing.',
           wide: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -825,7 +825,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   _setAutoExpandLogs(value);
                 },
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 18),
               Row(
                 children: [
                   const _SettingsSubtitle('CLI Piggybacking'),
@@ -833,7 +833,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   _GhostMiniButton(
                     label: _aiProvidersLoading
                         ? 'Refreshing...'
-                        : 'Refresh Providers',
+                        : 'Refresh AI',
                     onTap: _aiProvidersLoading
                         ? null
                         : () {
@@ -882,34 +882,8 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
               const SizedBox(height: 10),
               _ProviderGrid(providers: providerCards),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        _StateCard(
-          title: 'AI Integrations',
-          summary:
-              'Model slots, inline aliases, and commit-message generation preferences.',
-          wide: true,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const _SettingsSubtitle('Model Slots'),
-                  const Spacer(),
-                  _GhostMiniButton(
-                    label: _aiProvidersLoading || _aiModelOptionsLoading
-                        ? 'Refreshing...'
-                        : 'Refresh AI',
-                    onTap: _aiProvidersLoading || _aiModelOptionsLoading
-                        ? null
-                        : () {
-                            _refreshAiDiagnostics();
-                          },
-                  ),
-                ],
-              ),
+              const SizedBox(height: 18),
+              const _SettingsSubtitle('Model Slots'),
               const SizedBox(height: 8),
               Text(
                 'Fast and quality slots can be renamed inline and routed to any detected provider model.',
@@ -1850,46 +1824,59 @@ class _ProviderNode extends StatelessWidget {
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.12)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            id,
-            style: TextStyle(
-              color: t.textStrong,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+          Expanded(
+            flex: 2,
+            child: Text(
+              id,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
-          const Spacer(),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                status,
-                style: TextStyle(color: statusColor, fontSize: 10),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                binaryLabel,
-                style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: 10,
-                  fontFamily: 'JetBrainsMono',
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  status,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                  style: TextStyle(color: statusColor, fontSize: 10),
                 ),
-              ),
-              if (detail != null && detail!.trim().isNotEmpty) ...[
                 const SizedBox(height: 2),
-                SizedBox(
-                  width: 180,
-                  child: Text(
+                Text(
+                  binaryLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontFamily: 'JetBrainsMono',
+                  ),
+                ),
+                if (detail != null && detail!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
                     detail!,
                     maxLines: 2,
                     textAlign: TextAlign.end,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: t.textMuted, fontSize: 9),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         ],
       ),
@@ -1931,7 +1918,7 @@ class _ProviderGrid extends StatelessWidget {
           itemCount: providers.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            mainAxisExtent: 68,
+            mainAxisExtent: 88,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
           ),

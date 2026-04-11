@@ -371,7 +371,7 @@ class _ChangesPageState extends State<ChangesPage> {
     }
     if (!_hasCommitAiSelection(aiSettings)) {
       return _commitAiError ??
-          'Configure commit-message AI in Settings > AI Integrations.';
+          'Configure commit-message AI in Settings > Behavioural Dynamics > Commit Messages.';
     }
     return 'Generate commit message';
   }
@@ -744,15 +744,15 @@ class _ChangesPageState extends State<ChangesPage> {
                         _SmartSelectBtn(
                           allSelected: status.files.isNotEmpty &&
                               includedCount == status.files.length,
+                          noneSelected: includedCount == 0,
                           enabled: !_actionRunning && status.files.isNotEmpty,
                           tokens: t,
-                          onTap: includedCount == status.files.length
-                              ? () => setState(() {
-                                    _includedPaths.clear();
-                                    _actionError = null;
-                                    _actionMessage = null;
-                                  })
-                              : () => _includeAll(status),
+                          onSelectAll: () => _includeAll(status),
+                          onDeselectAll: () => setState(() {
+                            _includedPaths.clear();
+                            _actionError = null;
+                            _actionMessage = null;
+                          }),
                         ),
                       ],
                     ),
@@ -1052,15 +1052,22 @@ List<_CombinedDiffSection> _parseCombinedDiffSections(String diffContent) {
 
   final sections = <_CombinedDiffSection>[];
   final lines = diffContent.split('\n');
+  var renderedLineIndex = 0;
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
     final match = RegExp(r'^diff --git a/(.+) b/(.+)$').firstMatch(line);
     if (match == null) {
+      if (!_isHiddenCombinedDiffPreamble(line)) {
+        renderedLineIndex++;
+      }
       continue;
     }
     final path = match.group(2) ?? match.group(1) ?? '';
     final normalized = path.trim();
     if (normalized.isEmpty) {
+      if (!_isHiddenCombinedDiffPreamble(line)) {
+        renderedLineIndex++;
+      }
       continue;
     }
     final displayName = normalized.split('/').last;
@@ -1069,13 +1076,19 @@ List<_CombinedDiffSection> _parseCombinedDiffSections(String diffContent) {
         path: normalized,
         displayName: displayName,
         index: sections.length,
-        startLine: i,
+        startLine: renderedLineIndex,
       ),
     );
+    if (!_isHiddenCombinedDiffPreamble(line)) {
+      renderedLineIndex++;
+    }
   }
 
   return sections;
 }
+
+bool _isHiddenCombinedDiffPreamble(String line) =>
+    line.startsWith('diff ') || line.startsWith('index ');
 
 List<_CombinedDiffSection> _buildTimelineSections(
   List<RepositoryStatusFile> files,
@@ -1296,14 +1309,8 @@ class _MultiDiffProgressRailPainter extends CustomPainter {
       ..color = tokens.chromeBorder.withValues(alpha: 0.28)
       ..strokeWidth = 1.6
       ..strokeCap = StrokeCap.round;
-    final activeRail = Paint()
-      ..color = tokens.accentBright.withValues(alpha: 0.72)
-      ..strokeWidth = 1.8
-      ..strokeCap = StrokeCap.round;
 
     canvas.drawLine(Offset(left, centerY), Offset(right, centerY), baseRail);
-    canvas.drawLine(
-        Offset(left, centerY), Offset(markerX, centerY), activeRail);
 
     final sampleCount = count < 2
         ? 1
@@ -1317,14 +1324,11 @@ class _MultiDiffProgressRailPainter extends CustomPainter {
           sampleCount == 1 ? currentIndex : (ratio * (count - 1)).round();
       final x = left + usableWidth * ratio;
       final isCurrent = representedIndex == currentIndex;
-      final isPast = representedIndex < currentIndex;
-      final radius = isCurrent ? 4.5 : (isPast ? 2.8 : 2.4);
+      final radius = isCurrent ? 4.5 : 2.4;
       final fill = Paint()
         ..color = isCurrent
             ? tokens.accentBright
-            : isPast
-                ? tokens.accentBright.withValues(alpha: 0.5)
-                : tokens.textMuted.withValues(alpha: 0.24);
+            : tokens.textMuted.withValues(alpha: 0.24);
       canvas.drawCircle(Offset(x, centerY), radius, fill);
     }
 
@@ -1742,8 +1746,7 @@ class _CommitComposerField extends StatelessWidget {
                   decoration: BoxDecoration(
                     border: Border(
                       top: BorderSide(
-                        color:
-                            tokens.chromeBorder.withValues(alpha: 0.10),
+                        color: tokens.chromeBorder.withValues(alpha: 0.10),
                       ),
                     ),
                   ),
@@ -1881,61 +1884,181 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
 
 class _SmartSelectBtn extends StatefulWidget {
   final bool allSelected;
+  final bool noneSelected;
   final bool enabled;
   final AppTokens tokens;
-  final VoidCallback onTap;
+  final VoidCallback onSelectAll;
+  final VoidCallback onDeselectAll;
 
   const _SmartSelectBtn({
     required this.allSelected,
+    required this.noneSelected,
     required this.enabled,
     required this.tokens,
-    required this.onTap,
+    required this.onSelectAll,
+    required this.onDeselectAll,
   });
+
+  bool get isPartial => !allSelected && !noneSelected;
 
   @override
   State<_SmartSelectBtn> createState() => _SmartSelectBtnState();
 }
 
 class _SmartSelectBtnState extends State<_SmartSelectBtn> {
-  bool _hovered = false;
+  // hover state for the single-button mode
+  bool _hoveredSingle = false;
+  // hover state for each half of the split mode
+  bool _hoveredDeselect = false;
+  bool _hoveredSelectAll = false;
 
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
-    final label = widget.allSelected ? 'Deselect all' : 'Select all';
-    return MouseRegion(
-      cursor: widget.enabled
-          ? SystemMouseCursors.click
-          : SystemMouseCursors.basic,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: widget.enabled ? widget.onTap : null,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 110),
-          height: 22,
-          padding: const EdgeInsets.symmetric(horizontal: 9),
+    final borderColor =
+        t.secondaryBtnBorder.withValues(alpha: widget.enabled ? 0.72 : 0.28);
+
+    Widget child;
+    if (widget.isPartial) {
+      // ── Split: [☐ deselect] | [☑ select all] ──────────────────────────
+      child = KeyedSubtree(
+        key: const ValueKey('partial'),
+        child: Container(
+          height: 24,
           decoration: BoxDecoration(
-            color: _hovered && widget.enabled
-                ? t.secondaryBtnHoverBg
-                : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: t.secondaryBtnBorder
-                  .withValues(alpha: widget.enabled ? 0.75 : 0.30),
+            border: Border.all(color: borderColor),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(5),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _splitHalf(
+                  t,
+                  icon: Icons.check_box_outline_blank_rounded,
+                  tooltip: 'Deselect all',
+                  hovered: _hoveredDeselect,
+                  onEnter: () => setState(() => _hoveredDeselect = true),
+                  onExit: () => setState(() => _hoveredDeselect = false),
+                  onTap: widget.onDeselectAll,
+                ),
+                Container(
+                  width: 1,
+                  color: borderColor,
+                ),
+                _splitHalf(
+                  t,
+                  icon: Icons.check_box_rounded,
+                  tooltip: 'Select all',
+                  hovered: _hoveredSelectAll,
+                  onEnter: () => setState(() => _hoveredSelectAll = true),
+                  onExit: () => setState(() => _hoveredSelectAll = false),
+                  onTap: widget.onSelectAll,
+                ),
+              ],
             ),
           ),
-          child: Center(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 130),
-              child: Text(
-                label,
-                key: ValueKey(label),
-                style: TextStyle(
-                  color: widget.enabled ? t.textNormal : t.textMuted,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w500,
-                ),
+        ),
+      );
+    } else {
+      // ── Single button: text + icon ──────────────────────────────────────
+      final isSelectAll = widget.noneSelected;
+      child = KeyedSubtree(
+        key: ValueKey(isSelectAll),
+        child: MouseRegion(
+          cursor: widget.enabled
+              ? SystemMouseCursors.click
+              : SystemMouseCursors.basic,
+          onEnter: (_) => setState(() => _hoveredSingle = true),
+          onExit: (_) => setState(() => _hoveredSingle = false),
+          child: GestureDetector(
+            onTap: widget.enabled
+                ? (isSelectAll ? widget.onSelectAll : widget.onDeselectAll)
+                : null,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 110),
+              height: 24,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: _hoveredSingle && widget.enabled
+                    ? t.secondaryBtnHoverBg
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: borderColor),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    isSelectAll
+                        ? Icons.check_box_rounded
+                        : Icons.check_box_outline_blank_rounded,
+                    size: 12,
+                    color: widget.enabled
+                        ? t.textNormal.withValues(alpha: 0.80)
+                        : t.textMuted.withValues(alpha: 0.40),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    isSelectAll ? 'Select all' : 'Deselect all',
+                    style: TextStyle(
+                      color: widget.enabled ? t.textNormal : t.textMuted,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 160),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, animation) =>
+          FadeTransition(opacity: animation, child: child),
+      child: child,
+    );
+  }
+
+  Widget _splitHalf(
+    AppTokens t, {
+    required IconData icon,
+    required String tooltip,
+    required bool hovered,
+    required VoidCallback onEnter,
+    required VoidCallback onExit,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      waitDuration: const Duration(milliseconds: 300),
+      child: MouseRegion(
+        cursor: widget.enabled
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        onEnter: (_) => onEnter(),
+        onExit: (_) => onExit(),
+        child: GestureDetector(
+          onTap: widget.enabled ? onTap : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 110),
+            width: 28,
+            color: hovered && widget.enabled
+                ? t.secondaryBtnHoverBg
+                : Colors.transparent,
+            child: Center(
+              child: Icon(
+                icon,
+                size: 13,
+                color: widget.enabled
+                    ? t.textNormal.withValues(alpha: hovered ? 1.0 : 0.65)
+                    : t.textMuted.withValues(alpha: 0.35),
               ),
             ),
           ),
@@ -1985,8 +2108,7 @@ class _PanelDividerState extends State<_PanelDivider> {
               duration: const Duration(milliseconds: 140),
               width: _dragging ? 2.0 : 1.0,
               color: isActive
-                  ? t.accentBright
-                      .withValues(alpha: _dragging ? 0.55 : 0.30)
+                  ? t.accentBright.withValues(alpha: _dragging ? 0.55 : 0.30)
                   : t.chromeBorder.withValues(alpha: 0.18),
             ),
           ),
