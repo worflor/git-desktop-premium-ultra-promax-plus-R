@@ -162,18 +162,55 @@ String? _diffDisplayDirectory(String filePath) {
   return parts.sublist(0, parts.length - 1).join('/');
 }
 
+String _diffStatusLabel(String diffContent) {
+  if (diffContent.contains('rename from ') ||
+      diffContent.contains('rename to ')) {
+    return 'Renamed file';
+  }
+  if (diffContent.contains('deleted file mode') ||
+      diffContent.contains('+++ /dev/null')) {
+    return 'Deleted file';
+  }
+  if (diffContent.contains('new file mode') ||
+      diffContent.contains('--- /dev/null')) {
+    return 'New file';
+  }
+  if (diffContent.contains('Binary files ') ||
+      diffContent.contains('GIT binary patch') ||
+      diffContent.contains('[binary content omitted]')) {
+    return 'Binary file';
+  }
+  return 'Edited file';
+}
+
+String _changeBlockLabel(int hunkCount) {
+  if (hunkCount <= 1) {
+    return '1 change block';
+  }
+  return '$hunkCount change blocks';
+}
+
 class _DiffFileHeader extends StatelessWidget {
   final String filePath;
+  final String diffContent;
+  final int hunkCount;
   final AppTokens tokens;
 
   const _DiffFileHeader({
     required this.filePath,
+    required this.diffContent,
+    required this.hunkCount,
     required this.tokens,
   });
 
   @override
   Widget build(BuildContext context) {
     final directory = _diffDisplayDirectory(filePath);
+    final summaryParts = <String>[
+      _diffStatusLabel(diffContent),
+      _changeBlockLabel(hunkCount),
+      if (directory != null) directory,
+    ];
     return MaterialSurface(
       tone: AppMaterialTone.surface1,
       radius: 0,
@@ -195,18 +232,16 @@ class _DiffFileHeader extends StatelessWidget {
               fontWeight: FontWeight.w700,
             ),
           ),
-          if (directory != null) ...[
-            const SizedBox(height: 2),
-            Text(
-              directory,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: tokens.textMuted,
-                fontSize: 10,
-              ),
+          const SizedBox(height: 2),
+          Text(
+            summaryParts.join(' | '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: tokens.textMuted,
+              fontSize: 10,
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -313,7 +348,10 @@ class _DiffShellState extends State<DiffShell> {
 
   void _rebuild() {
     if (widget.diffContent != null && widget.diffContent!.isNotEmpty) {
-      _lines = _parseDiff(widget.diffContent!);
+      final parsedLines = _parseDiff(widget.diffContent!);
+      _lines = widget.showFileHeader
+          ? _trimLeadingMetaLines(parsedLines)
+          : parsedLines;
       _hunks = _extractHunks(_lines);
       _refreshDisplayLines();
       _beginTelemetrySession();
@@ -539,13 +577,24 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   void _refreshDisplayLines() {
+    final sourceLines =
+        widget.showFileHeader ? _trimLeadingMetaLines(_lines) : _lines;
     final term = _searchTerm.toLowerCase();
     if (term.isEmpty) {
-      _displayLines = _lines;
+      _displayLines = sourceLines;
       return;
     }
     _displayLines =
-        _lines.where((line) => line.lowerText.contains(term)).toList();
+        sourceLines.where((line) => line.lowerText.contains(term)).toList();
+  }
+
+  List<_ParsedLine> _trimLeadingMetaLines(List<_ParsedLine> lines) {
+    var firstContentIndex = 0;
+    while (firstContentIndex < lines.length &&
+        lines[firstContentIndex].kind == _LineKind.meta) {
+      firstContentIndex++;
+    }
+    return firstContentIndex == 0 ? lines : lines.sublist(firstContentIndex);
   }
 
   void _jumpToHunkIndex(int hunkIdx) {
@@ -605,7 +654,12 @@ class _DiffShellState extends State<DiffShell> {
     return Stack(children: [
       Column(children: [
         if (widget.showFileHeader)
-          _DiffFileHeader(filePath: widget.filePath, tokens: t),
+          _DiffFileHeader(
+            filePath: widget.filePath,
+            diffContent: widget.diffContent ?? '',
+            hunkCount: _hunks.length,
+            tokens: t,
+          ),
         // ── Toolbar: search + hunk nav ─────────────────────────────────────
         MaterialSurface(
           tone: AppMaterialTone.surface1,
@@ -1425,7 +1479,7 @@ class _HunkDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<int>(
-      tooltip: 'Jump to hunk',
+      tooltip: 'Jump to change block. Git calls these hunks.',
       offset: const Offset(0, 28),
       color: t.surface2,
       shape: RoundedRectangleBorder(
@@ -1455,7 +1509,7 @@ class _HunkDropdown extends StatelessWidget {
           fillColor: t.itemHoverBg,
           borderColor: t.secondaryBtnBorder,
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Text('${hunks.length} hunk${hunks.length == 1 ? "" : "s"}',
+            Text('${hunks.length} change${hunks.length == 1 ? "" : "s"}',
                 style: TextStyle(color: t.textMuted, fontSize: 10)),
             const SizedBox(width: 4),
             AppIcon(name: 'chevron-down', size: 10, color: t.textMuted),
