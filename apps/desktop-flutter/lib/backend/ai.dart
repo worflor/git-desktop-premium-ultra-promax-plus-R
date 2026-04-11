@@ -8,7 +8,7 @@ import 'package:path/path.dart' as p;
 import 'ai_audit_store.dart';
 import '../diagnostics/diagnostics_state.dart';
 import 'dtos.dart';
-import 'git.dart';
+import 'git_result.dart';
 
 const _providerSpecs = <_ProviderSpec>[
   _ProviderSpec(id: 'codex', binary: 'codex', kind: _ProviderKind.codex),
@@ -24,7 +24,7 @@ const _providerSpecs = <_ProviderSpec>[
 const _defaultModelCategories = <_ModelCategoryTemplate>[
   _ModelCategoryTemplate(
     id: 'quality',
-    label: 'Quality model',
+    label: 'Quality',
     description: 'Higher quality reasoning-first models.',
     hintTokens: [
       'opus',
@@ -39,7 +39,7 @@ const _defaultModelCategories = <_ModelCategoryTemplate>[
   ),
   _ModelCategoryTemplate(
     id: 'fast',
-    label: 'Fast model',
+    label: 'Fast',
     description: 'Lower-latency throughput-first models.',
     hintTokens: [
       'mini',
@@ -93,6 +93,10 @@ final _migrationEntryRegex = RegExp(r'^"([^"]+)"\s*=\s*"([^"]+)"');
 final _backtickContentRegex = RegExp(r'`([^`]+)`');
 final _findingTagRegex = RegExp(
   r'<finding\b([^>]*)>([\s\S]*?)</finding>',
+  caseSensitive: false,
+);
+final _observationTagRegex = RegExp(
+  r'<observation\b([^>]*)>([\s\S]*?)</observation>',
   caseSensitive: false,
 );
 final _xmlTagRegex = RegExp(r'<(\w+)>([\s\S]*?)</\1>', caseSensitive: false);
@@ -523,6 +527,7 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
           summary: draftReview.summary,
           reasoningReport: draftReview.reasoningReport,
           findings: draftReview.findings,
+          observations: draftReview.observations,
           twoStepEnabled: false,
           hasVerificationTrace: false,
         ),
@@ -576,6 +581,7 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
         summary: draftReview.summary,
         reasoningReport: draftReview.reasoningReport,
         findings: draftReview.findings,
+        observations: draftReview.observations,
         twoStepEnabled: true,
         hasVerificationTrace: false,
         verificationFailed: true,
@@ -603,6 +609,7 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
           summary: draftReview.summary,
           reasoningReport: draftReview.reasoningReport,
           findings: draftReview.findings,
+          observations: draftReview.observations,
           twoStepEnabled: true,
           hasVerificationTrace: false,
           verificationFailed: true,
@@ -642,6 +649,7 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
         summary: merged.summary,
         reasoningReport: merged.reasoningReport,
         findings: merged.findings,
+        observations: draftReview.observations,
         twoStepEnabled: true,
         hasVerificationTrace: true,
         draftFindings: draftReview.findings,
@@ -1291,10 +1299,24 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     return _CommitDiffContextResult.err(unstagedStat.error!);
   }
 
+  // Diff flags chosen for AI review quality.
+  // Context lines adapt to scope size: small changes get more surrounding
+  // code (the AI sees the full function), large changes get less (save
+  // token budget for actual changes).
+  final fileCount = scopeArgs.length > 1 ? scopeArgs.length - 1 : 10;
+  final contextLines = fileCount <= 3 ? 15 : (fileCount <= 10 ? 10 : 6);
+  final diffFlags = [
+    '--no-color',
+    '-U$contextLines',
+    '--patience',
+    '-M',
+    '--ignore-cr-at-eol',
+  ];
+
   final stagedDiff = includeStaged
       ? await _runGitCommand(
           repositoryPath,
-          ['diff', '--cached', '--no-color', ...scopeArgs],
+          ['diff', '--cached', ...diffFlags, ...scopeArgs],
           timeout: const Duration(seconds: _diffTimeoutSeconds),
         )
       : const GitResult.ok('');
@@ -1305,7 +1327,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   final unstagedDiff = includeUnstaged
       ? await _runGitCommand(
           repositoryPath,
-          ['diff', '--no-color', ...scopeArgs],
+          ['diff', ...diffFlags, ...scopeArgs],
           timeout: const Duration(seconds: _diffTimeoutSeconds),
         )
       : const GitResult.ok('');
@@ -1324,6 +1346,79 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   }
 
   final diffBundle = _buildDiffPromptBundle(fullDiff);
+
+  // ── Parallel context enrichment ──────────────────────────────────────
+  // Five anti-hallucination layers gathered simultaneously. Budget adapts
+  // to the diff size — small diffs get rich context, large diffs get the
+  // essentials. The split shifts based on file count: few files means
+  // more budget for full source; many files means more for metadata.
+  final changedFileCount = RegExp(r'^diff --git ', multiLine: true)
+      .allMatches(fullDiff).length.clamp(1, 999);
+
+  // Estimate overhead from the parts of the prompt that aren't diff or
+  // context: system instructions, evidence rules, schema, summaries.
+  // Measured from actual prompt builds — typically 8-14K depending on
+  // guardrail profile and custom prompt length.
+  // System instructions + evidence rules + XML schema + summaries +
+  // user custom prompt. Measured from actual prompt builds.
+  const estimatedOverhead = 12000;
+  final contextBudget = _maxPromptChars - diffBundle.promptBody.length - estimatedOverhead;
+
+  // Adaptive split: file context is most valuable, but with 50+ files
+  // the metadata summary becomes more important than trying to include
+  // all source. The ratio slides smoothly between the extremes.
+  final metadataWeight = (changedFileCount / 100).clamp(0.1, 0.3);
+  final fileContextWeight = 1.0 - metadataWeight - 0.1; // 10% headroom
+
+  final contextFutures = await Future.wait([
+    _collectFileContext(
+      repositoryPath: repositoryPath,
+      diffText: fullDiff,
+      budgetChars: (contextBudget * fileContextWeight).round(),
+    ),
+    _collectFileMetadata(
+      repositoryPath: repositoryPath,
+      diffText: fullDiff,
+      budgetChars: (contextBudget * metadataWeight).round(),
+    ),
+    _collectChangeTypes(
+      repositoryPath: repositoryPath,
+      scopeArgs: scopeArgs,
+      includeStaged: includeStaged,
+      includeUnstaged: includeUnstaged,
+    ),
+    _collectStructuralVerification(
+      repositoryPath: repositoryPath,
+      diffText: fullDiff,
+    ),
+  ]);
+  final fileContext = contextFutures[0];
+  final fileMetadata = contextFutures[1];
+  final changeTypes = contextFutures[2];
+  final structuralVerification = contextFutures[3];
+
+  // Append enrichment sections to the diff bundle.
+  final enrichedParts = <String>[diffBundle.promptBody];
+  if (changeTypes.isNotEmpty) {
+    enrichedParts.add('<change_types>\n$changeTypes</change_types>');
+  }
+  if (structuralVerification.isNotEmpty) {
+    enrichedParts.add('<structural_verification>\n$structuralVerification</structural_verification>');
+  }
+  if (fileMetadata.isNotEmpty) {
+    enrichedParts.add('<file_metadata>\n$fileMetadata</file_metadata>');
+  }
+  if (fileContext.isNotEmpty) {
+    enrichedParts.add('<file_context>\n$fileContext</file_context>');
+  }
+  final enrichedPromptBody = enrichedParts.join('\n\n');
+
+  final enrichedBundle = _DiffPromptBundle(
+    promptBody: enrichedPromptBody,
+    usedCondensedDiff: diffBundle.usedCondensedDiff,
+    originalDiffCharacters: diffBundle.originalDiffCharacters,
+  );
+
   final statSummary = _joinStatSections(
     stagedStat: stagedStat.data ?? '',
     unstagedStat: unstagedStat.data ?? '',
@@ -1368,7 +1463,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
       branchName: (branch.data ?? 'HEAD').trim(),
       statusSummary: (status.data ?? '').trim(),
       statSummary: statSummary.trim(),
-      diffBundle: diffBundle,
+      diffBundle: enrichedBundle,
       totalCommits: totalCommits,
       recentLog: recentLog,
       authorName: authorName,
@@ -1408,6 +1503,457 @@ String _joinStatSections({
     sections.add('Unstaged diffstat:\n$unstagedStat');
   }
   return sections.join('\n\n');
+}
+
+/// Collect git metadata for changed files — authorship, churn, test coverage.
+/// This is the "other 70%" of review context beyond the diff itself.
+Future<String> _collectFileMetadata({
+  required String repositoryPath,
+  required String diffText,
+  required int budgetChars,
+}) async {
+  if (budgetChars <= 0) return '';
+
+  final pathPattern = RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
+  final paths = pathPattern.allMatches(diffText).map((m) => m.group(1)!).toSet();
+  if (paths.isEmpty) return '';
+
+  final buffer = StringBuffer();
+  var remaining = budgetChars;
+
+  // Gather metadata with a concurrency cap. Each file spawns 4 git
+  // commands, so 15 files = 60 processes — a sane ceiling.
+  // Batch size adapts to file count — small changes run fully parallel,
+  // large changes batch to avoid process table saturation.
+  final sortedPaths = paths.toList()..sort();
+  final batchSize = sortedPaths.length <= 10
+      ? sortedPaths.length // Few files: all parallel
+      : (sortedPaths.length <= 30 ? 10 : 8); // Many files: controlled batches
+  final results = <_FileMetaResult>[];
+
+  for (var i = 0; i < sortedPaths.length; i += batchSize) {
+    final batch = sortedPaths.skip(i).take(batchSize);
+    final batchResults = await Future.wait(
+      batch.map((filePath) => _gatherFileMeta(repositoryPath, filePath)),
+    );
+    results.addAll(batchResults);
+    if (remaining <= 100) break; // stop early if budget exhausted
+  }
+
+  for (final meta in results) {
+    if (remaining <= 100) break;
+
+    final block = StringBuffer();
+    block.writeln('${meta.path}:');
+
+    if (meta.churnCount > 0) {
+      block.writeln('  commits: ${meta.churnCount} (last 90 days)');
+    }
+    if (meta.authors.isNotEmpty) {
+      block.writeln('  authors: ${meta.authors.take(5).join(', ')}');
+    }
+    if (meta.lastAuthor.isNotEmpty) {
+      block.writeln('  last modified by: ${meta.lastAuthor} (${meta.lastAge})');
+    }
+    if (meta.fileAge.isNotEmpty) {
+      block.writeln('  created: ${meta.fileAge}');
+    }
+    if (meta.hasTest) {
+      block.writeln('  test file: exists');
+    }
+
+    final entry = block.toString();
+    if (entry.length > remaining) continue;
+    buffer.write(entry);
+    remaining -= entry.length;
+  }
+
+  return buffer.toString();
+}
+
+Future<_FileMetaResult> _gatherFileMeta(String repo, String filePath) async {
+  try {
+    final results = await Future.wait([
+      // Churn: how many commits touched this file recently.
+      // Uses --since instead of -N so it adapts to repo activity naturally.
+      _runGitCommand(repo, [
+        'log', '--oneline', '--follow', '--since=90.days', '--', filePath,
+      ]),
+      // Recent authors: who has touched this file.
+      // -20 captures enough for knowledge distribution without over-querying.
+      _runGitCommand(repo, [
+        'log', '--format=%an', '-20', '--follow', '--', filePath,
+      ]),
+      // Last modifier + age (use %x00 null byte as separator — safe from
+      // any content in author names, unlike string delimiters).
+      _runGitCommand(repo, [
+        'log', '--format=%an%x00%cr', '-1', '--follow', '--', filePath,
+      ]),
+      // File creation date
+      _runGitCommand(repo, [
+        'log', '--diff-filter=A', '--format=%cr', '--follow', '--', filePath,
+      ]),
+    ]);
+
+    final churnLines = (results[0].data ?? '').trim().split('\n');
+    final churnCount = churnLines.where((l) => l.isNotEmpty).length;
+
+    final authorLines = (results[1].data ?? '').trim().split('\n');
+    final authors = authorLines.where((l) => l.isNotEmpty).toSet().toList();
+
+    final lastParts = (results[2].data ?? '').trim().split('\x00');
+    final lastAuthor = lastParts.isNotEmpty ? lastParts[0] : '';
+    final lastAge = lastParts.length > 1 ? lastParts[1] : '';
+
+    final fileAge = (results[3].data ?? '').trim();
+
+    // Test file detection: check common patterns.
+    final hasTest = await _detectTestFile(repo, filePath);
+
+    return _FileMetaResult(
+      path: filePath,
+      churnCount: churnCount,
+      authors: authors,
+      lastAuthor: lastAuthor,
+      lastAge: lastAge,
+      fileAge: fileAge,
+      hasTest: hasTest,
+    );
+  } catch (_) {
+    return _FileMetaResult(path: filePath);
+  }
+}
+
+/// Language-agnostic test file detection via path patterns.
+/// Uses async I/O to avoid blocking the event loop.
+Future<bool> _detectTestFile(String repo, String filePath) async {
+  final name = p.basenameWithoutExtension(filePath);
+  final ext = p.extension(filePath);
+  final dir = p.dirname(filePath);
+
+  // Common test file patterns: foo_test.dart, foo.test.ts, test_foo.py, etc.
+  final testPatterns = [
+    p.join(dir, '${name}_test$ext'),
+    p.join(dir, '$name.test$ext'),
+    p.join(dir, '${name}_spec$ext'),
+    p.join(dir, '$name.spec$ext'),
+    p.join(dir, 'test_$name$ext'),
+  ];
+
+  for (final testPath in testPatterns) {
+    if (await File(p.join(repo, testPath)).exists()) return true;
+  }
+  return false;
+}
+
+class _FileMetaResult {
+  final String path;
+  final int churnCount;
+  final List<String> authors;
+  final String lastAuthor;
+  final String lastAge;
+  final String fileAge;
+  final bool hasTest;
+
+  const _FileMetaResult({
+    required this.path,
+    this.churnCount = 0,
+    this.authors = const [],
+    this.lastAuthor = '',
+    this.lastAge = '',
+    this.fileAge = '',
+    this.hasTest = false,
+  });
+}
+
+// ── Anti-hallucination: change type classification ──────────────────
+/// Runs `git diff --name-status -M -C` to get the change type per file.
+/// Tells the AI whether each file is Added/Modified/Deleted/Renamed/Copied
+/// so it doesn't guess.
+Future<String> _collectChangeTypes({
+  required String repositoryPath,
+  required List<String> scopeArgs,
+  required bool includeStaged,
+  required bool includeUnstaged,
+}) async {
+  try {
+    final results = <String>[];
+
+    if (includeStaged) {
+      final r = await _runGitCommand(repositoryPath, [
+        'diff', '--cached', '--name-status', '-M', '-C', ...scopeArgs,
+      ]);
+      if (r.ok && (r.data ?? '').trim().isNotEmpty) {
+        results.add(r.data!.trim());
+      }
+    }
+    if (includeUnstaged) {
+      final r = await _runGitCommand(repositoryPath, [
+        'diff', '--name-status', '-M', '-C', ...scopeArgs,
+      ]);
+      if (r.ok && (r.data ?? '').trim().isNotEmpty) {
+        results.add(r.data!.trim());
+      }
+    }
+
+    final combined = results.join('\n');
+    if (combined.isEmpty) return '';
+
+    // Annotate with human-readable descriptions for the AI.
+    final lines = combined.split('\n').where((l) => l.trim().isNotEmpty);
+    final annotated = StringBuffer();
+    for (final line in lines) {
+      final status = line.isNotEmpty ? line[0] : '?';
+      final desc = switch (status) {
+        'A' => 'new file',
+        'M' => 'modified',
+        'D' => 'deleted',
+        'R' => 'renamed',
+        'C' => 'copied',
+        'T' => 'type changed',
+        _ => 'changed',
+      };
+      annotated.writeln('$line  ($desc)');
+    }
+    return annotated.toString();
+  } catch (_) {
+    return '';
+  }
+}
+
+// ── Anti-hallucination: structural verification ─────────────────────
+/// Scans the diff for import statements and new symbol definitions,
+/// then verifies them against the working tree. Produces a compact
+/// verification summary the AI can trust instead of guessing.
+Future<String> _collectStructuralVerification({
+  required String repositoryPath,
+  required String diffText,
+}) async {
+  try {
+    final buffer = StringBuffer();
+
+    // 1. Import verification — check if import targets exist on disk.
+    final importVerification = await _verifyImports(repositoryPath, diffText);
+    if (importVerification.isNotEmpty) {
+      buffer.writeln('Import verification:');
+      buffer.write(importVerification);
+      buffer.writeln();
+    }
+
+    // 2. Symbol grep — verify new function/class names exist in the repo.
+    final symbolVerification = await _verifySymbols(repositoryPath, diffText);
+    if (symbolVerification.isNotEmpty) {
+      buffer.writeln('Symbol verification:');
+      buffer.write(symbolVerification);
+    }
+
+    return buffer.toString();
+  } catch (_) {
+    return '';
+  }
+}
+
+/// Scan added lines for import/require/from patterns, verify targets exist.
+/// Tracks which file each import belongs to so relative paths resolve correctly.
+Future<String> _verifyImports(String repositoryPath, String diffText) async {
+  final importPattern = RegExp(
+    r'''^\+\s*(?:import\s+['"]([^'"]+)['"]|'''
+    r'''(?:const|var|let|final)\s+\w+\s*=\s*require\(['"]([^'"]+)['"]\)|'''
+    r'''from\s+['"]([^'"]+)['"])''',
+  );
+  final fileHeaderPattern = RegExp(r'^diff --git a/.+ b/(.+)$');
+
+  final seen = <String>{};
+  final results = StringBuffer();
+  String? currentFile;
+
+  for (final line in diffText.split('\n')) {
+    // Track which file we're in so relative imports resolve correctly.
+    final headerMatch = fileHeaderPattern.firstMatch(line);
+    if (headerMatch != null) {
+      currentFile = headerMatch.group(1);
+      continue;
+    }
+
+    if (!line.startsWith('+') || line.startsWith('+++')) continue;
+
+    final match = importPattern.firstMatch(line);
+    if (match == null) continue;
+
+    final importPath = match.group(1) ?? match.group(2) ?? match.group(3);
+    if (importPath == null) continue;
+    if (importPath.startsWith('dart:') || importPath.startsWith('package:')) continue;
+    if (!seen.add('$currentFile→$importPath')) continue;
+
+    // Resolve relative to the importing file's directory.
+    final importingDir = currentFile != null
+        ? p.dirname(p.join(repositoryPath, currentFile))
+        : repositoryPath;
+    final resolved = p.normalize(p.join(importingDir, importPath));
+    final exists = await File(resolved).exists();
+
+    results.writeln('  ${exists ? "✓" : "✗"} $importPath${exists ? "" : " (NOT FOUND)"}');
+  }
+
+  return results.toString();
+}
+
+/// Extract new function/class/variable names from added lines, grep for them.
+Future<String> _verifySymbols(String repositoryPath, String diffText) async {
+  // Extract symbol names from added lines that look like definitions.
+  final defPattern = RegExp(
+    r'^\+\s*(?:class|enum|mixin|extension|typedef)\s+(\w+)|'
+    r'^\+\s*(?:void|Future|String|int|bool|double|List|Map|Set|Widget|dynamic)\s*<?[^>]*>?\s+(\w+)\s*[(<]|'
+    r'^\+\s*(?:final|const|var|late)\s+\w+\s+(\w+)\s*=',
+    multiLine: true,
+  );
+
+  final symbols = <String>{};
+  for (final match in defPattern.allMatches(diffText)) {
+    final name = match.group(1) ?? match.group(2) ?? match.group(3);
+    if (name != null && name.length > 2 && !name.startsWith('_')) {
+      symbols.add(name);
+    }
+  }
+
+  if (symbols.isEmpty) return '';
+
+  // Cap adapts to symbol count — verify more when there are few,
+  // sample when there are many. Diminishing returns past ~15.
+  final maxLookups = symbols.length <= 5 ? symbols.length : (symbols.length <= 20 ? 12 : 8);
+  final results = StringBuffer();
+  var count = 0;
+  for (final symbol in symbols) {
+    if (count >= maxLookups) break;
+    count++;
+
+    try {
+      final grep = await _runGitCommand(repositoryPath, [
+        'grep', '-l', '--fixed-strings', symbol,
+      ]);
+      if (grep.ok && (grep.data ?? '').trim().isNotEmpty) {
+        final files = (grep.data ?? '').trim().split('\n').where((f) => f.isNotEmpty).toList();
+        results.writeln('  $symbol: found in ${files.length} file${files.length == 1 ? "" : "s"} (${files.take(3).join(", ")}${files.length > 3 ? ", ..." : ""})');
+      } else {
+        results.writeln('  $symbol: not found in repo');
+      }
+    } catch (_) {
+      continue;
+    }
+  }
+
+  return results.toString();
+}
+
+/// Collect full file contents for small changed files to give the AI
+/// reviewer complete context (imports, function signatures, surrounding code).
+///
+/// Budget-aware: fills up to [budgetChars] with the most impactful files
+/// (largest diffs first), skipping files that exceed the remaining budget.
+/// Language-agnostic — just reads the working tree file.
+Future<String> _collectFileContext({
+  required String repositoryPath,
+  required String diffText,
+  required int budgetChars,
+}) async {
+  if (budgetChars <= 0) return '';
+
+  // Extract changed file paths from the diff headers.
+  final pathPattern = RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
+  final paths = pathPattern.allMatches(diffText).map((m) => m.group(1)!).toSet();
+  if (paths.isEmpty) return '';
+
+  // Read files in parallel, filter to those that exist and are small enough.
+  // Threshold between "include full source" vs "outline only". Adapts to
+  // budget — generous budget lets us include larger files whole, tight
+  // budget makes us more selective. The budget cap naturally limits how
+  // many files fit regardless.
+  final maxFileLines = budgetChars > 100000
+      ? 1200 // Tons of room — include most files whole
+      : budgetChars > 50000
+          ? 800 // Moderate room
+          : budgetChars > 20000
+              ? 500 // Tight — be selective
+              : 300; // Very tight — only tiny files
+  final buffer = StringBuffer();
+  var remaining = budgetChars;
+
+  // Sort by path so output is deterministic.
+  final sortedPaths = paths.toList()..sort();
+
+  // Use async I/O to avoid blocking the Flutter event loop.
+  for (final filePath in sortedPaths) {
+    if (remaining <= 200) break;
+
+    try {
+      final file = File(p.join(repositoryPath, filePath));
+      if (!await file.exists()) continue;
+
+      final content = await file.readAsString();
+      final lineCount = '\n'.allMatches(content).length + 1;
+
+      if (lineCount <= maxFileLines) {
+        final block = '--- $filePath ($lineCount lines) ---\n$content\n';
+        if (block.length > remaining) continue;
+
+        buffer.write(block);
+        remaining -= block.length;
+        continue;
+      }
+
+      // Large file — function/class outline for structural awareness.
+      final outline = _buildFileOutline(content, filePath, lineCount);
+      if (outline.length > remaining) continue;
+
+      buffer.write(outline);
+      remaining -= outline.length;
+    } catch (_) {
+      continue;
+    }
+  }
+
+  return buffer.toString();
+}
+
+/// Build a compact outline of a large file — class/function/method signatures
+/// with line numbers. Gives the AI structural awareness without full source.
+String _buildFileOutline(String content, String filePath, int lineCount) {
+  final lines = content.split('\n');
+  final outline = StringBuffer();
+  outline.writeln('--- $filePath ($lineCount lines, outline only) ---');
+
+  // Universal structure detection — works across languages by matching
+  // patterns that indicate "this line defines something":
+  //   • Type/class/struct declarations (class Foo, struct Bar, interface Baz)
+  //   • Function/method signatures (lines with parens that aren't calls)
+  //   • Decorators/annotations that precede definitions (@override, #[derive])
+  //   • Module/namespace declarations
+  // Not language-specific — catches the shape of declarations, not keywords.
+  final sigPatterns = [
+    // Type declarations: class, struct, enum, interface, trait, protocol, etc.
+    RegExp(r'^\s*(?:export\s+)?(?:abstract\s+)?(?:class|struct|enum|mixin|extension|interface|trait|protocol|type|union|module|namespace|package)\s+\w+'),
+    // Function/method declarations: lines ending with { or : or => after parens
+    RegExp(r'^\s*(?:export\s+)?(?:pub\s+)?(?:static\s+)?(?:async\s+)?(?:const\s+)?(?:\w+\s+)*\w+\s*(?:<[^>]*>\s*)?\([^)]*\)\s*(?:async\s*)?[{:=>\-]?\s*$'),
+    // Python/Ruby style: def/fn at start of line
+    RegExp(r'^\s*(?:def|fn|func|function|sub|proc|method)\s+\w+'),
+    // Go style: func (receiver) name(
+    RegExp(r'^\s*func\s+(?:\([^)]*\)\s+)?\w+\s*\('),
+    // Annotations/decorators on their own line (precede definitions)
+    RegExp(r'^\s*(?:@\w+|#\[[\w:]+)'),
+  ];
+
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    if (line.trim().isEmpty) continue;
+    for (final pattern in sigPatterns) {
+      if (pattern.hasMatch(line)) {
+        outline.writeln('  L${i + 1}: ${line.trim()}');
+        break;
+      }
+    }
+  }
+
+  return outline.toString();
 }
 
 _DiffPromptBundle _buildDiffPromptBundle(String fullDiff) {
@@ -1601,21 +2147,17 @@ String _buildCommitMessagePrompt({
   int uniqueContributors = 0,
 }) {
   final buffer = StringBuffer();
-  buffer.writeln(
-    'You are generating a git commit message for a desktop Git client.',
-  );
-  buffer.writeln(
-    'Return only the commit message text. Do not add commentary, labels, quotes, or code fences.',
-  );
-  buffer.writeln(
-    'If <user_instructions> are present, follow them exactly — they override all defaults including format, tone, length, and style.',
-  );
-  buffer.writeln(
-    'Prefer a concise summary line. Add a blank line and body only when the diff clearly warrants extra detail.',
-  );
-  buffer.writeln(
-    'Keep the summary specific to what changed, not just which files moved.',
-  );
+  buffer.writeln('You are generating a git commit message.');
+  buffer.writeln('Return only the message — plain text, ASCII characters only.');
+  buffer.writeln();
+  buffer.writeln('<commit_message_structure>');
+  buffer.writeln('Subject line: start with an imperative verb, keep it tight enough to read in a git log.');
+  buffer.writeln('  Examples: "add OAuth token refresh", "fix pipe deadlock on Windows", "refactor diff context collection"');
+  buffer.writeln('Body (optional): separated by a blank line. Explain the motivation and impact — the diff already shows the mechanics.');
+  buffer.writeln('  Include a body when the change has non-obvious motivation, affects multiple concerns, or has caveats.');
+  buffer.writeln('</commit_message_structure>');
+  buffer.writeln();
+  buffer.writeln('If <user_instructions> are present, follow them — they override format, tone, and style.');
   buffer.writeln();
   buffer.writeln('<generation_context>');
   buffer.writeln('Branch: $branchName');
@@ -1731,7 +2273,7 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
         primaryFear:
             'Your job is to catch incomplete handling, hidden coupling, edge cases, and long-tail risks before commit.',
         silenceRule:
-            'Do not nitpick aesthetics, but you should surface subtle risks when they are grounded in the diff.',
+            'Surface subtle risks when grounded in the diff. Leave aesthetics to linters.',
         verdictBar:
             'A commit is not ready when hidden assumptions or incomplete safeguards create material risk.',
         priorityConcernClasses: [
@@ -1757,7 +2299,7 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
         primaryFear:
             'Your job is to prevent harmful surprises such as destructive behavior, data loss, corruption, security exposure, and silent regressions.',
         silenceRule:
-            'Do not invent threats, but when the diff credibly points toward a serious risk class you should surface it clearly.',
+            'Surface serious risks clearly when the diff credibly supports them. Ground every concern in evidence.',
         verdictBar:
             'Downgrade aggressively when the evidence points to a high-impact failure class, even if the bug is not fully proven.',
         priorityConcernClasses: [
@@ -1801,15 +2343,30 @@ String _buildCommitReviewPrompt({
   buffer.writeln();
   buffer.writeln('<evidence_rules>');
   buffer.writeln(
-    'Ground every finding in the visible diff. Prefer omission over speculation.',
+    'Ground every finding in the provided evidence layers:\n'
+    '  • <change_types> classifies each file as new/modified/deleted/renamed — '
+    'trust it for file history context.\n'
+    '  • <structural_verification> confirms import targets and symbol definitions '
+    'against the live repo — trust it for existence questions.\n'
+    '  • <file_metadata> provides authorship, churn, and test coverage — '
+    'use it to calibrate risk and flag untested high-churn files.\n'
+    '  • <file_context> provides full source of small changed files — '
+    'use it to verify imports, function signatures, and surrounding code.\n'
+    'Only report findings you can cite concrete evidence for. '
+    'Omit anything that requires guessing. '
+    'When verification data confirms something, treat it as fact.',
   );
   if (profile.requireConcreteEvidence) {
     buffer.writeln(
-      'Do not report a concern unless you can cite concrete evidence from the diff or its immediate implications.',
+      'Every concern must cite concrete evidence from the diff or its structural context.',
     );
   }
   buffer.writeln(
-    'Do not edit code, rewrite the patch, or offer style-only commentary.',
+    'Use <findings> for things that are concretely wrong — bugs, breakage, '
+    'missing files, incorrect logic. Use <observations> for architectural '
+    'notes, performance considerations, design trade-offs, and intentional '
+    'changes worth noting. The score follows from findings alone. '
+    'Leave code style to linters.',
   );
   buffer.writeln('</evidence_rules>');
   buffer.writeln();
@@ -1907,7 +2464,7 @@ String _reviewOutputSchemaInstructions(_ReviewPassMode passMode) {
   if (passMode == _ReviewPassMode.verify) {
     return '''
 <output_schema>
-Return XML-like text only. Do not include prose before or after the schema.
+Return only the XML-like schema below — no surrounding prose.
 Use exactly this shape:
 <verification_result>
 <confirmed_ids>F1,F2</confirmed_ids>
@@ -1932,22 +2489,31 @@ If there are no new findings, keep <new_findings></new_findings> empty.
 
   return '''
 <output_schema>
-Return XML-like text only. Do not include prose before or after the schema.
+Return only the XML-like schema below — no surrounding prose.
 Use exactly this shape:
 <review_result>
 <verdict>Ready|Mostly ready|Needs attention|High risk|Block</verdict>
-<score>0-100 integer</score>
+<score>0-100 confidence that this commit lands cleanly. Findings weigh heavily, observations contribute lightly. Let both inform the score naturally — findings move the needle, observations nudge it.</score>
 <summary>One sentence summary.</summary>
-<summary_reasoning>Short plain-language explanation of the reasoning.</summary_reasoning>
+<summary_reasoning>Plain-language explanation of the reasoning. Architectural observations, performance considerations, design trade-offs, and intentional changes belong here — they provide context but are not actionable findings.</summary_reasoning>
 <findings>
 <finding id="F1" severity="note|warn|risk|block" file="path/or/-" hunk="@@ ... @@ or -">
 <title>Short title</title>
-<evidence>Concrete evidence from the diff</evidence>
-<why>Why it matters</why>
+<evidence>Concrete evidence from the diff showing something that is wrong or will break</evidence>
+<why>The practical consequence — what breaks, what fails, what produces incorrect results</why>
 </finding>
 </findings>
+<observations>
+<observation id="O1" file="path/or/-">
+<title>Short title</title>
+<detail>What you noticed and why it matters for context</detail>
+</observation>
+</observations>
 </review_result>
-If there are no findings, keep <findings></findings> empty.
+A finding belongs in findings when you are certain — you can prove it from the evidence.
+An observation belongs in observations when you are noting something worth awareness — a trade-off, a design choice, a consideration.
+Certainty is the separator: proven facts go to findings, everything else goes to observations.
+Empty sections are welcome — a clean commit with only observations is a good result.
 </output_schema>''';
 }
 
@@ -2086,12 +2652,15 @@ _ParsedReviewResult? _parseDraftReview(String raw) {
   }
   final findingsBlock = _extractTag(normalized, 'findings') ?? '';
   final findings = _parseFindingTags(findingsBlock, origin: 'draft');
+  final observationsBlock = _extractTag(normalized, 'observations') ?? '';
+  final observations = _parseObservationTags(observationsBlock);
   return _ParsedReviewResult(
     verdict: _normalizeVerdict(verdict),
     score: score.clamp(0, 100),
     summary: summary.trim(),
     reasoningReport: summaryReasoning.trim(),
     findings: findings,
+    observations: observations,
   );
 }
 
@@ -2164,6 +2733,28 @@ List<AiCommitReviewFindingData> _parseFindingTags(
     );
   }
   return findings;
+}
+
+List<AiCommitReviewObservationData> _parseObservationTags(String block) {
+  final matches = _observationTagRegex.allMatches(block);
+  final observations = <AiCommitReviewObservationData>[];
+  var index = 0;
+  for (final match in matches) {
+    final attrs = _parseXmlAttributes(match.group(1) ?? '');
+    final body = match.group(2) ?? '';
+    index += 1;
+    observations.add(
+      AiCommitReviewObservationData(
+        id: (attrs['id']?.trim().isNotEmpty ?? false)
+            ? attrs['id']!.trim()
+            : 'O$index',
+        title: (_extractTag(body, 'title') ?? 'Observation $index').trim(),
+        detail: (_extractTag(body, 'detail') ?? '').trim(),
+        filePath: _normalizedOptionalTagAttribute(attrs['file']),
+      ),
+    );
+  }
+  return observations;
 }
 
 _MergedReviewResult _mergeVerifiedReview({
@@ -4051,6 +4642,7 @@ class _ParsedReviewResult {
   final String summary;
   final String reasoningReport;
   final List<AiCommitReviewFindingData> findings;
+  final List<AiCommitReviewObservationData> observations;
 
   const _ParsedReviewResult({
     required this.verdict,
@@ -4058,6 +4650,7 @@ class _ParsedReviewResult {
     required this.summary,
     required this.reasoningReport,
     required this.findings,
+    this.observations = const [],
   });
 }
 

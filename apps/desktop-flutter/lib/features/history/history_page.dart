@@ -634,8 +634,9 @@ class _CommitImpact extends StatelessWidget {
 
 class HistoryPage extends StatefulWidget {
   final String? initialCommitHash;
+  final VoidCallback? onOpenXray;
 
-  const HistoryPage({super.key, this.initialCommitHash});
+  const HistoryPage({super.key, this.initialCommitHash, this.onOpenXray});
 
   @override
   State<HistoryPage> createState() => _HistoryPageState();
@@ -899,6 +900,14 @@ class _HistoryPageState extends State<HistoryPage> {
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.05)),
+          if (widget.onOpenXray != null) ...[
+            const SizedBox(width: 10),
+            _HistoryMiniButton(
+              label: 'Repo X-Ray',
+              icon: 'search',
+              onTap: widget.onOpenXray!,
+            ),
+          ],
           const Spacer(),
           Row(children: [
             Text('Viewing last',
@@ -1617,6 +1626,70 @@ class _CommitDetailTransition extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _HistoryMiniButton extends StatefulWidget {
+  final String label;
+  final String icon;
+  final VoidCallback onTap;
+
+  const _HistoryMiniButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  State<_HistoryMiniButton> createState() => _HistoryMiniButtonState();
+}
+
+class _HistoryMiniButtonState extends State<_HistoryMiniButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final chrome = ghostButtonChrome(
+      t,
+      hovered: _hovered,
+      pressed: _pressed,
+      enabled: true,
+      baseBorderColor: t.secondaryBtnBorder,
+    );
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) => setState(() => _pressed = false),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: chrome.background,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: chrome.borderColor),
+            boxShadow: chrome.shadows,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppIcon(name: widget.icon, size: 12, color: t.textMuted),
+              const SizedBox(width: 6),
+              Text(
+                widget.label,
+                style: TextStyle(color: t.textNormal, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

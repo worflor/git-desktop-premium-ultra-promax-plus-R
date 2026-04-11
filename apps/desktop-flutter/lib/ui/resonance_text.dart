@@ -54,26 +54,13 @@ Widget _buildWithCodeBlocks(String text, TextStyle base, AppTokens t) {
       }
     }
 
-    // The code block itself — subtle container.
+    // The code block itself — collapsible when tall.
     final code = (m.group(1) ?? '').trimRight();
     if (code.isNotEmpty) {
-      children.add(Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: t.bg0.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.1)),
-        ),
-        child: Text(
-          code,
-          style: TextStyle(
-            color: t.chromeAccent,
-            fontFamily: 'JetBrainsMono',
-            fontSize: (base.fontSize ?? 11.2) - 0.8,
-            height: 1.5,
-          ),
-        ),
+      children.add(_CollapsibleCodeBlock(
+        code: code,
+        tokens: t,
+        fontSize: (base.fontSize ?? 11.2) - 0.8,
       ));
       children.add(const SizedBox(height: 6));
     }
@@ -125,8 +112,9 @@ final _patterns = <(_Cat, RegExp)>[
   // This avoids matching concept lists like "summary/reasoning/evidence".
   (_Cat.filePath, RegExp(r'(?:[\w-]+/){2,}[\w-]+\.\w+|[\w-]+(?:\.\w+){2,}')),
 
-  // Title Case entities: multi-word proper names.
-  (_Cat.entity, RegExp(r'\b[A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+')),
+  // Title Case entities: multi-word proper names and compound terms.
+  // Allows short capitalized segments (X-Ray, AI Review) and hyphens.
+  (_Cat.entity, RegExp(r'\b[A-Z][\w-]*(?:\s+[A-Z][\w-]*)+')),
 ];
 
 // Punctuation matched separately (single chars, very low priority).
@@ -243,6 +231,93 @@ TextStyle _styleFor(_Cat cat, TextStyle base, AppTokens t) {
         color: t.textFaint,
       ),
   };
+}
+
+// ── Collapsible code block ─────────────────────────────────────────────
+
+/// Code blocks collapse when taller than ~8 lines. Tap to expand.
+class _CollapsibleCodeBlock extends StatefulWidget {
+  final String code;
+  final AppTokens tokens;
+  final double fontSize;
+
+  const _CollapsibleCodeBlock({
+    required this.code,
+    required this.tokens,
+    required this.fontSize,
+  });
+
+  @override
+  State<_CollapsibleCodeBlock> createState() => _CollapsibleCodeBlockState();
+}
+
+class _CollapsibleCodeBlockState extends State<_CollapsibleCodeBlock> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final lineCount = '\n'.allMatches(widget.code).length + 1;
+    final isLong = lineCount > 8;
+    final codeStyle = TextStyle(
+      color: t.chromeAccent,
+      fontFamily: 'JetBrainsMono',
+      fontSize: widget.fontSize,
+      height: 1.5,
+    );
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: t.bg0.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isLong && !_expanded)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 160),
+              child: ClipRect(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Text(widget.code, style: codeStyle),
+                ),
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Text(widget.code, style: codeStyle),
+            ),
+          if (isLong)
+            GestureDetector(
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                decoration: BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.1)),
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    _expanded ? '▲ collapse' : '▼ ${lineCount - 8} more lines',
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 // ── Internal types ─────────────────────────────────────────────────────

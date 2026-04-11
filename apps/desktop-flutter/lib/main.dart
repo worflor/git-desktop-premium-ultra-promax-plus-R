@@ -6,6 +6,7 @@ import 'app/app_identity.dart';
 import 'app/ai_settings_state.dart';
 import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
+import 'app/repository_xray_state.dart';
 import 'app/hyper_reactivity.dart';
 import 'app/sidebar_rail.dart';
 import 'app/theme_state.dart';
@@ -39,6 +40,7 @@ void main() async {
 
   final repoState = RepositoryState();
   await repoState.loadRecents();
+  final repoXrayState = RepositoryXrayState();
 
   final preferencesState = PreferencesState();
   await preferencesState.load();
@@ -54,6 +56,7 @@ void main() async {
       providers: [
         ChangeNotifierProvider.value(value: themeState),
         ChangeNotifierProvider.value(value: repoState),
+        ChangeNotifierProvider.value(value: repoXrayState),
         ChangeNotifierProvider.value(value: preferencesState),
         ChangeNotifierProvider.value(value: aiSettingsState),
         ChangeNotifierProvider.value(value: diagnosticsState),

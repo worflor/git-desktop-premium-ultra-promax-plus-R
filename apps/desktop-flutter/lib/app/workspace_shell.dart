@@ -11,18 +11,19 @@ import '../features/changes/changes_page.dart';
 import '../features/history/history_page.dart';
 import '../features/search/search_panel.dart';
 import '../features/settings/settings_page.dart';
-import '../features/sync/sync_panel.dart';
+import '../features/xray/repo_xray_panel.dart';
 import '../ui/control_chrome.dart';
 import '../ui/material_surface.dart';
 import '../ui/tokens.dart';
 import '../diagnostics/diagnostics_state.dart';
 import 'hyper_reactivity.dart';
 import 'repository_state.dart';
+import 'repository_xray_state.dart';
 import 'theme_state.dart';
 
 enum _WorkspaceMode { changes, history, branches }
 
-enum _Panel { none, sync, settings, search }
+enum _Panel { none, xray, settings, search }
 
 class WorkspaceShell extends StatefulWidget {
   const WorkspaceShell({super.key});
@@ -38,6 +39,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   bool _awaitingGPrefix = false;
   String? _selectedCommitHash;
   Stopwatch? _panelOpenStopwatch;
+  String? _lastRepoPathForXray;
 
   @override
   void initState() {
@@ -58,6 +60,16 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final syncMaxHeight = size.height > 64 ? size.height - 64 : size.height;
+    final activeRepoPath = context.watch<RepositoryState>().activePath;
+    if (_lastRepoPathForXray != activeRepoPath) {
+      _lastRepoPathForXray = activeRepoPath;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        context.read<RepositoryXrayState>().invalidateAllExcept(activeRepoPath);
+      });
+    }
 
     return Focus(
       autofocus: true,
@@ -88,18 +100,19 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                     child: _MainContent(
                       mode: _mode,
                       selectedCommitHash: _selectedCommitHash,
+                      onOpenXray: () => setState(() => _panel = _Panel.xray),
                     ),
                   ),
                 ),
               ),
             ],
           ),
-          if (_panel == _Panel.sync)
+          if (_panel == _Panel.xray)
             Positioned(
               top: 48,
               right: 12,
-              left: size.width < 420 ? 8 : null,
-              width: size.width < 420 ? null : 380,
+              left: size.width < 760 ? 8 : null,
+              width: size.width < 760 ? null : 680,
               child: ConstrainedBox(
                 constraints: BoxConstraints(
                   maxHeight: syncMaxHeight,
@@ -119,8 +132,15 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                       ),
                     ),
                   ),
-                  child: SyncPanel(
+                  child: RepoXrayPanel(
                     onClose: () => setState(() => _panel = _Panel.none),
+                    onCommitSelected: (hash) {
+                      setState(() {
+                        _selectedCommitHash = hash;
+                        _mode = _WorkspaceMode.history;
+                        _panel = _Panel.none;
+                      });
+                    },
                   ),
                 ),
               ),
@@ -197,7 +217,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.digit4) {
-        _togglePanel(_Panel.sync);
+        _togglePanel(_Panel.xray);
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.digit5) {
@@ -222,7 +242,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.keyS) {
-        _togglePanel(_Panel.sync);
+        _togglePanel(_Panel.xray);
         return KeyEventResult.handled;
       }
       if (key == LogicalKeyboardKey.comma) {
@@ -313,10 +333,15 @@ class _Topbar extends StatelessWidget {
     final repo = context.watch<RepositoryState>();
     final repoName = repo.activeRepoName;
     final status = repo.status;
+    final xrayState = context.watch<RepositoryXrayState>();
     final syncSummary = status != null &&
             (status.ahead > 0 || status.behind > 0)
         ? '${status.ahead > 0 ? '${status.ahead}↑' : ''}${status.behind > 0 ? '${status.behind}↓' : ''}'
         : null;
+    final xraySnapshot =
+        repo.activePath == null ? null : xrayState.snapshotFor(repo.activePath!);
+    final xraySummary =
+        xraySnapshot == null ? syncSummary : '${xraySnapshot.cards.length}';
 
     return MaterialSurface(
       tone: topbarTone,
@@ -338,16 +363,11 @@ class _Topbar extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    repoName ?? 'No repository open',
-                    style: TextStyle(
-                      color: repoName != null
-                          ? t.textStrong
-                          : t.textMuted.withValues(alpha: 0.5),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+                  _RepoNameLabel(
+                    name: repoName ?? 'No repository open',
+                    hasRepo: repoName != null,
+                    repoPath: repo.activePath,
+                    onRefresh: () => repo.refreshStatus(),
                   ),
                   if (status != null) ...[
                     const SizedBox(height: 4),
@@ -381,10 +401,10 @@ class _Topbar extends StatelessWidget {
                 onTap: () => onModeChanged(_WorkspaceMode.branches),
               ),
               const SizedBox(width: 4),
-              _SyncModeBtn(
-                active: panel == _Panel.sync,
-                summary: syncSummary,
-                onTap: () => onTogglePanel(_Panel.sync),
+              _XrayModeBtn(
+                active: panel == _Panel.xray,
+                summary: xraySummary,
+                onTap: () => onTogglePanel(_Panel.xray),
               ),
               const SizedBox(width: 8),
               _ModeBtn(
@@ -479,12 +499,75 @@ class _ModeBtnState extends State<_ModeBtn> {
   }
 }
 
-class _SyncModeBtn extends StatelessWidget {
+class _RepoNameLabel extends StatefulWidget {
+  final String name;
+  final bool hasRepo;
+  final String? repoPath;
+  final VoidCallback onRefresh;
+
+  const _RepoNameLabel({
+    required this.name,
+    required this.hasRepo,
+    this.repoPath,
+    required this.onRefresh,
+  });
+
+  @override
+  State<_RepoNameLabel> createState() => _RepoNameLabelState();
+}
+
+class _RepoNameLabelState extends State<_RepoNameLabel> {
+  bool _hovered = false;
+  bool _fetching = false;
+
+  Future<void> _fetch() async {
+    if (_fetching || widget.repoPath == null) return;
+    setState(() => _fetching = true);
+    try {
+      await fetchRemote(widget.repoPath!, prune: true);
+      widget.onRefresh();
+    } finally {
+      if (mounted) setState(() => _fetching = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final baseColor = widget.hasRepo
+        ? t.textStrong
+        : t.textMuted.withValues(alpha: 0.5);
+    final color = widget.hasRepo && _hovered ? t.accentBright : baseColor;
+
+    return MouseRegion(
+      cursor: widget.hasRepo ? SystemMouseCursors.click : MouseCursor.defer,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.hasRepo ? _fetch : null,
+        child: AnimatedDefaultTextStyle(
+          duration: const Duration(milliseconds: 100),
+          style: TextStyle(
+            color: _fetching ? t.accentBright.withValues(alpha: 0.6) : color,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+          child: Text(
+            widget.name,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _XrayModeBtn extends StatelessWidget {
   final bool active;
   final String? summary;
   final VoidCallback onTap;
 
-  const _SyncModeBtn({
+  const _XrayModeBtn({
     required this.active,
     required this.summary,
     required this.onTap,
@@ -497,7 +580,7 @@ class _SyncModeBtn extends StatelessWidget {
       clipBehavior: Clip.none,
       alignment: Alignment.center,
       children: [
-        _ModeBtn(icon: 'sync', active: active, width: 34, onTap: onTap),
+        _ModeBtn(icon: 'search', active: active, width: 34, onTap: onTap),
         if (summary != null)
           Positioned(
             left: 39,
@@ -509,8 +592,7 @@ class _SyncModeBtn extends StatelessWidget {
                   color: t.accentBright.withValues(alpha: active ? 0.18 : 0.12),
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(
-                    color:
-                        t.accentBright.withValues(alpha: active ? 0.28 : 0.18),
+                    color: t.accentBright.withValues(alpha: active ? 0.28 : 0.18),
                   ),
                 ),
                 child: Center(
@@ -1089,8 +1171,13 @@ class _NavRowState extends State<_NavRow> {
 class _MainContent extends StatelessWidget {
   final _WorkspaceMode mode;
   final String? selectedCommitHash;
+  final VoidCallback onOpenXray;
 
-  const _MainContent({required this.mode, this.selectedCommitHash});
+  const _MainContent({
+    required this.mode,
+    this.selectedCommitHash,
+    required this.onOpenXray,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1098,7 +1185,10 @@ class _MainContent extends StatelessWidget {
       case _WorkspaceMode.changes:
         return const ChangesPage();
       case _WorkspaceMode.history:
-        return HistoryPage(initialCommitHash: selectedCommitHash);
+        return HistoryPage(
+          initialCommitHash: selectedCommitHash,
+          onOpenXray: onOpenXray,
+        );
       case _WorkspaceMode.branches:
         return const BranchesPage();
     }

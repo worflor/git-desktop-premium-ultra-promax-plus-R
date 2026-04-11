@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../../ui/animated_icons.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
@@ -61,7 +62,9 @@ class _ChangesPageState extends State<ChangesPage> {
   int _multiDiffJumpRequestId = 0;
   bool _actionRunning = false;
   bool _generateRunning = false;
+  bool _generateSuccess = false;
   bool _reviewRunning = false;
+  bool _reviewSuccess = false;
   bool _commitAiLoading = false;
   String? _commitAiError;
   List<AiModelCategoryData> _commitAiCategories = const [];
@@ -429,28 +432,39 @@ class _ChangesPageState extends State<ChangesPage> {
       return _commitAiError ??
           'Configure commit-message AI in Settings > Behavioural Dynamics > Commit Messages.';
     }
-    return 'Generate commit message';
+    // The second category is "Fast" — the typical default for commit gen.
+    final commitLabel = aiSettings.labelForCategory(
+      aiSettings.commitMessageModelCategoryId,
+      _commitAiCategories.length > 1 ? _commitAiCategories[1].label : 'fast',
+    ).toLowerCase();
+    return 'generate commit message with $commitLabel model';
   }
 
-  String _reviewAiTooltip(AiSettingsState aiSettings, int includedCount) {
+  String _reviewAiTooltip(AiSettingsState aiSettings, int includedCount, int guardrailStage) {
     final hasPersistentReview = _hasReviewStateForCurrentSelection();
+    // The first category is "Quality" — the typical default for review.
+    final reviewLabel = aiSettings.labelForCategory(
+      aiSettings.reviewCommitModelCategoryId,
+      _commitAiCategories.isNotEmpty ? _commitAiCategories.first.label : 'quality',
+    ).toLowerCase();
+    final guardrail = _guardrailLabelForStage(guardrailStage).toLowerCase();
     if (_reviewRunning) {
-      return _reviewActive ? 'Checking these changes...' : 'Show review';
+      return _reviewActive ? 'checking these changes...' : 'show review';
     }
     if (_commitAiLoading) {
-      return 'Preparing commit review...';
+      return 'preparing commit review...';
     }
     if (includedCount == 0) {
-      return 'Select at least one file to review.';
+      return 'select at least one file to review.';
     }
     if (!_hasReviewAiSelection(aiSettings)) {
       return _commitAiError ??
-          'Configure review AI in Settings > Behavioural Dynamics > Review Commit.';
+          'configure review AI in settings.';
     }
     if (hasPersistentReview) {
-      return _reviewActive ? 'Review commit' : 'Show review';
+      return _reviewActive ? 'viewing review' : 'show review';
     }
-    return 'Review commit';
+    return '$guardrail review with $reviewLabel model';
   }
 
   bool _hasReviewStateForCurrentSelection() {
@@ -677,6 +691,13 @@ class _ChangesPageState extends State<ChangesPage> {
 
     setState(() {
       _generateRunning = false;
+      _generateSuccess = result.ok;
+      if (_generateSuccess) {
+        // Auto-clear success after a beat so the icon returns to idle.
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (mounted) setState(() => _generateSuccess = false);
+        });
+      }
       if (result.ok) {
         _commitMsgCtrl.text = result.data!.message;
         _commitMsgCtrl.selection = TextSelection.collapsed(
@@ -802,6 +823,12 @@ class _ChangesPageState extends State<ChangesPage> {
 
     setState(() {
       _reviewRunning = false;
+      _reviewSuccess = result.ok;
+      if (_reviewSuccess) {
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (mounted) setState(() => _reviewSuccess = false);
+        });
+      }
       if (result.ok) {
         _reviewResult = result.data;
         _reviewError = null;
@@ -861,6 +888,16 @@ class _ChangesPageState extends State<ChangesPage> {
         }
         if (finding.whyItMatters.trim().isNotEmpty) {
           buffer.writeln('  Why: ${finding.whyItMatters}');
+        }
+      }
+    }
+    if (review.observations.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('Observations');
+      for (final obs in review.observations) {
+        buffer.writeln('- ${obs.title}');
+        if (obs.detail.trim().isNotEmpty) {
+          buffer.writeln('  ${obs.detail}');
         }
       }
     }
@@ -1007,9 +1044,11 @@ class _ChangesPageState extends State<ChangesPage> {
     _syncDraftFromStatus(status);
 
     if (status.files.isEmpty) {
-      return const AppStatusView(
-        title: 'Working tree clean',
-        message: 'No staged or unstaged changes detected.',
+      return _CleanTreeDashboard(
+        tokens: t,
+        status: status,
+        repoPath: repoPath,
+        onRefresh: () => repo.refreshStatus(),
       );
     }
 
@@ -1186,12 +1225,14 @@ class _ChangesPageState extends State<ChangesPage> {
                             onChanged: (_) => setState(() {}),
                             aiEnabled: canGenerate,
                             aiLoading: _generateRunning || _commitAiLoading,
+                            aiSuccess: _generateSuccess,
                             aiTooltip:
                                 _commitAiTooltip(aiSettings, includedCount),
                             reviewEnabled: canReview,
                             reviewLoading: _reviewRunning,
+                            reviewSuccess: _reviewSuccess,
                             reviewTooltip:
-                                _reviewAiTooltip(aiSettings, includedCount),
+                                _reviewAiTooltip(aiSettings, includedCount, preferences.guardrailStage),
                             onGenerate: () => _generateCommitMessage(
                               repoPath,
                               status,
@@ -1219,6 +1260,7 @@ class _ChangesPageState extends State<ChangesPage> {
                           t: t,
                           enabled: canCommit,
                           aiGenerating: _generateRunning || _commitAiLoading,
+                          actionRunning: _actionRunning,
                           onCommit: () => _commit(
                             repoPath,
                             status,
@@ -1291,7 +1333,10 @@ class _ChangesPageState extends State<ChangesPage> {
                         onBack: () => setState(() {
                           _clearReviewState();
                         }),
-                        onRerun: () => _reviewCommit(repoPath, status),
+                        onRerun: () {
+                          _clearReviewState();
+                          _reviewCommit(repoPath, status);
+                        },
                         onCopy: _reviewResult == null
                             ? null
                             : () => _copyReviewReport(_reviewResult!),
@@ -1860,45 +1905,39 @@ class _CommitReviewPane extends StatelessWidget {
 
     if (error != null && result == null) {
       return _reviewShell(
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Review unavailable',
-                      style: TextStyle(
-                        color: tokens.textStrong,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      error!,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: tokens.textMuted,
-                        fontSize: 11.5,
-                        height: 1.45,
-                      ),
-                    ),
-                  ],
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Review unavailable',
+                  style: TextStyle(
+                    color: tokens.textStrong,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
+                const SizedBox(height: 8),
+                Text(
+                  error!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: tokens.textMuted,
+                    fontSize: 11.5,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _GhostActionChip(
+                  tokens: tokens,
+                  label: 'Back to diff',
+                  onTap: onBack,
+                ),
+              ],
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-              child: _GhostActionChip(
-                tokens: tokens,
-                label: 'Back to diff',
-                onTap: onBack,
-              ),
-            ),
-          ],
+          ),
         ),
       );
     }
@@ -1953,7 +1992,13 @@ class _CommitReviewPane extends StatelessWidget {
                     ),
                     _ReviewVerdictChip(tokens: tokens, verdict: review.verdict),
                     const SizedBox(width: 6),
-                    _ReviewScorePill(tokens: tokens, score: review.score, verdict: review.verdict),
+                    _ReviewScorePill(
+                      tokens: tokens,
+                      score: review.score,
+                      verdict: review.verdict,
+                      findingCount: review.findings.length,
+                      observationCount: review.observations.length,
+                    ),
                     if (review.hasVerificationTrace) ...[
                       const SizedBox(width: 6),
                       _ReviewMetaChip(
@@ -1989,6 +2034,19 @@ class _CommitReviewPane extends StatelessWidget {
                               style: TextStyle(color: tokens.textFaint),
                             ),
                             TextSpan(text: modelLabel),
+                            if (review.usedCondensedDiff) ...[
+                              TextSpan(
+                                text: '  ·  ',
+                                style: TextStyle(color: tokens.textFaint),
+                              ),
+                              TextSpan(
+                                text: 'condensed',
+                                style: TextStyle(
+                                  color: AppSeverityPalette.caution.withValues(alpha: 0.7),
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                         maxLines: 1,
@@ -2131,6 +2189,58 @@ class _CommitReviewPane extends StatelessWidget {
                       ),
                     ),
                   ),
+                if (review.observations.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'Observations',
+                    style: TextStyle(
+                      color: tokens.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...review.observations.map(
+                    (obs) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: tokens.rowBg,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: tokens.chromeBorder.withValues(alpha: 0.08),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              obs.title,
+                              style: TextStyle(
+                                color: tokens.textMuted,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (obs.detail.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              resonanceText(
+                                obs.detail,
+                                tokens,
+                                baseStyle: TextStyle(
+                                  color: tokens.textMuted,
+                                  fontSize: 10.5,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
                 if (review.twoStepEnabled &&
                     (review.hasVerificationTrace ||
                         review.verificationFailed ||
@@ -2202,33 +2312,119 @@ class _ReviewScorePill extends StatelessWidget {
   final AppTokens tokens;
   final int score;
   final String verdict;
+  final int findingCount;
+  final int observationCount;
 
   const _ReviewScorePill({
     required this.tokens,
     required this.score,
     required this.verdict,
+    this.findingCount = 0,
+    this.observationCount = 0,
   });
 
   @override
   Widget build(BuildContext context) {
     final verdictColor = _reviewVerdictColor(verdict);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        color: verdictColor.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: verdictColor.withValues(alpha: 0.18)),
-      ),
-      child: Text(
-        '$score',
-        style: TextStyle(
-          color: verdictColor,
-          fontSize: 10.5,
-          fontWeight: FontWeight.w700,
+    const size = 32.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(
+        painter: _ScoreRingPainter(
+          score: score,
+          verdictColor: verdictColor,
+          findingCount: findingCount,
+          observationCount: observationCount,
+          bgColor: tokens.chromeBorder.withValues(alpha: 0.1),
+        ),
+        child: Center(
+          child: Text(
+            '$score',
+            style: TextStyle(
+              color: verdictColor,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
       ),
     );
   }
+}
+
+class _ScoreRingPainter extends CustomPainter {
+  final int score;
+  final Color verdictColor;
+  final int findingCount;
+  final int observationCount;
+  final Color bgColor;
+
+  const _ScoreRingPainter({
+    required this.score,
+    required this.verdictColor,
+    required this.findingCount,
+    required this.observationCount,
+    required this.bgColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.shortestSide / 2) - 1.5;
+    const strokeWidth = 2.5;
+
+    // Background ring.
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = bgColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth,
+    );
+
+    // Score arc — fills proportionally (100 = full circle).
+    final scoreAngle = (score / 100) * 2 * math.pi;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi / 2, // start at top
+      scoreAngle,
+      false,
+      Paint()
+        ..color = verdictColor.withValues(alpha: 0.7)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.round,
+    );
+
+    // Tiny finding/observation dots on the ring — visual density indicator.
+    final total = findingCount + observationCount;
+    if (total > 0 && total <= 12) {
+      final dotRadius = 1.5;
+      for (var i = 0; i < total; i++) {
+        final angle = -math.pi / 2 + (i / total) * 2 * math.pi;
+        final isFinding = i < findingCount;
+        final dotColor = isFinding
+            ? verdictColor
+            : verdictColor.withValues(alpha: 0.3);
+        final dx = center.dx + (radius) * math.cos(angle);
+        final dy = center.dy + (radius) * math.sin(angle);
+        canvas.drawCircle(
+          Offset(dx, dy),
+          dotRadius,
+          Paint()..color = dotColor,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ScoreRingPainter old) =>
+      old.score != score ||
+      old.verdictColor != verdictColor ||
+      old.findingCount != findingCount ||
+      old.observationCount != observationCount;
 }
 
 class _ReviewMetaChip extends StatelessWidget {
@@ -2610,14 +2806,154 @@ class _TracePanel extends StatelessWidget {
   }
 }
 
+class _CleanTreeDashboard extends StatefulWidget {
+  final AppTokens tokens;
+  final RepositoryStatus status;
+  final String repoPath;
+  final VoidCallback onRefresh;
+
+  const _CleanTreeDashboard({
+    required this.tokens,
+    required this.status,
+    required this.repoPath,
+    required this.onRefresh,
+  });
+
+  @override
+  State<_CleanTreeDashboard> createState() => _CleanTreeDashboardState();
+}
+
+class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
+  bool _fetching = false;
+
+  Future<void> _fetch() async {
+    if (_fetching) return;
+    setState(() => _fetching = true);
+    try {
+      await fetchRemote(widget.repoPath, prune: true);
+      widget.onRefresh();
+    } finally {
+      if (mounted) setState(() => _fetching = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final s = widget.status;
+    final aheadColor = s.ahead > 0 ? AppSeverityPalette.caution : AppSeverityPalette.safe;
+    final behindColor = s.behind > 0 ? AppSeverityPalette.caution : AppSeverityPalette.safe;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Working tree clean',
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'No staged or unstaged changes detected.',
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 11.5,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 18),
+            // Branch → upstream
+            Text.rich(
+              TextSpan(
+                style: TextStyle(color: t.textMuted, fontSize: 11),
+                children: [
+                  TextSpan(
+                    text: s.branch,
+                    style: TextStyle(
+                      color: t.textStrong,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (s.upstream != null) ...[
+                    TextSpan(
+                      text: '  →  ',
+                      style: TextStyle(color: t.textFaint),
+                    ),
+                    TextSpan(text: s.upstream),
+                  ] else
+                    const TextSpan(
+                      text: '  ·  no upstream',
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Ahead · Behind
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '↑ ${s.ahead}',
+                  style: TextStyle(
+                    color: aheadColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'JetBrainsMono',
+                  ),
+                ),
+                Text(
+                  ' ahead',
+                  style: TextStyle(color: t.textMuted, fontSize: 11),
+                ),
+                Text(
+                  '  ·  ',
+                  style: TextStyle(color: t.textFaint, fontSize: 11),
+                ),
+                Text(
+                  '↓ ${s.behind}',
+                  style: TextStyle(
+                    color: behindColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'JetBrainsMono',
+                  ),
+                ),
+                Text(
+                  ' behind',
+                  style: TextStyle(color: t.textMuted, fontSize: 11),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            _GhostActionChip(
+              tokens: t,
+              label: _fetching ? 'Checking...' : 'Check remote',
+              fetching: _fetching,
+              onTap: _fetch,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _GhostActionChip extends StatelessWidget {
   final AppTokens tokens;
   final String label;
+  final bool fetching;
   final VoidCallback onTap;
 
   const _GhostActionChip({
     required this.tokens,
     required this.label,
+    this.fetching = false,
     required this.onTap,
   });
 
@@ -2626,6 +2962,7 @@ class _GhostActionChip extends StatelessWidget {
     return _GhostActionChipButton(
       tokens: tokens,
       label: label,
+      fetching: fetching,
       onTap: onTap,
     );
   }
@@ -2634,11 +2971,13 @@ class _GhostActionChip extends StatelessWidget {
 class _GhostActionChipButton extends StatefulWidget {
   final AppTokens tokens;
   final String label;
+  final bool fetching;
   final VoidCallback onTap;
 
   const _GhostActionChipButton({
     required this.tokens,
     required this.label,
+    this.fetching = false,
     required this.onTap,
   });
 
@@ -2830,6 +3169,7 @@ class _SplitCommitBtn extends StatefulWidget {
   final AppTokens t;
   final bool enabled;
   final bool aiGenerating;
+  final bool actionRunning;
   final VoidCallback onCommit;
   final VoidCallback onToggleMode;
 
@@ -2840,6 +3180,7 @@ class _SplitCommitBtn extends StatefulWidget {
     required this.t,
     required this.enabled,
     required this.aiGenerating,
+    this.actionRunning = false,
     required this.onCommit,
     required this.onToggleMode,
   });
@@ -2907,15 +3248,32 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                         onTapUp: (_) =>
                             setState(() => _mainPressed = false),
                         child: Center(
-                          child: Text(
-                            widget.label,
-                            style: TextStyle(
-                              color: widget.enabled
-                                  ? t.btnText
-                                  : t.textMuted,
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              AnimatedPushIcon(
+                                state: widget.actionRunning
+                                    ? IconAnimState.loading
+                                    : _mainHovered
+                                        ? IconAnimState.hovered
+                                        : IconAnimState.idle,
+                                color: widget.enabled
+                                    ? t.btnText
+                                    : t.textMuted,
+                                size: 13,
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                widget.label,
+                                style: TextStyle(
+                                  color: widget.enabled
+                                      ? t.btnText
+                                      : t.textMuted,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -2955,15 +3313,41 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                               : Colors.white.withValues(
                                   alpha: _chevronHovered ? 0.10 : 0.0),
                           child: Center(
-                            child: Icon(
-                              widget.commitOnlyMode
-                                  ? Icons.sync_rounded
-                                  : Icons.commit_rounded,
-                              size: 14,
-                              color: (widget.commitOnlyMode
-                                      ? t.accentBright
-                                      : t.btnText)
-                                  .withValues(alpha: 0.80),
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 250),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeInCubic,
+                              transitionBuilder: (child, anim) {
+                                return FadeTransition(
+                                  opacity: anim,
+                                  child: ScaleTransition(
+                                    scale: Tween<double>(
+                                      begin: 0.6,
+                                      end: 1.0,
+                                    ).animate(anim),
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: widget.commitOnlyMode
+                                  ? AnimatedSyncIcon(
+                                      key: const ValueKey('sync'),
+                                      state: _chevronHovered
+                                          ? IconAnimState.hovered
+                                          : IconAnimState.idle,
+                                      color: t.accentBright
+                                          .withValues(alpha: 0.80),
+                                      size: 14,
+                                    )
+                                  : AnimatedCommitIcon(
+                                      key: const ValueKey('commit'),
+                                      state: _chevronHovered
+                                          ? IconAnimState.hovered
+                                          : IconAnimState.idle,
+                                      color: t.btnText
+                                          .withValues(alpha: 0.80),
+                                      size: 14,
+                                    ),
                             ),
                           ),
                         ),
@@ -3207,9 +3591,11 @@ class _CommitComposerField extends StatefulWidget {
   final ValueChanged<String> onChanged;
   final bool aiEnabled;
   final bool aiLoading;
+  final bool aiSuccess;
   final String aiTooltip;
   final bool reviewEnabled;
   final bool reviewLoading;
+  final bool reviewSuccess;
   final String reviewTooltip;
   final VoidCallback onGenerate;
   final VoidCallback onReview;
@@ -3222,9 +3608,11 @@ class _CommitComposerField extends StatefulWidget {
     required this.onChanged,
     required this.aiEnabled,
     required this.aiLoading,
+    this.aiSuccess = false,
     required this.aiTooltip,
     required this.reviewEnabled,
     required this.reviewLoading,
+    this.reviewSuccess = false,
     required this.reviewTooltip,
     required this.onGenerate,
     required this.onReview,
@@ -3394,10 +3782,11 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                         tokens: tokens,
                         enabled: widget.reviewEnabled,
                         loading: widget.reviewLoading,
+                        success: widget.reviewSuccess,
                         tooltip: widget.reviewTooltip,
                         hasText: hasText,
                         fieldRadius: effectiveRadius,
-                        icon: Icons.search_rounded,
+                        iconKind: _AiToolbarIconKind.search,
                         onTap: widget.onReview,
                       ),
                       const SizedBox(width: 4),
@@ -3405,10 +3794,11 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                         tokens: tokens,
                         enabled: widget.aiEnabled,
                         loading: widget.aiLoading,
+                        success: widget.aiSuccess,
                         tooltip: widget.aiTooltip,
                         hasText: hasText,
                         fieldRadius: effectiveRadius,
-                        icon: Icons.auto_awesome_rounded,
+                        iconKind: _AiToolbarIconKind.sparkle,
                         onTap: widget.onGenerate,
                       ),
                     ],
@@ -3425,24 +3815,28 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
 
 // ── AI toolbar button (lives inside the commit composer's bottom toolbar) ──────
 
+enum _AiToolbarIconKind { search, sparkle }
+
 class _CommitAiToolbarBtn extends StatefulWidget {
   final AppTokens tokens;
   final bool enabled;
   final bool loading;
+  final bool success;
   final String tooltip;
   final bool hasText; // de-emphasise when the user already typed something
   final double fieldRadius;
-  final IconData icon;
+  final _AiToolbarIconKind iconKind;
   final VoidCallback onTap;
 
   const _CommitAiToolbarBtn({
     required this.tokens,
     required this.enabled,
     required this.loading,
+    this.success = false,
     required this.tooltip,
     required this.hasText,
     required this.fieldRadius,
-    required this.icon,
+    required this.iconKind,
     required this.onTap,
   });
 
@@ -3453,6 +3847,13 @@ class _CommitAiToolbarBtn extends StatefulWidget {
 class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
   bool _hovered = false;
   bool _pressed = false;
+
+  IconAnimState get _iconState {
+    if (widget.success) return IconAnimState.success;
+    if (widget.loading) return IconAnimState.loading;
+    if (_hovered && widget.enabled) return IconAnimState.hovered;
+    return IconAnimState.idle;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3473,6 +3874,8 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
         : _hovered
             ? 0.10
             : 0.0;
+
+    final iconColor = t.accentBright.withValues(alpha: iconOpacity);
 
     return Tooltip(
       message: widget.tooltip,
@@ -3504,24 +3907,18 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
               borderRadius: BorderRadius.circular(btnRadius),
             ),
             child: Center(
-              child: widget.loading
-                  ? SizedBox(
-                      width: 13,
-                      height: 13,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.5,
-                        color: t.accentBright.withValues(alpha: iconOpacity),
-                      ),
-                    )
-                  : AnimatedOpacity(
-                      duration: const Duration(milliseconds: 150),
-                      opacity: iconOpacity,
-                      child: Icon(
-                        widget.icon,
-                        size: 14,
-                        color: t.accentBright,
-                      ),
-                    ),
+              child: switch (widget.iconKind) {
+                _AiToolbarIconKind.search => AnimatedSearchIcon(
+                    state: _iconState,
+                    color: iconColor,
+                    size: 14,
+                  ),
+                _AiToolbarIconKind.sparkle => AnimatedSparkleIcon(
+                    state: _iconState,
+                    color: iconColor,
+                    size: 14,
+                  ),
+              },
             ),
           ),
         ),

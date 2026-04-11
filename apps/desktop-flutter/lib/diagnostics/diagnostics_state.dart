@@ -751,7 +751,6 @@ class DiagnosticsState extends ChangeNotifier {
     final commandReport = commandLatencyReport;
     final diffReport = diffRenderMetricsReport;
     final uiReport = uiTimingReport;
-    final backendReport = backendCommandTelemetrySnapshot;
     final lifecycleEvents = commandLifecycleEvents;
     final commandOffender = _topCommandOffender();
     if (commandOffender != null) {
@@ -769,7 +768,7 @@ class DiagnosticsState extends ChangeNotifier {
         (right['score'] as double).compareTo(left['score'] as double));
 
     return {
-      'snapshotFormat': 'dense.v3',
+      'schema': 'manifold.telemetry.v3',
       'copiedAt': DateTime.now().toIso8601String(),
       'focusedStream': focusedStream,
       'retention': {
@@ -780,7 +779,6 @@ class DiagnosticsState extends ChangeNotifier {
         'commandSamples': commandReport.totalSamples,
         'diffSessions': diffReport.totalSessions,
         'uiSamples': uiReport.totalSamples,
-        'backendCommandSamples': backendReport.sampleCount,
         'lifecycleEvents': lifecycleEvents.length,
       },
       'topOffenders': offenders
@@ -795,9 +793,6 @@ class DiagnosticsState extends ChangeNotifier {
       'command': _buildDenseCommandSnapshot(commandReport),
       'diffRender': _buildDenseDiffSnapshot(diffReport),
       'uiTiming': _buildDenseUiSnapshot(uiReport),
-      'backendCommandTelemetry': _buildDenseBackendCommandSnapshot(
-        backendReport,
-      ),
       'lifecycle': _buildDenseLifecycleSnapshot(lifecycleEvents),
     };
   }
@@ -845,9 +840,8 @@ class DiagnosticsState extends ChangeNotifier {
           'backendDurationMs',
           'recordedAt',
           'errorCode',
-          'requestId',
         ],
-        _commandSamples.reversed.map(
+        _smartTrimCommandSamples(_commandSamples).map(
           (sample) => [
             sample.command,
             sample.ok,
@@ -855,7 +849,6 @@ class DiagnosticsState extends ChangeNotifier {
             sample.backendDurationMs,
             sample.recordedAt,
             sample.errorCode,
-            sample.requestId,
           ],
         ),
       ),
@@ -931,7 +924,7 @@ class DiagnosticsState extends ChangeNotifier {
           'recordedAt',
           'diffId',
         ],
-        _diffRenderSamples.reversed.map(
+        _smartTrimDiffSamples(_diffRenderSamples).map(
           (sample) => [
             sample.rendererMode,
             _ellipsize(sample.path, 96),
@@ -996,7 +989,7 @@ class DiagnosticsState extends ChangeNotifier {
           'recordedAt',
           'errorCode',
         ],
-        _uiTimingSamples.reversed.map(
+        _smartTrimUiSamples(_uiTimingSamples).map(
           (sample) => [
             sample.phase,
             sample.event,
@@ -1004,62 +997,6 @@ class DiagnosticsState extends ChangeNotifier {
             sample.durationMs,
             sample.recordedAt,
             sample.errorCode,
-          ],
-        ),
-      ),
-    };
-  }
-
-  Map<String, dynamic> _buildDenseBackendCommandSnapshot(
-    CommandTelemetrySnapshotData report,
-  ) {
-    return {
-      'generatedAt': report.generatedAt,
-      'sampleCount': report.sampleCount,
-      'scopedCommandCount': report.summaries.length,
-      'summaries': _packTable(
-        const [
-          'scope',
-          'command',
-          'sampleCount',
-          'failureCount',
-          'p50Ms',
-          'p95Ms',
-          'lastDurationMs',
-          'lastSeenAt',
-        ],
-        report.summaries.map(
-          (summary) => [
-            summary.scope,
-            summary.command,
-            summary.sampleCount,
-            summary.failureCount,
-            summary.p50Ms,
-            summary.p95Ms,
-            summary.lastDurationMs,
-            summary.lastSeenAt,
-          ],
-        ),
-      ),
-      'recentSamples': _packTable(
-        const [
-          'scope',
-          'command',
-          'ok',
-          'durationMs',
-          'createdAt',
-          'errorCode',
-          'id',
-        ],
-        report.recentSamples.map(
-          (sample) => [
-            sample.scope,
-            sample.command,
-            sample.ok,
-            sample.durationMs,
-            sample.createdAt,
-            sample.errorCode,
-            sample.id,
           ],
         ),
       ),
@@ -1098,6 +1035,67 @@ class DiagnosticsState extends ChangeNotifier {
         ),
       ),
     };
+  }
+
+  // ── Smart sample trimming ──────────────────────────────────────────
+  // Keep all failures + heaviest outliers + recent context.
+  // No arbitrary caps — the diagnostic value comes from the extremes
+  // and the tail, not the middle.
+
+  /// Command samples: all failures, top 10 slowest successes, last 15 recent.
+  List<CommandLatencySample> _smartTrimCommandSamples(
+    List<CommandLatencySample> raw,
+  ) {
+    final failures = raw.where((s) => !s.ok).toList();
+    final successes = raw.where((s) => s.ok).toList()
+      ..sort((a, b) => b.roundTripMs.compareTo(a.roundTripMs));
+    final heaviest = successes.take(10);
+    final recent = raw.reversed.take(15);
+
+    // Merge, dedupe by identity, sort by time.
+    final seen = <CommandLatencySample>{};
+    seen.addAll(failures);
+    seen.addAll(heaviest);
+    seen.addAll(recent);
+    final result = seen.toList()
+      ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    return result;
+  }
+
+  /// Diff render: all fallbacks, top 10 jankiest, last 10 recent.
+  List<DiffRenderMetricSample> _smartTrimDiffSamples(
+    List<DiffRenderMetricSample> raw,
+  ) {
+    final fallbacks = raw.where((s) => s.fallbackActivated).toList();
+    final byJank = List.of(raw)
+      ..sort((a, b) => b.frameTimeP95Ms.compareTo(a.frameTimeP95Ms));
+    final heaviest = byJank.take(10);
+    final recent = raw.reversed.take(10);
+
+    final seen = <DiffRenderMetricSample>{};
+    seen.addAll(fallbacks);
+    seen.addAll(heaviest);
+    seen.addAll(recent);
+    final result = seen.toList()
+      ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    return result;
+  }
+
+  /// UI timing: all failures, top 10 slowest, last 15 recent.
+  List<UiTimingSample> _smartTrimUiSamples(List<UiTimingSample> raw) {
+    final failures = raw.where((s) => !s.ok).toList();
+    final byDuration = List.of(raw)
+      ..sort((a, b) => b.durationMs.compareTo(a.durationMs));
+    final heaviest = byDuration.take(10);
+    final recent = raw.reversed.take(15);
+
+    final seen = <UiTimingSample>{};
+    seen.addAll(failures);
+    seen.addAll(heaviest);
+    seen.addAll(recent);
+    final result = seen.toList()
+      ..sort((a, b) => a.recordedAt.compareTo(b.recordedAt));
+    return result;
   }
 
   Map<String, dynamic> _packTable(

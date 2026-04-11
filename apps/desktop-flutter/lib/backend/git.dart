@@ -1,18 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'repository_xray.dart';
 import 'dtos.dart';
+import 'git_result.dart';
 import '../diagnostics/diagnostics_state.dart';
 
 // ── Result type ──────────────────────────────────────────────────────────────
 
-class GitResult<T> {
-  final T? data;
-  final String? error;
-  bool get ok => error == null;
-  const GitResult.ok(T this.data) : error = null;
-  const GitResult.err(String this.error) : data = null;
-}
 
 // ── Git runner ───────────────────────────────────────────────────────────────
 
@@ -74,6 +69,10 @@ Future<ProcessResult> _git(String workingDir, List<String> args) async {
     );
     rethrow;
   }
+}
+
+Future<ProcessResult> runGitProbe(String workingDir, List<String> args) {
+  return _git(workingDir, args);
 }
 
 // ── Repository ───────────────────────────────────────────────────────────────
@@ -759,4 +758,20 @@ Future<GitResult<void>> startInteractiveRebase(
 
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(null);
+}
+
+Future<GitResult<String>> getRepositoryXrayFingerprint(String repo) {
+  return computeRepositoryXrayFingerprint(repo, getRepositoryStatus, _git);
+}
+
+Future<GitResult<RepositoryXraySnapshotData>> getRepositoryXray(
+  String repo, {
+  bool forceRefresh = false,
+}) {
+  return buildRepositoryXraySnapshot(
+    repo,
+    forceRefresh: forceRefresh,
+    statusLoader: getRepositoryStatus,
+    probe: _git,
+  );
 }

@@ -274,6 +274,216 @@ class SyncData {
       );
 }
 
+class RepositoryXrayHeaderData {
+  final String repoPath;
+  final String repoName;
+  final String branch;
+  final String headCommitHash;
+  final String headShortHash;
+  final int dirtyFileCount;
+  final String computedAt;
+  final String fingerprint;
+
+  const RepositoryXrayHeaderData({
+    required this.repoPath,
+    required this.repoName,
+    required this.branch,
+    required this.headCommitHash,
+    required this.headShortHash,
+    required this.dirtyFileCount,
+    required this.computedAt,
+    required this.fingerprint,
+  });
+}
+
+class RepositoryXrayEvidenceData {
+  final String label;
+  final String detail;
+  final String kind;
+  final String? path;
+  final String? commitHash;
+  final int? count;
+
+  const RepositoryXrayEvidenceData({
+    required this.label,
+    required this.detail,
+    required this.kind,
+    this.path,
+    this.commitHash,
+    this.count,
+  });
+}
+
+class RepositoryXrayCardData {
+  final String id;
+  final String title;
+  final String claim;
+  final String verdict;
+  final String confidence;
+  final List<RepositoryXrayEvidenceData> evidence;
+  final String? primaryPath;
+  final String? primaryCommitHash;
+
+  const RepositoryXrayCardData({
+    required this.id,
+    required this.title,
+    required this.claim,
+    required this.verdict,
+    required this.confidence,
+    required this.evidence,
+    this.primaryPath,
+    this.primaryCommitHash,
+  });
+}
+
+class RepositoryXrayHotspotData {
+  final String kind;
+  final String path;
+  final int touchCount;
+  final int ownerCount;
+  final String lastTouchedAt;
+  final String? latestCommitHash;
+  final String? latestShortHash;
+
+  const RepositoryXrayHotspotData({
+    required this.kind,
+    required this.path,
+    required this.touchCount,
+    required this.ownerCount,
+    required this.lastTouchedAt,
+    this.latestCommitHash,
+    this.latestShortHash,
+  });
+}
+
+class RepositoryXrayCadenceData {
+  final String kind;
+  final String label;
+  final int count;
+  final String detail;
+
+  const RepositoryXrayCadenceData({
+    required this.kind,
+    required this.label,
+    required this.count,
+    required this.detail,
+  });
+}
+
+class RepositoryXrayRefSummaryData {
+  final int localBranchCount;
+  final int remoteBranchCount;
+  final int tagCount;
+  final int stashCount;
+  final int noteCount;
+  final int worktreeCount;
+  final int mergeCommitCount;
+  final int renameCommitCount;
+  final List<String> hiddenNamespaces;
+
+  const RepositoryXrayRefSummaryData({
+    required this.localBranchCount,
+    required this.remoteBranchCount,
+    required this.tagCount,
+    required this.stashCount,
+    required this.noteCount,
+    required this.worktreeCount,
+    required this.mergeCommitCount,
+    required this.renameCommitCount,
+    required this.hiddenNamespaces,
+  });
+}
+
+class RepositoryXrayStratumData {
+  final String id;
+  final String label;
+  final String pathPrefix;
+  final int touchCount;
+  final int ownerCount;
+  final String lastTouchedAt;
+  final String summary;
+
+  const RepositoryXrayStratumData({
+    required this.id,
+    required this.label,
+    required this.pathPrefix,
+    required this.touchCount,
+    required this.ownerCount,
+    required this.lastTouchedAt,
+    required this.summary,
+  });
+}
+
+class RepositoryXrayPivotCommitData {
+  final String commitHash;
+  final String shortHash;
+  final String authoredAt;
+  final String authorName;
+  final String subject;
+  final int filesChanged;
+  final int insertions;
+  final int deletions;
+
+  const RepositoryXrayPivotCommitData({
+    required this.commitHash,
+    required this.shortHash,
+    required this.authoredAt,
+    required this.authorName,
+    required this.subject,
+    required this.filesChanged,
+    required this.insertions,
+    required this.deletions,
+  });
+}
+
+class RepositoryXraySignalIntegrityData {
+  final int rawCommitCount;
+  final int filteredCommitCount;
+  final int machineCommitCount;
+  final int hiddenRefCount;
+  final bool machineHistoryDominant;
+  final bool hasHiddenRefs;
+
+  const RepositoryXraySignalIntegrityData({
+    required this.rawCommitCount,
+    required this.filteredCommitCount,
+    required this.machineCommitCount,
+    required this.hiddenRefCount,
+    required this.machineHistoryDominant,
+    required this.hasHiddenRefs,
+  });
+}
+
+class RepositoryXraySnapshotData {
+  final RepositoryXrayHeaderData header;
+  final RepositoryXraySignalIntegrityData signalIntegrity;
+  final RepositoryXrayRefSummaryData refSummary;
+  final List<RepositoryXrayCardData> cards;
+  final List<RepositoryXrayCardData> rawCards;
+  final List<RepositoryXrayHotspotData> hotspots;
+  final List<RepositoryXrayHotspotData> rawHotspots;
+  final List<RepositoryXrayCadenceData> cadence;
+  final List<RepositoryXrayCadenceData> rawCadence;
+  final List<RepositoryXrayStratumData> strata;
+  final List<RepositoryXrayPivotCommitData> pivots;
+  final List<RepositoryXrayPivotCommitData> rawPivots;
+
+  const RepositoryXraySnapshotData({
+    required this.header,
+    required this.signalIntegrity,
+    required this.refSummary,
+    required this.cards,
+    required this.rawCards,
+    required this.hotspots,
+    required this.rawHotspots,
+    required this.cadence,
+    required this.rawCadence,
+    required this.strata,
+    required this.pivots,
+    required this.rawPivots,
+  });
+}
+
 class AiProviderStatus {
   final String id;
   final bool available;
@@ -423,6 +633,20 @@ class AiCommitReviewFindingData {
   });
 }
 
+class AiCommitReviewObservationData {
+  final String id;
+  final String title;
+  final String detail;
+  final String? filePath;
+
+  const AiCommitReviewObservationData({
+    required this.id,
+    required this.title,
+    required this.detail,
+    this.filePath,
+  });
+}
+
 class AiCommitReviewVerificationData {
   final List<String> confirmedFindingIds;
   final List<String> rejectedFindingIds;
@@ -457,6 +681,7 @@ class AiCommitReviewData {
   final String summary;
   final String reasoningReport;
   final List<AiCommitReviewFindingData> findings;
+  final List<AiCommitReviewObservationData> observations;
   final bool twoStepEnabled;
   final bool hasVerificationTrace;
   final bool verificationFailed;
@@ -478,6 +703,7 @@ class AiCommitReviewData {
     required this.summary,
     required this.reasoningReport,
     required this.findings,
+    this.observations = const [],
     required this.twoStepEnabled,
     required this.hasVerificationTrace,
     this.verificationFailed = false,

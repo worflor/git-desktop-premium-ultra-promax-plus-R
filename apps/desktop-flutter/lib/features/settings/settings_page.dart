@@ -130,13 +130,12 @@ class _SettingsPageState extends State<SettingsPage> {
     for (final category in _aiModelCategories) {
       final resolvedLabel =
           aiSettings.labelForCategory(category.id, category.label);
-      final controller = _categoryLabelControllers.putIfAbsent(
+      _categoryLabelControllers.putIfAbsent(
         category.id,
         () => TextEditingController(text: resolvedLabel),
       );
-      if (controller.text != resolvedLabel) {
-        controller.text = resolvedLabel;
-      }
+      // Don't force-sync controller.text here — it resets cursor position
+      // mid-typing. The controller is the source of truth while focused.
     }
   }
 
@@ -721,12 +720,10 @@ class _SettingsPageState extends State<SettingsPage> {
     final topOffenders =
         _buildTopOffenders(commandReport, diffReport, uiReport);
     final providerCards = _buildProviderCards();
-    if (_commitPromptController.text != aiSettings.commitMessagePrompt) {
-      _commitPromptController.text = aiSettings.commitMessagePrompt;
-    }
-    if (_reviewPromptController.text != aiSettings.reviewCommitPrompt) {
-      _reviewPromptController.text = aiSettings.reviewCommitPrompt;
-    }
+    // Don't force-sync prompt controllers here — setting controller.text
+    // resets cursor position mid-typing. The controllers are initialized
+    // in initState and updated by the user's keystrokes. The debounced
+    // save writes the value to AiSettingsState, not back to the controller.
     _syncCategoryControllers();
 
     return ListView(
@@ -862,13 +859,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 onChanged: themeState.setKeybindingProfile,
               ),
               const SizedBox(height: 12),
-              Text(
-                'Core shortcuts for the active profile.',
-                style: TextStyle(color: t.textMuted, fontSize: 12),
-              ),
+              const _SettingsBody('Core shortcuts for the active profile.'),
               const SizedBox(height: 8),
               _ShortcutsTable(profile: themeState.keybindingProfile),
-              const SizedBox(height: 18),
+              const _SettingsGap(),
               const _SettingsSubtitle('Behavioural Dynamics'),
               _CheckboxRow(
                 label: 'Auto-expand operation logs',
@@ -900,9 +894,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 ],
               ),
               const SizedBox(height: 8),
-              Text(
+              const _SettingsBody(
                 'Routing and piping interface messages directly to local provider binaries.',
-                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
               ),
               if (_aiProvidersError != null && _aiProviders.isEmpty) ...[
                 const SizedBox(height: 8),
@@ -939,7 +932,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
               const SizedBox(height: 10),
               _ProviderGrid(providers: providerCards),
-              const SizedBox(height: 18),
+              const _SettingsGap(),
               const _SettingsSubtitle('Model Slots'),
               const SizedBox(height: 8),
               Text(
@@ -1009,7 +1002,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     const SizedBox(height: 10),
                 ],
               ],
-              const SizedBox(height: 18),
+              const _SettingsGap(),
               const _SettingsSubtitle('Commit Messages'),
               const SizedBox(height: 8),
               Text(
@@ -1036,7 +1029,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   'Model-slot settings will appear here once provider models are available.',
                   style: TextStyle(color: t.textMuted, fontSize: 12),
                 ),
-              const SizedBox(height: 18),
+              const _SettingsGap(),
               const _SettingsSubtitle('Review Commit'),
               const SizedBox(height: 8),
               Text(
@@ -1538,7 +1531,7 @@ class _GuardrailStepper extends StatelessWidget {
   }
 }
 
-class _InputWithUnit extends StatelessWidget {
+class _InputWithUnit extends StatefulWidget {
   final String unit;
   final int value;
   final int min;
@@ -1554,32 +1547,73 @@ class _InputWithUnit extends StatelessWidget {
   });
 
   @override
+  State<_InputWithUnit> createState() => _InputWithUnitState();
+}
+
+class _InputWithUnitState extends State<_InputWithUnit> {
+  late final TextEditingController _controller;
+  bool _hasFocus = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: '${widget.value}');
+  }
+
+  @override
+  void didUpdateWidget(covariant _InputWithUnit old) {
+    super.didUpdateWidget(old);
+    // Only sync from parent when unfocused — never fight the user's cursor.
+    if (!_hasFocus && old.value != widget.value) {
+      _controller.text = '${widget.value}';
+    }
+  }
+
+  @override
+  void dispose() {
+    _hasFocus = false;
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChange(bool focused) {
+    _hasFocus = focused;
+    // When losing focus, sync the display value back to the parent's
+    // canonical value (in case the user typed something invalid).
+    if (!focused && mounted) {
+      _controller.text = '${widget.value}';
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final controller = TextEditingController(text: '$value');
     return AppInputShell(
       height: 32,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
           Expanded(
-            child: AppTextField(
-              controller: controller,
-              height: 28,
-              mono: true,
-              fontSize: 12,
-              keyboardType: TextInputType.number,
-              padding: EdgeInsets.zero,
-              onSubmitted: (raw) {
-                final parsed = int.tryParse(raw.trim());
-                if (parsed != null) {
-                  onChanged(parsed.clamp(min, max));
-                }
-              },
+            child: Focus(
+              onFocusChange: _onFocusChange,
+              child: AppTextField(
+                controller: _controller,
+                height: 28,
+                mono: true,
+                fontSize: 12,
+                keyboardType: TextInputType.number,
+                padding: EdgeInsets.zero,
+                onSubmitted: (raw) {
+                  final parsed = int.tryParse(raw.trim());
+                  if (parsed != null) {
+                    widget.onChanged(parsed.clamp(widget.min, widget.max));
+                  }
+                },
+              ),
             ),
           ),
           Text(
-            unit,
+            widget.unit,
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.75),
               fontSize: 10,
@@ -1779,7 +1813,7 @@ class _ShortcutsTable extends StatelessWidget {
             ('Changes', 'G C'),
             ('History', 'G H'),
             ('Branches', 'G B'),
-            ('Sync panel', 'G S'),
+            ('Repo X-Ray', 'G S'),
             ('Search commits', '/'),
             ('Close panel', 'Esc'),
             ('Select range (rebase)', 'Shift+Click'),
@@ -1788,7 +1822,7 @@ class _ShortcutsTable extends StatelessWidget {
             ('Changes', '1'),
             ('History', '2'),
             ('Branches', '3'),
-            ('Sync panel', '4'),
+            ('Repo X-Ray', '4'),
             ('Search commits', '/'),
             ('Close panel', 'Esc'),
             ('Select range (rebase)', 'Shift+Click'),
@@ -2433,6 +2467,7 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
   }
 }
 
+/// Section subtitle label — small, bold, uppercase feel.
 class _SettingsSubtitle extends StatelessWidget {
   final String label;
 
@@ -2451,6 +2486,30 @@ class _SettingsSubtitle extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Body description text — the most common text pattern in settings.
+class _SettingsBody extends StatelessWidget {
+  final String text;
+
+  const _SettingsBody(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Text(
+      text,
+      style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
+    );
+  }
+}
+
+/// Consistent vertical gap between settings sections.
+class _SettingsGap extends StatelessWidget {
+  const _SettingsGap();
+
+  @override
+  Widget build(BuildContext context) => const SizedBox(height: 18);
 }
 
 class _AiMetaRow extends StatelessWidget {
