@@ -56,6 +56,9 @@ List<_ParsedLine> _parseDiff(String diff) {
   int oldLine = 0, newLine = 0, hunkIdx = -1;
 
   for (final line in rawLines) {
+    if (line.startsWith('diff ') || line.startsWith('index ')) {
+      continue;
+    }
     if (line.startsWith('@@')) {
       final m =
           RegExp(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@').firstMatch(line);
@@ -83,8 +86,15 @@ List<_ParsedLine> _parseDiff(String diff) {
           kind: _LineKind.deleted,
           lineNumOld: oldLine++,
           hunkIndex: hunkIdx));
-    } else if (line.startsWith('diff ') ||
-        line.startsWith('index ') ||
+    } else if (line.startsWith('new file mode ') ||
+        line.startsWith('deleted file mode ') ||
+        line.startsWith('old mode ') ||
+        line.startsWith('new mode ') ||
+        line.startsWith('similarity index ') ||
+        line.startsWith('rename from ') ||
+        line.startsWith('rename to ') ||
+        line.startsWith('Binary files ') ||
+        line.startsWith('GIT binary patch') ||
         line.startsWith('--- ') ||
         line.startsWith('+++ ')) {
       result.add(_ParsedLine(
@@ -137,6 +147,72 @@ String _formatBlameTime(String timestamp) {
   return '${(days / 365).floor()}y';
 }
 
+String _diffDisplayName(String filePath) {
+  final normalized = filePath.replaceAll('\\', '/');
+  final parts = normalized.split('/').where((part) => part.isNotEmpty).toList();
+  return parts.isEmpty ? filePath : parts.last;
+}
+
+String? _diffDisplayDirectory(String filePath) {
+  final normalized = filePath.replaceAll('\\', '/');
+  final parts = normalized.split('/').where((part) => part.isNotEmpty).toList();
+  if (parts.length <= 1) {
+    return null;
+  }
+  return parts.sublist(0, parts.length - 1).join('/');
+}
+
+class _DiffFileHeader extends StatelessWidget {
+  final String filePath;
+  final AppTokens tokens;
+
+  const _DiffFileHeader({
+    required this.filePath,
+    required this.tokens,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final directory = _diffDisplayDirectory(filePath);
+    return MaterialSurface(
+      tone: AppMaterialTone.surface1,
+      radius: 0,
+      border: Border(
+        bottom: BorderSide(color: tokens.chromeBorder.withValues(alpha: 0.12)),
+      ),
+      elevated: false,
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 9),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _diffDisplayName(filePath),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: tokens.textStrong,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (directory != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              directory,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: tokens.textMuted,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 // ── DiffShell ─────────────────────────────────────────────────────────────────
 
 class DiffShell extends StatefulWidget {
@@ -146,6 +222,9 @@ class DiffShell extends StatefulWidget {
   final String? error;
   final AppTokens tokens;
   final String? repositoryPath;
+  final int? jumpToLineIndex;
+  final int jumpToLineRequestId;
+  final bool showFileHeader;
 
   const DiffShell({
     super.key,
@@ -155,6 +234,9 @@ class DiffShell extends StatefulWidget {
     this.loading = false,
     this.error,
     this.repositoryPath,
+    this.jumpToLineIndex,
+    this.jumpToLineRequestId = 0,
+    this.showFileHeader = true,
   });
 
   @override
@@ -222,6 +304,10 @@ class _DiffShellState extends State<DiffShell> {
           }
         });
       }
+    }
+    if (old.jumpToLineRequestId != widget.jumpToLineRequestId &&
+        widget.jumpToLineIndex != null) {
+      _jumpToLineIndex(widget.jumpToLineIndex!);
     }
   }
 
@@ -465,12 +551,25 @@ class _DiffShellState extends State<DiffShell> {
   void _jumpToHunkIndex(int hunkIdx) {
     if (hunkIdx < 0 || hunkIdx >= _hunks.length) return;
     final lineIdx = _hunks[hunkIdx].lineIndex;
-    const lineH = 18.0;
-    _scrollCtrl.animateTo(
-      lineIdx * lineH,
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
-    );
+    _jumpToLineIndex(lineIdx);
+  }
+
+  void _jumpToLineIndex(int lineIdx) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollCtrl.hasClients) {
+        return;
+      }
+      const lineH = 18.0;
+      final targetOffset = (lineIdx * lineH).clamp(
+        0.0,
+        _scrollCtrl.position.maxScrollExtent,
+      );
+      _scrollCtrl.animateTo(
+        targetOffset,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   @override
@@ -505,6 +604,8 @@ class _DiffShellState extends State<DiffShell> {
 
     return Stack(children: [
       Column(children: [
+        if (widget.showFileHeader)
+          _DiffFileHeader(filePath: widget.filePath, tokens: t),
         // ── Toolbar: search + hunk nav ─────────────────────────────────────
         MaterialSurface(
           tone: AppMaterialTone.surface1,
@@ -677,6 +778,7 @@ class _DiffLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = tokens;
     final l = line;
+    final isMeta = l.kind == _LineKind.meta;
 
     Color? lineBg;
     Color textColor;
@@ -695,8 +797,8 @@ class _DiffLine extends StatelessWidget {
         textColor = t.accentBright;
         break;
       case _LineKind.meta:
-        lineBg = null;
-        textColor = t.textMuted;
+        lineBg = t.surface0.withValues(alpha: 0.18);
+        textColor = t.textMuted.withValues(alpha: 0.72);
         break;
       case _LineKind.context:
         lineBg = null;
@@ -717,13 +819,15 @@ class _DiffLine extends StatelessWidget {
     }
 
     final gutterCell = Container(
-      width: 56,
+      width: isMeta ? 40 : 56,
       padding: const EdgeInsets.only(right: 8),
       alignment: Alignment.centerRight,
       color: hovered
           ? t.accentBright.withValues(alpha: 0.06)
-          : (lineBg?.withValues(alpha: 0.6) ??
-              t.surface1.withValues(alpha: 0.5)),
+          : isMeta
+              ? Colors.transparent
+              : (lineBg?.withValues(alpha: 0.6) ??
+                  t.surface1.withValues(alpha: 0.5)),
       child: Text(
         gutterText,
         style: TextStyle(
@@ -764,12 +868,14 @@ class _DiffLine extends StatelessWidget {
             textColor,
             t,
             searchTerm,
+            fontSize: isMeta ? 11 : 12,
+            height: isMeta ? 1.3 : 1.5,
           );
 
     Widget lineContent = Expanded(
       child: Container(
         color: lineBg,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: EdgeInsets.symmetric(horizontal: isMeta ? 12 : 8),
         alignment: Alignment.centerLeft,
         child: textChild,
       ),
@@ -937,10 +1043,23 @@ Widget _buildPlainDiffText(
   String displayText,
   Color baseColor,
   AppTokens t,
-  String searchTerm,
-) {
+  String searchTerm, {
+  double fontSize = 12,
+  double height = 1.5,
+  FontWeight? fontWeight,
+  FontStyle? fontStyle,
+}) {
   if (searchTerm.isNotEmpty) {
-    return _buildSearchText(displayText, baseColor, t, searchTerm);
+    return _buildSearchText(
+      displayText,
+      baseColor,
+      t,
+      searchTerm,
+      fontSize: fontSize,
+      height: height,
+      fontWeight: fontWeight,
+      fontStyle: fontStyle,
+    );
   }
   return Text(
     displayText,
@@ -948,9 +1067,11 @@ Widget _buildPlainDiffText(
     overflow: TextOverflow.clip,
     style: TextStyle(
       color: baseColor,
-      fontSize: 12,
+      fontSize: fontSize,
       fontFamily: 'JetBrainsMono',
-      height: 1.5,
+      height: height,
+      fontWeight: fontWeight,
+      fontStyle: fontStyle,
     ),
   );
 }
@@ -959,8 +1080,12 @@ Widget _buildSearchText(
   String displayText,
   Color baseColor,
   AppTokens t,
-  String searchTerm,
-) {
+  String searchTerm, {
+  double fontSize = 12,
+  double height = 1.5,
+  FontWeight? fontWeight,
+  FontStyle? fontStyle,
+}) {
   final lower = displayText.toLowerCase();
   final termLower = searchTerm.toLowerCase();
   final spans = <TextSpan>[];
@@ -970,12 +1095,20 @@ Widget _buildSearchText(
     if (idx > start) {
       spans.add(TextSpan(
           text: displayText.substring(start, idx),
-          style: TextStyle(color: baseColor)));
+          style: TextStyle(
+            color: baseColor,
+            fontWeight: fontWeight,
+            fontStyle: fontStyle,
+          )));
     }
     spans.add(TextSpan(
       text: displayText.substring(idx, idx + termLower.length),
       style: TextStyle(
-          color: t.bg0, backgroundColor: t.accentBright.withValues(alpha: 0.8)),
+        color: t.bg0,
+        backgroundColor: t.accentBright.withValues(alpha: 0.8),
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+      ),
     ));
     start = idx + termLower.length;
     idx = lower.indexOf(termLower, start);
@@ -983,15 +1116,21 @@ Widget _buildSearchText(
   if (start < displayText.length) {
     spans.add(TextSpan(
         text: displayText.substring(start),
-        style: TextStyle(color: baseColor)));
+        style: TextStyle(
+          color: baseColor,
+          fontWeight: fontWeight,
+          fontStyle: fontStyle,
+        )));
   }
 
   return RichText(
     text: TextSpan(
-      style: const TextStyle(
-        fontSize: 12,
+      style: TextStyle(
+        fontSize: fontSize,
         fontFamily: 'JetBrainsMono',
-        height: 1.5,
+        height: height,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
       ),
       children: spans,
     ),

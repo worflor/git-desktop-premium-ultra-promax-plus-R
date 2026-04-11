@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -41,10 +43,19 @@ class _ChangesPageState extends State<ChangesPage> {
 
   String? _draftKey;
   String? _selectedDiffPath;
+  String? _inspectionDiffPath;
   String? _visibleDiffPath;
   String? _diffContent;
   bool _diffLoading = false;
   String? _diffError;
+  String? _multiDiffScopeKey;
+  String? _multiDiffContent;
+  bool _multiDiffLoading = false;
+  String? _multiDiffError;
+  List<_CombinedDiffSection> _multiDiffSections = const [];
+  String? _multiDiffCurrentPath;
+  int? _multiDiffJumpLineIndex;
+  int _multiDiffJumpRequestId = 0;
   bool _actionRunning = false;
   bool _generateRunning = false;
   bool _commitAiLoading = false;
@@ -175,6 +186,119 @@ class _ChangesPageState extends State<ChangesPage> {
       ok: r.ok,
       errorCode: r.ok ? null : 'diff.load_failed',
     );
+  }
+
+  void _inspectSingleDiff(String repo, String path) {
+    setState(() {
+      _inspectionDiffPath = path;
+    });
+    unawaited(_loadDiff(repo, path));
+  }
+
+  String _buildMultiDiffScopeKey(List<RepositoryStatusFile> files) {
+    return files
+        .map((file) => '${file.path}|${file.staged}|${file.unstaged}')
+        .join('||');
+  }
+
+  Future<void> _loadMultiDiff(
+    String repo,
+    List<RepositoryStatusFile> files,
+  ) async {
+    final requestFiles = List<RepositoryStatusFile>.from(files);
+    final scopeKey = _buildMultiDiffScopeKey(requestFiles);
+    setState(() {
+      _multiDiffScopeKey = scopeKey;
+      _multiDiffLoading = true;
+      _multiDiffError = null;
+      _multiDiffSections = const [];
+      _multiDiffCurrentPath =
+          requestFiles.isEmpty ? null : requestFiles.first.path;
+    });
+
+    final result = await getSelectionDiff(repo, requestFiles);
+    if (!mounted || _multiDiffScopeKey != scopeKey) {
+      return;
+    }
+
+    setState(() {
+      _multiDiffLoading = false;
+      if (result.ok) {
+        _multiDiffContent = result.data;
+        _multiDiffError = null;
+        _multiDiffSections = _parseCombinedDiffSections(result.data ?? '');
+        _multiDiffCurrentPath = _multiDiffSections.isNotEmpty
+            ? _multiDiffSections.first.path
+            : (requestFiles.isEmpty ? null : requestFiles.first.path);
+        _multiDiffJumpLineIndex = _multiDiffSections.isNotEmpty
+            ? _multiDiffSections.first.startLine
+            : 0;
+        _multiDiffJumpRequestId++;
+      } else {
+        _multiDiffContent = null;
+        _multiDiffError = result.error;
+        _multiDiffSections = const [];
+        _multiDiffCurrentPath = null;
+        _multiDiffJumpLineIndex = null;
+      }
+    });
+  }
+
+  void _primeMultiDiff(
+    String repo,
+    List<RepositoryStatusFile> files,
+  ) {
+    final scopeKey = _buildMultiDiffScopeKey(files);
+    if (_multiDiffLoading && _multiDiffScopeKey == scopeKey) {
+      return;
+    }
+    if (_multiDiffScopeKey == scopeKey &&
+        (_multiDiffContent != null || _multiDiffError != null)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_loadMultiDiff(repo, files));
+    });
+  }
+
+  void _handleMultiDiffScroll(ScrollMetrics metrics) {
+    if (_multiDiffSections.isEmpty) {
+      return;
+    }
+    final probeOffset = metrics.pixels + (metrics.viewportDimension * 0.2);
+    final lineIndex = (probeOffset / 18).floor().clamp(0, 1 << 20);
+    var current = _multiDiffSections.first;
+    for (final section in _multiDiffSections) {
+      if (section.startLine <= lineIndex) {
+        current = section;
+      } else {
+        break;
+      }
+    }
+    if (current.path == _multiDiffCurrentPath) {
+      return;
+    }
+    setState(() {
+      _multiDiffCurrentPath = current.path;
+    });
+  }
+
+  void _jumpToMultiDiffPath(String path, {int? fallbackStartLine}) {
+    final targetSection =
+        _multiDiffSections.where((section) => section.path == path).firstOrNull;
+    setState(() {
+      _inspectionDiffPath = null;
+      _selectedDiffPath = null;
+      _multiDiffCurrentPath = path;
+      final jumpLine = targetSection?.startLine ?? fallbackStartLine;
+      if (jumpLine != null) {
+        _multiDiffJumpLineIndex = jumpLine;
+        _multiDiffJumpRequestId++;
+      }
+    });
   }
 
   void _toggleIncluded(String path, bool include) {
@@ -550,6 +674,20 @@ class _ChangesPageState extends State<ChangesPage> {
     final stagedCount =
         status.files.where((file) => _isDirty(file.staged)).length;
     final includedCount = _includedDirtyCount(status);
+    final includedFiles = status.files
+        .where((file) => _includedPaths.contains(file.path))
+        .toList();
+    final inspectionOverridePath = _inspectionDiffPath;
+    final inspectingSingleDiff = includedFiles.length > 1 &&
+        inspectionOverridePath != null &&
+        !_includedPaths.contains(inspectionOverridePath);
+    final showMultiDiff = includedFiles.length > 1 && !inspectingSingleDiff;
+    final activeMultiDiffPath = _multiDiffCurrentPath;
+    final activeDiffPath = inspectingSingleDiff
+        ? inspectionOverridePath
+        : showMultiDiff
+            ? activeMultiDiffPath
+            : (_visibleDiffPath ?? _selectedDiffPath);
     final primaryAction = _primaryActionFor(status);
     final hasCommitAiSelection = _hasCommitAiSelection(aiSettings);
     final canCommit = !_actionRunning &&
@@ -579,35 +717,7 @@ class _ChangesPageState extends State<ChangesPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Next Commit',
-                          style: TextStyle(
-                            color: t.textStrong,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.04,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          stagedCount > 0
-                              ? '$includedCount selected · $stagedCount staged'
-                              : '$includedCount selected',
-                          style: TextStyle(
-                            color: t.textMuted,
-                            fontSize: 11,
-                            height: 1.2,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
                     child: Row(
                       children: [
                         Expanded(
@@ -650,9 +760,17 @@ class _ChangesPageState extends State<ChangesPage> {
                         return _FileRow(
                           file: file,
                           tokens: t,
-                          isDiffSelected: _selectedDiffPath == file.path,
+                          isDiffSelected: activeDiffPath == file.path,
                           included: _includedPaths.contains(file.path),
-                          onTap: () => _loadDiff(repoPath, file.path),
+                          onTap: includedFiles.length > 1
+                              ? () {
+                                  if (_includedPaths.contains(file.path)) {
+                                    _jumpToMultiDiffPath(file.path);
+                                  } else {
+                                    _inspectSingleDiff(repoPath, file.path);
+                                  }
+                                }
+                              : () => _loadDiff(repoPath, file.path),
                           onIncludeChanged: (value) =>
                               _toggleIncluded(file.path, value),
                         );
@@ -664,7 +782,8 @@ class _ChangesPageState extends State<ChangesPage> {
                     radius: 0,
                     border: Border(
                       top: BorderSide(
-                          color: t.chromeBorder.withValues(alpha: 0.15)),
+                        color: t.chromeBorder.withValues(alpha: 0.15),
+                      ),
                     ),
                     elevated: false,
                     padding: const EdgeInsets.all(12),
@@ -673,8 +792,12 @@ class _ChangesPageState extends State<ChangesPage> {
                       children: [
                         Text(
                           includedCount == 0
-                              ? 'Nothing selected'
-                              : '$includedCount file${includedCount == 1 ? '' : 's'} selected.',
+                              ? (stagedCount > 0
+                                  ? 'Nothing selected | $stagedCount staged'
+                                  : 'Nothing selected')
+                              : (stagedCount > 0
+                                  ? '$includedCount file${includedCount == 1 ? '' : 's'} selected | $stagedCount staged'
+                                  : '$includedCount file${includedCount == 1 ? '' : 's'} selected'),
                           style: TextStyle(
                             color:
                                 includedCount == 0 ? t.textMuted : t.textNormal,
@@ -783,26 +906,87 @@ class _ChangesPageState extends State<ChangesPage> {
               ),
             ),
             Expanded(
-              child: MaterialSurface(
-                tone: AppMaterialTone.surface0,
-                radius: 0,
-                borderAlpha: 0,
-                elevated: false,
-                child: _selectedDiffPath == null
-                    ? const AppStatusView(
-                        title: 'No file selected',
-                        message: 'Select a changed file to inspect its diff.',
-                        compact: true,
-                      )
-                    : DiffShell(
-                        key: ValueKey(_visibleDiffPath ?? _selectedDiffPath!),
-                        filePath: _visibleDiffPath ?? _selectedDiffPath!,
-                        diffContent: _diffContent,
-                        loading: _diffLoading,
-                        error: _diffError,
-                        tokens: t,
-                        repositoryPath: repoPath,
+              child: Builder(
+                builder: (context) {
+                  if (showMultiDiff) {
+                    _primeMultiDiff(repoPath, includedFiles);
+                    final timelineSections = _buildTimelineSections(
+                        includedFiles, _multiDiffSections);
+                    return MaterialSurface(
+                      tone: AppMaterialTone.surface0,
+                      radius: 0,
+                      borderAlpha: 0,
+                      elevated: false,
+                      child: Column(
+                        children: [
+                          _MultiDiffTimelineStrip(
+                            tokens: t,
+                            sections: timelineSections,
+                            currentPath: _multiDiffCurrentPath,
+                            onSelectPath: (section) => _jumpToMultiDiffPath(
+                              section.path,
+                              fallbackStartLine: section.startLine,
+                            ),
+                          ),
+                          Expanded(
+                            child: NotificationListener<ScrollNotification>(
+                              onNotification: (notification) {
+                                if (notification.depth == 0 &&
+                                    notification.metrics.axis ==
+                                        Axis.vertical) {
+                                  _handleMultiDiffScroll(
+                                    notification.metrics,
+                                  );
+                                }
+                                return false;
+                              },
+                              child: DiffShell(
+                                key: ValueKey(
+                                  _multiDiffScopeKey ?? 'multi-diff',
+                                ),
+                                filePath:
+                                    '${includedFiles.length} selected files',
+                                diffContent: _multiDiffContent,
+                                loading: _multiDiffLoading,
+                                error: _multiDiffError,
+                                tokens: t,
+                                repositoryPath: null,
+                                jumpToLineIndex: _multiDiffJumpLineIndex,
+                                jumpToLineRequestId: _multiDiffJumpRequestId,
+                                showFileHeader: false,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
+                    );
+                  }
+
+                  return MaterialSurface(
+                    tone: AppMaterialTone.surface0,
+                    radius: 0,
+                    borderAlpha: 0,
+                    elevated: false,
+                    child: _selectedDiffPath == null
+                        ? const AppStatusView(
+                            title: 'No file selected',
+                            message:
+                                'Select a changed file to inspect its diff.',
+                            compact: true,
+                          )
+                        : DiffShell(
+                            key: ValueKey(
+                              _visibleDiffPath ?? _selectedDiffPath!,
+                            ),
+                            filePath: _visibleDiffPath ?? _selectedDiffPath!,
+                            diffContent: _diffContent,
+                            loading: _diffLoading,
+                            error: _diffError,
+                            tokens: t,
+                            repositoryPath: repoPath,
+                          ),
+                  );
+                },
               ),
             ),
           ],
@@ -832,6 +1016,322 @@ bool _samePathSet(Set<String> a, Set<String> b) {
     }
   }
   return true;
+}
+
+class _CombinedDiffSection {
+  final String path;
+  final String displayName;
+  final int index;
+  final int startLine;
+
+  const _CombinedDiffSection({
+    required this.path,
+    required this.displayName,
+    required this.index,
+    required this.startLine,
+  });
+}
+
+List<_CombinedDiffSection> _parseCombinedDiffSections(String diffContent) {
+  if (diffContent.trim().isEmpty) {
+    return const [];
+  }
+
+  final sections = <_CombinedDiffSection>[];
+  final lines = diffContent.split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    final match = RegExp(r'^diff --git a/(.+) b/(.+)$').firstMatch(line);
+    if (match == null) {
+      continue;
+    }
+    final path = match.group(2) ?? match.group(1) ?? '';
+    final normalized = path.trim();
+    if (normalized.isEmpty) {
+      continue;
+    }
+    final displayName = normalized.split('/').last;
+    sections.add(
+      _CombinedDiffSection(
+        path: normalized,
+        displayName: displayName,
+        index: sections.length,
+        startLine: i,
+      ),
+    );
+  }
+
+  return sections;
+}
+
+List<_CombinedDiffSection> _buildTimelineSections(
+  List<RepositoryStatusFile> files,
+  List<_CombinedDiffSection> diffSections,
+) {
+  final seenPaths = <String>{};
+  final sections = <_CombinedDiffSection>[];
+
+  for (final section in diffSections) {
+    if (!seenPaths.add(section.path)) {
+      continue;
+    }
+    sections.add(
+      _CombinedDiffSection(
+        path: section.path,
+        displayName: section.displayName,
+        index: sections.length,
+        startLine: section.startLine,
+      ),
+    );
+  }
+
+  for (final file in files) {
+    if (!seenPaths.add(file.path)) {
+      continue;
+    }
+    sections.add(
+      _CombinedDiffSection(
+        path: file.path,
+        displayName: file.path.split('/').last,
+        index: sections.length,
+        startLine: sections.isEmpty ? 0 : sections.last.startLine,
+      ),
+    );
+  }
+  return sections;
+}
+
+class _MultiDiffTimelineStrip extends StatelessWidget {
+  final AppTokens tokens;
+  final List<_CombinedDiffSection> sections;
+  final String? currentPath;
+  final ValueChanged<_CombinedDiffSection>? onSelectPath;
+
+  const _MultiDiffTimelineStrip({
+    required this.tokens,
+    required this.sections,
+    required this.currentPath,
+    this.onSelectPath,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final currentIndex = sections.isEmpty
+        ? 0
+        : sections.indexWhere((section) => section.path == currentPath);
+    final effectiveIndex = currentIndex < 0 ? 0 : currentIndex;
+    final currentSection = sections.isEmpty ? null : sections[effectiveIndex];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: tokens.chromeBorder.withValues(alpha: 0.15),
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Tooltip(
+            message: currentSection?.path,
+            child: Text(
+              currentSection == null
+                  ? '${sections.length} selected files'
+                  : '${currentSection.displayName} | ${effectiveIndex + 1} of ${sections.length}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: tokens.textStrong,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(height: 7),
+          _MultiDiffProgressRail(
+            tokens: tokens,
+            sections: sections,
+            currentIndex: effectiveIndex,
+            onSelectPath: onSelectPath,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MultiDiffProgressRail extends StatelessWidget {
+  final AppTokens tokens;
+  final List<_CombinedDiffSection> sections;
+  final int currentIndex;
+  final ValueChanged<_CombinedDiffSection>? onSelectPath;
+
+  const _MultiDiffProgressRail({
+    required this.tokens,
+    required this.sections,
+    required this.currentIndex,
+    this.onSelectPath,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        return MouseRegion(
+          cursor: onSelectPath == null || sections.isEmpty
+              ? SystemMouseCursors.basic
+              : SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: onSelectPath == null || sections.isEmpty
+                ? null
+                : (details) => _selectFromOffset(
+                      details.localPosition.dx,
+                      width,
+                    ),
+            onHorizontalDragStart: onSelectPath == null || sections.isEmpty
+                ? null
+                : (details) => _selectFromOffset(
+                      details.localPosition.dx,
+                      width,
+                    ),
+            onHorizontalDragUpdate: onSelectPath == null || sections.isEmpty
+                ? null
+                : (details) => _selectFromOffset(
+                      details.localPosition.dx,
+                      width,
+                    ),
+            child: SizedBox(
+              width: width,
+              height: 28,
+              child: CustomPaint(
+                size: Size(width, 28),
+                painter: _MultiDiffProgressRailPainter(
+                  tokens: tokens,
+                  count: sections.length,
+                  currentIndex: currentIndex,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  int _nearestTimelineIndex({
+    required double localDx,
+    required double width,
+    required int count,
+  }) {
+    if (count <= 1) {
+      return 0;
+    }
+    const horizontalInset = 6.0;
+    final clampedWidth =
+        width <= horizontalInset * 2 ? horizontalInset * 2 + 1 : width;
+    final usableWidth = clampedWidth - (horizontalInset * 2);
+    final ratio = ((localDx - horizontalInset) / usableWidth).clamp(0.0, 1.0);
+    return (ratio * (count - 1)).round();
+  }
+
+  void _selectFromOffset(double localDx, double width) {
+    if (onSelectPath == null || sections.isEmpty) {
+      return;
+    }
+    final index = _nearestTimelineIndex(
+      localDx: localDx,
+      width: width,
+      count: sections.length,
+    );
+    onSelectPath!(sections[index]);
+  }
+}
+
+class _MultiDiffProgressRailPainter extends CustomPainter {
+  final AppTokens tokens;
+  final int count;
+  final int currentIndex;
+
+  const _MultiDiffProgressRailPainter({
+    required this.tokens,
+    required this.count,
+    required this.currentIndex,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (count <= 0) {
+      return;
+    }
+
+    const horizontalInset = 6.0;
+    final left = horizontalInset;
+    final right = size.width - horizontalInset;
+    final centerY = size.height / 2;
+    final usableWidth = right - left;
+    final progress = count == 1 ? 1.0 : currentIndex / (count - 1);
+    final markerX = left + usableWidth * progress.clamp(0.0, 1.0);
+
+    final baseRail = Paint()
+      ..color = tokens.chromeBorder.withValues(alpha: 0.28)
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    final activeRail = Paint()
+      ..color = tokens.accentBright.withValues(alpha: 0.72)
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(Offset(left, centerY), Offset(right, centerY), baseRail);
+    canvas.drawLine(
+        Offset(left, centerY), Offset(markerX, centerY), activeRail);
+
+    final sampleCount = count < 2
+        ? 1
+        : count > 44
+            ? 44
+            : count;
+
+    for (var i = 0; i < sampleCount; i++) {
+      final ratio = sampleCount == 1 ? 0.0 : i / (sampleCount - 1);
+      final representedIndex =
+          sampleCount == 1 ? currentIndex : (ratio * (count - 1)).round();
+      final x = left + usableWidth * ratio;
+      final isCurrent = representedIndex == currentIndex;
+      final isPast = representedIndex < currentIndex;
+      final radius = isCurrent ? 4.5 : (isPast ? 2.8 : 2.4);
+      final fill = Paint()
+        ..color = isCurrent
+            ? tokens.accentBright
+            : isPast
+                ? tokens.accentBright.withValues(alpha: 0.5)
+                : tokens.textMuted.withValues(alpha: 0.24);
+      canvas.drawCircle(Offset(x, centerY), radius, fill);
+    }
+
+    final halo = Paint()
+      ..color = tokens.accentBright.withValues(alpha: 0.16)
+      ..style = PaintingStyle.fill;
+    final ring = Paint()
+      ..color = tokens.accentBright.withValues(alpha: 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawCircle(Offset(markerX, centerY), 7.5, halo);
+    canvas.drawCircle(Offset(markerX, centerY), 6.2, ring);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MultiDiffProgressRailPainter oldDelegate) {
+    return oldDelegate.count != count ||
+        oldDelegate.currentIndex != currentIndex ||
+        oldDelegate.tokens != tokens;
+  }
 }
 
 class _ActionBtn extends StatefulWidget {
@@ -950,7 +1450,11 @@ class _FileRowState extends State<_FileRow> {
     if (staged != null) {
       badges.add(staged);
     }
-    if (unstaged != null) {
+    if (unstaged != null &&
+        !badges.any(
+          (badge) =>
+              badge.label == unstaged.label && badge.color == unstaged.color,
+        )) {
       badges.add(unstaged);
     }
     return badges;
@@ -1165,8 +1669,9 @@ class _CommitComposerField extends StatelessWidget {
     final effectiveRadius = (radius * 0.75).clamp(0.0, 14.0);
 
     return ListenableBuilder(
-      listenable: focusNode,
+      listenable: Listenable.merge([focusNode, controller]),
       builder: (context, child) {
+        final hasText = controller.text.trim().isNotEmpty;
         return AnimatedContainer(
           duration: const Duration(milliseconds: 110),
           height: 112,
@@ -1183,7 +1688,7 @@ class _CommitComposerField extends StatelessWidget {
           child: Stack(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 52, 10),
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
                 child: TextField(
                   controller: controller,
                   focusNode: focusNode,
@@ -1207,13 +1712,14 @@ class _CommitComposerField extends StatelessWidget {
                 ),
               ),
               Positioned(
-                top: 10,
                 right: 10,
+                bottom: 10,
                 child: _CommitAiOverlayButton(
                   tokens: tokens,
                   enabled: aiEnabled,
                   loading: aiLoading,
                   tooltip: aiTooltip,
+                  obstructed: hasText,
                   onTap: onGenerate,
                 ),
               ),
@@ -1230,6 +1736,7 @@ class _CommitAiOverlayButton extends StatefulWidget {
   final bool enabled;
   final bool loading;
   final String tooltip;
+  final bool obstructed;
   final VoidCallback onTap;
 
   const _CommitAiOverlayButton({
@@ -1237,6 +1744,7 @@ class _CommitAiOverlayButton extends StatefulWidget {
     required this.enabled,
     required this.loading,
     required this.tooltip,
+    required this.obstructed,
     required this.onTap,
   });
 
@@ -1250,18 +1758,26 @@ class _CommitAiOverlayButtonState extends State<_CommitAiOverlayButton> {
 
   @override
   Widget build(BuildContext context) {
-    final background = widget.enabled
+    final showFullChrome = _hovered || _pressed || !widget.obstructed;
+    final shellAlpha = widget.enabled
         ? (_pressed
-            ? widget.tokens.accentBright.withValues(alpha: 0.24)
+            ? 0.26
             : _hovered
-                ? widget.tokens.accentBright.withValues(alpha: 0.18)
-                : widget.tokens.bg0.withValues(alpha: 0.92))
-        : widget.tokens.bg0.withValues(alpha: 0.72);
+                ? 0.22
+                : (widget.obstructed ? 0.1 : 0.18))
+        : (widget.obstructed ? 0.05 : 0.1);
+    final borderAlpha = widget.enabled
+        ? (_hovered ? 0.44 : (widget.obstructed ? 0.12 : 0.26))
+        : (widget.obstructed ? 0.1 : 0.2);
+    final background = widget.enabled
+        ? widget.tokens.bg0.withValues(alpha: showFullChrome ? 0.92 : 0.46)
+        : widget.tokens.bg0.withValues(alpha: 0.38);
     final border = widget.enabled
-        ? widget.tokens.accentBright.withValues(alpha: _hovered ? 0.42 : 0.26)
-        : widget.tokens.chromeBorder.withValues(alpha: 0.24);
+        ? widget.tokens.accentBright.withValues(alpha: borderAlpha)
+        : widget.tokens.chromeBorder.withValues(alpha: borderAlpha);
     final iconColor = widget.enabled
         ? widget.tokens.accentBright
+            .withValues(alpha: showFullChrome ? 1 : 0.74)
         : widget.tokens.textMuted.withValues(alpha: 0.65);
 
     return Tooltip(
@@ -1285,40 +1801,55 @@ class _CommitAiOverlayButtonState extends State<_CommitAiOverlayButton> {
           onTapUp:
               widget.enabled ? (_) => setState(() => _pressed = false) : null,
           onTap: widget.enabled ? widget.onTap : null,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 110),
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: background,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: border),
-              boxShadow: widget.enabled && _hovered
-                  ? [
-                      BoxShadow(
-                        color:
-                            widget.tokens.accentBright.withValues(alpha: 0.12),
-                        blurRadius: 12,
-                        spreadRadius: -6,
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Center(
-              child: widget.loading
-                  ? SizedBox(
-                      width: 13,
-                      height: 13,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.5,
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 140),
+            opacity: showFullChrome ? 1 : 0.8,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 140),
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: background,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: border),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    widget.tokens.accentBright.withValues(alpha: shellAlpha),
+                    widget.tokens.bg0.withValues(
+                      alpha: showFullChrome ? 0.92 : 0.34,
+                    ),
+                  ],
+                ),
+                boxShadow: widget.enabled && (_hovered || !widget.obstructed)
+                    ? [
+                        BoxShadow(
+                          color: widget.tokens.accentBright.withValues(
+                            alpha: _hovered ? 0.18 : 0.1,
+                          ),
+                          blurRadius: _hovered ? 20 : 14,
+                          spreadRadius: -8,
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Center(
+                child: widget.loading
+                    ? SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.6,
+                          color: iconColor,
+                        ),
+                      )
+                    : Icon(
+                        Icons.auto_awesome_rounded,
+                        size: 17,
                         color: iconColor,
                       ),
-                    )
-                  : Icon(
-                      Icons.auto_awesome_rounded,
-                      size: 15,
-                      color: iconColor,
-                    ),
+              ),
             ),
           ),
         ),

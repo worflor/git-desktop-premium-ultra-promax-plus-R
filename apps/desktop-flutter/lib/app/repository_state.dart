@@ -9,6 +9,7 @@ class RepositoryState extends ChangeNotifier {
   bool _statusLoading = false;
   String? _statusError;
   List<String> _recentPaths = [];
+  int _statusRequestId = 0;
 
   String? get activePath => _activePath;
   RepositoryStatus? get status => _status;
@@ -36,38 +37,60 @@ class RepositoryState extends ChangeNotifier {
   }
 
   Future<String?> setActivePath(String path) async {
-    final result = await openRepository(path);
-    if (!result.ok) return result.error;
+    try {
+      final result = await openRepository(path);
+      if (!result.ok || result.data == null) {
+        return result.error ?? 'Failed to open repository.';
+      }
 
-    _activePath = path;
-    _status = null;
-    _statusError = null;
+      final resolvedPath = result.data!;
+      _activePath = resolvedPath;
+      _status = null;
+      _statusLoading = false;
+      _statusError = null;
 
-    if (!_recentPaths.contains(path)) {
-      _recentPaths = [path, ..._recentPaths].take(20).toList();
-      await _saveRecents();
+      if (!_recentPaths.contains(resolvedPath)) {
+        _recentPaths = [resolvedPath, ..._recentPaths].take(20).toList();
+        await _saveRecents();
+      }
+
+      notifyListeners();
+      await refreshStatus();
+      return null;
+    } catch (error) {
+      return error.toString();
     }
-
-    notifyListeners();
-    await refreshStatus();
-    return null;
   }
 
   Future<void> refreshStatus() async {
     final path = _activePath;
     if (path == null) return;
+    final requestId = ++_statusRequestId;
 
     _statusLoading = true;
     _statusError = null;
     notifyListeners();
 
-    final result = await getRepositoryStatus(path);
-    _statusLoading = false;
-    if (result.ok) {
-      _status = result.data;
-      _statusError = null;
-    } else {
-      _statusError = result.error;
+    try {
+      final result = await getRepositoryStatus(path);
+      if (_activePath != path || requestId != _statusRequestId) {
+        return;
+      }
+      _statusLoading = false;
+      if (result.ok) {
+        _status = result.data;
+        _statusError = null;
+      } else {
+        _status = null;
+        _statusError = result.error;
+      }
+    } catch (error) {
+      if (_activePath != path || requestId != _statusRequestId) {
+        return;
+      }
+      _statusLoading = false;
+      _status = null;
+      _statusError = error.toString();
     }
     notifyListeners();
   }

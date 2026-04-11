@@ -82,134 +82,159 @@ class _SidebarRailState extends State<SidebarRail> {
   }
 
   Future<void> _onOpen() async {
-    if (_entryMode == _RepositoryEntryMode.clone) {
-      await _onClone();
-      return;
-    }
-    if (_entryMode == _RepositoryEntryMode.create) {
-      await _onInit();
-      return;
-    }
+    try {
+      if (_entryMode == _RepositoryEntryMode.clone) {
+        await _onClone();
+        return;
+      }
+      if (_entryMode == _RepositoryEntryMode.create) {
+        await _onInit();
+        return;
+      }
 
-    final repo = context.read<RepositoryState>();
-    var path = _pathController.text.trim();
-    if (path.isEmpty) {
-      final picked = await _pickDirectory('Open Repository');
-      if (picked == null) return;
-      path = picked;
-      _pathController.text = path;
-    }
+      final repo = context.read<RepositoryState>();
+      var path = _pathController.text.trim();
+      if (path.isEmpty) {
+        final picked = await _pickDirectory('Open Repository');
+        if (picked == null) return;
+        path = picked;
+        _pathController.text = path;
+      }
 
-    setState(() {
-      _running = true;
-      _error = null;
-    });
-    final err = await repo.setActivePath(path);
-    if (!mounted) return;
-    setState(() => _running = false);
-    if (err != null) {
       setState(() {
-        _error = err.toLowerCase().contains('not a git')
-            ? 'Not a git repository. Initialize one here?'
-            : err;
+        _running = true;
+        _error = null;
       });
-      return;
-    }
+      final err = await repo.setActivePath(path);
+      if (!mounted) return;
+      setState(() => _running = false);
+      if (err != null) {
+        setState(() {
+          _error = err.toLowerCase().contains('not a git')
+              ? 'Not a git repository. Initialize one here?'
+              : err;
+        });
+        return;
+      }
 
-    setState(() {
-      _showPathEntry = false;
-      _pathController.clear();
-      _cloneTargetController.clear();
-      _entryMode = _RepositoryEntryMode.open;
-    });
+      setState(() {
+        _showPathEntry = false;
+        _pathController.clear();
+        _cloneTargetController.clear();
+        _entryMode = _RepositoryEntryMode.open;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _running = false;
+        _error = error.toString();
+      });
+    }
   }
 
   Future<void> _onClone() async {
-    final url = _pathController.text.trim();
-    final target = _cloneTargetController.text.trim();
-    if (url.isEmpty || target.isEmpty) {
-      setState(() => _error = 'URL and target path required.');
-      return;
-    }
+    try {
+      final url = _pathController.text.trim();
+      final target = _cloneTargetController.text.trim();
+      if (url.isEmpty || target.isEmpty) {
+        setState(() => _error = 'URL and target path required.');
+        return;
+      }
 
-    setState(() {
-      _running = true;
-      _error = null;
-      _cloningEntry = target;
-    });
-    final result = await cloneRepository(url, target);
-    if (!mounted) return;
-    if (!result.ok) {
+      setState(() {
+        _running = true;
+        _error = null;
+        _cloningEntry = target;
+      });
+      final result = await cloneRepository(url, target);
+      if (!mounted) return;
+      if (!result.ok || result.data == null) {
+        setState(() {
+          _running = false;
+          _cloningEntry = null;
+          _error = result.error ?? 'Failed to clone repository.';
+        });
+        return;
+      }
+
+      final repo = context.read<RepositoryState>();
+      final err = await repo.setActivePath(result.data!);
+      if (!mounted) return;
+      if (err != null) {
+        setState(() {
+          _running = false;
+          _cloningEntry = null;
+          _error = err;
+        });
+        return;
+      }
       setState(() {
         _running = false;
         _cloningEntry = null;
-        _error = result.error;
+        _showPathEntry = false;
+        _pathController.clear();
+        _cloneTargetController.clear();
+        _entryMode = _RepositoryEntryMode.open;
       });
-      return;
-    }
-
-    final repo = context.read<RepositoryState>();
-    final err = await repo.setActivePath(result.data!);
-    if (!mounted) return;
-    if (err != null) {
+    } catch (error) {
+      if (!mounted) return;
       setState(() {
         _running = false;
         _cloningEntry = null;
-        _error = err;
+        _error = error.toString();
       });
-      return;
     }
-    setState(() {
-      _running = false;
-      _cloningEntry = null;
-      _showPathEntry = false;
-      _pathController.clear();
-      _cloneTargetController.clear();
-      _entryMode = _RepositoryEntryMode.open;
-    });
   }
 
   Future<void> _onInit() async {
-    var path = _pathController.text.trim();
-    if (path.isEmpty) {
-      final picked = await _pickDirectory('Create Repository');
-      if (picked == null) return;
-      path = picked;
-      _pathController.text = path;
-    }
-    if (path.isEmpty) return;
+    try {
+      var path = _pathController.text.trim();
+      if (path.isEmpty) {
+        final picked = await _pickDirectory('Create Repository');
+        if (picked == null) return;
+        path = picked;
+        _pathController.text = path;
+      }
+      if (path.isEmpty) return;
 
-    setState(() {
-      _running = true;
-      _error = null;
-    });
-    final result = await initRepository(path);
-    if (!mounted) return;
-    if (!result.ok) {
+      setState(() {
+        _running = true;
+        _error = null;
+      });
+      final result = await initRepository(path);
+      if (!mounted) return;
+      if (!result.ok || result.data == null) {
+        setState(() {
+          _running = false;
+          _error = result.error ?? 'Failed to create repository.';
+        });
+        return;
+      }
+
+      final repo = context.read<RepositoryState>();
+      final err = await repo.setActivePath(result.data!);
+      if (!mounted) return;
+      if (err != null) {
+        setState(() {
+          _running = false;
+          _error = err;
+        });
+        return;
+      }
       setState(() {
         _running = false;
-        _error = result.error;
+        _showPathEntry = false;
+        _pathController.clear();
+        _cloneTargetController.clear();
+        _entryMode = _RepositoryEntryMode.open;
       });
-      return;
-    }
-
-    final repo = context.read<RepositoryState>();
-    final err = await repo.setActivePath(result.data!);
-    if (!mounted) return;
-    if (err != null) {
+    } catch (error) {
+      if (!mounted) return;
       setState(() {
         _running = false;
-        _error = err;
+        _error = error.toString();
       });
-      return;
     }
-    setState(() {
-      _running = false;
-      _showPathEntry = false;
-      _pathController.clear();
-      _cloneTargetController.clear();
-      _entryMode = _RepositoryEntryMode.open;
-    });
   }
 
   @override
@@ -304,9 +329,15 @@ class _SidebarRailState extends State<SidebarRail> {
                             _normalizePath(repo.activePath!) ==
                                 _normalizePath(path),
                         onTap: () async {
-                          final err = await repo.setActivePath(path);
-                          if (err != null && mounted) {
-                            setState(() => _error = err);
+                          try {
+                            final err = await repo.setActivePath(path);
+                            if (err != null && mounted) {
+                              setState(() => _error = err);
+                            }
+                          } catch (error) {
+                            if (mounted) {
+                              setState(() => _error = error.toString());
+                            }
                           }
                         },
                       );

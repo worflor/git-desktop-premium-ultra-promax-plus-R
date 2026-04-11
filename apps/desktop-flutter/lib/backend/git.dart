@@ -79,9 +79,13 @@ Future<ProcessResult> _git(String workingDir, List<String> args) async {
 // ── Repository ───────────────────────────────────────────────────────────────
 
 Future<GitResult<String>> openRepository(String path) async {
-  final r = await _git(path, ['rev-parse', '--git-dir']);
-  if (r.exitCode != 0) return GitResult.err('Not a git repository');
-  return GitResult.ok(path);
+  try {
+    final r = await _git(path, ['rev-parse', '--git-dir']);
+    if (r.exitCode != 0) return GitResult.err('Not a git repository');
+    return GitResult.ok(path);
+  } catch (error) {
+    return GitResult.err(error.toString());
+  }
 }
 
 Future<GitResult<List<String>>> listRecentRepositories() async {
@@ -90,51 +94,57 @@ Future<GitResult<List<String>>> listRecentRepositories() async {
 }
 
 Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
-  final branch = await _git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  if (branch.exitCode != 0)
-    return GitResult.err(branch.stderr.toString().trim());
-  final branchName = branch.stdout.toString().trim();
+  try {
+    final branch = await _git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    if (branch.exitCode != 0) {
+      return GitResult.err(branch.stderr.toString().trim());
+    }
+    final branchName = branch.stdout.toString().trim();
 
-  final status = await _git(repo, ['status', '--porcelain=v1', '-u']);
-  if (status.exitCode != 0)
-    return GitResult.err(status.stderr.toString().trim());
+    final status = await _git(repo, ['status', '--porcelain=v1', '-u']);
+    if (status.exitCode != 0) {
+      return GitResult.err(status.stderr.toString().trim());
+    }
 
-  final files = <RepositoryStatusFile>[];
-  for (final line in status.stdout.toString().split('\n')) {
-    if (line.length < 3) continue;
-    final staged = line[0];
-    final unstaged = line[1];
-    final path = line.substring(3).trim();
-    if (path.isEmpty) continue;
-    files.add(RepositoryStatusFile(
-        path: path,
-        staged: staged == ' ' ? '' : staged,
-        unstaged: unstaged == ' ' ? '' : unstaged));
-  }
+    final files = <RepositoryStatusFile>[];
+    for (final line in status.stdout.toString().split('\n')) {
+      if (line.length < 3) continue;
+      final staged = line[0];
+      final unstaged = line[1];
+      final path = line.substring(3).trim();
+      if (path.isEmpty) continue;
+      files.add(RepositoryStatusFile(
+          path: path,
+          staged: staged == ' ' ? '' : staged,
+          unstaged: unstaged == ' ' ? '' : unstaged));
+    }
 
-  int ahead = 0, behind = 0;
-  final upstream = await _git(
-      repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
-  String? upstreamName;
-  if (upstream.exitCode == 0) {
-    upstreamName = upstream.stdout.toString().trim();
-    final ab = await _git(
-        repo, ['rev-list', '--left-right', '--count', '$upstreamName...HEAD']);
-    if (ab.exitCode == 0) {
-      final parts = ab.stdout.toString().trim().split('\t');
-      if (parts.length == 2) {
-        behind = int.tryParse(parts[0]) ?? 0;
-        ahead = int.tryParse(parts[1]) ?? 0;
+    int ahead = 0, behind = 0;
+    final upstream = await _git(
+        repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
+    String? upstreamName;
+    if (upstream.exitCode == 0) {
+      upstreamName = upstream.stdout.toString().trim();
+      final ab = await _git(repo,
+          ['rev-list', '--left-right', '--count', '$upstreamName...HEAD']);
+      if (ab.exitCode == 0) {
+        final parts = ab.stdout.toString().trim().split('\t');
+        if (parts.length == 2) {
+          behind = int.tryParse(parts[0]) ?? 0;
+          ahead = int.tryParse(parts[1]) ?? 0;
+        }
       }
     }
-  }
 
-  return GitResult.ok(RepositoryStatus(
-      branch: branchName,
-      upstream: upstreamName,
-      ahead: ahead,
-      behind: behind,
-      files: files));
+    return GitResult.ok(RepositoryStatus(
+        branch: branchName,
+        upstream: upstreamName,
+        ahead: ahead,
+        behind: behind,
+        files: files));
+  } catch (error) {
+    return GitResult.err(error.toString());
+  }
 }
 
 Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(String repo,
@@ -257,6 +267,106 @@ Future<GitResult<String>> getFileDiff(String repo, String path,
   final r = await _git(repo, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(r.stdout.toString());
+}
+
+Future<GitResult<String>> getSelectionDiff(
+  String repo,
+  List<RepositoryStatusFile> files, {
+  int contextLines = 3,
+}) async {
+  if (files.isEmpty) {
+    return const GitResult.ok('');
+  }
+
+  final parts = <String>[];
+  final trackedPaths = files
+      .where((file) => !_isUntrackedFile(file))
+      .map((file) => file.path)
+      .toList();
+  final hasTrackedStaged = files.any(
+    (file) => !_isUntrackedMarker(file.staged) && file.staged.trim().isNotEmpty,
+  );
+  final hasTrackedUnstaged = files.any(
+    (file) =>
+        !_isUntrackedMarker(file.unstaged) && file.unstaged.trim().isNotEmpty,
+  );
+
+  if (trackedPaths.isNotEmpty && hasTrackedStaged) {
+    final stagedResult = await _git(
+      repo,
+      ['diff', '--cached', '-U$contextLines', '--', ...trackedPaths],
+    );
+    if (stagedResult.exitCode != 0) {
+      return GitResult.err(stagedResult.stderr.toString().trim());
+    }
+    final output = stagedResult.stdout.toString().trim();
+    if (output.isNotEmpty) {
+      parts.add(output);
+    }
+  }
+
+  if (trackedPaths.isNotEmpty && hasTrackedUnstaged) {
+    final unstagedResult = await _git(
+      repo,
+      ['diff', '-U$contextLines', '--', ...trackedPaths],
+    );
+    if (unstagedResult.exitCode != 0) {
+      return GitResult.err(unstagedResult.stderr.toString().trim());
+    }
+    final output = unstagedResult.stdout.toString().trim();
+    if (output.isNotEmpty) {
+      parts.add(output);
+    }
+  }
+
+  for (final file in files.where(_isUntrackedFile)) {
+    parts.add(await _buildSyntheticUntrackedDiff(repo, file.path));
+  }
+
+  return GitResult.ok(parts.where((part) => part.trim().isNotEmpty).join('\n'));
+}
+
+bool _isUntrackedFile(RepositoryStatusFile file) =>
+    _isUntrackedMarker(file.staged) || _isUntrackedMarker(file.unstaged);
+
+bool _isUntrackedMarker(String code) => code.trim() == '?';
+
+Future<String> _buildSyntheticUntrackedDiff(
+    String repo, String relativePath) async {
+  final normalizedPath = relativePath.replaceAll('\\', '/');
+  final file = File(
+    '$repo${Platform.pathSeparator}${normalizedPath.replaceAll('/', Platform.pathSeparator)}',
+  );
+
+  List<String> lines;
+  try {
+    final bytes = await file.readAsBytes();
+    final isBinary = bytes.contains(0);
+    if (isBinary) {
+      lines = const ['[binary content omitted]'];
+    } else {
+      final content = utf8.decode(bytes, allowMalformed: true);
+      lines = const LineSplitter().convert(content);
+      if (content.isEmpty) {
+        lines = const [''];
+      }
+    }
+  } catch (_) {
+    lines = const ['[unable to read file content]'];
+  }
+
+  final buffer = StringBuffer()
+    ..writeln('diff --git a/$normalizedPath b/$normalizedPath')
+    ..writeln('new file mode 100644')
+    ..writeln('--- /dev/null')
+    ..writeln('+++ b/$normalizedPath')
+    ..writeln('@@ -0,0 +1,${lines.length} @@');
+
+  for (final line in lines) {
+    buffer.writeln('+$line');
+  }
+
+  return buffer.toString().trimRight();
 }
 
 Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {
@@ -592,18 +702,26 @@ Future<GitResult<SyncData>> syncRemote(
 }
 
 Future<GitResult<String>> cloneRepository(String url, String targetPath) async {
-  final r = await Process.run('git', ['clone', url, targetPath],
-      stdoutEncoding: utf8, stderrEncoding: utf8);
-  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-  return GitResult.ok(targetPath);
+  try {
+    final r = await Process.run('git', ['clone', url, targetPath],
+        stdoutEncoding: utf8, stderrEncoding: utf8);
+    if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+    return GitResult.ok(targetPath);
+  } catch (error) {
+    return GitResult.err(error.toString());
+  }
 }
 
 Future<GitResult<String>> initRepository(String path) async {
-  final dir = Directory(path);
-  if (!await dir.exists()) await dir.create(recursive: true);
-  final r = await _git(path, ['init']);
-  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-  return GitResult.ok(path);
+  try {
+    final dir = Directory(path);
+    if (!await dir.exists()) await dir.create(recursive: true);
+    final r = await _git(path, ['init']);
+    if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+    return GitResult.ok(path);
+  } catch (error) {
+    return GitResult.err(error.toString());
+  }
 }
 
 Future<GitResult<void>> startInteractiveRebase(
