@@ -243,8 +243,9 @@ List<BoxShadow> _primaryButtonShadows(
       ],
     AppThemeId.blackboard => [
         BoxShadow(
-          color: Colors.white.withValues(alpha: 0.15),
-          blurRadius: 8,
+          color: Colors.white.withValues(alpha: 0.2),
+          blurRadius: 1,
+          spreadRadius: 0.5,
         ),
       ],
     _ => const [],
@@ -262,8 +263,9 @@ List<BoxShadow> _modeButtonShadows(
     return [
       BoxShadow(
         color: t.accentBright
-            .withValues(alpha: t.id == AppThemeId.blackboard ? 0 : 0.18),
-        blurRadius: t.id == AppThemeId.redshift ? 12 : 8,
+            .withValues(alpha: t.id == AppThemeId.blackboard ? 0 : 0.25),
+        blurRadius: 1,
+        spreadRadius: 0.5,
       ),
     ];
   }

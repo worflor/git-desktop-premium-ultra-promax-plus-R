@@ -430,6 +430,7 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
   required bool includeUnstaged,
   List<String> scopedPaths = const [],
   String customPrompt = '',
+  String commitDraft = '',
   required int guardrailStage,
   bool doubleCheckEnabled = false,
   bool readOnly = true,
@@ -474,6 +475,7 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       modelCategoryLabel: modelCategoryLabel,
       scopeLabel: scopeLabel,
       customPrompt: customPrompt,
+      commitDraft: commitDraft,
       statusSummary: bundle.statusSummary,
       statSummary: bundle.statSummary,
       diffSummary: bundle.diffBundle.promptBody,
@@ -518,6 +520,8 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
         AiCommitReviewData(
           providerId: provider.id,
           modelId: modelId,
+          modelCategoryLabel: modelCategoryLabel,
+          guardrailStage: guardrailStage,
           scopeLabel: scopeLabel,
           usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
           promptCharacters: draftPrompt.length,
@@ -572,6 +576,8 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       final fallback = AiCommitReviewData(
         providerId: provider.id,
         modelId: modelId,
+        modelCategoryLabel: modelCategoryLabel,
+        guardrailStage: guardrailStage,
         scopeLabel: scopeLabel,
         usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
@@ -600,6 +606,8 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
         AiCommitReviewData(
           providerId: provider.id,
           modelId: modelId,
+          modelCategoryLabel: modelCategoryLabel,
+          guardrailStage: guardrailStage,
           scopeLabel: scopeLabel,
           usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
           promptCharacters: draftPrompt.length + verifyPrompt.length,
@@ -640,6 +648,8 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       AiCommitReviewData(
         providerId: provider.id,
         modelId: modelId,
+        modelCategoryLabel: modelCategoryLabel,
+        guardrailStage: guardrailStage,
         scopeLabel: scopeLabel,
         usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
@@ -1747,6 +1757,14 @@ Future<String> _collectStructuralVerification({
       buffer.write(symbolVerification);
     }
 
+    // 3. Removal verification — confirm removed symbols are dead code.
+    final removalVerification = await _verifyRemovals(repositoryPath, diffText);
+    if (removalVerification.isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('Removal verification:');
+      buffer.write(removalVerification);
+    }
+
     return buffer.toString();
   } catch (_) {
     return '';
@@ -1829,13 +1847,62 @@ Future<String> _verifySymbols(String repositoryPath, String diffText) async {
 
     try {
       final grep = await _runGitCommand(repositoryPath, [
-        'grep', '-l', '--fixed-strings', symbol,
+        'grep', '-l', '-w', '--fixed-strings', symbol,
       ]);
       if (grep.ok && (grep.data ?? '').trim().isNotEmpty) {
         final files = (grep.data ?? '').trim().split('\n').where((f) => f.isNotEmpty).toList();
         results.writeln('  $symbol: found in ${files.length} file${files.length == 1 ? "" : "s"} (${files.take(3).join(", ")}${files.length > 3 ? ", ..." : ""})');
       } else {
         results.writeln('  $symbol: not found in repo');
+      }
+    } catch (_) {
+      continue;
+    }
+  }
+
+  return results.toString();
+}
+
+/// Verify that removed function/class definitions are no longer referenced.
+/// Confirms the removal is safe dead-code cleanup, not an accidental regression.
+Future<String> _verifyRemovals(String repositoryPath, String diffText) async {
+  // Extract symbol names from REMOVED lines that look like definitions.
+  // Language-agnostic: matches type/class declarations and any function
+  // signature pattern (word followed by parens), not a hardcoded type list.
+  final defPattern = RegExp(
+    r'^-\s*(?:class|enum|mixin|extension|typedef|struct|interface|trait)\s+(\w+)|'
+    r'^-\s*(?:(?:export|pub|static|async|const|final|var|let|val)\s+)*(?:[A-Z]\w*|void|int|bool|double|float|long|char|string|num)[<>\[\]?,\w]*\s+(\w+)\s*[(<]',
+    multiLine: true,
+  );
+
+  final removedSymbols = <String>{};
+  for (final match in defPattern.allMatches(diffText)) {
+    final name = match.group(1) ?? match.group(2);
+    if (name != null && name.length > 3 && !name.startsWith('_')) {
+      removedSymbols.add(name);
+    }
+  }
+
+  if (removedSymbols.isEmpty) return '';
+
+  final results = StringBuffer();
+  var count = 0;
+  for (final symbol in removedSymbols) {
+    if (count >= 8) break;
+    count++;
+    try {
+      final grep = await _runGitCommand(repositoryPath, [
+        'grep', '-l', '-w', '--fixed-strings', symbol,
+      ]);
+      final files = (grep.ok ? (grep.data ?? '') : '')
+          .trim()
+          .split('\n')
+          .where((f) => f.isNotEmpty)
+          .toList();
+      if (files.isEmpty) {
+        results.writeln('  ✓ $symbol: safely removed (no remaining references)');
+      } else {
+        results.writeln('  ⚠ $symbol: still referenced in ${files.length} file(s) (${files.take(3).join(", ")})');
       }
     } catch (_) {
       continue;
@@ -2193,8 +2260,6 @@ String _buildCommitMessagePrompt({
     buffer.writeln(statSummary.trim());
     buffer.writeln('</diffstat>');
   }
-  // User instructions go last before the diff — maximum recency weight,
-  // acts as a final directive the model reads immediately before generating.
   if (customPrompt.trim().isNotEmpty) {
     buffer.writeln();
     buffer.writeln('<user_instructions>');
@@ -2218,12 +2283,13 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
     case 0:
       return const ReviewGuardrailProfile(
         id: 'loose',
-        seat: 'restrained sanity checker',
+        seat: 'focused sanity checker',
+        wakeFrame: 'A quick second pair of eyes. If something is probably fine, it is fine.',
         reviewRadius: 'Keep the review local to the changed code and obvious nearby effects.',
         primaryFear:
             'Your main job is to catch concrete logic bugs and likely breakage in the code at hand.',
         silenceRule:
-            'Stay silent on cosmetic opinions, abstract architecture critiques, and weakly supported inconsistency commentary.',
+            'Stay silent on cosmetic opinions, abstract architecture critiques, and speculative edge cases that require unlikely preconditions.',
         verdictBar:
             'Only downgrade the commit when the evidence supports a credible, likely problem.',
         priorityConcernClasses: [
@@ -2244,6 +2310,7 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
       return const ReviewGuardrailProfile(
         id: 'balanced',
         seat: 'practical reviewer',
+        wakeFrame: 'A proper read-through. Sit with the diff, check the work.',
         reviewRadius:
             'Review the changed code and its likely integration surface in the surrounding system.',
         primaryFear:
@@ -2251,7 +2318,7 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
         silenceRule:
             'Skip cosmetic nits and generic opinions. Surface only issues with practical engineering consequence.',
         verdictBar:
-            'Downgrade when the evidence supports meaningful correctness, integration, or code-health risk.',
+            'Downgrade when the evidence supports meaningful correctness, integration, or reliability risk.',
         priorityConcernClasses: [
           ReviewConcernClass.logicBug,
           ReviewConcernClass.regressionRisk,
@@ -2268,12 +2335,13 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
       return const ReviewGuardrailProfile(
         id: 'strict',
         seat: 'careful maintainer',
+        wakeFrame: 'What looks fine on first read — look again. Check underneath.',
         reviewRadius:
             'Review the changed code, nearby integration points, and hidden assumptions implied by the diff.',
         primaryFear:
             'Your job is to catch incomplete handling, hidden coupling, edge cases, and long-tail risks before commit.',
         silenceRule:
-            'Surface subtle risks when grounded in the diff. Leave aesthetics to linters.',
+            'Surface subtle risks when supported by evidence in the diff. Leave aesthetics to linters.',
         verdictBar:
             'A commit is not ready when hidden assumptions or incomplete safeguards create material risk.',
         priorityConcernClasses: [
@@ -2284,6 +2352,8 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
           ReviewConcernClass.inconsistentPattern,
           ReviewConcernClass.hiddenAssumption,
           ReviewConcernClass.maintainabilityHazard,
+          ReviewConcernClass.destructiveRisk,
+          ReviewConcernClass.securityRisk,
         ],
         suppressedConcernClasses: [],
         allowIntegrationEscalation: true,
@@ -2294,12 +2364,13 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
       return const ReviewGuardrailProfile(
         id: 'paranoid',
         seat: 'final gate reviewer',
+        wakeFrame: 'Assume something is hiding. Find it, or confirm it is not there.',
         reviewRadius:
             'Review the changed code, integration surface, and any broader operational or safety consequences supported by the diff.',
         primaryFear:
             'Your job is to prevent harmful surprises such as destructive behavior, data loss, corruption, security exposure, and silent regressions.',
         silenceRule:
-            'Surface serious risks clearly when the diff credibly supports them. Ground every concern in evidence.',
+            'Flag credible risks even when evidence is circumstantial. State your reasoning clearly.',
         verdictBar:
             'Downgrade aggressively when the evidence points to a high-impact failure class, even if the bug is not fully proven.',
         priorityConcernClasses: [
@@ -2317,7 +2388,7 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
         suppressedConcernClasses: [],
         allowIntegrationEscalation: true,
         allowDesignSmellEscalation: true,
-        requireConcreteEvidence: true,
+        requireConcreteEvidence: false,
       );
   }
 }
@@ -2363,9 +2434,9 @@ String _buildCommitReviewPrompt({
   }
   buffer.writeln(
     'Use <findings> for things that are concretely wrong — bugs, breakage, '
-    'missing files, incorrect logic. Use <observations> for architectural '
-    'notes, performance considerations, design trade-offs, and intentional '
-    'changes worth noting. The score follows from findings alone. '
+    'missing files, incorrect logic. Use <observations> for anything else '
+    'that surfaced during review — complexity, trade-offs, assumptions, risk. '
+    'The score follows from findings alone. '
     'Leave code style to linters.',
   );
   buffer.writeln('</evidence_rules>');
@@ -2422,6 +2493,12 @@ String _buildCommitReviewPrompt({
     buffer.writeln(spec.statSummary.trim());
     buffer.writeln('</diffstat>');
   }
+  if (spec.commitDraft.trim().isNotEmpty) {
+    buffer.writeln();
+    buffer.writeln('<commit_intent>');
+    buffer.writeln(spec.commitDraft.trim());
+    buffer.writeln('</commit_intent>');
+  }
   buffer.writeln();
   buffer.writeln('<diff_context>');
   buffer.writeln(spec.diffSummary.trim());
@@ -2449,9 +2526,7 @@ String _buildReviewWakeBlock(
     );
   } else {
     buffer.writeln('You are the ${profile.seat} for this commit review.');
-    buffer.writeln(
-      'Your responsibility is to judge whether this change is safe and coherent enough to commit.',
-    );
+    buffer.writeln(profile.wakeFrame);
   }
   buffer.writeln(profile.primaryFear);
   buffer.writeln(profile.silenceRule);
@@ -2493,9 +2568,9 @@ Return only the XML-like schema below — no surrounding prose.
 Use exactly this shape:
 <review_result>
 <verdict>Ready|Mostly ready|Needs attention|High risk|Block</verdict>
-<score>0-100 confidence that this commit lands cleanly. Findings weigh heavily, observations contribute lightly. Let both inform the score naturally — findings move the needle, observations nudge it.</score>
-<summary>One sentence summary.</summary>
-<summary_reasoning>Plain-language explanation of the reasoning. Architectural observations, performance considerations, design trade-offs, and intentional changes belong here — they provide context but are not actionable findings.</summary_reasoning>
+<score>0-100 confidence that this commit lands cleanly. The score reflects what you found — let the evidence decide.</score>
+<summary>One sentence — what was found, not what was built.</summary>
+<summary_reasoning>Plain-language explanation of the reasoning behind the verdict and score.</summary_reasoning>
 <findings>
 <finding id="F1" severity="note|warn|risk|block" file="path/or/-" hunk="@@ ... @@ or -">
 <title>Short title</title>
@@ -2513,7 +2588,8 @@ Use exactly this shape:
 A finding belongs in findings when you are certain — you can prove it from the evidence.
 An observation belongs in observations when you are noting something worth awareness — a trade-off, a design choice, a consideration.
 Certainty is the separator: proven facts go to findings, everything else goes to observations.
-Empty sections are welcome — a clean commit with only observations is a good result.
+Empty findings are welcome when the commit is genuinely clean — but verify before concluding.
+Observations hold everything that didn't crystallize into a finding — the texture of the change.
 </output_schema>''';
 }
 
@@ -4605,6 +4681,7 @@ class _ReviewPromptSpec {
   final String modelCategoryLabel;
   final String scopeLabel;
   final String customPrompt;
+  final String commitDraft;
   final String statusSummary;
   final String statSummary;
   final String diffSummary;
@@ -4616,6 +4693,7 @@ class _ReviewPromptSpec {
     required this.modelCategoryLabel,
     required this.scopeLabel,
     required this.customPrompt,
+    this.commitDraft = '',
     required this.statusSummary,
     required this.statSummary,
     required this.diffSummary,
@@ -4724,6 +4802,7 @@ enum ReviewConcernClass {
 class ReviewGuardrailProfile {
   final String id;
   final String seat;
+  final String wakeFrame;
   final String reviewRadius;
   final String primaryFear;
   final String silenceRule;
@@ -4737,6 +4816,7 @@ class ReviewGuardrailProfile {
   const ReviewGuardrailProfile({
     required this.id,
     required this.seat,
+    required this.wakeFrame,
     required this.reviewRadius,
     required this.primaryFear,
     required this.silenceRule,

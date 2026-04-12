@@ -63,15 +63,6 @@ class HyperReactive extends StatelessWidget {
                 color: t.chromeAccent.withValues(alpha: 0.18 + glow * 0.32),
               )
             : null,
-        boxShadow: glow > 0
-            ? [
-                BoxShadow(
-                  color: t.chromeAccent.withValues(alpha: 0.18 * glow),
-                  blurRadius: 8 + 22 * drag,
-                  spreadRadius: drag * 1.2,
-                ),
-              ]
-            : null,
       ),
       child: Transform(
         alignment: Alignment.center,

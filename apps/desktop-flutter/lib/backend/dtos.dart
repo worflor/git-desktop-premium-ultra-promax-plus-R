@@ -672,6 +672,8 @@ class AiCommitReviewVerificationData {
 class AiCommitReviewData {
   final String providerId;
   final String modelId;
+  final String modelCategoryLabel;
+  final int guardrailStage;
   final String scopeLabel;
   final bool usedCondensedDiff;
   final int promptCharacters;
@@ -694,6 +696,8 @@ class AiCommitReviewData {
   const AiCommitReviewData({
     required this.providerId,
     required this.modelId,
+    this.modelCategoryLabel = '',
+    this.guardrailStage = 1,
     required this.scopeLabel,
     required this.usedCondensedDiff,
     required this.promptCharacters,

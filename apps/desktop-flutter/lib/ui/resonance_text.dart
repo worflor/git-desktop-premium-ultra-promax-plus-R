@@ -258,7 +258,11 @@ class _CollapsibleCodeBlockState extends State<_CollapsibleCodeBlock> {
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final lineCount = '\n'.allMatches(widget.code).length + 1;
-    final isLong = lineCount > 8;
+    // Only collapse when hiding at least 4 lines — the toggle itself
+    // takes visual space, so hiding 1-3 lines isn't worth it.
+    final collapsedLines = 6;
+    final hiddenLines = lineCount - collapsedLines;
+    final isLong = hiddenLines >= 4;
     final codeStyle = TextStyle(
       color: t.chromeAccent,
       fontFamily: 'JetBrainsMono',
@@ -304,7 +308,7 @@ class _CollapsibleCodeBlockState extends State<_CollapsibleCodeBlock> {
                 ),
                 child: Center(
                   child: Text(
-                    _expanded ? '▲ collapse' : '▼ ${lineCount - 8} more lines',
+                    _expanded ? '▲ collapse' : '▼ $hiddenLines more lines',
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 10,

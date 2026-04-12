@@ -392,11 +392,17 @@ class _SparklePainter extends CustomPainter {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedSearchIcon extends _AnimatedIconBase {
+  /// Review verdict — controls what the lens morphs into on success.
+  /// "Ready" → shield+check, "Mostly ready" → simple check,
+  /// "Needs attention" → eye, "High risk" → warning, "Block" → X
+  final String? verdict;
+
   const AnimatedSearchIcon({
     super.key,
     required super.state,
     required super.color,
     super.size,
+    this.verdict,
   });
 
   @override
@@ -416,6 +422,7 @@ class _AnimatedSearchIconState
       _SearchPainter(
         color: color, loop: loopValue, flash: flashValue,
         hover: hoverValue, state: state,
+        verdict: widget.verdict,
       );
 }
 
@@ -423,10 +430,11 @@ class _SearchPainter extends CustomPainter {
   final Color color;
   final double loop, flash, hover;
   final IconAnimState state;
+  final String? verdict;
 
   _SearchPainter({
     required this.color, required this.loop, required this.flash,
-    required this.hover, required this.state,
+    required this.hover, required this.state, this.verdict,
   });
 
   @override
@@ -441,9 +449,9 @@ class _SearchPainter extends CustomPainter {
 
     canvas.save();
 
-    // ── Success: morph to shield-check ──
+    // ── Success: morph based on review verdict ──
     if (state == IconAnimState.success && flash > 0) {
-      _paintShieldMorph(canvas, paint, s, size);
+      _paintVerdictMorph(canvas, paint, s, size);
       canvas.restore();
       return;
     }
@@ -599,72 +607,210 @@ class _SearchPainter extends CustomPainter {
     }
   }
 
-  void _paintShieldMorph(Canvas canvas, Paint paint, double s, Size size) {
-    final et = Curves.easeOutCubic.transform(flash);
-    final cx = size.width / 2;
-    final cy = size.height / 2;
+  // ── Phase 1 (shared): lens collapses, handle retracts ──
+  void _paintLensCollapse(Canvas canvas, Paint paint, double s, double morph) {
+    final em = Curves.easeInOutCubic.transform(morph);
+    final cx = s * 8;
 
-    // Phase 1: lens shrinks, handle retracts, circle warps into shield
-    // Phase 2: check draws inside
+    final lensX = 7 * s + (cx - 7 * s) * em;
+    final lensY = 7 * s + (cx - 7 * s) * em;
+    final lensR = 4.5 * s * (1.0 - em * 0.85);
 
     paint.strokeWidth = 1.5 * s;
+    paint.color = color;
+    canvas.drawCircle(Offset(lensX, lensY), lensR, paint);
 
-    if (et < 0.5) {
-      // Morphing: interpolate lens circle → shield shape
-      final morph = et / 0.5;
-      final em = Curves.easeInOutCubic.transform(morph);
+    paint.color = color.withValues(alpha: 1.0 - em);
+    paint.strokeWidth = 1.8 * s;
+    canvas.drawLine(
+      Offset(10.5 * s, 10.5 * s),
+      Offset(13.5 * s - 2 * s * em, 13.5 * s - 2 * s * em),
+      paint,
+    );
+    paint.color = color;
+  }
 
-      // Lens shrinks toward center
-      final lensX = 7 * s + (cx - 7 * s) * em;
-      final lensY = 7 * s + (cy - 7 * s) * em;
-      final lensR = 4.5 * s * (1.0 - em * 0.3);
+  void _paintVerdictMorph(Canvas canvas, Paint paint, double s, Size size) {
+    final et = Curves.easeOutCubic.transform(flash);
+    paint.strokeWidth = 1.5 * s;
 
-      canvas.drawCircle(Offset(lensX, lensY), lensR, paint);
+    // Phase 1: lens collapses (0→0.45)
+    if (et < 0.45) {
+      _paintLensCollapse(canvas, paint, s, et / 0.45);
+      return;
+    }
 
-      // Handle fades
-      paint.color = color.withValues(alpha: 1.0 - em);
-      paint.strokeWidth = 1.8 * s;
-      canvas.drawLine(
-        Offset(10.5 * s, 10.5 * s),
-        Offset(13.5 * s - 2 * s * em, 13.5 * s - 2 * s * em),
-        paint,
-      );
-      paint.color = color;
-    } else {
-      // Shield fully formed
-      final shieldT = ((et - 0.5) / 0.5).clamp(0.0, 1.0);
-      final pop = 1.0 + 0.08 * math.sin(shieldT * math.pi);
-      canvas.translate(cx, cy);
-      canvas.scale(pop);
-      canvas.translate(-cx, -cy);
+    // Phase 2: verdict symbol emerges (0.4→1.0)
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final symbolT = ((et - 0.4) / 0.6).clamp(0.0, 1.0);
+    final pop = 1.0 + 0.1 * math.sin(symbolT * math.pi);
 
-      final shield = Path()
-        ..moveTo(cx, 2 * s)
-        ..lineTo(cx + 5 * s, 4.5 * s)
-        ..lineTo(cx + 5 * s, 9 * s)
-        ..quadraticBezierTo(cx, 14.5 * s, cx, 14.5 * s)
-        ..quadraticBezierTo(cx, 14.5 * s, cx - 5 * s, 9 * s)
-        ..lineTo(cx - 5 * s, 4.5 * s)
-        ..close();
-      canvas.drawPath(shield, paint);
+    canvas.translate(cx, cy);
+    canvas.scale(pop);
 
-      // Inner check
-      if (shieldT > 0.2) {
-        final checkT = ((shieldT - 0.2) / 0.8).clamp(0.0, 1.0);
-        final checkPath = Path()
-          ..moveTo(cx - 2.2 * s, cy + 0.5 * s)
-          ..lineTo(cx - 0.5 * s, cy + 2.5 * s)
-          ..lineTo(cx + 2.5 * s, cy - 1.5 * s);
-        final metric = checkPath.computeMetrics().first;
-        canvas.drawPath(metric.extractPath(0, metric.length * checkT), paint);
-      }
+    paint.color = color;
+    paint.strokeWidth = 1.5 * s;
+
+    switch (verdict) {
+      // ── Ready: shield with check ──
+      case 'Ready':
+        final shield = Path()
+          ..moveTo(0, -6 * s)
+          ..lineTo(5 * s, -3.5 * s)
+          ..lineTo(5 * s, 1 * s)
+          ..quadraticBezierTo(0, 6.5 * s, 0, 6.5 * s)
+          ..quadraticBezierTo(0, 6.5 * s, -5 * s, 1 * s)
+          ..lineTo(-5 * s, -3.5 * s)
+          ..close();
+        final shieldMetric = shield.computeMetrics().first;
+        canvas.drawPath(
+          shieldMetric.extractPath(0, shieldMetric.length * symbolT),
+          paint,
+        );
+        if (symbolT > 0.4) {
+          final ct = ((symbolT - 0.4) / 0.6).clamp(0.0, 1.0);
+          final check = Path()
+            ..moveTo(-2.2 * s, 0.5 * s)
+            ..lineTo(-0.5 * s, 2.5 * s)
+            ..lineTo(2.5 * s, -1.5 * s);
+          final cm = check.computeMetrics().first;
+          canvas.drawPath(cm.extractPath(0, cm.length * ct), paint);
+        }
+
+      // ── Mostly ready: simple bold checkmark ──
+      case 'Mostly ready':
+        final check = Path()
+          ..moveTo(-4 * s, 0)
+          ..lineTo(-1 * s, 3.5 * s)
+          ..lineTo(5 * s, -3.5 * s);
+        paint.strokeWidth = 1.8 * s;
+        final cm = check.computeMetrics().first;
+        canvas.drawPath(cm.extractPath(0, cm.length * symbolT), paint);
+
+      // ── Needs attention: open eye ──
+      case 'Needs attention':
+        // Eye outline (almond shape)
+        final eyeTop = Path()
+          ..moveTo(-6 * s, 0)
+          ..quadraticBezierTo(0, -4.5 * s, 6 * s, 0);
+        final eyeBot = Path()
+          ..moveTo(-6 * s, 0)
+          ..quadraticBezierTo(0, 4.5 * s, 6 * s, 0);
+        final topM = eyeTop.computeMetrics().first;
+        final botM = eyeBot.computeMetrics().first;
+        canvas.drawPath(topM.extractPath(0, topM.length * symbolT), paint);
+        canvas.drawPath(botM.extractPath(0, botM.length * symbolT), paint);
+        // Pupil (appears after eye shape is drawn)
+        if (symbolT > 0.5) {
+          final pupilT = ((symbolT - 0.5) / 0.5).clamp(0.0, 1.0);
+          canvas.drawCircle(Offset.zero, 1.8 * s * pupilT, paint);
+        }
+
+      // ── High risk: warning triangle with ! ──
+      case 'High risk':
+        final tri = Path()
+          ..moveTo(0, -5.5 * s)
+          ..lineTo(5.5 * s, 4.5 * s)
+          ..lineTo(-5.5 * s, 4.5 * s)
+          ..close();
+        final triM = tri.computeMetrics().first;
+        canvas.drawPath(triM.extractPath(0, triM.length * symbolT), paint);
+        if (symbolT > 0.5) {
+          final bangT = ((symbolT - 0.5) / 0.5).clamp(0.0, 1.0);
+          // Exclamation line
+          canvas.drawLine(
+            Offset(0, -2.5 * s),
+            Offset(0, (-2.5 + 3.5 * bangT) * s),
+            paint,
+          );
+          // Dot
+          if (bangT > 0.7) {
+            canvas.drawCircle(
+              Offset(0, 3 * s),
+              0.5 * s,
+              paint..style = PaintingStyle.fill,
+            );
+            paint.style = PaintingStyle.stroke;
+          }
+        }
+
+      // ── Block: bold X ──
+      case 'Block':
+        // Sad robot face: head circle, antenna, dash eyes, frown arc.
+        // Phase 1 (0→0.35): head draws
+        // Phase 2 (0.35→0.6): antenna + eyes appear
+        // Phase 3 (0.6→1.0): frown draws
+        paint.strokeWidth = 1.5 * s;
+
+        // Head circle
+        final headR = 4.5 * s;
+        final headRect = Rect.fromCircle(center: Offset.zero, radius: headR);
+        final headT = (symbolT / 0.35).clamp(0.0, 1.0);
+        canvas.drawArc(headRect, -math.pi / 2, math.pi * 2 * headT, false, paint);
+
+        // Antenna (small line + dot on top)
+        if (symbolT > 0.3) {
+          final antT = ((symbolT - 0.3) / 0.2).clamp(0.0, 1.0);
+          canvas.drawLine(
+            Offset(0, -headR),
+            Offset(0, -headR - 2.2 * s * antT),
+            paint,
+          );
+          if (antT > 0.6) {
+            canvas.drawCircle(
+              Offset(0, -headR - 2.2 * s),
+              0.6 * s,
+              paint..style = PaintingStyle.fill,
+            );
+            paint.style = PaintingStyle.stroke;
+          }
+        }
+
+        // Eyes (small horizontal dashes — half-shut, sad)
+        if (symbolT > 0.4) {
+          final eyeT = ((symbolT - 0.4) / 0.2).clamp(0.0, 1.0);
+          final eyeW = 1.4 * s * eyeT;
+          final eyeY = -1.0 * s;
+          // Left eye
+          canvas.drawLine(
+            Offset(-2.0 * s - eyeW, eyeY),
+            Offset(-2.0 * s + eyeW, eyeY),
+            paint,
+          );
+          // Right eye
+          canvas.drawLine(
+            Offset(2.0 * s - eyeW, eyeY),
+            Offset(2.0 * s + eyeW, eyeY),
+            paint,
+          );
+        }
+
+        // Frown (downward arc)
+        if (symbolT > 0.6) {
+          final frownT = ((symbolT - 0.6) / 0.4).clamp(0.0, 1.0);
+          final frown = Path()
+            ..moveTo(-2.2 * s, 2.2 * s)
+            ..quadraticBezierTo(0, 0.8 * s, 2.2 * s, 2.2 * s);
+          final fm = frown.computeMetrics().first;
+          canvas.drawPath(fm.extractPath(0, fm.length * frownT), paint);
+        }
+
+      // ── Fallback (no verdict or unknown): simple check ──
+      default:
+        final check = Path()
+          ..moveTo(-3.5 * s, 0)
+          ..lineTo(-1 * s, 2.8 * s)
+          ..lineTo(4 * s, -2.8 * s);
+        final cm = check.computeMetrics().first;
+        canvas.drawPath(cm.extractPath(0, cm.length * symbolT), paint);
     }
   }
 
   @override
   bool shouldRepaint(_SearchPainter old) =>
       loop != old.loop || flash != old.flash || hover != old.hover ||
-      state != old.state || color != old.color;
+      state != old.state || color != old.color || verdict != old.verdict;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

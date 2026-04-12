@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
+
+import 'package:path/path.dart' as p;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,6 +21,19 @@ import '../../app/preferences_state.dart';
 import '../../app/repository_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../diff/diff_shell.dart';
+
+String _guardrailLabelForStage(int stage) {
+  switch (stage.clamp(0, 3)) {
+    case 0:
+      return 'Loose';
+    case 1:
+      return 'Balanced';
+    case 2:
+      return 'Strict';
+    default:
+      return 'Paranoid';
+  }
+}
 
 enum _CommitRunMode { commitOnly, commitAndSync }
 
@@ -80,6 +96,9 @@ class _ChangesPageState extends State<ChangesPage> {
   static const _minLeftPanelWidth = 220.0;
   static const _maxLeftPanelWidth = 520.0;
   bool _commitOnlyMode = false;
+  Timer? _commitDraftSaveDebounce;
+  String? _lastDraftRepoPath;
+  String? _lastDraftBranch;
 
   @override
   void initState() {
@@ -98,8 +117,116 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
+  /// Resolve the git directory for a repo. Handles worktrees and submodules
+  /// where `.git` may be a file rather than a directory.
+  Future<String?> _resolveGitDir(String repoPath) async {
+    try {
+      final result = await Process.run(
+        'git', ['rev-parse', '--git-dir'],
+        workingDirectory: repoPath,
+      );
+      if (result.exitCode == 0) {
+        final gitDir = (result.stdout as String).trim();
+        // rev-parse returns relative or absolute — normalize.
+        return p.isAbsolute(gitDir) ? gitDir : p.join(repoPath, gitDir);
+      }
+    } catch (_) {}
+    // Fallback to the common case.
+    return p.join(repoPath, '.git');
+  }
+
+  File _draftFile(String gitDir, [String? branch]) {
+    if (branch == null || branch.isEmpty) {
+      return File(p.join(gitDir, 'MANIFOLD_COMMIT_MSG'));
+    }
+    // Sanitize branch name for use as a filename suffix.
+    final safe = branch.replaceAll(RegExp(r'[^\w.-]'), '_');
+    return File(p.join(gitDir, 'MANIFOLD_COMMIT_MSG_$safe'));
+  }
+
+  void _loadCommitDraft() {
+    final repoState = context.read<RepositoryState>();
+    final repoPath = repoState.activePath;
+    if (repoPath == null) return;
+    _lastDraftRepoPath = repoPath;
+    _lastDraftBranch = repoState.status?.branch;
+    _loadCommitDraftForRepo(repoPath, branch: _lastDraftBranch);
+  }
+
+  Future<void> _loadCommitDraftForRepo(String repoPath, {String? branch, bool force = false}) async {
+    try {
+      final gitDir = await _resolveGitDir(repoPath);
+      if (gitDir == null) return;
+      final file = _draftFile(gitDir, branch);
+      if (await file.exists()) {
+        final draft = await file.readAsString();
+        if (mounted && (force || _commitMsgCtrl.text.isEmpty)) {
+          _commitMsgCtrl.text = draft;
+        }
+      } else if (force && mounted) {
+        _commitMsgCtrl.clear();
+      }
+    } catch (_) {}
+  }
+
+  void _saveCommitDraft(String value) {
+    _commitDraftSaveDebounce?.cancel();
+    // Capture repo path and branch NOW, not when the timer fires — prevents
+    // saving to the wrong repo/branch after a switch.
+    final capturedRepoPath = _lastDraftRepoPath;
+    final capturedBranch = _lastDraftBranch;
+    _commitDraftSaveDebounce = Timer(const Duration(milliseconds: 500), () async {
+      try {
+        final repoPath = capturedRepoPath ?? context.read<RepositoryState>().activePath;
+        if (repoPath == null) return;
+        final gitDir = await _resolveGitDir(repoPath);
+        if (gitDir == null) return;
+        final file = _draftFile(gitDir, capturedBranch);
+        if (value.trim().isEmpty) {
+          if (await file.exists()) await file.delete();
+        } else {
+          await file.writeAsString(value);
+        }
+      } catch (_) {}
+    });
+  }
+
+  Future<void> _clearCommitDraft() async {
+    try {
+      final repoPath = _lastDraftRepoPath ?? context.read<RepositoryState>().activePath;
+      if (repoPath == null) return;
+      final gitDir = await _resolveGitDir(repoPath);
+      if (gitDir == null) return;
+      final file = _draftFile(gitDir, _lastDraftBranch);
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
+  /// Immediately write a draft to disk — no debounce. Used on branch/repo
+  /// switch and app lifecycle transitions to avoid losing in-progress text.
+  Future<void> _flushDraft(String repoPath, String? branch, String value) async {
+    try {
+      final gitDir = await _resolveGitDir(repoPath);
+      if (gitDir == null) return;
+      final file = _draftFile(gitDir, branch);
+      if (value.trim().isEmpty) {
+        if (await file.exists()) await file.delete();
+      } else {
+        await file.writeAsString(value);
+      }
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
+    _commitDraftSaveDebounce?.cancel();
+    // Flush on dispose so closing the app doesn't lose the draft.
+    final repo = _lastDraftRepoPath;
+    final branch = _lastDraftBranch;
+    final text = _commitMsgCtrl.text;
+    if (repo != null && text.trim().isNotEmpty) {
+      _flushDraft(repo, branch, text);
+    }
     _commitMsgCtrl.dispose();
     _commitMsgFocusNode.dispose();
     super.dispose();
@@ -133,6 +260,7 @@ class _ChangesPageState extends State<ChangesPage> {
 
   void _clearReviewState() {
     _reviewRunning = false;
+    _reviewSuccess = false;
     _reviewActive = false;
     _reviewTraceExpanded = false;
     _reviewReasoningExpanded = false;
@@ -148,6 +276,7 @@ class _ChangesPageState extends State<ChangesPage> {
   void _cancelReviewRequest() {
     setState(() {
       _reviewRunning = false;
+      _reviewSuccess = false;
       _reviewActive = false;
       _reviewScopeKey = null;
       _reviewError = null;
@@ -449,7 +578,7 @@ class _ChangesPageState extends State<ChangesPage> {
     ).toLowerCase();
     final guardrail = _guardrailLabelForStage(guardrailStage).toLowerCase();
     if (_reviewRunning) {
-      return _reviewActive ? 'checking these changes...' : 'show review';
+      return _reviewActive ? 'reviewing...' : 'show review';
     }
     if (_commitAiLoading) {
       return 'preparing commit review...';
@@ -462,7 +591,11 @@ class _ChangesPageState extends State<ChangesPage> {
           'configure review AI in settings.';
     }
     if (hasPersistentReview) {
-      return _reviewActive ? 'viewing review' : 'show review';
+      if (_reviewActive) {
+        final verdict = _reviewResult?.verdict;
+        return verdict != null ? verdict.toLowerCase() : 'viewing review';
+      }
+      return 'show review';
     }
     return '$guardrail review with $reviewLabel model';
   }
@@ -520,19 +653,6 @@ class _ChangesPageState extends State<ChangesPage> {
             .firstOrNull ??
         selectedCategory.models.first;
     return '${selectedModel.providerLabel} | ${selectedModel.modelId}';
-  }
-
-  String _guardrailLabelForStage(int stage) {
-    switch (stage.clamp(0, 3)) {
-      case 0:
-        return 'Loose';
-      case 1:
-        return 'Balanced';
-      case 2:
-        return 'Strict';
-      default:
-        return 'Paranoid';
-    }
   }
 
   Future<void> _refreshCommitAiConfig({bool forceRefresh = false}) async {
@@ -805,6 +925,7 @@ class _ChangesPageState extends State<ChangesPage> {
       includeUnstaged: includeUnstaged,
       scopedPaths: included.map((file) => file.path).toList(),
       customPrompt: aiSettings.reviewCommitPrompt,
+      commitDraft: _commitMsgCtrl.text.trim(),
       guardrailStage: preferences.guardrailStage,
       doubleCheckEnabled: aiSettings.reviewCommitDoubleCheckEnabled,
       readOnly: preferences.aiReadOnlyDefault,
@@ -824,11 +945,6 @@ class _ChangesPageState extends State<ChangesPage> {
     setState(() {
       _reviewRunning = false;
       _reviewSuccess = result.ok;
-      if (_reviewSuccess) {
-        Future.delayed(const Duration(milliseconds: 1500), () {
-          if (mounted) setState(() => _reviewSuccess = false);
-        });
-      }
       if (result.ok) {
         _reviewResult = result.data;
         _reviewError = null;
@@ -1011,6 +1127,7 @@ class _ChangesPageState extends State<ChangesPage> {
     setState(() {
       _actionRunning = false;
       _commitMsgCtrl.clear();
+      unawaited(_clearCommitDraft());
       _actionMessage = successMessage;
       _actionError = syncError;
     });
@@ -1027,6 +1144,26 @@ class _ChangesPageState extends State<ChangesPage> {
 
     if (repoPath == null) {
       return const AppStatusView.noRepository();
+    }
+    // Detect repo or branch switch — cancel any pending saves,
+    // then load the correct draft.
+    final currentBranch = status?.branch;
+    if (_lastDraftRepoPath != repoPath || _lastDraftBranch != currentBranch) {
+      _commitDraftSaveDebounce?.cancel();
+      // Flush the current draft to the OLD repo/branch before switching.
+      final oldRepo = _lastDraftRepoPath;
+      final oldBranch = _lastDraftBranch;
+      final textToSave = _commitMsgCtrl.text;
+      _lastDraftRepoPath = repoPath;
+      _lastDraftBranch = currentBranch;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        // Save outgoing draft, then load incoming.
+        if (oldRepo != null && textToSave.trim().isNotEmpty) {
+          await _flushDraft(oldRepo, oldBranch, textToSave);
+        }
+        _loadCommitDraftForRepo(repoPath, branch: currentBranch, force: true);
+      });
     }
     if (repo.statusError != null) {
       return AppStatusView.error(
@@ -1084,12 +1221,17 @@ class _ChangesPageState extends State<ChangesPage> {
         !_commitAiLoading &&
         includedCount > 0 &&
         hasCommitAiSelection;
+    // Allow clicking the review button when a review is running (to navigate
+    // back to the spinner view) or when a persistent review exists.
+    // Enable when: not busy with other actions AND either there's a review
+    // to show or we can start one. When a review is running AND we're already
+    // viewing it (_reviewActive), disable — we're already there.
     final canReview = !_actionRunning &&
         !_generateRunning &&
-        !_reviewRunning &&
         !_commitAiLoading &&
+        !(_reviewRunning && _reviewActive) &&
         includedCount > 0 &&
-        (hasReviewAiSelection || hasPersistentReview);
+        (_reviewRunning || hasReviewAiSelection || hasPersistentReview);
 
     return Stack(
       children: [
@@ -1222,7 +1364,10 @@ class _ChangesPageState extends State<ChangesPage> {
                             controller: _commitMsgCtrl,
                             focusNode: _commitMsgFocusNode,
                             enabled: !_actionRunning,
-                            onChanged: (_) => setState(() {}),
+                            onChanged: (value) {
+                              _saveCommitDraft(value);
+                              setState(() {});
+                            },
                             aiEnabled: canGenerate,
                             aiLoading: _generateRunning || _commitAiLoading,
                             aiSuccess: _generateSuccess,
@@ -1231,6 +1376,7 @@ class _ChangesPageState extends State<ChangesPage> {
                             reviewEnabled: canReview,
                             reviewLoading: _reviewRunning,
                             reviewSuccess: _reviewSuccess,
+                            reviewVerdict: _reviewResult?.verdict,
                             reviewTooltip:
                                 _reviewAiTooltip(aiSettings, includedCount, preferences.guardrailStage),
                             onGenerate: () => _generateCommitMessage(
@@ -1317,6 +1463,7 @@ class _ChangesPageState extends State<ChangesPage> {
                         modelLabel: _reviewModelLabel(aiSettings),
                         guardrailLabel:
                             _guardrailLabelForStage(preferences.guardrailStage),
+                        guardrailStage: preferences.guardrailStage,
                         loading: _reviewRunning,
                         error: _reviewError,
                         result: _reviewResult,
@@ -1366,11 +1513,14 @@ class _ChangesPageState extends State<ChangesPage> {
                             ),
                           ),
                           Expanded(
+                            // Track vertical scroll to sync the timeline strip.
+                            // Intentionally omits depth==0: the DiffShell's ListView
+                            // is nested inside a horizontal SingleChildScrollView,
+                            // so its events arrive at depth>0.
                             child: NotificationListener<ScrollNotification>(
                               onNotification: (notification) {
-                                if (notification.depth == 0 &&
-                                    notification.metrics.axis ==
-                                        Axis.vertical) {
+                                if (notification.metrics.axis ==
+                                    Axis.vertical) {
                                   _handleMultiDiffScroll(
                                     notification.metrics,
                                   );
@@ -1780,6 +1930,7 @@ class _CommitReviewPane extends StatelessWidget {
   final int includedCount;
   final String modelLabel;
   final String guardrailLabel;
+  final int guardrailStage;
   final bool loading;
   final String? error;
   final AiCommitReviewData? result;
@@ -1798,6 +1949,7 @@ class _CommitReviewPane extends StatelessWidget {
     required this.includedCount,
     required this.modelLabel,
     required this.guardrailLabel,
+    required this.guardrailStage,
     required this.loading,
     required this.error,
     required this.result,
@@ -1996,8 +2148,7 @@ class _CommitReviewPane extends StatelessWidget {
                       tokens: tokens,
                       score: review.score,
                       verdict: review.verdict,
-                      findingCount: review.findings.length,
-                      observationCount: review.observations.length,
+                      guardrailStage: review.guardrailStage,
                     ),
                     if (review.hasVerificationTrace) ...[
                       const SizedBox(width: 6),
@@ -2028,7 +2179,9 @@ class _CommitReviewPane extends StatelessWidget {
                             fontSize: 10.5,
                           ),
                           children: [
-                            TextSpan(text: guardrailLabel),
+                            TextSpan(text: review.guardrailStage >= 0
+                                ? _guardrailLabelForStage(review.guardrailStage)
+                                : guardrailLabel),
                             TextSpan(
                               text: '  ·  ',
                               style: TextStyle(color: tokens.textFaint),
@@ -2312,15 +2465,13 @@ class _ReviewScorePill extends StatelessWidget {
   final AppTokens tokens;
   final int score;
   final String verdict;
-  final int findingCount;
-  final int observationCount;
+  final int guardrailStage; // 0=loose, 1=balanced, 2=strict, 3=paranoid
 
   const _ReviewScorePill({
     required this.tokens,
     required this.score,
     required this.verdict,
-    this.findingCount = 0,
-    this.observationCount = 0,
+    required this.guardrailStage,
   });
 
   @override
@@ -2334,8 +2485,7 @@ class _ReviewScorePill extends StatelessWidget {
         painter: _ScoreRingPainter(
           score: score,
           verdictColor: verdictColor,
-          findingCount: findingCount,
-          observationCount: observationCount,
+          guardrailStage: guardrailStage,
           bgColor: tokens.chromeBorder.withValues(alpha: 0.1),
         ),
         child: Center(
@@ -2356,17 +2506,78 @@ class _ReviewScorePill extends StatelessWidget {
 class _ScoreRingPainter extends CustomPainter {
   final int score;
   final Color verdictColor;
-  final int findingCount;
-  final int observationCount;
+  final int guardrailStage;
   final Color bgColor;
 
   const _ScoreRingPainter({
     required this.score,
     required this.verdictColor,
-    required this.findingCount,
-    required this.observationCount,
+    required this.guardrailStage,
     required this.bgColor,
   });
+
+  /// Build the outline path for the guardrail shape.
+  /// 0 = circle, 1 = squished diamond, 2 = shield, 3 = fortress.
+  Path _shapePath(Offset center, double r) {
+    final cx = center.dx;
+    final cy = center.dy;
+    switch (guardrailStage.clamp(0, 3)) {
+      case 0:
+        // ── Loose: plain circle ──
+        return Path()..addOval(Rect.fromCircle(center: center, radius: r));
+
+      case 1:
+        // ── Balanced: rounded square ──
+        final rect = Rect.fromCircle(center: center, radius: r);
+        final cornerR = r * 0.38;
+        return Path()..addRRect(RRect.fromRectAndRadius(rect, Radius.circular(cornerR)));
+
+      case 2:
+        // ── Strict: shield ──
+        final w = r * 0.92;
+        final top = cy - r;
+        return Path()
+          ..moveTo(cx, top)                                   // crown
+          ..lineTo(cx + w, cy - r * 0.5)                      // right shoulder
+          ..lineTo(cx + w, cy + r * 0.15)                     // right waist
+          ..quadraticBezierTo(cx, cy + r * 1.05, cx, cy + r)  // right curve → bottom point
+          ..quadraticBezierTo(cx, cy + r * 1.05, cx - w, cy + r * 0.15) // bottom point → left curve
+          ..lineTo(cx - w, cy - r * 0.5)                      // left shoulder
+          ..close();
+
+      default:
+        // ── Paranoid: fortress / crenellated octagon ──
+        // Octagon with notched battlements at the cardinal points.
+        final pts = <Offset>[];
+        final notchDepth = r * 0.15;
+        for (int i = 0; i < 8; i++) {
+          final angle = -math.pi / 2 + (i / 8) * 2 * math.pi;
+          final nextAngle = -math.pi / 2 + ((i + 1) / 8) * 2 * math.pi;
+          // Outer vertex
+          pts.add(Offset(
+            cx + r * math.cos(angle),
+            cy + r * math.sin(angle),
+          ));
+          // Battlement notch at midpoint of each edge (inward)
+          final midAngle = (angle + nextAngle) / 2;
+          final notchR = r - notchDepth;
+          pts.add(Offset(
+            cx + notchR * math.cos(midAngle - 0.08),
+            cy + notchR * math.sin(midAngle - 0.08),
+          ));
+          pts.add(Offset(
+            cx + notchR * math.cos(midAngle + 0.08),
+            cy + notchR * math.sin(midAngle + 0.08),
+          ));
+        }
+        final path = Path()..moveTo(pts[0].dx, pts[0].dy);
+        for (int i = 1; i < pts.length; i++) {
+          path.lineTo(pts[i].dx, pts[i].dy);
+        }
+        path.close();
+        return path;
+    }
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2374,47 +2585,38 @@ class _ScoreRingPainter extends CustomPainter {
     final radius = (size.shortestSide / 2) - 1.5;
     const strokeWidth = 2.5;
 
-    // Background ring.
-    canvas.drawCircle(
-      center,
-      radius,
+    final shape = _shapePath(center, radius);
+
+    // Background shape outline.
+    canvas.drawPath(
+      shape,
       Paint()
         ..color = bgColor
         ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth,
+        ..strokeWidth = strokeWidth
+        ..strokeJoin = StrokeJoin.round,
     );
 
-    // Score arc — fills proportionally (100 = full circle).
-    final scoreAngle = (score / 100) * 2 * math.pi;
-    canvas.drawArc(
-      Rect.fromCircle(center: center, radius: radius),
-      -math.pi / 2, // start at top
-      scoreAngle,
-      false,
-      Paint()
+    // Score progress — draw a portion of the shape's perimeter.
+    final scoreFraction = (score / 100).clamp(0.0, 1.0);
+    final metrics = shape.computeMetrics().toList();
+    if (metrics.isNotEmpty) {
+      final totalLength = metrics.fold<double>(0, (sum, m) => sum + m.length);
+      final drawLength = totalLength * scoreFraction;
+
+      final scorePaint = Paint()
         ..color = verdictColor.withValues(alpha: 0.7)
         ..style = PaintingStyle.stroke
         ..strokeWidth = strokeWidth
-        ..strokeCap = StrokeCap.round,
-    );
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round;
 
-    // Tiny finding/observation dots on the ring — visual density indicator.
-    final total = findingCount + observationCount;
-    if (total > 0 && total <= 12) {
-      final dotRadius = 1.5;
-      for (var i = 0; i < total; i++) {
-        final angle = -math.pi / 2 + (i / total) * 2 * math.pi;
-        final isFinding = i < findingCount;
-        final dotColor = isFinding
-            ? verdictColor
-            : verdictColor.withValues(alpha: 0.3);
-        final dx = center.dx + (radius) * math.cos(angle);
-        final dy = center.dy + (radius) * math.sin(angle);
-        canvas.drawCircle(
-          Offset(dx, dy),
-          dotRadius,
-          Paint()..color = dotColor,
-        );
+      double drawn = 0;
+      for (final metric in metrics) {
+        if (drawn >= drawLength) break;
+        final segLen = (drawLength - drawn).clamp(0.0, metric.length);
+        canvas.drawPath(metric.extractPath(0, segLen), scorePaint);
+        drawn += metric.length;
       }
     }
   }
@@ -2423,8 +2625,7 @@ class _ScoreRingPainter extends CustomPainter {
   bool shouldRepaint(_ScoreRingPainter old) =>
       old.score != score ||
       old.verdictColor != verdictColor ||
-      old.findingCount != findingCount ||
-      old.observationCount != observationCount;
+      old.guardrailStage != guardrailStage;
 }
 
 class _ReviewMetaChip extends StatelessWidget {
@@ -3596,6 +3797,7 @@ class _CommitComposerField extends StatefulWidget {
   final bool reviewEnabled;
   final bool reviewLoading;
   final bool reviewSuccess;
+  final String? reviewVerdict;
   final String reviewTooltip;
   final VoidCallback onGenerate;
   final VoidCallback onReview;
@@ -3613,6 +3815,7 @@ class _CommitComposerField extends StatefulWidget {
     required this.reviewEnabled,
     required this.reviewLoading,
     this.reviewSuccess = false,
+    this.reviewVerdict,
     required this.reviewTooltip,
     required this.onGenerate,
     required this.onReview,
@@ -3736,9 +3939,10 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                     ),
                     child: Scrollbar(
                       controller: _scrollCtrl,
-                      child: ScrollConfiguration(
-                        behavior: ScrollConfiguration.of(context)
-                            .copyWith(scrollbars: false),
+                      child: ScrollbarTheme(
+                        data: ScrollbarThemeData(
+                          thickness: WidgetStateProperty.all(0),
+                        ),
                         child: TextField(
                           controller: widget.controller,
                           focusNode: widget.focusNode,
@@ -3783,6 +3987,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                         enabled: widget.reviewEnabled,
                         loading: widget.reviewLoading,
                         success: widget.reviewSuccess,
+                        verdict: widget.reviewVerdict,
                         tooltip: widget.reviewTooltip,
                         hasText: hasText,
                         fieldRadius: effectiveRadius,
@@ -3822,6 +4027,7 @@ class _CommitAiToolbarBtn extends StatefulWidget {
   final bool enabled;
   final bool loading;
   final bool success;
+  final String? verdict; // review verdict for search icon morph
   final String tooltip;
   final bool hasText; // de-emphasise when the user already typed something
   final double fieldRadius;
@@ -3833,6 +4039,7 @@ class _CommitAiToolbarBtn extends StatefulWidget {
     required this.enabled,
     required this.loading,
     this.success = false,
+    this.verdict,
     required this.tooltip,
     required this.hasText,
     required this.fieldRadius,
@@ -3912,6 +4119,7 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
                     state: _iconState,
                     color: iconColor,
                     size: 14,
+                    verdict: widget.verdict,
                   ),
                 _AiToolbarIconKind.sparkle => AnimatedSparkleIcon(
                     state: _iconState,

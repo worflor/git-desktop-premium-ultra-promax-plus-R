@@ -254,11 +254,7 @@ class _SidebarRailState extends State<SidebarRail> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
-            child: BrandLockup(),
-          ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 36),
           _ProjectsHeader(
             active: _showPathEntry,
             onTap: () => setState(() {

@@ -418,10 +418,12 @@ class _GlassSliderThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final canvas = context.canvas;
-    final shadowPaint = Paint()
+    final rimGlow = Paint()
       ..color = glowColor
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8);
-    canvas.drawCircle(center, size * 0.38, shadowPaint);
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
+    canvas.drawCircle(center, size * 0.5, rimGlow);
 
     final fillPaint = Paint()..color = fillColor;
     canvas.drawCircle(center, size * 0.5, fillPaint);
@@ -481,10 +483,12 @@ class _DiamondSliderThumbShape extends SliderComponentShape {
       ..lineTo(rect.left, center.dy)
       ..close();
 
-    final glowPaint = Paint()
+    final rimGlow = Paint()
       ..color = glowColor
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
-    canvas.drawCircle(center, half * 0.95, glowPaint);
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2);
+    canvas.drawPath(diamond, rimGlow);
 
     final fillPaint = Paint()..color = fillColor;
     canvas.drawPath(diamond, fillPaint);
@@ -646,7 +650,9 @@ class _SightSliderThumbShape extends SliderComponentShape {
       path,
       Paint()
         ..color = glowColor
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2),
     );
     canvas.drawPath(path, Paint()..color = fillColor);
   }

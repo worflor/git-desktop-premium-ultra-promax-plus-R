@@ -690,6 +690,19 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   @override
+  void didUpdateWidget(HistoryPage old) {
+    super.didUpdateWidget(old);
+    final newHash = widget.initialCommitHash;
+    if (newHash != null && newHash != old.initialCommitHash) {
+      final repo = context.read<RepositoryState>().activePath;
+      if (repo != null && _commits.any((c) => c.commitHash == newHash)) {
+        setState(() => _selectedHash = newHash);
+        _loadDetail(repo, newHash);
+      }
+    }
+  }
+
+  @override
   void dispose() {
     _tagCtrl.dispose();
     _limitCtrl.dispose();

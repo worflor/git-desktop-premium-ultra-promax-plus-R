@@ -97,7 +97,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: _MainContent(
+                    child: _KeepAlivePages(
                       mode: _mode,
                       selectedCommitHash: _selectedCommitHash,
                       onOpenXray: () => setState(() => _panel = _Panel.xray),
@@ -1168,12 +1168,15 @@ class _NavRowState extends State<_NavRow> {
   }
 }
 
-class _MainContent extends StatelessWidget {
+/// Keeps all three pages alive so that in-progress work (like a running
+/// review) survives page switches. Uses an [IndexedStack] underneath
+/// with [TickerMode] to pause off-screen pages' tickers/animations.
+class _KeepAlivePages extends StatelessWidget {
   final _WorkspaceMode mode;
   final String? selectedCommitHash;
   final VoidCallback onOpenXray;
 
-  const _MainContent({
+  const _KeepAlivePages({
     required this.mode,
     this.selectedCommitHash,
     required this.onOpenXray,
@@ -1181,17 +1184,21 @@ class _MainContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    switch (mode) {
-      case _WorkspaceMode.changes:
-        return const ChangesPage();
-      case _WorkspaceMode.history:
-        return HistoryPage(
-          initialCommitHash: selectedCommitHash,
-          onOpenXray: onOpenXray,
-        );
-      case _WorkspaceMode.branches:
-        return const BranchesPage();
-    }
+    final pages = <Widget>[
+      const ChangesPage(),
+      HistoryPage(
+        initialCommitHash: selectedCommitHash,
+        onOpenXray: onOpenXray,
+      ),
+      const BranchesPage(),
+    ];
+    return IndexedStack(
+      index: mode.index,
+      children: [
+        for (var i = 0; i < pages.length; i++)
+          TickerMode(enabled: i == mode.index, child: pages[i]),
+      ],
+    );
   }
 }
 

@@ -8,6 +8,7 @@ import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
 import 'app/repository_xray_state.dart';
 import 'app/hyper_reactivity.dart';
+import 'app/brand_lockup.dart';
 import 'app/sidebar_rail.dart';
 import 'app/theme_state.dart';
 import 'app/workspace_shell.dart';
@@ -227,6 +228,16 @@ class _AppFrameState extends State<_AppFrame> {
                 ),
                 const Expanded(child: WorkspaceShell()),
               ],
+            ),
+            // Brand lockup floats above all panels so the hypercube
+            // never clips behind content during drag.
+            const Positioned(
+              left: 12,
+              top: 12,
+              child: IgnorePointer(
+                ignoring: false,
+                child: BrandLockup(),
+              ),
             ),
           ],
         ),
