@@ -743,7 +743,7 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             _StateCard(
               title: 'Guardrails',
-              summary: 'Automated action assertion and safety thresholds.',
+              summary: 'Automated safety thresholds and assertions.',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -754,7 +754,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     },
                   ),
                   const SizedBox(height: 10),
-                  _FitLine(
+                  _WrappedAnnotation(
                     _guardrailPhrase(preferences.guardrailStage),
                     color: t.textMuted,
                   ),
@@ -782,7 +782,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         ),
                       ),
                     ),
-                    child: _FitLine(
+                    child: _WrappedAnnotation(
                       _themeDescription(themeState.themeId),
                       color: t.textMuted,
                     ),
@@ -792,8 +792,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             _StateCard(
               title: 'Local Data Retention',
-              summary:
-                  'Retention policy for local diagnostics and AI audit records.',
+              summary: 'Diagnostic and AI audit retention policy.',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -823,8 +822,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     ],
                   ),
                   const SizedBox(height: 10),
-                  _FitLine(
-                    'Includes diagnostics, performance timings, and AI audit metadata.',
+                  _WrappedAnnotation(
+                    'Includes diagnostics, performance timings, and AI metadata.',
                     color: t.textMuted,
                   ),
                   const SizedBox(height: 8),
@@ -848,8 +847,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 10),
         _StateCard(
           title: 'Navigation and Dynamics',
-          summary:
-              'Keyboard architecture, interface behavior, and local AI routing.',
+          summary: 'Shortcuts, interface behavior, and AI routing.',
           wide: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -898,7 +896,7 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 8),
               const _SettingsBody(
-                'Routing and piping interface messages directly to local provider binaries.',
+                'Directly pipe interface messages to local provider binaries.',
               ),
               if (_aiProvidersError != null && _aiProviders.isEmpty) ...[
                 const SizedBox(height: 8),
@@ -1641,46 +1639,64 @@ class _HybridRetentionActions extends StatelessWidget {
     final t = context.tokens;
     const labels = ['Diag', 'Audit', 'All'];
     final actions = [onClearDiagnostics, onClearAudit, onClearAll];
-    return IntrinsicWidth(
-      child: Container(
-        height: 26,
-        decoration: BoxDecoration(
-          color: t.rowBg,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.18)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < labels.length; i++) ...[
-              GestureDetector(
-                onTap: busy ? null : actions[i],
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Center(
-                    child: Text(
-                      labels[i],
-                      style: TextStyle(
-                        color: busy
-                            ? t.textMuted.withValues(alpha: 0.6)
-                            : t.textNormal,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        IntrinsicWidth(
+          child: Container(
+            height: 26,
+            decoration: BoxDecoration(
+              color: t.rowBg,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: t.chromeBorder.withValues(alpha: 0.18)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < labels.length; i++) ...[
+                  GestureDetector(
+                    onTap: busy ? null : actions[i],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Center(
+                        child: Text(
+                          labels[i],
+                          style: TextStyle(
+                            color: busy
+                                ? t.textMuted.withValues(alpha: 0.6)
+                                : t.textNormal,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ),
-              if (i < labels.length - 1)
-                Container(
-                  width: 1,
-                  height: 16,
-                  color: t.chromeBorder.withValues(alpha: 0.14),
-                ),
-            ],
-          ],
+                  if (i < labels.length - 1)
+                    Container(
+                      width: 1,
+                      height: 16,
+                      color: t.chromeBorder.withValues(alpha: 0.14),
+                    ),
+                ],
+              ],
+            ),
+          ),
         ),
-      ),
+        const SizedBox(width: 10),
+        Text(
+          '<-- clears',
+          style: TextStyle(
+            color: t.textMuted.withValues(alpha: 0.55),
+            fontSize: 10,
+            fontFamily: 'JetBrainsMono',
+            fontStyle: FontStyle.italic,
+            fontWeight: FontWeight.w500,
+            letterSpacing: -0.2,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -3527,19 +3543,21 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
   }
 }
 
-class _FitLine extends StatelessWidget {
+class _WrappedAnnotation extends StatelessWidget {
   final String text;
   final Color color;
 
-  const _FitLine(this.text, {required this.color});
+  const _WrappedAnnotation(this.text, {required this.color});
 
   @override
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: TextStyle(color: color, fontSize: 11),
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: color,
+        fontSize: 11,
+        height: 1.25,
+      ),
     );
   }
 }

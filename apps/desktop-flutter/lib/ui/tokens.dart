@@ -1047,7 +1047,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.aether,
       'Aether',
-      'Deep cosmic glass with cool contrast for long review sessions.',
+      'Crisp cosmic glass with cool contrast for long review sessions.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.glass,
@@ -1068,7 +1068,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.quanta,
       'Quanta',
-      'Deep emerald obsidian with crystalline subatomic clarity and high-refraction glass.',
+      'Rich emerald obsidian with crystalline subatomic clarity and high-refraction glass.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.glass,
