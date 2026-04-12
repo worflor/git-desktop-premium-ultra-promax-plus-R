@@ -78,6 +78,32 @@ void main() {
     expect((engine.transition - expectedTransition).abs(), lessThan(1e-9));
   });
 
+  test('step preserves transition overshoot when rolling to the next pose', () {
+    final engine = HypercubeLogoEngine(seed: 42)
+      ..near = 0
+      ..dragging = false
+      ..smoothBoost = 1
+      ..transition = 0.9995;
+
+    const dt = 0.016;
+    final start = hypercubeStates[engine.currentIndex];
+    final end = hypercubeStates[engine.targetIndex];
+    double distSquared = 0;
+    for (int i = 0; i < start.length; i++) {
+      final d = start[i] - end[i];
+      distSquared += d * d;
+    }
+    final distMult =
+        0.9 + (math.sqrt(distSquared) * 0.1).clamp(0, 0.1).toDouble();
+    final delta = 0.095 * dt * distMult;
+
+    final previousTarget = engine.targetIndex;
+    engine.step(dt, speed: 0.85);
+
+    expect(engine.currentIndex, previousTarget);
+    expect(engine.transition, closeTo(0.9995 + delta - 1, 1e-9));
+  });
+
   test('step applies spring-damped warp return while not dragging', () {
     final engine = HypercubeLogoEngine(seed: 7)
       ..dragging = false

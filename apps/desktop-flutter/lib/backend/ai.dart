@@ -1345,9 +1345,18 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     return _CommitDiffContextResult.err(unstagedDiff.error!);
   }
 
+  // Untracked files are invisible to `git diff` and `git diff --cached` —
+  // they only appear in `git status` as '??'. For the AI reviewer, those
+  // are just new files with their full content as added lines. Synthesize
+  // proper unified-diff entries for each one so the reviewer can see them.
+  final untrackedDiff = includeUnstaged
+      ? await _collectUntrackedFilesDiff(repositoryPath, scopeArgs)
+      : '';
+
   final fullDiff = _joinDiffSections(
     stagedDiff: stagedDiff.data ?? '',
     unstagedDiff: unstagedDiff.data ?? '',
+    untrackedDiff: untrackedDiff,
   );
   if (fullDiff.trim().isEmpty) {
     return _CommitDiffContextResult.err(
@@ -1487,6 +1496,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
 String _joinDiffSections({
   required String stagedDiff,
   required String unstagedDiff,
+  String untrackedDiff = '',
 }) {
   final sections = <String>[];
   if (stagedDiff.trim().isNotEmpty) {
@@ -1495,10 +1505,121 @@ String _joinDiffSections({
   if (unstagedDiff.trim().isNotEmpty) {
     sections.add('=== UNSTAGED CHANGES ===\n$unstagedDiff');
   }
+  if (untrackedDiff.trim().isNotEmpty) {
+    // Untracked files are not yet in git's index — they look like "new
+    // files" to a human reader, which is exactly how the synthesized
+    // diff entries render them.
+    sections.add('=== UNTRACKED (NEW) FILES ===\n$untrackedDiff');
+  }
   if (sections.isEmpty) {
     return '';
   }
   return sections.join('\n\n');
+}
+
+/// Build unified-diff entries for all untracked files.
+///
+/// `git diff` and `git diff --cached` never show untracked files, but new
+/// files are exactly the kind of thing an AI reviewer needs to see (or
+/// it'll hallucinate that they don't exist). We read each file's content
+/// and emit a synthetic `/dev/null → b/<path>` diff block so the reviewer
+/// gets the full new file content as added lines.
+///
+/// [scopeArgs] follows the same convention as elsewhere — either `['--']`
+/// for "all files" or `['--', path1, path2, ...]` to restrict scope.
+/// Decode bytes as UTF-8, tolerating malformed sequences by falling back
+/// to a byte-for-byte reading. Most source files are UTF-8; using the
+/// Latin-1-ish `String.fromCharCodes` corrupts any non-ASCII character
+/// (emoji, accented letters, smart quotes) — that matters for AI review
+/// because the model needs to see the file as it actually is.
+String _tryDecodeUtf8(List<int> bytes) {
+  try {
+    return utf8.decode(bytes, allowMalformed: true);
+  } catch (_) {
+    return String.fromCharCodes(bytes);
+  }
+}
+
+Future<String> _collectUntrackedFilesDiff(
+  String repositoryPath,
+  List<String> scopeArgs,
+) async {
+  // List untracked, non-ignored files. `--exclude-standard` respects
+  // .gitignore + global excludes + .git/info/exclude.
+  final listArgs = <String>[
+    'ls-files', '--others', '--exclude-standard',
+    ...scopeArgs,
+  ];
+  final listResult = await _runGitCommand(
+    repositoryPath, listArgs,
+    timeout: const Duration(seconds: _diffTimeoutSeconds),
+  );
+  if (!listResult.ok) return '';
+  final paths = (listResult.data ?? '')
+      .split('\n')
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty)
+      .toList();
+  if (paths.isEmpty) return '';
+
+  final buffer = StringBuffer();
+  const perFileCapBytes = 64 * 1024; // cap any single file's preview
+  const totalCapBytes = 512 * 1024;  // and the combined block
+  var totalBytes = 0;
+
+  for (final relPath in paths) {
+    if (totalBytes >= totalCapBytes) {
+      buffer.writeln(
+        '(further untracked files omitted — total preview cap reached)',
+      );
+      break;
+    }
+    final absPath = p.join(repositoryPath, relPath);
+    String content;
+    try {
+      final file = File(absPath);
+      if (!await file.exists()) continue;
+      // Skip binary-looking files quickly by checking size + a null byte
+      // probe of the first chunk.
+      final stat = await file.stat();
+      if (stat.size == 0) {
+        // Empty new file — still worth showing as an "empty new file" marker.
+        content = '';
+      } else if (stat.size > perFileCapBytes) {
+        final raw = await file.openRead(0, perFileCapBytes).toList();
+        final bytes = raw.expand((x) => x).toList();
+        if (bytes.contains(0)) continue; // binary
+        // Decode as UTF-8 (most source files) and fall back to the raw
+        // code points if that fails, so we don't corrupt multi-byte
+        // characters (emoji, non-Latin scripts, smart quotes).
+        content = _tryDecodeUtf8(bytes) +
+            '\n(truncated — file larger than ${perFileCapBytes ~/ 1024}KB)';
+      } else {
+        final bytes = await file.readAsBytes();
+        if (bytes.contains(0)) continue; // binary
+        content = _tryDecodeUtf8(bytes);
+      }
+    } catch (_) {
+      continue;
+    }
+    final lines = content.split('\n');
+    // Strip trailing empty line caused by final newline, if any.
+    if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
+    final lineCount = lines.isEmpty ? 0 : lines.length;
+    final addedBlock = lines.map((l) => '+$l').join('\n');
+    final entry = [
+      'diff --git a/$relPath b/$relPath',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/$relPath',
+      '@@ -0,0 +1,$lineCount @@',
+      if (addedBlock.isNotEmpty) addedBlock,
+    ].join('\n');
+    totalBytes += entry.length;
+    buffer.writeln(entry);
+    buffer.writeln();
+  }
+  return buffer.toString();
 }
 
 String _joinStatSections({

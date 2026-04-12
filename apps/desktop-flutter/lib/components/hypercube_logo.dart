@@ -101,7 +101,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     }
   }
 
-  void _updatePointer(Offset localPosition) {
+  void _updatePointer(Offset localPosition, {Offset? globalPosition}) {
     final double half = widget.size / 2;
     final Offset delta = localPosition - Offset(half, half);
     _engine.updatePointer(delta: delta, size: widget.size);
@@ -110,6 +110,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
             _engine.near + 1,
             dragOffset: delta,
             normalizedOffset: _engine.tilt,
+            globalPosition: globalPosition ?? Offset.zero,
           );
     }
   }
@@ -127,18 +128,32 @@ class _HypercubeLogoState extends State<HypercubeLogo>
       cursor: _engine.dragging
           ? SystemMouseCursors.grabbing
           : SystemMouseCursors.click,
-      onExit: (_) => _engine.handlePointerExit(),
-      child: Listener(
-        onPointerHover: (PointerHoverEvent event) =>
-            _updatePointer(event.localPosition),
-        onPointerDown: (PointerDownEvent event) {
+      onExit: (_) {
+        if (!_engine.dragging) {
+          _engine.handlePointerExit();
+        }
+      },
+      onHover: (PointerHoverEvent event) => _updatePointer(
+        event.localPosition,
+        globalPosition: event.position,
+      ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: (DragStartDetails details) {
           _engine.setDragging(true);
-          _updatePointer(event.localPosition);
+          _updatePointer(
+            details.localPosition,
+            globalPosition: details.globalPosition,
+          );
         },
-        onPointerMove: (PointerMoveEvent event) =>
-            _updatePointer(event.localPosition),
-        onPointerUp: (_) => _releaseDrag(),
-        onPointerCancel: (_) => _releaseDrag(),
+        onPanUpdate: (DragUpdateDetails details) {
+          _updatePointer(
+            details.localPosition,
+            globalPosition: details.globalPosition,
+          );
+        },
+        onPanEnd: (_) => _releaseDrag(),
+        onPanCancel: _releaseDrag,
         child: SizedBox(
           width: widget.size,
           height: widget.size,

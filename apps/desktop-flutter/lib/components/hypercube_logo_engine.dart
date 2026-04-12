@@ -125,10 +125,10 @@ class HypercubeLogoEngine {
     }
     final double distMult = 0.9 + math.min(math.sqrt(distSquared) * 0.1, 0.1);
     transition += 0.095 * dt * smoothBoost * distMult;
-    if (transition >= 1) {
+    while (transition >= 1) {
       currentIndex = targetIndex;
       targetIndex = pickNextIndex();
-      transition = 0;
+      transition -= 1;
     }
 
     if (!dragging) {

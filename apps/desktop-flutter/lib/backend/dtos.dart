@@ -74,13 +74,18 @@ class CommitFileStatData {
   final String path;
   final int additions;
   final int deletions;
+  final String changeType; // 'M', 'A', 'D', 'R', 'C', 'T', 'U'
   const CommitFileStatData(
-      {required this.path, required this.additions, required this.deletions});
+      {required this.path,
+      required this.additions,
+      required this.deletions,
+      this.changeType = 'M'});
   factory CommitFileStatData.fromJson(Map<String, dynamic> j) =>
       CommitFileStatData(
           path: j['path'] ?? '',
           additions: j['additions'] ?? 0,
-          deletions: j['deletions'] ?? 0);
+          deletions: j['deletions'] ?? 0,
+          changeType: j['changeType'] ?? 'M');
 }
 
 class CommitDetailData {
@@ -732,6 +737,28 @@ class StashEntryData {
     required this.hash,
     required this.createdAt,
     this.fileCount = 0,
+  });
+}
+
+/// One "desk" — a git worktree. The primary worktree is the main repo
+/// directory itself; additional desks live under `.manifold/worktrees/`.
+class WorktreeData {
+  final String path;
+  final String head;
+  final String? branch;
+  final bool isMain;
+  final bool isDetached;
+  final bool isLocked;
+  final int dirtyFileCount;
+
+  const WorktreeData({
+    required this.path,
+    required this.head,
+    this.branch,
+    required this.isMain,
+    required this.isDetached,
+    required this.isLocked,
+    this.dirtyFileCount = 0,
   });
 }
 

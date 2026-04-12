@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'repository_xray.dart';
 import 'dtos.dart';
 import 'git_result.dart';
@@ -200,6 +201,107 @@ Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(String repo,
   return GitResult.ok(_parseCommitLogLines(r.stdout.toString().split('\n')));
 }
 
+/// Bulk-fetches file stats for all commits in two parallel git log passes
+/// (--numstat and --name-status). Merges with already-loaded commit metadata
+/// to produce a full CommitDetailData per commit — body is left empty since
+/// it isn't needed for the file list view and the individual getCommitDetail
+/// path fills it in on demand.
+Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
+    String repo,
+    List<CommitHistoryEntry> commits, {
+    int limit = 200,
+    String? branch,
+}) async {
+  if (commits.isEmpty) return GitResult.ok({});
+
+  final meta = {for (final c in commits) c.commitHash: c};
+  final baseArgs = ['log', '--format=>>>%H', '-n', '$limit'];
+  if (branch != null) baseArgs.add(branch);
+
+  final results = await Future.wait([
+    _git(repo, [...baseArgs, '--numstat']),
+    _git(repo, [...baseArgs, '--name-status']),
+  ]);
+
+  if (results[0].exitCode != 0) {
+    return GitResult.err(results[0].stderr.toString().trim());
+  }
+
+  // Parse numstat output: sentinel line ">>>hash" then tab-separated file rows
+  final numstatByHash = <String, List<_BulkFileStat>>{};
+  String? cur;
+  for (final line in results[0].stdout.toString().split('\n')) {
+    if (line.startsWith('>>>')) {
+      cur = line.substring(3).trim();
+      numstatByHash[cur] = [];
+    } else if (cur != null) {
+      final parts = line.trim().split('\t');
+      if (parts.length >= 3) {
+        final adds = int.tryParse(parts[0]) ?? 0;
+        final dels = int.tryParse(parts[1]) ?? 0;
+        final path = parts[2].trim();
+        if (path.isNotEmpty) numstatByHash[cur]!.add(_BulkFileStat(path, adds, dels));
+      }
+    }
+  }
+
+  // Parse name-status output: sentinel line ">>>hash" then "X\tpath" rows
+  final changeTypesByHash = <String, Map<String, String>>{};
+  cur = null;
+  if (results[1].exitCode == 0) {
+    for (final line in results[1].stdout.toString().split('\n')) {
+      if (line.startsWith('>>>')) {
+        cur = line.substring(3).trim();
+        changeTypesByHash[cur] = {};
+      } else if (cur != null) {
+        final trimmed = line.trim();
+        if (trimmed.isEmpty) continue;
+        final tabIdx = trimmed.indexOf('\t');
+        if (tabIdx < 0) continue;
+        final type = trimmed.substring(0, 1);
+        final rest = trimmed.substring(tabIdx + 1);
+        // Renames: "old\tnew" — use new path
+        final path = rest.contains('\t') ? rest.split('\t').last : rest;
+        changeTypesByHash[cur]![path.trim()] = type;
+      }
+    }
+  }
+
+  // Build CommitDetailData from existing metadata + fetched file stats
+  final out = <String, CommitDetailData>{};
+  for (final c in commits) {
+    final stats = numstatByHash[c.commitHash] ?? [];
+    final types = changeTypesByHash[c.commitHash] ?? {};
+    final files = stats.map((s) => CommitFileStatData(
+          path: s.path,
+          additions: s.additions,
+          deletions: s.deletions,
+          changeType: types[s.path] ?? 'M',
+        )).toList();
+    out[c.commitHash] = CommitDetailData(
+      commitHash: c.commitHash,
+      shortHash: c.shortHash,
+      subject: c.subject,
+      body: '',
+      authorName: c.authorName,
+      authorEmail: c.authorEmail,
+      authoredAt: c.authoredAt,
+      filesChanged: files.length,
+      additions: files.fold(0, (s, f) => s + f.additions),
+      deletions: files.fold(0, (s, f) => s + f.deletions),
+      files: files,
+    );
+  }
+  return GitResult.ok(out);
+}
+
+class _BulkFileStat {
+  final String path;
+  final int additions;
+  final int deletions;
+  const _BulkFileStat(this.path, this.additions, this.deletions);
+}
+
 // ── Paper Trail (file history) ──────────────────────────────────────────────
 
 /// Wraps a history entry with the file path AS IT EXISTED at that commit.
@@ -336,13 +438,37 @@ Future<GitResult<String>> getFileDiffAtRevision(
 
 Future<GitResult<CommitDetailData>> getCommitDetail(
     String repo, String hash) async {
-  final r = await _git(repo, [
-    'show',
-    '--stat',
-    '--format=%H%n%h%n%s%n%b%n---END-META---%n%aN%n%aE%n%aI',
-    hash
+  // Two calls: metadata + numstat, and name-status for change types
+  final results = await Future.wait([
+    _git(repo, [
+      'show',
+      '--numstat',
+      '--format=%H%n%h%n%s%n%b%n---END-META---%n%aN%n%aE%n%aI',
+      hash
+    ]),
+    _git(repo,
+        ['diff-tree', '--no-commit-id', '-r', '--name-status', hash]),
   ]);
+
+  final r = results[0];
+  final r2 = results[1];
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+
+  // Parse change types from name-status output
+  final changeTypes = <String, String>{};
+  if (r2.exitCode == 0) {
+    for (final line in r2.stdout.toString().split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      final tabIdx = trimmed.indexOf('\t');
+      if (tabIdx < 0) continue;
+      final type = trimmed.substring(0, tabIdx).trim();
+      final path = trimmed.substring(tabIdx + 1).trim();
+      // For renames, git outputs "old\tnew" after the type — use the new path
+      final finalPath = path.contains('\t') ? path.split('\t').last : path;
+      changeTypes[finalPath] = type.substring(0, 1); // first char: M/A/D/R/C
+    }
+  }
 
   final output = r.stdout.toString();
   final metaEnd = output.indexOf('---END-META---');
@@ -365,18 +491,20 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
   final authorEmail = afterMeta.length > 1 ? afterMeta[1].trim() : '';
   final authoredAt = afterMeta.length > 2 ? afterMeta[2].trim() : '';
 
-  // parse stat block
-  final statLines = afterMeta.skip(3).where((l) => l.contains('|')).toList();
+  // Parse numstat lines: additions<tab>deletions<tab>path
   final files = <CommitFileStatData>[];
-  for (final line in statLines) {
-    final parts = line.split('|');
-    if (parts.length < 2) continue;
-    final filePath = parts[0].trim();
-    final statPart = parts[1].trim();
-    final adds = '+'.allMatches(statPart).length;
-    final dels = '-'.allMatches(statPart).length;
-    files.add(
-        CommitFileStatData(path: filePath, additions: adds, deletions: dels));
+  for (final line in afterMeta.skip(3)) {
+    final parts = line.trim().split('\t');
+    if (parts.length < 3) continue;
+    final adds = int.tryParse(parts[0]) ?? 0; // '-' for binaries → 0
+    final dels = int.tryParse(parts[1]) ?? 0;
+    final filePath = parts[2].trim();
+    if (filePath.isEmpty) continue;
+    files.add(CommitFileStatData(
+        path: filePath,
+        additions: adds,
+        deletions: dels,
+        changeType: changeTypes[filePath] ?? 'M'));
   }
 
   return GitResult.ok(CommitDetailData(
@@ -988,6 +1116,172 @@ Future<GitResult<String>> stashShow(String repo, {int index = 0}) async {
   final r = await _git(repo, ['stash', 'show', '-p', 'stash@{$index}']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(r.stdout.toString());
+}
+
+// ── Parallel Desks (worktrees) ──────────────────────────────────────────────
+
+/// Parses `git worktree list --porcelain`. Each worktree is a block of
+/// key-value lines separated by a blank line. Keys: worktree, HEAD, branch,
+/// bare, detached, locked. Blank-only lines terminate the block.
+Future<GitResult<List<WorktreeData>>> listWorktrees(String repo) async {
+  final r = await _git(repo, ['worktree', 'list', '--porcelain']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+
+  final worktrees = <WorktreeData>[];
+  String? curPath;
+  String? curHead;
+  String? curBranch;
+  bool curDetached = false;
+  bool curLocked = false;
+
+  void flush() {
+    if (curPath == null) return;
+    worktrees.add(WorktreeData(
+      path: curPath!,
+      head: curHead ?? '',
+      branch: curBranch,
+      // First entry from `worktree list` is always the main repo.
+      isMain: worktrees.isEmpty,
+      isDetached: curDetached,
+      isLocked: curLocked,
+    ));
+    curPath = null;
+    curHead = null;
+    curBranch = null;
+    curDetached = false;
+    curLocked = false;
+  }
+
+  for (final line in r.stdout.toString().split('\n')) {
+    if (line.isEmpty) {
+      flush();
+      continue;
+    }
+    if (line.startsWith('worktree ')) {
+      curPath = line.substring('worktree '.length).trim();
+    } else if (line.startsWith('HEAD ')) {
+      curHead = line.substring('HEAD '.length).trim();
+    } else if (line.startsWith('branch ')) {
+      // refs/heads/main → main
+      final ref = line.substring('branch '.length).trim();
+      curBranch = ref.startsWith('refs/heads/')
+          ? ref.substring('refs/heads/'.length)
+          : ref;
+    } else if (line == 'detached') {
+      curDetached = true;
+    } else if (line.startsWith('locked')) {
+      curLocked = true;
+    }
+  }
+  flush();
+
+  // Enrich with dirty-file counts per worktree in parallel — each probe
+  // is its own `git status` process, so running them concurrently keeps
+  // latency flat as desk count grows.
+  final statusResults = await Future.wait(worktrees.map((wt) async {
+    try {
+      final s = await _git(wt.path, ['status', '--porcelain']);
+      if (s.exitCode != 0) return 0;
+      return s.stdout
+          .toString()
+          .split('\n')
+          .where((l) => l.trim().isNotEmpty)
+          .length;
+    } catch (_) {
+      return 0;
+    }
+  }));
+  for (var i = 0; i < worktrees.length; i++) {
+    final wt = worktrees[i];
+    worktrees[i] = WorktreeData(
+      path: wt.path,
+      head: wt.head,
+      branch: wt.branch,
+      isMain: wt.isMain,
+      isDetached: wt.isDetached,
+      isLocked: wt.isLocked,
+      dirtyFileCount: statusResults[i],
+    );
+  }
+
+  return GitResult.ok(worktrees);
+}
+
+/// Creates a worktree at the given path for the given branch.
+/// Ensures `.manifold/` is in `.git/info/exclude` so app-managed desk
+/// directories are never tracked by git.
+Future<GitResult<String>> addWorktree(
+  String repo,
+  String worktreePath,
+  String branch, {
+  /// When true, creates a new branch from HEAD at the given name alongside
+  /// the worktree. Uses `git worktree add -b <branch> <path>`.
+  bool createNewBranch = false,
+}) async {
+  // Append `.manifold/` to .git/info/exclude if not already present.
+  try {
+    // Resolve .git (handles worktree pointers + submodules).
+    final gitDirResult = await Process.run(
+      'git',
+      ['rev-parse', '--git-common-dir'],
+      workingDirectory: repo,
+    );
+    if (gitDirResult.exitCode == 0) {
+      final gitDir = (gitDirResult.stdout as String).trim();
+      // Use the path package's robust isAbsolute check — it handles
+      // POSIX paths, Windows drive letters (C:\...), AND UNC paths
+      // (\\server\share\...) correctly on each platform.
+      final absGitDir = p.isAbsolute(gitDir) ? gitDir : p.join(repo, gitDir);
+      final excludeFile = File(p.join(absGitDir, 'info', 'exclude'));
+      final existing =
+          await excludeFile.exists() ? await excludeFile.readAsString() : '';
+      if (!existing
+          .split('\n')
+          .map((l) => l.trim())
+          .contains('.manifold/')) {
+        await excludeFile.writeAsString(
+          '${existing.trimRight()}\n.manifold/\n',
+        );
+      }
+    }
+  } catch (error) {
+    // Non-fatal — worktree creation can proceed even if we couldn't edit
+    // exclude — but surface it via diagnostics so a persistent failure
+    // (e.g. permissions, read-only FS) gets noticed. If exclude stays
+    // unwritten, users could accidentally commit .manifold/ contents.
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'failure',
+      command: 'worktree.exclude_write',
+      errorCode: 'exclude.write_failed',
+      message: error.toString(),
+    );
+  }
+
+  final args = createNewBranch
+      ? ['worktree', 'add', '-b', branch, worktreePath]
+      : ['worktree', 'add', worktreePath, branch];
+  final r = await _git(repo, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(worktreePath);
+}
+
+Future<GitResult<void>> removeWorktree(
+  String repo,
+  String worktreePath, {
+  bool force = false,
+}) async {
+  final args = ['worktree', 'remove'];
+  if (force) args.add('--force');
+  args.add(worktreePath);
+  final r = await _git(repo, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(null);
+}
+
+Future<GitResult<void>> pruneWorktrees(String repo) async {
+  final r = await _git(repo, ['worktree', 'prune']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(null);
 }
 
 // ── X-Ray ──────────────────────────────────────────────────────────────────

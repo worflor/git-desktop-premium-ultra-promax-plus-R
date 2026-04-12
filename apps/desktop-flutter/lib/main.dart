@@ -7,6 +7,7 @@ import 'app/ai_settings_state.dart';
 import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
 import 'app/repository_xray_state.dart';
+import 'app/worktree_state.dart';
 import 'app/hyper_reactivity.dart';
 import 'app/brand_lockup.dart';
 import 'app/sidebar_rail.dart';
@@ -42,6 +43,7 @@ void main() async {
   final repoState = RepositoryState();
   await repoState.loadRecents();
   final repoXrayState = RepositoryXrayState();
+  final worktreeState = WorktreeState(repoState);
 
   final preferencesState = PreferencesState();
   await preferencesState.load();
@@ -58,6 +60,7 @@ void main() async {
         ChangeNotifierProvider.value(value: themeState),
         ChangeNotifierProvider.value(value: repoState),
         ChangeNotifierProvider.value(value: repoXrayState),
+        ChangeNotifierProvider.value(value: worktreeState),
         ChangeNotifierProvider.value(value: preferencesState),
         ChangeNotifierProvider.value(value: aiSettingsState),
         ChangeNotifierProvider.value(value: diagnosticsState),

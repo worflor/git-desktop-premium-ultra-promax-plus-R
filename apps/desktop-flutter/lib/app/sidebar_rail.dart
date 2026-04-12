@@ -305,19 +305,28 @@ class _SidebarRailState extends State<SidebarRail> {
               ),
             ),
           Expanded(
-            child: repo.recentPaths.isEmpty
-                ? Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
-                    child: Text(
-                      'No projects yet',
-                      style: TextStyle(color: t.textMuted, fontSize: 11),
-                    ),
-                  )
-                : ListView.builder(
+            child: () {
+              // Filter out any worktree paths that may have leaked into
+              // recents (e.g. from pre-fix sessions). Worktrees are desks,
+              // not projects — the sidebar is for distinct repos only.
+              final visiblePaths = repo.recentPaths
+                  .where((p) =>
+                      !p.replaceAll('\\', '/').contains('/.manifold/worktrees/'))
+                  .toList();
+              if (visiblePaths.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+                  child: Text(
+                    'No projects yet',
+                    style: TextStyle(color: t.textMuted, fontSize: 11),
+                  ),
+                );
+              }
+              return ListView.builder(
                     padding: EdgeInsets.zero,
-                    itemCount: repo.recentPaths.length,
+                    itemCount: visiblePaths.length,
                     itemBuilder: (context, index) {
-                      final path = repo.recentPaths[index];
+                      final path = visiblePaths[index];
                       return _ProjectItem(
                         name: _toProjectName(path),
                         path: path,
@@ -336,9 +345,11 @@ class _SidebarRailState extends State<SidebarRail> {
                             }
                           }
                         },
+                        onForget: () => repo.forgetRecent(path),
                       );
                     },
-                  ),
+                  );
+            }(),
           ),
         ],
       ),
@@ -647,12 +658,14 @@ class _ProjectItem extends StatefulWidget {
   final String path;
   final bool isActive;
   final VoidCallback onTap;
+  final VoidCallback? onForget;
 
   const _ProjectItem({
     required this.name,
     required this.path,
     required this.isActive,
     required this.onTap,
+    this.onForget,
   });
 
   @override
@@ -686,14 +699,51 @@ class _ProjectItemState extends State<_ProjectItem> {
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: borderColor),
           ),
-          child: Text(
-            widget.name,
-            style: TextStyle(
-              color: widget.isActive ? t.textStrong : t.textNormal,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
+          // Tooltip exposes the full path so duplicate-named entries (e.g.
+          // the same repo cloned in two locations) can be told apart.
+          child: Tooltip(
+            message: widget.path,
+            waitDuration: const Duration(milliseconds: 400),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.name,
+                    style: TextStyle(
+                      color: widget.isActive ? t.textStrong : t.textNormal,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                // Hover-reveal "forget" action. Removes the entry from
+                // recents without touching the repo on disk.
+                if (_hovered && widget.onForget != null)
+                  Tooltip(
+                    message: 'Forget this project',
+                    child: GestureDetector(
+                      onTap: widget.onForget,
+                      behavior: HitTestBehavior.opaque,
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: Center(
+                          child: Text(
+                            '×',
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              height: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-            overflow: TextOverflow.ellipsis,
           ),
         ),
       ),

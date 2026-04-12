@@ -27,8 +27,31 @@ class RepositoryState extends ChangeNotifier {
 
   Future<void> loadRecents() async {
     final prefs = await SharedPreferences.getInstance();
-    _recentPaths = prefs.getStringList('recent_repos') ?? [];
+    final stored = prefs.getStringList('recent_repos') ?? [];
+    // Purge any Manifold-managed worktree paths that leaked into recents
+    // before desk switches stopped touching the list. Worktrees are not
+    // distinct projects — they're desks of their parent repo.
+    final cleaned = stored
+        .where((p) =>
+            !p.replaceAll('\\', '/').contains('/.manifold/worktrees/'))
+        .toList();
+    _recentPaths = cleaned;
+    if (cleaned.length != stored.length) {
+      // Persist the purge so the migration only runs once.
+      await _saveRecents();
+    }
     notifyListeners();
+  }
+
+  /// Remove a path from the recents list without otherwise changing the
+  /// repo session. Used by the sidebar's per-project "forget" action.
+  Future<void> forgetRecent(String path) async {
+    final before = _recentPaths.length;
+    _recentPaths = _recentPaths.where((p) => p != path).toList();
+    if (_recentPaths.length != before) {
+      await _saveRecents();
+      notifyListeners();
+    }
   }
 
   Future<void> _saveRecents() async {
@@ -36,7 +59,16 @@ class RepositoryState extends ChangeNotifier {
     await prefs.setStringList('recent_repos', _recentPaths);
   }
 
-  Future<String?> setActivePath(String path) async {
+  /// Opens a repository path as the active repo.
+  ///
+  /// [addToRecents] controls whether the path is tracked in the recent
+  /// repositories sidebar. Worktree ("desk") switches within the same repo
+  /// pass `false` so individual desks don't clutter the project list —
+  /// only the primary worktree gets added on initial open.
+  Future<String?> setActivePath(
+    String path, {
+    bool addToRecents = true,
+  }) async {
     try {
       final result = await openRepository(path);
       if (!result.ok || result.data == null) {
@@ -49,7 +81,7 @@ class RepositoryState extends ChangeNotifier {
       _statusLoading = false;
       _statusError = null;
 
-      if (!_recentPaths.contains(resolvedPath)) {
+      if (addToRecents && !_recentPaths.contains(resolvedPath)) {
         _recentPaths = [resolvedPath, ..._recentPaths].take(20).toList();
         await _saveRecents();
       }

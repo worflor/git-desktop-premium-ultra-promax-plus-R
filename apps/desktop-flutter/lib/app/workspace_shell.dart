@@ -20,6 +20,7 @@ import 'hyper_reactivity.dart';
 import 'repository_state.dart';
 import 'repository_xray_state.dart';
 import 'theme_state.dart';
+import 'worktree_state.dart';
 
 enum _WorkspaceMode { changes, history, branches }
 
@@ -354,7 +355,12 @@ class _Topbar extends StatelessWidget {
       ),
       elevated: false,
       padding: const EdgeInsets.fromLTRB(2, 8, 12, 8),
+      // crossAxisAlignment.start keeps the mode buttons top-aligned even
+      // when the left column expands to two rows (repo + branch/desks row).
+      // Without this, the default center alignment drifts the buttons
+      // vertically as the left column grows.
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: Padding(
@@ -371,10 +377,11 @@ class _Topbar extends StatelessWidget {
                   ),
                   if (status != null) ...[
                     const SizedBox(height: 4),
-                    _BranchPill(
-                      branch: status.branch,
-                      repoPath: repo.activePath,
-                      onNavigate: () =>
+                    // Desk row: active branch pill + other open worktrees.
+                    _DeskRow(
+                      activeBranch: status.branch,
+                      activeRepoPath: repo.activePath,
+                      onNavigateBranches: () =>
                           onModeChanged(_WorkspaceMode.branches),
                     ),
                   ],
@@ -614,6 +621,236 @@ class _XrayModeBtn extends StatelessWidget {
   }
 }
 
+// ── Desk row: active branch pill + other open worktrees ─────────────────────
+
+/// The desk row lives in the second line of the topbar. The first position
+/// is the active desk (rendered as `_BranchPill` — keeps the dropdown
+/// affordance). Subsequent positions are other open worktrees as smaller
+/// tabs. Single-desk state looks identical to pre-worktree chrome.
+class _DeskRow extends StatelessWidget {
+  final String activeBranch;
+  final String? activeRepoPath;
+  final VoidCallback onNavigateBranches;
+
+  const _DeskRow({
+    required this.activeBranch,
+    required this.activeRepoPath,
+    required this.onNavigateBranches,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final worktreeState = context.watch<WorktreeState>();
+    final repoState = context.watch<RepositoryState>();
+    final activeNormalized =
+        activeRepoPath?.replaceAll('\\', '/').toLowerCase();
+    // Other desks = every known worktree except the one currently active.
+    final otherDesks = worktreeState.desks.where((d) {
+      return d.path.replaceAll('\\', '/').toLowerCase() != activeNormalized;
+    }).toList();
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _BranchPill(
+          branch: activeBranch,
+          repoPath: activeRepoPath,
+          onNavigate: onNavigateBranches,
+        ),
+        for (final desk in otherDesks) ...[
+          const SizedBox(width: 6),
+          _DeskTab(
+            desk: desk,
+            onTap: () {
+              if (desk.path != repoState.activePath) {
+                repoState.setActivePath(desk.path, addToRecents: false);
+              }
+            },
+            onClose: desk.isMain
+                ? null
+                : () => _closeDeskFlow(context, desk, worktreeState),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _closeDeskFlow(
+    BuildContext context,
+    WorktreeData desk,
+    WorktreeState worktreeState,
+  ) async {
+    if (desk.dirtyFileCount == 0) {
+      // Clean desk → silent close.
+      await worktreeState.closeDesk(desk.path);
+      return;
+    }
+    // Dirty desk → confirm with shelve option.
+    final choice = await showDialog<_CloseDeskChoice>(
+      context: context,
+      builder: (ctx) => _CloseDeskDialog(desk: desk),
+    );
+    if (choice == null || choice == _CloseDeskChoice.cancel) return;
+    await worktreeState.closeDesk(
+      desk.path,
+      shelveFirst: choice == _CloseDeskChoice.shelve,
+      force: choice == _CloseDeskChoice.discard,
+    );
+  }
+}
+
+class _DeskTab extends StatefulWidget {
+  final WorktreeData desk;
+  final VoidCallback onTap;
+  final VoidCallback? onClose;
+
+  const _DeskTab({
+    required this.desk,
+    required this.onTap,
+    required this.onClose,
+  });
+
+  @override
+  State<_DeskTab> createState() => _DeskTabState();
+}
+
+class _DeskTabState extends State<_DeskTab> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final d = widget.desk;
+    final label = d.branch ?? (d.isDetached ? d.head.substring(0, 7) : 'desk');
+    final canClose = widget.onClose != null;
+    final showCloseOverDot = canClose && _hovered;
+    final dotColor = d.dirtyFileCount > 0
+        ? t.accentBright.withValues(alpha: 0.85)
+        : t.chromeBorder.withValues(alpha: 0.5);
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          height: 26,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? t.secondaryBtnHoverBg
+                : t.bg0.withValues(alpha: 0.25),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: t.chromeBorder.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Indicator position: dot by default, × overlay on hover.
+              // Same footprint so the tab never reflows.
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    AnimatedOpacity(
+                      opacity: showCloseOverDot ? 0.0 : 1.0,
+                      duration: const Duration(milliseconds: 100),
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: dotColor,
+                        ),
+                      ),
+                    ),
+                    if (canClose)
+                      AnimatedOpacity(
+                        opacity: showCloseOverDot ? 1.0 : 0.0,
+                        duration: const Duration(milliseconds: 100),
+                        child: GestureDetector(
+                          onTap: widget.onClose,
+                          behavior: HitTestBehavior.opaque,
+                          child: Text(
+                            '×',
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              height: 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _CloseDeskChoice { shelve, discard, cancel }
+
+class _CloseDeskDialog extends StatelessWidget {
+  final WorktreeData desk;
+  const _CloseDeskDialog({required this.desk});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return AlertDialog(
+      backgroundColor: t.surface1,
+      title: Text(
+        'Close desk?',
+        style: TextStyle(color: t.textStrong, fontSize: 14),
+      ),
+      content: Text(
+        'This desk has ${desk.dirtyFileCount} uncommitted file${desk.dirtyFileCount == 1 ? '' : 's'}. '
+        'Shelve them so you can pick them back up later, or close anyway and discard the changes?',
+        style: TextStyle(color: t.textNormal, fontSize: 12),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () =>
+              Navigator.of(context).pop(_CloseDeskChoice.cancel),
+          child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+        ),
+        TextButton(
+          onPressed: () =>
+              Navigator.of(context).pop(_CloseDeskChoice.discard),
+          child: Text('Discard & close',
+              style: TextStyle(color: t.stateDeleted)),
+        ),
+        TextButton(
+          onPressed: () =>
+              Navigator.of(context).pop(_CloseDeskChoice.shelve),
+          child: Text('Shelve & close',
+              style: TextStyle(color: t.accentBright)),
+        ),
+      ],
+    );
+  }
+}
+
 // ── Branch pill + emerging panel ─────────────────────────────────────────────
 
 class _BranchPill extends StatefulWidget {
@@ -677,6 +914,14 @@ class _BranchPillState extends State<_BranchPill> {
     final box = _pillKey.currentContext!.findRenderObject() as RenderBox;
     final origin = box.localToGlobal(Offset.zero);
     final pillSize = box.size;
+    // Snapshot the worktree state at overlay-open time so the "+ desk" /
+    // "→ open" affordances know which branches are already open elsewhere.
+    final worktreeState = context.read<WorktreeState>();
+    final repoState = context.read<RepositoryState>();
+    final branchesOpenAsDesks = worktreeState.desks
+        .where((d) => d.branch != null)
+        .map((d) => d.branch!)
+        .toSet();
 
     _overlay = OverlayEntry(builder: (_) {
       return _BranchPanelOverlay(
@@ -691,6 +936,31 @@ class _BranchPillState extends State<_BranchPill> {
         currentBranch: widget.branch,
         onDismiss: _close,
         onCheckout: _checkout,
+        onOpenAsDesk: (branchName) async {
+          // If this branch already has a desk, jump to it. Otherwise
+          // create a new worktree for it and switch to it.
+          final existing = worktreeState.desks.firstWhere(
+            (d) => d.branch == branchName,
+            orElse: () => const WorktreeData(
+              path: '', head: '', isMain: false,
+              isDetached: false, isLocked: false,
+            ),
+          );
+          _close();
+          if (existing.path.isNotEmpty) {
+            await repoState.setActivePath(existing.path, addToRecents: false);
+          } else {
+            await worktreeState.addDesk(branchName);
+          }
+        },
+        onCreateDeskFromHead: (newBranchName) async {
+          _close();
+          await worktreeState.addDesk(
+            newBranchName,
+            createNewBranch: true,
+          );
+        },
+        branchesOpenAsDesks: branchesOpenAsDesks,
         onNavigate: () {
           _close();
           widget.onNavigate();
@@ -781,6 +1051,9 @@ class _BranchPanelOverlay extends StatefulWidget {
   final String currentBranch;
   final VoidCallback onDismiss;
   final ValueChanged<String> onCheckout;
+  final ValueChanged<String>? onOpenAsDesk;
+  final ValueChanged<String>? onCreateDeskFromHead;
+  final Set<String> branchesOpenAsDesks;
   final VoidCallback onNavigate;
 
   const _BranchPanelOverlay({
@@ -794,6 +1067,9 @@ class _BranchPanelOverlay extends StatefulWidget {
     required this.currentBranch,
     required this.onDismiss,
     required this.onCheckout,
+    this.onOpenAsDesk,
+    this.onCreateDeskFromHead,
+    this.branchesOpenAsDesks = const {},
     required this.onNavigate,
   });
 
@@ -928,6 +1204,9 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
                           switching: widget.switching,
                           currentBranch: widget.currentBranch,
                           onCheckout: widget.onCheckout,
+                          onOpenAsDesk: widget.onOpenAsDesk,
+                          onCreateDeskFromHead: widget.onCreateDeskFromHead,
+                          branchesOpenAsDesks: widget.branchesOpenAsDesks,
                           onNavigate: widget.onNavigate,
                           t: t,
                         ),
@@ -950,6 +1229,10 @@ class _PanelBody extends StatelessWidget {
   final bool switching;
   final String currentBranch;
   final ValueChanged<String> onCheckout;
+  final ValueChanged<String>? onOpenAsDesk;
+  final Set<String> branchesOpenAsDesks;
+  /// Create a new branch from HEAD and open it on a new desk, in one motion.
+  final ValueChanged<String>? onCreateDeskFromHead;
   final VoidCallback onNavigate;
   final AppTokens t;
 
@@ -959,6 +1242,9 @@ class _PanelBody extends StatelessWidget {
     required this.switching,
     required this.currentBranch,
     required this.onCheckout,
+    this.onOpenAsDesk,
+    this.branchesOpenAsDesks = const {},
+    this.onCreateDeskFromHead,
     required this.onNavigate,
     required this.t,
   });
@@ -1001,6 +1287,10 @@ class _PanelBody extends StatelessWidget {
             onTap: branch.current
                 ? null
                 : () => onCheckout(branch.name),
+            onOpenAsDesk: onOpenAsDesk == null
+                ? null
+                : () => onOpenAsDesk!(branch.name),
+            alreadyOpenAsDesk: branchesOpenAsDesks.contains(branch.name),
           ),
         const SizedBox(height: 4),
         Container(
@@ -1008,6 +1298,8 @@ class _PanelBody extends StatelessWidget {
           color: t.chromeBorder.withValues(alpha: 0.12),
           margin: const EdgeInsets.symmetric(horizontal: 8),
         ),
+        if (onCreateDeskFromHead != null)
+          _NewDeskRow(t: t, onSubmit: onCreateDeskFromHead!),
         _NavRow(t: t, onTap: onNavigate),
       ],
     );
@@ -1020,6 +1312,12 @@ class _BranchRow extends StatefulWidget {
   final bool switching;
   final AppTokens t;
   final VoidCallback? onTap;
+  /// When non-null, shows a hover-reveal "open on new desk" affordance.
+  /// If the branch already has a worktree, this instead jumps to that desk.
+  final VoidCallback? onOpenAsDesk;
+  /// True when this branch is already open as a separate desk — the desk
+  /// action then "jumps" instead of creating a new one.
+  final bool alreadyOpenAsDesk;
 
   const _BranchRow({
     required this.branch,
@@ -1027,6 +1325,8 @@ class _BranchRow extends StatefulWidget {
     required this.switching,
     required this.t,
     required this.onTap,
+    this.onOpenAsDesk,
+    this.alreadyOpenAsDesk = false,
   });
 
   @override
@@ -1108,6 +1408,159 @@ class _BranchRowState extends State<_BranchRow> {
                     ),
                   ),
               ],
+              // Trailing desk affordances — only for non-current branches.
+              // The current branch is already where you are; there's no
+              // "jump to" or "open on new desk" meaning for it.
+              if (widget.onOpenAsDesk != null && !widget.isCurrent) ...[
+                const SizedBox(width: 6),
+                if (widget.alreadyOpenAsDesk)
+                  Tooltip(
+                    message: 'Jump to desk',
+                    child: GestureDetector(
+                      onTap: widget.onOpenAsDesk,
+                      child: Text(
+                        '→ open',
+                        style: TextStyle(
+                          color: t.accentBright.withValues(alpha: 0.7),
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  )
+                else if (_hovered)
+                  Tooltip(
+                    message: 'Open on a new desk',
+                    child: GestureDetector(
+                      onTap: widget.onOpenAsDesk,
+                      child: Text(
+                        '+ desk',
+                        style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Inline "+ new desk from HEAD..." row. Collapsed to a button by default;
+/// expands into a text field where you name a new branch. Enter creates
+/// the branch AND opens it on a new desk in one motion.
+class _NewDeskRow extends StatefulWidget {
+  final AppTokens t;
+  final ValueChanged<String> onSubmit;
+  const _NewDeskRow({required this.t, required this.onSubmit});
+
+  @override
+  State<_NewDeskRow> createState() => _NewDeskRowState();
+}
+
+class _NewDeskRowState extends State<_NewDeskRow> {
+  bool _hovered = false;
+  bool _expanded = false;
+  final _ctrl = TextEditingController();
+  final _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _ctrl.text.trim();
+    if (name.isEmpty) return;
+    widget.onSubmit(name);
+    _ctrl.clear();
+    setState(() => _expanded = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    if (_expanded) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          children: [
+            Text('+ ', style: TextStyle(color: t.accentBright, fontSize: 12)),
+            Expanded(
+              child: TextField(
+                controller: _ctrl,
+                focusNode: _focusNode,
+                autofocus: true,
+                onSubmitted: (_) => _submit(),
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+                decoration: InputDecoration(
+                  isCollapsed: true,
+                  hintText: 'new-branch-name',
+                  hintStyle: TextStyle(
+                    color: t.textMuted.withValues(alpha: 0.6),
+                    fontSize: 11,
+                  ),
+                  border: InputBorder.none,
+                ),
+              ),
+            ),
+            GestureDetector(
+              onTap: () => setState(() {
+                _expanded = false;
+                _ctrl.clear();
+              }),
+              child: Text('esc',
+                  style: TextStyle(color: t.textMuted, fontSize: 9)),
+            ),
+          ],
+        ),
+      );
+    }
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: () {
+          setState(() => _expanded = true);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _focusNode.requestFocus();
+          });
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          color: _hovered ? t.secondaryBtnHoverBg : Colors.transparent,
+          child: Row(
+            children: [
+              Text(
+                '+ New desk',
+                style: TextStyle(
+                  color: _hovered ? t.textNormal : t.textMuted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'from HEAD...',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.6),
+                  fontSize: 10,
+                ),
+              ),
             ],
           ),
         ),

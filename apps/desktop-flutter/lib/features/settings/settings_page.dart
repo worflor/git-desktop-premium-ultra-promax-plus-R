@@ -3401,13 +3401,15 @@ class _FitLine extends StatelessWidget {
 String _guardrailPhrase(int stage) {
   switch (stage) {
     case 0:
-      return 'Permissive review mode';
+      return 'Probably fine means fine';
+    case 1:
+      return 'A proper read — logic, integration, patterns';
     case 2:
-      return 'Tighter safety checks';
+      return 'Look again. Something might be hiding';
     case 3:
-      return 'Maximum lock-down safeguards';
+      return 'Assume something is wrong. Find it';
     default:
-      return 'Practical everyday protections';
+      return 'A proper read — logic, integration, patterns';
   }
 }
 

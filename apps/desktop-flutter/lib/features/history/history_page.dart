@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -249,6 +250,9 @@ class _TimelinePainter extends CustomPainter {
   final double height;
   final double vertInset;
   final double laneStep;
+  // Per-commit data for size + color encoding. May be empty if cache not ready.
+  final Map<String, double> churnNorm;   // 0.0–1.0, log-normalized across window
+  final Map<String, double> netRatio;    // 0.0=all-deletions … 1.0=all-additions
 
   const _TimelinePainter({
     required this.layout,
@@ -261,6 +265,8 @@ class _TimelinePainter extends CustomPainter {
     required this.height,
     required this.vertInset,
     required this.laneStep,
+    required this.churnNorm,
+    required this.netRatio,
   });
 
   @override
@@ -352,16 +358,33 @@ class _TimelinePainter extends CustomPainter {
     for (final node in sorted) {
       final m = metricsMap[node.entry.commitHash];
       if (m == null) continue;
-      final isSelected = node.entry.commitHash == selectedHash;
-      final r = _kNodeRadius * m.scale;
+      final hash = node.entry.commitHash;
+      final isSelected = hash == selectedHash;
+
+      // Size: base lens scale + churn boost (up to 1.5x extra)
+      final churn = churnNorm[hash] ?? 0.0;
+      final r = _kNodeRadius * m.scale * (1.0 + churn * 0.5);
+
+      // Color: lerp hypercubeNegative → hypercubePositive by net ratio
+      final Color nodeColor;
+      if (isSelected) {
+        nodeColor = tokens.accentBright;
+      } else if (churnNorm.containsKey(hash)) {
+        final t = netRatio[hash] ?? 0.5;
+        nodeColor = Color.lerp(
+          tokens.hypercubeNegative.withValues(alpha: 0.85),
+          tokens.hypercubePositive.withValues(alpha: 0.85),
+          t,
+        )!;
+      } else {
+        nodeColor = tokens.chromeBorder.withValues(alpha: 0.7);
+      }
 
       canvas.drawCircle(
         Offset(m.x, m.y),
         r,
         Paint()
-          ..color = isSelected
-              ? tokens.accentBright
-              : tokens.chromeBorder.withValues(alpha: 0.7)
+          ..color = nodeColor
           ..style = PaintingStyle.fill,
       );
 
@@ -394,7 +417,9 @@ class _TimelinePainter extends CustomPainter {
       old.hoveredHash != hoveredHash ||
       old.hoverX != hoverX ||
       old.layout != layout ||
-      old.baseXs != baseXs;
+      old.baseXs != baseXs ||
+      old.churnNorm != churnNorm ||
+      old.netRatio != netRatio;
 }
 
 // ── Timeline strip ────────────────────────────────────────────────────────────
@@ -404,12 +429,14 @@ class _TimelineStrip extends StatefulWidget {
   final String? selectedHash;
   final ValueChanged<String> onSelected;
   final AppTokens tokens;
+  final Map<String, CommitDetailData> detailCache;
 
   const _TimelineStrip({
     required this.commits,
     required this.selectedHash,
     required this.onSelected,
     required this.tokens,
+    required this.detailCache,
   });
 
   @override
@@ -423,11 +450,21 @@ class _TimelineStripState extends State<_TimelineStrip> {
   _GLayout? _layout;
   List<double> _percents = [];
   int _layoutVersion = 0;
+  Map<String, double> _churnNorm = {};
+  Map<String, double> _netRatio = {};
+  int _cacheVersion = 0;
 
   void _rebuildLayout() {
     _layout = _buildLayout(widget.commits);
     _percents = _computePercents(widget.commits);
     _layoutVersion = widget.commits.length;
+    _rebuildChurnMaps();
+  }
+
+  void _rebuildChurnMaps() {
+    _churnNorm = _computeChurnNorm(widget.commits, widget.detailCache);
+    _netRatio = _computeNetRatio(widget.commits, widget.detailCache);
+    _cacheVersion = widget.detailCache.length;
   }
 
   @override
@@ -435,6 +472,9 @@ class _TimelineStripState extends State<_TimelineStrip> {
     super.didUpdateWidget(old);
     if (old.commits.length != widget.commits.length) {
       _layout = null;
+    }
+    if (old.detailCache.length != widget.detailCache.length) {
+      _rebuildChurnMaps();
     }
   }
 
@@ -525,6 +565,8 @@ class _TimelineStripState extends State<_TimelineStrip> {
                   height: height,
                   vertInset: _kVertInset,
                   laneStep: laneStep,
+                  churnNorm: _churnNorm,
+                  netRatio: _netRatio,
                 ),
                 size: Size(width, totalHeight),
               ),
@@ -533,6 +575,48 @@ class _TimelineStripState extends State<_TimelineStrip> {
         ),
       );
     });
+  }
+
+  // Build hash→detail lookup from the repo-keyed cache
+  static Map<String, CommitDetailData> _byHash(
+      Map<String, CommitDetailData> cache) {
+    final out = <String, CommitDetailData>{};
+    for (final e in cache.entries) {
+      // cache keys are "repoPath::hash" — extract hash after last '::'
+      final sep = e.key.lastIndexOf('::');
+      final hash = sep >= 0 ? e.key.substring(sep + 2) : e.key;
+      out[hash] = e.value;
+    }
+    return out;
+  }
+
+  static Map<String, double> _computeChurnNorm(
+      List<CommitHistoryEntry> commits, Map<String, CommitDetailData> cache) {
+    final byHash = _byHash(cache);
+    final raws = <String, double>{};
+    for (final c in commits) {
+      final d = byHash[c.commitHash];
+      if (d == null) continue;
+      final churn = d.additions + d.deletions;
+      if (churn > 0) raws[c.commitHash] = log(churn + 1);
+    }
+    if (raws.isEmpty) return {};
+    final maxVal = raws.values.reduce(max);
+    if (maxVal == 0) return {};
+    return raws.map((k, v) => MapEntry(k, v / maxVal));
+  }
+
+  static Map<String, double> _computeNetRatio(
+      List<CommitHistoryEntry> commits, Map<String, CommitDetailData> cache) {
+    final byHash = _byHash(cache);
+    final result = <String, double>{};
+    for (final c in commits) {
+      final d = byHash[c.commitHash];
+      if (d == null) continue;
+      final total = d.additions + d.deletions;
+      result[c.commitHash] = total == 0 ? 0.5 : d.additions / total;
+    }
+    return result;
   }
 
   String? _nearestHash(double x, List<double> baseXs) {
@@ -725,6 +809,9 @@ class _HistoryPageState extends State<HistoryPage> {
         _error = r.error;
       }
     });
+    // Kick off bulk prefetch immediately — runs in background, no await
+    if (r.ok) unawaited(_prefetchAllDetails(repo));
+
     final initialHash = widget.initialCommitHash;
     if (initialHash != null &&
         _commits.any((c) => c.commitHash == initialHash)) {
@@ -789,6 +876,19 @@ class _HistoryPageState extends State<HistoryPage> {
       ok: r.ok,
       errorCode: r.ok ? null : 'history.detail_failed',
     );
+  }
+
+  /// Silently pre-populates _detailCache for all loaded commits using two
+  /// bulk git log passes. Uses putIfAbsent so individual fetches (which
+  /// include body text) always win over bulk-fetched entries.
+  Future<void> _prefetchAllDetails(String repo) async {
+    final commits = List<CommitHistoryEntry>.from(_commits);
+    if (commits.isEmpty) return;
+    final r = await bulkGetCommitDetails(repo, commits, limit: _historyLimit);
+    if (!mounted || !r.ok) return;
+    for (final entry in r.data!.entries) {
+      _detailCache.putIfAbsent('$repo::${entry.key}', () => entry.value);
+    }
   }
 
   Future<void> _loadReflog(String repo) async {
@@ -958,6 +1058,7 @@ class _HistoryPageState extends State<HistoryPage> {
             _loadDetail(repoPath, hash);
           },
           tokens: t,
+          detailCache: _detailCache,
         ),
 
       // ── Main content ─────────────────────────────────────────────────
@@ -1383,10 +1484,118 @@ class _CommitDetail extends StatelessWidget {
     }
   }
 
+  List<Widget> _buildGroupedFiles(List<CommitFileStatData> files,
+      AppTokens t, Set<String> dirtyPaths) {
+    // Group by module
+    final grouped = <String, List<CommitFileStatData>>{};
+    for (final f in files) {
+      grouped.putIfAbsent(_moduleFromPath(f.path), () => []).add(f);
+    }
+
+    final widgets = <Widget>[];
+    bool first = true;
+    for (final entry in grouped.entries) {
+      if (!first) widgets.add(const SizedBox(height: 10));
+      first = false;
+
+      // Module header
+      widgets.add(Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(children: [
+          Text(entry.key,
+              style: TextStyle(
+                  color: t.textFaint,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5)),
+          const SizedBox(width: 3),
+          Text('/',
+              style: TextStyle(color: t.textFaint.withValues(alpha: 0.5), fontSize: 10)),
+        ]),
+      ));
+
+      // File rows
+      for (final f in entry.value) {
+        final normalizedPath = f.path.replaceAll('\\', '/');
+        // Both dirtyPaths (from git status) and normalizedPath (from
+        // git show) are repo-root-relative, so direct equality is correct.
+        final isDirty = dirtyPaths.contains(normalizedPath);
+        final displayName = _displayPath(f.path, entry.key);
+
+        widgets.add(Padding(
+          padding: const EdgeInsets.symmetric(vertical: 1.5),
+          child: Row(children: [
+            // Change type badge
+            _ChangeTypeBadge(type: f.changeType, tokens: t),
+            const SizedBox(width: 6),
+            // Dirty indicator dot
+            if (isDirty) ...[
+              Container(
+                width: 5,
+                height: 5,
+                margin: const EdgeInsets.only(right: 5),
+                decoration: BoxDecoration(
+                  color: t.accentBright,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+            // File name
+            Expanded(
+              child: Text(displayName,
+                  style: TextStyle(
+                      color: isDirty ? t.textStrong : t.textNormal,
+                      fontSize: 11,
+                      fontFamily: 'JetBrainsMono'),
+                  overflow: TextOverflow.ellipsis),
+            ),
+            // Stats
+            Text('+${f.additions}',
+                style: TextStyle(color: t.stateAdded, fontSize: 10)),
+            const SizedBox(width: 4),
+            Text('-${f.deletions}',
+                style: TextStyle(color: t.stateDeleted, fontSize: 10)),
+          ]),
+        ));
+      }
+    }
+    return widgets;
+  }
+
+  static String _moduleFromPath(String path) {
+    final p = path.replaceAll('\\', '/');
+    final libIdx = p.indexOf('/lib/');
+    if (libIdx >= 0) {
+      final afterLib = p.substring(libIdx + 5);
+      final slash = afterLib.indexOf('/');
+      return slash >= 0 ? afterLib.substring(0, slash) : afterLib;
+    }
+    if (p.contains('/test/')) return 'test';
+    final parts = p.split('/').where((s) => s.isNotEmpty).toList();
+    return parts.length > 1 ? parts[parts.length - 2] : 'other';
+  }
+
+  static String _displayPath(String path, String module) {
+    final p = path.replaceAll('\\', '/');
+    final marker = '/lib/$module/';
+    final idx = p.indexOf(marker);
+    if (idx >= 0) return p.substring(idx + marker.length);
+    final testIdx = p.indexOf('/test/');
+    if (testIdx >= 0) return p.substring(testIdx + 6);
+    return p.split('/').last;
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = tokens;
     final d = detail;
+    final dirtyPaths = context
+            .watch<RepositoryState>()
+            .status
+            ?.files
+            .map((f) => f.path.replaceAll('\\', '/'))
+            .toSet() ??
+        <String>{};
     return ListView(padding: const EdgeInsets.all(20), children: [
       // Subject (primary heading)
       resonanceText(d.subject, t,
@@ -1550,23 +1759,7 @@ class _CommitDetail extends StatelessWidget {
       ]),
 
       const SizedBox(height: 16),
-      ...d.files.map((f) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(children: [
-              Expanded(
-                  child: Text(f.path,
-                      style: TextStyle(
-                          color: t.textNormal,
-                          fontSize: 11,
-                          fontFamily: 'JetBrainsMono'),
-                      overflow: TextOverflow.ellipsis)),
-              Text('+${f.additions}',
-                  style: TextStyle(color: t.stateAdded, fontSize: 10)),
-              const SizedBox(width: 4),
-              Text('-${f.deletions}',
-                  style: TextStyle(color: t.stateDeleted, fontSize: 10)),
-            ]),
-          )),
+      ..._buildGroupedFiles(d.files, t, dirtyPaths),
     ]);
   }
 }
@@ -1721,6 +1914,49 @@ class _StatChip extends StatelessWidget {
             style: TextStyle(
                 color: color, fontSize: 10, fontWeight: FontWeight.w600)),
       );
+}
+
+class _ChangeTypeBadge extends StatelessWidget {
+  final String type;
+  final AppTokens tokens;
+  const _ChangeTypeBadge({required this.type, required this.tokens});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final Color color;
+    switch (type) {
+      case 'A':
+        color = t.stateAdded;
+        break;
+      case 'D':
+        color = t.stateDeleted;
+        break;
+      case 'R':
+        color = t.accentBright;
+        break;
+      case 'C':
+        color = t.accentBright.withValues(alpha: 0.8);
+        break;
+      default: // 'M' and others
+        color = t.textFaint;
+    }
+    return Container(
+      width: 14,
+      height: 14,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text(type.substring(0, 1),
+          style: TextStyle(
+              color: color,
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              fontFamily: 'JetBrainsMono')),
+    );
+  }
 }
 
 // ── Rebase editor ─────────────────────────────────────────────────────────────
