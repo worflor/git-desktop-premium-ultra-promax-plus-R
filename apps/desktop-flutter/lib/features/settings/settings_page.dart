@@ -873,7 +873,9 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(height: 10),
               _CheckboxRow(
                 label: 'Logo animates when tabbed out',
-                description: "It's designed to be efficient, don't hurt its feelings",
+                description: preferences.logoAnimatesWhenUnfocused
+                    ? "It's designed to be efficient, don't hurt its feelings"
+                    : ":(",
                 value: preferences.logoAnimatesWhenUnfocused,
                 onChanged: (value) {
                   _setLogoAnimatesWhenUnfocused(value);
@@ -1052,87 +1054,73 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
         const SizedBox(height: 10),
-        _StateCard(
-          title: 'Diagnostics',
-          summary:
-              'Comparative overview with focused drill-down for each diagnostic stream.',
-          wide: true,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Spacer(),
-                  _GhostMiniButton(
-                      label: 'Copy All', onTap: _copyAllDiagnostics),
-                ],
-              ),
-              const SizedBox(height: 8),
-              _ResponsiveCardRow(
-                gap: 8,
-                children: [
-                  _DiagnosticsTab(
-                    label: 'Command',
-                    meta:
-                        '${commandReport.totalSamples} samples | ${commandReport.commandCount} commands',
-                    active: _diagnosticsFocus == 'command',
-                    onTap: () => setState(() => _diagnosticsFocus = 'command'),
-                  ),
-                  _DiagnosticsTab(
-                    label: 'Diff Render',
-                    meta:
-                        '${diffReport.totalSessions} sessions | ${((1 - diffReport.fallbackRate) * 100).toStringAsFixed(0)}% stability',
-                    active: _diagnosticsFocus == 'diff',
-                    onTap: () => setState(() => _diagnosticsFocus = 'diff'),
-                  ),
-                  _DiagnosticsTab(
-                    label: 'UI Timing',
-                    meta:
-                        '${uiReport.totalSamples} samples | ${uiReport.eventCount} events',
-                    active: _diagnosticsFocus == 'ui',
-                    onTap: () => setState(() => _diagnosticsFocus = 'ui'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              const _SettingsSubtitle('Top Offenders'),
-              const SizedBox(height: 4),
-              if (topOffenders.isEmpty)
-                Text(
-                  'No offender ranking yet. Capture diagnostic activity to populate this list.',
-                  style: TextStyle(color: t.textMuted, fontSize: 12),
-                )
-              else
-                Column(
-                  children: [
-                    for (var i = 0; i < topOffenders.length; i++) ...[
-                      _DiagnosticsOffenderButton(
-                        rank: i + 1,
-                        offender: topOffenders[i],
-                        onTap: () => setState(
-                          () => _diagnosticsFocus = topOffenders[i].focus,
-                        ),
-                      ),
-                      if (i < topOffenders.length - 1)
-                        const SizedBox(height: 6),
-                    ],
-                  ],
-                ),
-              const SizedBox(height: 16),
-              _DiagnosticsFocusPanel(
+        const _SettingsGap(),
+        const _SettingsSubtitle('Performance Diagnostics'),
+        const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: _TelemetrySwitcher(
                 focus: _diagnosticsFocus,
                 commandReport: commandReport,
-                backendCommandReport: backendCommandReport,
                 diffReport: diffReport,
                 uiReport: uiReport,
-                onRefresh: diagnostics.refreshSnapshots,
-                onClearCommand: diagnostics.clearCommandLatencyReport,
-                onClearDiff: diagnostics.clearDiffRenderMetricsReport,
-                onClearUi: diagnostics.clearUiTimingReport,
-                formatSampleTime: _formatSampleTime,
+                onFocusChanged: (focus) => setState(() => _diagnosticsFocus = focus),
               ),
+            ),
+            const SizedBox(width: 12),
+            _GhostMiniButton(
+              label: 'Copy Trace',
+              onTap: _copyAllDiagnostics,
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            const _SettingsSubtitle('Offender Ranking'),
+            const SizedBox(width: 8),
+            Text(
+              'Latency drivers across streams.',
+              style: TextStyle(color: t.textMuted, fontSize: 10),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        if (topOffenders.isEmpty)
+          Text(
+            'No offender ranking yet. Capture diagnostic activity to populate this list.',
+            style: TextStyle(color: t.textMuted, fontSize: 12),
+          )
+        else
+          Column(
+            children: [
+              for (var i = 0; i < topOffenders.length; i++) ...[
+                _DiagnosticsOffenderButton(
+                  rank: i + 1,
+                  offender: topOffenders[i],
+                  onTap: () => setState(
+                    () => _diagnosticsFocus = topOffenders[i].focus,
+                  ),
+                ),
+                if (i < topOffenders.length - 1)
+                  const SizedBox(height: 4),
+              ],
             ],
           ),
+        const _SettingsGap(),
+        _DiagnosticsFocusPanel(
+          focus: _diagnosticsFocus,
+          commandReport: commandReport,
+          backendCommandReport: backendCommandReport,
+          diffReport: diffReport,
+          uiReport: uiReport,
+          onRefresh: diagnostics.refreshSnapshots,
+          onClearCommand: diagnostics.clearCommandLatencyReport,
+          onClearDiff: diagnostics.clearDiffRenderMetricsReport,
+          onClearUi: diagnostics.clearUiTimingReport,
+          formatSampleTime: _formatSampleTime,
         ),
         const SizedBox(height: 10),
         _StateCard(
@@ -1244,42 +1232,51 @@ class _DiagnosticsOffenderButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: t.rowBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: t.secondaryBtnBorder),
+          color: t.rowBg.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.08)),
         ),
         child: Row(
           children: [
-            Text(
-              '#$rank',
-              style: TextStyle(
-                color: t.accentBright,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
+            Container(
+              width: 24,
+              height: 16,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: t.accentBright.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(2),
+              ),
+              child: Text(
+                '0$rank',
+                style: TextStyle(
+                  color: t.accentBright,
+                  fontSize: 9,
+                  fontFamily: 'JetBrainsMono',
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Text(
-                    offender.streamLabel,
-                    style: TextStyle(
-                      color: t.textMuted,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
                   Text(
                     offender.name,
                     style: TextStyle(
                       color: t.textStrong,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'in ${offender.streamLabel}',
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 9,
+                      fontFamily: 'JetBrainsMono',
                     ),
                   ),
                 ],
@@ -1289,7 +1286,12 @@ class _DiagnosticsOffenderButton extends StatelessWidget {
             Text(
               offender.metricLabel,
               textAlign: TextAlign.right,
-              style: TextStyle(color: t.textMuted, fontSize: 10),
+              style: TextStyle(
+                color: t.accentBright.withValues(alpha: 0.8),
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono',
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),
@@ -2775,13 +2777,76 @@ class _GhostMiniButtonState extends State<_GhostMiniButton> {
   }
 }
 
-class _DiagnosticsTab extends StatefulWidget {
+class _TelemetrySwitcher extends StatelessWidget {
+  final String focus;
+  final CommandLatencyReport commandReport;
+  final DiffRenderMetricsReport diffReport;
+  final UiTimingReport uiReport;
+  final ValueChanged<String> onFocusChanged;
+
+  const _TelemetrySwitcher({
+    required this.focus,
+    required this.commandReport,
+    required this.diffReport,
+    required this.uiReport,
+    required this.onFocusChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final items = [
+      (
+        'command',
+        'Command',
+        '${commandReport.totalSamples} samples | ${commandReport.commandCount} commands'
+      ),
+      (
+        'diff',
+        'Diff Render',
+        '${diffReport.totalSessions} sessions | ${((1 - diffReport.fallbackRate) * 100).toStringAsFixed(0)}% stability'
+      ),
+      (
+        'ui',
+        'UI Timing',
+        '${uiReport.totalSamples} samples | ${uiReport.eventCount} events'
+      ),
+    ];
+
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.only(bottom: 2),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: t.chromeBorder.withValues(alpha: 0.12),
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (final item in items)
+            _TelemetrySwitcherItem(
+              label: item.$2,
+              meta: item.$3,
+              active: focus == item.$1,
+              onTap: () => onFocusChanged(item.$1),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TelemetrySwitcherItem extends StatefulWidget {
   final String label;
   final String meta;
   final bool active;
   final VoidCallback onTap;
 
-  const _DiagnosticsTab({
+  const _TelemetrySwitcherItem({
     required this.label,
     required this.meta,
     required this.active,
@@ -2789,69 +2854,82 @@ class _DiagnosticsTab extends StatefulWidget {
   });
 
   @override
-  State<_DiagnosticsTab> createState() => _DiagnosticsTabState();
+  State<_TelemetrySwitcherItem> createState() => _TelemetrySwitcherItemState();
 }
 
-class _DiagnosticsTabState extends State<_DiagnosticsTab> {
+class _TelemetrySwitcherItemState extends State<_TelemetrySwitcherItem> {
   bool _hovered = false;
-  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final chrome = modeButtonChrome(
-      t,
-      hovered: _hovered,
-      pressed: _pressed,
-      active: widget.active,
-    );
+    final activeColor = t.accentBright;
+    final mutedColor = t.textMuted;
+
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
-        child: AnimatedScale(
-          duration: const Duration(milliseconds: 80),
-          scale: chrome.scale,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: chrome.background,
-              gradient: chrome.gradient,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: chrome.borderColor),
-              boxShadow: chrome.shadows,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          margin: const EdgeInsets.only(right: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: widget.active ? activeColor : Colors.transparent,
+                width: 2,
+              ),
             ),
-            child: Transform.translate(
-              offset: chrome.offset,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     widget.label,
                     style: TextStyle(
-                      color: widget.active ? t.accentBright : t.textNormal,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                      color: widget.active ? activeColor : t.textNormal,
+                      fontSize: 10,
+                      fontWeight:
+                          widget.active ? FontWeight.w800 : FontWeight.w600,
+                      letterSpacing: -0.2,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(widget.meta,
-                      style: TextStyle(color: t.textMuted, fontSize: 10)),
+                  if (widget.active) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 1,
+                      height: 8,
+                      color: activeColor.withValues(alpha: 0.5),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      widget.meta.split(' | ').first, // Shorthand metrics
+                      style: TextStyle(
+                        color: activeColor.withValues(alpha: 0.7),
+                        fontSize: 8,
+                        fontFamily: 'JetBrainsMono',
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ],
               ),
-            ),
+              const SizedBox(height: 4),
+            ],
           ),
         ),
       ),
     );
   }
 }
+
 
 class _CommandDiagnosticsPanel extends StatelessWidget {
   final CommandLatencyReport report;
@@ -2875,17 +2953,21 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const _SettingsSubtitle('Command Diagnostics'),
-        const SizedBox(height: 4),
-        Text(
-          '${report.totalSamples} samples | ${report.commandCount} unique commands',
-          style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
-        ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
         _DiagnosticsActionRow(
           onRefresh: onRefresh,
           clearLabel: 'Clear Samples',
           onClear: onClear,
           clearEnabled: report.totalSamples > 0,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${report.totalSamples} samples | ${report.commandCount} unique commands',
+          style: TextStyle(
+            color: context.tokens.textMuted,
+            fontSize: 10,
+            fontFamily: 'JetBrainsMono',
+          ),
         ),
         const SizedBox(height: 12),
         if (summaries.isEmpty)
@@ -2933,11 +3015,16 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 16),
-        const _SettingsSubtitle('Backend Command Telemetry'),
-        const SizedBox(height: 4),
+        const SizedBox(height: 16),
+        const _SettingsSubtitle('Network Flow Telemetry'),
+        const SizedBox(height: 8),
         Text(
           '${backendReport.sampleCount} samples | ${backendReport.summaries.length} scoped commands',
-          style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
+          style: TextStyle(
+            color: context.tokens.textMuted,
+            fontSize: 10,
+            fontFamily: 'JetBrainsMono',
+          ),
         ),
         const SizedBox(height: 10),
         if (backendReport.summaries.isEmpty)
@@ -2960,7 +3047,7 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
               ],
             ],
           ),
@@ -3000,18 +3087,21 @@ class _DiffDiagnosticsPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SettingsSubtitle('Diff Render Diagnostics'),
-        const SizedBox(height: 4),
-        Text(
-          '${report.totalSessions} sessions | jank ${(report.jankyFrameRate * 100).toStringAsFixed(0)}%',
-          style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
-        ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
         _DiagnosticsActionRow(
           onRefresh: onRefresh,
-          clearLabel: 'Clear Diff Metrics',
+          clearLabel: 'Clear Metrics',
           onClear: onClear,
           clearEnabled: report.totalSessions > 0,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${report.totalSessions} sessions | jank ${(report.jankyFrameRate * 100).toStringAsFixed(0)}%',
+          style: TextStyle(
+            color: context.tokens.textMuted,
+            fontSize: 10,
+            fontFamily: 'JetBrainsMono',
+          ),
         ),
         const SizedBox(height: 12),
         if (report.modeSummaries.isEmpty)
@@ -3085,18 +3175,21 @@ class _UiDiagnosticsPanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SettingsSubtitle('UI Timing Diagnostics'),
-        const SizedBox(height: 4),
-        Text(
-          '${report.totalSamples} samples | ${report.eventCount} instrumented events',
-          style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
-        ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 6),
         _DiagnosticsActionRow(
           onRefresh: onRefresh,
-          clearLabel: 'Clear UI Timings',
+          clearLabel: 'Clear Timings',
           onClear: onClear,
           clearEnabled: report.totalSamples > 0,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${report.totalSamples} samples | ${report.eventCount} instrumented events',
+          style: TextStyle(
+            color: context.tokens.textMuted,
+            fontSize: 10,
+            fontFamily: 'JetBrainsMono',
+          ),
         ),
         const SizedBox(height: 12),
         if (summaries.isEmpty)
@@ -3162,23 +3255,100 @@ class _DiagnosticsActionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final t = context.tokens;
     return Row(
       children: [
-        _GhostMiniButton(
-          label: 'Refresh Snapshot',
-          onTap: () {
-            onRefresh();
-          },
+        _DeckButton(
+          label: 'RECALIBRATE',
+          icon: Icons.refresh_outlined,
+          onTap: onRefresh,
         ),
         const SizedBox(width: 8),
-        _PrimaryButton(
-          label: clearLabel,
+        _DeckButton(
+          label: clearLabel.toUpperCase(),
+          icon: Icons.cleaning_services_outlined,
           enabled: clearEnabled,
-          onTap: () {
-            onClear();
-          },
+          onTap: onClear,
+          isDestructive: true,
         ),
       ],
+    );
+  }
+}
+
+class _DeckButton extends StatefulWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool enabled;
+  final bool isDestructive;
+
+  const _DeckButton({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+    this.enabled = true,
+    this.isDestructive = false,
+  });
+
+  @override
+  State<_DeckButton> createState() => _DeckButtonState();
+}
+
+class _DeckButtonState extends State<_DeckButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final color = widget.isDestructive ? t.stateDeleted : t.accentBright;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: widget.enabled ? widget.onTap : null,
+        child: Opacity(
+          opacity: widget.enabled ? 1.0 : 0.4,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: _hovered && widget.enabled
+                  ? color.withValues(alpha: 0.12)
+                  : t.rowBg.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: _hovered && widget.enabled
+                    ? color.withValues(alpha: 0.4)
+                    : t.chromeBorder.withValues(alpha: 0.1),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  widget.icon,
+                  size: 14,
+                  color: _hovered && widget.enabled ? color : t.textMuted,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: _hovered && widget.enabled ? t.textStrong : t.textNormal,
+                    fontSize: 9,
+                    fontFamily: 'JetBrainsMono',
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -3200,11 +3370,13 @@ class _TelemetrySummaryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       decoration: BoxDecoration(
-        color: t.rowBg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: t.secondaryBtnBorder),
+        color: t.rowBg.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(2),
+        border: Border(
+          left: BorderSide(color: t.accentBright.withValues(alpha: 0.4), width: 1.5),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3213,11 +3385,11 @@ class _TelemetrySummaryRow extends StatelessWidget {
             title,
             style: TextStyle(
               color: t.textStrong,
-              fontSize: 12,
+              fontSize: 10,
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           LayoutBuilder(
             builder: (context, constraints) {
               final compact = constraints.maxWidth < 420;
@@ -3297,38 +3469,64 @@ class _RecentSamplesList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: t.surface0,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              color: t.textStrong,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          for (var i = 0; i < items.length; i++) ...[
-            Text(
-              items[i],
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 11,
-                fontFamily: 'JetBrainsMono',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 4,
+              height: 4,
+              decoration: BoxDecoration(
+                color: t.accentBright.withValues(alpha: 0.5),
+                shape: BoxShape.circle,
               ),
             ),
-            if (i < items.length - 1) const SizedBox(height: 4),
+            const SizedBox(width: 8),
+            Text(
+              title.toUpperCase(),
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
+            ),
           ],
-        ],
-      ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.only(left: 10),
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(color: t.chromeBorder.withValues(alpha: 0.1), width: 1),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < items.length; i++) ...[
+                Text(
+                  items[i],
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontFamily: 'JetBrainsMono',
+                    height: 1.5,
+                  ),
+                ),
+                if (i < items.length - 1)
+                  Container(
+                    height: 1,
+                    width: 24,
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    color: t.chromeBorder.withValues(alpha: 0.05),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
