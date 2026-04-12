@@ -33,6 +33,7 @@ class ThemeState extends ChangeNotifier {
       AppSettingsSnapshot(
         guardrailValue: settings.guardrailValue,
         aiReadOnlyDefault: settings.aiReadOnlyDefault,
+        logoAnimatesWhenUnfocused: settings.logoAnimatesWhenUnfocused,
         telemetryRetentionDays: settings.telemetryRetentionDays,
         telemetryRetentionMb: settings.telemetryRetentionMb,
         updateChannel: settings.updateChannel,
@@ -61,6 +62,7 @@ class ThemeState extends ChangeNotifier {
       AppSettingsSnapshot(
         guardrailValue: settings.guardrailValue,
         aiReadOnlyDefault: settings.aiReadOnlyDefault,
+        logoAnimatesWhenUnfocused: settings.logoAnimatesWhenUnfocused,
         telemetryRetentionDays: settings.telemetryRetentionDays,
         telemetryRetentionMb: settings.telemetryRetentionMb,
         updateChannel: settings.updateChannel,
@@ -84,6 +86,7 @@ class ThemeState extends ChangeNotifier {
       AppSettingsSnapshot(
         guardrailValue: settings.guardrailValue,
         aiReadOnlyDefault: settings.aiReadOnlyDefault,
+        logoAnimatesWhenUnfocused: settings.logoAnimatesWhenUnfocused,
         telemetryRetentionDays: settings.telemetryRetentionDays,
         telemetryRetentionMb: settings.telemetryRetentionMb,
         updateChannel: settings.updateChannel,

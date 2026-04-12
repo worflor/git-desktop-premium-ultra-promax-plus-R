@@ -221,6 +221,10 @@ class _SettingsPageState extends State<SettingsPage> {
     await context.read<PreferencesState>().setAiReadOnlyDefault(value);
   }
 
+  Future<void> _setLogoAnimatesWhenUnfocused(bool value) async {
+    await context.read<PreferencesState>().setLogoAnimatesWhenUnfocused(value);
+  }
+
   Future<void> _saveModelSelection(String categoryId, String value) async {
     try {
       await context
@@ -876,6 +880,13 @@ class _SettingsPageState extends State<SettingsPage> {
                 value: preferences.aiReadOnlyDefault,
                 onChanged: (value) {
                   _setAiReadOnlyDefault(value);
+                },
+              ),
+              _CheckboxRow(
+                label: 'Logo animates when tabbed out',
+                value: preferences.logoAnimatesWhenUnfocused,
+                onChanged: (value) {
+                  _setLogoAnimatesWhenUnfocused(value);
                 },
               ),
               const SizedBox(height: 18),

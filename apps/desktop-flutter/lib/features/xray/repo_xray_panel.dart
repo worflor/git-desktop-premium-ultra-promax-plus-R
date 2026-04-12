@@ -47,7 +47,8 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
       _lastLoadedRepoPath = null;
       return;
     }
-    if (_lastLoadedRepoPath == repoPath && xrayState.snapshotFor(repoPath) != null) {
+    if (_lastLoadedRepoPath == repoPath &&
+        xrayState.snapshotFor(repoPath) != null) {
       return;
     }
     _lastLoadedRepoPath = repoPath;
@@ -102,9 +103,12 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
     }
 
     final cards = _includeMachineHistory ? snapshot.rawCards : snapshot.cards;
-    final hotspots = _includeMachineHistory ? snapshot.rawHotspots : snapshot.hotspots;
-    final cadence = _includeMachineHistory ? snapshot.rawCadence : snapshot.cadence;
-    final pivots = _includeMachineHistory ? snapshot.rawPivots : snapshot.pivots;
+    final hotspots =
+        _includeMachineHistory ? snapshot.rawHotspots : snapshot.hotspots;
+    final cadence =
+        _includeMachineHistory ? snapshot.rawCadence : snapshot.cadence;
+    final pivots =
+        _includeMachineHistory ? snapshot.rawPivots : snapshot.pivots;
     _syncSelection(snapshot, cards, hotspots, pivots);
 
     return Column(
@@ -169,10 +173,14 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
                 selectedHotspotPath: _selectedHotspotPath,
                 selectedPivotHash: _selectedPivotHash,
                 selectedStratumId: _selectedStratumId,
-                onSignalSelected: (id) => setState(() => _selectedSignalId = id),
-                onHotspotSelected: (path) => setState(() => _selectedHotspotPath = path),
-                onPivotSelected: (hash) => setState(() => _selectedPivotHash = hash),
-                onStratumSelected: (id) => setState(() => _selectedStratumId = id),
+                onSignalSelected: (id) =>
+                    setState(() => _selectedSignalId = id),
+                onHotspotSelected: (path) =>
+                    setState(() => _selectedHotspotPath = path),
+                onPivotSelected: (hash) =>
+                    setState(() => _selectedPivotHash = hash),
+                onStratumSelected: (id) =>
+                    setState(() => _selectedStratumId = id),
               );
               final inspector = _InspectorPanel(
                 view: _view,
@@ -230,10 +238,12 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
       _selectedSignalId = cards.isEmpty ? null : cards.first.id;
       _selectedHotspotPath = hotspots.isEmpty ? null : hotspots.first.path;
       _selectedPivotHash = pivots.isEmpty ? null : pivots.first.commitHash;
-      _selectedStratumId = snapshot.strata.isEmpty ? null : snapshot.strata.first.id;
+      _selectedStratumId =
+          snapshot.strata.isEmpty ? null : snapshot.strata.first.id;
       return;
     }
-    if (_selectedSignalId != null && !cards.any((card) => card.id == _selectedSignalId)) {
+    if (_selectedSignalId != null &&
+        !cards.any((card) => card.id == _selectedSignalId)) {
       _selectedSignalId = cards.isEmpty ? null : cards.first.id;
     }
     if (_selectedHotspotPath != null &&
@@ -246,7 +256,8 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
     }
     if (_selectedStratumId != null &&
         !snapshot.strata.any((stratum) => stratum.id == _selectedStratumId)) {
-      _selectedStratumId = snapshot.strata.isEmpty ? null : snapshot.strata.first.id;
+      _selectedStratumId =
+          snapshot.strata.isEmpty ? null : snapshot.strata.first.id;
     }
   }
 }
@@ -275,7 +286,8 @@ class _Header extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 10),
       decoration: BoxDecoration(
         color: t.panelOverlayStrong.withValues(alpha: 0.12),
-        border: Border(bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.12))),
+        border: Border(
+            bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.12))),
       ),
       child: Column(
         children: [
@@ -286,10 +298,12 @@ class _Header extends StatelessWidget {
                 height: 28,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: t.chromeBorder.withValues(alpha: 0.28)),
+                  border:
+                      Border.all(color: t.chromeBorder.withValues(alpha: 0.28)),
                 ),
                 child: Center(
-                  child: AppIcon(name: 'app-logo', size: 14, color: t.textStrong),
+                  child:
+                      AppIcon(name: 'app-logo', size: 14, color: t.textStrong),
                 ),
               ),
               const SizedBox(width: 10),
@@ -301,16 +315,24 @@ class _Header extends StatelessWidget {
                       children: [
                         Text(
                           'Repo X-Ray',
-                          style: TextStyle(color: t.textStrong, fontSize: 17, fontWeight: FontWeight.w800),
+                          style: TextStyle(
+                              color: t.textStrong,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800),
                         ),
                         const SizedBox(width: 8),
-                        _DenseBadge(value: '${snapshot.header.dirtyFileCount}', label: 'dirty'),
+                        _DenseBadge(
+                            value: '${snapshot.header.dirtyFileCount}',
+                            label: 'dirty'),
                       ],
                     ),
                     const SizedBox(height: 1),
                     Text(
                       '${snapshot.header.repoName} | ${snapshot.header.branch} | ${snapshot.header.headShortHash}',
-                      style: TextStyle(color: t.textMuted, fontSize: 11, fontFamily: 'JetBrainsMono'),
+                      style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 11,
+                          fontFamily: 'JetBrainsMono'),
                     ),
                   ],
                 ),
@@ -318,7 +340,8 @@ class _Header extends StatelessWidget {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('machine', style: TextStyle(color: t.textMuted, fontSize: 10)),
+                  Text('machine',
+                      style: TextStyle(color: t.textMuted, fontSize: 10)),
                   const SizedBox(width: 4),
                   Switch(
                     value: includeMachineHistory,
@@ -335,7 +358,8 @@ class _Header extends StatelessWidget {
                 onTap: onRefresh,
               ),
               const SizedBox(width: 8),
-              _MiniButton(label: 'Close', icon: 'x', enabled: true, onTap: onClose),
+              _MiniButton(
+                  label: 'Close', icon: 'x', enabled: true, onTap: onClose),
             ],
           ),
         ],
@@ -389,11 +413,23 @@ class _ViewTabs extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _TabChip(label: 'Map', icon: 'app-logo', active: current == _XrayView.map, onTap: () => onChanged(_XrayView.map)),
+        _TabChip(
+            label: 'Map',
+            icon: 'app-logo',
+            active: current == _XrayView.map,
+            onTap: () => onChanged(_XrayView.map)),
         const SizedBox(width: 8),
-        _TabChip(label: 'Time', icon: 'history', active: current == _XrayView.time, onTap: () => onChanged(_XrayView.time)),
+        _TabChip(
+            label: 'Time',
+            icon: 'history',
+            active: current == _XrayView.time,
+            onTap: () => onChanged(_XrayView.time)),
         const SizedBox(width: 8),
-        _TabChip(label: 'Signals', icon: 'search', active: current == _XrayView.signals, onTap: () => onChanged(_XrayView.signals)),
+        _TabChip(
+            label: 'Signals',
+            icon: 'search',
+            active: current == _XrayView.signals,
+            onTap: () => onChanged(_XrayView.signals)),
       ],
     );
   }
@@ -566,20 +602,31 @@ class _SignalsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1.7,
-      ),
-      itemCount: cards.length,
-      itemBuilder: (context, index) {
-        final card = cards[index];
-        return _SignalTile(
-          card: card,
-          active: card.id == selectedSignalId,
-          onTap: () => onSignalSelected(card.id),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final crossAxisCount = constraints.maxWidth < 520 ? 1 : 2;
+        final spacing = 10.0;
+        final tileWidth =
+            (constraints.maxWidth - (crossAxisCount - 1) * spacing) /
+                crossAxisCount;
+        final targetHeight = constraints.maxHeight < 340 ? 112.0 : 134.0;
+        final aspectRatio = (tileWidth / targetHeight).clamp(1.35, 1.9);
+        return GridView.builder(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: spacing,
+            childAspectRatio: aspectRatio,
+          ),
+          itemCount: cards.length,
+          itemBuilder: (context, index) {
+            final card = cards[index];
+            return _SignalTile(
+              card: card,
+              active: card.id == selectedSignalId,
+              onTap: () => onSignalSelected(card.id),
+            );
+          },
         );
       },
     );
@@ -615,22 +662,30 @@ class _InspectorPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final card = selectedSignalId == null ? null : cards.cast<RepositoryXrayCardData?>().firstWhere(
-          (item) => item!.id == selectedSignalId,
-          orElse: () => null,
-        );
-    final hotspot = selectedHotspotPath == null ? null : hotspots.cast<RepositoryXrayHotspotData?>().firstWhere(
-          (item) => item!.path == selectedHotspotPath,
-          orElse: () => null,
-        );
-    final pivot = selectedPivotHash == null ? null : pivots.cast<RepositoryXrayPivotCommitData?>().firstWhere(
-          (item) => item!.commitHash == selectedPivotHash,
-          orElse: () => null,
-        );
-    final stratum = selectedStratumId == null ? null : snapshot.strata.cast<RepositoryXrayStratumData?>().firstWhere(
-          (item) => item!.id == selectedStratumId,
-          orElse: () => null,
-        );
+    final card = selectedSignalId == null
+        ? null
+        : cards.cast<RepositoryXrayCardData?>().firstWhere(
+              (item) => item!.id == selectedSignalId,
+              orElse: () => null,
+            );
+    final hotspot = selectedHotspotPath == null
+        ? null
+        : hotspots.cast<RepositoryXrayHotspotData?>().firstWhere(
+              (item) => item!.path == selectedHotspotPath,
+              orElse: () => null,
+            );
+    final pivot = selectedPivotHash == null
+        ? null
+        : pivots.cast<RepositoryXrayPivotCommitData?>().firstWhere(
+              (item) => item!.commitHash == selectedPivotHash,
+              orElse: () => null,
+            );
+    final stratum = selectedStratumId == null
+        ? null
+        : snapshot.strata.cast<RepositoryXrayStratumData?>().firstWhere(
+              (item) => item!.id == selectedStratumId,
+              orElse: () => null,
+            );
 
     return _PanelBlock(
       child: Column(
@@ -641,15 +696,18 @@ class _InspectorPanel extends StatelessWidget {
           Expanded(
             child: switch (view) {
               _XrayView.map => hotspot != null
-                  ? _HotspotInspector(hotspot: hotspot, onCommitSelected: onCommitSelected)
+                  ? _HotspotInspector(
+                      hotspot: hotspot, onCommitSelected: onCommitSelected)
                   : stratum != null
                       ? _StratumInspector(stratum: stratum)
                       : _OverviewInspector(snapshot: snapshot),
               _XrayView.time => pivot != null
-                  ? _PivotInspector(pivot: pivot, onCommitSelected: onCommitSelected)
+                  ? _PivotInspector(
+                      pivot: pivot, onCommitSelected: onCommitSelected)
                   : _OverviewInspector(snapshot: snapshot),
               _XrayView.signals => card != null
-                  ? _SignalInspector(card: card, onCommitSelected: onCommitSelected)
+                  ? _SignalInspector(
+                      card: card, onCommitSelected: onCommitSelected)
                   : _OverviewInspector(snapshot: snapshot),
             },
           ),
@@ -683,7 +741,8 @@ class _DiagnosisToken extends StatelessWidget {
   final RepositoryXrayCardData card;
   final bool active;
   final VoidCallback onTap;
-  const _DiagnosisToken({required this.card, required this.active, required this.onTap});
+  const _DiagnosisToken(
+      {required this.card, required this.active, required this.onTap});
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -708,13 +767,18 @@ class _TabChip extends StatelessWidget {
   final String icon;
   final bool active;
   final VoidCallback onTap;
-  const _TabChip({required this.label, required this.icon, required this.active, required this.onTap});
+  const _TabChip(
+      {required this.label,
+      required this.icon,
+      required this.active,
+      required this.onTap});
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     return _ChromeChip(
       label: label,
-      leading: AppIcon(name: icon, size: 12, color: active ? t.textStrong : t.textMuted),
+      leading: AppIcon(
+          name: icon, size: 12, color: active ? t.textStrong : t.textMuted),
       active: active,
       onTap: onTap,
       textColor: t.textStrong,
@@ -731,9 +795,15 @@ class _OverviewInspector extends StatelessWidget {
       children: [
         _InspectorRow(label: 'fingerprint', value: snapshot.header.fingerprint),
         _InspectorRow(label: 'head', value: snapshot.header.headCommitHash),
-        _InspectorRow(label: 'hidden refs', value: '${snapshot.signalIntegrity.hiddenRefCount}'),
-        _InspectorRow(label: 'raw commits', value: '${snapshot.signalIntegrity.rawCommitCount}'),
-        _InspectorRow(label: 'filtered commits', value: '${snapshot.signalIntegrity.filteredCommitCount}'),
+        _InspectorRow(
+            label: 'hidden refs',
+            value: '${snapshot.signalIntegrity.hiddenRefCount}'),
+        _InspectorRow(
+            label: 'raw commits',
+            value: '${snapshot.signalIntegrity.rawCommitCount}'),
+        _InspectorRow(
+            label: 'filtered commits',
+            value: '${snapshot.signalIntegrity.filteredCommitCount}'),
       ],
     );
   }
@@ -747,13 +817,19 @@ class _SignalInspector extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        Text(card.title, style: TextStyle(color: context.tokens.textStrong, fontSize: 14, fontWeight: FontWeight.w700)),
+        Text(card.title,
+            style: TextStyle(
+                color: context.tokens.textStrong,
+                fontSize: 14,
+                fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         _InspectorRow(label: 'verdict', value: card.verdict),
         _InspectorRow(label: 'confidence', value: card.confidence),
         _InspectorRow(label: 'claim', value: card.claim),
-        if (card.primaryPath != null) _InspectorRow(label: 'path', value: card.primaryPath!),
-        if (card.primaryCommitHash != null) _InspectorRow(label: 'commit', value: card.primaryCommitHash!),
+        if (card.primaryPath != null)
+          _InspectorRow(label: 'path', value: card.primaryPath!),
+        if (card.primaryCommitHash != null)
+          _InspectorRow(label: 'commit', value: card.primaryCommitHash!),
         const SizedBox(height: 8),
         for (final item in card.evidence) ...[
           _InspectorRow(label: item.label, value: item.detail),
@@ -761,7 +837,11 @@ class _SignalInspector extends StatelessWidget {
         ],
         if (card.primaryCommitHash != null && onCommitSelected != null) ...[
           const SizedBox(height: 8),
-          _MiniButton(label: 'Open commit', icon: 'history', enabled: true, onTap: () => onCommitSelected!(card.primaryCommitHash!)),
+          _MiniButton(
+              label: 'Open commit',
+              icon: 'history',
+              enabled: true,
+              onTap: () => onCommitSelected!(card.primaryCommitHash!)),
         ],
       ],
     );
@@ -776,16 +856,26 @@ class _HotspotInspector extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        Text(hotspot.path, style: TextStyle(color: context.tokens.textStrong, fontSize: 14, fontWeight: FontWeight.w700)),
+        Text(hotspot.path,
+            style: TextStyle(
+                color: context.tokens.textStrong,
+                fontSize: 14,
+                fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         _InspectorRow(label: 'kind', value: hotspot.kind),
         _InspectorRow(label: 'touches', value: '${hotspot.touchCount}'),
         _InspectorRow(label: 'owners', value: '${hotspot.ownerCount}'),
         _InspectorRow(label: 'last touched', value: hotspot.lastTouchedAt),
-        if (hotspot.latestCommitHash != null) _InspectorRow(label: 'latest commit', value: hotspot.latestCommitHash!),
+        if (hotspot.latestCommitHash != null)
+          _InspectorRow(
+              label: 'latest commit', value: hotspot.latestCommitHash!),
         if (hotspot.latestCommitHash != null && onCommitSelected != null) ...[
           const SizedBox(height: 8),
-          _MiniButton(label: hotspot.latestShortHash ?? 'Open commit', icon: 'history', enabled: true, onTap: () => onCommitSelected!(hotspot.latestCommitHash!)),
+          _MiniButton(
+              label: hotspot.latestShortHash ?? 'Open commit',
+              icon: 'history',
+              enabled: true,
+              onTap: () => onCommitSelected!(hotspot.latestCommitHash!)),
         ],
       ],
     );
@@ -799,7 +889,11 @@ class _StratumInspector extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        Text(stratum.pathPrefix, style: TextStyle(color: context.tokens.textStrong, fontSize: 14, fontWeight: FontWeight.w700)),
+        Text(stratum.pathPrefix,
+            style: TextStyle(
+                color: context.tokens.textStrong,
+                fontSize: 14,
+                fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         _InspectorRow(label: 'label', value: stratum.label),
         _InspectorRow(label: 'touches', value: '${stratum.touchCount}'),
@@ -819,7 +913,11 @@ class _PivotInspector extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView(
       children: [
-        Text(pivot.subject, style: TextStyle(color: context.tokens.textStrong, fontSize: 14, fontWeight: FontWeight.w700)),
+        Text(pivot.subject,
+            style: TextStyle(
+                color: context.tokens.textStrong,
+                fontSize: 14,
+                fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         _InspectorRow(label: 'short hash', value: pivot.shortHash),
         _InspectorRow(label: 'author', value: pivot.authorName),
@@ -829,7 +927,11 @@ class _PivotInspector extends StatelessWidget {
         _InspectorRow(label: 'deletions', value: '${pivot.deletions}'),
         const SizedBox(height: 8),
         if (onCommitSelected != null)
-          _MiniButton(label: 'Open commit', icon: 'history', enabled: true, onTap: () => onCommitSelected!(pivot.commitHash)),
+          _MiniButton(
+              label: 'Open commit',
+              icon: 'history',
+              enabled: true,
+              onTap: () => onCommitSelected!(pivot.commitHash)),
       ],
     );
   }
@@ -843,8 +945,18 @@ class _InspectorRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      SizedBox(width: 86, child: Text(label.toUpperCase(), style: TextStyle(color: t.textMuted, fontSize: 9, letterSpacing: 1.0, fontFamily: 'JetBrainsMono'))),
-      Expanded(child: Text(value, style: TextStyle(color: t.textNormal, fontSize: 11, height: 1.4))),
+      SizedBox(
+          width: 86,
+          child: Text(label.toUpperCase(),
+              style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 9,
+                  letterSpacing: 1.0,
+                  fontFamily: 'JetBrainsMono'))),
+      Expanded(
+          child: Text(value,
+              style:
+                  TextStyle(color: t.textNormal, fontSize: 11, height: 1.4))),
     ]);
   }
 }
@@ -862,9 +974,18 @@ class _InspectorModeBar extends StatelessWidget {
     };
     return Row(
       children: [
-        Container(width: 6, height: 6, decoration: BoxDecoration(color: t.accentBright, shape: BoxShape.circle)),
+        Container(
+            width: 6,
+            height: 6,
+            decoration:
+                BoxDecoration(color: t.accentBright, shape: BoxShape.circle)),
         const SizedBox(width: 8),
-        Text(label, style: TextStyle(color: t.textMuted, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+        Text(label,
+            style: TextStyle(
+                color: t.textMuted,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8)),
       ],
     );
   }
@@ -965,7 +1086,8 @@ class _Tag extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
         child: Text(
           text,
-          style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700),
+          style: TextStyle(
+              color: color, fontSize: 10, fontWeight: FontWeight.w700),
         ),
       ),
     );
@@ -989,7 +1111,8 @@ class _DenseBadge extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
         child: Text(
           '$value $label',
-          style: TextStyle(color: t.textMuted, fontSize: 10, fontWeight: FontWeight.w600),
+          style: TextStyle(
+              color: t.textMuted, fontSize: 10, fontWeight: FontWeight.w600),
         ),
       ),
     );
@@ -1000,11 +1123,14 @@ class _TerrainBoard extends StatelessWidget {
   final List<RepositoryXrayStratumData> strata;
   final String? selectedId;
   final ValueChanged<String> onSelected;
-  const _TerrainBoard({required this.strata, required this.selectedId, required this.onSelected});
+  const _TerrainBoard(
+      {required this.strata,
+      required this.selectedId,
+      required this.onSelected});
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final maxTouches = strata.fold<int>(1, (m, e) => math.max(m, e.touchCount));
+    final maxTouches = strata.fold<int>(0, (m, e) => math.max(m, e.touchCount));
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
       radius: 12,
@@ -1017,7 +1143,12 @@ class _TerrainBoard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Strata', style: TextStyle(color: t.textMuted, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+            Text('Strata',
+                style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8)),
             const SizedBox(height: 10),
             Expanded(
               child: Column(
@@ -1028,10 +1159,15 @@ class _TerrainBoard extends StatelessWidget {
                         builder: (context, c) {
                           final s = strata[i];
                           final accent = _stratumAccent(t, s.label);
-                          final fraction = (s.touchCount / maxTouches).clamp(0.12, 1.0);
+                          final fraction = maxTouches > 0
+                              ? (s.touchCount / maxTouches).clamp(0.12, 1.0)
+                              : 0.12;
                           final width = math.max(108.0, c.maxWidth * fraction);
-                          final compact = width < 186;
-                          final showStats = width >= 126;
+                          final verticalCompact = c.maxHeight < 62;
+                          final ultraCompact = c.maxHeight < 48;
+                          final compact = width < 186 || verticalCompact;
+                          final showStats = width >= 126 && !verticalCompact;
+                          final showTag = width >= 170 && !verticalCompact;
                           return Align(
                             alignment: Alignment.centerLeft,
                             child: InkWell(
@@ -1041,7 +1177,9 @@ class _TerrainBoard extends StatelessWidget {
                                 width: width,
                                 height: math.max(48.0, c.maxHeight - 6),
                                 child: MaterialSurface(
-                                  tone: selectedId == s.id ? AppMaterialTone.surface1 : AppMaterialTone.surface0,
+                                  tone: selectedId == s.id
+                                      ? AppMaterialTone.surface1
+                                      : AppMaterialTone.surface0,
                                   radius: 12,
                                   elevated: false,
                                   glaze: false,
@@ -1053,39 +1191,64 @@ class _TerrainBoard extends StatelessWidget {
                                     decoration: BoxDecoration(
                                       border: Border(
                                         left: BorderSide(
-                                          color: accent.withValues(alpha: selectedId == s.id ? 0.9 : 0.55),
+                                          color: accent.withValues(
+                                              alpha: selectedId == s.id
+                                                  ? 0.9
+                                                  : 0.55),
                                           width: 3,
                                         ),
                                       ),
                                     ),
                                     padding: EdgeInsets.symmetric(
                                       horizontal: compact ? 8 : 12,
-                                      vertical: compact ? 8 : 10,
+                                      vertical: compact ? 6 : 10,
                                     ),
                                     child: compact
-                                        ? Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            mainAxisAlignment: MainAxisAlignment.center,
+                                        ? Row(
                                             children: [
-                                              Text(
-                                                s.pathPrefix,
-                                                maxLines: showStats ? 1 : 2,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                  color: t.textStrong,
-                                                  fontSize: 11.5,
-                                                  fontWeight: FontWeight.w700,
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment.center,
+                                                  children: [
+                                                    Text(
+                                                      s.pathPrefix,
+                                                      maxLines:
+                                                          ultraCompact ? 1 : 2,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                        color: t.textStrong,
+                                                        fontSize: ultraCompact
+                                                            ? 10.5
+                                                            : 11.5,
+                                                        fontWeight:
+                                                            FontWeight.w700,
+                                                      ),
+                                                    ),
+                                                    if (showStats) ...[
+                                                      const SizedBox(height: 2),
+                                                      Text(
+                                                        '${s.touchCount} | ${s.ownerCount}',
+                                                        style: TextStyle(
+                                                          color: t.textMuted,
+                                                          fontSize: 9.5,
+                                                          fontFamily:
+                                                              'JetBrainsMono',
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ],
                                                 ),
                                               ),
-                                              if (showStats) ...[
-                                                const SizedBox(height: 3),
-                                                Text(
-                                                  '${s.touchCount} | ${s.ownerCount}',
-                                                  style: TextStyle(
-                                                    color: t.textMuted,
-                                                    fontSize: 9.5,
-                                                    fontFamily: 'JetBrainsMono',
-                                                  ),
+                                              if (showTag) ...[
+                                                const SizedBox(width: 6),
+                                                _Tag(
+                                                  text: _compactStratumLabel(
+                                                      s.label),
+                                                  color: accent,
                                                 ),
                                               ],
                                             ],
@@ -1094,17 +1257,39 @@ class _TerrainBoard extends StatelessWidget {
                                             children: [
                                               Expanded(
                                                 child: Column(
-                                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                                  mainAxisAlignment: MainAxisAlignment.center,
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment.center,
                                                   children: [
-                                                    Text(s.pathPrefix, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.textStrong, fontSize: 12, fontWeight: FontWeight.w700)),
+                                                    Text(s.pathPrefix,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: TextStyle(
+                                                            color: t.textStrong,
+                                                            fontSize: 12,
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .w700)),
                                                     const SizedBox(height: 3),
-                                                    Text('${s.touchCount} | ${s.ownerCount} | ${s.lastTouchedAt}', style: TextStyle(color: t.textMuted, fontSize: 10, fontFamily: 'JetBrainsMono')),
+                                                    Text(
+                                                        '${s.touchCount} | ${s.ownerCount} | ${s.lastTouchedAt}',
+                                                        style: TextStyle(
+                                                            color: t.textMuted,
+                                                            fontSize: 10,
+                                                            fontFamily:
+                                                                'JetBrainsMono')),
                                                   ],
                                                 ),
                                               ),
-                                              const SizedBox(width: 8),
-                                              _Tag(text: _compactStratumLabel(s.label), color: accent),
+                                              if (showTag) ...[
+                                                const SizedBox(width: 8),
+                                                _Tag(
+                                                    text: _compactStratumLabel(
+                                                        s.label),
+                                                    color: accent),
+                                              ],
                                             ],
                                           ),
                                   ),
@@ -1130,11 +1315,15 @@ class _HotspotBoard extends StatelessWidget {
   final List<RepositoryXrayHotspotData> hotspots;
   final String? selectedPath;
   final ValueChanged<String> onSelected;
-  const _HotspotBoard({required this.hotspots, required this.selectedPath, required this.onSelected});
+  const _HotspotBoard(
+      {required this.hotspots,
+      required this.selectedPath,
+      required this.onSelected});
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final maxTouches = hotspots.fold<int>(1, (m, e) => math.max(m, e.touchCount));
+    final maxTouches =
+        hotspots.fold<int>(0, (m, e) => math.max(m, e.touchCount));
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
       radius: 12,
@@ -1147,7 +1336,12 @@ class _HotspotBoard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Heat', style: TextStyle(color: t.textMuted, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
+            Text('Heat',
+                style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.8)),
             const SizedBox(height: 10),
             Expanded(
               child: GridView.builder(
@@ -1162,13 +1356,17 @@ class _HotspotBoard extends StatelessWidget {
                 itemBuilder: (context, index) {
                   final h = hotspots[index];
                   final accent = _hotspotAccent(t, h.kind);
-                  final intensity = (h.touchCount / maxTouches).clamp(0.12, 1.0);
+                  final intensity = maxTouches > 0
+                      ? (h.touchCount / maxTouches).clamp(0.12, 1.0)
+                      : 0.12;
                   final active = selectedPath == h.path;
                   return InkWell(
                     borderRadius: BorderRadius.circular(12),
                     onTap: () => onSelected(h.path),
                     child: MaterialSurface(
-                      tone: active ? AppMaterialTone.surface1 : AppMaterialTone.surface0,
+                      tone: active
+                          ? AppMaterialTone.surface1
+                          : AppMaterialTone.surface0,
                       radius: 12,
                       elevated: false,
                       glaze: false,
@@ -1176,26 +1374,62 @@ class _HotspotBoard extends StatelessWidget {
                           ? accent.withValues(alpha: 0.42)
                           : t.chromeBorder.withValues(alpha: 0.14),
                       borderAlpha: 1,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border(
-                            top: BorderSide(
-                              color: accent.withValues(alpha: 0.25 + 0.45 * intensity),
-                              width: 3,
+                      child: LayoutBuilder(
+                        builder: (context, tile) {
+                          final compact =
+                              tile.maxHeight < 108 || tile.maxWidth < 150;
+                          final ultraCompact = tile.maxHeight < 92;
+                          return Container(
+                            decoration: BoxDecoration(
+                              border: Border(
+                                top: BorderSide(
+                                  color: accent.withValues(
+                                      alpha: 0.25 + 0.45 * intensity),
+                                  width: 3,
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                        padding: const EdgeInsets.all(10),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(_shortPath(h.path), maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.textStrong, fontSize: 11, fontWeight: FontWeight.w700)),
-                            const Spacer(),
-                            Text('${h.touchCount}', style: TextStyle(color: t.textStrong, fontSize: 16, fontWeight: FontWeight.w800, fontFamily: 'JetBrainsMono')),
-                            const SizedBox(height: 2),
-                            Text('${h.kind} | ${h.ownerCount}', style: TextStyle(color: t.textMuted, fontSize: 10, fontFamily: 'JetBrainsMono')),
-                          ],
-                        ),
+                            padding: EdgeInsets.all(compact ? 8 : 10),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _shortPath(h.path),
+                                  maxLines: ultraCompact ? 1 : 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: t.textStrong,
+                                    fontSize: compact ? 10.5 : 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Text(
+                                  '${h.touchCount}',
+                                  style: TextStyle(
+                                    color: t.textStrong,
+                                    fontSize: compact ? 14 : 16,
+                                    fontWeight: FontWeight.w800,
+                                    fontFamily: 'JetBrainsMono',
+                                  ),
+                                ),
+                                if (!ultraCompact) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${h.kind} | ${h.ownerCount}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: t.textMuted,
+                                      fontSize: 10,
+                                      fontFamily: 'JetBrainsMono',
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     ),
                   );
@@ -1214,20 +1448,32 @@ class _TimelineBoard extends StatelessWidget {
   final List<RepositoryXrayPivotCommitData> pivots;
   final String? selectedPivotHash;
   final ValueChanged<String> onPivotSelected;
-  const _TimelineBoard({required this.cadence, required this.pivots, required this.selectedPivotHash, required this.onPivotSelected});
+  const _TimelineBoard(
+      {required this.cadence,
+      required this.pivots,
+      required this.selectedPivotHash,
+      required this.onPivotSelected});
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final allDates = <DateTime>[
       for (final p in pivots)
-        if (DateTime.tryParse(p.authoredAt) != null) DateTime.parse(p.authoredAt),
+        if (DateTime.tryParse(p.authoredAt) != null)
+          DateTime.parse(p.authoredAt),
       for (final c in cadence)
         if (_cadenceDate(c) != null) _cadenceDate(c)!,
     ];
-    final minDate = allDates.isEmpty ? DateTime.now() : allDates.reduce((a, b) => a.isBefore(b) ? a : b);
-    final maxDate = allDates.isEmpty ? DateTime.now() : allDates.reduce((a, b) => a.isAfter(b) ? a : b);
+    final minDate = allDates.isEmpty
+        ? DateTime.now()
+        : allDates.reduce((a, b) => a.isBefore(b) ? a : b);
+    final maxDate = allDates.isEmpty
+        ? DateTime.now()
+        : allDates.reduce((a, b) => a.isAfter(b) ? a : b);
     final spanDays = math.max(maxDate.difference(minDate).inDays.abs(), 1);
-    double xFor(DateTime date, double width) => ((date.difference(minDate).inDays) / spanDays).clamp(0.0, 1.0) * (width - 24) + 12;
+    double xFor(DateTime date, double width) =>
+        ((date.difference(minDate).inDays) / spanDays).clamp(0.0, 1.0) *
+            (width - 24) +
+        12;
 
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
@@ -1261,7 +1507,8 @@ class _TimelineBoard extends StatelessWidget {
                 for (final pivot in pivots)
                   if (DateTime.tryParse(pivot.authoredAt) != null)
                     Positioned(
-                      left: xFor(DateTime.parse(pivot.authoredAt), c.maxWidth) - 26,
+                      left: xFor(DateTime.parse(pivot.authoredAt), c.maxWidth) -
+                          26,
                       top: 72,
                       child: GestureDetector(
                         onTap: () => onPivotSelected(pivot.commitHash),
@@ -1284,7 +1531,10 @@ class _PivotStrip extends StatelessWidget {
   final List<RepositoryXrayPivotCommitData> pivots;
   final String? selectedPivotHash;
   final ValueChanged<String> onPivotSelected;
-  const _PivotStrip({required this.pivots, required this.selectedPivotHash, required this.onPivotSelected});
+  const _PivotStrip(
+      {required this.pivots,
+      required this.selectedPivotHash,
+      required this.onPivotSelected});
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -1313,11 +1563,25 @@ class _PivotStrip extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(p.shortHash, style: TextStyle(color: t.accentBright, fontSize: 11, fontFamily: 'JetBrainsMono')),
+                  Text(p.shortHash,
+                      style: TextStyle(
+                          color: t.accentBright,
+                          fontSize: 11,
+                          fontFamily: 'JetBrainsMono')),
                   const SizedBox(height: 6),
-                  Text(p.subject, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.textStrong, fontSize: 11, fontWeight: FontWeight.w700)),
+                  Text(p.subject,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: t.textStrong,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)),
                   const Spacer(),
-                  Text('${p.authoredAt} | ${p.filesChanged}', style: TextStyle(color: t.textMuted, fontSize: 10, fontFamily: 'JetBrainsMono')),
+                  Text('${p.authoredAt} | ${p.filesChanged}',
+                      style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 10,
+                          fontFamily: 'JetBrainsMono')),
                 ],
               ),
             ),
@@ -1332,7 +1596,8 @@ class _SignalTile extends StatelessWidget {
   final RepositoryXrayCardData card;
   final bool active;
   final VoidCallback onTap;
-  const _SignalTile({required this.card, required this.active, required this.onTap});
+  const _SignalTile(
+      {required this.card, required this.active, required this.onTap});
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -1349,30 +1614,88 @@ class _SignalTile extends StatelessWidget {
             ? accent.withValues(alpha: 0.42)
             : t.chromeBorder.withValues(alpha: 0.14),
         borderAlpha: 1,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Container(width: 8, height: 8, decoration: BoxDecoration(color: accent, shape: BoxShape.circle)),
-                const SizedBox(width: 8),
-                Expanded(child: Text(_compactCardTitle(card.title), style: TextStyle(color: t.textStrong, fontSize: 12, fontWeight: FontWeight.w700))),
-              ]),
-              const Spacer(),
-              Row(
-                children: List.generate(3, (i) {
-                  final activeDot = i < (card.confidence == 'high' ? 3 : card.confidence == 'medium' ? 2 : 1);
-                  return Padding(
-                    padding: EdgeInsets.only(right: i == 2 ? 0 : 4),
-                    child: Container(width: 6, height: 6, decoration: BoxDecoration(color: activeDot ? accent : t.chromeBorder.withValues(alpha: 0.22), shape: BoxShape.circle)),
-                  );
-                }),
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final compact = c.maxHeight < 118 || c.maxWidth < 220;
+            final ultraCompact = c.maxHeight < 98 || c.maxWidth < 180;
+            final claimLines = ultraCompact ? 1 : (compact ? 2 : 3);
+            final titleLines = ultraCompact ? 2 : 3;
+            return Padding(
+              padding: EdgeInsets.all(compact ? 10 : 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                              color: accent, shape: BoxShape.circle),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _compactCardTitle(card.title),
+                          maxLines: titleLines,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: t.textStrong,
+                            fontSize: compact ? 11.5 : 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: List.generate(3, (i) {
+                      final activeDot = i <
+                          (card.confidence == 'high'
+                              ? 3
+                              : card.confidence == 'medium'
+                                  ? 2
+                                  : 1);
+                      return Padding(
+                        padding: EdgeInsets.only(right: i == 2 ? 0 : 4),
+                        child: Container(
+                          width: 6,
+                          height: 6,
+                          decoration: BoxDecoration(
+                            color: activeDot
+                                ? accent
+                                : t.chromeBorder.withValues(alpha: 0.22),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.topLeft,
+                      child: Text(
+                        card.claim,
+                        maxLines: claimLines,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: compact ? 10 : 10.5,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              Text(card.claim, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: t.textMuted, fontSize: 10.5, height: 1.35)),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -1383,16 +1706,32 @@ class _TimelineMarker extends StatelessWidget {
   final String label;
   final int count;
   final Color color;
-  const _TimelineMarker({required this.label, required this.count, required this.color});
+  const _TimelineMarker(
+      {required this.label, required this.count, required this.color});
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return Column(
-      children: [
-        Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(height: 4),
-        Text('$label $count', style: TextStyle(color: t.textMuted, fontSize: 10, fontWeight: FontWeight.w700)),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 36;
+        return Column(
+          children: [
+            Container(
+                width: compact ? 8 : 10,
+                height: compact ? 8 : 10,
+                decoration:
+                    BoxDecoration(color: color, shape: BoxShape.circle)),
+            const SizedBox(height: 4),
+            Text(
+              compact ? '$count' : '$label $count',
+              style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: compact ? 9 : 10,
+                  fontWeight: FontWeight.w700),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1404,25 +1743,43 @@ class _PivotMarker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return Column(
-      children: [
-        Container(width: 2, height: 26, color: active ? t.accentBright : t.chromeBorder.withValues(alpha: 0.5)),
-        const SizedBox(height: 4),
-        MaterialSurface(
-          tone: active ? AppMaterialTone.surface1 : AppMaterialTone.surface0,
-          radius: 999,
-          elevated: false,
-          glaze: false,
-          borderColor: active
-              ? t.itemActiveBorder
-              : t.chromeBorder.withValues(alpha: 0.14),
-          borderAlpha: 1,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-            child: Text(hash, style: TextStyle(color: active ? t.accentBright : t.textMuted, fontSize: 10, fontFamily: 'JetBrainsMono')),
-          ),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 56;
+        return Column(
+          children: [
+            Container(
+                width: 2,
+                height: 26,
+                color: active
+                    ? t.accentBright
+                    : t.chromeBorder.withValues(alpha: 0.5)),
+            const SizedBox(height: 4),
+            MaterialSurface(
+              tone:
+                  active ? AppMaterialTone.surface1 : AppMaterialTone.surface0,
+              radius: 999,
+              elevated: false,
+              glaze: false,
+              borderColor: active
+                  ? t.itemActiveBorder
+                  : t.chromeBorder.withValues(alpha: 0.14),
+              borderAlpha: 1,
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 5 : 7, vertical: 4),
+                child: Text(
+                  compact ? hash.substring(0, math.min(hash.length, 5)) : hash,
+                  style: TextStyle(
+                      color: active ? t.accentBright : t.textMuted,
+                      fontSize: compact ? 9 : 10,
+                      fontFamily: 'JetBrainsMono'),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1440,7 +1797,8 @@ class _TimelinePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _TimelinePainter oldDelegate) => oldDelegate.tokens != tokens;
+  bool shouldRepaint(covariant _TimelinePainter oldDelegate) =>
+      oldDelegate.tokens != tokens;
 }
 
 DateTime? _cadenceDate(RepositoryXrayCadenceData item) {
@@ -1518,7 +1876,11 @@ class _MiniButton extends StatefulWidget {
   final String? icon;
   final bool enabled;
   final VoidCallback onTap;
-  const _MiniButton({required this.label, this.icon, required this.enabled, required this.onTap});
+  const _MiniButton(
+      {required this.label,
+      this.icon,
+      required this.enabled,
+      required this.onTap});
   @override
   State<_MiniButton> createState() => _MiniButtonState();
 }
@@ -1529,23 +1891,37 @@ class _MiniButtonState extends State<_MiniButton> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final chrome = ghostButtonChrome(t, hovered: _hovered, pressed: _pressed, enabled: widget.enabled, baseBorderColor: t.secondaryBtnBorder);
+    final chrome = ghostButtonChrome(t,
+        hovered: _hovered,
+        pressed: _pressed,
+        enabled: widget.enabled,
+        baseBorderColor: t.secondaryBtnBorder);
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      cursor: widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor:
+          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
       child: GestureDetector(
         onTap: widget.enabled ? widget.onTap : null,
-        onTapDown: widget.enabled ? (_) => setState(() => _pressed = true) : null,
+        onTapDown:
+            widget.enabled ? (_) => setState(() => _pressed = true) : null,
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(color: chrome.background, borderRadius: BorderRadius.circular(6), border: Border.all(color: chrome.borderColor), boxShadow: chrome.shadows),
+          decoration: BoxDecoration(
+              color: chrome.background,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: chrome.borderColor),
+              boxShadow: chrome.shadows),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            if (widget.icon != null) ...[AppIcon(name: widget.icon!, size: 12, color: t.textMuted), const SizedBox(width: 6)],
-            Text(widget.label, style: TextStyle(color: t.textNormal, fontSize: 11)),
+            if (widget.icon != null) ...[
+              AppIcon(name: widget.icon!, size: 12, color: t.textMuted),
+              const SizedBox(width: 6)
+            ],
+            Text(widget.label,
+                style: TextStyle(color: t.textNormal, fontSize: 11)),
           ]),
         ),
       ),

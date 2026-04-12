@@ -18,6 +18,7 @@ class PreferencesState extends ChangeNotifier {
   bool _crashReportingEnabled = false;
   bool _autoExpandLogs = false;
   bool _aiReadOnlyDefault = true;
+  bool _logoAnimatesWhenUnfocused = true;
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
@@ -27,6 +28,7 @@ class PreferencesState extends ChangeNotifier {
   bool get crashReportingEnabled => _crashReportingEnabled;
   bool get autoExpandLogs => _autoExpandLogs;
   bool get aiReadOnlyDefault => _aiReadOnlyDefault;
+  bool get logoAnimatesWhenUnfocused => _logoAnimatesWhenUnfocused;
 
   Future<void> load() async {
     if (_loaded) {
@@ -39,6 +41,7 @@ class PreferencesState extends ChangeNotifier {
     _crashReportingEnabled = settings.crashReportingEnabled;
     _autoExpandLogs = settings.autoExpandOperationLogs;
     _aiReadOnlyDefault = settings.aiReadOnlyDefault;
+    _logoAnimatesWhenUnfocused = settings.logoAnimatesWhenUnfocused;
     _loaded = true;
     notifyListeners();
   }
@@ -75,6 +78,7 @@ class PreferencesState extends ChangeNotifier {
         AppSettingsSnapshot(
           guardrailValue: _guardrailValue,
           aiReadOnlyDefault: _aiReadOnlyDefault,
+          logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
           telemetryRetentionDays: settings.telemetryRetentionDays,
           telemetryRetentionMb: settings.telemetryRetentionMb,
           updateChannel: settings.updateChannel,
@@ -137,6 +141,7 @@ class PreferencesState extends ChangeNotifier {
         AppSettingsSnapshot(
           guardrailValue: settings.guardrailValue,
           aiReadOnlyDefault: _aiReadOnlyDefault,
+          logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
           telemetryRetentionDays: settings.telemetryRetentionDays,
           telemetryRetentionMb: settings.telemetryRetentionMb,
           updateChannel: _updateChannel,
@@ -198,6 +203,7 @@ class PreferencesState extends ChangeNotifier {
         AppSettingsSnapshot(
           guardrailValue: settings.guardrailValue,
           aiReadOnlyDefault: _aiReadOnlyDefault,
+          logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
           telemetryRetentionDays: settings.telemetryRetentionDays,
           telemetryRetentionMb: settings.telemetryRetentionMb,
           updateChannel: settings.updateChannel,
@@ -253,6 +259,7 @@ class PreferencesState extends ChangeNotifier {
       AppSettingsSnapshot(
         guardrailValue: settings.guardrailValue,
         aiReadOnlyDefault: _aiReadOnlyDefault,
+        logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
         telemetryRetentionDays: settings.telemetryRetentionDays,
         telemetryRetentionMb: settings.telemetryRetentionMb,
         updateChannel: settings.updateChannel,
@@ -280,6 +287,35 @@ class PreferencesState extends ChangeNotifier {
       AppSettingsSnapshot(
         guardrailValue: settings.guardrailValue,
         aiReadOnlyDefault: _aiReadOnlyDefault,
+        logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
+        telemetryRetentionDays: settings.telemetryRetentionDays,
+        telemetryRetentionMb: settings.telemetryRetentionMb,
+        updateChannel: settings.updateChannel,
+        crashReportingEnabled: settings.crashReportingEnabled,
+        themeId: settings.themeId,
+        keybindingProfile: settings.keybindingProfile,
+        sidebarWidthPx: settings.sidebarWidthPx,
+        sidebarPosition: settings.sidebarPosition,
+        utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
+        utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
+        autoExpandOperationLogs: _autoExpandLogs,
+      ),
+    );
+    notifyListeners();
+  }
+
+  Future<void> setLogoAnimatesWhenUnfocused(bool value) async {
+    if (_logoAnimatesWhenUnfocused == value) {
+      return;
+    }
+
+    _logoAnimatesWhenUnfocused = value;
+    final settings = await SettingsStore.load();
+    await SettingsStore.persist(
+      AppSettingsSnapshot(
+        guardrailValue: settings.guardrailValue,
+        aiReadOnlyDefault: _aiReadOnlyDefault,
+        logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
         telemetryRetentionDays: settings.telemetryRetentionDays,
         telemetryRetentionMb: settings.telemetryRetentionMb,
         updateChannel: settings.updateChannel,

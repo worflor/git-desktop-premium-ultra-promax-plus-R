@@ -1540,6 +1540,7 @@ class DiagnosticsState extends ChangeNotifier {
       AppSettingsSnapshot(
         guardrailValue: settings.guardrailValue,
         aiReadOnlyDefault: settings.aiReadOnlyDefault,
+        logoAnimatesWhenUnfocused: settings.logoAnimatesWhenUnfocused,
         telemetryRetentionDays: _retentionDays,
         telemetryRetentionMb: _retentionMb,
         updateChannel: settings.updateChannel,

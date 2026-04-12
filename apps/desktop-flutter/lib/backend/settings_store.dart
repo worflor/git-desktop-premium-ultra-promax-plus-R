@@ -6,6 +6,7 @@ import 'storage_paths.dart';
 class AppSettingsSnapshot {
   final double guardrailValue;
   final bool aiReadOnlyDefault;
+  final bool logoAnimatesWhenUnfocused;
   final int telemetryRetentionDays;
   final int telemetryRetentionMb;
   final String updateChannel;
@@ -21,6 +22,7 @@ class AppSettingsSnapshot {
   const AppSettingsSnapshot({
     required this.guardrailValue,
     required this.aiReadOnlyDefault,
+    required this.logoAnimatesWhenUnfocused,
     required this.telemetryRetentionDays,
     required this.telemetryRetentionMb,
     required this.updateChannel,
@@ -37,6 +39,7 @@ class AppSettingsSnapshot {
   Map<String, dynamic> toJson() => {
         'guardrailValue': guardrailValue,
         'aiReadOnlyDefault': aiReadOnlyDefault,
+        'logoAnimatesWhenUnfocused': logoAnimatesWhenUnfocused,
         'telemetryRetentionDays': telemetryRetentionDays,
         'telemetryRetentionMb': telemetryRetentionMb,
         'updateChannel': updateChannel,
@@ -53,6 +56,7 @@ class AppSettingsSnapshot {
   factory AppSettingsSnapshot.defaults() => const AppSettingsSnapshot(
         guardrailValue: 0.5,
         aiReadOnlyDefault: true,
+        logoAnimatesWhenUnfocused: true,
         telemetryRetentionDays: 30,
         telemetryRetentionMb: 128,
         updateChannel: 'stable',
@@ -76,6 +80,10 @@ class AppSettingsSnapshot {
       aiReadOnlyDefault: SettingsStore._boolOr(
         json['aiReadOnlyDefault'],
         defaults.aiReadOnlyDefault,
+      ),
+      logoAnimatesWhenUnfocused: SettingsStore._boolOr(
+        json['logoAnimatesWhenUnfocused'],
+        defaults.logoAnimatesWhenUnfocused,
       ),
       telemetryRetentionDays: SettingsStore._intOr(
         json['telemetryRetentionDays'],

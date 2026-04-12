@@ -27,11 +27,14 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   late final HypercubeLogoEngine _engine;
   Duration? _lastElapsed;
   bool _isTickerModeVisible = true;
+  bool _animateWhenUnfocused = true;
+  AppLifecycleState? _appLifecycleState;
 
   @override
   void initState() {
     super.initState();
     _engine = HypercubeLogoEngine();
+    _appLifecycleState = WidgetsBinding.instance.lifecycleState;
     WidgetsBinding.instance.addObserver(this);
     _ticker = createTicker(_tick);
   }
@@ -40,11 +43,18 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _isTickerModeVisible = TickerMode.of(context);
+    _animateWhenUnfocused = context.select<PreferencesState, bool>(
+      (PreferencesState preferences) => preferences.logoAnimatesWhenUnfocused,
+    );
     _syncTicker();
   }
 
   void _syncTicker() {
-    final bool shouldRun = _isTickerModeVisible;
+    final AppLifecycleState lifecycleState =
+        _appLifecycleState ?? AppLifecycleState.resumed;
+    final bool isFocused = lifecycleState == AppLifecycleState.resumed;
+    final bool shouldRun =
+        _isTickerModeVisible && (_animateWhenUnfocused || isFocused);
     if (shouldRun) {
       if (!_ticker.isActive) {
         _lastElapsed = null;
@@ -60,6 +70,8 @@ class _HypercubeLogoState extends State<HypercubeLogo>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appLifecycleState = state;
+    _syncTicker();
     if (state == AppLifecycleState.resumed || !mounted) {
       return;
     }

@@ -2070,6 +2070,8 @@ ol {
 
 .path-input,
 .diff-search {
+  appearance: none;
+  -webkit-appearance: none;
   min-width: 0;
   flex: 1;
   padding: 7px 10px;
@@ -2092,6 +2094,16 @@ ol {
 .diff-search::placeholder {
   color: var(--text-muted);
   opacity: 0.5;
+}
+
+input[type="number"].path-input {
+  -moz-appearance: textfield;
+}
+
+input[type="number"].path-input::-webkit-outer-spin-button,
+input[type="number"].path-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .primary-btn,
@@ -2243,8 +2255,8 @@ ol {
   appearance: none;
   width: 18px;
   height: 18px;
-  margin-top: -12px !important;
-  /* Global mathematical center */
+  margin-top: -6px !important;
+  /* Center an 18px thumb on a 6px track */
   border-radius: 50%;
   background: var(--slider-thumb, var(--accent-bright));
   border: 2.5px solid var(--slider-thumb-border, var(--bg-0));
@@ -2257,7 +2269,7 @@ ol {
 [data-theme="aether"] .theme-slider::-webkit-slider-thumb {
   width: 20px;
   height: 20px;
-  margin-top: -14px !important;
+  margin-top: -7px !important;
   background: rgba(255, 255, 255, 0.15);
   backdrop-filter: blur(4px);
   border: 1px solid rgba(255, 255, 255, 0.4);
@@ -2268,7 +2280,7 @@ ol {
 [data-theme="helix"] .theme-slider::-webkit-slider-thumb {
   width: 18px;
   height: 18px;
-  margin-top: -12px !important;
+  margin-top: -6px !important;
   background: linear-gradient(135deg, #e2d1b6, #cfb996);
   border: 2px solid #2f2519;
   box-shadow: 2px 2px 0px #2f2519, inset 0 0 5px rgba(0, 0, 0, 0.2);
@@ -2278,7 +2290,7 @@ ol {
 [data-theme="petrichor"] .theme-slider::-webkit-slider-thumb {
   width: 20px;
   height: 20px;
-  margin-top: -14px !important;
+  margin-top: -7px !important;
   border-radius: 50% 50% 50% 10%;
   transform: rotate(45deg);
   background: var(--accent-bright);
@@ -2290,7 +2302,7 @@ ol {
 [data-theme="quanta"] .theme-slider::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
-  margin-top: -10px !important;
+  margin-top: -4px !important;
   border-radius: 2px;
   transform: rotate(45deg);
   background: var(--accent-bright);
@@ -2302,7 +2314,7 @@ ol {
 [data-theme="redshift"] .theme-slider::-webkit-slider-thumb {
   width: 12px;
   height: 24px;
-  margin-top: -18px !important;
+  margin-top: -9px !important;
   border-radius: 1px;
   background: var(--accent-bright);
   border: none;
@@ -2314,7 +2326,7 @@ ol {
 [data-theme="halo"] .theme-slider::-webkit-slider-thumb {
   width: 18px;
   height: 18px;
-  margin-top: -12px !important;
+  margin-top: -6px !important;
   background: #fff;
   border: 2px solid var(--accent-bright);
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1), inset 0 0 3px rgba(0, 0, 0, 0.05);
@@ -2324,7 +2336,7 @@ ol {
 [data-theme="crafty"] .theme-slider::-webkit-slider-thumb {
   width: 16px;
   height: 16px;
-  margin-top: -10px !important;
+  margin-top: -5px !important;
   border-radius: 0;
   background: var(--accent-bright);
   border: 3.5px solid #3d2918;
@@ -2335,7 +2347,7 @@ ol {
 [data-theme="nightwalker"] .theme-slider::-webkit-slider-thumb {
   width: 22px;
   height: 22px;
-  margin-top: -16px !important;
+  margin-top: -8px !important;
   background: transparent;
   border: 3px solid var(--accent-bright);
   box-shadow: 0 0 15px var(--accent-bright), inset 0 0 8px var(--accent-bright);
@@ -2345,7 +2357,7 @@ ol {
 [data-theme="blackboard"] .theme-slider::-webkit-slider-thumb {
   width: 16px;
   height: 16px;
-  margin-top: -10px !important;
+  margin-top: -5px !important;
   border-radius: 2px;
   background: #fff;
   border: 2px dashed rgba(0, 0, 0, 0.3);
