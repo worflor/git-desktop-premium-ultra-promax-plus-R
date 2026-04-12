@@ -833,7 +833,10 @@ class _HistoryPageState extends State<HistoryPage> {
     // Check cache — key includes repo path to avoid cross-repo collisions
     final cacheKey = '$repo::$hash';
     final cached = _detailCache[cacheKey];
-    if (cached != null) {
+    // A cached entry with an empty body was written by the bulk prefetch,
+    // which deliberately omits the body. Show it immediately for the file list
+    // but fall through to fetch the full detail (body included).
+    if (cached != null && cached.body.isNotEmpty) {
       if (_selectedHash != hash) return;
       setState(() {
         _detail = cached;
@@ -849,8 +852,12 @@ class _HistoryPageState extends State<HistoryPage> {
       );
       return;
     }
-
+    if (_selectedHash != hash) return;
     setState(() {
+      // Partial cache hit (bulk-prefetched, no body): show file stats now,
+      // then upgrade with the full fetch below. All state set atomically to
+      // avoid an intermediate frame with stale error or missing loading indicator.
+      if (cached != null) _detail = cached;
       _detailLoading = true;
       _detailLoadingHash = hash;
       _detailError = null;

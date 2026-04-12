@@ -30,6 +30,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   bool _isTickerModeVisible = true;
   bool _animateWhenUnfocused = true;
   AppLifecycleState? _appLifecycleState;
+  PreferencesState? _prefs;
 
   @override
   void initState() {
@@ -44,10 +45,27 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _isTickerModeVisible = TickerMode.of(context);
-    _animateWhenUnfocused = context.select<PreferencesState, bool>(
-      (PreferencesState preferences) => preferences.logoAnimatesWhenUnfocused,
-    );
+
+    // Use a manual listener so only logoAnimatesWhenUnfocused changes (not all
+    // of PreferencesState) trigger _syncTicker — equivalent to context.select
+    // but valid outside of build().
+    final prefs = context.read<PreferencesState>();
+    if (_prefs != prefs) {
+      _prefs?.removeListener(_onPrefsChanged);
+      _prefs = prefs;
+      _prefs!.addListener(_onPrefsChanged);
+      _animateWhenUnfocused = prefs.logoAnimatesWhenUnfocused;
+    }
+
     _syncTicker();
+  }
+
+  void _onPrefsChanged() {
+    final newValue = _prefs!.logoAnimatesWhenUnfocused;
+    if (newValue != _animateWhenUnfocused) {
+      _animateWhenUnfocused = newValue;
+      _syncTicker();
+    }
   }
 
   void _syncTicker() {
@@ -90,6 +108,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
 
   @override
   void dispose() {
+    _prefs?.removeListener(_onPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
     context.read<HyperReactivity>().deactivate();
     _ticker.dispose();

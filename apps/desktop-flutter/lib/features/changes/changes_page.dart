@@ -4277,7 +4277,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                           ),
                           decoration: InputDecoration(
                             isCollapsed: true,
-                            contentPadding: const EdgeInsets.all(6),
+                            contentPadding: const EdgeInsets.fromLTRB(10, 10, 16, 10),
                             border: InputBorder.none,
                             enabledBorder: InputBorder.none,
                             focusedBorder: InputBorder.none,
