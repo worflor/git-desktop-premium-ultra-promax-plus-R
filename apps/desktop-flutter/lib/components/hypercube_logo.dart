@@ -1,4 +1,4 @@
-import 'dart:ui' show PathMetric;
+import 'dart:math' as math;
 import 'package:flutter/gestures.dart' show PointerHoverEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
@@ -26,7 +26,6 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   late final Ticker _ticker;
   late final HypercubeLogoEngine _engine;
   Duration? _lastElapsed;
-  int _lastIdleFrameMicros = 0;
   bool _isTickerModeVisible = true;
 
   @override
@@ -49,7 +48,6 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     if (shouldRun) {
       if (!_ticker.isActive) {
         _lastElapsed = null;
-        _lastIdleFrameMicros = 0;
         _ticker.start();
       }
       return;
@@ -57,7 +55,6 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     if (_ticker.isActive) {
       _ticker.stop();
       _lastElapsed = null;
-      _lastIdleFrameMicros = 0;
     }
   }
 
@@ -92,14 +89,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
       return;
     }
 
-    final int nowMicros = elapsed.inMicroseconds;
-    if (_engine.isIdleVisualState &&
-        (nowMicros - _lastIdleFrameMicros) < idleFrameInterval.inMicroseconds) {
-      return;
-    }
-    _lastIdleFrameMicros = nowMicros;
-
-    final int deltaMicros = nowMicros - _lastElapsed!.inMicroseconds;
+    final int deltaMicros = elapsed.inMicroseconds - _lastElapsed!.inMicroseconds;
     _lastElapsed = elapsed;
     final double dt = (deltaMicros / Duration.microsecondsPerSecond)
         .clamp(0, 0.033)
@@ -114,9 +104,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   void _updatePointer(Offset localPosition) {
     final double half = widget.size / 2;
     final Offset delta = localPosition - Offset(half, half);
-    setState(() {
-      _engine.updatePointer(delta: delta, size: widget.size);
-    });
+    _engine.updatePointer(delta: delta, size: widget.size);
     if (_engine.dragging) {
       context.read<HyperReactivity>().activate(
             _engine.near + 1,
@@ -139,7 +127,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
       cursor: _engine.dragging
           ? SystemMouseCursors.grabbing
           : SystemMouseCursors.click,
-      onExit: (_) => setState(_engine.handlePointerExit),
+      onExit: (_) => _engine.handlePointerExit(),
       child: Listener(
         onPointerHover: (PointerHoverEvent event) =>
             _updatePointer(event.localPosition),
@@ -273,6 +261,25 @@ class HypercubeLogoPainter extends CustomPainter {
     final bool useEffects = near > 0.05 || dragging;
     final double glowBlurSigma = _blurSigma(0.6 + near * 0.5);
     final double saturationBoost = 1.8 + near * 1.5;
+    final Paint glowPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final Paint leftPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final Paint rightPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final Paint corePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    if (useEffects) {
+      glowPaint.maskFilter = MaskFilter.blur(BlurStyle.normal, glowBlurSigma);
+    }
 
     for (final (int i, int j) in hypercubeEdges) {
       final HypercubeProjectedPoint p1 = points[i];
@@ -290,24 +297,16 @@ class HypercubeLogoPainter extends CustomPainter {
       final double coreAlpha = (opacity + stress * 0.15).clamp(0, 1).toDouble();
 
       if (useEffects) {
-        final Paint glowPaint = Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round
+        glowPaint
           ..strokeWidth = strokeWidth
-          ..maskFilter = MaskFilter.blur(BlurStyle.normal, glowBlurSigma)
-          ..color = colors.core
-              .withValues(
-                alpha: (coreAlpha * 0.5 * (saturationBoost / 1.8))
-                    .clamp(0, 1)
-                    .toDouble(),
-              );
+          ..color = colors.core.withValues(
+            alpha: (coreAlpha * 0.5 * (saturationBoost / 1.8))
+                .clamp(0, 1)
+                .toDouble(),
+          );
         _drawEdgeLine(canvas, p1.point, p2.point, glowPaint, dashed);
 
-        final Paint leftPaint = Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round
+        leftPaint
           ..strokeWidth = strokeWidth
           ..color = colors.chromatic1.withValues(alpha: coreAlpha);
         _drawEdgeLine(
@@ -318,10 +317,7 @@ class HypercubeLogoPainter extends CustomPainter {
           dashed,
         );
 
-        final Paint rightPaint = Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round
+        rightPaint
           ..strokeWidth = strokeWidth
           ..color = colors.chromatic2.withValues(alpha: coreAlpha);
         _drawEdgeLine(
@@ -333,10 +329,7 @@ class HypercubeLogoPainter extends CustomPainter {
         );
       }
 
-      final Paint corePaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
+      corePaint
         ..strokeWidth = strokeWidth
         ..color = colors.core.withValues(alpha: coreAlpha);
       _drawEdgeLine(canvas, p1.point, p2.point, corePaint, dashed);
@@ -369,17 +362,24 @@ class HypercubeLogoPainter extends CustomPainter {
       canvas.drawLine(start, end, paint);
       return;
     }
-    final Path path = Path()
-      ..moveTo(start.dx, start.dy)
-      ..lineTo(end.dx, end.dy);
-    for (final PathMetric metric in path.computeMetrics()) {
-      double distance = 0;
-      while (distance < metric.length) {
-        final double next =
-            (distance + dashLength).clamp(0, metric.length).toDouble();
-        canvas.drawPath(metric.extractPath(distance, next), paint);
-        distance += dashLength + gapLength;
-      }
+    final double dx = end.dx - start.dx;
+    final double dy = end.dy - start.dy;
+    final double length = math.sqrt(dx * dx + dy * dy);
+    if (length <= 0) {
+      return;
+    }
+    final double invLength = 1 / length;
+    final double stepX = dx * invLength;
+    final double stepY = dy * invLength;
+    double distance = 0;
+    while (distance < length) {
+      final double next = math.min(distance + dashLength, length);
+      canvas.drawLine(
+        Offset(start.dx + stepX * distance, start.dy + stepY * distance),
+        Offset(start.dx + stepX * next, start.dy + stepY * next),
+        paint,
+      );
+      distance += dashLength + gapLength;
     }
   }
 

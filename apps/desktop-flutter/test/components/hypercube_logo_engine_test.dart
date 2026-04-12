@@ -94,6 +94,23 @@ void main() {
     expect(engine.warpVy, isNot(0));
   });
 
+  test('step snaps an effectively settled warp back to zero', () {
+    final engine = HypercubeLogoEngine(seed: 9)
+      ..dragging = false
+      ..near = 0
+      ..warpX = 0.002
+      ..warpY = -0.002
+      ..warpVx = 0.001
+      ..warpVy = -0.001;
+
+    engine.step(0.016, speed: 0.85);
+
+    expect(engine.warpX, 0);
+    expect(engine.warpY, 0);
+    expect(engine.warpVx, 0);
+    expect(engine.warpVy, 0);
+  });
+
   test('projected vertices are deterministic for fixed state snapshot', () {
     HypercubeProjectedData projectOnce() {
       final engine = HypercubeLogoEngine(seed: 77)
@@ -123,6 +140,46 @@ void main() {
       expect(_pointsClose(first.home[i], second.home[i]), isTrue);
       expect(_pointsClose(first.ghost[i], second.ghost[i]), isTrue);
     }
+  });
+
+  test('projected data skips secondary passes when they would not be visible', () {
+    final engine = HypercubeLogoEngine(seed: 77)
+      ..currentIndex = 2
+      ..targetIndex = 7
+      ..transition = 0.42
+      ..time = 1.234
+      ..near = 0
+      ..dragging = false
+      ..tiltX = 0
+      ..tiltY = 0
+      ..warpX = 0
+      ..warpY = 0
+      ..warpVx = 0
+      ..warpVy = 0;
+
+    final projected = engine.projectedData(48);
+    expect(projected.main.length, 16);
+    expect(projected.home, isEmpty);
+    expect(projected.ghost, isEmpty);
+  });
+
+  test('dragging keeps the home projection available for connector rendering', () {
+    final engine = HypercubeLogoEngine(seed: 77)
+      ..currentIndex = 2
+      ..targetIndex = 7
+      ..transition = 0.42
+      ..time = 1.234
+      ..near = 0
+      ..dragging = true
+      ..tiltX = 0.12
+      ..tiltY = -0.08
+      ..warpX = 3.5
+      ..warpY = -2.25
+      ..warpVx = 0
+      ..warpVy = 0;
+
+    final projected = engine.projectedData(48);
+    expect(projected.home.length, 16);
   });
 }
 

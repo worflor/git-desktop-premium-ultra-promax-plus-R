@@ -32,6 +32,7 @@ class _ParsedLine {
   final int? lineNumOld;
   final int? lineNumNew;
   final int hunkIndex; // which hunk this belongs to (-1 for meta)
+  final String? filePath; // which file this line belongs to (multi-file diffs)
   const _ParsedLine({
     required this.text,
     required this.lowerText,
@@ -39,7 +40,14 @@ class _ParsedLine {
     this.lineNumOld,
     this.lineNumNew,
     this.hunkIndex = -1,
+    this.filePath,
   });
+}
+
+class _AgeRange {
+  final DateTime min;
+  final DateTime max;
+  const _AgeRange({required this.min, required this.max});
 }
 
 class _HunkHeader {
@@ -54,8 +62,15 @@ List<_ParsedLine> _parseDiff(String diff) {
   final rawLines = diff.split('\n');
   final result = <_ParsedLine>[];
   int oldLine = 0, newLine = 0, hunkIdx = -1;
+  String? currentFile;
 
+  final diffHeaderRe = RegExp(r'^diff --git a/(.+) b/(.+)$');
   for (final line in rawLines) {
+    if (line.startsWith('diff --git')) {
+      final m = diffHeaderRe.firstMatch(line);
+      if (m != null) currentFile = m.group(2) ?? m.group(1);
+      continue;
+    }
     if (line.startsWith('diff ') || line.startsWith('index ')) {
       continue;
     }
@@ -71,21 +86,24 @@ List<_ParsedLine> _parseDiff(String diff) {
           text: line,
           lowerText: line.toLowerCase(),
           kind: _LineKind.hunk,
-          hunkIndex: hunkIdx));
+          hunkIndex: hunkIdx,
+          filePath: currentFile));
     } else if (line.startsWith('+') && !line.startsWith('+++')) {
       result.add(_ParsedLine(
           text: line,
           lowerText: line.toLowerCase(),
           kind: _LineKind.added,
           lineNumNew: newLine++,
-          hunkIndex: hunkIdx));
+          hunkIndex: hunkIdx,
+          filePath: currentFile));
     } else if (line.startsWith('-') && !line.startsWith('---')) {
       result.add(_ParsedLine(
           text: line,
           lowerText: line.toLowerCase(),
           kind: _LineKind.deleted,
           lineNumOld: oldLine++,
-          hunkIndex: hunkIdx));
+          hunkIndex: hunkIdx,
+          filePath: currentFile));
     } else if (line.startsWith('new file mode ') ||
         line.startsWith('deleted file mode ') ||
         line.startsWith('old mode ') ||
@@ -98,7 +116,8 @@ List<_ParsedLine> _parseDiff(String diff) {
         line.startsWith('--- ') ||
         line.startsWith('+++ ')) {
       result.add(_ParsedLine(
-          text: line, lowerText: line.toLowerCase(), kind: _LineKind.meta));
+          text: line, lowerText: line.toLowerCase(), kind: _LineKind.meta,
+          filePath: currentFile));
     } else if (line.isNotEmpty) {
       result.add(_ParsedLine(
           text: line,
@@ -106,7 +125,8 @@ List<_ParsedLine> _parseDiff(String diff) {
           kind: _LineKind.context,
           lineNumOld: oldLine++,
           lineNumNew: newLine++,
-          hunkIndex: hunkIdx));
+          hunkIndex: hunkIdx,
+          filePath: currentFile));
     } else {
       result.add(_ParsedLine(
           text: line,
@@ -190,24 +210,37 @@ String _changeBlockLabel(int hunkCount) {
   return '$hunkCount change blocks';
 }
 
-class _DiffFileHeader extends StatelessWidget {
+class _DiffFileHeader extends StatefulWidget {
   final String filePath;
   final String diffContent;
   final int hunkCount;
   final AppTokens tokens;
+  final VoidCallback? onTapFilePath;
+  final bool trailActive;
 
   const _DiffFileHeader({
     required this.filePath,
     required this.diffContent,
     required this.hunkCount,
     required this.tokens,
+    this.onTapFilePath,
+    this.trailActive = false,
   });
 
   @override
+  State<_DiffFileHeader> createState() => _DiffFileHeaderState();
+}
+
+class _DiffFileHeaderState extends State<_DiffFileHeader> {
+  bool _hovered = false;
+
+  @override
   Widget build(BuildContext context) {
-    final directory = _diffDisplayDirectory(filePath);
-    final statusLabel = _diffStatusLabel(diffContent);
-    final hunkLabel = _changeBlockLabel(hunkCount);
+    final t = widget.tokens;
+    final directory = _diffDisplayDirectory(widget.filePath);
+    final statusLabel = _diffStatusLabel(widget.diffContent);
+    final hunkLabel = _changeBlockLabel(widget.hunkCount);
+    final canTap = widget.onTapFilePath != null;
 
     return Container(
       width: double.infinity,
@@ -215,23 +248,53 @@ class _DiffFileHeader extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(
-            color: tokens.chromeBorder.withValues(alpha: 0.15),
+            color: t.chromeBorder.withValues(alpha: 0.15),
           ),
         ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Tooltip(
-            message: directory != null ? filePath : '',
-            child: Text(
-              _diffDisplayName(filePath),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: tokens.textStrong,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
+          MouseRegion(
+            cursor: canTap ? SystemMouseCursors.click : SystemMouseCursors.basic,
+            onEnter: canTap ? (_) => setState(() => _hovered = true) : null,
+            onExit: canTap ? (_) => setState(() => _hovered = false) : null,
+            child: GestureDetector(
+              onTap: widget.onTapFilePath,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Tooltip(
+                      message: directory != null ? widget.filePath : '',
+                      child: Text(
+                        _diffDisplayName(widget.filePath),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: widget.trailActive
+                              ? t.accentBright
+                              : (_hovered ? t.accentBright : t.textStrong),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          decoration: _hovered ? TextDecoration.underline : null,
+                          decorationColor: t.accentBright.withValues(alpha: 0.5),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (widget.trailActive) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      '· trail',
+                      style: TextStyle(
+                        color: t.accentBright.withValues(alpha: 0.6),
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
@@ -243,14 +306,14 @@ class _DiffFileHeader extends StatelessWidget {
                 height: 8,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: tokens.accentBright,
+                  color: t.accentBright,
                 ),
               ),
               const SizedBox(width: 8),
               Text(
                 statusLabel,
                 style: TextStyle(
-                  color: tokens.textMuted,
+                  color: t.textMuted,
                   fontSize: 10,
                   fontWeight: FontWeight.w500,
                 ),
@@ -259,13 +322,13 @@ class _DiffFileHeader extends StatelessWidget {
               Container(
                 width: 1,
                 height: 9,
-                color: tokens.chromeBorder.withValues(alpha: 0.35),
+                color: t.chromeBorder.withValues(alpha: 0.35),
               ),
               const SizedBox(width: 6),
               Text(
                 hunkLabel,
                 style: TextStyle(
-                  color: tokens.textMuted,
+                  color: t.textMuted,
                   fontSize: 10,
                 ),
               ),
@@ -319,7 +382,11 @@ class _DiffShellState extends State<DiffShell> {
   final List<double> _frameTotalSamples = [];
   final List<double> _frameBuildSamples = [];
   final List<double> _frameRasterSamples = [];
-  final Map<int, BlameLineData> _blameByLine = {};
+  // Blame cache keyed by file path → line number → entry.
+  // Supports multi-file diffs where each file has its own blame.
+  final Map<String, Map<int, BlameLineData>> _blameByFile = {};
+  final Set<String> _blameFetchedFiles = {};
+  final Set<String> _blameFetchingFiles = {};
   bool _sessionFlushed = false;
   double? _sessionFirstPaintMs;
   DateTime? _lastScrollEventAt;
@@ -333,10 +400,19 @@ class _DiffShellState extends State<DiffShell> {
   Timer? _sessionFlushTimer;
   late final TimingsCallback _frameTimingsCallback;
 
-  // Blame
-  List<BlameLineData>? _blameData;
-  bool _blameFetched = false;
-  bool _blameFetching = false;
+  // Wear map (blame heatmap)
+  bool _wearMapVisible = false;
+
+  // Paper Trail (file history)
+  bool _trailVisible = false;
+  List<FileHistoryEntry> _trailHistory = const [];
+  bool _trailLoading = false;
+  String? _trailSelectedHash;
+  String? _originalDiffContent;
+  // Resolved file path AT the currently-selected trail commit. Tracks the
+  // file's pre-rename name when viewing historical stops so diff/blame
+  // queries use the correct path for that point in time.
+  String? _trailSelectedPath;
   int? _hoveredLine; // the lineNumNew being hovered
 
   // Hunk navigation
@@ -357,11 +433,18 @@ class _DiffShellState extends State<DiffShell> {
     super.didUpdateWidget(old);
     if (old.diffContent != widget.diffContent ||
         old.filePath != widget.filePath) {
-      _blameFetched = false;
-      _blameFetching = false;
-      _blameData = null;
-      _blameByLine.clear();
+      _blameFetchedFiles.clear();
+      _blameFetchingFiles.clear();
+      _blameByFile.clear();
       _hoveredLine = null;
+      // Reset trail state — the underlying diff changed, so any active
+      // historical view is no longer meaningful.
+      _trailVisible = false;
+      _trailHistory = const [];
+      _trailLoading = false;
+      _trailSelectedHash = null;
+      _trailSelectedPath = null;
+      _originalDiffContent = null;
       _rebuild();
       if (old.filePath != widget.filePath) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -564,40 +647,151 @@ class _DiffShellState extends State<DiffShell> {
     super.dispose();
   }
 
-  Future<void> _loadBlame(int lineNum) async {
-    if (_blameFetched || _blameFetching) return;
+  /// Build a cache key that includes the revision — blame at HEAD and blame
+  /// at a historical commit are different data sets, and both can be viewed
+  /// during a single DiffShell session when the Paper Trail is active.
+  String _blameKey(String filePath, String? revision) =>
+      revision == null ? filePath : '$filePath@$revision';
+
+  Future<void> _loadBlame(String filePath, int lineNum) async {
     final repo = widget.repositoryPath;
     if (repo == null) return;
+    // When viewing a historical stop via the Paper Trail, blame must be
+    // computed AS OF that commit — otherwise hovering a line shows the
+    // current-HEAD author instead of who last touched it at that point.
+    // For renamed files, also use the path AT that commit (pre-rename).
+    final revision = _trailSelectedHash;
+    final queryPath = (revision != null && _trailSelectedPath != null)
+        ? _trailSelectedPath!
+        : filePath;
+    final key = _blameKey(filePath, revision);
+    if (_blameFetchedFiles.contains(key) ||
+        _blameFetchingFiles.contains(key)) return;
 
     setState(() {
-      _blameFetching = true;
+      _blameFetchingFiles.add(key);
       _hoveredLine = lineNum;
     });
-    final r = await getFileBlame(repo, widget.filePath);
+    final r = await getFileBlame(repo, queryPath, commitRef: revision);
     if (!mounted) return;
     setState(() {
-      _blameFetching = false;
-      _blameFetched = true;
+      _blameFetchingFiles.remove(key);
+      _blameFetchedFiles.add(key);
       if (r.ok) {
-        _blameData = r.data;
-        _blameByLine
-          ..clear()
-          ..addEntries(
-              r.data!.map((entry) => MapEntry(entry.lineNumber, entry)));
+        final map = <int, BlameLineData>{};
+        for (final entry in r.data!) {
+          map[entry.lineNumber] = entry;
+        }
+        _blameByFile[key] = map;
       }
     });
   }
 
-  BlameLineData? _blameFor(int lineNum) {
-    return _blameByLine[lineNum];
+  BlameLineData? _blameFor(String? filePath, int lineNum) {
+    if (filePath == null) return null;
+    return _blameByFile[_blameKey(filePath, _trailSelectedHash)]?[lineNum];
   }
 
-  bool get _canShowInlineBlame =>
-      !_useAnimatedTextMode &&
-      _sessionChangedLines <= 400 &&
-      _sessionPayloadBytes <= 96 * 1024;
+  // ── Wear map ────────────────────────────────────────────────────────────
 
-  void _scheduleBlameLoad(int lineNum) {
+  Set<String> _uniqueFilePathsInDiff() {
+    final paths = <String>{};
+    for (final line in _lines) {
+      final p = line.filePath;
+      if (p != null && p.isNotEmpty) paths.add(p);
+    }
+    // Fallback for single-file diffs where parser didn't see a diff --git header.
+    if (paths.isEmpty) paths.add(widget.filePath);
+    return paths;
+  }
+
+  void _toggleWearMap() {
+    if (widget.repositoryPath == null) return;
+    setState(() => _wearMapVisible = !_wearMapVisible);
+    if (_wearMapVisible) {
+      _batchLoadWearBlame();
+    }
+  }
+
+  /// Load blame for every file in the diff AS OF the current trail revision.
+  /// Sequential (not concurrent) to avoid spawning a storm of `git blame`
+  /// processes on large multi-file diffs. Bails if wear map is toggled off
+  /// mid-load, or if the trail selection changes.
+  Future<void> _batchLoadWearBlame() async {
+    final revisionAtStart = _trailSelectedHash;
+    for (final path in _uniqueFilePathsInDiff()) {
+      if (!mounted) return;
+      if (!_wearMapVisible) return;
+      // If the user navigated the trail to a different revision while we
+      // were loading, let the next scheduler handle it.
+      if (_trailSelectedHash != revisionAtStart) return;
+      final key = _blameKey(path, revisionAtStart);
+      if (_blameFetchedFiles.contains(key) ||
+          _blameFetchingFiles.contains(key)) continue;
+      await _loadBlame(path, 0);
+    }
+  }
+
+  // Cached per-file age range: oldest and newest authoredAt per file.
+  // Invalidated whenever blame changes; recomputed lazily on access.
+  Map<String, _AgeRange>? _ageRangesCache;
+  int _ageRangesCacheKey = 0;
+
+  Map<String, _AgeRange> _ageRangesByFile() {
+    // Invalidate when the blame cache shape changes.
+    final key = _blameByFile.length * 10000 +
+        _blameByFile.values.fold<int>(0, (acc, m) => acc + m.length);
+    if (_ageRangesCache != null && _ageRangesCacheKey == key) {
+      return _ageRangesCache!;
+    }
+    final result = <String, _AgeRange>{};
+    _blameByFile.forEach((path, lineMap) {
+      DateTime? min;
+      DateTime? max;
+      for (final entry in lineMap.values) {
+        try {
+          final d = DateTime.parse(entry.authoredAt);
+          if (min == null || d.isBefore(min)) min = d;
+          if (max == null || d.isAfter(max)) max = d;
+        } catch (_) {}
+      }
+      if (min != null && max != null) {
+        result[path] = _AgeRange(min: min, max: max);
+      }
+    });
+    _ageRangesCache = result;
+    _ageRangesCacheKey = key;
+    return result;
+  }
+
+  /// Returns 0 (newest) to 1 (oldest) for a line's wear intensity,
+  /// or null if we can't resolve an age for it.
+  double? _wearIntensityFor(String? filePath, int lineNum) {
+    if (filePath == null) return null;
+    final entry = _blameFor(filePath, lineNum);
+    if (entry == null) return null;
+    // Age ranges are cached by the same (file, revision) key as blame.
+    final range = _ageRangesByFile()[_blameKey(filePath, _trailSelectedHash)];
+    if (range == null) return null;
+    try {
+      final d = DateTime.parse(entry.authoredAt);
+      final span = range.max.difference(range.min).inSeconds;
+      if (span <= 0) return 0.0;
+      final from = range.max.difference(d).inSeconds;
+      return (from / span).clamp(0.0, 1.0);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Blame is loaded lazily per-file on hover, so the session caps
+  // (intended to protect the diff renderer) don't need to gate it.
+  // Only disable in animated text mode (where the diff is tiny and blame
+  // hover would be weird) or when no repo path is available.
+  bool get _canShowInlineBlame =>
+      !_useAnimatedTextMode && widget.repositoryPath != null;
+
+  void _scheduleBlameLoad(String filePath, int lineNum) {
     if (!_canShowInlineBlame) {
       return;
     }
@@ -606,7 +800,7 @@ class _DiffShellState extends State<DiffShell> {
       if (!mounted || _hoveredLine != lineNum) {
         return;
       }
-      _loadBlame(lineNum);
+      _loadBlame(filePath, lineNum);
     });
   }
 
@@ -683,6 +877,131 @@ class _DiffShellState extends State<DiffShell> {
     });
   }
 
+  // ── Paper Trail ────────────────────────────────────────────────────────
+
+  // Regex matches our own synthetic multi-file label: "N selected files".
+  static final RegExp _multiFileLabelRe = RegExp(r'^\d+ selected files?$');
+
+  /// Returns the single file path the trail should operate on, or null
+  /// if this DiffShell is showing a multi-file diff, a synthetic label
+  /// (like a stash peek), or otherwise can't unambiguously identify one file.
+  String? _resolvedTrailFilePath() {
+    final paths = _uniqueFilePathsInDiff();
+    if (paths.length != 1) return null;
+    final only = paths.first;
+    // Reject known synthetic labels the app produces when there's no real
+    // single file to point at. Real paths with spaces (e.g. "My Docs/file.md")
+    // are valid and pass through.
+    if (_multiFileLabelRe.hasMatch(only)) return null;
+    if (only.startsWith('filed:')) return null;
+    return only;
+  }
+
+  void _toggleTrail() {
+    if (_trailVisible) {
+      // Collapse trail, restore the original (working) diff content
+      // by re-parsing it back into the visible lines.
+      final original = _originalDiffContent;
+      setState(() {
+        _trailVisible = false;
+        _trailHistory = const [];
+        _trailSelectedHash = null;
+        _trailSelectedPath = null;
+        _originalDiffContent = null;
+        if (original != null) {
+          _reparse(original);
+        }
+      });
+      return;
+    }
+    final repo = widget.repositoryPath;
+    if (repo == null) return;
+    final trailPath = _resolvedTrailFilePath();
+    if (trailPath == null) return;
+    setState(() {
+      _trailVisible = true;
+      _trailLoading = true;
+      _originalDiffContent = widget.diffContent;
+    });
+    listFileHistoryWithPaths(repo, trailPath).then((result) {
+      if (!mounted) return;
+      setState(() {
+        _trailLoading = false;
+        _trailHistory = result.ok ? result.data! : const [];
+      });
+    });
+  }
+
+  void _selectTrailStop(String commitHash) {
+    final repo = widget.repositoryPath;
+    if (repo == null) return;
+    // Resolve the path AT this historical commit — critical for renames:
+    // a commit from before the rename must be queried with the old name.
+    final historyEntry = _trailHistory.firstWhere(
+      (e) => e.commit.commitHash == commitHash,
+      orElse: () => FileHistoryEntry(
+        commit: CommitHistoryEntry(
+          commitHash: '', shortHash: '', parentHashes: const [],
+          refNames: const [], isMerge: false, subject: '',
+          authorName: '', authorEmail: '', authoredAt: '',
+        ),
+        pathAtRevision: _resolvedTrailFilePath() ?? widget.filePath,
+      ),
+    );
+    final pathAt = historyEntry.pathAtRevision;
+    // Snapshot the previous selection so we can roll back on failure —
+    // avoids the UI showing a selected hash whose diff never loaded.
+    final previousHash = _trailSelectedHash;
+    final previousPath = _trailSelectedPath;
+    setState(() {
+      _trailSelectedHash = commitHash;
+      _trailSelectedPath = pathAt;
+    });
+    getFileDiffAtRevision(repo, pathAt, commitHash).then((result) {
+      if (!mounted || _trailSelectedHash != commitHash) return;
+      if (result.ok) {
+        setState(() {
+          _reparse(result.data!);
+        });
+        // Wear map is keyed by revision — if it's active, kick off a
+        // blame load for the new revision so the heatmap stays populated
+        // instead of blanking out until the user hovers each line.
+        if (_wearMapVisible) {
+          _batchLoadWearBlame();
+        }
+      } else {
+        // Fetch failed — revert the selection so the strip and diff stay
+        // in sync. The diff content remains whatever was last visible.
+        setState(() {
+          _trailSelectedHash = previousHash;
+          _trailSelectedPath = previousPath;
+        });
+      }
+    });
+  }
+
+  void _selectTrailNow() {
+    setState(() {
+      _trailSelectedHash = null;
+      _trailSelectedPath = null;
+      if (_originalDiffContent != null) {
+        _reparse(_originalDiffContent!);
+      }
+    });
+    // Re-populate wear map against HEAD (key null) when returning to "now".
+    if (_wearMapVisible) {
+      _batchLoadWearBlame();
+    }
+  }
+
+  void _reparse(String content) {
+    final parsed = _parseDiff(content);
+    _lines = widget.showFileHeader ? _trimLeadingMetaLines(parsed) : parsed;
+    _hunks = _extractHunks(_lines);
+    _refreshDisplayLines();
+    _computeMaxLineWidth();
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
@@ -721,6 +1040,24 @@ class _DiffShellState extends State<DiffShell> {
             diffContent: widget.diffContent ?? '',
             hunkCount: _hunks.length,
             tokens: t,
+            // Trail only works when we can unambiguously resolve a single
+            // real file path — disables itself for multi-file diffs, stash
+            // peeks, and other synthetic filePath views.
+            onTapFilePath:
+                (widget.repositoryPath != null && _resolvedTrailFilePath() != null)
+                    ? _toggleTrail
+                    : null,
+            trailActive: _trailVisible,
+          ),
+        // ── Paper trail strip ───────────────────────────────────────────
+        if (_trailVisible)
+          _TrailStrip(
+            tokens: t,
+            history: _trailHistory,
+            loading: _trailLoading,
+            selectedHash: _trailSelectedHash,
+            onSelectStop: _selectTrailStop,
+            onSelectNow: _selectTrailNow,
           ),
         // ── Toolbar: search + hunk nav ─────────────────────────────────────
         MaterialSurface(
@@ -786,8 +1123,8 @@ class _DiffShellState extends State<DiffShell> {
               _HunkDropdown(hunks: _hunks, t: t, onJump: _jumpToHunkIndex),
             ],
 
-            // Blame indicator
-            if (_blameFetching)
+            // Blame / wear map indicator (click toggles wear map)
+            if (_blameFetchingFiles.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(left: 8),
                 child: Text(
@@ -799,14 +1136,32 @@ class _DiffShellState extends State<DiffShell> {
                   ),
                 ),
               ),
-            if (_blameFetched && _blameData != null)
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Text('blame',
-                    style: TextStyle(
-                        color: t.accentBright.withValues(alpha: 0.7),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600)),
+            if (_canShowInlineBlame && _blameFetchingFiles.isEmpty)
+              Tooltip(
+                message: _wearMapVisible
+                    ? 'wear map on — click to hide'
+                    : 'show wear map (activity heatmap)',
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    onTap: _toggleWearMap,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text(
+                        _wearMapVisible ? 'wear · on' : 'blame',
+                        style: TextStyle(
+                          color: _wearMapVisible
+                              ? t.hyperChromatic1
+                              : (_blameByFile.isNotEmpty
+                                  ? t.hyperChromatic1.withValues(alpha: 0.7)
+                                  : t.textMuted),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
           ]),
         ),
@@ -837,11 +1192,14 @@ class _DiffShellState extends State<DiffShell> {
                       itemExtent: 18,
                       itemBuilder: (ctx, i) {
                         final line = displayLines[i];
+                        // Resolve file path: prefer the line's own tag (for multi-file diffs),
+                        // fall back to the widget's filePath for single-file views.
+                        final lineFile = line.filePath ?? widget.filePath;
                         return _DiffLine(
                           line: line,
                           tokens: t,
                           blameEntry: line.lineNumNew != null
-                              ? _blameFor(line.lineNumNew!)
+                              ? _blameFor(lineFile, line.lineNumNew!)
                               : null,
                           hovered: _hoveredLine == line.lineNumNew &&
                               line.lineNumNew != null,
@@ -850,7 +1208,7 @@ class _DiffShellState extends State<DiffShell> {
                                   ? () {
                                       setState(
                                           () => _hoveredLine = line.lineNumNew!);
-                                      _scheduleBlameLoad(line.lineNumNew!);
+                                      _scheduleBlameLoad(lineFile, line.lineNumNew!);
                                     }
                                   : null,
                           onGutterExit: () {
@@ -859,6 +1217,9 @@ class _DiffShellState extends State<DiffShell> {
                           },
                           searchTerm: _searchTerm,
                           useAnimatedTextMode: _useAnimatedTextMode,
+                          wearIntensity: _wearMapVisible && line.lineNumNew != null
+                              ? _wearIntensityFor(lineFile, line.lineNumNew!)
+                              : null,
                         );
                       },
                     ),
@@ -898,6 +1259,7 @@ class _DiffLine extends StatelessWidget {
   final VoidCallback onGutterExit;
   final String searchTerm;
   final bool useAnimatedTextMode;
+  final double? wearIntensity; // 0 = newest, 1 = oldest; null = no wear map
 
   const _DiffLine({
     required this.line,
@@ -908,6 +1270,7 @@ class _DiffLine extends StatelessWidget {
     required this.onGutterExit,
     required this.searchTerm,
     required this.useAnimatedTextMode,
+    this.wearIntensity,
   });
 
   @override
@@ -954,22 +1317,37 @@ class _DiffLine extends StatelessWidget {
       gutterText = l.lineNumNew != null ? '${l.lineNumNew}' : '';
     }
 
+    // Wear map: theme-chromatic gradient from hypercubePositive (newest)
+    // toward hypercubeNegative (oldest). Alpha scales by intensity so ancient
+    // lines fade out while recent ones glow in the theme's warm tone.
+    Color? wearBg;
+    if (wearIntensity != null && !isMeta && l.kind != _LineKind.hunk) {
+      wearBg = Color.lerp(
+        t.hypercubePositive.withValues(alpha: 0.32),
+        t.hypercubeNegative.withValues(alpha: 0.08),
+        wearIntensity!,
+      );
+    }
+
+    final Color gutterBg = hovered
+        ? t.accentBright.withValues(alpha: 0.06)
+        : isMeta
+            ? Colors.transparent
+            : (wearBg ??
+                (lineBg?.withValues(alpha: 0.6) ??
+                    t.surface1.withValues(alpha: 0.5)));
+
     final gutterCell = Container(
       width: isMeta ? 40 : 56,
       padding: const EdgeInsets.only(right: 8),
       alignment: Alignment.centerRight,
-      color: hovered
-          ? t.accentBright.withValues(alpha: 0.06)
-          : isMeta
-              ? Colors.transparent
-              : (lineBg?.withValues(alpha: 0.6) ??
-                  t.surface1.withValues(alpha: 0.5)),
+      color: gutterBg,
       child: Text(
         gutterText,
         style: TextStyle(
           color: hovered
               ? (blameEntry != null
-                  ? t.accentBright.withValues(alpha: 0.9)
+                  ? t.hyperChromatic1.withValues(alpha: 0.9)
                   : t.textMuted)
               : t.textMuted.withValues(alpha: 0.5),
           fontSize: 10,
@@ -1051,7 +1429,7 @@ class _DiffLine extends StatelessWidget {
               color: t.surface1,
               border: Border(
                 right: BorderSide(
-                    color: t.accentBright.withValues(alpha: 0.3), width: 2),
+                    color: t.hyperChromatic1.withValues(alpha: 0.4), width: 2),
               ),
             ),
             child: Row(children: [
@@ -1072,20 +1450,15 @@ class _DiffLine extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                    Text(b.shortHash,
-                        style: TextStyle(
-                            color: t.accentBright,
-                            fontSize: 9,
-                            fontFamily: 'JetBrainsMono'),
-                        overflow: TextOverflow.ellipsis),
-                    Text(timeStr,
-                        style: TextStyle(color: t.textMuted, fontSize: 9),
-                        overflow: TextOverflow.ellipsis),
-                  ])),
+                  child: Text(
+                    '${b.shortHash} · $timeStr',
+                    style: TextStyle(
+                      color: t.hyperChromatic1,
+                      fontSize: 9,
+                      fontFamily: 'JetBrainsMono',
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  )),
             ]),
           ),
         ),
@@ -1498,6 +1871,245 @@ class _DiffMeltTextPainter extends CustomPainter {
         oldDelegate.fromColor != fromColor ||
         oldDelegate.toColor != toColor ||
         oldDelegate.progress != progress;
+  }
+}
+
+// ── Paper Trail strip ─────────────────────────────────────────────────────
+
+/// A horizontal node-style rail for the file's commit history.
+/// Mirrors the visual language of `_MultiDiffProgressRail` in changes_page —
+/// a baseline with evenly-spaced dots, a halo marker on the selected stop.
+/// Index 0 is "now" (current working state), then each commit newest → oldest.
+class _TrailStrip extends StatelessWidget {
+  final AppTokens tokens;
+  final List<FileHistoryEntry> history;
+  final bool loading;
+  final String? selectedHash;
+  final ValueChanged<String> onSelectStop;
+  final VoidCallback onSelectNow;
+
+  const _TrailStrip({
+    required this.tokens,
+    required this.history,
+    required this.loading,
+    required this.selectedHash,
+    required this.onSelectStop,
+    required this.onSelectNow,
+  });
+
+  String _relativeDate(String isoDate) {
+    try {
+      final date = DateTime.parse(isoDate);
+      final diff = DateTime.now().difference(date);
+      if (diff.inDays > 365) return '${diff.inDays ~/ 365}y';
+      if (diff.inDays > 30) return '${diff.inDays ~/ 30}mo';
+      if (diff.inDays > 0) return '${diff.inDays}d';
+      if (diff.inHours > 0) return '${diff.inHours}h';
+      return '${diff.inMinutes}m';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  int get _currentIndex {
+    if (selectedHash == null) return 0; // "now"
+    final idx =
+        history.indexWhere((e) => e.commit.commitHash == selectedHash);
+    return idx < 0 ? 0 : idx + 1;
+  }
+
+  String? _currentLabel() {
+    if (loading) return 'loading trail...';
+    if (history.isEmpty) return 'no history found';
+    if (selectedHash == null) return 'now · working copy';
+    final entry = history.firstWhere(
+      (e) => e.commit.commitHash == selectedHash,
+      orElse: () => history.first,
+    );
+    final c = entry.commit;
+    final rel = _relativeDate(c.authoredAt);
+    return '${c.shortHash} · ${c.authorName} · $rel · ${c.subject}';
+  }
+
+  void _selectByIndex(int index) {
+    if (index == 0) {
+      onSelectNow();
+    } else {
+      final i = (index - 1).clamp(0, history.length - 1);
+      onSelectStop(history[i].commit.commitHash);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final total = history.length + 1; // +1 for "now"
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 8),
+      decoration: BoxDecoration(
+        color: t.bg0.withValues(alpha: 0.3),
+        border: Border(
+          bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.1)),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            _currentLabel() ?? '',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          if (!loading && history.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            _TrailRail(
+              tokens: t,
+              total: total,
+              currentIndex: _currentIndex,
+              onSelectIndex: _selectByIndex,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TrailRail extends StatelessWidget {
+  final AppTokens tokens;
+  final int total;
+  final int currentIndex;
+  final ValueChanged<int> onSelectIndex;
+
+  const _TrailRail({
+    required this.tokens,
+    required this.total,
+    required this.currentIndex,
+    required this.onSelectIndex,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : MediaQuery.sizeOf(context).width;
+        return MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (d) => _selectFromOffset(d.localPosition.dx, width),
+            onHorizontalDragStart: (d) =>
+                _selectFromOffset(d.localPosition.dx, width),
+            onHorizontalDragUpdate: (d) =>
+                _selectFromOffset(d.localPosition.dx, width),
+            child: SizedBox(
+              width: width,
+              height: 22,
+              child: CustomPaint(
+                size: Size(width, 22),
+                painter: _TrailRailPainter(
+                  tokens: tokens,
+                  total: total,
+                  currentIndex: currentIndex,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _selectFromOffset(double localDx, double width) {
+    if (total <= 0) return;
+    const horizontalInset = 6.0;
+    final usable = (width - horizontalInset * 2).clamp(1.0, double.infinity);
+    final ratio = ((localDx - horizontalInset) / usable).clamp(0.0, 1.0);
+    final index = total == 1 ? 0 : (ratio * (total - 1)).round();
+    onSelectIndex(index);
+  }
+}
+
+class _TrailRailPainter extends CustomPainter {
+  final AppTokens tokens;
+  final int total;
+  final int currentIndex;
+
+  const _TrailRailPainter({
+    required this.tokens,
+    required this.total,
+    required this.currentIndex,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (total <= 0) return;
+
+    const horizontalInset = 6.0;
+    final left = horizontalInset;
+    final right = size.width - horizontalInset;
+    final centerY = size.height / 2;
+    final usableWidth = right - left;
+    final progress = total == 1 ? 0.0 : currentIndex / (total - 1);
+    final markerX = left + usableWidth * progress.clamp(0.0, 1.0);
+
+    final baseRail = Paint()
+      ..color = tokens.chromeBorder.withValues(alpha: 0.28)
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(left, centerY), Offset(right, centerY), baseRail);
+
+    // Cap the visible dot count so huge histories don't clutter the rail.
+    final sampleCount = total < 2
+        ? 1
+        : total > 44
+            ? 44
+            : total;
+
+    for (var i = 0; i < sampleCount; i++) {
+      final ratio = sampleCount == 1 ? 0.0 : i / (sampleCount - 1);
+      final representedIndex =
+          sampleCount == 1 ? currentIndex : (ratio * (total - 1)).round();
+      final x = left + usableWidth * ratio;
+      final isCurrent = representedIndex == currentIndex;
+      // "now" (index 0) gets a slightly brighter base color to distinguish it.
+      final isNow = representedIndex == 0;
+      final radius = isCurrent ? 4.5 : (isNow ? 3.2 : 2.4);
+      final fill = Paint()
+        ..color = isCurrent
+            ? tokens.accentBright
+            : (isNow
+                ? tokens.accentBright.withValues(alpha: 0.55)
+                : tokens.textMuted.withValues(alpha: 0.24));
+      canvas.drawCircle(Offset(x, centerY), radius, fill);
+    }
+
+    final halo = Paint()
+      ..color = tokens.accentBright.withValues(alpha: 0.16)
+      ..style = PaintingStyle.fill;
+    final ring = Paint()
+      ..color = tokens.accentBright.withValues(alpha: 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawCircle(Offset(markerX, centerY), 7.5, halo);
+    canvas.drawCircle(Offset(markerX, centerY), 6.2, ring);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrailRailPainter old) {
+    return old.total != total ||
+        old.currentIndex != currentIndex ||
+        old.tokens != tokens;
   }
 }
 

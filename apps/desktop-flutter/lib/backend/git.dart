@@ -146,20 +146,17 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
   }
 }
 
-Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(String repo,
-    {int limit = 200, String? branch}) async {
-  final args = [
-    'log',
-    '--format=%H%n%h%n%P%n%D%n%s%n%aN%n%aE%n%aI',
-    '-n',
-    '$limit'
-  ];
-  if (branch != null) args.add(branch);
-  final r = await _git(repo, args);
-  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+/// Format string used by both listCommitHistory and listFileHistory.
+/// Shape: hash, shortHash, parents, refs, subject, author, email, date.
+/// Keep in sync with `_parseCommitLogLines` below.
+const String _kCommitLogFormat =
+    '--format=%H%n%h%n%P%n%D%n%s%n%aN%n%aE%n%aI';
 
+/// Parses 8-line commit records from `git log --format=_kCommitLogFormat`.
+/// Each commit occupies 8 consecutive non-empty lines; blank lines separate
+/// them. Used by listCommitHistory and listFileHistory.
+List<CommitHistoryEntry> _parseCommitLogLines(List<String> lines) {
   final entries = <CommitHistoryEntry>[];
-  final lines = r.stdout.toString().split('\n');
   int i = 0;
   while (i + 7 < lines.length) {
     final hash = lines[i].trim();
@@ -167,36 +164,175 @@ Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(String repo,
       i++;
       continue;
     }
-    final shortHash = lines[i + 1].trim();
-    final parents =
-        lines[i + 2].trim().split(' ').where((s) => s.isNotEmpty).toList();
-    final refs = lines[i + 3]
+    final parents = lines[i + 2]
         .trim()
-        .split(',')
-        .map((s) => s.trim())
+        .split(' ')
         .where((s) => s.isNotEmpty)
         .toList();
-    final subject = lines[i + 4].trim();
-    final author = lines[i + 5].trim();
-    final email = lines[i + 6].trim();
-    final date = lines[i + 7].trim();
     entries.add(CommitHistoryEntry(
       commitHash: hash,
-      shortHash: shortHash,
+      shortHash: lines[i + 1].trim(),
       parentHashes: parents,
-      refNames: refs,
+      refNames: lines[i + 3]
+          .trim()
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList(),
       isMerge: parents.length > 1,
-      subject: subject,
-      authorName: author,
-      authorEmail: email,
-      authoredAt: date,
+      subject: lines[i + 4].trim(),
+      authorName: lines[i + 5].trim(),
+      authorEmail: lines[i + 6].trim(),
+      authoredAt: lines[i + 7].trim(),
     ));
     i += 8;
-    // skip blank separator
     while (i < lines.length && lines[i].trim().isEmpty) i++;
   }
+  return entries;
+}
+
+Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(String repo,
+    {int limit = 200, String? branch}) async {
+  final args = ['log', _kCommitLogFormat, '-n', '$limit'];
+  if (branch != null) args.add(branch);
+  final r = await _git(repo, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(_parseCommitLogLines(r.stdout.toString().split('\n')));
+}
+
+// ── Paper Trail (file history) ──────────────────────────────────────────────
+
+/// Wraps a history entry with the file path AS IT EXISTED at that commit.
+/// Critical for correctly fetching diffs/blame across renames: if the file
+/// was foo.txt before being renamed to bar.txt, pre-rename commits must be
+/// queried with the OLD name, not the current one.
+class FileHistoryEntry {
+  final CommitHistoryEntry commit;
+  final String pathAtRevision;
+  const FileHistoryEntry({
+    required this.commit,
+    required this.pathAtRevision,
+  });
+}
+
+/// Returns the commit history for a file, with `--follow` tracking renames,
+/// AND the path the file had at each commit (used to query diffs/blame
+/// correctly for commits from before a rename).
+Future<GitResult<List<FileHistoryEntry>>> listFileHistoryWithPaths(
+  String repo,
+  String filePath, {
+  int limit = 100,
+}) async {
+  // --name-status emits a status line (M/A/D/R100 etc.) after each commit's
+  // metadata, with the file path(s) involved. For renames, two paths:
+  // old\tnew. We use these to resolve the name at each historical commit.
+  final r = await _git(repo, [
+    'log',
+    '--follow',
+    _kCommitLogFormat,
+    '--name-status',
+    '-n',
+    '$limit',
+    '--',
+    filePath,
+  ]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+
+  // Separate the interleaved output into two streams:
+  //   - commit metadata lines (8 per commit) → parsed by shared helper
+  //   - per-commit name-status lines → resolved into pathsByHash
+  // This keeps `_parseCommitLogLines` as the single source of truth for
+  // the 8-line commit format.
+  final raw = r.stdout.toString().split('\n');
+  final metadataLines = <String>[];
+  final pathsByHash = <String, String>{};
+  // Rolling fallback: git log is newest→oldest, so if a commit's name-status
+  // fails to parse, the last successfully-resolved path is more likely to be
+  // correct than the current HEAD filePath (which would be wrong for anything
+  // before a rename).
+  String? lastKnownPath;
+  int i = 0;
+  while (i + 7 < raw.length) {
+    final hash = raw[i].trim();
+    if (hash.isEmpty) { i++; continue; }
+    // Forward the 8 metadata lines + a blank separator to the shared parser.
+    for (var j = 0; j < 8; j++) {
+      metadataLines.add(i + j < raw.length ? raw[i + j] : '');
+    }
+    metadataLines.add('');
+    i += 8;
+    while (i < raw.length && raw[i].trim().isEmpty) i++;
+    // Name-status lines: "STATUS\tpath" or "R100\told\tnew". In both cases
+    // we want parts[1]: the first path (old name for renames, which is what
+    // the file was called AT this commit in the file's history chain).
+    String? pathAt;
+    while (i < raw.length && raw[i].isNotEmpty) {
+      final parts = raw[i].split('\t');
+      if (parts.length >= 2) pathAt = parts[1];
+      i++;
+    }
+    final resolved = pathAt ?? lastKnownPath ?? filePath;
+    pathsByHash[hash] = resolved;
+    lastKnownPath = resolved;
+  }
+
+  final commits = _parseCommitLogLines(metadataLines);
+  final entries = commits
+      .map((c) => FileHistoryEntry(
+            commit: c,
+            pathAtRevision: pathsByHash[c.commitHash] ?? filePath,
+          ))
+      .toList();
   return GitResult.ok(entries);
 }
+
+/// Thin wrapper returning just the commit entries (path info discarded).
+/// Kept for callers that don't need rename-aware behavior.
+Future<GitResult<List<CommitHistoryEntry>>> listFileHistory(
+  String repo,
+  String filePath, {
+  int limit = 100,
+}) async {
+  final r = await listFileHistoryWithPaths(repo, filePath, limit: limit);
+  if (!r.ok) return GitResult.err(r.error!);
+  return GitResult.ok(r.data!.map((e) => e.commit).toList());
+}
+
+Future<GitResult<String>> getFileDiffAtRevision(
+  String repo,
+  String filePath,
+  String commitHash,
+) async {
+  final r = await _git(repo, [
+    'diff',
+    '$commitHash~1..$commitHash',
+    '--',
+    filePath,
+  ]);
+  if (r.exitCode == 0) return GitResult.ok(r.stdout.toString());
+
+  // Only fall back to `git show` when the error genuinely looks like
+  // "this commit has no parent" — i.e. a root commit. Other errors
+  // (invalid hash, missing file, etc.) should surface as-is instead of
+  // being masked by a second command's failure.
+  final primaryErr = r.stderr.toString();
+  final looksLikeRootCommit = primaryErr.contains('unknown revision') ||
+      primaryErr.contains('ambiguous argument') ||
+      primaryErr.contains('bad revision');
+  if (!looksLikeRootCommit) {
+    return GitResult.err(primaryErr.trim());
+  }
+  final r2 = await _git(repo, ['show', commitHash, '--', filePath]);
+  if (r2.exitCode != 0) {
+    // Preserve the original diff error context alongside the fallback's.
+    return GitResult.err(
+      '${primaryErr.trim()}\n(fallback also failed: ${r2.stderr.toString().trim()})',
+    );
+  }
+  return GitResult.ok(r2.stdout.toString());
+}
+
+// ── Commit detail ──────────────────────────────────────────────────────────
 
 Future<GitResult<CommitDetailData>> getCommitDetail(
     String repo, String hash) async {

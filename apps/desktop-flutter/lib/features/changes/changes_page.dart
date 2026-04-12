@@ -1715,7 +1715,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                 loading: _multiDiffLoading,
                                 error: _multiDiffError,
                                 tokens: t,
-                                repositoryPath: null,
+                                repositoryPath: repoPath,
                                 jumpToLineIndex: _multiDiffJumpLineIndex,
                                 jumpToLineRequestId: _multiDiffJumpRequestId,
                                 showFileHeader: false,
@@ -2387,8 +2387,8 @@ class _CommitReviewPane extends StatelessWidget {
                     const SizedBox(width: 10),
                     _GhostActionChip(
                       tokens: tokens,
-                      label: 'Run again',
-                      onTap: onRerun,
+                      label: 'Back to diff',
+                      onTap: onBack,
                     ),
                     if (onCopy != null) ...[
                       const SizedBox(width: 8),
@@ -2401,8 +2401,8 @@ class _CommitReviewPane extends StatelessWidget {
                     const SizedBox(width: 8),
                     _GhostActionChip(
                       tokens: tokens,
-                      label: 'Back to diff',
-                      onTap: onBack,
+                      label: 'Run again',
+                      onTap: onRerun,
                     ),
                   ],
                 ),
