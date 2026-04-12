@@ -864,6 +864,7 @@ class _SettingsPageState extends State<SettingsPage> {
               _ShortcutsTable(profile: themeState.keybindingProfile),
               const _SettingsGap(),
               const _SettingsSubtitle('Behavioural Dynamics'),
+              const SizedBox(height: 12),
               _CheckboxRow(
                 label: 'AI read-only mode',
                 description: 'Prevents AI from writing or staging changes automatically.',
@@ -938,7 +939,7 @@ class _SettingsPageState extends State<SettingsPage> {
               const _SettingsSubtitle('Model Slots'),
               const SizedBox(height: 8),
               Text(
-                'Fast and quality slots can be renamed inline and routed to any detected provider model.',
+                'Rename and route configurations to any detected provider model.',
                 style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
               ),
               if (_aiModelOptionsError != null &&
@@ -1032,6 +1033,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 _AiReviewIntegrationEditor(
                   categories: _aiModelCategories,
                   aiSettings: aiSettings,
+                  guardrailStage: preferences.guardrailStage,
                   promptController: _reviewPromptController,
                   promptStatusLabel: _reviewPromptStatusLabel(),
                   onCategoryChanged: (value) {
@@ -1403,7 +1405,7 @@ class _FeatureHeader extends StatelessWidget {
                 'Workspace Preferences',
                 style: TextStyle(
                   color: t.textMuted,
-                  fontSize: 10,
+                  fontSize: 11,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.2,
                 ),
@@ -1934,66 +1936,70 @@ class _ProviderNode extends StatelessWidget {
             ? t.stateAdded
             : t.stateConflicted;
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: t.rowBg,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: t.chromeBorder.withValues(alpha: 0.12)),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Expanded(
-            flex: 2,
-            child: Text(
-              id,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: t.textStrong,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  status,
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  id,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.end,
-                  style: TextStyle(color: statusColor, fontSize: 10),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  binaryLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.end,
                   style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    color: t.textStrong,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                if (detail != null && detail!.trim().isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
+              ),
+              const SizedBox(width: 8),
+              Text(
+                status.toUpperCase(),
+                style: TextStyle(
+                  color: statusColor,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                binaryLabel,
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 10,
+                  fontFamily: 'JetBrainsMono',
+                ),
+              ),
+              if (detail != null && detail!.trim().isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
                     detail!,
-                    maxLines: 2,
-                    textAlign: TextAlign.end,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: t.textMuted, fontSize: 9),
+                    style: TextStyle(
+                      color: t.textMuted.withValues(alpha: 0.50),
+                      fontSize: 9,
+                    ),
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           ),
         ],
       ),
@@ -2028,16 +2034,20 @@ class _ProviderGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth < 620 ? 1 : 2;
+        final columns = constraints.maxWidth < 520
+            ? 1
+            : constraints.maxWidth < 800
+                ? 2
+                : 3;
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: providers.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            mainAxisExtent: 88,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
+            mainAxisExtent: 64,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
           ),
           itemBuilder: (context, index) {
             final p = providers[index];
@@ -2247,29 +2257,20 @@ class _CompactModelSlot extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Top row: slot id badge  +  provider chip
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                '${category.id} slot',
-                style: TextStyle(
-                  color: t.textMuted.withValues(alpha: 0.70),
-                  fontSize: 9,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.9,
+              Expanded(
+                child: _EditableSlotTitle(
+                  controller: controller,
+                  hintText: category.label,
+                  onChanged: onLabelChanged,
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               if (selectedModel != null)
                 _ProviderPill(label: selectedModel.providerLabel),
             ],
-          ),
-          const SizedBox(height: 6),
-          // Editable slot name
-          _EditableSlotTitle(
-            controller: controller,
-            hintText: category.label,
-            onChanged: onLabelChanged,
           ),
           const SizedBox(height: 8),
           // Model picker
@@ -2404,6 +2405,7 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
 class _AiReviewIntegrationEditor extends StatelessWidget {
   final List<AiModelCategoryData> categories;
   final AiSettingsState aiSettings;
+  final int guardrailStage;
   final TextEditingController promptController;
   final String? promptStatusLabel;
   final ValueChanged<String?> onCategoryChanged;
@@ -2413,6 +2415,7 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
   const _AiReviewIntegrationEditor({
     required this.categories,
     required this.aiSettings,
+    required this.guardrailStage,
     required this.promptController,
     required this.promptStatusLabel,
     required this.onCategoryChanged,
@@ -2452,6 +2455,7 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
           onCategoryChanged: onCategoryChanged,
           statusLabel: promptStatusLabel,
         ),
+        const SizedBox(height: 12),
         _CheckboxRow(
           label: 'Double-check review',
           description: 'Run a second verification pass before showing the final report.',
@@ -2463,7 +2467,7 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
         const SizedBox(height: 8),
         AppMultilineTextField(
           controller: promptController,
-          hintText: 'Optional guidance for what the review should care about.',
+          hintText: _reviewGuideHint(guardrailStage),
           minHeight: 100,
           maxHeight: 200,
           onChanged: onPromptChanged,
@@ -3545,16 +3549,32 @@ String _guardrailPhrase(int stage) {
     case 0:
       return 'Probably fine means fine';
     case 1:
-      return 'A proper read — logic, integration, patterns';
+      return 'A proper read, logic, integration, patterns';
     case 2:
       return 'Look again. Something might be hiding';
     case 3:
       return 'Assume something is wrong. Find it';
     default:
-      return 'A proper read — logic, integration, patterns';
+      return 'A proper read, logic, integration, patterns';
   }
 }
 
 String _themeDescription(AppThemeId id) {
   return themeDefinitionFor(id).option.description;
 }
+
+String _reviewGuideHint(int stage) {
+  switch (stage) {
+    case 0:
+      return 'e.g. Focus on high-level logic and major bugs. Be brief and forgiving.';
+    case 1:
+      return 'e.g. Surface potential bugs, architectural inconsistencies, and edge case failures.';
+    case 2:
+      return 'e.g. Scrutinize every line for optimization, security, and pattern compliance.';
+    case 3:
+      return 'e.g. Trust nothing. Question every side effect. Treat every line as a potential failure.';
+    default:
+      return 'Optional guidance for what the review should care about.';
+  }
+}
+
