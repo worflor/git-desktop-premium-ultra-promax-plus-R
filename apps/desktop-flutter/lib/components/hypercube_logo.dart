@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart' show PointerHoverEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:provider/provider.dart';
+import '../app/preferences_state.dart';
 import '../app/hyper_reactivity.dart';
 import '../ui/tokens.dart';
 import 'hypercube_logo_engine.dart';
@@ -101,7 +102,8 @@ class _HypercubeLogoState extends State<HypercubeLogo>
       return;
     }
 
-    final int deltaMicros = elapsed.inMicroseconds - _lastElapsed!.inMicroseconds;
+    final int deltaMicros =
+        elapsed.inMicroseconds - _lastElapsed!.inMicroseconds;
     _lastElapsed = elapsed;
     final double dt = (deltaMicros / Duration.microsecondsPerSecond)
         .clamp(0, 0.033)
