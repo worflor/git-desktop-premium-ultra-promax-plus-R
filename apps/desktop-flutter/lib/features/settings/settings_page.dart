@@ -213,10 +213,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Future<void> _setAutoExpandLogs(bool value) async {
-    await context.read<PreferencesState>().setAutoExpandLogs(value);
-  }
-
   Future<void> _setAiReadOnlyDefault(bool value) async {
     await context.read<PreferencesState>().setAiReadOnlyDefault(value);
   }
@@ -869,27 +865,22 @@ class _SettingsPageState extends State<SettingsPage> {
               const _SettingsGap(),
               const _SettingsSubtitle('Behavioural Dynamics'),
               _CheckboxRow(
-                label: 'Auto-expand operation logs',
-                value: preferences.autoExpandLogs,
-                onChanged: (value) {
-                  _setAutoExpandLogs(value);
-                },
-              ),
-              _CheckboxRow(
                 label: 'AI read-only mode',
-                value: preferences.aiReadOnlyDefault,
-                onChanged: (value) {
-                  _setAiReadOnlyDefault(value);
-                },
+                description: 'Prevents AI from writing or staging changes automatically.',
+                value: true, // Forced enabled
+                enabled: false, // Grayed out
+                onChanged: (_) {},
               ),
+              const SizedBox(height: 10),
               _CheckboxRow(
                 label: 'Logo animates when tabbed out',
+                description: "It's designed to be efficient, don't hurt its feelings",
                 value: preferences.logoAnimatesWhenUnfocused,
                 onChanged: (value) {
                   _setLogoAnimatesWhenUnfocused(value);
                 },
               ),
-              const SizedBox(height: 18),
+              const _SettingsGap(),
               Row(
                 children: [
                   const _SettingsSubtitle('CLI Piggybacking'),
@@ -989,29 +980,18 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ] else ...[
                 const SizedBox(height: 10),
-                for (final category in _aiModelCategories) ...[
-                  _AiModelCategoryEditor(
-                    category: category,
-                    labelController: _categoryLabelControllers[category.id]!,
-                    selectedValue: aiSettings.modelSelections[category.id] ??
-                        (category.models.isNotEmpty
-                            ? category.models.first.value
-                            : ''),
-                    onLabelChanged: (value) {
-                      _saveModelCategoryLabel(category.id, value);
-                    },
-                    onModelChanged: category.models.isEmpty
-                        ? null
-                        : (value) {
-                            if (value == null || value.isEmpty) {
-                              return;
-                            }
-                            _saveModelSelection(category.id, value);
-                          },
-                  ),
-                  if (category != _aiModelCategories.last)
-                    const SizedBox(height: 10),
-                ],
+                _ModelSlotsGrid(
+                  categories: _aiModelCategories,
+                  aiSettings: aiSettings,
+                  categoryLabelControllers: _categoryLabelControllers,
+                  onLabelChanged: (categoryId, value) {
+                    _saveModelCategoryLabel(categoryId, value);
+                  },
+                  onModelChanged: (categoryId, value) {
+                    if (value == null || value.isEmpty) return;
+                    _saveModelSelection(categoryId, value);
+                  },
+                ),
               ],
               const _SettingsGap(),
               const _SettingsSubtitle('Commit Messages'),
@@ -1162,21 +1142,24 @@ class _SettingsPageState extends State<SettingsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _ChannelSelect(
-                value: preferences.updateChannel,
-                onChanged: (value) {
-                  _saveUpdateChannel(value);
-                },
+              // Channel + crash reporting side-by-side
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  _ChannelSelect(
+                    value: preferences.updateChannel,
+                    onChanged: _saveUpdateChannel,
+                  ),
+                  const Spacer(),
+                  _CheckboxRow(
+                    label: 'Capture crash diagnostics',
+                    description: 'Stores anonymised crash snapshots locally for stability analysis.',
+                    value: preferences.crashReportingEnabled,
+                    onChanged: _saveCrashReporting,
+                  ),
+                ],
               ),
-              const SizedBox(height: 10),
-              _CheckboxRow(
-                label: 'Capture local crash diagnostics',
-                value: preferences.crashReportingEnabled,
-                onChanged: (value) {
-                  _saveCrashReporting(value);
-                },
-              ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   _PrimaryButton(
@@ -1738,14 +1721,19 @@ class _ChannelSelect extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          width: 86,
-          child: Text('Channel',
-              style: TextStyle(color: t.textMuted, fontSize: 12)),
+        Text(
+          'Channel',
+          style: TextStyle(
+            color: t.textMuted,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
         ),
+        const SizedBox(width: 10),
         SizedBox(
-          width: 160,
+          width: 140,
           child: AppDropdownField<String>(
             value: value,
             items: const [
@@ -1773,8 +1761,7 @@ class _ProfileSelect extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
         Text(
           'Keybinding profile',
@@ -1784,27 +1771,29 @@ class _ProfileSelect extends StatelessWidget {
             fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 4),
-        AppDropdownField<KeybindingProfile>(
-          value: value,
-          height: 32,
-          fontWeight: FontWeight.w600,
-          menuColor: t.surface1,
-          items: const [
-            DropdownMenuItem(
-              value: KeybindingProfile.classic,
-              child: Text('Classic'),
-            ),
-            DropdownMenuItem(
-              value: KeybindingProfile.compact,
-              child: Text('Compact'),
-            ),
-          ],
-          onChanged: (profile) {
-            if (profile != null) {
-              onChanged(profile);
-            }
-          },
+        const SizedBox(width: 12),
+        Expanded(
+          child: AppDropdownField<KeybindingProfile>(
+            value: value,
+            height: 32,
+            fontWeight: FontWeight.w600,
+            menuColor: t.surface1,
+            items: const [
+              DropdownMenuItem(
+                value: KeybindingProfile.classic,
+                child: Text('Classic'),
+              ),
+              DropdownMenuItem(
+                value: KeybindingProfile.compact,
+                child: Text('Compact'),
+              ),
+            ],
+            onChanged: (profile) {
+              if (profile != null) {
+                onChanged(profile);
+              }
+            },
+          ),
         ),
       ],
     );
@@ -2130,16 +2119,109 @@ class _EditableSlotTitleState extends State<_EditableSlotTitle> {
   }
 }
 
-class _AiModelCategoryEditor extends StatelessWidget {
+/// Renders all model slots in a 2-column fluid grid, each slot compact.
+class _ModelSlotsGrid extends StatelessWidget {
+  final List<AiModelCategoryData> categories;
+  final AiSettingsState aiSettings;
+  final Map<String, TextEditingController> categoryLabelControllers;
+  final void Function(String categoryId, String value) onLabelChanged;
+  final void Function(String categoryId, String? value) onModelChanged;
+
+  const _ModelSlotsGrid({
+    required this.categories,
+    required this.aiSettings,
+    required this.categoryLabelControllers,
+    required this.onLabelChanged,
+    required this.onModelChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final twoCol = constraints.maxWidth >= 520;
+        if (!twoCol) {
+          return Column(
+            children: [
+              for (var i = 0; i < categories.length; i++) ...[
+                _CompactModelSlot(
+                  category: categories[i],
+                  controller: categoryLabelControllers[categories[i].id]!,
+                  selectedValue: aiSettings.modelSelections[categories[i].id] ??
+                      (categories[i].models.isNotEmpty
+                          ? categories[i].models.first.value
+                          : ''),
+                  onLabelChanged: (v) => onLabelChanged(categories[i].id, v),
+                  onModelChanged: categories[i].models.isEmpty
+                      ? null
+                      : (v) => onModelChanged(categories[i].id, v),
+                ),
+                if (i < categories.length - 1) const SizedBox(height: 8),
+              ],
+            ],
+          );
+        }
+
+        // 2-column grid
+        final rows = <Widget>[];
+        for (var i = 0; i < categories.length; i += 2) {
+          final left = categories[i];
+          final right = i + 1 < categories.length ? categories[i + 1] : null;
+          rows.add(
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _CompactModelSlot(
+                    category: left,
+                    controller: categoryLabelControllers[left.id]!,
+                    selectedValue: aiSettings.modelSelections[left.id] ??
+                        (left.models.isNotEmpty ? left.models.first.value : ''),
+                    onLabelChanged: (v) => onLabelChanged(left.id, v),
+                    onModelChanged: left.models.isEmpty
+                        ? null
+                        : (v) => onModelChanged(left.id, v),
+                  ),
+                ),
+                if (right != null) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _CompactModelSlot(
+                      category: right,
+                      controller: categoryLabelControllers[right.id]!,
+                      selectedValue: aiSettings.modelSelections[right.id] ??
+                          (right.models.isNotEmpty
+                              ? right.models.first.value
+                              : ''),
+                      onLabelChanged: (v) => onLabelChanged(right.id, v),
+                      onModelChanged: right.models.isEmpty
+                          ? null
+                          : (v) => onModelChanged(right.id, v),
+                    ),
+                  ),
+                ] else ...[const SizedBox(), const SizedBox()],
+              ],
+            ),
+          );
+          if (i + 2 < categories.length) rows.add(const SizedBox(height: 8));
+        }
+        return Column(children: rows);
+      },
+    );
+  }
+}
+
+/// Compact model slot tile — label editable inline, dropdown below, provider pill on the right.
+class _CompactModelSlot extends StatelessWidget {
   final AiModelCategoryData category;
-  final TextEditingController labelController;
+  final TextEditingController controller;
   final String selectedValue;
   final ValueChanged<String> onLabelChanged;
   final ValueChanged<String?>? onModelChanged;
 
-  const _AiModelCategoryEditor({
+  const _CompactModelSlot({
     required this.category,
-    required this.labelController,
+    required this.controller,
     required this.selectedValue,
     required this.onLabelChanged,
     required this.onModelChanged,
@@ -2156,7 +2238,7 @@ class _AiModelCategoryEditor extends StatelessWidget {
       }
     }
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: t.rowBg,
         borderRadius: BorderRadius.circular(8),
@@ -2165,30 +2247,35 @@ class _AiModelCategoryEditor extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _AiMetaRow(
-            left: '${category.id} slot',
-            right: selectedModel != null
-                ? '${selectedModel.providerLabel} • ${category.models.length} models'
-                : '${category.models.length} models',
+          // Top row: slot id badge  +  provider chip
+          Row(
+            children: [
+              Text(
+                '${category.id} slot',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.70),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.9,
+                ),
+              ),
+              const Spacer(),
+              if (selectedModel != null)
+                _ProviderPill(label: selectedModel.providerLabel),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
+          // Editable slot name
           _EditableSlotTitle(
-            controller: labelController,
+            controller: controller,
             hintText: category.label,
             onChanged: onLabelChanged,
           ),
-          if (category.description != null &&
-              category.description!.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              category.description!,
-              style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.4),
-            ),
-          ],
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
+          // Model picker
           if (category.models.isEmpty)
             Text(
-              'No live models discovered for this slot yet.',
+              'No models detected for this slot.',
               style: TextStyle(color: t.textMuted, fontSize: 11),
             )
           else
@@ -2205,18 +2292,45 @@ class _AiModelCategoryEditor extends StatelessWidget {
               onChanged: onModelChanged ?? (_) {},
             ),
           if (selectedModel != null) ...[
-            const SizedBox(height: 8),
-            _AiSupportLine(
-              selectedModel.modelId,
-              strong: true,
-            ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
-              selectedModel.description,
-              style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.4),
+              'via ${selectedModel.providerLabel.toLowerCase()}',
+              style: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.65),
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono',
+              ),
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Small rounded pill showing a provider name.
+class _ProviderPill extends StatelessWidget {
+  final String label;
+  const _ProviderPill({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: t.accentBright.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: t.accentBright.withValues(alpha: 0.22)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: t.accentBright.withValues(alpha: 0.85),
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
+        ),
       ),
     );
   }
@@ -2258,82 +2372,28 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
     }
     selectedModel ??=
         selectedCategory.models.isEmpty ? null : selectedCategory.models.first;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: t.rowBg,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _AiMetaRow(
-                left:
-                    '${aiSettings.labelForCategory(selectedCategory.id, selectedCategory.label)} slot',
-                right: selectedModel?.providerLabel ?? 'No provider',
-              ),
-              if (selectedModel != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  selectedModel.modelId,
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  selectedModel.description,
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 11,
-                    height: 1.35,
-                  ),
-                ),
-              ],
-            ],
-          ),
+        // Compact slot selector row
+        _AiSlotSelectorRow(
+          selectedCategoryId: selectedCategoryId,
+          selectedModel: selectedModel,
+          categories: categories,
+          aiSettings: aiSettings,
+          onCategoryChanged: onCategoryChanged,
+          statusLabel: promptStatusLabel,
         ),
-        const SizedBox(height: 10),
-        AppDropdownField<String>(
-          value: selectedCategoryId,
-          items: categories
-              .map(
-                (category) => DropdownMenuItem<String>(
-                  value: category.id,
-                  child: Text(
-                    aiSettings.labelForCategory(category.id, category.label),
-                  ),
-                ),
-              )
-              .toList(),
-          onChanged: onCategoryChanged,
-        ),
-        if (promptStatusLabel != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            promptStatusLabel!,
-            style: TextStyle(
-              color: t.textMuted,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         const _SettingsSubtitle('Style Guide'),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         AppMultilineTextField(
           controller: promptController,
           hintText:
               'Optional guidance for commit message tone, structure, or formatting.',
-          minHeight: 120,
-          maxHeight: 220,
+          minHeight: 100,
+          maxHeight: 200,
           onChanged: onPromptChanged,
         ),
       ],
@@ -2383,102 +2443,105 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: t.rowBg,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _AiMetaRow(
-                left:
-                    '${aiSettings.labelForCategory(selectedCategory.id, selectedCategory.label)} slot',
-                right: selectedModel?.providerLabel ?? 'No provider',
-              ),
-              if (selectedModel != null) ...[
-                const SizedBox(height: 8),
-                Text(
-                  selectedModel.modelId,
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  selectedModel.description,
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 11,
-                    height: 1.35,
-                  ),
-                ),
-              ],
-            ],
-          ),
+        // Compact slot selector row
+        _AiSlotSelectorRow(
+          selectedCategoryId: selectedCategoryId,
+          selectedModel: selectedModel,
+          categories: categories,
+          aiSettings: aiSettings,
+          onCategoryChanged: onCategoryChanged,
+          statusLabel: promptStatusLabel,
         ),
-        const SizedBox(height: 10),
-        AppDropdownField<String>(
-          value: selectedCategoryId,
-          items: categories
-              .map(
-                (category) => DropdownMenuItem<String>(
-                  value: category.id,
-                  child: Text(
-                    aiSettings.labelForCategory(category.id, category.label),
-                  ),
-                ),
-              )
-              .toList(),
-          onChanged: onCategoryChanged,
-        ),
-        if (promptStatusLabel != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            promptStatusLabel!,
-            style: TextStyle(
-              color: t.textMuted,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-        const SizedBox(height: 10),
         _CheckboxRow(
           label: 'Double-check review',
+          description: 'Run a second verification pass before showing the final report.',
           value: aiSettings.reviewCommitDoubleCheckEnabled,
           onChanged: onDoubleCheckChanged,
         ),
-        const SizedBox(height: 8),
-        Text(
-          'Run a second verification pass before showing the final report.',
-          style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.35),
-        ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         const _SettingsSubtitle('Review Guide'),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         AppMultilineTextField(
           controller: promptController,
           hintText: 'Optional guidance for what the review should care about.',
-          minHeight: 120,
-          maxHeight: 220,
+          minHeight: 100,
+          maxHeight: 200,
           onChanged: onPromptChanged,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Text(
           'Leave blank to use the built-in review guide.',
-          style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.35),
+          style: TextStyle(
+            color: t.textMuted.withValues(alpha: 0.65),
+            fontSize: 10.5,
+          ),
         ),
       ],
     );
   }
 }
 
-/// Section subtitle label — small, bold, uppercase feel.
+/// Shared compact slot selector: label+provider pill on one line, dropdown below.
+class _AiSlotSelectorRow extends StatelessWidget {
+  final String selectedCategoryId;
+  final AiModelOptionData? selectedModel;
+  final List<AiModelCategoryData> categories;
+  final AiSettingsState aiSettings;
+  final ValueChanged<String?> onCategoryChanged;
+  final String? statusLabel;
+
+  const _AiSlotSelectorRow({
+    required this.selectedCategoryId,
+    required this.selectedModel,
+    required this.categories,
+    required this.aiSettings,
+    required this.onCategoryChanged,
+    this.statusLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: AppDropdownField<String>(
+            value: selectedCategoryId,
+            items: categories
+                .map(
+                  (category) => DropdownMenuItem<String>(
+                    value: category.id,
+                    child: Text(
+                      aiSettings.labelForCategory(category.id, category.label),
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: onCategoryChanged,
+          ),
+        ),
+        if (selectedModel != null) ...[
+          const SizedBox(width: 8),
+          _ProviderPill(label: selectedModel!.providerLabel),
+        ],
+        if (statusLabel != null) ...[
+          const SizedBox(width: 8),
+          Text(
+            statusLabel!,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Section subtitle label — readable, anchored with a left accent stroke.
 class _SettingsSubtitle extends StatelessWidget {
   final String label;
 
@@ -2487,13 +2550,29 @@ class _SettingsSubtitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return Text(
-      label,
-      style: TextStyle(
-        color: t.textMuted.withValues(alpha: 0.80),
-        fontSize: 10,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.8,
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            width: 2,
+            margin: const EdgeInsets.symmetric(vertical: 1),
+            decoration: BoxDecoration(
+              color: t.accentBright.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            label,
+            style: TextStyle(
+              color: t.textNormal,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2515,12 +2594,31 @@ class _SettingsBody extends StatelessWidget {
   }
 }
 
-/// Consistent vertical gap between settings sections.
+/// Consistent vertical gap between settings sections — a thin ruled divider.
 class _SettingsGap extends StatelessWidget {
   const _SettingsGap();
 
   @override
-  Widget build(BuildContext context) => const SizedBox(height: 18);
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Container(
+        height: 1,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              t.chromeBorder.withValues(alpha: 0),
+              t.chromeBorder.withValues(alpha: 0.18),
+              t.chromeBorder.withValues(alpha: 0.18),
+              t.chromeBorder.withValues(alpha: 0),
+            ],
+            stops: const [0.0, 0.15, 0.85, 1.0],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AiMetaRow extends StatelessWidget {
@@ -3217,12 +3315,16 @@ class _RecentSamplesList extends StatelessWidget {
 
 class _CheckboxRow extends StatelessWidget {
   final String label;
+  final String? description;
   final bool value;
+  final bool enabled;
   final ValueChanged<bool> onChanged;
 
   const _CheckboxRow({
     required this.label,
+    this.description,
     required this.value,
+    this.enabled = true,
     required this.onChanged,
   });
 
@@ -3231,43 +3333,72 @@ class _CheckboxRow extends StatelessWidget {
     final t = context.tokens;
     final isCrafty = t.id == AppThemeId.crafty;
     final isBlackboard = t.id == AppThemeId.blackboard;
-    return GestureDetector(
-      onTap: () => onChanged(!value),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 18,
-            height: 18,
-            decoration: BoxDecoration(
-              color: value
-                  ? (isBlackboard ? Colors.transparent : t.sliderThumb)
-                  : t.inputBg,
-              borderRadius:
-                  BorderRadius.circular(isCrafty ? 0 : (isBlackboard ? 2 : 4)),
-              border: Border.all(
-                color: value
-                    ? (isCrafty
-                        ? t.btnBorder
-                        : (isBlackboard ? Colors.white : t.accentBright))
-                    : t.inputBorder,
-                width: isCrafty ? 2 : 1,
-              ),
-              boxShadow: value && isCrafty
-                  ? [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        offset: const Offset(-2, -2),
+    return MouseRegion(
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: enabled ? () => onChanged(!value) : null,
+        child: Opacity(
+          opacity: enabled ? 1.0 : 0.5,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 18,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: value
+                          ? (isBlackboard ? Colors.transparent : t.sliderThumb)
+                          : t.inputBg,
+                      borderRadius: BorderRadius.circular(
+                          isCrafty ? 0 : (isBlackboard ? 2 : 4)),
+                      border: Border.all(
+                        color: value
+                            ? (isCrafty
+                                ? t.btnBorder
+                                : (isBlackboard ? Colors.white : t.accentBright))
+                            : t.inputBorder,
+                        width: isCrafty ? 2 : 1,
                       ),
-                    ]
-                  : null,
-            ),
-            child:
-                value ? _ThemeCheckGlyph(tokens: t) : const SizedBox.shrink(),
+                      boxShadow: value && isCrafty
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.3),
+                                offset: const Offset(-2, -2),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: value
+                        ? _ThemeCheckGlyph(tokens: t)
+                        : const SizedBox.shrink(),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    label,
+                    style: TextStyle(color: t.textNormal, fontSize: 13),
+                  ),
+                ],
+              ),
+              if (description != null) ...[
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.only(left: 26),
+                  child: Text(
+                    description!,
+                    style: TextStyle(
+                      color: t.textMuted.withValues(alpha: 0.65),
+                      fontSize: 10.5,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
-          const SizedBox(width: 8),
-          Text(label, style: TextStyle(color: t.textNormal, fontSize: 12)),
-        ],
+        ),
       ),
     );
   }

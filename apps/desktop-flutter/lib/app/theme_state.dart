@@ -44,7 +44,6 @@ class ThemeState extends ChangeNotifier {
         sidebarPosition: settings.sidebarPosition,
         utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
         utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        autoExpandOperationLogs: settings.autoExpandOperationLogs,
       ),
     );
     notifyListeners();
@@ -73,7 +72,6 @@ class ThemeState extends ChangeNotifier {
         sidebarPosition: settings.sidebarPosition,
         utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
         utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        autoExpandOperationLogs: settings.autoExpandOperationLogs,
       ),
     );
     notifyListeners();
@@ -97,7 +95,6 @@ class ThemeState extends ChangeNotifier {
         sidebarPosition: settings.sidebarPosition,
         utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
         utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        autoExpandOperationLogs: settings.autoExpandOperationLogs,
       ),
     );
     notifyListeners();

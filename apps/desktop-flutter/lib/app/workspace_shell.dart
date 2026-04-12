@@ -12,6 +12,7 @@ import '../features/history/history_page.dart';
 import '../features/search/search_panel.dart';
 import '../features/settings/settings_page.dart';
 import '../features/xray/repo_xray_panel.dart';
+import '../ui/animated_icons.dart';
 import '../ui/control_chrome.dart';
 import '../ui/material_surface.dart';
 import '../ui/tokens.dart';
@@ -334,15 +335,6 @@ class _Topbar extends StatelessWidget {
     final repo = context.watch<RepositoryState>();
     final repoName = repo.activeRepoName;
     final status = repo.status;
-    final xrayState = context.watch<RepositoryXrayState>();
-    final syncSummary = status != null &&
-            (status.ahead > 0 || status.behind > 0)
-        ? '${status.ahead > 0 ? '${status.ahead}↑' : ''}${status.behind > 0 ? '${status.behind}↓' : ''}'
-        : null;
-    final xraySnapshot =
-        repo.activePath == null ? null : xrayState.snapshotFor(repo.activePath!);
-    final xraySummary =
-        xraySnapshot == null ? syncSummary : '${xraySnapshot.cards.length}';
 
     return MaterialSurface(
       tone: topbarTone,
@@ -410,7 +402,6 @@ class _Topbar extends StatelessWidget {
               const SizedBox(width: 4),
               _XrayModeBtn(
                 active: panel == _Panel.xray,
-                summary: xraySummary,
                 onTap: () => onTogglePanel(_Panel.xray),
               ),
               const SizedBox(width: 8),
@@ -447,6 +438,21 @@ class _ModeBtn extends StatefulWidget {
 class _ModeBtnState extends State<_ModeBtn> {
   bool _hovered = false;
   bool _pressed = false;
+
+  Widget _buildIcon(Color color) {
+    final state =
+        _hovered ? IconAnimState.hovered : IconAnimState.idle;
+    return switch (widget.icon) {
+      'history' =>
+        AnimatedHistoryIcon(state: state, color: color, size: 16),
+      'branches' =>
+        AnimatedBranchesIcon(state: state, color: color, size: 16),
+      'xray' => AnimatedXrayIcon(state: state, color: color, size: 16),
+      'settings' =>
+        AnimatedSettingsIcon(state: state, color: color, size: 16),
+      _ => AppIcon(name: widget.icon, size: 16, color: color),
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -495,7 +501,7 @@ class _ModeBtnState extends State<_ModeBtn> {
               child: Transform.translate(
                 offset: chrome.offset,
                 child: Center(
-                  child: AppIcon(name: widget.icon, size: 16, color: iconColor),
+                  child: _buildIcon(iconColor),
                 ),
               ),
             ),
@@ -571,53 +577,16 @@ class _RepoNameLabelState extends State<_RepoNameLabel> {
 
 class _XrayModeBtn extends StatelessWidget {
   final bool active;
-  final String? summary;
   final VoidCallback onTap;
 
   const _XrayModeBtn({
     required this.active,
-    required this.summary,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.center,
-      children: [
-        _ModeBtn(icon: 'search', active: active, width: 34, onTap: onTap),
-        if (summary != null)
-          Positioned(
-            left: 39,
-            child: IgnorePointer(
-              child: Container(
-                height: 16,
-                padding: const EdgeInsets.symmetric(horizontal: 5),
-                decoration: BoxDecoration(
-                  color: t.accentBright.withValues(alpha: active ? 0.18 : 0.12),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: t.accentBright.withValues(alpha: active ? 0.28 : 0.18),
-                  ),
-                ),
-                child: Center(
-                  child: Text(
-                    summary!,
-                    style: TextStyle(
-                      color: t.accentBright,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      fontFamily: 'JetBrainsMono',
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
+    return _ModeBtn(icon: 'xray', active: active, width: 34, onTap: onTap);
   }
 }
 

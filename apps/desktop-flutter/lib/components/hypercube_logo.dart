@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' show ViewFocusEvent, ViewFocusState;
 import 'package:flutter/gestures.dart' show PointerHoverEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
@@ -29,6 +30,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   Duration? _lastElapsed;
   bool _isTickerModeVisible = true;
   bool _animateWhenUnfocused = true;
+  bool _hasViewFocus = true;
   AppLifecycleState? _appLifecycleState;
   PreferencesState? _prefs;
 
@@ -71,7 +73,8 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   void _syncTicker() {
     final AppLifecycleState lifecycleState =
         _appLifecycleState ?? AppLifecycleState.resumed;
-    final bool isFocused = lifecycleState == AppLifecycleState.resumed;
+    final bool isFocused =
+        lifecycleState == AppLifecycleState.resumed && _hasViewFocus;
     final bool shouldRun =
         _isTickerModeVisible && (_animateWhenUnfocused || isFocused);
     if (shouldRun) {
@@ -94,6 +97,23 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     if (state == AppLifecycleState.resumed || !mounted) {
       return;
     }
+    _clearInteractionState();
+  }
+
+  @override
+  void didChangeViewFocus(ViewFocusEvent event) {
+    if (!mounted || event.viewId != View.of(context).viewId) {
+      return;
+    }
+    _hasViewFocus = event.state == ViewFocusState.focused;
+    _syncTicker();
+    if (_hasViewFocus) {
+      return;
+    }
+    _clearInteractionState();
+  }
+
+  void _clearInteractionState() {
     final bool wasDragging = _engine.dragging;
     setState(() {
       if (wasDragging) {

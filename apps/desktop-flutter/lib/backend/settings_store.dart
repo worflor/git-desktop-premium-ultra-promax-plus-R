@@ -17,7 +17,6 @@ class AppSettingsSnapshot {
   final String sidebarPosition;
   final bool utilityDrawerDefaultExpanded;
   final int utilityDrawerHeightPx;
-  final bool autoExpandOperationLogs;
 
   const AppSettingsSnapshot({
     required this.guardrailValue,
@@ -33,7 +32,6 @@ class AppSettingsSnapshot {
     required this.sidebarPosition,
     required this.utilityDrawerDefaultExpanded,
     required this.utilityDrawerHeightPx,
-    required this.autoExpandOperationLogs,
   });
 
   Map<String, dynamic> toJson() => {
@@ -50,7 +48,6 @@ class AppSettingsSnapshot {
         'sidebarPosition': sidebarPosition,
         'utilityDrawerDefaultExpanded': utilityDrawerDefaultExpanded,
         'utilityDrawerHeightPx': utilityDrawerHeightPx,
-        'autoExpandOperationLogs': autoExpandOperationLogs,
       };
 
   factory AppSettingsSnapshot.defaults() => const AppSettingsSnapshot(
@@ -67,7 +64,6 @@ class AppSettingsSnapshot {
         sidebarPosition: 'left',
         utilityDrawerDefaultExpanded: false,
         utilityDrawerHeightPx: 180,
-        autoExpandOperationLogs: false,
       );
 
   factory AppSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -123,10 +119,6 @@ class AppSettingsSnapshot {
         json['utilityDrawerHeightPx'],
         defaults.utilityDrawerHeightPx,
       ).clamp(120, 420),
-      autoExpandOperationLogs: SettingsStore._boolOr(
-        json['autoExpandOperationLogs'],
-        defaults.autoExpandOperationLogs,
-      ),
     );
   }
 }

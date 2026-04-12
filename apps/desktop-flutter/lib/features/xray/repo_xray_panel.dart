@@ -136,27 +136,43 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-          child: Row(
-            children: [
-              _ViewTabs(
-                current: _view,
-                onChanged: (view) => setState(() => _view = view),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _DiagnosisStrip(
-                  cards: cards,
-                  selectedId: _selectedSignalId,
-                  onTap: (id) {
-                    setState(() {
-                      _view = _XrayView.signals;
-                      _selectedSignalId = id;
-                    });
-                  },
-                ),
-              ),
-            ],
-          ),
+          child: LayoutBuilder(builder: (context, c) {
+            final tabs = _ViewTabs(
+              current: _view,
+              onChanged: (view) => setState(() => _view = view),
+            );
+            final strip = _DiagnosisStrip(
+              cards: cards,
+              selectedId: _selectedSignalId,
+              onTap: (id) {
+                setState(() {
+                  _view = _XrayView.signals;
+                  _selectedSignalId = id;
+                });
+              },
+            );
+            // Below this width, stacking the two rows avoids cramping both.
+            final narrow = c.maxWidth < 420;
+            if (narrow) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Align(alignment: Alignment.centerLeft, child: tabs),
+                  const SizedBox(height: 8),
+                  strip,
+                ],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                tabs,
+                const SizedBox(width: 10),
+                Expanded(child: strip),
+              ],
+            );
+          }),
         ),
         Expanded(
           child: LayoutBuilder(
@@ -173,14 +189,16 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
                 selectedHotspotPath: _selectedHotspotPath,
                 selectedPivotHash: _selectedPivotHash,
                 selectedStratumId: _selectedStratumId,
-                onSignalSelected: (id) =>
-                    setState(() => _selectedSignalId = id),
-                onHotspotSelected: (path) =>
-                    setState(() => _selectedHotspotPath = path),
-                onPivotSelected: (hash) =>
-                    setState(() => _selectedPivotHash = hash),
-                onStratumSelected: (id) =>
-                    setState(() => _selectedStratumId = id),
+                onSignalSelected: (id) => setState(() =>
+                    _selectedSignalId = _selectedSignalId == id ? null : id),
+                onHotspotSelected: (path) => setState(() =>
+                    _selectedHotspotPath =
+                        _selectedHotspotPath == path ? null : path),
+                onPivotSelected: (hash) => setState(() =>
+                    _selectedPivotHash =
+                        _selectedPivotHash == hash ? null : hash),
+                onStratumSelected: (id) => setState(() => _selectedStratumId =
+                    _selectedStratumId == id ? null : id),
               );
               final inspector = _InspectorPanel(
                 view: _view,
@@ -233,31 +251,35 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
     List<RepositoryXrayHotspotData> hotspots,
     List<RepositoryXrayPivotCommitData> pivots,
   ) {
+    // On a fresh snapshot, start with nothing selected so the Overview
+    // inspector (repo anatomy) is the landing state. Users drill in by
+    // clicking items.
     if (_lastSnapshotFingerprint != snapshot.header.fingerprint) {
       _lastSnapshotFingerprint = snapshot.header.fingerprint;
-      _selectedSignalId = cards.isEmpty ? null : cards.first.id;
-      _selectedHotspotPath = hotspots.isEmpty ? null : hotspots.first.path;
-      _selectedPivotHash = pivots.isEmpty ? null : pivots.first.commitHash;
-      _selectedStratumId =
-          snapshot.strata.isEmpty ? null : snapshot.strata.first.id;
+      _selectedSignalId = null;
+      _selectedHotspotPath = null;
+      _selectedPivotHash = null;
+      _selectedStratumId = null;
       return;
     }
+    // Invalidate selections that no longer exist in the current filtered set
+    // (e.g. the machine-history toggle changed). Fall back to null so Overview
+    // is shown rather than forcing a different item.
     if (_selectedSignalId != null &&
         !cards.any((card) => card.id == _selectedSignalId)) {
-      _selectedSignalId = cards.isEmpty ? null : cards.first.id;
+      _selectedSignalId = null;
     }
     if (_selectedHotspotPath != null &&
         !hotspots.any((hotspot) => hotspot.path == _selectedHotspotPath)) {
-      _selectedHotspotPath = hotspots.isEmpty ? null : hotspots.first.path;
+      _selectedHotspotPath = null;
     }
     if (_selectedPivotHash != null &&
         !pivots.any((pivot) => pivot.commitHash == _selectedPivotHash)) {
-      _selectedPivotHash = pivots.isEmpty ? null : pivots.first.commitHash;
+      _selectedPivotHash = null;
     }
     if (_selectedStratumId != null &&
         !snapshot.strata.any((stratum) => stratum.id == _selectedStratumId)) {
-      _selectedStratumId =
-          snapshot.strata.isEmpty ? null : snapshot.strata.first.id;
+      _selectedStratumId = null;
     }
   }
 }
@@ -289,81 +311,126 @@ class _Header extends StatelessWidget {
         border: Border(
             bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.12))),
       ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border:
-                      Border.all(color: t.chromeBorder.withValues(alpha: 0.28)),
-                ),
-                child: Center(
-                  child:
-                      AppIcon(name: 'app-logo', size: 14, color: t.textStrong),
-                ),
+      child: LayoutBuilder(builder: (context, c) {
+        // Below this width the controls wrap to their own row under the title
+        // so nothing overflows and the subtitle can keep its ellipsis.
+        final narrow = c.maxWidth < 460;
+
+        final titleBlock = Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                    color: t.chromeBorder.withValues(alpha: 0.28)),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Repo X-Ray',
-                          style: TextStyle(
-                              color: t.textStrong,
-                              fontSize: 17,
-                              fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(width: 8),
-                        _DenseBadge(
-                            value: '${snapshot.header.dirtyFileCount}',
-                            label: 'dirty'),
-                      ],
-                    ),
-                    const SizedBox(height: 1),
-                    Text(
-                      '${snapshot.header.repoName} | ${snapshot.header.branch} | ${snapshot.header.headShortHash}',
-                      style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 11,
-                          fontFamily: 'JetBrainsMono'),
-                    ),
-                  ],
-                ),
+              child: Center(
+                child: AppIcon(
+                    name: 'app-logo', size: 14, color: t.textStrong),
               ),
-              Row(
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('machine',
-                      style: TextStyle(color: t.textMuted, fontSize: 10)),
-                  const SizedBox(width: 4),
-                  Switch(
-                    value: includeMachineHistory,
-                    onChanged: onToggleMachineHistory,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          'Repo X-Ray',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: t.textStrong,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _DenseBadge(
+                        value: '${snapshot.header.dirtyFileCount}',
+                        label: 'dirty',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    '${snapshot.header.repoName} · ${snapshot.header.branch} · ${snapshot.header.headShortHash}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 11,
+                      fontFamily: 'JetBrainsMono',
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(width: 8),
-              _MiniButton(
-                label: loading ? 'Refreshing...' : 'Refresh',
-                icon: 'search',
-                enabled: !loading,
-                onTap: onRefresh,
+            ),
+          ],
+        );
+
+        final controls = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _ChromeChip(
+              label: 'machine',
+              leading: Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: includeMachineHistory
+                      ? t.accentBright
+                      : t.textFaint.withValues(alpha: 0.4),
+                  shape: BoxShape.circle,
+                ),
               ),
-              const SizedBox(width: 8),
-              _MiniButton(
-                  label: 'Close', icon: 'x', enabled: true, onTap: onClose),
+              active: includeMachineHistory,
+              activeBorderColor: t.accentBright.withValues(alpha: 0.5),
+              onTap: () => onToggleMachineHistory(!includeMachineHistory),
+              textColor: t.textStrong,
+            ),
+            const SizedBox(width: 8),
+            _MiniButton(
+              label: loading ? 'Refreshing...' : 'Refresh',
+              icon: 'search',
+              enabled: !loading,
+              onTap: onRefresh,
+            ),
+            const SizedBox(width: 8),
+            _MiniButton(
+                label: 'Close', icon: 'x', enabled: true, onTap: onClose),
+          ],
+        );
+
+        if (narrow) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              titleBlock,
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: controls,
+              ),
             ],
-          ),
-        ],
-      ),
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: titleBlock),
+            const SizedBox(width: 10),
+            controls,
+          ],
+        );
+      }),
     );
   }
 }
@@ -381,18 +448,46 @@ class _DiagnosisStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    final t = context.tokens;
+    if (cards.isEmpty) return const SizedBox.shrink();
+    // Fixed-height frame so the equalizer reads as one compact figure.
+    // The bars grow upward from the bottom; a hairline baseline reinforces
+    // the "chart-like" read so the skyline encodes meaning at-a-glance.
+    return Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: t.chromeBorder.withValues(alpha: 0.28),
+            width: 0.5,
+          ),
+        ),
+      ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          for (var i = 0; i < cards.length; i++) ...[
+          for (final card in cards)
             _DiagnosisToken(
-              card: cards[i],
-              active: cards[i].id == selectedId,
-              onTap: () => onTap(cards[i].id),
+              card: card,
+              active: card.id == selectedId,
+              onTap: () => onTap(card.id),
             ),
-            if (i != cards.length - 1) const SizedBox(width: 8),
-          ],
+          const SizedBox(width: 6),
+          // Soft count chip — unobtrusive, communicates "N signals detected"
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              '${cards.length}',
+              style: TextStyle(
+                color: t.textFaint,
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono',
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -515,36 +610,13 @@ class _MapView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 420;
-        final terrain = _TerrainBoard(
-          strata: snapshot.strata,
-          selectedId: selectedStratumId,
-          onSelected: onStratumSelected,
-        );
-        final heat = _HotspotBoard(
-          hotspots: hotspots,
-          selectedPath: selectedHotspotPath,
-          onSelected: onHotspotSelected,
-        );
-        if (!wide) {
-          return Column(
-            children: [
-              Expanded(flex: 5, child: terrain),
-              const SizedBox(height: 10),
-              Expanded(flex: 4, child: heat),
-            ],
-          );
-        }
-        return Row(
-          children: [
-            Expanded(flex: 6, child: terrain),
-            const SizedBox(width: 10),
-            Expanded(flex: 4, child: heat),
-          ],
-        );
-      },
+    return _TerritoryBoard(
+      strata: snapshot.strata,
+      hotspots: hotspots,
+      selectedStratumId: selectedStratumId,
+      selectedHotspotPath: selectedHotspotPath,
+      onStratumSelected: onStratumSelected,
+      onHotspotSelected: onHotspotSelected,
     );
   }
 }
@@ -566,19 +638,18 @@ class _TimeView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Expanded(
-          flex: 6,
-          child: _TimelineBoard(
+        SizedBox(
+          height: 118,
+          child: _CadenceRhythmBoard(
             cadence: cadence,
             pivots: pivots,
             selectedPivotHash: selectedPivotHash,
             onPivotSelected: onPivotSelected,
           ),
         ),
-        const SizedBox(height: 10),
-        SizedBox(
-          height: 110,
-          child: _PivotStrip(
+        const SizedBox(height: 8),
+        Expanded(
+          child: _PivotList(
             pivots: pivots,
             selectedPivotHash: selectedPivotHash,
             onPivotSelected: onPivotSelected,
@@ -602,31 +673,15 @@ class _SignalsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final crossAxisCount = constraints.maxWidth < 520 ? 1 : 2;
-        final spacing = 10.0;
-        final tileWidth =
-            (constraints.maxWidth - (crossAxisCount - 1) * spacing) /
-                crossAxisCount;
-        final targetHeight = constraints.maxHeight < 340 ? 112.0 : 134.0;
-        final aspectRatio = (tileWidth / targetHeight).clamp(1.35, 1.9);
-        return GridView.builder(
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: spacing,
-            mainAxisSpacing: spacing,
-            childAspectRatio: aspectRatio,
-          ),
-          itemCount: cards.length,
-          itemBuilder: (context, index) {
-            final card = cards[index];
-            return _SignalTile(
-              card: card,
-              active: card.id == selectedSignalId,
-              onTap: () => onSignalSelected(card.id),
-            );
-          },
+    return ListView.builder(
+      itemCount: cards.length,
+      itemBuilder: (context, i) {
+        final card = cards[i];
+        return _SignalRow(
+          card: card,
+          active: card.id == selectedSignalId,
+          isLast: i == cards.length - 1,
+          onTap: () => onSignalSelected(card.id),
         );
       },
     );
@@ -687,11 +742,46 @@ class _InspectorPanel extends StatelessWidget {
               orElse: () => null,
             );
 
+    final t = context.tokens;
+
+    // Compute what to show in the inspector header
+    final String inspectorTitle;
+    final Color inspectorAccent;
+    switch (view) {
+      case _XrayView.map:
+        if (hotspot != null) {
+          inspectorTitle = _shortPath(hotspot.path);
+          inspectorAccent = _hotspotAccent(t, hotspot.kind);
+        } else if (stratum != null) {
+          inspectorTitle = stratum.pathPrefix;
+          inspectorAccent = _stratumAccent(t, stratum.label);
+        } else {
+          inspectorTitle = snapshot.header.repoName;
+          inspectorAccent = t.accentBright;
+        }
+      case _XrayView.time:
+        if (pivot != null) {
+          inspectorTitle = pivot.shortHash;
+          inspectorAccent = t.accentBright;
+        } else {
+          inspectorTitle = snapshot.header.repoName;
+          inspectorAccent = t.accentBright;
+        }
+      case _XrayView.signals:
+        if (card != null) {
+          inspectorTitle = _compactCardTitle(card.title);
+          inspectorAccent = _signalAccent(t, card.verdict);
+        } else {
+          inspectorTitle = snapshot.header.repoName;
+          inspectorAccent = t.accentBright;
+        }
+    }
+
     return _PanelBlock(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _InspectorModeBar(view: view),
+          _InspectorModeBar(title: inspectorTitle, accent: inspectorAccent),
           const SizedBox(height: 10),
           Expanded(
             child: switch (view) {
@@ -737,27 +827,99 @@ class _PanelBlock extends StatelessWidget {
   }
 }
 
-class _DiagnosisToken extends StatelessWidget {
+class _DiagnosisToken extends StatefulWidget {
   final RepositoryXrayCardData card;
   final bool active;
   final VoidCallback onTap;
   const _DiagnosisToken(
       {required this.card, required this.active, required this.onTap});
   @override
+  State<_DiagnosisToken> createState() => _DiagnosisTokenState();
+}
+
+class _DiagnosisTokenState extends State<_DiagnosisToken> {
+  bool _hovered = false;
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final accent = _signalAccent(t, card.verdict);
-    return _ChromeChip(
-      label: _compactCardTitle(card.title),
-      leading: Container(
-        width: 7,
-        height: 7,
-        decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+    final accent = _signalAccent(t, widget.card.verdict);
+    // Height encodes confidence: tall = high confidence hard-fact,
+    // short = low confidence pattern. You read the skyline of the strip.
+    final conf = widget.card.confidence;
+    final barH = conf == 'high'
+        ? 20.0
+        : conf == 'medium'
+            ? 13.0
+            : 7.0;
+    final active = widget.active;
+    final hovered = _hovered;
+    final barW = active ? 7.0 : 5.0;
+    final alpha = active
+        ? 1.0
+        : hovered
+            ? 0.95
+            : 0.7;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Tooltip(
+          message:
+              '${_compactCardTitle(widget.card.title)} · ${widget.card.confidence}',
+          waitDuration: const Duration(milliseconds: 250),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: SizedBox(
+              // Full-height hit target so narrow bars stay easy to click
+              height: 28,
+              child: Stack(
+                alignment: Alignment.bottomCenter,
+                clipBehavior: Clip.none,
+                children: [
+                  // Invisible wider hit surface
+                  SizedBox(width: 10, height: 28),
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    curve: Curves.easeOutCubic,
+                    width: barW,
+                    height: barH,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: alpha),
+                      borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(2.5)),
+                      boxShadow: active
+                          ? [
+                              BoxShadow(
+                                color: accent.withValues(alpha: 0.5),
+                                blurRadius: 6,
+                                spreadRadius: 0.5,
+                              ),
+                            ]
+                          : null,
+                    ),
+                  ),
+                  // Selection caret — tiny downward marker above active bar
+                  if (active)
+                    Positioned(
+                      top: -1,
+                      child: Container(
+                        width: barW,
+                        height: 2,
+                        decoration: BoxDecoration(
+                          color: accent,
+                          borderRadius: BorderRadius.circular(1),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
-      active: active,
-      activeBorderColor: accent.withValues(alpha: 0.5),
-      onTap: onTap,
-      textColor: t.textStrong,
     );
   }
 }
@@ -791,21 +953,114 @@ class _OverviewInspector extends StatelessWidget {
   const _OverviewInspector({required this.snapshot});
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      children: [
-        _InspectorRow(label: 'fingerprint', value: snapshot.header.fingerprint),
-        _InspectorRow(label: 'head', value: snapshot.header.headCommitHash),
-        _InspectorRow(
-            label: 'hidden refs',
-            value: '${snapshot.signalIntegrity.hiddenRefCount}'),
-        _InspectorRow(
-            label: 'raw commits',
-            value: '${snapshot.signalIntegrity.rawCommitCount}'),
-        _InspectorRow(
-            label: 'filtered commits',
-            value: '${snapshot.signalIntegrity.filteredCommitCount}'),
+    final t = context.tokens;
+    final si = snapshot.signalIntegrity;
+    final rs = snapshot.refSummary;
+    final h = snapshot.header;
+    final machineCount = si.rawCommitCount - si.filteredCommitCount;
+    final linearRatio = si.filteredCommitCount > 0
+        ? rs.mergeCommitCount / si.filteredCommitCount
+        : 0.0;
+    final shapeHint = rs.mergeCommitCount == 0
+        ? 'linear'
+        : linearRatio > 0.15
+            ? 'merge-heavy'
+            : 'mostly linear';
+
+    return ListView(children: [
+      // ── Hero: commit count ──────────────────────────────────
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          Text('${si.filteredCommitCount}',
+              style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                  fontFamily: 'JetBrainsMono')),
+          const SizedBox(width: 6),
+          Text('commits',
+              style: TextStyle(color: t.textMuted, fontSize: 11)),
+        ],
+      ),
+      if (machineCount > 0) ...[
+        const SizedBox(height: 2),
+        Text('+$machineCount machine',
+            style: TextStyle(
+                color: t.textFaint,
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono')),
       ],
-    );
+
+      const SizedBox(height: 14),
+
+      // ── Refs & topology ─────────────────────────────────────
+      _InspectorRow(
+        label: 'branches',
+        value: rs.remoteBranchCount > 0
+            ? '${rs.localBranchCount} local · ${rs.remoteBranchCount} remote'
+            : '${rs.localBranchCount} local',
+      ),
+      const SizedBox(height: 5),
+      _InspectorRow(
+        label: 'tags',
+        value: rs.tagCount == 0 ? 'none' : '${rs.tagCount}',
+      ),
+      if (rs.stashCount > 0) ...[
+        const SizedBox(height: 5),
+        _InspectorRow(
+            label: 'stashes', value: '${rs.stashCount}'),
+      ],
+      if (rs.worktreeCount > 1) ...[
+        const SizedBox(height: 5),
+        _InspectorRow(
+            label: 'worktrees', value: '${rs.worktreeCount}'),
+      ],
+      if (rs.noteCount > 0) ...[
+        const SizedBox(height: 5),
+        _InspectorRow(label: 'notes', value: '${rs.noteCount}'),
+      ],
+
+      const SizedBox(height: 10),
+
+      // ── History shape ──────────────────────────────────────
+      _InspectorRow(
+        label: 'shape',
+        value: rs.mergeCommitCount == 0
+            ? shapeHint
+            : '$shapeHint · ${rs.mergeCommitCount} merges',
+      ),
+      if (rs.renameCommitCount > 0) ...[
+        const SizedBox(height: 5),
+        _InspectorRow(
+            label: 'renames', value: '${rs.renameCommitCount}'),
+      ],
+      if (si.hiddenRefCount > 0) ...[
+        const SizedBox(height: 5),
+        _InspectorRow(
+            label: 'hidden refs', value: '${si.hiddenRefCount}'),
+      ],
+
+      const SizedBox(height: 10),
+
+      // ── Head state ─────────────────────────────────────────
+      _InspectorRow(label: 'branch', value: h.branch),
+      const SizedBox(height: 5),
+      _InspectorRow(label: 'head', value: h.headShortHash),
+
+      // ── Freshness footer ───────────────────────────────────
+      const SizedBox(height: 14),
+      Text(
+        'probed ${_relativeTime(h.computedAt)}',
+        style: TextStyle(
+          color: t.textFaint,
+          fontSize: 9.5,
+          fontFamily: 'JetBrainsMono',
+          letterSpacing: 0.3,
+        ),
+      ),
+    ]);
   }
 }
 
@@ -815,36 +1070,38 @@ class _SignalInspector extends StatelessWidget {
   const _SignalInspector({required this.card, this.onCommitSelected});
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      children: [
-        Text(card.title,
-            style: TextStyle(
-                color: context.tokens.textStrong,
-                fontSize: 14,
-                fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        _InspectorRow(label: 'verdict', value: card.verdict),
-        _InspectorRow(label: 'confidence', value: card.confidence),
-        _InspectorRow(label: 'claim', value: card.claim),
-        if (card.primaryPath != null)
-          _InspectorRow(label: 'path', value: card.primaryPath!),
-        if (card.primaryCommitHash != null)
-          _InspectorRow(label: 'commit', value: card.primaryCommitHash!),
-        const SizedBox(height: 8),
-        for (final item in card.evidence) ...[
-          _InspectorRow(label: item.label, value: item.detail),
-          const SizedBox(height: 6),
-        ],
-        if (card.primaryCommitHash != null && onCommitSelected != null) ...[
-          const SizedBox(height: 8),
-          _MiniButton(
-              label: 'Open commit',
-              icon: 'history',
-              enabled: true,
-              onTap: () => onCommitSelected!(card.primaryCommitHash!)),
+    final t = context.tokens;
+    final accent = _signalAccent(t, card.verdict);
+    return ListView(children: [
+      // Verdict badge
+      _Tag(text: card.verdict.replaceAll('-', ' '), color: accent),
+      const SizedBox(height: 10),
+      // Claim is the primary insight
+      Text(card.claim,
+          style: TextStyle(
+              color: t.textStrong, fontSize: 12, height: 1.55)),
+      if (card.evidence.isNotEmpty) ...[
+        const SizedBox(height: 14),
+        for (var i = 0; i < card.evidence.length; i++) ...[
+          _InspectorRow(
+              label: card.evidence[i].label,
+              value: card.evidence[i].detail),
+          if (i < card.evidence.length - 1) const SizedBox(height: 5),
         ],
       ],
-    );
+      if (card.primaryPath != null) ...[
+        const SizedBox(height: 5),
+        _InspectorRow(label: 'path', value: card.primaryPath!),
+      ],
+      if (card.primaryCommitHash != null && onCommitSelected != null) ...[
+        const SizedBox(height: 12),
+        _MiniButton(
+            label: 'Open commit',
+            icon: 'history',
+            enabled: true,
+            onTap: () => onCommitSelected!(card.primaryCommitHash!)),
+      ],
+    ]);
   }
 }
 
@@ -854,31 +1111,39 @@ class _HotspotInspector extends StatelessWidget {
   const _HotspotInspector({required this.hotspot, this.onCommitSelected});
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      children: [
-        Text(hotspot.path,
-            style: TextStyle(
-                color: context.tokens.textStrong,
-                fontSize: 14,
-                fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        _InspectorRow(label: 'kind', value: hotspot.kind),
-        _InspectorRow(label: 'touches', value: '${hotspot.touchCount}'),
-        _InspectorRow(label: 'owners', value: '${hotspot.ownerCount}'),
-        _InspectorRow(label: 'last touched', value: hotspot.lastTouchedAt),
-        if (hotspot.latestCommitHash != null)
-          _InspectorRow(
-              label: 'latest commit', value: hotspot.latestCommitHash!),
-        if (hotspot.latestCommitHash != null && onCommitSelected != null) ...[
-          const SizedBox(height: 8),
-          _MiniButton(
-              label: hotspot.latestShortHash ?? 'Open commit',
-              icon: 'history',
-              enabled: true,
-              onTap: () => onCommitSelected!(hotspot.latestCommitHash!)),
-        ],
+    final t = context.tokens;
+    return ListView(children: [
+      // Full path in mono, truncated
+      Text(hotspot.path,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+              color: t.textMuted,
+              fontSize: 9.5,
+              fontFamily: 'JetBrainsMono')),
+      const SizedBox(height: 12),
+      // Touch count + owner count as large numbers side-by-side
+      Row(children: [
+        _InspectorStat(
+            value: '${hotspot.touchCount}', label: 'touches'),
+        const SizedBox(width: 20),
+        _InspectorStat(
+            value: '${hotspot.ownerCount}',
+            label:
+                'owner${hotspot.ownerCount == 1 ? '' : 's'}'),
+      ]),
+      const SizedBox(height: 10),
+      _InspectorRow(
+          label: 'last touched', value: hotspot.lastTouchedAt),
+      if (hotspot.latestCommitHash != null && onCommitSelected != null) ...[
+        const SizedBox(height: 12),
+        _MiniButton(
+            label: hotspot.latestShortHash ?? 'Open commit',
+            icon: 'history',
+            enabled: true,
+            onTap: () => onCommitSelected!(hotspot.latestCommitHash!)),
       ],
-    );
+    ]);
   }
 }
 
@@ -887,21 +1152,39 @@ class _StratumInspector extends StatelessWidget {
   const _StratumInspector({required this.stratum});
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      children: [
-        Text(stratum.pathPrefix,
-            style: TextStyle(
-                color: context.tokens.textStrong,
-                fontSize: 14,
-                fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        _InspectorRow(label: 'label', value: stratum.label),
-        _InspectorRow(label: 'touches', value: '${stratum.touchCount}'),
-        _InspectorRow(label: 'owners', value: '${stratum.ownerCount}'),
-        _InspectorRow(label: 'last touched', value: stratum.lastTouchedAt),
-        _InspectorRow(label: 'summary', value: stratum.summary),
+    final t = context.tokens;
+    final accent = _stratumAccent(t, stratum.label);
+    return ListView(children: [
+      // Label tag
+      _Tag(text: _compactStratumLabel(stratum.label), color: accent),
+      const SizedBox(height: 8),
+      // Path
+      Text(stratum.pathPrefix,
+          style: TextStyle(
+              color: t.textStrong,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              fontFamily: 'JetBrainsMono')),
+      if (stratum.summary.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        // Summary is the most valuable info
+        Text(stratum.summary,
+            style:
+                TextStyle(color: t.textNormal, fontSize: 11, height: 1.5)),
       ],
-    );
+      const SizedBox(height: 12),
+      Row(children: [
+        _InspectorStat(
+            value: '${stratum.touchCount}', label: 'touches'),
+        const SizedBox(width: 20),
+        _InspectorStat(
+            value: '${stratum.ownerCount}',
+            label: 'owner${stratum.ownerCount == 1 ? '' : 's'}'),
+      ]),
+      const SizedBox(height: 6),
+      _InspectorRow(
+          label: 'last touched', value: stratum.lastTouchedAt),
+    ]);
   }
 }
 
@@ -911,29 +1194,72 @@ class _PivotInspector extends StatelessWidget {
   const _PivotInspector({required this.pivot, this.onCommitSelected});
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      children: [
-        Text(pivot.subject,
+    final t = context.tokens;
+    return ListView(children: [
+      // Subject as hero
+      Text(pivot.subject,
+          style: TextStyle(
+              color: t.textStrong,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              height: 1.45)),
+      const SizedBox(height: 10),
+      // Hash + date + author as metadata row
+      Wrap(spacing: 8, runSpacing: 4, children: [
+        Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          decoration: BoxDecoration(
+            color: t.accentBright.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(pivot.shortHash,
+              style: TextStyle(
+                  color: t.accentBright,
+                  fontSize: 10,
+                  fontFamily: 'JetBrainsMono')),
+        ),
+        Text(pivot.authoredAt,
             style: TextStyle(
-                color: context.tokens.textStrong,
-                fontSize: 14,
-                fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        _InspectorRow(label: 'short hash', value: pivot.shortHash),
-        _InspectorRow(label: 'author', value: pivot.authorName),
-        _InspectorRow(label: 'date', value: pivot.authoredAt),
-        _InspectorRow(label: 'files changed', value: '${pivot.filesChanged}'),
-        _InspectorRow(label: 'insertions', value: '${pivot.insertions}'),
-        _InspectorRow(label: 'deletions', value: '${pivot.deletions}'),
-        const SizedBox(height: 8),
-        if (onCommitSelected != null)
-          _MiniButton(
-              label: 'Open commit',
-              icon: 'history',
-              enabled: true,
-              onTap: () => onCommitSelected!(pivot.commitHash)),
+                color: t.textMuted,
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono')),
+        Text(pivot.authorName,
+            style: TextStyle(color: t.textMuted, fontSize: 10)),
+      ]),
+      const SizedBox(height: 14),
+      // Diff stats as colored numbers
+      Row(children: [
+        Text('+${pivot.insertions}',
+            style: TextStyle(
+                color: t.stateAdded,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'JetBrainsMono')),
+        const SizedBox(width: 8),
+        Text('-${pivot.deletions}',
+            style: TextStyle(
+                color: t.stateDeleted,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'JetBrainsMono')),
+        const SizedBox(width: 10),
+        Text(
+            '${pivot.filesChanged} file${pivot.filesChanged == 1 ? '' : 's'}',
+            style: TextStyle(
+                color: t.textMuted,
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono')),
+      ]),
+      if (onCommitSelected != null) ...[
+        const SizedBox(height: 14),
+        _MiniButton(
+            label: 'Open commit',
+            icon: 'history',
+            enabled: true,
+            onTap: () => onCommitSelected!(pivot.commitHash)),
       ],
-    );
+    ]);
   }
 }
 
@@ -962,30 +1288,69 @@ class _InspectorRow extends StatelessWidget {
 }
 
 class _InspectorModeBar extends StatelessWidget {
-  final _XrayView view;
-  const _InspectorModeBar({required this.view});
+  final String title;
+  final Color accent;
+  const _InspectorModeBar({required this.title, required this.accent});
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final label = switch (view) {
-      _XrayView.map => 'map selection',
-      _XrayView.time => 'time selection',
-      _XrayView.signals => 'signal selection',
-    };
     return Row(
       children: [
         Container(
-            width: 6,
-            height: 6,
-            decoration:
-                BoxDecoration(color: t.accentBright, shape: BoxShape.circle)),
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+        ),
         const SizedBox(width: 8),
-        Text(label,
+        Expanded(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
-                color: t.textMuted,
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.8)),
+              color: t.textMuted,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+              fontFamily: 'JetBrainsMono',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InspectorStat extends StatelessWidget {
+  final String value;
+  final String label;
+  const _InspectorStat({required this.value, required this.label});
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            color: t.textStrong,
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            fontFamily: 'JetBrainsMono',
+            height: 1,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: TextStyle(
+            color: t.textMuted,
+            fontSize: 9.5,
+            letterSpacing: 0.4,
+          ),
+        ),
       ],
     );
   }
@@ -1119,211 +1484,235 @@ class _DenseBadge extends StatelessWidget {
   }
 }
 
-class _TerrainBoard extends StatelessWidget {
+// ── Territory: unified treemap of strata + hotspots ──────────────────────────
+//
+// Replaces the old Strata bars + Heat grid. Top-level directories become big
+// territory tiles sized by touch count; hot files/subdirs nest inside their
+// parent stratum as smaller tiles. Orphan hotspots (no matching stratum) sit
+// as their own top-level tiles. Clicking any tile selects it — the inspector
+// on the right fills in with the corresponding stratum or hotspot details.
+
+class _Parcel {
+  final String key;
+  final String label;
+  final Color accent;
+  final double value;
+  final int count;
+  final String? tagText;
+  final bool selected;
+  final bool isChild;
+  final VoidCallback onTap;
+  final List<_Parcel> children;
+
+  const _Parcel({
+    required this.key,
+    required this.label,
+    required this.accent,
+    required this.value,
+    required this.count,
+    required this.tagText,
+    required this.selected,
+    required this.isChild,
+    required this.onTap,
+    required this.children,
+  });
+}
+
+class _TreemapLayout {
+  final Rect rect;
+  final _Parcel parcel;
+  final List<_TreemapLayout> children;
+  const _TreemapLayout(this.rect, this.parcel, this.children);
+}
+
+/// Squarified-treemap layout (Bruls, Huijbregts & van Wijk).
+/// Recurses for children so strata cells contain their hotspots.
+List<_TreemapLayout> _layoutTreemap(List<_Parcel> parcels, Rect bounds) {
+  if (parcels.isEmpty || bounds.width <= 0 || bounds.height <= 0) {
+    return const [];
+  }
+  final filtered = parcels.where((p) => p.value > 0).toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  if (filtered.isEmpty) return const [];
+
+  final total = filtered.fold<double>(0, (s, p) => s + p.value);
+  final area = bounds.width * bounds.height;
+  final scaled = filtered.map((p) => p.value * area / total).toList();
+
+  final flat = <_TreemapLayout>[];
+  _squarify(filtered, scaled, bounds, flat);
+
+  return flat.map((layout) {
+    if (layout.parcel.children.isEmpty) return layout;
+    // Reserve space for the parent's label
+    final labelH = layout.rect.height > 56 ? 24.0 : 0.0;
+    const inset = 3.0;
+    final childBounds = Rect.fromLTWH(
+      layout.rect.left + inset,
+      layout.rect.top + labelH + inset * 0.5,
+      math.max(0, layout.rect.width - inset * 2),
+      math.max(0, layout.rect.height - labelH - inset * 1.5),
+    );
+    if (childBounds.width < 40 || childBounds.height < 24) return layout;
+    return _TreemapLayout(
+      layout.rect,
+      layout.parcel,
+      _layoutTreemap(layout.parcel.children, childBounds),
+    );
+  }).toList();
+}
+
+void _squarify(List<_Parcel> parcels, List<double> scaled, Rect bounds,
+    List<_TreemapLayout> out) {
+  double worst(List<int> indices, double shortSide) {
+    if (indices.isEmpty) return double.infinity;
+    double s = 0, rmax = 0, rmin = double.infinity;
+    for (final i in indices) {
+      final v = scaled[i];
+      s += v;
+      if (v > rmax) rmax = v;
+      if (v < rmin) rmin = v;
+    }
+    if (s == 0 || rmin == 0) return double.infinity;
+    final ss = s * s;
+    final ww = shortSide * shortSide;
+    return math.max(ww * rmax / ss, ss / (ww * rmin));
+  }
+
+  int idx = 0;
+  Rect remaining = bounds;
+  final row = <int>[];
+  while (idx < parcels.length) {
+    if (remaining.width <= 0 || remaining.height <= 0) break;
+    final shortSide = math.min(remaining.width, remaining.height);
+    if (row.isEmpty) {
+      row.add(idx++);
+      continue;
+    }
+    final currentWorst = worst(row, shortSide);
+    final candidateWorst = worst([...row, idx], shortSide);
+    if (candidateWorst <= currentWorst) {
+      row.add(idx++);
+    } else {
+      remaining = _placeRow(row, parcels, scaled, remaining, out);
+      row.clear();
+    }
+  }
+  if (row.isNotEmpty) {
+    _placeRow(row, parcels, scaled, remaining, out);
+  }
+}
+
+Rect _placeRow(List<int> rowIndices, List<_Parcel> parcels,
+    List<double> scaled, Rect bounds, List<_TreemapLayout> out) {
+  final rowSum = rowIndices.fold<double>(0, (s, i) => s + scaled[i]);
+  final shortSide = math.min(bounds.width, bounds.height);
+  if (rowSum <= 0 || shortSide <= 0) return bounds;
+  final rowThickness = rowSum / shortSide;
+  // When bounds are wider than tall, the row sits on the LEFT and cells stack
+  // vertically. When taller than wide, row sits on TOP, cells side-by-side.
+  final stackVertical = bounds.width > bounds.height;
+  double offset = 0;
+  for (final i in rowIndices) {
+    final extent = scaled[i] / rowThickness;
+    final rect = stackVertical
+        ? Rect.fromLTWH(
+            bounds.left, bounds.top + offset, rowThickness, extent)
+        : Rect.fromLTWH(
+            bounds.left + offset, bounds.top, extent, rowThickness);
+    out.add(_TreemapLayout(rect, parcels[i], const []));
+    offset += extent;
+  }
+  return stackVertical
+      ? Rect.fromLTWH(bounds.left + rowThickness, bounds.top,
+          bounds.width - rowThickness, bounds.height)
+      : Rect.fromLTWH(bounds.left, bounds.top + rowThickness, bounds.width,
+          bounds.height - rowThickness);
+}
+
+class _TerritoryBoard extends StatelessWidget {
   final List<RepositoryXrayStratumData> strata;
-  final String? selectedId;
-  final ValueChanged<String> onSelected;
-  const _TerrainBoard(
-      {required this.strata,
-      required this.selectedId,
-      required this.onSelected});
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final maxTouches = strata.fold<int>(0, (m, e) => math.max(m, e.touchCount));
-    return MaterialSurface(
-      tone: AppMaterialTone.surface0,
-      radius: 12,
-      elevated: false,
-      innerHighlight: true,
-      glaze: false,
-      borderAlpha: 0.14,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Strata',
-                style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.8)),
-            const SizedBox(height: 10),
-            Expanded(
-              child: Column(
-                children: [
-                  for (var i = 0; i < strata.length; i++) ...[
-                    Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, c) {
-                          final s = strata[i];
-                          final accent = _stratumAccent(t, s.label);
-                          final fraction = maxTouches > 0
-                              ? (s.touchCount / maxTouches).clamp(0.12, 1.0)
-                              : 0.12;
-                          final width = math.max(108.0, c.maxWidth * fraction);
-                          final verticalCompact = c.maxHeight < 62;
-                          final ultraCompact = c.maxHeight < 48;
-                          final compact = width < 186 || verticalCompact;
-                          final showStats = width >= 126 && !verticalCompact;
-                          final showTag = width >= 170 && !verticalCompact;
-                          return Align(
-                            alignment: Alignment.centerLeft,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(12),
-                              onTap: () => onSelected(s.id),
-                              child: SizedBox(
-                                width: width,
-                                height: math.max(48.0, c.maxHeight - 6),
-                                child: MaterialSurface(
-                                  tone: selectedId == s.id
-                                      ? AppMaterialTone.surface1
-                                      : AppMaterialTone.surface0,
-                                  radius: 12,
-                                  elevated: false,
-                                  glaze: false,
-                                  borderColor: selectedId == s.id
-                                      ? accent.withValues(alpha: 0.42)
-                                      : t.chromeBorder.withValues(alpha: 0.14),
-                                  borderAlpha: 1,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      border: Border(
-                                        left: BorderSide(
-                                          color: accent.withValues(
-                                              alpha: selectedId == s.id
-                                                  ? 0.9
-                                                  : 0.55),
-                                          width: 3,
-                                        ),
-                                      ),
-                                    ),
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: compact ? 8 : 12,
-                                      vertical: compact ? 6 : 10,
-                                    ),
-                                    child: compact
-                                        ? Row(
-                                            children: [
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment.center,
-                                                  children: [
-                                                    Text(
-                                                      s.pathPrefix,
-                                                      maxLines:
-                                                          ultraCompact ? 1 : 2,
-                                                      overflow:
-                                                          TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        color: t.textStrong,
-                                                        fontSize: ultraCompact
-                                                            ? 10.5
-                                                            : 11.5,
-                                                        fontWeight:
-                                                            FontWeight.w700,
-                                                      ),
-                                                    ),
-                                                    if (showStats) ...[
-                                                      const SizedBox(height: 2),
-                                                      Text(
-                                                        '${s.touchCount} | ${s.ownerCount}',
-                                                        style: TextStyle(
-                                                          color: t.textMuted,
-                                                          fontSize: 9.5,
-                                                          fontFamily:
-                                                              'JetBrainsMono',
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ],
-                                                ),
-                                              ),
-                                              if (showTag) ...[
-                                                const SizedBox(width: 6),
-                                                _Tag(
-                                                  text: _compactStratumLabel(
-                                                      s.label),
-                                                  color: accent,
-                                                ),
-                                              ],
-                                            ],
-                                          )
-                                        : Row(
-                                            children: [
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment.center,
-                                                  children: [
-                                                    Text(s.pathPrefix,
-                                                        maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
-                                                        style: TextStyle(
-                                                            color: t.textStrong,
-                                                            fontSize: 12,
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .w700)),
-                                                    const SizedBox(height: 3),
-                                                    Text(
-                                                        '${s.touchCount} | ${s.ownerCount} | ${s.lastTouchedAt}',
-                                                        style: TextStyle(
-                                                            color: t.textMuted,
-                                                            fontSize: 10,
-                                                            fontFamily:
-                                                                'JetBrainsMono')),
-                                                  ],
-                                                ),
-                                              ),
-                                              if (showTag) ...[
-                                                const SizedBox(width: 8),
-                                                _Tag(
-                                                    text: _compactStratumLabel(
-                                                        s.label),
-                                                    color: accent),
-                                              ],
-                                            ],
-                                          ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HotspotBoard extends StatelessWidget {
   final List<RepositoryXrayHotspotData> hotspots;
-  final String? selectedPath;
-  final ValueChanged<String> onSelected;
-  const _HotspotBoard(
-      {required this.hotspots,
-      required this.selectedPath,
-      required this.onSelected});
+  final String? selectedStratumId;
+  final String? selectedHotspotPath;
+  final ValueChanged<String> onStratumSelected;
+  final ValueChanged<String> onHotspotSelected;
+
+  const _TerritoryBoard({
+    required this.strata,
+    required this.hotspots,
+    required this.selectedStratumId,
+    required this.selectedHotspotPath,
+    required this.onStratumSelected,
+    required this.onHotspotSelected,
+  });
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final maxTouches =
-        hotspots.fold<int>(0, (m, e) => math.max(m, e.touchCount));
+
+    // Map every hotspot to a parent stratum (or null = orphan)
+    String norm(String p) => p.replaceAll('\\', '/');
+    final childMap = <String?, List<RepositoryXrayHotspotData>>{};
+    for (final h in hotspots) {
+      final hp = norm(h.path);
+      String? parentId;
+      for (final s in strata) {
+        final sp = norm(s.pathPrefix);
+        if (hp == sp) {
+          // Hotspot IS the stratum itself — skip duplicate; the stratum tile
+          // already represents it.
+          parentId = '__DROP__';
+          break;
+        }
+        if (hp.startsWith('$sp/')) {
+          parentId = s.id;
+          break;
+        }
+      }
+      if (parentId == '__DROP__') continue;
+      childMap.putIfAbsent(parentId, () => []).add(h);
+    }
+
+    _Parcel hotspotParcel(RepositoryXrayHotspotData h, {required bool isChild}) {
+      final accent = _hotspotAccent(t, h.kind);
+      return _Parcel(
+        key: 'h:${h.path}',
+        label: _shortPath(h.path),
+        accent: accent,
+        value: h.touchCount.toDouble(),
+        count: h.touchCount,
+        tagText: null,
+        selected: selectedHotspotPath == h.path,
+        isChild: isChild,
+        onTap: () => onHotspotSelected(h.path),
+        children: const [],
+      );
+    }
+
+    final topLevel = <_Parcel>[];
+    for (final s in strata) {
+      final accent = _stratumAccent(t, s.label);
+      final children = (childMap[s.id] ?? const <RepositoryXrayHotspotData>[])
+          .map((h) => hotspotParcel(h, isChild: true))
+          .toList();
+      topLevel.add(_Parcel(
+        key: 's:${s.id}',
+        label: s.pathPrefix,
+        accent: accent,
+        value: s.touchCount.toDouble(),
+        count: s.touchCount,
+        tagText: _compactStratumLabel(s.label),
+        selected: selectedStratumId == s.id,
+        isChild: false,
+        onTap: () => onStratumSelected(s.id),
+        children: children,
+      ));
+    }
+    for (final h in childMap[null] ?? const <RepositoryXrayHotspotData>[]) {
+      topLevel.add(hotspotParcel(h, isChild: false));
+    }
+
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
       radius: 12,
@@ -1332,123 +1721,253 @@ class _HotspotBoard extends StatelessWidget {
       glaze: false,
       borderAlpha: 0.14,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Heat',
+            Row(children: [
+              _BoardHeader(label: 'Territory'),
+              const Spacer(),
+              Text(
+                '${topLevel.length}',
                 style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.8)),
-            const SizedBox(height: 10),
-            Expanded(
-              child: GridView.builder(
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
-                  childAspectRatio: 1.45,
+                  color: t.textFaint,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'JetBrainsMono',
                 ),
-                itemCount: math.min(hotspots.length, 6),
-                itemBuilder: (context, index) {
-                  final h = hotspots[index];
-                  final accent = _hotspotAccent(t, h.kind);
-                  final intensity = maxTouches > 0
-                      ? (h.touchCount / maxTouches).clamp(0.12, 1.0)
-                      : 0.12;
-                  final active = selectedPath == h.path;
-                  return InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => onSelected(h.path),
-                    child: MaterialSurface(
-                      tone: active
-                          ? AppMaterialTone.surface1
-                          : AppMaterialTone.surface0,
-                      radius: 12,
-                      elevated: false,
-                      glaze: false,
-                      borderColor: active
-                          ? accent.withValues(alpha: 0.42)
-                          : t.chromeBorder.withValues(alpha: 0.14),
-                      borderAlpha: 1,
-                      child: LayoutBuilder(
-                        builder: (context, tile) {
-                          final compact =
-                              tile.maxHeight < 108 || tile.maxWidth < 150;
-                          final ultraCompact = tile.maxHeight < 92;
-                          return Container(
-                            decoration: BoxDecoration(
-                              border: Border(
-                                top: BorderSide(
-                                  color: accent.withValues(
-                                      alpha: 0.25 + 0.45 * intensity),
-                                  width: 3,
-                                ),
-                              ),
-                            ),
-                            padding: EdgeInsets.all(compact ? 8 : 10),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _shortPath(h.path),
-                                  maxLines: ultraCompact ? 1 : 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: t.textStrong,
-                                    fontSize: compact ? 10.5 : 11,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const Spacer(),
-                                Text(
-                                  '${h.touchCount}',
-                                  style: TextStyle(
-                                    color: t.textStrong,
-                                    fontSize: compact ? 14 : 16,
-                                    fontWeight: FontWeight.w800,
-                                    fontFamily: 'JetBrainsMono',
-                                  ),
-                                ),
-                                if (!ultraCompact) ...[
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${h.kind} | ${h.ownerCount}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: t.textMuted,
-                                      fontSize: 10,
-                                      fontFamily: 'JetBrainsMono',
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  );
-                },
               ),
+            ]),
+            const SizedBox(height: 8),
+            Expanded(
+              child: LayoutBuilder(builder: (context, c) {
+                final cells = _layoutTreemap(
+                  topLevel,
+                  Rect.fromLTWH(0, 0, c.maxWidth, c.maxHeight),
+                );
+                return Stack(
+                  clipBehavior: Clip.hardEdge,
+                  children: _renderCells(cells),
+                );
+              }),
             ),
           ],
         ),
       ),
     );
   }
+
+  List<Widget> _renderCells(List<_TreemapLayout> cells) {
+    final out = <Widget>[];
+    for (final cell in cells) {
+      out.add(Positioned(
+        left: cell.rect.left,
+        top: cell.rect.top,
+        width: cell.rect.width,
+        height: cell.rect.height,
+        child: _TerritoryCell(
+          parcel: cell.parcel,
+          hasChildren: cell.children.isNotEmpty,
+        ),
+      ));
+      // Children painted AFTER the parent so they sit on top visually.
+      // The parent's own label sits in a compact top "header band", below
+      // which is canvas that children fill.
+      if (cell.children.isNotEmpty) {
+        out.addAll(_renderCells(cell.children));
+      }
+    }
+    return out;
+  }
 }
 
-class _TimelineBoard extends StatelessWidget {
+class _TerritoryCell extends StatelessWidget {
+  final _Parcel parcel;
+  final bool hasChildren;
+  const _TerritoryCell({
+    required this.parcel,
+    required this.hasChildren,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final selected = parcel.selected;
+    final isChild = parcel.isChild;
+    final accent = parcel.accent;
+    return LayoutBuilder(builder: (context, c) {
+      final big = c.maxWidth > 140 && c.maxHeight > 60;
+      final medium = c.maxWidth > 80 && c.maxHeight > 30;
+      final tiny = c.maxWidth < 40 || c.maxHeight < 18;
+      // Region = cell that contains nested child cells. Label goes into a
+      // compact top band so children don't overlap the text.
+      final isRegion = hasChildren && !tiny;
+      final radius = isChild ? 4.0 : 7.0;
+      final bgAlpha = selected
+          ? 0.14
+          : isRegion
+              ? 0.11
+              : (isChild ? 0.07 : 0.09);
+
+      return MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: parcel.onTap,
+          child: Tooltip(
+            message: '${parcel.label}  ·  ${parcel.count}×',
+            waitDuration: const Duration(milliseconds: 400),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 90),
+              margin: EdgeInsets.all(isChild ? 1.5 : 2.5),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    accent.withValues(alpha: bgAlpha * 1.25),
+                    accent.withValues(alpha: bgAlpha * 0.55),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(radius),
+                border: Border.all(
+                  color: selected
+                      ? accent.withValues(alpha: 0.6)
+                      : t.chromeBorder.withValues(alpha: 0.16),
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(radius - 1),
+                child: tiny
+                    ? Container(color: accent.withValues(alpha: 0.22))
+                    : isRegion
+                        ? _regionLayout(t, big: big, medium: medium)
+                        : _headerRow(t,
+                            big: big, medium: medium, compact: false),
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _regionLayout(AppTokens t,
+      {required bool big, required bool medium}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          height: 26,
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: parcel.accent.withValues(alpha: 0.2),
+                width: 0.5,
+              ),
+            ),
+          ),
+          child: _headerRow(t, big: big, medium: medium, compact: true),
+        ),
+        const Expanded(child: SizedBox.shrink()),
+      ],
+    );
+  }
+
+  Widget _headerRow(
+    AppTokens t, {
+    required bool big,
+    required bool medium,
+    required bool compact,
+  }) {
+    final selected = parcel.selected;
+    final isChild = parcel.isChild;
+    final accent = parcel.accent;
+    return Row(children: [
+      Container(
+        width: isChild ? 2 : 3,
+        color: accent.withValues(alpha: selected ? 0.95 : 0.7),
+      ),
+      const SizedBox(width: 7),
+      Expanded(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              parcel.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: compact ? 11 : (big ? 12 : (medium ? 10.5 : 9.5)),
+                fontWeight: FontWeight.w700,
+                fontFamily: isChild ? 'JetBrainsMono' : null,
+                letterSpacing: 0.1,
+              ),
+            ),
+            if (!compact && medium) ...[
+              const SizedBox(height: 1),
+              Text(
+                '${parcel.count}×',
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 9,
+                  fontFamily: 'JetBrainsMono',
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      // Inline count in the compact header-band (next to label)
+      if (compact) ...[
+        Text(
+          '${parcel.count}×',
+          style: TextStyle(
+            color: t.textMuted,
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'JetBrainsMono',
+          ),
+        ),
+        const SizedBox(width: 6),
+      ],
+      if (big && parcel.tagText != null) ...[
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: _Tag(text: parcel.tagText!, color: accent),
+        ),
+      ] else
+        const SizedBox(width: 4),
+    ]);
+  }
+}
+
+class _BoardHeader extends StatelessWidget {
+  final String label;
+  const _BoardHeader({required this.label});
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Text(
+      label,
+      style: TextStyle(
+        color: t.textMuted,
+        fontSize: 10,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.8,
+      ),
+    );
+  }
+}
+
+class _CadenceRhythmBoard extends StatelessWidget {
   final List<RepositoryXrayCadenceData> cadence;
   final List<RepositoryXrayPivotCommitData> pivots;
   final String? selectedPivotHash;
   final ValueChanged<String> onPivotSelected;
-  const _TimelineBoard(
+  const _CadenceRhythmBoard(
       {required this.cadence,
       required this.pivots,
       required this.selectedPivotHash,
@@ -1462,18 +1981,23 @@ class _TimelineBoard extends StatelessWidget {
           DateTime.parse(p.authoredAt),
       for (final c in cadence)
         if (_cadenceDate(c) != null) _cadenceDate(c)!,
+      for (final c in cadence)
+        if (_cadenceDateEnd(c) != null) _cadenceDateEnd(c)!,
     ];
-    final minDate = allDates.isEmpty
-        ? DateTime.now()
-        : allDates.reduce((a, b) => a.isBefore(b) ? a : b);
-    final maxDate = allDates.isEmpty
-        ? DateTime.now()
-        : allDates.reduce((a, b) => a.isAfter(b) ? a : b);
+    if (allDates.isEmpty) return const SizedBox.shrink();
+
+    final minDate = allDates.reduce((a, b) => a.isBefore(b) ? a : b);
+    final maxDate = allDates.reduce((a, b) => a.isAfter(b) ? a : b);
     final spanDays = math.max(maxDate.difference(minDate).inDays.abs(), 1);
+
     double xFor(DateTime date, double width) =>
         ((date.difference(minDate).inDays) / spanDays).clamp(0.0, 1.0) *
-            (width - 24) +
-        12;
+            (width - 32) +
+        16;
+
+    final maxBurst = cadence
+        .where((c) => c.kind == 'burst')
+        .fold<int>(1, (m, c) => math.max(m, c.count));
 
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
@@ -1482,43 +2006,359 @@ class _TimelineBoard extends StatelessWidget {
       innerHighlight: true,
       glaze: false,
       borderAlpha: 0.14,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: LayoutBuilder(
-          builder: (context, c) {
-            return Stack(
-              children: [
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: _TimelinePainter(tokens: t),
+      child: LayoutBuilder(builder: (context, box) {
+        final w = box.maxWidth;
+        final h = box.maxHeight;
+        // Bottom chrome zones (stacked from the baseline down):
+        //   [dates: Apr 3 · Apr 10 · Apr 12]   ← one line under each burst
+        //   [reflog: ● 46]                     ← one line, accent marks
+        const burstDateH = 14.0;
+        const reflogH = 16.0;
+        final barAreaH = h - burstDateH - reflogH;
+        final maxBarH = (barAreaH - 20).clamp(10.0, double.infinity);
+
+        double barH(RepositoryXrayCadenceData item) =>
+            ((item.count / maxBurst).clamp(0.15, 1.0) * maxBarH)
+                .clamp(8.0, maxBarH);
+
+        return Stack(clipBehavior: Clip.hardEdge, children: [
+          // ── Baseline ──────────────────────────────────────────
+          Positioned(
+            left: 12,
+            right: 12,
+            top: barAreaH,
+            height: 1,
+            child:
+                Container(color: t.chromeBorder.withValues(alpha: 0.22)),
+          ),
+
+          // ── Gap fills + day-count label ───────────────────────
+          for (final item in cadence)
+            if (item.kind == 'gap' &&
+                _cadenceDate(item) != null &&
+                _cadenceDateEnd(item) != null) ...[
+              Positioned(
+                left: xFor(_cadenceDate(item)!, w),
+                top: 0,
+                width: math.max(
+                    2.0,
+                    xFor(_cadenceDateEnd(item)!, w) -
+                        xFor(_cadenceDate(item)!, w)),
+                height: barAreaH,
+                child: Tooltip(
+                  message: item.detail.isNotEmpty
+                      ? item.detail
+                      : '${item.count}-day gap · ${item.label}',
+                  waitDuration: const Duration(milliseconds: 400),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: t.chromeBorder.withValues(alpha: 0.05),
+                      border: Border.symmetric(
+                        vertical: BorderSide(
+                            color: t.chromeBorder.withValues(alpha: 0.1),
+                            width: 0.5),
+                      ),
+                    ),
                   ),
                 ),
-                for (final item in cadence)
-                  if (_cadenceDate(item) != null)
-                    Positioned(
-                      left: xFor(_cadenceDate(item)!, c.maxWidth) - 10,
-                      top: item.kind == 'reflog' ? 118 : 34,
-                      child: _TimelineMarker(
-                        label: item.kind,
-                        count: item.count,
-                        color: _cadenceAccent(t, item.kind),
-                      ),
+              ),
+              // Day-count label centered in the gap region — makes
+              // "empty space" communicate "7d of quiet" instantly.
+              Positioned(
+                left: ((xFor(_cadenceDate(item)!, w) +
+                                xFor(_cadenceDateEnd(item)!, w)) /
+                            2 -
+                        18)
+                    .clamp(0.0, w - 36),
+                top: (barAreaH / 2 - 7).clamp(2.0, barAreaH - 14),
+                width: 36,
+                child: Text(
+                  '${item.count}d',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: t.textFaint.withValues(alpha: 0.85),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'JetBrainsMono',
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ),
+            ],
+
+          // ── Pivot hairlines ────────────────────────────────────
+          for (final pivot in pivots)
+            if (DateTime.tryParse(pivot.authoredAt) != null)
+              Positioned(
+                left: xFor(DateTime.parse(pivot.authoredAt), w) - 0.5,
+                top: 0,
+                width: 1,
+                height: barAreaH,
+                child: Container(
+                  color: pivot.commitHash == selectedPivotHash
+                      ? t.accentBright.withValues(alpha: 0.65)
+                      : t.chromeBorder.withValues(alpha: 0.22),
+                ),
+              ),
+
+          // ── Burst bars + count labels + date labels ────────────
+          for (final item in cadence)
+            if (item.kind == 'burst' && _cadenceDate(item) != null) ...[
+              // The bar itself
+              Positioned(
+                left: (xFor(_cadenceDate(item)!, w) - 14)
+                    .clamp(0.0, w - 28),
+                top: barAreaH - barH(item),
+                width: 28,
+                height: barH(item),
+                child: Tooltip(
+                  message: item.detail.isNotEmpty
+                      ? item.detail
+                      : '${item.count} commits on ${item.label}',
+                  waitDuration: const Duration(milliseconds: 400),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: _cadenceAccent(t, 'burst')
+                          .withValues(alpha: 0.82),
+                      borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(4)),
                     ),
-                for (final pivot in pivots)
-                  if (DateTime.tryParse(pivot.authoredAt) != null)
-                    Positioned(
-                      left: xFor(DateTime.parse(pivot.authoredAt), c.maxWidth) -
-                          26,
-                      top: 72,
-                      child: GestureDetector(
-                        onTap: () => onPivotSelected(pivot.commitHash),
-                        child: _PivotMarker(
-                          hash: pivot.shortHash,
-                          active: pivot.commitHash == selectedPivotHash,
+                  ),
+                ),
+              ),
+              // Count label above the bar
+              Positioned(
+                left: (xFor(_cadenceDate(item)!, w) - 16)
+                    .clamp(0.0, w - 32),
+                top: math.max(0, barAreaH - barH(item) - 16),
+                width: 32,
+                child: Text(
+                  '${item.count}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    fontFamily: 'JetBrainsMono',
+                  ),
+                ),
+              ),
+              // Date label below the bar (Apr 3, Apr 10, Apr 12...)
+              Positioned(
+                left: (xFor(_cadenceDate(item)!, w) - 22)
+                    .clamp(0.0, w - 44),
+                top: barAreaH + 2,
+                width: 44,
+                child: Text(
+                  _fmtDateMD(_cadenceDate(item)!),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'JetBrainsMono',
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+            ],
+
+          // ── Reflog markers (centered under their date column) ──
+          // Same 44px-wide anchor as the burst date label above, so when a
+          // reflog and burst share a day they stack in a clean column.
+          for (final item in cadence)
+            if (item.kind == 'reflog' && _cadenceDate(item) != null)
+              Positioned(
+                left: (xFor(_cadenceDate(item)!, w) - 22)
+                    .clamp(0.0, w - 44),
+                top: barAreaH + burstDateH + 1,
+                width: 44,
+                height: 12,
+                child: Tooltip(
+                  message: item.detail.isNotEmpty
+                      ? item.detail
+                      : '${item.count} reflog events on ${item.label}',
+                  waitDuration: const Duration(milliseconds: 400),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.max,
+                    children: [
+                      Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                            color: _cadenceAccent(t, 'reflog'),
+                            shape: BoxShape.circle),
+                      ),
+                      const SizedBox(width: 3),
+                      Text('${item.count}',
+                          style: TextStyle(
+                              color: _cadenceAccent(t, 'reflog'),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'JetBrainsMono')),
+                    ],
+                  ),
+                ),
+              ),
+
+          // ── Interactive tap areas ──────────────────────────────
+          for (final pivot in pivots)
+            if (DateTime.tryParse(pivot.authoredAt) != null)
+              Positioned(
+                left: (xFor(DateTime.parse(pivot.authoredAt), w) - 20)
+                    .clamp(0.0, w - 40),
+                top: 0,
+                width: 40,
+                height: barAreaH,
+                child: Tooltip(
+                  message:
+                      '${pivot.shortHash}  ·  ${pivot.filesChanged}f  ·  ${pivot.subject}',
+                  waitDuration: const Duration(milliseconds: 300),
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () => onPivotSelected(pivot.commitHash),
+                      behavior: HitTestBehavior.translucent,
+                    ),
+                  ),
+                ),
+              ),
+        ]);
+      }),
+    );
+  }
+}
+
+// ── Pivot list (replaces horizontal scrolling strip) ──────────────────────────
+
+class _PivotList extends StatelessWidget {
+  final List<RepositoryXrayPivotCommitData> pivots;
+  final String? selectedPivotHash;
+  final ValueChanged<String> onPivotSelected;
+  const _PivotList(
+      {required this.pivots,
+      required this.selectedPivotHash,
+      required this.onPivotSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final maxFiles =
+        pivots.fold<int>(1, (m, p) => math.max(m, p.filesChanged));
+
+    return MaterialSurface(
+      tone: AppMaterialTone.surface0,
+      radius: 12,
+      elevated: false,
+      innerHighlight: false,
+      glaze: false,
+      borderAlpha: 0.14,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: ListView.builder(
+          padding: EdgeInsets.zero,
+          itemCount: pivots.length,
+          itemBuilder: (context, i) {
+            final p = pivots[i];
+            final active = p.commitHash == selectedPivotHash;
+            final frac = (p.filesChanged / maxFiles).clamp(0.04, 1.0);
+            return MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () => onPivotSelected(p.commitHash),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 80),
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: active ? t.itemActiveBg : Colors.transparent,
+                    border: Border(
+                      left: BorderSide(
+                        color:
+                            active ? t.accentBright : Colors.transparent,
+                        width: 3,
+                      ),
+                      bottom: i < pivots.length - 1
+                          ? BorderSide(
+                              color:
+                                  t.chromeBorder.withValues(alpha: 0.08))
+                          : BorderSide.none,
+                    ),
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                        active ? 9 : 12, 0, 12, 0),
+                    child: Row(children: [
+                      // Date
+                      SizedBox(
+                        width: 46,
+                        child: Text(
+                          _fmtDateCompact(p.authoredAt),
+                          style: TextStyle(
+                            color: t.textFaint,
+                            fontSize: 9.5,
+                            fontFamily: 'JetBrainsMono',
+                          ),
                         ),
                       ),
-                    ),
-              ],
+                      const SizedBox(width: 6),
+                      // Hash chip
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: t.accentBright.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(p.shortHash,
+                            style: TextStyle(
+                                color: t.accentBright,
+                                fontSize: 9,
+                                fontFamily: 'JetBrainsMono')),
+                      ),
+                      const SizedBox(width: 8),
+                      // Subject
+                      Expanded(
+                        child: Text(
+                          p.subject,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: active ? t.textStrong : t.textNormal,
+                            fontSize: 11,
+                            fontWeight: active
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // File count + heat bar
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text('${p.filesChanged}f',
+                              style: TextStyle(
+                                  color: t.textFaint,
+                                  fontSize: 8.5,
+                                  fontFamily: 'JetBrainsMono')),
+                          const SizedBox(height: 2),
+                          Container(
+                            height: 3,
+                            width: (28 * frac).clamp(3.0, 28.0),
+                            decoration: BoxDecoration(
+                              color: t.stateModified
+                                  .withValues(alpha: 0.65),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ]),
+                  ),
+                ),
+              ),
             );
           },
         ),
@@ -1527,278 +2367,109 @@ class _TimelineBoard extends StatelessWidget {
   }
 }
 
-class _PivotStrip extends StatelessWidget {
-  final List<RepositoryXrayPivotCommitData> pivots;
-  final String? selectedPivotHash;
-  final ValueChanged<String> onPivotSelected;
-  const _PivotStrip(
-      {required this.pivots,
-      required this.selectedPivotHash,
-      required this.onPivotSelected});
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return ListView.separated(
-      scrollDirection: Axis.horizontal,
-      itemCount: pivots.length,
-      separatorBuilder: (_, __) => const SizedBox(width: 8),
-      itemBuilder: (context, index) {
-        final p = pivots[index];
-        final active = p.commitHash == selectedPivotHash;
-        return InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () => onPivotSelected(p.commitHash),
-          child: MaterialSurface(
-            tone: active ? AppMaterialTone.surface1 : AppMaterialTone.surface0,
-            width: 180,
-            radius: 12,
-            elevated: false,
-            glaze: false,
-            borderColor: active
-                ? t.itemActiveBorder
-                : t.chromeBorder.withValues(alpha: 0.14),
-            borderAlpha: 1,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(p.shortHash,
-                      style: TextStyle(
-                          color: t.accentBright,
-                          fontSize: 11,
-                          fontFamily: 'JetBrainsMono')),
-                  const SizedBox(height: 6),
-                  Text(p.subject,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                          color: t.textStrong,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700)),
-                  const Spacer(),
-                  Text('${p.authoredAt} | ${p.filesChanged}',
-                      style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 10,
-                          fontFamily: 'JetBrainsMono')),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
+// ── Signal row (replaces grid tile) ──────────────────────────────────────────
 
-class _SignalTile extends StatelessWidget {
+class _SignalRow extends StatelessWidget {
   final RepositoryXrayCardData card;
   final bool active;
+  final bool isLast;
   final VoidCallback onTap;
-  const _SignalTile(
-      {required this.card, required this.active, required this.onTap});
+  const _SignalRow(
+      {required this.card,
+      required this.active,
+      required this.isLast,
+      required this.onTap});
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final accent = _signalAccent(t, card.verdict);
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: MaterialSurface(
-        tone: active ? AppMaterialTone.surface1 : AppMaterialTone.surface0,
-        radius: 12,
-        elevated: false,
-        glaze: false,
-        borderColor: active
-            ? accent.withValues(alpha: 0.42)
-            : t.chromeBorder.withValues(alpha: 0.14),
-        borderAlpha: 1,
-        child: LayoutBuilder(
-          builder: (context, c) {
-            final compact = c.maxHeight < 118 || c.maxWidth < 220;
-            final ultraCompact = c.maxHeight < 98 || c.maxWidth < 180;
-            final claimLines = ultraCompact ? 1 : (compact ? 2 : 3);
-            final titleLines = ultraCompact ? 2 : 3;
-            return Padding(
-              padding: EdgeInsets.all(compact ? 10 : 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                              color: accent, shape: BoxShape.circle),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _compactCardTitle(card.title),
-                          maxLines: titleLines,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: t.textStrong,
-                            fontSize: compact ? 11.5 : 12,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: List.generate(3, (i) {
-                      final activeDot = i <
-                          (card.confidence == 'high'
-                              ? 3
-                              : card.confidence == 'medium'
-                                  ? 2
-                                  : 1);
-                      return Padding(
-                        padding: EdgeInsets.only(right: i == 2 ? 0 : 4),
-                        child: Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            color: activeDot
-                                ? accent
-                                : t.chromeBorder.withValues(alpha: 0.22),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      );
-                    }),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.topLeft,
-                      child: Text(
-                        card.claim,
-                        maxLines: claimLines,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: compact ? 10 : 10.5,
-                          height: 1.3,
-                        ),
+    final confLevel = card.confidence == 'high'
+        ? 3
+        : card.confidence == 'medium'
+            ? 2
+            : 1;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          decoration: BoxDecoration(
+            color: active ? t.itemActiveBg : Colors.transparent,
+            border: Border(
+              left: BorderSide(
+                color: active ? accent : accent.withValues(alpha: 0.35),
+                width: 3,
+              ),
+              bottom: isLast
+                  ? BorderSide.none
+                  : BorderSide(
+                      color: t.chromeBorder.withValues(alpha: 0.08)),
+            ),
+          ),
+          padding:
+              EdgeInsets.fromLTRB(active ? 9 : 12, 10, 12, 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _compactCardTitle(card.title),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: active ? t.textStrong : t.textNormal,
+                        fontSize: 12,
+                        fontWeight: active
+                            ? FontWeight.w700
+                            : FontWeight.w600,
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 3),
+                    Text(
+                      card.claim,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: t.textMuted, fontSize: 10, height: 1.3),
+                    ),
+                  ],
+                ),
               ),
-            );
-          },
+              const SizedBox(width: 10),
+              // Signal-strength confidence bars (ascending heights)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: List.generate(3, (i) {
+                  final filled = i < confLevel;
+                  return Padding(
+                    padding: EdgeInsets.only(left: i > 0 ? 2 : 0),
+                    child: Container(
+                      width: 4,
+                      height: 4.0 + i * 3.5,
+                      decoration: BoxDecoration(
+                        color: filled
+                            ? accent
+                            : t.chromeBorder.withValues(alpha: 0.22),
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-}
-
-class _TimelineMarker extends StatelessWidget {
-  final String label;
-  final int count;
-  final Color color;
-  const _TimelineMarker(
-      {required this.label, required this.count, required this.color});
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 36;
-        return Column(
-          children: [
-            Container(
-                width: compact ? 8 : 10,
-                height: compact ? 8 : 10,
-                decoration:
-                    BoxDecoration(color: color, shape: BoxShape.circle)),
-            const SizedBox(height: 4),
-            Text(
-              compact ? '$count' : '$label $count',
-              style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: compact ? 9 : 10,
-                  fontWeight: FontWeight.w700),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _PivotMarker extends StatelessWidget {
-  final String hash;
-  final bool active;
-  const _PivotMarker({required this.hash, required this.active});
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 56;
-        return Column(
-          children: [
-            Container(
-                width: 2,
-                height: 26,
-                color: active
-                    ? t.accentBright
-                    : t.chromeBorder.withValues(alpha: 0.5)),
-            const SizedBox(height: 4),
-            MaterialSurface(
-              tone:
-                  active ? AppMaterialTone.surface1 : AppMaterialTone.surface0,
-              radius: 999,
-              elevated: false,
-              glaze: false,
-              borderColor: active
-                  ? t.itemActiveBorder
-                  : t.chromeBorder.withValues(alpha: 0.14),
-              borderAlpha: 1,
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                    horizontal: compact ? 5 : 7, vertical: 4),
-                child: Text(
-                  compact ? hash.substring(0, math.min(hash.length, 5)) : hash,
-                  style: TextStyle(
-                      color: active ? t.accentBright : t.textMuted,
-                      fontSize: compact ? 9 : 10,
-                      fontFamily: 'JetBrainsMono'),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _TimelinePainter extends CustomPainter {
-  final AppTokens tokens;
-  const _TimelinePainter({required this.tokens});
-  @override
-  void paint(Canvas canvas, Size size) {
-    final line = Paint()
-      ..color = tokens.chromeBorder.withValues(alpha: 0.2)
-      ..strokeWidth = 1;
-    canvas.drawLine(const Offset(12, 78), Offset(size.width - 12, 78), line);
-    canvas.drawLine(const Offset(12, 124), Offset(size.width - 12, 124), line);
-  }
-
-  @override
-  bool shouldRepaint(covariant _TimelinePainter oldDelegate) =>
-      oldDelegate.tokens != tokens;
 }
 
 DateTime? _cadenceDate(RepositoryXrayCadenceData item) {
@@ -1830,8 +2501,10 @@ String _compactCardTitle(String title) {
   if (lower.contains('no formal release/tag trail')) return 'no tags';
   if (lower.contains('bursty development cadence')) return 'bursty';
   if (lower.contains('branch model')) return 'branches';
-  if (lower.contains('reflog')) return 'reflog';
-  if (lower.contains('hotspot concentration')) return 'narrow hotspot';
+  if (lower.contains('reflog') ||
+      lower.contains('intense local editing')) return 'reflog';
+  if (lower.contains('hotspot concentration') ||
+      lower.contains('narrow')) return 'narrow hotspot';
   return title.toLowerCase();
 }
 
@@ -1843,9 +2516,15 @@ String _compactStratumLabel(String label) {
 }
 
 Color _signalAccent(AppTokens t, String verdict) {
+  // Palette hierarchy in this panel:
+  //   accentBright (bright blue) → hard/definite/primary
+  //   chromeAccent (muted teal)  → secondary/observed pattern
+  //   stateModified (amber)      → reserved for activity heat (bursts,
+  //                                 hot directories). Not used here so we
+  //                                 don't overload the "warning-ish" feel.
   return switch (verdict) {
     'hard-fact' => t.accentBright,
-    'strong-pattern' => t.stateModified,
+    'strong-pattern' => t.chromeAccent,
     _ => t.chromeAccent,
   };
 }
@@ -1853,14 +2532,17 @@ Color _signalAccent(AppTokens t, String verdict) {
 Color _stratumAccent(AppTokens t, String label) {
   final lower = label.toLowerCase();
   if (lower.contains('current')) return t.stateAdded;
+  // "legacy" / "architecture migration" zones → muted teal (chromeAccent)
+  // instead of amber. Amber stays reserved for activity-heat encodings
+  // (bursts and hot directories) where warmth is metaphorically correct.
   if (lower.contains('legacy') || lower.contains('architecture')) {
-    return t.stateModified;
+    return t.chromeAccent;
   }
   return t.accentBright;
 }
 
 Color _hotspotAccent(AppTokens t, String kind) {
-  return kind == 'directory' ? t.stateModified : t.stateDeleted;
+  return kind == 'directory' ? t.stateModified : t.accentBright;
 }
 
 Color _cadenceAccent(AppTokens t, String kind) {
@@ -1869,6 +2551,56 @@ Color _cadenceAccent(AppTokens t, String kind) {
     'gap' => t.textMuted,
     _ => t.accentBright,
   };
+}
+
+DateTime? _cadenceDateEnd(RepositoryXrayCadenceData item) {
+  if (item.kind == 'gap') {
+    final parts = item.label.split('->');
+    if (parts.length > 1 && DateTime.tryParse(parts.last.trim()) != null) {
+      return DateTime.parse(parts.last.trim());
+    }
+  }
+  return null;
+}
+
+String _fmtDateMD(DateTime date) {
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return '${months[date.month - 1]} ${date.day}';
+}
+
+String _fmtDateShort(DateTime date) {
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return "${months[date.month - 1]} '${date.year.toString().substring(2)}";
+}
+
+String _relativeTime(String iso) {
+  final d = DateTime.tryParse(iso);
+  if (d == null) return iso;
+  final diff = DateTime.now().difference(d);
+  if (diff.isNegative) return 'just now';
+  if (diff.inSeconds < 45) return 'just now';
+  if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+  if (diff.inHours < 24) return '${diff.inHours}h ago';
+  if (diff.inDays < 30) return '${diff.inDays}d ago';
+  return iso.length >= 10 ? iso.substring(0, 10) : iso;
+}
+
+String _fmtDateCompact(String isoDate) {
+  final d = DateTime.tryParse(isoDate);
+  if (d == null) {
+    return isoDate.length > 5 ? isoDate.substring(5) : isoDate;
+  }
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return '${months[d.month - 1]} ${d.day}';
 }
 
 class _MiniButton extends StatefulWidget {

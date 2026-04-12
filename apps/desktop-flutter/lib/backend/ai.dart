@@ -65,9 +65,9 @@ const _gitCommandTimeout = Duration(seconds: 30);
 const _modelDiscoveryTimeout = Duration(seconds: 8);
 const _openCodeVerboseDiscoveryTimeout = Duration(seconds: 15);
 const _claudeModelDiscoveryTimeout = Duration(seconds: 12);
-const _maxFullDiffChars = 140000;
-const _maxCondensedDiffChars = 110000;
-const _maxPromptChars = 180000;
+const _maxFullDiffChars = 220000;
+const _maxCondensedDiffChars = 180000;
+const _maxPromptChars = 260000;
 
 final Map<String, _TimedValue<_ProviderResolution?>> _providerResolutionCache =
     {};
@@ -331,7 +331,8 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
           : modelId;
       final apiResult = await _runGeminiApiRequest(prompt, geminiModel);
       if (apiResult.text == null) {
-        return GitResult.err(apiResult.error ?? 'Gemini API returned no response.');
+        return GitResult.err(
+            apiResult.error ?? 'Gemini API returned no response.');
       }
       final message = _normalizeCommitMessage(apiResult.text!);
       if (message.isEmpty) {
@@ -351,13 +352,13 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
     }
 
     // --- CLI providers: process spawning ---
-    final attempts = _buildProviderAttempts(provider.kind, modelId, readOnly: readOnly, resolvedCommand: availability.resolution!.command);
+    final attempts = _buildProviderAttempts(provider.kind, modelId,
+        readOnly: readOnly, resolvedCommand: availability.resolution!.command);
     String? providerOutput;
     String? lastError;
     for (final attempt in attempts) {
-      final effectiveArgs = attempt.useStdinForPrompt
-          ? attempt.args
-          : [...attempt.args, prompt];
+      final effectiveArgs =
+          attempt.useStdinForPrompt ? attempt.args : [...attempt.args, prompt];
       final effectiveStdin = attempt.useStdinForPrompt ? prompt : null;
       final result = await _runObservedProcess(
         commandLabel: 'ai.${provider.id}.${attempt.name}',
@@ -709,12 +710,15 @@ Future<_ProviderAvailability> _inspectProvider(_ProviderSpec provider) async {
           : null,
       auth: _ProviderAuthStatus(
         ok: hasRefresh,
-        detail: hasRefresh ? 'gemini oauth creds found' : 'no ~/.gemini/oauth_creds.json',
+        detail: hasRefresh
+            ? 'gemini oauth creds found'
+            : 'no ~/.gemini/oauth_creds.json',
       ),
     );
   }
 
-  _ProviderResolution? resolution = await _resolveProviderCommand(provider.binary);
+  _ProviderResolution? resolution =
+      await _resolveProviderCommand(provider.binary);
   final auth = _providerAuthStatus(provider.kind);
   return _ProviderAvailability(
     ready: resolution != null && auth.ok,
@@ -839,7 +843,6 @@ void _parseCodexToml(String payload, Set<String> models) {
   }
 }
 
-
 Future<_ProviderModelDiscovery?> _discoverClaudeModels(
   _ProviderResolution? resolution,
 ) async {
@@ -899,7 +902,12 @@ _ProviderModelDiscovery? _discoverGeminiModels(
 ) {
   // Gemini CLI accepts stable shorthand aliases (--model auto/pro/flash/flash-lite).
   // Surface these plus whatever the user has explicitly configured.
-  final models = <String>{'gemini auto', 'gemini pro', 'gemini flash', 'gemini flash-lite'};
+  final models = <String>{
+    'gemini auto',
+    'gemini pro',
+    'gemini flash',
+    'gemini flash-lite'
+  };
 
   final configured = _discoverGeminiConfiguredModel();
   if (configured != null) {
@@ -951,7 +959,6 @@ String? _extractGeminiModelFromJson(dynamic value) {
   }
   return null;
 }
-
 
 Future<_ProviderModelDiscovery?> _discoverOpenCodeModels(
   _ProviderResolution? resolution,
@@ -1125,7 +1132,6 @@ _ProviderModelDiscovery _parseClaudeModelsOutput(String stdout) {
   }
   return _ProviderModelDiscovery(models: models, modelDetails: modelDetails);
 }
-
 
 String _formatTokenLimit(int tokens) {
   if (tokens >= 1000000) {
@@ -1372,7 +1378,9 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // essentials. The split shifts based on file count: few files means
   // more budget for full source; many files means more for metadata.
   final changedFileCount = RegExp(r'^diff --git ', multiLine: true)
-      .allMatches(fullDiff).length.clamp(1, 999);
+      .allMatches(fullDiff)
+      .length
+      .clamp(1, 999);
 
   // Estimate overhead from the parts of the prompt that aren't diff or
   // context: system instructions, evidence rules, schema, summaries.
@@ -1381,7 +1389,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // System instructions + evidence rules + XML schema + summaries +
   // user custom prompt. Measured from actual prompt builds.
   const estimatedOverhead = 12000;
-  final contextBudget = _maxPromptChars - diffBundle.promptBody.length - estimatedOverhead;
+  final contextBudget =
+      _maxPromptChars - diffBundle.promptBody.length - estimatedOverhead;
 
   // Adaptive split: file context is most valuable, but with 50+ files
   // the metadata summary becomes more important than trying to include
@@ -1422,7 +1431,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     enrichedParts.add('<change_types>\n$changeTypes</change_types>');
   }
   if (structuralVerification.isNotEmpty) {
-    enrichedParts.add('<structural_verification>\n$structuralVerification</structural_verification>');
+    enrichedParts.add(
+        '<structural_verification>\n$structuralVerification</structural_verification>');
   }
   if (fileMetadata.isNotEmpty) {
     enrichedParts.add('<file_metadata>\n$fileMetadata</file_metadata>');
@@ -1451,12 +1461,12 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     _runGitCommand(repositoryPath, ['log', '--format=%h %s', '-10']),
     _runGitCommand(repositoryPath, ['log', '--format=%an', '-1']),
     _runGitCommand(repositoryPath, ['log', '--format=%cr', '-1']),
-    _runGitCommand(repositoryPath, ['log', '--max-parents=0', '--format=%cr', 'HEAD']),
+    _runGitCommand(
+        repositoryPath, ['log', '--max-parents=0', '--format=%cr', 'HEAD']),
     _runGitCommand(repositoryPath, ['log', '--format=%an', '-50']),
   ]);
 
-  final totalCommits =
-      int.tryParse((telemetry[0].data ?? '').trim()) ?? 0;
+  final totalCommits = int.tryParse((telemetry[0].data ?? '').trim()) ?? 0;
 
   String recentLog = '';
   String authorName = '';
@@ -1547,11 +1557,14 @@ Future<String> _collectUntrackedFilesDiff(
   // List untracked, non-ignored files. `--exclude-standard` respects
   // .gitignore + global excludes + .git/info/exclude.
   final listArgs = <String>[
-    'ls-files', '--others', '--exclude-standard',
+    'ls-files',
+    '--others',
+    '--exclude-standard',
     ...scopeArgs,
   ];
   final listResult = await _runGitCommand(
-    repositoryPath, listArgs,
+    repositoryPath,
+    listArgs,
     timeout: const Duration(seconds: _diffTimeoutSeconds),
   );
   if (!listResult.ok) return '';
@@ -1564,7 +1577,7 @@ Future<String> _collectUntrackedFilesDiff(
 
   final buffer = StringBuffer();
   const perFileCapBytes = 64 * 1024; // cap any single file's preview
-  const totalCapBytes = 512 * 1024;  // and the combined block
+  const totalCapBytes = 512 * 1024; // and the combined block
   var totalBytes = 0;
 
   for (final relPath in paths) {
@@ -1646,7 +1659,8 @@ Future<String> _collectFileMetadata({
   if (budgetChars <= 0) return '';
 
   final pathPattern = RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
-  final paths = pathPattern.allMatches(diffText).map((m) => m.group(1)!).toSet();
+  final paths =
+      pathPattern.allMatches(diffText).map((m) => m.group(1)!).toSet();
   if (paths.isEmpty) return '';
 
   final buffer = StringBuffer();
@@ -1708,21 +1722,41 @@ Future<_FileMetaResult> _gatherFileMeta(String repo, String filePath) async {
       // Churn: how many commits touched this file recently.
       // Uses --since instead of -N so it adapts to repo activity naturally.
       _runGitCommand(repo, [
-        'log', '--oneline', '--follow', '--since=90.days', '--', filePath,
+        'log',
+        '--oneline',
+        '--follow',
+        '--since=90.days',
+        '--',
+        filePath,
       ]),
       // Recent authors: who has touched this file.
       // -20 captures enough for knowledge distribution without over-querying.
       _runGitCommand(repo, [
-        'log', '--format=%an', '-20', '--follow', '--', filePath,
+        'log',
+        '--format=%an',
+        '-20',
+        '--follow',
+        '--',
+        filePath,
       ]),
       // Last modifier + age (use %x00 null byte as separator — safe from
       // any content in author names, unlike string delimiters).
       _runGitCommand(repo, [
-        'log', '--format=%an%x00%cr', '-1', '--follow', '--', filePath,
+        'log',
+        '--format=%an%x00%cr',
+        '-1',
+        '--follow',
+        '--',
+        filePath,
       ]),
       // File creation date
       _runGitCommand(repo, [
-        'log', '--diff-filter=A', '--format=%cr', '--follow', '--', filePath,
+        'log',
+        '--diff-filter=A',
+        '--format=%cr',
+        '--follow',
+        '--',
+        filePath,
       ]),
     ]);
 
@@ -1812,7 +1846,12 @@ Future<String> _collectChangeTypes({
 
     if (includeStaged) {
       final r = await _runGitCommand(repositoryPath, [
-        'diff', '--cached', '--name-status', '-M', '-C', ...scopeArgs,
+        'diff',
+        '--cached',
+        '--name-status',
+        '-M',
+        '-C',
+        ...scopeArgs,
       ]);
       if (r.ok && (r.data ?? '').trim().isNotEmpty) {
         results.add(r.data!.trim());
@@ -1820,7 +1859,11 @@ Future<String> _collectChangeTypes({
     }
     if (includeUnstaged) {
       final r = await _runGitCommand(repositoryPath, [
-        'diff', '--name-status', '-M', '-C', ...scopeArgs,
+        'diff',
+        '--name-status',
+        '-M',
+        '-C',
+        ...scopeArgs,
       ]);
       if (r.ok && (r.data ?? '').trim().isNotEmpty) {
         results.add(r.data!.trim());
@@ -1921,7 +1964,8 @@ Future<String> _verifyImports(String repositoryPath, String diffText) async {
 
     final importPath = match.group(1) ?? match.group(2) ?? match.group(3);
     if (importPath == null) continue;
-    if (importPath.startsWith('dart:') || importPath.startsWith('package:')) continue;
+    if (importPath.startsWith('dart:') || importPath.startsWith('package:'))
+      continue;
     if (!seen.add('$currentFile→$importPath')) continue;
 
     // Resolve relative to the importing file's directory.
@@ -1931,7 +1975,8 @@ Future<String> _verifyImports(String repositoryPath, String diffText) async {
     final resolved = p.normalize(p.join(importingDir, importPath));
     final exists = await File(resolved).exists();
 
-    results.writeln('  ${exists ? "✓" : "✗"} $importPath${exists ? "" : " (NOT FOUND)"}');
+    results.writeln(
+        '  ${exists ? "✓" : "✗"} $importPath${exists ? "" : " (NOT FOUND)"}');
   }
 
   return results.toString();
@@ -1959,7 +2004,8 @@ Future<String> _verifySymbols(String repositoryPath, String diffText) async {
 
   // Cap adapts to symbol count — verify more when there are few,
   // sample when there are many. Diminishing returns past ~15.
-  final maxLookups = symbols.length <= 5 ? symbols.length : (symbols.length <= 20 ? 12 : 8);
+  final maxLookups =
+      symbols.length <= 5 ? symbols.length : (symbols.length <= 20 ? 12 : 8);
   final results = StringBuffer();
   var count = 0;
   for (final symbol in symbols) {
@@ -1968,11 +2014,20 @@ Future<String> _verifySymbols(String repositoryPath, String diffText) async {
 
     try {
       final grep = await _runGitCommand(repositoryPath, [
-        'grep', '-l', '-w', '--fixed-strings', symbol,
+        'grep',
+        '-l',
+        '-w',
+        '--fixed-strings',
+        symbol,
       ]);
       if (grep.ok && (grep.data ?? '').trim().isNotEmpty) {
-        final files = (grep.data ?? '').trim().split('\n').where((f) => f.isNotEmpty).toList();
-        results.writeln('  $symbol: found in ${files.length} file${files.length == 1 ? "" : "s"} (${files.take(3).join(", ")}${files.length > 3 ? ", ..." : ""})');
+        final files = (grep.data ?? '')
+            .trim()
+            .split('\n')
+            .where((f) => f.isNotEmpty)
+            .toList();
+        results.writeln(
+            '  $symbol: found in ${files.length} file${files.length == 1 ? "" : "s"} (${files.take(3).join(", ")}${files.length > 3 ? ", ..." : ""})');
       } else {
         results.writeln('  $symbol: not found in repo');
       }
@@ -2013,7 +2068,11 @@ Future<String> _verifyRemovals(String repositoryPath, String diffText) async {
     count++;
     try {
       final grep = await _runGitCommand(repositoryPath, [
-        'grep', '-l', '-w', '--fixed-strings', symbol,
+        'grep',
+        '-l',
+        '-w',
+        '--fixed-strings',
+        symbol,
       ]);
       final files = (grep.ok ? (grep.data ?? '') : '')
           .trim()
@@ -2021,9 +2080,11 @@ Future<String> _verifyRemovals(String repositoryPath, String diffText) async {
           .where((f) => f.isNotEmpty)
           .toList();
       if (files.isEmpty) {
-        results.writeln('  ✓ $symbol: safely removed (no remaining references)');
+        results
+            .writeln('  ✓ $symbol: safely removed (no remaining references)');
       } else {
-        results.writeln('  ⚠ $symbol: still referenced in ${files.length} file(s) (${files.take(3).join(", ")})');
+        results.writeln(
+            '  ⚠ $symbol: still referenced in ${files.length} file(s) (${files.take(3).join(", ")})');
       }
     } catch (_) {
       continue;
@@ -2048,7 +2109,8 @@ Future<String> _collectFileContext({
 
   // Extract changed file paths from the diff headers.
   final pathPattern = RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
-  final paths = pathPattern.allMatches(diffText).map((m) => m.group(1)!).toSet();
+  final paths =
+      pathPattern.allMatches(diffText).map((m) => m.group(1)!).toSet();
   if (paths.isEmpty) return '';
 
   // Read files in parallel, filter to those that exist and are small enough.
@@ -2119,9 +2181,11 @@ String _buildFileOutline(String content, String filePath, int lineCount) {
   // Not language-specific — catches the shape of declarations, not keywords.
   final sigPatterns = [
     // Type declarations: class, struct, enum, interface, trait, protocol, etc.
-    RegExp(r'^\s*(?:export\s+)?(?:abstract\s+)?(?:class|struct|enum|mixin|extension|interface|trait|protocol|type|union|module|namespace|package)\s+\w+'),
+    RegExp(
+        r'^\s*(?:export\s+)?(?:abstract\s+)?(?:class|struct|enum|mixin|extension|interface|trait|protocol|type|union|module|namespace|package)\s+\w+'),
     // Function/method declarations: lines ending with { or : or => after parens
-    RegExp(r'^\s*(?:export\s+)?(?:pub\s+)?(?:static\s+)?(?:async\s+)?(?:const\s+)?(?:\w+\s+)*\w+\s*(?:<[^>]*>\s*)?\([^)]*\)\s*(?:async\s*)?[{:=>\-]?\s*$'),
+    RegExp(
+        r'^\s*(?:export\s+)?(?:pub\s+)?(?:static\s+)?(?:async\s+)?(?:const\s+)?(?:\w+\s+)*\w+\s*(?:<[^>]*>\s*)?\([^)]*\)\s*(?:async\s*)?[{:=>\-]?\s*$'),
     // Python/Ruby style: def/fn at start of line
     RegExp(r'^\s*(?:def|fn|func|function|sub|proc|method)\s+\w+'),
     // Go style: func (receiver) name(
@@ -2336,16 +2400,22 @@ String _buildCommitMessagePrompt({
 }) {
   final buffer = StringBuffer();
   buffer.writeln('You are generating a git commit message.');
-  buffer.writeln('Return only the message — plain text, ASCII characters only.');
+  buffer
+      .writeln('Return only the message — plain text, ASCII characters only.');
   buffer.writeln();
   buffer.writeln('<commit_message_structure>');
-  buffer.writeln('Subject line: start with an imperative verb, keep it tight enough to read in a git log.');
-  buffer.writeln('  Examples: "add OAuth token refresh", "fix pipe deadlock on Windows", "refactor diff context collection"');
-  buffer.writeln('Body (optional): separated by a blank line. Explain the motivation and impact — the diff already shows the mechanics.');
-  buffer.writeln('  Include a body when the change has non-obvious motivation, affects multiple concerns, or has caveats.');
+  buffer.writeln(
+      'Subject line: start with an imperative verb, keep it tight enough to read in a git log.');
+  buffer.writeln(
+      '  Examples: "add OAuth token refresh", "fix pipe deadlock on Windows", "refactor diff context collection"');
+  buffer.writeln(
+      'Body (optional): separated by a blank line. Explain the motivation and impact — the diff already shows the mechanics.');
+  buffer.writeln(
+      '  Include a body when the change has non-obvious motivation, affects multiple concerns, or has caveats.');
   buffer.writeln('</commit_message_structure>');
   buffer.writeln();
-  buffer.writeln('If <user_instructions> are present, follow them — they override format, tone, and style.');
+  buffer.writeln(
+      'If <user_instructions> are present, follow them — they override format, tone, and style.');
   buffer.writeln();
   buffer.writeln('<generation_context>');
   buffer.writeln('Branch: $branchName');
@@ -2353,7 +2423,8 @@ String _buildCommitMessagePrompt({
   if (totalCommits > 0) buffer.writeln('Total commits: $totalCommits');
   if (projectAge.isNotEmpty) buffer.writeln('Project started: $projectAge');
   if (lastCommitAge.isNotEmpty) buffer.writeln('Last commit: $lastCommitAge');
-  if (uniqueContributors > 0) buffer.writeln('Contributors (sampled): $uniqueContributors');
+  if (uniqueContributors > 0)
+    buffer.writeln('Contributors (sampled): $uniqueContributors');
   buffer.writeln('Model slot: $modelCategoryLabel');
   buffer.writeln('Scope: $scopeLabel');
   buffer.writeln('</generation_context>');
@@ -2405,8 +2476,10 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
       return const ReviewGuardrailProfile(
         id: 'loose',
         seat: 'focused sanity checker',
-        wakeFrame: 'A quick second pair of eyes. If something is probably fine, it is fine.',
-        reviewRadius: 'Keep the review local to the changed code and obvious nearby effects.',
+        wakeFrame:
+            'A quick second pair of eyes. If something is probably fine, it is fine.',
+        reviewRadius:
+            'Keep the review local to the changed code and obvious nearby effects.',
         primaryFear:
             'Your main job is to catch concrete logic bugs and likely breakage in the code at hand.',
         silenceRule:
@@ -2456,7 +2529,8 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
       return const ReviewGuardrailProfile(
         id: 'strict',
         seat: 'careful maintainer',
-        wakeFrame: 'What looks fine on first read — look again. Check underneath.',
+        wakeFrame:
+            'What looks fine on first read — look again. Check underneath.',
         reviewRadius:
             'Review the changed code, nearby integration points, and hidden assumptions implied by the diff.',
         primaryFear:
@@ -2485,7 +2559,8 @@ ReviewGuardrailProfile _guardrailProfileForStage(int stage) {
       return const ReviewGuardrailProfile(
         id: 'paranoid',
         seat: 'final gate reviewer',
-        wakeFrame: 'Assume something is hiding. Find it, or confirm it is not there.',
+        wakeFrame:
+            'Assume something is hiding. Find it, or confirm it is not there.',
         reviewRadius:
             'Review the changed code, integration surface, and any broader operational or safety consequences supported by the diff.',
         primaryFear:
@@ -2772,13 +2847,13 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   }
 
   // --- CLI providers: process spawning ---
-  final attempts = _buildProviderAttempts(provider.kind, modelId, readOnly: readOnly, resolvedCommand: resolution.command);
+  final attempts = _buildProviderAttempts(provider.kind, modelId,
+      readOnly: readOnly, resolvedCommand: resolution.command);
   String? providerOutput;
   String? lastError;
   for (final attempt in attempts) {
-    final effectiveArgs = attempt.useStdinForPrompt
-        ? attempt.args
-        : [...attempt.args, prompt];
+    final effectiveArgs =
+        attempt.useStdinForPrompt ? attempt.args : [...attempt.args, prompt];
     final effectiveStdin = attempt.useStdinForPrompt ? prompt : null;
     final result = await _runObservedProcess(
       commandLabel: 'ai.${provider.id}.${attempt.name}',
@@ -2840,7 +2915,10 @@ _ParsedReviewResult? _parseDraftReview(String raw) {
   final scoreRaw = _extractTag(normalized, 'score');
   final summary = _extractTag(normalized, 'summary');
   final summaryReasoning = _extractTag(normalized, 'summary_reasoning');
-  if (verdict == null || scoreRaw == null || summary == null || summaryReasoning == null) {
+  if (verdict == null ||
+      scoreRaw == null ||
+      summary == null ||
+      summaryReasoning == null) {
     return null;
   }
   final score = int.tryParse(scoreRaw.trim());
@@ -2909,7 +2987,8 @@ List<AiCommitReviewFindingData> _parseFindingTags(
   final findings = <AiCommitReviewFindingData>[];
   var index = 0;
   final isDraft = origin == _findingOriginDraft;
-  final idPrefix = isDraft ? _findingIdPrefixDraft : _findingIdPrefixVerification;
+  final idPrefix =
+      isDraft ? _findingIdPrefixDraft : _findingIdPrefixVerification;
   for (final match in matches) {
     final attrs = _parseXmlAttributes(match.group(1) ?? '');
     final body = match.group(2) ?? '';
@@ -2995,8 +3074,8 @@ _MergedReviewResult _mergeVerifiedReview({
             origin: 'merged',
           );
   }).toList()
-    ..sort((left, right) =>
-        _severityWeight(right.severity).compareTo(_severityWeight(left.severity)));
+    ..sort((left, right) => _severityWeight(right.severity)
+        .compareTo(_severityWeight(left.severity)));
 
   final baseScore = (draft.score + verification.scoreAdjustment).clamp(0, 100);
   final verdict = verification.verdictAdjustment ?? draft.verdict;
@@ -3015,7 +3094,8 @@ String _serializeDraftReview(_ParsedReviewResult draft) {
   buffer.writeln('<verdict>${draft.verdict}</verdict>');
   buffer.writeln('<score>${draft.score}</score>');
   buffer.writeln('<summary>${draft.summary}</summary>');
-  buffer.writeln('<summary_reasoning>${draft.reasoningReport}</summary_reasoning>');
+  buffer.writeln(
+      '<summary_reasoning>${draft.reasoningReport}</summary_reasoning>');
   buffer.writeln('<findings>');
   for (final finding in draft.findings) {
     buffer.writeln(
@@ -3038,7 +3118,6 @@ String _serializeFinalReview(_MergedReviewResult result) {
       .join(' | ');
   return '${result.verdict} | ${result.score} | ${result.summary} | $findingSummary';
 }
-
 
 String _normalizeModelMarkup(String value) {
   var normalized = value.replaceAll('\r\n', '\n').trim();
@@ -3746,7 +3825,9 @@ Future<_CommandResult?> _runObservedProcess({
         environment: environment.isEmpty ? null : environment,
       );
       // Close Dart's stdin pipe immediately — input comes from the file.
-      try { await process.stdin.close(); } catch (_) {}
+      try {
+        await process.stdin.close();
+      } catch (_) {}
     } else {
       process = await Process.start(
         invocation.command,
@@ -3841,8 +3922,12 @@ Future<_CommandResult?> _runObservedProcess({
     return null;
   } finally {
     // Clean up temp files.
-    try { stdinTempFile?.deleteSync(); } catch (_) {}
-    try { File('${stdinTempFile?.path}.bat').deleteSync(); } catch (_) {}
+    try {
+      stdinTempFile?.deleteSync();
+    } catch (_) {}
+    try {
+      File('${stdinTempFile?.path}.bat').deleteSync();
+    } catch (_) {}
   }
 }
 
@@ -3900,7 +3985,8 @@ String? _geminiApiRefreshToken() {
 Future<String?> _geminiApiEnsureToken() async {
   if (_geminiApiAccessToken != null &&
       _geminiApiTokenExpiry != null &&
-      DateTime.now().isBefore(_geminiApiTokenExpiry!.subtract(const Duration(seconds: 30)))) {
+      DateTime.now().isBefore(
+          _geminiApiTokenExpiry!.subtract(const Duration(seconds: 30)))) {
     return _geminiApiAccessToken;
   }
 
@@ -3911,7 +3997,8 @@ Future<String?> _geminiApiEnsureToken() async {
     final request = await _geminiApiHttpClient.postUrl(
       Uri.parse('https://oauth2.googleapis.com/token'),
     );
-    request.headers.contentType = ContentType('application', 'x-www-form-urlencoded');
+    request.headers.contentType =
+        ContentType('application', 'x-www-form-urlencoded');
     request.write(
       'client_id=${Uri.encodeComponent(_geminiApiClientId)}'
       '&client_secret=${Uri.encodeComponent(_geminiApiClientSecret)}'
@@ -3921,13 +4008,13 @@ Future<String?> _geminiApiEnsureToken() async {
     final response = await request.close();
     final body = await response.transform(utf8.decoder).join();
 
-
     if (response.statusCode != 200) return null;
     final json = jsonDecode(body);
     if (json is! Map || json['access_token'] is! String) return null;
 
     _geminiApiAccessToken = json['access_token'] as String;
-    final expiresIn = json['expires_in'] is int ? json['expires_in'] as int : 3599;
+    final expiresIn =
+        json['expires_in'] is int ? json['expires_in'] as int : 3599;
     _geminiApiTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
     return _geminiApiAccessToken;
   } catch (_) {
@@ -3958,7 +4045,6 @@ Future<String?> _geminiApiEnsureProject() async {
     final response = await request.close();
     final body = await response.transform(utf8.decoder).join();
 
-
     if (response.statusCode != 200) return null;
     final json = jsonDecode(body);
     if (json is! Map) return null;
@@ -3976,12 +4062,22 @@ Future<({String? text, String? error, int inputTokens, int outputTokens})>
     _runGeminiApiRequest(String prompt, String modelAlias) async {
   final token = await _geminiApiEnsureToken();
   if (token == null) {
-    return (text: null, error: 'Gemini API token refresh failed.', inputTokens: 0, outputTokens: 0);
+    return (
+      text: null,
+      error: 'Gemini API token refresh failed.',
+      inputTokens: 0,
+      outputTokens: 0
+    );
   }
 
   final project = await _geminiApiEnsureProject();
   if (project == null) {
-    return (text: null, error: 'Gemini API project setup failed.', inputTokens: 0, outputTokens: 0);
+    return (
+      text: null,
+      error: 'Gemini API project setup failed.',
+      inputTokens: 0,
+      outputTokens: 0
+    );
   }
 
   final model = _geminiApiModelName(modelAlias);
@@ -4014,39 +4110,70 @@ Future<({String? text, String? error, int inputTokens, int outputTokens})>
     final response = await request.close();
     final body = await response.transform(utf8.decoder).join();
 
-
     if (response.statusCode != 200) {
       // Try to extract a meaningful error message.
       try {
         final errJson = jsonDecode(body);
-        final message = errJson['error']?['message'] ?? 'HTTP ${response.statusCode}';
-        return (text: null, error: 'Gemini API: $message', inputTokens: 0, outputTokens: 0);
+        final message =
+            errJson['error']?['message'] ?? 'HTTP ${response.statusCode}';
+        return (
+          text: null,
+          error: 'Gemini API: $message',
+          inputTokens: 0,
+          outputTokens: 0
+        );
       } catch (_) {
-        return (text: null, error: 'Gemini API error: HTTP ${response.statusCode}', inputTokens: 0, outputTokens: 0);
+        return (
+          text: null,
+          error: 'Gemini API error: HTTP ${response.statusCode}',
+          inputTokens: 0,
+          outputTokens: 0
+        );
       }
     }
 
     final json = jsonDecode(body);
     if (json is! Map) {
-      return (text: null, error: 'Gemini API returned invalid JSON.', inputTokens: 0, outputTokens: 0);
+      return (
+        text: null,
+        error: 'Gemini API returned invalid JSON.',
+        inputTokens: 0,
+        outputTokens: 0
+      );
     }
 
     // Extract text from response.candidates[0].content.parts[0].text
     final candidates = (json['response'] as Map?)?['candidates'] as List?;
     final text = (candidates?.firstOrNull as Map?)?['content']?['parts']
-        ?.firstWhere((p) => p['text'] != null, orElse: () => null)?['text'] as String?;
+            ?.firstWhere((p) => p['text'] != null, orElse: () => null)?['text']
+        as String?;
 
     final usage = (json['response'] as Map?)?['usageMetadata'] as Map?;
     final inputTokens = (usage?['promptTokenCount'] as int?) ?? 0;
     final outputTokens = (usage?['candidatesTokenCount'] as int?) ?? 0;
 
     if (text == null || text.trim().isEmpty) {
-      return (text: null, error: 'Gemini API returned no content.', inputTokens: inputTokens, outputTokens: outputTokens);
+      return (
+        text: null,
+        error: 'Gemini API returned no content.',
+        inputTokens: inputTokens,
+        outputTokens: outputTokens
+      );
     }
 
-    return (text: text, error: null, inputTokens: inputTokens, outputTokens: outputTokens);
+    return (
+      text: text,
+      error: null,
+      inputTokens: inputTokens,
+      outputTokens: outputTokens
+    );
   } catch (e) {
-    return (text: null, error: 'Gemini API request failed: $e', inputTokens: 0, outputTokens: 0);
+    return (
+      text: null,
+      error: 'Gemini API request failed: $e',
+      inputTokens: 0,
+      outputTokens: 0
+    );
   }
 }
 
@@ -4175,9 +4302,10 @@ _ProcessInvocation _buildProcessInvocation(String command, List<String> args) {
     }
 
     // Resolve %dp0%\ → actual directory
-    final scriptPath = rawScript.toLowerCase().startsWith(dp0Token.toLowerCase())
-        ? '$dp0${rawScript.substring(dp0Token.length)}'
-        : rawScript;
+    final scriptPath =
+        rawScript.toLowerCase().startsWith(dp0Token.toLowerCase())
+            ? '$dp0${rawScript.substring(dp0Token.length)}'
+            : rawScript;
 
     if (!File(scriptPath).existsSync()) return null;
 

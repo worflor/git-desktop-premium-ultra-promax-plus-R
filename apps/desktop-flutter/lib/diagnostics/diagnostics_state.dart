@@ -1551,7 +1551,6 @@ class DiagnosticsState extends ChangeNotifier {
         sidebarPosition: settings.sidebarPosition,
         utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
         utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        autoExpandOperationLogs: settings.autoExpandOperationLogs,
       ),
     );
   }

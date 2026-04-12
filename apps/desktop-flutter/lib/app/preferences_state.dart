@@ -16,7 +16,6 @@ class PreferencesState extends ChangeNotifier {
   double _guardrailValue = 0.5;
   String _updateChannel = 'stable';
   bool _crashReportingEnabled = false;
-  bool _autoExpandLogs = false;
   bool _aiReadOnlyDefault = true;
   bool _logoAnimatesWhenUnfocused = true;
   bool _loaded = false;
@@ -26,7 +25,6 @@ class PreferencesState extends ChangeNotifier {
   int get guardrailStage => _guardrailStageFromValue(_guardrailValue);
   String get updateChannel => _updateChannel;
   bool get crashReportingEnabled => _crashReportingEnabled;
-  bool get autoExpandLogs => _autoExpandLogs;
   bool get aiReadOnlyDefault => _aiReadOnlyDefault;
   bool get logoAnimatesWhenUnfocused => _logoAnimatesWhenUnfocused;
 
@@ -39,7 +37,6 @@ class PreferencesState extends ChangeNotifier {
     _guardrailValue = _normalizeGuardrailValue(settings.guardrailValue);
     _updateChannel = _normalizeUpdateChannel(settings.updateChannel);
     _crashReportingEnabled = settings.crashReportingEnabled;
-    _autoExpandLogs = settings.autoExpandOperationLogs;
     _aiReadOnlyDefault = settings.aiReadOnlyDefault;
     _logoAnimatesWhenUnfocused = settings.logoAnimatesWhenUnfocused;
     _loaded = true;
@@ -89,7 +86,6 @@ class PreferencesState extends ChangeNotifier {
           sidebarPosition: settings.sidebarPosition,
           utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
           utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-          autoExpandOperationLogs: _autoExpandLogs,
         ),
       );
       notifyListeners();
@@ -152,7 +148,6 @@ class PreferencesState extends ChangeNotifier {
           sidebarPosition: settings.sidebarPosition,
           utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
           utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-          autoExpandOperationLogs: _autoExpandLogs,
         ),
       );
       notifyListeners();
@@ -214,7 +209,6 @@ class PreferencesState extends ChangeNotifier {
           sidebarPosition: settings.sidebarPosition,
           utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
           utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-          autoExpandOperationLogs: _autoExpandLogs,
         ),
       );
       notifyListeners();
@@ -248,34 +242,6 @@ class PreferencesState extends ChangeNotifier {
     }
   }
 
-  Future<void> setAutoExpandLogs(bool value) async {
-    if (_autoExpandLogs == value) {
-      return;
-    }
-
-    _autoExpandLogs = value;
-    final settings = await SettingsStore.load();
-    await SettingsStore.persist(
-      AppSettingsSnapshot(
-        guardrailValue: settings.guardrailValue,
-        aiReadOnlyDefault: _aiReadOnlyDefault,
-        logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
-        telemetryRetentionDays: settings.telemetryRetentionDays,
-        telemetryRetentionMb: settings.telemetryRetentionMb,
-        updateChannel: settings.updateChannel,
-        crashReportingEnabled: settings.crashReportingEnabled,
-        themeId: settings.themeId,
-        keybindingProfile: settings.keybindingProfile,
-        sidebarWidthPx: settings.sidebarWidthPx,
-        sidebarPosition: settings.sidebarPosition,
-        utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-        utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        autoExpandOperationLogs: _autoExpandLogs,
-      ),
-    );
-    notifyListeners();
-  }
-
   Future<void> setAiReadOnlyDefault(bool value) async {
     if (_aiReadOnlyDefault == value) {
       return;
@@ -298,7 +264,6 @@ class PreferencesState extends ChangeNotifier {
         sidebarPosition: settings.sidebarPosition,
         utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
         utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        autoExpandOperationLogs: _autoExpandLogs,
       ),
     );
     notifyListeners();
@@ -326,7 +291,6 @@ class PreferencesState extends ChangeNotifier {
         sidebarPosition: settings.sidebarPosition,
         utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
         utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        autoExpandOperationLogs: _autoExpandLogs,
       ),
     );
     notifyListeners();
