@@ -1124,42 +1124,64 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         const SizedBox(height: 10),
         _StateCard(
-          title: 'Release Channel',
-          summary: 'Update feed and crash diagnostics policy.',
+          title: 'Release Deployment',
+          summary: 'Update feeds, crash diagnostics, and environment posture.',
           wide: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Channel + crash reporting side-by-side
               Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _ChannelSelect(
-                    value: preferences.updateChannel,
-                    onChanged: _saveUpdateChannel,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'DEPLOYMENT CHANNEL',
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _ChannelRibbon(
+                          value: preferences.updateChannel,
+                          onChanged: _saveUpdateChannel,
+                        ),
+                      ],
+                    ),
                   ),
-                  const Spacer(),
-                  _CheckboxRow(
-                    label: 'Capture crash diagnostics',
-                    description: 'Stores anonymised crash snapshots locally for stability analysis.',
-                    value: preferences.crashReportingEnabled,
-                    onChanged: _saveCrashReporting,
+                  const SizedBox(width: 24),
+                  Expanded(
+                    child: _CheckboxRow(
+                      label: 'Capture crash diagnostics',
+                      description: 'Anonymised crash snapshots.',
+                      value: preferences.crashReportingEnabled,
+                      onChanged: _saveCrashReporting,
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 20),
               Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  _PrimaryButton(
-                    label: 'Check for Updates',
+                  _DeckButton(
+                    label: 'POLL FOR UPDATES',
+                    icon: Icons.radar_outlined,
                     onTap: _showUpdateStubMessage,
                   ),
                   const SizedBox(width: 8),
-                  _PrimaryButton(
-                    label: 'Install Available Update',
+                  _DeckButton(
+                    label: 'FORCE DEPLOY',
+                    icon: Icons.system_update_alt_outlined,
                     enabled: false,
                     onTap: _showUpdateStubMessage,
                   ),
+                  const Spacer(),
                 ],
               ),
             ],
@@ -1731,43 +1753,126 @@ class _ThemeSelect extends StatelessWidget {
   }
 }
 
-class _ChannelSelect extends StatelessWidget {
+class _ChannelRibbon extends StatelessWidget {
   final String value;
   final ValueChanged<String> onChanged;
 
-  const _ChannelSelect({required this.value, required this.onChanged});
+  const _ChannelRibbon({required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'Channel',
-          style: TextStyle(
-            color: t.textMuted,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
+    final channels = [
+      ('stable', 'STABLE', true),
+      ('beta', 'BETA', true),
+      ('dev', 'DEV', true), // Enabled because user is in dev build
+    ];
+
+    return Container(
+      height: 32,
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: t.chromeBorder.withValues(alpha: 0.1),
+            width: 1,
           ),
         ),
-        const SizedBox(width: 10),
-        SizedBox(
-          width: 140,
-          child: AppDropdownField<String>(
-            value: value,
-            items: const [
-              DropdownMenuItem(value: 'stable', child: Text('Stable')),
-              DropdownMenuItem(value: 'beta', child: Text('Beta')),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (final channel in channels)
+            _ChannelRibbonItem(
+              label: channel.$2,
+              active: value == channel.$1,
+              enabled: channel.$3,
+              onTap: () => onChanged(channel.$1),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChannelRibbonItem extends StatefulWidget {
+  final String label;
+  final bool active;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _ChannelRibbonItem({
+    required this.label,
+    required this.active,
+    required this.onTap,
+    this.enabled = true,
+  });
+
+  @override
+  State<_ChannelRibbonItem> createState() => _ChannelRibbonItemState();
+}
+
+class _ChannelRibbonItemState extends State<_ChannelRibbonItem> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final activeColor = t.accentBright;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor:
+          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: widget.enabled ? widget.onTap : null,
+        child: Opacity(
+          opacity: widget.enabled ? 1.0 : 0.35,
+          child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          margin: const EdgeInsets.only(right: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: widget.active ? activeColor : Colors.transparent,
+                width: 2,
+              ),
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: widget.active ? activeColor : t.textNormal,
+                      fontSize: 10,
+                      fontFamily: 'JetBrainsMono',
+                      fontWeight:
+                          widget.active ? FontWeight.w800 : FontWeight.w600,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                  if (widget.active) ...[
+                    const SizedBox(width: 4),
+                    Container(
+                      width: 1,
+                      height: 8,
+                      color: activeColor.withValues(alpha: 0.4),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 4),
             ],
-            onChanged: (id) {
-              if (id != null) {
-                onChanged(id);
-              }
-            },
+          ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
