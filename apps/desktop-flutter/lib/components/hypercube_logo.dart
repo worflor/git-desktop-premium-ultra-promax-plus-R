@@ -1,3 +1,5 @@
+import 'dart:ui' show PathMetric;
+import 'package:flutter/gestures.dart' show PointerHoverEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:provider/provider.dart';
