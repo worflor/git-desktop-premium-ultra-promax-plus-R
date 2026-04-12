@@ -719,6 +719,22 @@ class AiCommitReviewData {
   });
 }
 
+class StashEntryData {
+  final int index;
+  final String message;
+  final String hash;
+  final String createdAt;
+  final int fileCount;
+
+  const StashEntryData({
+    required this.index,
+    required this.message,
+    required this.hash,
+    required this.createdAt,
+    this.fileCount = 0,
+  });
+}
+
 class RebaseTodoEntry {
   final String action;
   final String commitHash;

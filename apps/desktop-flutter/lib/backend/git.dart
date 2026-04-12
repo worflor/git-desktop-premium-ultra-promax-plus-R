@@ -760,6 +760,102 @@ Future<GitResult<void>> startInteractiveRebase(
   return GitResult.ok(null);
 }
 
+// ── Stash (Filing Cabinet) ──────────────────────────────────────────────────
+
+Future<GitResult<List<StashEntryData>>> listStashes(String repo) async {
+  // Format: index, hash, date, message
+  final r = await _git(repo, [
+    'stash', 'list',
+    '--format=%gd\x1f%H\x1f%ci\x1f%gs',
+  ]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  final lines = r.stdout
+      .toString()
+      .trim()
+      .split('\n')
+      .where((l) => l.isNotEmpty)
+      .toList();
+  final entries = <StashEntryData>[];
+  for (final line in lines) {
+    final parts = line.split('\x1f');
+    if (parts.length < 4) continue;
+    // stash@{0} → 0
+    final indexMatch = RegExp(r'\{(\d+)\}').firstMatch(parts[0]);
+    final index = indexMatch != null ? int.tryParse(indexMatch.group(1)!) ?? 0 : entries.length;
+    entries.add(StashEntryData(
+      index: index,
+      hash: parts[1],
+      createdAt: parts[2],
+      message: parts[3],
+    ));
+  }
+  // Enrich with file counts (fast — only stat, no diff content).
+  for (var i = 0; i < entries.length && i < 20; i++) {
+    final stat = await _git(repo, ['stash', 'show', '--stat', 'stash@{${entries[i].index}}']);
+    if (stat.exitCode == 0) {
+      final statLines = stat.stdout.toString().trim().split('\n');
+      // Last line of --stat is the summary: " 3 files changed, ..."
+      final summary = statLines.isNotEmpty ? statLines.last : '';
+      final countMatch = RegExp(r'(\d+) files? changed').firstMatch(summary);
+      final count = countMatch != null ? int.tryParse(countMatch.group(1)!) ?? 0 : 0;
+      entries[i] = StashEntryData(
+        index: entries[i].index,
+        hash: entries[i].hash,
+        createdAt: entries[i].createdAt,
+        message: entries[i].message,
+        fileCount: count,
+      );
+    }
+  }
+  return GitResult.ok(entries);
+}
+
+Future<GitResult<String>> stashPush(
+  String repo, {
+  String? message,
+  List<String>? paths,
+  bool keepIndex = false,
+}) async {
+  final args = <String>['stash', 'push'];
+  if (keepIndex) args.add('--keep-index');
+  if (message != null && message.trim().isNotEmpty) {
+    args.addAll(['-m', message.trim()]);
+  }
+  if (paths != null && paths.isNotEmpty) {
+    args.add('--');
+    args.addAll(paths);
+  }
+  final r = await _git(repo, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(r.stdout.toString().trim());
+}
+
+Future<GitResult<void>> stashPop(String repo, {int index = 0}) async {
+  final r = await _git(repo, ['stash', 'pop', 'stash@{$index}']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(null);
+}
+
+Future<GitResult<void>> stashApply(String repo, {int index = 0}) async {
+  final r = await _git(repo, ['stash', 'apply', 'stash@{$index}']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(null);
+}
+
+Future<GitResult<void>> stashDrop(String repo, {int index = 0}) async {
+  final r = await _git(repo, ['stash', 'drop', 'stash@{$index}']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(null);
+}
+
+Future<GitResult<String>> stashShow(String repo, {int index = 0}) async {
+  final r = await _git(repo, ['stash', 'show', '-p', 'stash@{$index}']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(r.stdout.toString());
+}
+
+// ── X-Ray ──────────────────────────────────────────────────────────────────
+
 Future<GitResult<String>> getRepositoryXrayFingerprint(String repo) {
   return computeRepositoryXrayFingerprint(repo, getRepositoryStatus, _git);
 }

@@ -27,7 +27,6 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   late final HypercubeLogoEngine _engine;
   Duration? _lastElapsed;
   int _lastIdleFrameMicros = 0;
-  bool _isLifecycleVisible = true;
   bool _isTickerModeVisible = true;
 
   @override
@@ -35,8 +34,6 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     super.initState();
     _engine = HypercubeLogoEngine();
     WidgetsBinding.instance.addObserver(this);
-    _isLifecycleVisible =
-        _isVisibleLifecycleState(WidgetsBinding.instance.lifecycleState);
     _ticker = createTicker(_tick);
   }
 
@@ -47,33 +44,44 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     _syncTicker();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    _isLifecycleVisible = _isVisibleLifecycleState(state);
-    _syncTicker();
-  }
-
-  bool _isVisibleLifecycleState(AppLifecycleState? state) {
-    return state == null || state == AppLifecycleState.resumed;
-  }
-
   void _syncTicker() {
-    final bool shouldRun = _isLifecycleVisible && _isTickerModeVisible;
+    final bool shouldRun = _isTickerModeVisible;
     if (shouldRun) {
       if (!_ticker.isActive) {
         _lastElapsed = null;
+        _lastIdleFrameMicros = 0;
         _ticker.start();
       }
       return;
     }
     if (_ticker.isActive) {
       _ticker.stop();
+      _lastElapsed = null;
+      _lastIdleFrameMicros = 0;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed || !mounted) {
+      return;
+    }
+    final bool wasDragging = _engine.dragging;
+    setState(() {
+      if (wasDragging) {
+        _engine.setDragging(false);
+      }
+      _engine.handlePointerExit();
+    });
+    if (wasDragging) {
+      context.read<HyperReactivity>().deactivate();
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    context.read<HyperReactivity>().deactivate();
     _ticker.dispose();
     super.dispose();
   }

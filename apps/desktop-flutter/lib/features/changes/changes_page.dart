@@ -100,6 +100,13 @@ class _ChangesPageState extends State<ChangesPage> {
   String? _lastDraftRepoPath;
   String? _lastDraftBranch;
 
+  // Filing cabinet (stashes)
+  List<StashEntryData> _stashes = const [];
+  bool _stashesLoading = false;
+  bool _stashesExpanded = false;
+  String? _stashPeekDiff;
+  int? _stashPeekIndex;
+
   @override
   void initState() {
     super.initState();
@@ -1133,6 +1140,89 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
+  // ── Filing cabinet (stash) operations ─────────────────────────────────────
+
+  Future<void> _loadStashes(String repo) async {
+    setState(() => _stashesLoading = true);
+    final result = await listStashes(repo);
+    if (!mounted) return;
+    setState(() {
+      _stashesLoading = false;
+      _stashes = result.ok ? result.data! : const [];
+    });
+  }
+
+  Future<void> _shelveFiles(String repo, List<String> paths, {String? label}) async {
+    final result = await stashPush(repo, message: label, paths: paths);
+    if (!mounted) return;
+    if (!result.ok) {
+      setState(() => _actionError = result.error);
+      return;
+    }
+    await _refreshAndReadStatus();
+    if (mounted) _loadStashes(repo);
+  }
+
+  Future<void> _shelveAll(String repo, {String? label}) async {
+    final result = await stashPush(repo, message: label);
+    if (!mounted) return;
+    if (!result.ok) {
+      setState(() => _actionError = result.error);
+      return;
+    }
+    await _refreshAndReadStatus();
+    if (mounted) _loadStashes(repo);
+  }
+
+  Future<void> _pickUpStash(String repo, int index) async {
+    final result = await stashPop(repo, index: index);
+    if (!mounted) return;
+    if (!result.ok) {
+      setState(() => _actionError = result.error);
+      return;
+    }
+    setState(() {
+      _stashPeekDiff = null;
+      _stashPeekIndex = null;
+    });
+    await _refreshAndReadStatus();
+    if (mounted) _loadStashes(repo);
+  }
+
+  Future<void> _tossStash(String repo, int index) async {
+    final result = await stashDrop(repo, index: index);
+    if (!mounted) return;
+    if (!result.ok) {
+      setState(() => _actionError = result.error);
+      return;
+    }
+    setState(() {
+      if (_stashPeekIndex == index) {
+        _stashPeekDiff = null;
+        _stashPeekIndex = null;
+      }
+    });
+    if (mounted) _loadStashes(repo);
+  }
+
+  Future<void> _peekStash(String repo, int index) async {
+    if (_stashPeekIndex == index) {
+      setState(() {
+        _stashPeekDiff = null;
+        _stashPeekIndex = null;
+      });
+      return;
+    }
+    final result = await stashShow(repo, index: index);
+    if (!mounted) return;
+    if (result.ok) {
+      setState(() {
+        _stashPeekDiff = result.data;
+        _stashPeekIndex = index;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -1163,6 +1253,7 @@ class _ChangesPageState extends State<ChangesPage> {
           await _flushDraft(oldRepo, oldBranch, textToSave);
         }
         _loadCommitDraftForRepo(repoPath, branch: currentBranch, force: true);
+        _loadStashes(repoPath);
       });
     }
     if (repo.statusError != null) {
@@ -1180,7 +1271,7 @@ class _ChangesPageState extends State<ChangesPage> {
 
     _syncDraftFromStatus(status);
 
-    if (status.files.isEmpty) {
+    if (status.files.isEmpty && _stashes.isEmpty && !_stashesLoading) {
       return _CleanTreeDashboard(
         tokens: t,
         status: status,
@@ -1287,29 +1378,35 @@ class _ChangesPageState extends State<ChangesPage> {
                     ),
                   ),
                   Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      itemCount: status.files.length,
-                      itemBuilder: (ctx, i) {
-                        final file = status.files[i];
-                        return _FileRow(
-                          file: file,
-                          tokens: t,
-                          isDiffSelected: activeDiffPath == file.path,
-                          included: _includedPaths.contains(file.path),
-                          onTap: includedFiles.length > 1
-                              ? () {
-                                  if (_includedPaths.contains(file.path)) {
-                                    _jumpToMultiDiffPath(file.path);
-                                  } else {
-                                    _inspectSingleDiff(repoPath, file.path);
-                                  }
-                                }
-                              : () => _loadDiff(repoPath, file.path),
-                          onIncludeChanged: (value) =>
-                              _toggleIncluded(file.path, value),
-                        );
-                      },
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: ListView.builder(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            itemCount: status.files.length,
+                            itemBuilder: (ctx, i) {
+                              final file = status.files[i];
+                              return _FileRow(
+                                file: file,
+                                tokens: t,
+                                isDiffSelected: activeDiffPath == file.path,
+                                included: _includedPaths.contains(file.path),
+                                onTap: includedFiles.length > 1
+                                    ? () {
+                                        if (_includedPaths.contains(file.path)) {
+                                          _jumpToMultiDiffPath(file.path);
+                                        } else {
+                                          _inspectSingleDiff(repoPath, file.path);
+                                        }
+                                      }
+                                    : () => _loadDiff(repoPath, file.path),
+                                onIncludeChanged: (value) =>
+                                    _toggleIncluded(file.path, value),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   MaterialSurface(
@@ -1325,20 +1422,87 @@ class _ChangesPageState extends State<ChangesPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          includedCount == 0
-                              ? (stagedCount > 0
-                                  ? 'Nothing selected | $stagedCount staged'
-                                  : 'Nothing selected')
-                              : (stagedCount > 0
-                                  ? '$includedCount file${includedCount == 1 ? '' : 's'} selected | $stagedCount staged'
-                                  : '$includedCount file${includedCount == 1 ? '' : 's'} selected'),
-                          style: TextStyle(
-                            color:
-                                includedCount == 0 ? t.textMuted : t.textNormal,
-                            fontSize: 11,
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                includedCount == 0
+                                    ? (stagedCount > 0
+                                        ? 'Nothing selected · $stagedCount staged'
+                                        : 'Nothing selected')
+                                    : (stagedCount > 0
+                                        ? '$includedCount file${includedCount == 1 ? '' : 's'} selected · $stagedCount staged'
+                                        : '$includedCount file${includedCount == 1 ? '' : 's'} selected'),
+                                style: TextStyle(
+                                  color:
+                                      includedCount == 0 ? t.textMuted : t.textNormal,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                            if (_stashes.isNotEmpty || _stashesLoading)
+                              GestureDetector(
+                                onTap: () => setState(() => _stashesExpanded = !_stashesExpanded),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      '${_stashes.length} shelved',
+                                      style: TextStyle(
+                                        color: t.chromeAccent.withValues(alpha: 0.7),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      _stashesExpanded ? '▾' : '▸',
+                                      style: TextStyle(color: t.textMuted, fontSize: 9),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              GestureDetector(
+                                onTap: status.files.isNotEmpty ? () => _shelveAll(repoPath) : null,
+                                child: Text(
+                                  '↓ shelve',
+                                  style: TextStyle(
+                                    color: status.files.isNotEmpty
+                                        ? t.textMuted
+                                        : t.textMuted.withValues(alpha: 0.3),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
+                        // ── Filing cabinet drawers (inline) ────────
+                        if (_stashesExpanded && _stashes.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6, bottom: 2),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 120),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                padding: EdgeInsets.zero,
+                                itemCount: _stashes.length,
+                                itemBuilder: (ctx, i) {
+                                  final stash = _stashes[i];
+                                  final isPeeking = _stashPeekIndex == stash.index;
+                                  return _StashDrawerCard(
+                                    tokens: t,
+                                    stash: stash,
+                                    isPeeking: isPeeking,
+                                    onPickUp: () => _pickUpStash(repoPath, stash.index),
+                                    onPeek: () => _peekStash(repoPath, stash.index),
+                                    onToss: () => _tossStash(repoPath, stash.index),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
                         const SizedBox(height: 8),
                         Focus(
                           onKeyEvent: (node, event) {
@@ -1451,6 +1615,20 @@ class _ChangesPageState extends State<ChangesPage> {
             Expanded(
               child: Builder(
                 builder: (context) {
+                  // Stash peek view
+                  if (_stashPeekIndex != null && _stashPeekDiff != null) {
+                    final peekStash = _stashes.where((s) => s.index == _stashPeekIndex).firstOrNull;
+                    final peekLabel = peekStash?.message ?? 'stash@{$_stashPeekIndex}';
+                    return DiffShell(
+                      key: ValueKey('stash-peek-$_stashPeekIndex'),
+                      filePath: 'filed: $peekLabel',
+                      diffContent: _stashPeekDiff,
+                      loading: false,
+                      error: null,
+                      tokens: t,
+                      repositoryPath: repoPath,
+                    );
+                  }
                   if (_reviewActive) {
                     return MaterialSurface(
                       tone: AppMaterialTone.surface0,
@@ -3561,6 +3739,145 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
           ),
         ),
       ),
+      ),
+    );
+  }
+}
+
+// ── Stash drawer card ─────────────────────────────────────────────────────
+
+class _StashDrawerCard extends StatefulWidget {
+  final AppTokens tokens;
+  final StashEntryData stash;
+  final bool isPeeking;
+  final VoidCallback onPickUp;
+  final VoidCallback onPeek;
+  final VoidCallback onToss;
+
+  const _StashDrawerCard({
+    required this.tokens,
+    required this.stash,
+    required this.isPeeking,
+    required this.onPickUp,
+    required this.onPeek,
+    required this.onToss,
+  });
+
+  @override
+  State<_StashDrawerCard> createState() => _StashDrawerCardState();
+}
+
+class _StashDrawerCardState extends State<_StashDrawerCard> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final stash = widget.stash;
+    // Clean up the default "WIP on branch: hash message" format.
+    var label = stash.message;
+    final wipMatch = RegExp(r'^WIP on .+?: [a-f0-9]+ (.+)$').firstMatch(label);
+    if (wipMatch != null) label = wipMatch.group(1)!;
+    final onMatch = RegExp(r'^On .+?: (.+)$').firstMatch(label);
+    if (onMatch != null) label = onMatch.group(1)!;
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: widget.isPeeking
+              ? t.itemActiveBg
+              : (_hovered ? t.secondaryBtnHoverBg : Colors.transparent),
+          borderRadius: BorderRadius.circular(4),
+          border: widget.isPeeking
+              ? Border.all(color: t.chromeAccent.withValues(alpha: 0.3))
+              : null,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: t.textNormal,
+                      fontSize: 11,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    '${stash.fileCount} file${stash.fileCount == 1 ? '' : 's'}',
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 9,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_hovered || widget.isPeeking) ...[
+              _StashAction(
+                icon: '↑',
+                tooltip: 'pick up',
+                color: t.accentBright,
+                onTap: widget.onPickUp,
+              ),
+              const SizedBox(width: 4),
+              _StashAction(
+                icon: widget.isPeeking ? '◉' : '◎',
+                tooltip: 'peek',
+                color: t.chromeAccent,
+                onTap: widget.onPeek,
+              ),
+              const SizedBox(width: 4),
+              _StashAction(
+                icon: '×',
+                tooltip: 'toss',
+                color: t.textMuted,
+                onTap: widget.onToss,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StashAction extends StatelessWidget {
+  final String icon;
+  final String tooltip;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _StashAction({
+    required this.icon,
+    required this.tooltip,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Text(
+          icon,
+          style: TextStyle(
+            color: color,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
     );
   }
