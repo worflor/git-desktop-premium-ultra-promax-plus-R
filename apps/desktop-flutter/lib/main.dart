@@ -9,6 +9,7 @@ import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
 import 'app/repository_xray_state.dart';
 import 'app/file_coupling_state.dart';
+import 'app/logos_git_state.dart';
 import 'app/worktree_state.dart';
 import 'app/hyper_reactivity.dart';
 import 'app/brand_lockup.dart';
@@ -67,6 +68,7 @@ void main() async {
   await repoState.loadRecents();
   final repoXrayState = RepositoryXrayState();
   final fileCouplingState = FileCouplingState();
+  final logosGitState = LogosGitState();
   final worktreeState = WorktreeState(repoState);
 
   final preferencesState = PreferencesState();
@@ -85,6 +87,7 @@ void main() async {
         ChangeNotifierProvider.value(value: repoState),
         ChangeNotifierProvider.value(value: repoXrayState),
         ChangeNotifierProvider.value(value: fileCouplingState),
+        ChangeNotifierProvider.value(value: logosGitState),
         ChangeNotifierProvider.value(value: worktreeState),
         ChangeNotifierProvider.value(value: preferencesState),
         ChangeNotifierProvider.value(value: aiSettingsState),
@@ -335,6 +338,11 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
   /// than glued to the window — the "distant stars" depth illusion.
   final ValueNotifier<Offset> _windowDelta = ValueNotifier(Offset.zero);
   Offset? _baseWindowPos;
+  /// Cached merged listenable for the AnimatedBuilder. Was being
+  /// reallocated every build (which is every parent rebuild — and the
+  /// parent is `_AppFrame`, which currently rebuilds on every theme
+  /// notification). Refreshed only on shader-kind change.
+  Listenable? _backdropSignal;
 
   // ── Whisp simulation state ──────────────────────────────────────────
   // Redshift's `ThemeParticles.whisps` runs a tiny physics sim: up to 3
@@ -368,7 +376,14 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
     if (_particlesAnimate(widget.shader)) {
       _controller.repeat();
     }
+    _rebuildBackdropSignal();
     _captureBaseWindowPos();
+  }
+
+  void _rebuildBackdropSignal() {
+    _backdropSignal = _particlesAnimate(widget.shader)
+        ? Listenable.merge([_controller, _windowDelta])
+        : _windowDelta;
   }
 
   void _tickSim() {
@@ -513,6 +528,10 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
         _controller.stop();
         _controller.value = 0;
       }
+      // Particle-active state may have flipped; refresh the cached
+      // listenable so the AnimatedBuilder picks up the controller
+      // (or drops it when particles go quiet).
+      _rebuildBackdropSignal();
     }
   }
 
@@ -538,22 +557,19 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
 
   @override
   Widget build(BuildContext context) {
-    // Merge the animation controller with the window-delta notifier so the
-    // painter re-paints on either particle tick *or* window move, without
-    // any full widget rebuilds in the subtree.
-    final listenable = _particlesAnimate(widget.shader)
-        ? Listenable.merge([_controller, _windowDelta])
-        : _windowDelta;
-    return AnimatedBuilder(
-      animation: listenable,
-      builder: (context, _) => CustomPaint(
-        painter: _ParticleBackdropPainter(
-          tokens: widget.tokens,
-          shader: widget.shader,
-          progress: _particlesAnimate(widget.shader) ? _controller.value : 0,
-          windowDelta: _windowDelta.value,
-          whisps: _whisps,
-          debris: _debris,
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _backdropSignal!,
+        builder: (context, _) => CustomPaint(
+          painter: _ParticleBackdropPainter(
+            tokens: widget.tokens,
+            shader: widget.shader,
+            progress:
+                _particlesAnimate(widget.shader) ? _controller.value : 0,
+            windowDelta: _windowDelta.value,
+            whisps: _whisps,
+            debris: _debris,
+          ),
         ),
       ),
     );
@@ -680,6 +696,10 @@ class _ParticleBackdropPainter extends CustomPainter {
   /// Color updated per call from `tokens.chromeBorder` so the blot ink
   /// stays in sync with the theme's panel-border ink line.
   static final Paint _inkblotPaint = Paint()..style = PaintingStyle.fill;
+  // Reusable Path — `reset()`+rebuild each blot avoids allocating a
+  // fresh `Path` per blot per frame. Same pattern as `edgePath` in
+  // the timeline painter.
+  static final Path _inkblotPath = Path();
 
   void _drawInkblots(Canvas canvas, Size size) {
     _inkblotPaint.color = tokens.chromeBorder.withValues(alpha: 0.05);
@@ -698,7 +718,8 @@ class _ParticleBackdropPainter extends CustomPainter {
       final radius = 18.0 + (i % 3) * 6.0;
       // Hand-drawn-feeling blot: a circle nudged with two off-center
       // bumps via quadratic bezier. Stable shape per blot index.
-      final path = Path()
+      _inkblotPath
+        ..reset()
         ..moveTo(cx + radius, cy)
         ..quadraticBezierTo(cx + radius * 1.2, cy - radius * 0.3,
             cx + radius * 0.4, cy - radius)
@@ -709,7 +730,7 @@ class _ParticleBackdropPainter extends CustomPainter {
         ..quadraticBezierTo(cx + radius * 0.8, cy + radius * 1.0,
             cx + radius, cy)
         ..close();
-      canvas.drawPath(path, _inkblotPaint);
+      canvas.drawPath(_inkblotPath, _inkblotPaint);
     }
   }
 

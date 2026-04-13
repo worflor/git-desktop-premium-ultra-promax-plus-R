@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../../app/repository_state.dart';
 import '../../app/repository_xray_state.dart';
 import '../../backend/dtos.dart';
+import '../../backend/engram_fit.dart'
+    show branchLabelConverging, branchLabelDiverging, branchLabelSteady;
 import '../../components/icons/app_icons.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/interaction_feedback.dart';
@@ -370,6 +372,10 @@ class _Header extends StatelessWidget {
                       fontFamily: 'JetBrainsMono',
                     ),
                   ),
+                  if (snapshot.metabolism.activeDays > 0) ...[
+                    const SizedBox(height: 2),
+                    _MetabolismLine(metabolism: snapshot.metabolism),
+                  ],
                 ],
               ),
             ),
@@ -1132,6 +1138,26 @@ class _HotspotInspector extends StatelessWidget {
             label:
                 'owner${hotspot.ownerCount == 1 ? '' : 's'}'),
       ]),
+      if (hotspot.isKeystone) ...[
+        const SizedBox(height: 10),
+        // Keystone badge — a file in the top band of pull-per-touch.
+        // Reads as a structural observation, not a hotspot ranking.
+        Row(children: [
+          Icon(Icons.hub_outlined, size: 11, color: t.accentBright),
+          const SizedBox(width: 4),
+          Text(
+            hotspot.keystoneScore == null
+                ? 'keystone'
+                : 'keystone  φ=${hotspot.keystoneScore!.toStringAsFixed(2)}',
+            style: TextStyle(
+              color: t.accentBright,
+              fontSize: 9.5,
+              fontFamily: 'JetBrainsMono',
+              letterSpacing: 0.2,
+            ),
+          ),
+        ]),
+      ],
       const SizedBox(height: 10),
       _InspectorRow(
           label: 'last touched', value: hotspot.lastTouchedAt),
@@ -1484,6 +1510,157 @@ class _DenseBadge extends StatelessWidget {
   }
 }
 
+/// Compact metabolism readout for the X-Ray header. A tiny
+/// trajectory-coloured sparkline — no text. The visual *is* the
+/// statement: the line's shape, stroke weight, and glow all carry
+/// the signal (converging = warm accent, diverging = muted, steady =
+/// neutral; vitality from spectral radius scales stroke + halo).
+/// Hover tooltip still carries the numeric detail for anyone who
+/// wants it. Silent when the activity window is too short to fit.
+class _MetabolismLine extends StatelessWidget {
+  final RepositoryXrayMetabolismData metabolism;
+  const _MetabolismLine({required this.metabolism});
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final trajectory = metabolism.trajectoryLabel;
+    final accent = switch (trajectory) {
+      branchLabelConverging => t.accentBright,
+      branchLabelDiverging => t.textMuted,
+      branchLabelSteady => t.textStrong,
+      _ => t.textFaint,
+    };
+    final hl = metabolism.halfLifeDays;
+    final tooltipParts = [
+      if (trajectory.isNotEmpty) trajectory,
+      '|λ|=${metabolism.spectralRadius.toStringAsFixed(2)}',
+      if (hl != null) '${hl.round()}d half-life',
+    ];
+    return Tooltip(
+      message: tooltipParts.join(' · '),
+      waitDuration: const Duration(milliseconds: 400),
+      child: _Sparkline(
+        values: metabolism.sparkline,
+        color: accent,
+        width: 72,
+        height: 10,
+        // Spectral radius → visual vitality. Stroke weight and halo
+        // breathe with how alive the repo is. Dying repo reads as a
+        // hairline; sustained orbit breathes with a soft glow.
+        vitality: metabolism.spectralRadius,
+      ),
+    );
+  }
+}
+
+/// Tiny zero-chrome line sparkline. Values assumed normalised to
+/// [0, 1]; zero and out-of-range inputs render as a flat baseline
+/// instead of crashing.
+///
+/// The [vitality] parameter (Engram spectral radius, clamped to [0, 1])
+/// modulates how *alive* the line looks:
+///   * stroke width grows from ~0.8px (decaying repo) to ~2.2px
+///     (sustained orbit) — the line has more presence when the repo
+///     is homeostatic;
+///   * a Gaussian-blurred glow is painted underneath with alpha = the
+///     same vitality scalar — dying repos render as a flat line with
+///     no halo, sustained orbits get a soft breath around them.
+///
+/// Both effects degrade to "the old look" when vitality is null — no
+/// behavioural change for callers that don't pass the signal.
+class _Sparkline extends StatelessWidget {
+  final List<double> values;
+  final Color color;
+  final double width;
+  final double height;
+  final double? vitality;
+  const _Sparkline({
+    required this.values,
+    required this.color,
+    required this.width,
+    required this.height,
+    this.vitality,
+  });
+  @override
+  Widget build(BuildContext context) {
+    if (values.isEmpty) return SizedBox(width: width, height: height);
+    return SizedBox(
+      width: width,
+      height: height,
+      child: CustomPaint(
+        painter: _SparklinePainter(
+          values: values,
+          color: color,
+          vitality: vitality,
+        ),
+      ),
+    );
+  }
+}
+
+class _SparklinePainter extends CustomPainter {
+  final List<double> values;
+  final Color color;
+  final double? vitality;
+  _SparklinePainter({
+    required this.values,
+    required this.color,
+    this.vitality,
+  });
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length < 2) return;
+    // Build the path once, reuse for both glow + stroke passes.
+    final dx = size.width / (values.length - 1);
+    final path = Path();
+    for (var i = 0; i < values.length; i++) {
+      final v = values[i].clamp(0.0, 1.0);
+      final x = i * dx;
+      final y = size.height - v * size.height;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+
+    // Vitality ∈ [0, 1]. Spectral radius can bleed slightly past 1.0
+    // in near-sustained orbits (our orbit ceiling tolerance), so clamp.
+    final v = (vitality ?? 0).clamp(0.0, 1.0);
+
+    // Underglow: only drawn when there's meaningful vitality. A
+    // blurred stroke beneath the main line, alpha scaling with v —
+    // so a decaying repo paints no glow at all, a sustained orbit
+    // gets a soft breath. Blur sigma ties to the stroke width so the
+    // halo always looks proportional.
+    if (v > 0) {
+      final glowPaint = Paint()
+        ..color = color.withValues(alpha: 0.55 * v)
+        ..strokeWidth = 1.6 + 1.4 * v
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 1.2 + 1.4 * v);
+      canvas.drawPath(path, glowPaint);
+    }
+
+    // Main stroke. Width ramps from 0.8px (no vitality) to ~2.2px
+    // (fully orbital). The line has more *presence* in a living repo
+    // without shouting.
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.75)
+      ..strokeWidth = 0.8 + 1.4 * v
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparklinePainter old) =>
+      old.values != values ||
+      old.color != color ||
+      old.vitality != vitality;
+}
+
 // ── Territory: unified treemap of strata + hotspots ──────────────────────────
 //
 // Replaces the old Strata bars + Heat grid. Top-level directories become big
@@ -1491,6 +1668,22 @@ class _DenseBadge extends StatelessWidget {
 // parent stratum as smaller tiles. Orphan hotspots (no matching stratum) sit
 // as their own top-level tiles. Clicking any tile selects it — the inspector
 // on the right fills in with the corresponding stratum or hotspot details.
+
+// ── Parcel decoration alphas ──
+// Expressed as multipliers on the base `bgAlpha` (which itself comes
+// from the parcel's own role — region / child / orphan / selected).
+// Named so the relationships between normal, keystone, and selected
+// tiles read explicitly in the decoration block rather than as
+// scattered literals.
+const double _parcelGradientAlphaMul = 1.25; // normal warm-corner
+const double _keystoneGradientAlphaMul = 1.8; // warmer corner for keystones
+const double _parcelCoolCornerAlphaMul = 0.55; // diagonal fade target
+const double _parcelSelectedBorderAlpha = 0.6; // full selection border
+const double _parcelChromeBorderAlpha = 0.16; // neutral chrome border
+// Keystone border sits between selection (0.6) and chrome (0.16) —
+// midpoint ≈ 0.38, softened to 0.34 so the effect stays quieter
+// than a selection while still whispering structural importance.
+const double _keystoneBorderAlpha = 0.34;
 
 class _Parcel {
   final String key;
@@ -1503,6 +1696,12 @@ class _Parcel {
   final bool isChild;
   final VoidCallback onTap;
   final List<_Parcel> children;
+  /// Keystone bridge-file marker. Rendered as a stronger border +
+  /// warmer inner gradient stop so the tile reads as structurally
+  /// load-bearing before the user notices the tag text. Default false
+  /// so every non-hotspot-file parcel (directories, strata) stays
+  /// neutral.
+  final bool isKeystone;
 
   const _Parcel({
     required this.key,
@@ -1515,6 +1714,7 @@ class _Parcel {
     required this.isChild,
     required this.onTap,
     required this.children,
+    this.isKeystone = false,
   });
 }
 
@@ -1682,11 +1882,14 @@ class _TerritoryBoard extends StatelessWidget {
         accent: accent,
         value: h.touchCount.toDouble(),
         count: h.touchCount,
-        tagText: null,
+        // Keystone files get a compact `keystone` tag on their tile so
+        // they're visible in the overview, not just the inspector pane.
+        tagText: h.isKeystone ? 'keystone' : null,
         selected: selectedHotspotPath == h.path,
         isChild: isChild,
         onTap: () => onHotspotSelected(h.path),
         children: const [],
+        isKeystone: h.isKeystone,
       );
     }
 
@@ -1824,15 +2027,38 @@ class _TerritoryCell extends StatelessWidget {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    accent.withValues(alpha: bgAlpha * 1.25),
-                    accent.withValues(alpha: bgAlpha * 0.55),
+                    // Warm-corner alpha. Normal tiles sit at the base
+                    // multiplier (1.25). Keystones lift it to the
+                    // midpoint between normal and "fully saturated"
+                    // (1 + (2 - 1.25)·½ = 1.375·… rounded to a clean
+                    // factor below) so they read as denser than a
+                    // regular hotspot without shouting.
+                    accent.withValues(
+                      alpha: bgAlpha *
+                          (parcel.isKeystone
+                              ? _keystoneGradientAlphaMul
+                              : _parcelGradientAlphaMul),
+                    ),
+                    accent.withValues(alpha: bgAlpha * _parcelCoolCornerAlphaMul),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(radius),
                 border: Border.all(
                   color: selected
-                      ? accent.withValues(alpha: 0.6)
-                      : t.chromeBorder.withValues(alpha: 0.16),
+                      ? accent.withValues(alpha: _parcelSelectedBorderAlpha)
+                      // Non-selected keystones borrow a whisper of
+                      // accent: the midpoint between the neutral
+                      // chromeBorder and a full selection border
+                      // (`(0.16 + 0.6) / 2 ≈ 0.38`, softened down to
+                      // 0.34 so the effect stays quieter than a
+                      // selection). Pure derivation from the two
+                      // existing border alphas.
+                      : parcel.isKeystone
+                          ? accent.withValues(
+                              alpha: _keystoneBorderAlpha,
+                            )
+                          : t.chromeBorder
+                              .withValues(alpha: _parcelChromeBorderAlpha),
                 ),
               ),
               child: ClipRRect(
@@ -1995,10 +2221,6 @@ class _CadenceRhythmBoard extends StatelessWidget {
             (width - 32) +
         16;
 
-    final maxBurst = cadence
-        .where((c) => c.kind == 'burst')
-        .fold<int>(1, (m, c) => math.max(m, c.count));
-
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
       elevated: false,
@@ -2009,15 +2231,50 @@ class _CadenceRhythmBoard extends StatelessWidget {
         final w = box.maxWidth;
         final h = box.maxHeight;
         // Bottom chrome zones (stacked from the baseline down):
-        //   [dates: Apr 3 · Apr 10 · Apr 12]   ← one line under each burst
+        //   [dates: Apr 3 · Apr 10-12 · …]    ← one line under each bucket
         //   [reflog: ● 46]                     ← one line, accent marks
         const burstDateH = 14.0;
         const reflogH = 16.0;
+        const barWidth = 28.0;
+        // Minimum horizontal clearance between bucket centres: wide
+        // enough for the 44px date label under each bar to breathe
+        // against its neighbour. Bursts whose x-positions are closer
+        // than this collapse into a single bucket — preserves every
+        // count, just paints them as one "Feb 23–25" block instead of
+        // three bars on top of each other.
+        const bucketStride = 48.0;
         final barAreaH = h - burstDateH - reflogH;
         final maxBarH = (barAreaH - 20).clamp(10.0, double.infinity);
 
-        double barH(RepositoryXrayCadenceData item) =>
-            ((item.count / maxBurst).clamp(0.15, 1.0) * maxBarH)
+        // ── Bucketing pass ────────────────────────────────────────
+        // Sort bursts chronologically, then walk left-to-right
+        // merging any whose positions would collide.
+        final burstItems = [
+          for (final c in cadence)
+            if (c.kind == 'burst' && _cadenceDate(c) != null) c,
+        ]..sort((a, b) => _cadenceDate(a)!.compareTo(_cadenceDate(b)!));
+
+        final buckets = <_BurstBucket>[];
+        for (final item in burstItems) {
+          final x = xFor(_cadenceDate(item)!, w);
+          if (buckets.isNotEmpty &&
+              x - buckets.last.centerX < bucketStride) {
+            buckets.last.add(item, x);
+          } else {
+            buckets.add(_BurstBucket.start(item, x));
+          }
+        }
+
+        // Height scaling uses the largest bucket sum, not the
+        // largest single-day burst — otherwise a coalesced bucket
+        // (3 days of 60 commits each → 180) would visually overflow
+        // a single-day burst of 90. Post-bucket normalisation keeps
+        // the tallest visible bar occupying the same relative
+        // fraction of the chart regardless of clustering.
+        final maxBucketCount =
+            buckets.fold<int>(1, (m, b) => math.max(m, b.sumCount));
+        double barH(int count) =>
+            ((count / maxBucketCount).clamp(0.15, 1.0) * maxBarH)
                 .clamp(8.0, maxBarH);
 
         return Stack(clipBehavior: Clip.hardEdge, children: [
@@ -2101,66 +2358,71 @@ class _CadenceRhythmBoard extends StatelessWidget {
               ),
 
           // ── Burst bars + count labels + date labels ────────────
-          for (final item in cadence)
-            if (item.kind == 'burst' && _cadenceDate(item) != null) ...[
-              // The bar itself
-              Positioned(
-                left: (xFor(_cadenceDate(item)!, w) - 14)
-                    .clamp(0.0, w - 28),
-                top: barAreaH - barH(item),
-                width: 28,
-                height: barH(item),
-                child: Tooltip(
-                  message: item.detail.isNotEmpty
-                      ? item.detail
-                      : '${item.count} commits on ${item.label}',
-                  waitDuration: const Duration(milliseconds: 400),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: _cadenceAccent(t, 'burst')
-                          .withValues(alpha: 0.82),
-                      borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(4)),
-                    ),
+          //
+          // One bar per bucket. Singleton buckets look identical to
+          // the old single-day rendering. Merged buckets get a count
+          // badge showing the total + `×n` multiplier and a date
+          // range label, so three tightly-packed days appear as one
+          // tall bar reading "Feb 23–25 · 198 ×3" instead of three
+          // overlapping stubs.
+          for (final bucket in buckets) ...[
+            Positioned(
+              left: (bucket.centerX - barWidth / 2).clamp(0.0, w - barWidth),
+              top: barAreaH - barH(bucket.sumCount),
+              width: barWidth,
+              height: barH(bucket.sumCount),
+              child: Tooltip(
+                message: bucket.tooltipMessage(),
+                waitDuration: const Duration(milliseconds: 400),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _cadenceAccent(t, 'burst')
+                        .withValues(alpha: 0.82),
+                    borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(4)),
                   ),
                 ),
               ),
-              // Count label above the bar
-              Positioned(
-                left: (xFor(_cadenceDate(item)!, w) - 16)
-                    .clamp(0.0, w - 32),
-                top: math.max(0, barAreaH - barH(item) - 16),
-                width: 32,
-                child: Text(
-                  '${item.count}',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    fontFamily: 'JetBrainsMono',
-                  ),
+            ),
+            // Count label above the bar. Wider box when the bucket
+            // coalesces multiple bursts so the "×n" multiplier sits
+            // beside the total cleanly instead of wrapping.
+            Positioned(
+              left: (bucket.centerX - 20).clamp(0.0, w - 40),
+              top: math.max(0, barAreaH - barH(bucket.sumCount) - 16),
+              width: 40,
+              child: Text(
+                bucket.countLabel(),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  fontFamily: 'JetBrainsMono',
                 ),
               ),
-              // Date label below the bar (Apr 3, Apr 10, Apr 12...)
-              Positioned(
-                left: (xFor(_cadenceDate(item)!, w) - 22)
-                    .clamp(0.0, w - 44),
-                top: barAreaH + 2,
-                width: 44,
-                child: Text(
-                  _fmtDateMD(_cadenceDate(item)!),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'JetBrainsMono',
-                    letterSpacing: 0.2,
-                  ),
+            ),
+            // Date label below the bar — singleton shows one date,
+            // bucket shows the span.
+            Positioned(
+              left: (bucket.centerX - 24).clamp(0.0, w - 48),
+              top: barAreaH + 2,
+              width: 48,
+              child: Text(
+                bucket.dateLabel(),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'JetBrainsMono',
+                  letterSpacing: 0.2,
                 ),
               ),
-            ],
+            ),
+          ],
 
           // ── Reflog markers (centered under their date column) ──
           // Same 44px-wide anchor as the burst date label above, so when a
@@ -2226,6 +2488,82 @@ class _CadenceRhythmBoard extends StatelessWidget {
         ]);
       }),
     );
+  }
+}
+
+/// Coalesced group of adjacent cadence bursts. When consecutive-day
+/// bursts would paint at overlapping pixel positions (because the repo's
+/// total span is wide relative to the chart's width), they merge into
+/// one bucket that renders as a single bar carrying the summed count.
+/// The label vocabulary absorbs the merge: "Apr 3" stays itself,
+/// "Apr 3–5" replaces three collided stubs. Restrained — a single-day
+/// bucket behaves identically to the pre-rework single-burst render.
+class _BurstBucket {
+  final List<RepositoryXrayCadenceData> items;
+  final double centerX;
+  int sumCount;
+
+  _BurstBucket._({
+    required this.items,
+    required this.centerX,
+    required this.sumCount,
+  });
+
+  factory _BurstBucket.start(
+    RepositoryXrayCadenceData item,
+    double x,
+  ) => _BurstBucket._(
+        items: [item],
+        centerX: x,
+        sumCount: item.count,
+      );
+
+  void add(RepositoryXrayCadenceData item, double x) {
+    items.add(item);
+    sumCount += item.count;
+    // centerX stays anchored at the first item's position — prevents
+    // a growing bucket from sliding rightward and colliding with the
+    // next singleton.
+  }
+
+  /// Count label — a plain integer for singleton buckets, the sum
+  /// plus a multiplier for merged buckets so the reader sees both
+  /// "how much activity" and "how many days it spans" at a glance.
+  String countLabel() {
+    if (items.length == 1) return '${items.first.count}';
+    return '$sumCount ×${items.length}';
+  }
+
+  /// Date label — one `MMM d` for singleton, `MMM d–d` for a bucket
+  /// spanning within one month, `MMM d–MMM d` for cross-month ranges.
+  String dateLabel() {
+    if (items.length == 1) {
+      final d = _cadenceDate(items.first);
+      return d == null ? items.first.label : _fmtDateMD(d);
+    }
+    final first = _cadenceDate(items.first);
+    final last = _cadenceDate(items.last);
+    if (first == null || last == null) return items.first.label;
+    final sameMonth = first.month == last.month && first.year == last.year;
+    if (sameMonth) {
+      return '${_fmtDateMD(first)}–${last.day}';
+    }
+    return '${_fmtDateMD(first)}–${_fmtDateMD(last)}';
+  }
+
+  String tooltipMessage() {
+    if (items.length == 1) {
+      final item = items.first;
+      return item.detail.isNotEmpty
+          ? item.detail
+          : '${item.count} commits on ${item.label}';
+    }
+    // Multi-day bucket — list per-day breakdown so the tooltip still
+    // carries the full data under the coalesced bar.
+    final lines = items
+        .map((i) => '${i.label}: ${i.count}')
+        .join('\n');
+    return '$sumCount commits · ${items.length} days\n$lines';
   }
 }
 

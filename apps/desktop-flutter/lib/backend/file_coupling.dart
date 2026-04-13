@@ -1,8 +1,16 @@
 import 'dart:convert' show LineSplitter;
 import 'dart:math' as math;
 
+import 'engram_fit.dart';
 import 'git.dart';
 import 'git_result.dart';
+
+/// Separator token planted into `git log` custom formats so downstream
+/// parsers can identify commit boundaries without regex. Chosen to be
+/// unambiguous vs filename characters (ASCII only, no whitespace, no
+/// git-ref-legal character). Shared across every call site that parses
+/// `--format=${logCommitSeparator}%H` output.
+const String logCommitSeparator = '__C__';
 
 /// Co-change coupling: files appearing in the same commit over and over are
 /// *semantically* related. This is the truth git already holds — we just have
@@ -31,12 +39,23 @@ class FileCouplingMatrix {
 
   /// Coherence of a *set* of files: the mean of all pairwise scores.
   /// Returns 1.0 for ≤1 files (trivially coherent — nothing to compare).
-  /// Used as a "semantic resonance" signal on PR rows: high = the PR
-  /// touches files that historically move together (a focused change);
-  /// low = scattered worklines (a sweep, a chore, or an unfocused PR).
+  ///
+  /// Confidence gating: a brand-new repo with a handful of commits will
+  /// produce *false-confident* Jaccard scores — every pair appears
+  /// together because every commit touched every file once. We gate
+  /// coherence on the matrix's underlying commit count, returning the
+  /// max-uncertainty prior (0.5) when there isn't enough data to trust
+  /// the signal. Matches the BornMixer's confidence-gate philosophy
+  /// applied at the coherence level.
+  ///
+  /// Threshold of 50 commits chosen so that typical refactor churn
+  /// inside a feature branch (a few dozen commits) doesn't produce
+  /// spurious "tight coupling" reports before the history is
+  /// statistically meaningful.
   double coherenceFor(Iterable<String> paths) {
     final list = paths.toList();
     if (list.length < 2) return 1.0;
+    if (commitsAnalyzed < 50) return 0.5;
     double sum = 0.0;
     int pairs = 0;
     for (var i = 0; i < list.length; i++) {
@@ -65,28 +84,38 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   String repo, {
   int commitLimit = 1000,
   int largeCommitCutoff = 60,
+  // Exponential decay half-life measured in commits. A commit at rank
+  // [halfLifeCommits] contributes half as much as the tip. Set to 0 or
+  // a negative number to disable (pure count-based Jaccard, legacy
+  // behaviour). Pass null to *derive* a per-repo half-life via
+  // [deriveEngramHalfLife] — an AR(2) oscillator fit on the commit
+  // similarity trajectory. Rationale: a 50-commit greenfield repo and
+  // a 50k-commit monorepo deserve different memory depths. Null is the
+  // production default; tests and regression-pinning pass a number.
+  double? halfLifeCommits,
 }) async {
   final logProbe = await runGitProbe(repo, [
     'log',
     '-n', '$commitLimit',
     '--no-merges',
     '--name-only',
-    '--format=__C__%H',
+    '--format=$logCommitSeparator%H',
   ]);
   if (logProbe.exitCode != 0) {
     return GitResult.err(logProbe.stderr.toString().trim());
   }
 
   // Parse in one pass — avoid building intermediate String list per line.
-  // Commit separator lines look like "__C__<sha>"; we extract HEAD from the
-  // first one and commit hashes are otherwise ignored.
+  // Commit separator lines look like "${logCommitSeparator}<sha>"; we
+  // extract HEAD from the first one and commit hashes are otherwise ignored.
   final stdout = logProbe.stdout.toString();
   String headHash = '';
   final commits = <List<String>>[];
   List<String>? current;
+  final sepLen = logCommitSeparator.length;
 
   for (final rawLine in const LineSplitter().convert(stdout)) {
-    if (rawLine.startsWith('__C__')) {
+    if (rawLine.startsWith(logCommitSeparator)) {
       if (current != null &&
           current.isNotEmpty &&
           current.length <= largeCommitCutoff) {
@@ -94,7 +123,7 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
       }
       current = <String>[];
       if (headHash.isEmpty) {
-        headHash = rawLine.substring(5).trim();
+        headHash = rawLine.substring(sepLen).trim();
       }
       continue;
     }
@@ -109,14 +138,31 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
     commits.add(current);
   }
 
-  // One pass: per-file commit count + per-pair co-count. Only upper-triangle
-  // (a < b lexicographic) — cuts pair inserts in half. Score lookup checks
-  // both orders.
-  final fileCommits = <String, int>{};
-  final pairCount = <String, Map<String, int>>{};
-  for (final files in commits) {
+  // Resolve the effective half-life. Null caller → derive it from the
+  // signal via [deriveEngramHalfLife]; a number → use it verbatim.
+  final double effectiveHalfLife = halfLifeCommits == null
+      ? _deriveAdaptiveHalfLife(commits)
+      : halfLifeCommits;
+  // Commits are in reverse-chrono order — index 0 is the most recent.
+  // Per-commit weight w_i = 2^(-i / halfLife). At halfLife=200,
+  // w_0 = 1.0, w_200 = 0.5, w_400 = 0.25, w_1000 ≈ 0.03. Weighted
+  // Jaccard preserves [0, 1] range because the inclusion-exclusion
+  // identity |A∩B| / |A∪B| = co / (Na + Nb - co) is linear in the
+  // underlying counts: substituting weighted sums keeps it sound.
+  double commitWeight(int rank) {
+    if (effectiveHalfLife <= 0) return 1.0;
+    return math.pow(0.5, rank / effectiveHalfLife).toDouble();
+  }
+
+  // One pass: per-file weighted commit "count" + per-pair weighted co-
+  // count. Only upper-triangle (a < b lexicographic) — halves inserts.
+  final fileCommits = <String, double>{};
+  final pairCount = <String, Map<String, double>>{};
+  for (var rank = 0; rank < commits.length; rank++) {
+    final files = commits[rank];
+    final w = commitWeight(rank);
     for (final f in files) {
-      fileCommits[f] = (fileCommits[f] ?? 0) + 1;
+      fileCommits[f] = (fileCommits[f] ?? 0) + w;
     }
     final n = files.length;
     if (n < 2) continue;
@@ -124,16 +170,16 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
       final a = files[i];
       for (var j = i + 1; j < n; j++) {
         final b = files[j];
-        // Lexicographic ordering → store once, halve memory.
         final lo = a.compareTo(b) < 0 ? a : b;
         final hi = a.compareTo(b) < 0 ? b : a;
         final row = pairCount.putIfAbsent(lo, () => {});
-        row[hi] = (row[hi] ?? 0) + 1;
+        row[hi] = (row[hi] ?? 0) + w;
       }
     }
   }
 
-  // Jaccard: |A ∩ B| / |A ∪ B| = co / (Na + Nb - co)
+  // Jaccard: |A ∩ B| / |A ∪ B| = co / (Na + Nb - co), with the counts
+  // now being time-weighted sums instead of integers. Still in [0, 1].
   final jaccard = <String, Map<String, double>>{};
   pairCount.forEach((a, row) {
     final na = fileCommits[a] ?? 0;
@@ -156,6 +202,81 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
     commitsAnalyzed: commits.length,
   ));
 }
+
+/// Half-life clamp band. Half-life is measured in commits.
+///
+/// The floor [_halfLifeMin] is the point where the exponential kernel
+/// concentrates ~99% of its mass inside the most recent ~7·halfLife
+/// commits (7·ln(2) ≈ 4.85, so 2⁻⁷ ≈ 1%). Below 50 the tail becomes
+/// sparse enough that a single unusual recent commit dominates the
+/// Jaccard signal. Empirically the minimum sustainable window.
+///
+/// The ceiling [_halfLifeMax] is the reciprocal concern on big
+/// monorepos — beyond this, files that co-changed a year ago still
+/// carry near-equal weight to yesterday's edit, and the matrix
+/// effectively degenerates toward count-based Jaccard.
+const double _halfLifeMin = 50.0;
+const double _halfLifeMax = 500.0;
+
+/// Fraction of the analysed window the fallback half-life occupies.
+/// Picking halfLife = n/[_fallbackHalfLifeDivisor] means the most
+/// recent 25% of commits holds ≈ 87.5% of the weight (1 - 2⁻³).
+/// That matches the "new edits should dominate but old ones still
+/// count" intuition without needing a fit.
+const int _fallbackHalfLifeDivisor = 4;
+
+/// Fallback half-life when the Engram fit can't run (too few commits,
+/// degenerate signal). Proportional to the analysable window so tiny
+/// repos get a tighter half-life than big ones.
+double _fallbackHalfLife(int commitCount) =>
+    (commitCount / _fallbackHalfLifeDivisor)
+        .clamp(_halfLifeMin, _halfLifeMax)
+        .toDouble();
+
+/// Derive an adaptive half-life (in commits) from the shape of the
+/// history itself. Implements the Whisper Engram principle: block size
+/// is a property of the data, not a parameter anyone chose.
+///
+/// Algorithm:
+///   1. Build the consecutive-commit Jaccard series via the shared
+///      helper [consecutiveJaccardSeries]. This is the "trajectory" of
+///      how fast the working set turns over — highly correlated = slow
+///      drift (monorepo), oscillating near 0 = fast topic changes.
+///   2. Centre the sequence so the AR(2) fit isn't biased by the
+///      baseline similarity.
+///   3. Fit z[n] = K·z[n-1] − G·z[n-2]. Spectral radius |λ| is the
+///      per-step decay factor; half-life = −ln(2)/ln|λ|.
+///   4. Clamp to the production band; fall back to a size-proportional
+///      heuristic when the fit degenerates (short / non-orbital /
+///      divergent).
+///
+/// Public so the derivation can be exercised in isolation by tests.
+double deriveEngramHalfLife(List<List<String>> commitFileLists) {
+  final n = commitFileLists.length;
+  // Fit needs at least `engramMinSamples` similarity values, and the
+  // similarity series has length n-1. +1 margin for the centring pass.
+  if (n < engramMinSamples + 2) return _fallbackHalfLife(n);
+
+  final fileSets = commitFileLists.map((c) => c.toSet()).toList();
+  final sims = consecutiveJaccardSeries(fileSets);
+
+  // Centre the signal. AR(2) on a biased series fits the mean instead
+  // of the dynamics.
+  var mean = 0.0;
+  for (final s in sims) {
+    mean += s;
+  }
+  mean /= sims.length;
+  final centred = List<double>.generate(sims.length, (i) => sims[i] - mean);
+
+  final fit = engramFit(centred);
+  final hl = fit.halfLifeSamples;
+  if (hl == null) return _fallbackHalfLife(n);
+  return hl.clamp(_halfLifeMin, _halfLifeMax);
+}
+
+double _deriveAdaptiveHalfLife(List<List<String>> commits) =>
+    deriveEngramHalfLife(commits);
 
 /// How files are ordered in the change list once they've been clustered.
 enum FileSortGuide {

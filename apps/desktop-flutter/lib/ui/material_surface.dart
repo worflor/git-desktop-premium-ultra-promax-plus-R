@@ -314,14 +314,24 @@ class MaterialSurface extends StatelessWidget {
 }
 
 class MaterialRuntimeCache {
-  static final _cache = <String, SurfaceMaterialRuntime>{};
+  // Two-level identity-keyed cache. Was a single Map<String,_> with a
+  // per-call key built via string-interpolation +
+  // `dpr.toStringAsFixed(2)` — that ran on every `MaterialSurface.build`,
+  // which is every visible surface every rebuild. Now: per-theme map,
+  // identity-compared shader → no allocation in the hot path.
+  static final Map<AppThemeId,
+          Map<SurfaceMaterialShader, SurfaceMaterialRuntime>>
+      _cache = {};
 
   static SurfaceMaterialRuntime of(
       AppTokens tokens, SurfaceMaterialShader shader) {
+    final perTheme = _cache.putIfAbsent(tokens.id, () => {});
+    final cached = perTheme[shader];
+    if (cached != null) return cached;
     final dpr = PlatformDispatcher.instance.implicitView?.devicePixelRatio ?? 1;
-    final key =
-        '${tokens.id.name}:${shader.hashCode}:${dpr.toStringAsFixed(2)}';
-    return _cache.putIfAbsent(key, () => _compute(tokens, shader, dpr));
+    final r = _compute(tokens, shader, dpr);
+    perTheme[shader] = r;
+    return r;
   }
 
   static SurfaceMaterialRuntime _compute(

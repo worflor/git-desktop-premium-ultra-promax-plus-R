@@ -88,7 +88,7 @@ void main() {
       expect(result.ok, isTrue);
       expect(
         result.data,
-        r'C:/repo|feature/xray|deadbeefcafebabe|2',
+        r'C:/repo|feature/xray|deadbeefcafebabe|2|s1|u1',
       );
     });
 

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../backend/git.dart';
 import '../backend/dtos.dart';
+import '../backend/logos_git_resolver.dart' as logos;
 
 class RepositoryState extends ChangeNotifier {
   String? _activePath;
@@ -88,6 +89,16 @@ class RepositoryState extends ChangeNotifier {
 
       notifyListeners();
       await refreshStatus();
+
+      // Pre-warm the Logos engine in the background. First review on a
+      // fresh repo otherwise pays the full build cost (1-3s of git log
+      // + graph construction) on the critical path. This eats the
+      // latency while the user is still orienting. Fire-and-forget —
+      // the resolver de-dupes concurrent builds so redundant calls are
+      // cheap, and failure just logs to diagnostics without surfacing.
+      // ignore: unawaited_futures
+      logos.resolveLogosGit(resolvedPath).catchError((_) => null);
+
       return null;
     } catch (error) {
       return error.toString();

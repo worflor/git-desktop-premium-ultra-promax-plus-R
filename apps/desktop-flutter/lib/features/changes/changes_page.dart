@@ -21,8 +21,10 @@ import '../../backend/ai.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
+import '../../backend/logos_git.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/file_coupling_state.dart';
+import '../../app/logos_git_state.dart';
 import '../../app/preferences_state.dart';
 import '../../app/repository_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
@@ -1219,9 +1221,20 @@ class _ChangesPageState extends State<ChangesPage> {
         sourceLabel: '◈ shape → index · "$trimmed"',
         stageMode: true,
         onApplied: () {
-          // Popover manages its own controller lifecycle now — no
-          // page-level reset needed. refreshStatus fires downstream
-          // from the preview dialog's onApplied path.
+          // Successful stage → exit shape-mode, clear the sentence,
+          // move focus to the commit message field so the user can
+          // immediately write the commit for what was just staged.
+          // Without this the user is stranded in an empty (or stale)
+          // shape field and has to click ◈ again, which is ~15 wasted
+          // clicks over a 15-commit marathon session.
+          if (!mounted) return;
+          _shapeCtrl.clear();
+          if (_shapeMode) {
+            setState(() => _shapeMode = false);
+          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _commitMsgFocusNode.requestFocus();
+          });
         },
         onRefine: (refinement) async {
           // Stack refinement onto the original sentence so the AI sees
@@ -1624,10 +1637,16 @@ class _ChangesPageState extends State<ChangesPage> {
   Future<void> _copyReviewReport(AiCommitReviewData review) async {
     final buffer = StringBuffer()
       ..writeln('${review.verdict} | ${review.score}')
-      ..writeln(review.summary)
-      ..writeln()
-      ..writeln('RR')
-      ..writeln(review.reasoningReport);
+      ..writeln(review.summary);
+    // Skip the RR section entirely when the model didn't return
+    // reasoning — avoids dumping a stray "RR" header with no body
+    // into the user's clipboard.
+    if (review.reasoningReport.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('RR')
+        ..writeln(review.reasoningReport);
+    }
     if (review.findings.isNotEmpty) {
       buffer.writeln();
       buffer.writeln('Findings');
@@ -1924,9 +1943,21 @@ class _ChangesPageState extends State<ChangesPage> {
         '${status?.ahead ?? 0}|${status?.behind ?? 0}';
     if (_couplingKickedOffFor != couplingStateKey) {
       _couplingKickedOffFor = couplingStateKey;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
-        context.read<FileCouplingState>().loadForRepo(repoPath);
+        final couplingState = context.read<FileCouplingState>();
+        await couplingState.loadForRepo(repoPath);
+        if (!mounted) return;
+        // Chain: once the coupling matrix is warm, immediately warm the
+        // LogosGit engine too — it needs the matrix for the CC axis and
+        // reusing the cached one saves a second 1000-commit log walk.
+        final matrix = couplingState.matrixFor(repoPath);
+        if (matrix != null) {
+          // ignore: use_build_context_synchronously
+          context
+              .read<LogosGitState>()
+              .loadForRepo(repoPath, coupling: matrix);
+        }
       });
     }
     // Refresh per-file impact weights whenever the status signature
@@ -2050,6 +2081,28 @@ class _ChangesPageState extends State<ChangesPage> {
           )
         : FileClusters.empty(_currentPaths);
 
+    // Within-cluster φ re-ranking. When the 'related' sort guide is
+    // active and the Logos engine is warm, sort cluster members by the
+    // diffusion pull from currently-included files. Cluster grouping
+    // (which files belong to which cluster) stays intact — the cluster
+    // stripe rendering still works — but members within each cluster
+    // are re-ordered by relevance to the user's staging intent.
+    //
+    // At t=0.5 the diffusion is tight (1-hop-ish), so "related" here
+    // means "historically moves with what you just staged," not the
+    // broader architectural orbit.
+    final logosEngine = preferences.fileSortGuide == 'related'
+        ? context.watch<LogosGitState>().engineFor(repoPath)
+        : null;
+    final orderedPaths = (logosEngine != null && _includedPaths.isNotEmpty)
+        ? _logosRerankedOrder(
+            clusters: clusters,
+            engine: logosEngine,
+            sources: _includedPaths,
+            inverted: preferences.fileSortInverted,
+          )
+        : clusters.orderedPaths;
+
     final inspectionOverridePath = _inspectionDiffPath;
     final inspectingSingleDiff = includedFiles.length > 1 &&
         inspectionOverridePath != null &&
@@ -2160,12 +2213,11 @@ class _ChangesPageState extends State<ChangesPage> {
                               for (final f in status.files) f.path: f
                             };
                             final ordered = <RepositoryStatusFile>[
-                              for (final p in clusters.orderedPaths)
+                              for (final p in orderedPaths)
                                 if (fileByPath[p] != null) fileByPath[p]!,
                             ];
                             // Defensive: any file that didn't land in ordered.
-                            final orderedSet =
-                                clusters.orderedPaths.toSet();
+                            final orderedSet = orderedPaths.toSet();
                             for (final f in status.files) {
                               if (!orderedSet.contains(f.path)) ordered.add(f);
                             }
@@ -2373,22 +2425,53 @@ class _ChangesPageState extends State<ChangesPage> {
                         const SizedBox(height: 8),
                         Focus(
                           onKeyEvent: (node, event) {
-                            if (event is! KeyDownEvent ||
-                                event.logicalKey != LogicalKeyboardKey.enter) {
+                            if (event is! KeyDownEvent) {
                               return KeyEventResult.ignored;
                             }
-                            if (HardwareKeyboard.instance.isControlPressed ||
-                                HardwareKeyboard.instance.isMetaPressed) {
-                              _commit(
-                                repoPath,
-                                status,
-                                mode: primaryAction.syncAfterCommit
-                                    ? _CommitRunMode.commitAndSync
-                                    : _CommitRunMode.commitOnly,
-                              );
+                            // Esc: in shape-mode, exit back to the commit
+                            // draft. Sentence is preserved in _shapeCtrl;
+                            // toggling back later restores it.
+                            if (event.logicalKey ==
+                                    LogicalKeyboardKey.escape &&
+                                _shapeMode) {
+                              _toggleShapeMode();
                               return KeyEventResult.handled;
                             }
-                            return KeyEventResult.ignored;
+                            if (event.logicalKey !=
+                                LogicalKeyboardKey.enter) {
+                              return KeyEventResult.ignored;
+                            }
+                            final ctrlOrMeta =
+                                HardwareKeyboard.instance.isControlPressed ||
+                                    HardwareKeyboard.instance.isMetaPressed;
+                            if (!ctrlOrMeta) return KeyEventResult.ignored;
+                            // Ctrl/Cmd+Enter routing depends on mode:
+                            //   - shape-mode: fire the shape ask (not
+                            //     commit — that would fire _commit on a
+                            //     stale draft, an incident-class footgun).
+                            //   - commit-mode: run the commit.
+                            if (_shapeMode) {
+                              final text = _shapeCtrl.text.trim();
+                              if (text.isEmpty || _shaping) {
+                                return KeyEventResult.handled;
+                              }
+                              final cats = _shapeCategories(aiSettings);
+                              if (cats.isEmpty) return KeyEventResult.handled;
+                              final cat = cats[_shapeCategoryIndex
+                                  .clamp(0, cats.length - 1)];
+                              // Fire-and-forget — the dialog is modal, the
+                              // key handler returns immediately.
+                              _runShape(repoPath, status, text, cat);
+                              return KeyEventResult.handled;
+                            }
+                            _commit(
+                              repoPath,
+                              status,
+                              mode: primaryAction.syncAfterCommit
+                                  ? _CommitRunMode.commitAndSync
+                                  : _CommitRunMode.commitOnly,
+                            );
+                            return KeyEventResult.handled;
                           },
                           child: _CommitComposerField(
                             tokens: t,
@@ -2403,7 +2486,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                 ? _shapeFocus
                                 : _commitMsgFocusNode,
                             hintText: _shapeMode
-                                ? 'describe what to stage, in your own words'
+                                ? 'describe what to stage  ·  e.g. "only the test changes"  ·  ⌘↵ to ask  ·  Esc to exit'
                                 : 'Commit message...',
                             shapeMode: _shapeMode,
                             enabled: !_actionRunning,
@@ -2444,8 +2527,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                 !_shaping,
                             shapeLoading: _shaping,
                             shapeTooltip: _shapeMode
-                                ? 'exit shape · back to commit message'
-                                : 'shape commit · in your own words, not code',
+                                ? 'exit · restore your commit draft'
+                                : 'stage files by describing them',
                             onToggleShape: status.files.isEmpty
                                 ? null
                                 : _toggleShapeMode,
@@ -2465,6 +2548,13 @@ class _ChangesPageState extends State<ChangesPage> {
                               if (cats.isEmpty) return;
                               setState(() => _shapeCategoryIndex =
                                   (_shapeCategoryIndex + 1) % cats.length);
+                            },
+                            onCycleBack: () {
+                              final cats = _shapeCategories(aiSettings);
+                              if (cats.length < 2) return;
+                              setState(() => _shapeCategoryIndex =
+                                  (_shapeCategoryIndex - 1 + cats.length) %
+                                      cats.length);
                             },
                             onAsk: () async {
                               final text = _shapeCtrl.text.trim();
@@ -2770,6 +2860,56 @@ class _CombinedDiffSection {
     required this.index,
     required this.startLine,
   });
+}
+
+/// Re-rank `clusters.orderedPaths` within each cluster by diffusion pull
+/// from the currently-staged file set. Cluster boundaries are preserved
+/// so the visual grouping (cluster stripes) stays intact; only the
+/// member order inside each cluster changes.
+///
+/// Sources (files already included) float to the top of their cluster.
+/// Remaining members sort by φ descending — the file most strongly
+/// coupled to what's staged comes next.
+///
+/// Temperature t=0.5: tight, 1-hop-ish. "Files that historically move
+/// with what you just staged," not the broader architectural orbit.
+List<String> _logosRerankedOrder({
+  required FileClusters clusters,
+  required LogosGit engine,
+  required Set<String> sources,
+  bool inverted = false,
+}) {
+  if (sources.isEmpty) return clusters.orderedPaths;
+  final scores = engine.diffuse(sources, t: 0.5);
+  if (scores.isEmpty) return clusters.orderedPaths;
+  final phiByPath = <String, double>{
+    for (final s in scores) s.path: s.phi,
+  };
+
+  // Walk the original ordering once, collecting cluster runs on first
+  // encounter of each cluster ID. Sort each run by (isSource desc, φ desc
+  // with `inverted` flipping the φ direction).
+  final seen = <int>{};
+  final result = <String>[];
+  for (final p in clusters.orderedPaths) {
+    final cid = clusters.byPath[p] ?? FileClusters.clusterIdIsolated;
+    if (seen.contains(cid)) continue;
+    seen.add(cid);
+    final members = [
+      for (final q in clusters.orderedPaths)
+        if ((clusters.byPath[q] ?? FileClusters.clusterIdIsolated) == cid)
+          q,
+    ]..sort((a, b) {
+        final aIsSource = sources.contains(a);
+        final bIsSource = sources.contains(b);
+        if (aIsSource != bIsSource) return aIsSource ? -1 : 1;
+        final pa = phiByPath[a] ?? 0.0;
+        final pb = phiByPath[b] ?? 0.0;
+        return inverted ? pa.compareTo(pb) : pb.compareTo(pa);
+      });
+    result.addAll(members);
+  }
+  return result;
 }
 
 List<_CombinedDiffSection> _parseCombinedDiffSections(String diffContent) {
@@ -3368,19 +3508,6 @@ class _CommitReviewPane extends StatelessWidget {
                               style: TextStyle(color: tokens.textFaint),
                             ),
                             TextSpan(text: modelLabel),
-                            if (review.usedCondensedDiff) ...[
-                              TextSpan(
-                                text: '  ·  ',
-                                style: TextStyle(color: tokens.textFaint),
-                              ),
-                              TextSpan(
-                                text: 'condensed',
-                                style: TextStyle(
-                                  color: AppSeverityPalette.caution.withValues(alpha: 0.7),
-                                  fontSize: 10,
-                                ),
-                              ),
-                            ],
                           ],
                         ),
                         maxLines: 1,
@@ -3475,23 +3602,28 @@ class _CommitReviewPane extends StatelessWidget {
                     height: 1.35,
                   ),
                 ),
-                const SizedBox(height: 10),
-                _ReviewDisclosureCard(
-                  tokens: tokens,
-                  label: 'Why this review landed here',
-                  expanded: reasoningExpanded,
-                  preview: review.reasoningReport,
-                  onToggle: onToggleReasoning,
-                  child: resonanceText(
-                    review.reasoningReport,
-                    tokens,
-                    baseStyle: TextStyle(
-                      color: tokens.textNormal,
-                      fontSize: 11.2,
-                      height: 1.5,
+                // Reasoning is soft-required at the parser layer (some
+                // models omit `<summary_reasoning>`). Hide the whole
+                // disclosure when there's nothing to disclose.
+                if (review.reasoningReport.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _ReviewDisclosureCard(
+                    tokens: tokens,
+                    label: 'Why this review landed here',
+                    expanded: reasoningExpanded,
+                    preview: review.reasoningReport,
+                    onToggle: onToggleReasoning,
+                    child: resonanceText(
+                      review.reasoningReport,
+                      tokens,
+                      baseStyle: TextStyle(
+                        color: tokens.textNormal,
+                        fontSize: 11.2,
+                        height: 1.5,
+                      ),
                     ),
                   ),
-                ),
+                ],
                 const SizedBox(height: 12),
                 Text(
                   review.findings.isEmpty ? 'No findings' : 'Findings',
@@ -4771,7 +4903,11 @@ class _ShapeAskButton extends StatefulWidget {
   final int categoryIndex;
   final bool busy;
   final bool enabled;
+  /// Forward cycle (click or Space). Chevron.
   final VoidCallback onCycle;
+  /// Backward cycle (shift-click on chevron). Optional — dropped when
+  /// only 1 or 2 categories are configured (backward == forward).
+  final VoidCallback? onCycleBack;
   final VoidCallback onAsk;
 
   const _ShapeAskButton({
@@ -4781,6 +4917,7 @@ class _ShapeAskButton extends StatefulWidget {
     required this.busy,
     required this.enabled,
     required this.onCycle,
+    this.onCycleBack,
     required this.onAsk,
   });
 
@@ -4812,155 +4949,176 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
       enabled: widget.enabled && hasCats,
     );
 
-    return AnimatedOpacity(
-      duration: context.motion(const Duration(milliseconds: 180)),
-      opacity: widget.busy && !_anyHovered ? 0.45 : 1.0,
+    final mainEnabled = widget.enabled && hasCats && !widget.busy;
+    final chevEnabled = hasCats && widget.categories.length > 1;
+
+    // Two-layer split: the VISUAL sits inside Transform.translate/scale
+    // so chrome (offset + scale on hover/press) reads as depth. The
+    // HIT-TEST layer is a Stack sibling that stays at a fixed size so
+    // MouseRegion/GestureDetector bounds never shift mid-interaction.
+    // This fixes the "needs to be spammed" oscillation caused by the
+    // transform moving the target out from under the pointer near edges.
+    final visual = IgnorePointer(
       child: Transform.translate(
         offset: chrome.offset,
         child: Transform.scale(
           scale: chrome.scale,
-          child: SizedBox(
-            height: 36,
-            child: AnimatedContainer(
-              duration: context.motion(const Duration(milliseconds: 100)),
-              decoration: BoxDecoration(
-                color: chrome.background,
-                gradient: chrome.gradient,
-                borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.radius),
-                border: Border.all(color: chrome.borderColor),
-                boxShadow: chrome.shadows,
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(
-                    (context.surfaceShader.geometry.radius - 1)
-                        .clamp(0, double.infinity)),
-                child: Row(
-                  children: [
-                    // Main "ask with [category]" area
-                    Expanded(
-                      child: MouseRegion(
-                        cursor: widget.enabled && hasCats
-                            ? SystemMouseCursors.click
-                            : SystemMouseCursors.basic,
-                        onEnter: (_) => setState(() => _mainHovered = true),
-                        onExit: (_) => setState(() => _mainHovered = false),
-                        child: GestureDetector(
-                          onTap: (widget.enabled && hasCats && !widget.busy)
-                              ? widget.onAsk
-                              : null,
-                          onTapDown: widget.enabled && hasCats
-                              ? (_) => setState(() => _mainPressed = true)
-                              : null,
-                          onTapCancel: () =>
-                              setState(() => _mainPressed = false),
-                          onTapUp: (_) =>
-                              setState(() => _mainPressed = false),
-                          child: Center(
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  '↵',
-                                  style: TextStyle(
-                                    color: widget.enabled && hasCats
-                                        ? t.btnText
-                                        : t.textMuted,
-                                    fontSize: 12,
-                                    fontFamily: 'JetBrainsMono',
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                // Inner cross-fade so cycling the
-                                // category re-labels the button without
-                                // a layout jump.
-                                AnimatedSwitcher(
-                                  duration: context.motion(
-                                      const Duration(milliseconds: 140)),
-                                  switchInCurve: Curves.easeOutCubic,
-                                  switchOutCurve: Curves.easeInCubic,
-                                  child: Text(
-                                    hasCats
-                                        ? widget.busy
-                                            ? 'asking with $activeCat…'
-                                            : 'ask with $activeCat'
-                                        : 'no AI model configured',
-                                    key: ValueKey(
-                                        '${widget.busy}|$activeCat'),
-                                    style: TextStyle(
-                                      color: widget.enabled && hasCats
-                                          ? t.btnText
-                                          : t.textMuted,
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ],
+          child: AnimatedContainer(
+            duration: context.motion(const Duration(milliseconds: 100)),
+            decoration: BoxDecoration(
+              color: chrome.background,
+              gradient: chrome.gradient,
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.radius),
+              border: Border.all(color: chrome.borderColor),
+              boxShadow: chrome.shadows,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(
+                  (context.surfaceShader.geometry.radius - 1)
+                      .clamp(0, double.infinity)),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '↵',
+                            style: TextStyle(
+                              color: mainEnabled ? t.btnText : t.textMuted,
+                              fontSize: 12,
+                              fontFamily: 'JetBrainsMono',
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
-                        ),
-                      ),
-                    ),
-                    // Divider
-                    Container(
-                      width: 1,
-                      height: 18,
-                      color: t.chromeBorder
-                          .withValues(alpha: _anyHovered ? 0.35 : 0.22),
-                    ),
-                    // Chevron — cycles through categories on each tap
-                    // (no menu). Tooltip exposes what the next category
-                    // will be so users learn the cycle order.
-                    Tooltip(
-                      message: hasCats && widget.categories.length > 1
-                          ? 'next: ${widget.categories[(widget.categoryIndex + 1) % widget.categories.length]}'
-                          : 'only one AI category configured',
-                      waitDuration: const Duration(milliseconds: 600),
-                      child: MouseRegion(
-                        cursor: hasCats && widget.categories.length > 1
-                            ? SystemMouseCursors.click
-                            : SystemMouseCursors.basic,
-                        onEnter: (_) =>
-                            setState(() => _chevronHovered = true),
-                        onExit: (_) =>
-                            setState(() => _chevronHovered = false),
-                        child: GestureDetector(
-                          onTap: hasCats && widget.categories.length > 1
-                              ? widget.onCycle
-                              : null,
-                          onTapDown: (_) =>
-                              setState(() => _chevronPressed = true),
-                          onTapCancel: () =>
-                              setState(() => _chevronPressed = false),
-                          onTapUp: (_) =>
-                              setState(() => _chevronPressed = false),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 80),
-                            width: 32,
-                            color: Colors.white.withValues(
-                                alpha: _chevronHovered ? 0.10 : 0.0),
-                            child: Center(
-                              child: Text(
-                                '▾',
-                                style: TextStyle(
-                                  color: t.btnText.withValues(alpha: 0.80),
-                                  fontSize: 12,
-                                  fontFamily: 'JetBrainsMono',
-                                  fontWeight: FontWeight.w800,
-                                ),
+                          const SizedBox(width: 6),
+                          AnimatedSwitcher(
+                            duration: context.motion(
+                                const Duration(milliseconds: 140)),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            child: Text(
+                              hasCats
+                                  ? widget.busy
+                                      ? 'asking with $activeCat…'
+                                      : 'ask with $activeCat'
+                                  : 'no AI model configured',
+                              key: ValueKey('${widget.busy}|$activeCat'),
+                              style: TextStyle(
+                                color: mainEnabled ? t.btnText : t.textMuted,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: 1,
+                    height: 18,
+                    color: t.chromeBorder
+                        .withValues(alpha: _anyHovered ? 0.35 : 0.22),
+                  ),
+                  SizedBox(
+                    width: 32,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 80),
+                      color: Colors.white.withValues(
+                          alpha: _chevronHovered ? 0.10 : 0.0),
+                      child: Center(
+                        child: Text(
+                          '▾',
+                          style: TextStyle(
+                            color: t.btnText.withValues(alpha: 0.80),
+                            fontSize: 12,
+                            fontFamily: 'JetBrainsMono',
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
+        ),
+      ),
+    );
+
+    // Hit-test layer — fixed-size, outside any transform, so bounds are
+    // stable across hover/press state changes.
+    final hitTest = Row(
+      children: [
+        Expanded(
+          child: MouseRegion(
+            cursor: mainEnabled
+                ? SystemMouseCursors.click
+                : SystemMouseCursors.basic,
+            onEnter: (_) => setState(() => _mainHovered = true),
+            onExit: (_) => setState(() => _mainHovered = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: mainEnabled ? widget.onAsk : null,
+              onTapDown: mainEnabled
+                  ? (_) => setState(() => _mainPressed = true)
+                  : null,
+              onTapCancel: () => setState(() => _mainPressed = false),
+              onTapUp: (_) => setState(() => _mainPressed = false),
+            ),
+          ),
+        ),
+        const SizedBox(width: 1), // divider slot — no hit target
+        Tooltip(
+          message: chevEnabled
+              ? 'next: ${widget.categories[(widget.categoryIndex + 1) % widget.categories.length]}  ·  shift-click for previous'
+              : 'only one AI category configured',
+          waitDuration: const Duration(milliseconds: 600),
+          child: SizedBox(
+            width: 32,
+            child: MouseRegion(
+              cursor: chevEnabled
+                  ? SystemMouseCursors.click
+                  : SystemMouseCursors.basic,
+              onEnter: (_) => setState(() => _chevronHovered = true),
+              onExit: (_) => setState(() => _chevronHovered = false),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: chevEnabled
+                    ? () {
+                        final shift =
+                            HardwareKeyboard.instance.isShiftPressed;
+                        if (shift && widget.onCycleBack != null) {
+                          widget.onCycleBack!();
+                        } else {
+                          widget.onCycle();
+                        }
+                      }
+                    : null,
+                onTapDown: (_) => setState(() => _chevronPressed = true),
+                onTapCancel: () => setState(() => _chevronPressed = false),
+                onTapUp: (_) => setState(() => _chevronPressed = false),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    return AnimatedOpacity(
+      duration: context.motion(const Duration(milliseconds: 180)),
+      opacity: widget.busy && !_anyHovered ? 0.45 : 1.0,
+      child: SizedBox(
+        height: 36,
+        child: Stack(
+          children: [
+            Positioned.fill(child: visual),
+            Positioned.fill(child: hitTest),
+          ],
         ),
       ),
     );
@@ -5918,6 +6076,12 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
   late AnimationController _pulseCtrl;
   late AnimationController _doneCtrl;
   final ScrollController _scrollCtrl = ScrollController();
+  /// Cached merged listenable for the AnimatedBuilder. Was being
+  /// reallocated every build (string-keyed text input fires per
+  /// keystroke → 60+ rebuilds/sec → 60+ Listenable.merge allocs/sec).
+  /// Rebuilt only when the parent swaps the controller/focus refs
+  /// (mode switch).
+  Listenable? _composerSignal;
 
   @override
   void initState() {
@@ -5930,9 +6094,19 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
+    _rebuildComposerSignal();
     // _pulseCtrl is gated via didChangeDependencies so Reduce Motion
     // silences the border pulse; _doneCtrl forwards only when motion is
     // allowed.
+  }
+
+  void _rebuildComposerSignal() {
+    _composerSignal = Listenable.merge([
+      _pulseCtrl,
+      _doneCtrl,
+      widget.focusNode,
+      widget.controller,
+    ]);
   }
 
   @override
@@ -5952,6 +6126,13 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
   @override
   void didUpdateWidget(_CommitComposerField old) {
     super.didUpdateWidget(old);
+    // Refresh the cached merged listenable only when the parent
+    // swaps the controller or focus node (mode change). Avoids the
+    // per-build reallocation of `Listenable.merge`.
+    if (!identical(old.controller, widget.controller) ||
+        !identical(old.focusNode, widget.focusNode)) {
+      _rebuildComposerSignal();
+    }
     final reduce = context.reduceMotionRead;
     if (widget.aiLoading && !old.aiLoading) {
       _doneCtrl.stop();
@@ -5986,12 +6167,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     final effectiveRadius = (radius * 0.75).clamp(0.0, 14.0);
 
     return AnimatedBuilder(
-      animation: Listenable.merge([
-        _pulseCtrl,
-        _doneCtrl,
-        widget.focusNode,
-        widget.controller,
-      ]),
+      animation: _composerSignal!,
       builder: (context, child) {
         final hasText = widget.controller.text.trim().isNotEmpty;
         final isFocused = widget.focusNode.hasFocus;
@@ -6224,7 +6400,11 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
     final isActive = widget.state == IconAnimState.success;
     final isHovered = widget.state == IconAnimState.hovered;
 
-    return AnimatedBuilder(
+    // RepaintBoundary isolates the rotating glyph's per-frame paint
+    // from the surrounding toolbar button — without it, the parent
+    // `_CommitAiToolbarBtn` decoration repaints every animation tick.
+    return RepaintBoundary(
+      child: AnimatedBuilder(
       animation: _ctrl,
       builder: (_, __) {
         final t = _ctrl.value; // 0..1
@@ -6277,6 +6457,7 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
           ),
         );
       },
+    ),
     );
   }
 }

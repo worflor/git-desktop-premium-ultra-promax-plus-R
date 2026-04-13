@@ -14,9 +14,15 @@ import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
+import '../../backend/file_coupling.dart';
+import '../../backend/logos_git.dart';
+import '../../app/file_coupling_state.dart';
+import '../../app/logos_git_state.dart';
 import '../../app/repository_state.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import 'commit_tag_pill.dart';
+import 'commit_tagger.dart';
 
 // ── Constants (matching original) ────────────────────────────────────────────
 
@@ -65,8 +71,16 @@ class _GLayout {
   final List<_GNode> nodes;
   final List<_GEdge> edges;
   final int laneCount;
-  const _GLayout(
-      {required this.nodes, required this.edges, required this.laneCount});
+  /// Cached hash→nodes-index lookup. Built once at layout time so the
+  /// painter can resolve `edge.from`/`edge.to` and z-priority sort
+  /// indices in O(1) instead of walking the nodes list each paint.
+  final Map<String, int> hashToIndex;
+  const _GLayout({
+    required this.nodes,
+    required this.edges,
+    required this.laneCount,
+    required this.hashToIndex,
+  });
 }
 
 class _LensMetric {
@@ -139,7 +153,15 @@ _GLayout _buildLayout(List<CommitHistoryEntry> entries) {
     }
   }
 
-  return _GLayout(nodes: nodes, edges: edges, laneCount: laneCount);
+  // Build hash→index once so the painter can drop its per-paint map.
+  final hashToIndex = <String, int>{
+    for (var i = 0; i < nodes.length; i++) nodes[i].entry.commitHash: i,
+  };
+  return _GLayout(
+      nodes: nodes,
+      edges: edges,
+      laneCount: laneCount,
+      hashToIndex: hashToIndex);
 }
 
 // ── Temporal position computation ─────────────────────────────────────────────
@@ -258,6 +280,14 @@ class _TimelinePainter extends CustomPainter {
   final double laneStep;
   final Map<String, double> churnNorm;
   final Map<String, double> netRatio;
+  /// Pre-resolved per-hash churn target colors. The painter just lerps
+  /// gray→target instead of doing the churn-axis lerp inside the paint
+  /// loop on every frame.
+  final Map<String, Color> targetColors;
+  /// 0→1 fade animation. At 0 every node paints the gray fallback;
+  /// at 1 it paints its computed churn color. Lerping between makes
+  /// the gray→colored transition feel like a fill instead of a flip.
+  final Animation<double> churnIntro;
 
   _TimelinePainter({
     required this.layout,
@@ -272,8 +302,11 @@ class _TimelinePainter extends CustomPainter {
     required this.laneStep,
     required this.churnNorm,
     required this.netRatio,
+    required this.targetColors,
+    required this.churnIntro,
   }) : super(
-          repaint: Listenable.merge([hoveredHashListenable, hoverXListenable]),
+          repaint: Listenable.merge(
+              [hoveredHashListenable, hoverXListenable, churnIntro]),
         );
 
   String? get hoveredHash => hoveredHashListenable.value;
@@ -297,10 +330,11 @@ class _TimelinePainter extends CustomPainter {
       laneStep: laneStep,
     );
 
-    final metricsMap = <String, _LensMetric>{};
-    for (int i = 0; i < layout.nodes.length; i++) {
-      metricsMap[layout.nodes[i].entry.commitHash] = metrics[i];
-    }
+    // metricsMap removed — `metrics` is index-aligned with `layout.nodes`,
+    // and the layout caches `hashToIndex` once at build time. Edge/node
+    // lookups now resolve in O(1) with no per-paint Map allocation
+    // (was ~500 string-keyed entries on a long history).
+    final hashToIndex = layout.hashToIndex;
 
     // Rail
     final railY = vertInset + laneStep / 2;
@@ -334,9 +368,11 @@ class _TimelinePainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
     final edgePath = Path();
     for (final edge in layout.edges) {
-      final from = metricsMap[edge.from];
-      final to = metricsMap[edge.to];
-      if (from == null || to == null) continue;
+      final fromIdx = hashToIndex[edge.from];
+      final toIdx = hashToIndex[edge.to];
+      if (fromIdx == null || toIdx == null) continue;
+      final from = metrics[fromIdx];
+      final to = metrics[toIdx];
 
       final dx = to.x - from.x;
       final dy = to.y - from.y;
@@ -367,35 +403,48 @@ class _TimelinePainter extends CustomPainter {
           edgePath, isMainline ? mainlineEdgePaint : branchEdgePaint);
     }
 
-    // Nodes (selected on top)
-    final sorted = List.of(layout.nodes);
-    sorted.sort((a, b) {
-      int z(String h) => h == selectedHash
-          ? 2
-          : h == hoveredHash
-              ? 1
-              : 0;
-      return z(a.entry.commitHash).compareTo(z(b.entry.commitHash));
-    });
+    // Selected/hovered get z-priority (drawn last → on top). Skip the
+    // O(n log n) sort + List allocation when nothing has priority,
+    // which is the steady-state most paints — the painter receives
+    // hover/select changes through the `repaint:` listenable so a
+    // hover-tick still triggers a fresh paint with the sort enabled.
+    final hasZPriority = selectedHash != null || hoveredHash != null;
+    final List<_GNode> drawOrder;
+    if (hasZPriority) {
+      drawOrder = List.of(layout.nodes);
+      drawOrder.sort((a, b) {
+        int z(String h) => h == selectedHash
+            ? 2
+            : h == hoveredHash
+                ? 1
+                : 0;
+        return z(a.entry.commitHash).compareTo(z(b.entry.commitHash));
+      });
+    } else {
+      drawOrder = layout.nodes;
+    }
 
     // ── Nodes ───────────────────────────────────────────────────────
     // Two reusable Paints — fill (color swaps per node) and selected
     // ring (constant). Replaces 2 Paint allocs per commit per frame.
-    // Precompute the churn-lerp endpoints once since they're shared
-    // across every churn-ed node.
     final nodeFillPaint = Paint()..style = PaintingStyle.fill;
     final selectedRingPaint = Paint()
       ..color = tokens.accentBright.withValues(alpha: 0.3)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
-    final churnLerpA = tokens.hypercubeNegative.withValues(alpha: 0.85);
-    final churnLerpB = tokens.hypercubePositive.withValues(alpha: 0.85);
     final fallbackNodeColor = tokens.chromeBorder.withValues(alpha: 0.7);
     final selectedNodeColor = tokens.accentBright;
-    for (final node in sorted) {
-      final m = metricsMap[node.entry.commitHash];
-      if (m == null) continue;
+    // Hoist intro value once per paint — avoids re-reading the
+    // animation getter inside the per-node hot loop.
+    final introValue = churnIntro.value;
+    final introAtRest = introValue >= 1.0;
+    final introAtStart = introValue <= 0.0;
+
+    for (final node in drawOrder) {
       final hash = node.entry.commitHash;
+      final idx = hashToIndex[hash];
+      if (idx == null) continue;
+      final m = metrics[idx];
       final isSelected = hash == selectedHash;
 
       final churn = churnNorm[hash] ?? 0.0;
@@ -404,11 +453,20 @@ class _TimelinePainter extends CustomPainter {
       final Color nodeColor;
       if (isSelected) {
         nodeColor = selectedNodeColor;
-      } else if (churnNorm.containsKey(hash)) {
-        final tLerp = netRatio[hash] ?? 0.5;
-        nodeColor = Color.lerp(churnLerpA, churnLerpB, tLerp)!;
       } else {
-        nodeColor = fallbackNodeColor;
+        final target = targetColors[hash];
+        if (target == null) {
+          nodeColor = fallbackNodeColor;
+        } else if (introAtRest) {
+          // Steady state — vast majority of paints. Skip the lerp.
+          nodeColor = target;
+        } else if (introAtStart) {
+          nodeColor = fallbackNodeColor;
+        } else {
+          // Only allocate a Color during the ~320ms intro fade.
+          nodeColor =
+              Color.lerp(fallbackNodeColor, target, introValue)!;
+        }
       }
 
       nodeFillPaint.color = nodeColor;
@@ -451,6 +509,12 @@ class _TimelineStrip extends StatefulWidget {
   final ValueChanged<String> onSelected;
   final AppTokens tokens;
   final Map<String, CommitDetailData> detailCache;
+  /// Monotonic counter the parent bumps on every `_detailCache`
+  /// mutation. The map itself is mutated in place (same reference),
+  /// so `old.detailCache.length` reads the post-mutation length —
+  /// it can't detect cache changes. This counter is the only reliable
+  /// "cache changed" signal at `didUpdateWidget` time.
+  final int detailCacheVersion;
 
   const _TimelineStrip({
     required this.commits,
@@ -458,13 +522,15 @@ class _TimelineStrip extends StatefulWidget {
     required this.onSelected,
     required this.tokens,
     required this.detailCache,
+    required this.detailCacheVersion,
   });
 
   @override
   State<_TimelineStrip> createState() => _TimelineStripState();
 }
 
-class _TimelineStripState extends State<_TimelineStrip> {
+class _TimelineStripState extends State<_TimelineStrip>
+    with SingleTickerProviderStateMixin {
   // Pointer state held in ValueNotifiers — painter repaints via the
   // `repaint:` parameter on CustomPainter, bypassing widget rebuild
   // entirely. Was calling setState on every onPointerMove (60+/sec
@@ -485,7 +551,21 @@ class _TimelineStripState extends State<_TimelineStrip> {
   String _layoutSignature = '';
   Map<String, double> _churnNorm = {};
   Map<String, double> _netRatio = {};
+  /// Pre-resolved per-hash target color (the lerp result of churnLerpA→B
+  /// at netRatio[hash]). Computed once per `_rebuildChurnMaps` so the
+  /// painter does ONE `Color.lerp` per node per frame (gray→target)
+  /// instead of two (gray→target AND churnA→churnB at netRatio).
+  Map<String, Color> _churnTargetColors = const {};
   int _cacheVersion = 0;
+
+  /// 0 → 1 fade controller for the gray→churn-color crossfade. Driven
+  /// from `_rebuildChurnMaps`. The painter receives this as `repaint:`
+  /// and lerps each node's color from `fallbackNodeColor` toward its
+  /// computed churn color over the controller's value.
+  late final AnimationController _churnIntroCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 320),
+  );
 
   static String _signatureOf(List<CommitHistoryEntry> commits) {
     if (commits.isEmpty) return '';
@@ -496,6 +576,7 @@ class _TimelineStripState extends State<_TimelineStrip> {
   void dispose() {
     _hoverXNotifier.dispose();
     _hoveredHashNotifier.dispose();
+    _churnIntroCtrl.dispose();
     super.dispose();
   }
 
@@ -507,9 +588,25 @@ class _TimelineStripState extends State<_TimelineStrip> {
   }
 
   void _rebuildChurnMaps() {
-    _churnNorm = _computeChurnNorm(widget.commits, widget.detailCache);
-    _netRatio = _computeNetRatio(widget.commits, widget.detailCache);
-    _cacheVersion = widget.detailCache.length;
+    final (norm, ratio) =
+        _computeChurnAndRatio(widget.commits, widget.detailCache);
+    _churnNorm = norm;
+    _netRatio = ratio;
+    // Pre-resolve target colors so the per-frame paint loop only does
+    // one Color.lerp per node (gray→target) instead of two.
+    final t = widget.tokens;
+    final a = t.hypercubeNegative.withValues(alpha: 0.85);
+    final b = t.hypercubePositive.withValues(alpha: 0.85);
+    final out = <String, Color>{};
+    norm.forEach((hash, _) {
+      final tLerp = ratio[hash] ?? 0.5;
+      out[hash] = Color.lerp(a, b, tLerp)!;
+    });
+    _churnTargetColors = out;
+    _cacheVersion = widget.detailCacheVersion;
+    // Crossfade the new colors in from the gray fallback. Same anim
+    // for first-load AND subsequent refreshes — uniform feel.
+    _churnIntroCtrl.forward(from: 0);
   }
 
   @override
@@ -521,10 +618,10 @@ class _TimelineStripState extends State<_TimelineStrip> {
       // _rebuildLayout also rebuilds churn maps so colors stay synced
       // with the new commit set.
       _layout = null;
-    } else if (!identical(old.detailCache, widget.detailCache) ||
-        old.detailCache.length != widget.detailCache.length) {
-      // Commits unchanged but cache mutated (details streamed in for
-      // visible commits) — refresh colors only, no layout rework needed.
+    } else if (old.detailCacheVersion != widget.detailCacheVersion) {
+      // Commits unchanged but cache mutated. The map is shared by
+      // reference and mutated in place, so length/identity won't
+      // change — only the parent-bumped version counter detects this.
       _rebuildChurnMaps();
     }
   }
@@ -621,6 +718,8 @@ class _TimelineStripState extends State<_TimelineStrip> {
                     laneStep: laneStep,
                     churnNorm: _churnNorm,
                     netRatio: _netRatio,
+                    targetColors: _churnTargetColors,
+                    churnIntro: _churnIntroCtrl,
                   ),
                   size: Size(width, totalHeight),
                 ),
@@ -645,33 +744,29 @@ class _TimelineStripState extends State<_TimelineStrip> {
     return out;
   }
 
-  static Map<String, double> _computeChurnNorm(
-      List<CommitHistoryEntry> commits, Map<String, CommitDetailData> cache) {
+  /// Single-pass churn + netRatio computation. Shares one `byHash`
+  /// build and one iteration over `commits` instead of two — prior
+  /// code called `_byHash` twice (once per output map), wastefully
+  /// reparsing every cache key on every `_rebuildChurnMaps`.
+  static (Map<String, double>, Map<String, double>) _computeChurnAndRatio(
+      List<CommitHistoryEntry> commits,
+      Map<String, CommitDetailData> cache) {
     final byHash = _byHash(cache);
     final raws = <String, double>{};
-    for (final c in commits) {
-      final d = byHash[c.commitHash];
-      if (d == null) continue;
-      final churn = d.additions + d.deletions;
-      if (churn > 0) raws[c.commitHash] = log(churn + 1);
-    }
-    if (raws.isEmpty) return {};
-    final maxVal = raws.values.reduce(max);
-    if (maxVal == 0) return {};
-    return raws.map((k, v) => MapEntry(k, v / maxVal));
-  }
-
-  static Map<String, double> _computeNetRatio(
-      List<CommitHistoryEntry> commits, Map<String, CommitDetailData> cache) {
-    final byHash = _byHash(cache);
-    final result = <String, double>{};
+    final ratio = <String, double>{};
     for (final c in commits) {
       final d = byHash[c.commitHash];
       if (d == null) continue;
       final total = d.additions + d.deletions;
-      result[c.commitHash] = total == 0 ? 0.5 : d.additions / total;
+      ratio[c.commitHash] = total == 0 ? 0.5 : d.additions / total;
+      if (total > 0) raws[c.commitHash] = log(total + 1);
     }
-    return result;
+    if (raws.isEmpty) return (const <String, double>{}, ratio);
+    final maxVal = raws.values.reduce(max);
+    if (maxVal == 0) return (const <String, double>{}, ratio);
+    final norm = <String, double>{};
+    raws.forEach((k, v) => norm[k] = v / maxVal);
+    return (norm, ratio);
   }
 
   String? _nearestHash(double x, List<double> baseXs) {
@@ -769,6 +864,41 @@ class _CommitImpact extends StatelessWidget {
   }
 }
 
+// ── Tag-profile isolate payload ──────────────────────────────────────────────
+
+/// Input bundle for the off-main-isolate profile build. Must only
+/// contain isolate-transferable types — `FileCouplingMatrix`,
+/// `CommitHistoryEntry`, `CommitDetailData` are all plain data
+/// classes so this is safe.
+class _TagProfileInput {
+  final List<CommitHistoryEntry> commits;
+  final Map<String, CommitDetailData> details;
+  final FileCouplingMatrix? coupling;
+  /// Engine-derived multi-axis coherence per commit, computed on the
+  /// main isolate before [compute] hands off (the LogosGit engine isn't
+  /// trivially transferable, but a Map<String, double> is). When the
+  /// engine isn't warm, this is null and the isolate falls back to the
+  /// matrix's single-axis Jaccard.
+  final Map<String, double>? engineCoherences;
+  const _TagProfileInput({
+    required this.commits,
+    required this.details,
+    required this.coupling,
+    this.engineCoherences,
+  });
+}
+
+/// Top-level so `compute()` can spawn it. Thin shim that just forwards
+/// to [buildTagProfile]; the isolate boundary demands a top-level fn.
+RepositoryTagProfile _tagProfileIsolate(_TagProfileInput input) {
+  return buildTagProfile(
+    commits: input.commits,
+    detailsByHash: input.details,
+    coupling: input.coupling,
+    engineCoherences: input.engineCoherences,
+  );
+}
+
 // ── History page ──────────────────────────────────────────────────────────────
 
 class HistoryPage extends StatefulWidget {
@@ -792,6 +922,20 @@ class _HistoryPageState extends State<HistoryPage> {
   String? _detailLoadingHash;
   String? _detailError;
   final Map<String, CommitDetailData> _detailCache = {};
+  /// Bumped on every `_detailCache` mutation. The map is shared by
+  /// reference with `_TimelineStrip`, so length/identity comparisons
+  /// at `didUpdateWidget` can't see the mutation. This counter is the
+  /// "cache changed" signal the timeline uses to refresh churn colors.
+  int _detailCacheVersion = 0;
+
+  /// Auto-derived tag profile for the currently-loaded history window.
+  /// Rebuilt in a background isolate whenever the commit set or detail
+  /// cache materially grows (debounced — see [_scheduleTagProfileRebuild]).
+  /// Every field is derived from this repo's own data; nothing is
+  /// hardcoded.
+  RepositoryTagProfile _tagProfile = RepositoryTagProfile.empty;
+  int _tagProfileBuildId = 0;
+  Timer? _tagProfileDebounce;
 
   // History limit
   int _historyLimit = _kHistoryDefault;
@@ -845,7 +989,63 @@ class _HistoryPageState extends State<HistoryPage> {
   void dispose() {
     _tagCtrl.dispose();
     _limitCtrl.dispose();
+    _tagProfileDebounce?.cancel();
     super.dispose();
+  }
+
+  /// Builds (or rebuilds) the tag profile off-main-isolate. Debounced
+  /// at 200 ms so a burst of detail-cache fills (the bulk-prefetch
+  /// pathway) coalesces into a single profile build. Every call bumps
+  /// the build-id; late arrivals drop their result if a newer build
+  /// has already landed. Coupling matrix is pulled at call time so
+  /// the profile always reflects whatever's loaded by the
+  /// `FileCouplingState` provider.
+  void _scheduleTagProfileRebuild(String repoPath) {
+    _tagProfileDebounce?.cancel();
+    _tagProfileDebounce = Timer(const Duration(milliseconds: 200), () async {
+      if (!mounted || _commits.isEmpty) return;
+      final myBuildId = ++_tagProfileBuildId;
+      // Snapshot on the main isolate before handing off.
+      final coupling =
+          context.read<FileCouplingState>().matrixFor(repoPath);
+      final commitsCopy = List<CommitHistoryEntry>.unmodifiable(_commits);
+      final detailsCopy = <String, CommitDetailData>{
+        for (final e in _detailCache.entries)
+          // Strip the `$repoPath::` prefix so the tagger can key by
+          // commit hash directly.
+          if (e.key.startsWith('$repoPath::'))
+            e.key.substring(repoPath.length + 2): e.value,
+      };
+      // If the LogosGit engine is warm for this repo, precompute its
+      // multi-axis coherence per commit on the main isolate (it isn't
+      // trivially transferable). The isolate then uses these values
+      // instead of the raw Jaccard fallback — strictly more informative
+      // percentile splits with no extra round-trip cost.
+      Map<String, double>? engineCoherences;
+      try {
+        final engine =
+            context.read<LogosGitState>().engineFor(repoPath);
+        if (engine != null) {
+          engineCoherences = <String, double>{};
+          for (final entry in detailsCopy.entries) {
+            final files = entry.value.files.map((f) => f.path);
+            engineCoherences[entry.key] = engine.coherence(files);
+          }
+        }
+      } catch (_) {
+        // No state provider, no engine — silently fall back.
+      }
+      // Off-isolate build. The tagger is pure-Dart data crunch; safe
+      // to send across the isolate boundary.
+      final profile = await compute(_tagProfileIsolate, _TagProfileInput(
+        commits: commitsCopy,
+        details: detailsCopy,
+        coupling: coupling,
+        engineCoherences: engineCoherences,
+      ));
+      if (!mounted || myBuildId != _tagProfileBuildId) return;
+      setState(() => _tagProfile = profile);
+    });
   }
 
   Future<void> _load(String repo) async {
@@ -865,7 +1065,13 @@ class _HistoryPageState extends State<HistoryPage> {
       }
     });
     // Kick off bulk prefetch immediately — runs in background, no await
-    if (r.ok) unawaited(_prefetchAllDetails(repo));
+    if (r.ok) {
+      unawaited(_prefetchAllDetails(repo));
+      // First profile build runs on subject-only data (no details yet).
+      // Prefix/scope/merge tags light up immediately; axis + cluster
+      // tags fill in as the bulk prefetch populates the detail cache.
+      _scheduleTagProfileRebuild(repo);
+    }
 
     final initialHash = widget.initialCommitHash;
     if (initialHash != null &&
@@ -925,7 +1131,18 @@ class _HistoryPageState extends State<HistoryPage> {
       _detailLoadingHash = null;
       if (r.ok) {
         _detail = r.data;
+        // Only bump the timeline's cache version when the CHURN data
+        // (additions/deletions) actually changes — not just when the
+        // body fills in. Otherwise every single-commit click would
+        // retrigger the gray→color fade on already-colored nodes,
+        // because the version is the timeline's "anything changed"
+        // signal. Body text doesn't affect churn colors.
+        final old = _detailCache[cacheKey];
+        final churnChanged = old == null ||
+            old.additions != r.data!.additions ||
+            old.deletions != r.data!.deletions;
         _detailCache[cacheKey] = r.data!;
+        if (churnChanged) _detailCacheVersion++;
       } else {
         _detailError = r.error;
       }
@@ -948,17 +1165,25 @@ class _HistoryPageState extends State<HistoryPage> {
     if (commits.isEmpty) return;
     final r = await bulkGetCommitDetails(repo, commits, limit: _historyLimit);
     if (!mounted || !r.ok) return;
-    // Bulk fill the cache, then notify so anything depending on
-    // `_detailCache` (timeline rail churn colors, file impact summary,
-    // etc.) actually rebuilds. Without setState, the cache silently
-    // populates but no widget knows — the timeline rail stayed gray
-    // until the user happened to click a commit and trigger an
-    // unrelated setState in `_loadDetail`.
+    // Bulk fill the cache, bump the version counter, then notify.
+    // The version counter is the only reliable change-signal because
+    // the map is shared by reference with `_TimelineStrip` and
+    // mutated in place — length/identity comparisons there can't
+    // detect "cache grew" since old.detailCache is the same object.
+    var addedCount = 0;
     setState(() {
       for (final entry in r.data!.entries) {
-        _detailCache.putIfAbsent('$repo::${entry.key}', () => entry.value);
+        final key = '$repo::${entry.key}';
+        if (!_detailCache.containsKey(key)) {
+          _detailCache[key] = entry.value;
+          addedCount++;
+        }
       }
+      if (addedCount > 0) _detailCacheVersion++;
     });
+    // Bulk fill → richer profile. Debounce swallows the burst into one
+    // rebuild so we don't thrash the isolate.
+    if (addedCount > 0) _scheduleTagProfileRebuild(repo);
   }
 
   Future<void> _loadReflog(String repo) async {
@@ -1129,6 +1354,7 @@ class _HistoryPageState extends State<HistoryPage> {
           },
           tokens: t,
           detailCache: _detailCache,
+          detailCacheVersion: _detailCacheVersion,
         ),
 
       // ── Main content ─────────────────────────────────────────────────
@@ -1164,6 +1390,13 @@ class _HistoryPageState extends State<HistoryPage> {
                       isSelected: isSelected,
                       inRange: inRange,
                       cachedDetail: _detailCache['$repoPath::${commit.commitHash}'],
+                      tagProfile: _tagProfile,
+                      couplingMatrix: context
+                          .read<FileCouplingState>()
+                          .matrixFor(repoPath),
+                      logosEngine: context
+                          .read<LogosGitState>()
+                          .engineFor(repoPath),
                       onTap: (shift) => _onCommitTap(i, shift),
                     );
                   }
@@ -1261,6 +1494,17 @@ class _CommitRow extends StatefulWidget {
   final AppTokens tokens;
   final bool isSelected, inRange;
   final CommitDetailData? cachedDetail;
+  /// Auto-derived tag profile for the current repo. Empty profile
+  /// (first frame, or empty repo) yields no auto-tags — falls back
+  /// to just git-native tag pills.
+  final RepositoryTagProfile tagProfile;
+  /// Coupling matrix used for coherence-axis tags (focused / sprawl).
+  /// Null when not yet computed; rows silently skip coherence tags.
+  final FileCouplingMatrix? couplingMatrix;
+  /// Optional Logos engine for the active repo. When warm, supplies
+  /// Born-mixed multi-axis coherence to the row's focused/sprawl gate
+  /// in preference to the raw Jaccard fallback.
+  final LogosGit? logosEngine;
   final void Function(bool shift) onTap;
   const _CommitRow({
     required this.commit,
@@ -1268,6 +1512,9 @@ class _CommitRow extends StatefulWidget {
     required this.isSelected,
     required this.inRange,
     required this.cachedDetail,
+    required this.tagProfile,
+    required this.couplingMatrix,
+    required this.logosEngine,
     required this.onTap,
   });
   @override
@@ -1276,6 +1523,27 @@ class _CommitRow extends StatefulWidget {
 
 class _CommitRowState extends State<_CommitRow> {
   bool _hovered = false;
+
+  /// Computes the auto-tags for this row. Kept trivial and
+  /// synchronous — the heavy lifting (profile construction) already
+  /// happened off-isolate; per-row tagging is a handful of string and
+  /// numeric comparisons.
+  List<CommitTag> _autoTagsFor(CommitHistoryEntry c) {
+    if (widget.tagProfile.commitCount == 0) return const [];
+    double? engineCoherence;
+    final detail = widget.cachedDetail;
+    final engine = widget.logosEngine;
+    if (engine != null && detail != null && detail.files.length >= 2) {
+      engineCoherence = engine.coherence(detail.files.map((f) => f.path));
+    }
+    return tagCommit(
+      commit: c,
+      detail: detail,
+      profile: widget.tagProfile,
+      coupling: widget.couplingMatrix,
+      engineCoherence: engineCoherence,
+    );
+  }
 
   static String _formatDate(String iso) {
     try {
@@ -1365,7 +1633,16 @@ class _CommitRowState extends State<_CommitRow> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                // Tag pills
+                // Auto-derived semantic tags (repo-learned vocabulary,
+                // zero hardcoded values). Computed here per-build; the
+                // work is microseconds once the profile is warm.
+                ..._autoTagsFor(c).map(
+                  (tg) => Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: CommitTagPill(tag: tg, tokens: t),
+                  ),
+                ),
+                // Git-native tag pills (annotated tags on the commit).
                 ...c.refNames.where((r) => r.startsWith('tag:')).take(2).map(
                       (r) => Padding(
                           padding: const EdgeInsets.only(left: 4),

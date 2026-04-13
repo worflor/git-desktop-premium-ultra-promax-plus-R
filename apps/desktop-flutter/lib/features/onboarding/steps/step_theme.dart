@@ -208,6 +208,14 @@ class _PickerColumnState extends State<_PickerColumn> {
             child: MouseRegion(
               onExit: (_) => themeState.clearPreview(),
               child: SingleChildScrollView(
+                // PageStorageKey survives widget-tree restructures.
+                // When the user hovers a theme, the active theme
+                // switches, which flips MaterialSurface between
+                // `glass` and `solid` shape — the Scrollable's State
+                // gets recreated and a fresh ScrollPosition is
+                // installed. The owned controller alone can't restore
+                // the offset across that recreation; PageStorage can.
+                key: const PageStorageKey('onboarding.themePicker'),
                 controller: _scrollController,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,

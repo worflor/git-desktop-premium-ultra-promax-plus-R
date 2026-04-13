@@ -152,12 +152,27 @@ class _AppTextFieldState extends State<AppTextField> {
             fontSize: widget.fontSize,
             fontFamily: widget.mono ? 'JetBrains Mono' : null,
           ),
-          decoration: InputDecoration.collapsed(
+          // Fully-neutralised InputDecoration so the app-level
+          // InputDecorationTheme (OutlineInputBorder + filled:true, set
+          // in `theme.dart`) doesn't double-border over the
+          // AppInputShell chrome. `collapsed` only clears the base
+          // `border` — the theme's `enabledBorder`/`focusedBorder` and
+          // `filled` still apply unless explicitly overridden here.
+          decoration: InputDecoration(
+            isCollapsed: true,
+            filled: false,
             hintText: widget.hintText,
             hintStyle: TextStyle(
               color: t.textMuted.withValues(alpha: 0.5),
               fontSize: widget.fontSize,
             ),
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            disabledBorder: InputBorder.none,
+            errorBorder: InputBorder.none,
+            focusedErrorBorder: InputBorder.none,
+            contentPadding: EdgeInsets.zero,
           ),
         ),
       ),

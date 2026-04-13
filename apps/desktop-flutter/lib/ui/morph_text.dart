@@ -355,6 +355,17 @@ class _LaidOut {
 
 // ── Painter ────────────────────────────────────────────────────────────
 
+/// Precomputed pearl-shimmer hue lookup for `ThemeTextEffect.iridescent`.
+/// 64 entries (power of 2 so phase-to-index can use a bit mask).
+/// Replaces a per-glyph-per-frame `HSVColor.fromAHSV(...).toColor()` —
+/// 64 entries is visually indistinguishable from continuous because
+/// each glyph's hue drifts smoothly across many indices over time.
+const int _kIridescentLutSize = 64;
+final List<Color> _iridescentLut = List.generate(_kIridescentLutSize, (i) {
+  final hue = (i / _kIridescentLutSize) * 360.0;
+  return HSVColor.fromAHSV(1.0, hue, 0.42, 1.0).toColor();
+}, growable: false);
+
 class _MorphPainter extends CustomPainter {
   final _LaidOut from;
   final _LaidOut to;
@@ -961,14 +972,14 @@ class _MorphPainter extends CustomPainter {
                     (bbox.right - bbox.left).clamp(1.0, double.infinity))
                 .clamp(0.0, 1.0)
             : 0.5;
-        // Position-driven hue shift + faster time component so each
-        // glyph's hue drifts during the transition. 1.2 wraps roughly
-        // once across a 10-char word, so adjacent glyphs read distinct.
-        final hue = ((norm * 1.2 + t * 1.6) % 1.0) * 360.0;
-        // Pastel saturation = pearl, not psychedelic. Matches the
-        // iridescent fragment shader's HSV pick (0.32) but slightly
-        // bumped here so the tint reads on top of textNormal.
-        final shimmer = HSVColor.fromAHSV(1.0, hue, 0.42, 1.0).toColor();
+        // Index into the precomputed pearl-shimmer LUT. Was allocating
+        // an `HSVColor` + calling `toColor()` (HSV→RGB math) per glyph
+        // per frame. The LUT has 64 entries — visually indistinguishable
+        // from continuous, ~zero allocation.
+        final phase = (norm * 1.2 + t * 1.6) % 1.0;
+        final lutIdx = (phase * _kIridescentLutSize).toInt() &
+            (_kIridescentLutSize - 1);
+        final shimmer = _iridescentLut[lutIdx];
         if (isInsert || isRemove) {
           // Strong pulse on changing chars — peaks early so the
           // shimmer is visible during the slide-in, fades by end.

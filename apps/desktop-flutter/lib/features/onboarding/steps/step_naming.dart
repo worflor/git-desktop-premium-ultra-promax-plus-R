@@ -240,39 +240,47 @@ class _NameFieldState extends State<_NameField> {
   Widget build(BuildContext context) {
     final raw = widget.controller.text;
     final shown = raw.isEmpty ? 'Manifold' : raw;
-    // 18px slack covers TextField's internal cursor gutter + sub-pixel
-    // rounding; the outer minimum keeps the hint readable when empty.
-    final width = (_measure(context, shown) + 18).clamp(80.0, 420.0);
+    // Width = measured text + horizontal contentPadding (8 each side) +
+    // cursorWidth + sub-pixel rounding slack. Monospace fonts report
+    // slightly tighter widths than they render, so the slack is a hair
+    // generous on purpose.
+    final width = (_measure(context, shown) + 28).clamp(80.0, 420.0);
 
-    return SizedBox(
+    // AnimatedContainer tweens the width as the user types so the
+    // sentence around the field reflows smoothly instead of snapping
+    // per keystroke. Curve matches the rest of the onboarding motion.
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOutCubic,
       width: width,
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(color: widget.underlineColor, width: 1.4),
-          ),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: widget.underlineColor, width: 1.4),
         ),
-        child: TextField(
-          controller: widget.controller,
-          focusNode: widget.focusNode,
-          onChanged: widget.onChanged,
-          onSubmitted: widget.onSubmitted,
-          textAlign: TextAlign.center,
-          cursorColor: widget.style.color,
-          cursorWidth: 1.4,
-          maxLength: 24,
-          inputFormatters: [
-            LengthLimitingTextInputFormatter(24),
-            FilteringTextInputFormatter.deny(RegExp(r'[\n\r\t]')),
-          ],
-          style: widget.style,
-          decoration: const InputDecoration(
-            isDense: true,
-            contentPadding: EdgeInsets.symmetric(vertical: 2),
-            border: InputBorder.none,
-            counterText: '',
-            hintText: 'Manifold',
-          ),
+      ),
+      child: TextField(
+        controller: widget.controller,
+        focusNode: widget.focusNode,
+        onChanged: widget.onChanged,
+        onSubmitted: widget.onSubmitted,
+        textAlign: TextAlign.center,
+        cursorColor: widget.style.color,
+        cursorWidth: 1.4,
+        maxLength: 24,
+        inputFormatters: [
+          LengthLimitingTextInputFormatter(24),
+          FilteringTextInputFormatter.deny(RegExp(r'[\n\r\t]')),
+        ],
+        style: widget.style,
+        decoration: const InputDecoration(
+          isDense: true,
+          // Horizontal breathing room so the last glyph never visually
+          // touches the border (especially on monospace themes where
+          // the glyph cell is wider than the measured text width).
+          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          border: InputBorder.none,
+          counterText: '',
+          hintText: 'Manifold',
         ),
       ),
     );

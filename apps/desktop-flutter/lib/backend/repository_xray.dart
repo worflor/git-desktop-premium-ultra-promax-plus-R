@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import '../diagnostics/diagnostics_state.dart';
 import 'dtos.dart';
+import 'engram_fit.dart';
 import 'git_result.dart';
 
 typedef XrayGitProbe = Future<ProcessResult> Function(
@@ -30,12 +32,38 @@ Future<GitResult<String>> computeRepositoryXrayFingerprint(
 
     final status = statusResult.data!;
     final headHash = headResult.stdout.toString().trim();
-    return GitResult.ok(
-      '${repo.replaceAll('\\', '/')}|${status.branch}|$headHash|${status.files.length}',
-    );
+    return GitResult.ok(_fingerprintFor(
+      repo: repo,
+      branch: status.branch,
+      headHash: headHash,
+      files: status.files,
+    ));
   } catch (error) {
     return GitResult.err(error.toString());
   }
+}
+
+/// Central fingerprint builder. Includes both total file count AND a
+/// separate staged-count field so the cache invalidates when the user
+/// stages / unstages files without changing HEAD. Previously a user
+/// staging three files and running x-ray would get the pre-staging
+/// snapshot because only HEAD was in the key.
+String _fingerprintFor({
+  required String repo,
+  required String branch,
+  required String headHash,
+  required List<RepositoryStatusFile> files,
+}) {
+  var stagedCount = 0;
+  var dirtyCount = 0;
+  for (final f in files) {
+    // `staged` is a single char: ' ' means unstaged-only, anything else
+    // (M, A, D, R, C, T, U) is a staged mutation.
+    if (f.staged != ' ' && f.staged.isNotEmpty) stagedCount++;
+    if (f.unstaged != ' ' && f.unstaged.isNotEmpty) dirtyCount++;
+  }
+  return '${repo.replaceAll('\\', '/')}|$branch|$headHash'
+      '|${files.length}|s$stagedCount|u$dirtyCount';
 }
 
 Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
@@ -62,8 +90,12 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       return GitResult.err(headResult.stderr.toString().trim());
     }
     final headHash = headResult.stdout.toString().trim();
-    final fingerprint =
-        '${repo.replaceAll('\\', '/')}|${status.branch}|$headHash|${status.files.length}';
+    final fingerprint = _fingerprintFor(
+      repo: repo,
+      branch: status.branch,
+      headHash: headHash,
+      files: status.files,
+    );
 
     final futures = await Future.wait([
       cachedProbe.run(
@@ -168,13 +200,29 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         .toList()
       ..sort();
 
-    final rawHotspots =
-        await _buildHotspots(rawPathTouches, rawDirTouches, true, cachedProbe.run);
+    // Per-commit file sets for keystone-score derivation. Parsed from
+    // the same raw streams we already fetched — no extra git calls.
+    final rawCommitFiles = _parseCommitFileSets(futures[4].stdout.toString());
+    final filteredCommitFiles =
+        _parseCommitFileSets(futures[5].stdout.toString());
+    final rawKeystoneScores =
+        _computeKeystoneScores(rawCommitFiles, rawPathTouches);
+    final filteredKeystoneScores =
+        _computeKeystoneScores(filteredCommitFiles, filteredPathTouches);
+
+    final rawHotspots = await _buildHotspots(
+      rawPathTouches,
+      rawDirTouches,
+      true,
+      cachedProbe.run,
+      rawKeystoneScores,
+    );
     final filteredHotspots = await _buildHotspots(
       filteredPathTouches,
       filteredDirTouches,
       false,
       cachedProbe.run,
+      filteredKeystoneScores,
     );
     final strata = await _buildStrata(filteredDirTouches, cachedProbe.run);
     final rawPivots = _buildPivotCommits(rawShortstats);
@@ -247,6 +295,11 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       strata: strata,
       pivots: filteredPivots,
       rawPivots: rawPivots,
+      // Repo metabolism from the filtered (human) commit series.
+      // Machine-history dates would distort the oscillator — automated
+      // checkpoints produce a spurious steady rhythm that the AR(2)
+      // fit would happily report as "healthy."
+      metabolism: _computeMetabolism(filteredDates),
     );
 
     stopwatch.stop();
@@ -383,6 +436,194 @@ Map<String, int> _countDateSeries(String output) {
   return counts;
 }
 
+/// Parse a `git log --name-only --format=` stream into per-commit file
+/// sets. With an empty format string git emits blank-metadata rows and
+/// name-per-line blocks separated by blank lines.
+List<Set<String>> _parseCommitFileSets(String raw) {
+  final out = <Set<String>>[];
+  Set<String>? current;
+  for (final line in raw.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) {
+      if (current != null && current.isNotEmpty) out.add(current);
+      current = null;
+      continue;
+    }
+    current ??= <String>{};
+    current.add(trimmed.replaceAll('\\', '/'));
+  }
+  if (current != null && current.isNotEmpty) out.add(current);
+  return out;
+}
+
+/// Compute a keystone score per file and flag the top band. Keystone
+/// semantics (ecology borrow): a file whose *pull* — sum of Jaccard
+/// couplings to all co-changed files — is high while its own touch
+/// count stays modest. These are the bridge species: quiet on their
+/// own ledger, load-bearing across clusters.
+///
+///   pull(f)     = Σ_g J(f, g)      (Jaccard co-change with every other file)
+///   keystone(f) = pull(f) / log1p(touchCount(f))
+///
+/// The log1p dampens the divisor so raw frequency doesn't dominate —
+/// we want pull-per-touch to identify files whose *each touch* is
+/// structurally heavy. Top 10% (or ≥3 files for tiny repos) get
+/// `isKeystone = true`.
+Map<String, double> _computeKeystoneScores(
+  List<Set<String>> commits,
+  Map<String, int> touches,
+) {
+  if (commits.isEmpty || touches.isEmpty) return const {};
+
+  // Per-file membership index — commitIndex → filesInCommit is given;
+  // we need its transpose: file → set of commit indices.
+  final fileCommits = <String, Set<int>>{};
+  for (var i = 0; i < commits.length; i++) {
+    for (final f in commits[i]) {
+      fileCommits.putIfAbsent(f, () => <int>{}).add(i);
+    }
+  }
+
+  // For each file, compute pull by walking its co-commit neighbours.
+  // The double-nested pass is O(Σ_i |commits[i]|²) which is fine for
+  // X-Ray-scale windows (≤ ~1500 commits, median 5 files each).
+  final pairWeights = <String, Map<String, double>>{};
+  for (final commit in commits) {
+    final members = commit.toList();
+    final n = members.length;
+    if (n < 2) continue;
+    for (var i = 0; i < n; i++) {
+      for (var j = i + 1; j < n; j++) {
+        final a = members[i];
+        final b = members[j];
+        // Only count each pair once at read time — aggregate per-file
+        // co-count, then convert to Jaccard below.
+        pairWeights.putIfAbsent(a, () => <String, double>{})
+            .update(b, (v) => v + 1, ifAbsent: () => 1);
+        pairWeights.putIfAbsent(b, () => <String, double>{})
+            .update(a, (v) => v + 1, ifAbsent: () => 1);
+      }
+    }
+  }
+
+  final scores = <String, double>{};
+  for (final entry in pairWeights.entries) {
+    final f = entry.key;
+    final neighbours = entry.value;
+    final nf = fileCommits[f]?.length ?? 0;
+    if (nf == 0) continue;
+    var pull = 0.0;
+    for (final n in neighbours.entries) {
+      final ng = fileCommits[n.key]?.length ?? 0;
+      if (ng == 0) continue;
+      // Jaccard: co / (nf + ng - co).
+      final co = n.value;
+      final union = nf + ng - co;
+      if (union > 0) pull += co / union;
+    }
+    final touch = touches[f] ?? nf;
+    final divisor = math.log(1 + touch);
+    scores[f] = divisor > 0 ? pull / divisor : pull;
+  }
+  return scores;
+}
+
+/// Derive the repo's metabolism from its daily commit-rate series.
+/// The date map is date-string → commit-count; we need a dense,
+/// gap-filled chronological series (zero-filling idle days) so the
+/// AR(2) oscillator sees the actual rhythm rather than a compacted
+/// timeline. Then a single Engram fit yields spectral radius,
+/// half-life (in days), and the converging/diverging/steady label
+/// the rest of the app already knows how to render.
+///
+/// Returns [RepositoryXrayMetabolismData.empty] for windows too short
+/// for a fit, so renderers can silently omit the card.
+RepositoryXrayMetabolismData _computeMetabolism(Map<String, int> dateCounts) {
+  if (dateCounts.isEmpty) return RepositoryXrayMetabolismData.empty;
+
+  // Sort keys chronologically. Dates come in as yyyy-MM-dd strings
+  // (git log --date=short), so lex order == chronological order.
+  final sortedDates = dateCounts.keys.toList()..sort();
+  final first = DateTime.tryParse(sortedDates.first);
+  final last = DateTime.tryParse(sortedDates.last);
+  if (first == null || last == null) return RepositoryXrayMetabolismData.empty;
+
+  final totalDays = last.difference(first).inDays + 1;
+  if (totalDays < engramMinSamples + 2) {
+    return RepositoryXrayMetabolismData.empty;
+  }
+
+  // Dense, gap-filled series — one bucket per day across the window.
+  // Idle days are zeros, which is exactly what the oscillator needs
+  // to see the true rhythm (otherwise 5 active days in 30 would look
+  // indistinguishable from 5 consecutive days).
+  final series = List<double>.filled(totalDays, 0);
+  dateCounts.forEach((dateStr, count) {
+    final d = DateTime.tryParse(dateStr);
+    if (d == null) return;
+    final idx = d.difference(first).inDays;
+    if (idx >= 0 && idx < totalDays) series[idx] = count.toDouble();
+  });
+
+  // Centre the signal so AR(2) fits the dynamics, not the mean rate.
+  var mean = 0.0;
+  for (final v in series) {
+    mean += v;
+  }
+  mean /= series.length;
+  final centred = List<double>.generate(series.length, (i) => series[i] - mean);
+
+  final fit = engramFit(centred);
+  final orbit = BranchOrbit(
+    fit: fit,
+    // Trend slope over the activity window: positive = repo heating
+    // up, negative = cooling. Not a branch Jaccard slope — the same
+    // BranchOrbit shape is reused because its classification logic
+    // (converging/diverging/steady via slope + orbit gate) matches
+    // what we want for the repo's own trajectory.
+    trendSlope: _seriesTrendSlope(series),
+    samples: series.length - 1,
+    meanSimilarity: mean,
+  );
+
+  // Sparkline — max-normalised so renderers can draw without knowing
+  // the raw count range.
+  var peak = 0.0;
+  for (final v in series) {
+    if (v > peak) peak = v;
+  }
+  final sparkline = peak <= 0
+      ? List<double>.filled(series.length, 0)
+      : series.map((v) => v / peak).toList(growable: false);
+
+  return RepositoryXrayMetabolismData(
+    spectralRadius: fit.spectralRadius,
+    halfLifeDays: fit.halfLifeSamples,
+    isOrbital: fit.isOrbital,
+    trajectoryLabel: orbit.characterLabel ?? '',
+    activeDays: dateCounts.length,
+    sparkline: sparkline,
+  );
+}
+
+/// Least-squares slope on (index, value). Used by the metabolism
+/// classifier to judge whether the commit-rate is trending up or down
+/// over the analysed window.
+double _seriesTrendSlope(List<double> series) {
+  final n = series.length;
+  if (n < 2) return 0;
+  var sumI = 0.0, sumI2 = 0.0, sumS = 0.0, sumIS = 0.0;
+  for (var i = 0; i < n; i++) {
+    sumI += i;
+    sumI2 += i * i;
+    sumS += series[i];
+    sumIS += i * series[i];
+  }
+  final denom = n * sumI2 - sumI * sumI;
+  if (denom == 0) return 0;
+  return (n * sumIS - sumI * sumS) / denom;
+}
+
 Map<String, int> _countReflogSeries(String output) {
   final counts = <String, int>{};
   for (final line in output.split('\n')) {
@@ -427,17 +668,47 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
   Map<String, int> dirTouches,
   bool includeMachineHistory,
   Future<ProcessResult> Function(List<String> args) probe,
+  Map<String, double> keystoneScores,
 ) async {
   final files = pathTouches.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
   final dirs = dirTouches.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-  final hotspotFutures = [
-    for (final entry in files.take(4))
+
+  // Keystone flag is top-decile of the distribution, with a floor of
+  // at least three files so tiny repos still surface their bridge
+  // species. Computed from the full `keystoneScores` map — keystones
+  // can be low-touch files that wouldn't qualify as hotspots on raw
+  // frequency alone.
+  final keystoneFlags = _flagKeystones(keystoneScores);
+
+  // Canonical hotspot selection: top-N by raw touch count.
+  final picked = <String>{
+    for (final entry in files.take(4)) entry.key,
+  };
+
+  // Keystone supplementation: any flagged keystone file not already
+  // in the hotspot list gets pulled in, capped so the list never
+  // blows past a reasonable size. Without this, keystones by
+  // definition never surface — they *should* have low touch counts
+  // (that's what makes the pull-per-touch ratio notable).
+  final sortedKeystones = keystoneFlags
+      .where((k) => !picked.contains(k))
+      .toList()
+    ..sort((a, b) =>
+        (keystoneScores[b] ?? 0).compareTo(keystoneScores[a] ?? 0));
+  for (final path in sortedKeystones.take(_keystoneHotspotCap)) {
+    picked.add(path);
+  }
+
+  final hotspotFutures = <Future<RepositoryXrayHotspotData>>[
+    for (final path in picked)
       _enrichHotspot(
-        entry.key,
+        path,
         'file',
-        entry.value,
+        pathTouches[path] ?? 0,
         includeMachineHistory,
         probe,
+        keystoneScores[path],
+        keystoneFlags.contains(path),
       ),
     for (final entry in dirs.take(4))
       _enrichHotspot(
@@ -446,11 +717,58 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
         entry.value,
         includeMachineHistory,
         probe,
+        null,
+        false,
       ),
   ];
   final hotspots = await Future.wait(hotspotFutures);
-  hotspots.sort((a, b) => b.touchCount.compareTo(a.touchCount));
+  // Sort: keystones group at the top (they're the noteworthy shape),
+  // then remaining by raw touch count. Within each group, touch count
+  // tie-breaks so the ordering stays stable and familiar.
+  hotspots.sort((a, b) {
+    if (a.isKeystone != b.isKeystone) return a.isKeystone ? -1 : 1;
+    return b.touchCount.compareTo(a.touchCount);
+  });
   return hotspots;
+}
+
+/// Fraction of the distribution that counts as "keystone". Top 10%
+/// by construction — a file has to be in the best-tenth of the
+/// pull-per-touch distribution to earn the label. Adaptive: computed
+/// per-repo from that repo's own score distribution.
+const double _keystoneTopFraction = 0.10;
+
+/// Minimum number of files flagged regardless of distribution size.
+/// Matches the AR(2) `engramMinSamples` floor in spirit — below this
+/// the top-decile cut produces 0 or 1 items, which hides the bridge
+/// species on tiny repos. Derived: the same six-sample threshold the
+/// oscillator fit uses for meaningful signal, halved because flagging
+/// is a weaker commitment than fitting.
+const int _keystoneMinFlags = engramMinSamples ~/ 2;
+
+/// Maximum additional keystones to pull into the hotspot list beyond
+/// the top-N-by-touchCount candidates. Same derivation as
+/// [_keystoneMinFlags] — we want the floor to fit in the visible
+/// hotspot band without displacing all the frequency-ranked ones.
+const int _keystoneHotspotCap = _keystoneMinFlags;
+
+/// Evidence rows we show per signal card. Pre-existing convention in
+/// `_buildCards` — the other cards already cap at five items — so the
+/// keystone card matches them for visual consistency.
+const int _signalCardEvidenceCap = 5;
+
+/// Flag the files in the top fraction of keystone score, with a
+/// repo-size-independent floor so tiny repos still surface their
+/// bridge species instead of getting zero flags.
+Set<String> _flagKeystones(Map<String, double> scores) {
+  if (scores.isEmpty) return const {};
+  final sorted = scores.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  final topFraction = (sorted.length * _keystoneTopFraction).ceil();
+  final take = topFraction > _keystoneMinFlags
+      ? topFraction
+      : _keystoneMinFlags;
+  return sorted.take(take.clamp(1, sorted.length)).map((e) => e.key).toSet();
 }
 
 Future<RepositoryXrayHotspotData> _enrichHotspot(
@@ -459,6 +777,8 @@ Future<RepositoryXrayHotspotData> _enrichHotspot(
   int touchCount,
   bool includeMachineHistory,
   Future<ProcessResult> Function(List<String> args) probe,
+  double? keystoneScore,
+  bool isKeystone,
 ) async {
   final authorArgs = ['log', '--format=%an'];
   final recentArgs = ['log', '-n', '1', '--date=short', '--format=%H\t%h\t%ad'];
@@ -490,6 +810,8 @@ Future<RepositoryXrayHotspotData> _enrichHotspot(
     lastTouchedAt: recentParts.length > 2 ? recentParts[2] : '',
     latestCommitHash: recentParts.isNotEmpty && recentParts[0].isNotEmpty ? recentParts[0] : null,
     latestShortHash: recentParts.length > 1 && recentParts[1].isNotEmpty ? recentParts[1] : null,
+    keystoneScore: keystoneScore,
+    isKeystone: isKeystone,
   );
 }
 
@@ -829,6 +1151,43 @@ List<RepositoryXrayCardData> _buildCards({
             kind: 'reflog',
             count: peakReflog,
           ),
+        ],
+      ),
+    );
+  }
+
+  // ── Keystone bridge-files signal ───────────────────────────────
+  // Surfaces the ecological bridge species: files that carry a lot
+  // of co-change pull for their touch count. Silent when the repo
+  // has no flagged keystones (tiny repo, no coupling data).
+  final keystones = hotspots.where((h) => h.isKeystone).toList();
+  if (keystones.isNotEmpty) {
+    // Sort keystones by their keystoneScore (descending) so the
+    // evidence list leads with the most structurally heavy files.
+    keystones.sort(
+      (a, b) => (b.keystoneScore ?? 0).compareTo(a.keystoneScore ?? 0),
+    );
+    cards.add(
+      RepositoryXrayCardData(
+        id: 'keystone-files',
+        title: keystones.length == 1
+            ? 'Keystone bridge-file'
+            : '${keystones.length} keystone bridge-files',
+        claim: keystones.length == 1
+            ? 'One file carries disproportionate co-change weight relative to its touch count.'
+            : 'A small set of files carry disproportionate co-change weight relative to their touch counts.',
+        verdict: 'strong-pattern',
+        confidence: 'medium',
+        evidence: [
+          for (final k in keystones.take(_signalCardEvidenceCap))
+            RepositoryXrayEvidenceData(
+              label: k.path,
+              detail:
+                  '${k.touchCount} touch${k.touchCount == 1 ? '' : 'es'} · '
+                  'pull φ=${(k.keystoneScore ?? 0).toStringAsFixed(2)}',
+              kind: 'file',
+              count: k.touchCount,
+            ),
         ],
       ),
     );

@@ -569,6 +569,11 @@ class _FileList extends StatelessWidget {
         ),
         Expanded(
           child: ListView.builder(
+            // PageStorageKey survives the widget-tree restructures
+            // caused by `MaterialSurface` flipping between glass and
+            // solid shape on theme switch — same fix applied to the
+            // theme picker's scroll view.
+            key: const PageStorageKey('onboarding.workspacePreview.fileList'),
             padding: const EdgeInsets.symmetric(vertical: 4),
             itemCount: files.length,
             itemBuilder: (context, index) => _FileRow(

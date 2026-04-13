@@ -736,6 +736,11 @@ class _SettingsPageState extends State<SettingsPage> {
     _syncCategoryControllers();
 
     return ListView(
+      // Settings is the other place users frequently switch themes —
+      // PageStorageKey survives the widget-tree restructure (glass↔solid
+      // shape flip in MaterialSurface) so the scroll position doesn't
+      // snap to top each time the active theme changes.
+      key: const PageStorageKey('settings.scroll'),
       padding: const EdgeInsets.all(12),
       children: [
         const _FeatureHeader(),

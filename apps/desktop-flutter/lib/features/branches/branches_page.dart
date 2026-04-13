@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -21,8 +22,10 @@ import '../../backend/gh.dart';
 import '../../backend/git_result.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
+import '../../backend/logos_git.dart';
 import '../../app/repository_state.dart';
 import '../../app/file_coupling_state.dart';
+import '../../app/logos_git_state.dart';
 import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView;
 import '../../components/icons/app_icons.dart';
@@ -4362,7 +4365,16 @@ class _PrExpanded extends StatelessWidget {
               activePath: activeFilePath ?? detail!.files.first.path,
               clusterByPath: _computeClusters(detail!.files, couplingMatrix),
               heatByPath: fileSignals?.heatByPath ?? const {},
-              ghostPaths: _resonanceForecast(detail!.files, couplingMatrix),
+              ghostPaths: _resonanceForecast(
+                detail!.files,
+                couplingMatrix,
+                engine: () {
+                  final repo = context.read<RepositoryState>().activePath;
+                  return repo == null
+                      ? null
+                      : context.read<LogosGitState>().engineFor(repo);
+                }(),
+              ),
               auroraSource: auroraSourceFile,
               couplingMatrix: couplingMatrix,
               onSelect: onSelectFile,
@@ -5083,20 +5095,54 @@ Map<String, int> _computeClusters(
   return clusters.byPath;
 }
 
-/// RESONANCE FORECAST — for each file in the PR, find coupling
-/// neighbors above [threshold] that are NOT already in the PR. The
-/// returned set is the suggested "you forgot these" files; rendered
-/// as ghost pills (dashed outline) in the file strip. Catches the
-/// half-refactor / forgotten-test class of review miss using only
-/// the matrix we already paid for.
+/// RESONANCE FORECAST — surfaces files the PR almost-touched but missed.
+/// Two paths:
+///   • **engine-warm**: one weighted diffusion across the entire PR file
+///     set (heat-kernel at t=1.0). Top-K neighbours by φ become the
+///     ghost pills. This sees indirect couplings — a test that's tied
+///     to module A via co-change with module B will surface even when
+///     the PR only touches A. Uses the same [LogosGit] engine the
+///     resonance pill reads from, so the two readings agree.
+///   • **fallback**: max-pairwise Jaccard from the raw coupling matrix.
+///     Same behaviour as before — graceful degradation when the engine
+///     hasn't finished its first build.
+///
+/// In both cases we cap suggestions at [maxSuggestions] to keep the
+/// strip readable.
 Set<String> _resonanceForecast(
   List<PrFile> files,
   FileCouplingMatrix? matrix, {
+  LogosGit? engine,
   double threshold = 0.4,
   int maxSuggestions = 5,
 }) {
-  if (matrix == null || files.isEmpty) return const {};
+  if (files.isEmpty) return const {};
   final inPr = files.map((f) => f.path).toSet();
+
+  if (engine != null) {
+    // Diffuse from every PR file at unit weight; the kernel handles the
+    // amplitude composition. t=1.0 is the commit-review default — close-
+    // neighbour scope, doesn't reach across the whole repo.
+    final weights = <String, double>{for (final p in inPr) p: 1.0};
+    final scored = engine.diffuseWeighted(
+      weights,
+      t: 1.0,
+      excludePaths: inPr,
+    );
+    if (scored.isEmpty) return const {};
+    // Threshold against a fraction of the top score — engine φ values
+    // aren't on the same scale as Jaccard, so a fixed 0.4 cutoff would
+    // be meaningless. A relative gate keeps the ghost pills tight.
+    final topPhi = scored.first.phi;
+    final cutoff = topPhi * 0.25;
+    return scored
+        .where((s) => s.phi >= cutoff)
+        .take(maxSuggestions)
+        .map((s) => s.path)
+        .toSet();
+  }
+
+  if (matrix == null) return const {};
   final scored = <String, double>{};
   for (final f in files) {
     final neighbors = matrix.jaccard[f.path] ?? const <String, double>{};
@@ -5135,10 +5181,23 @@ class _FilesSectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final hasMatrix = matrix != null && files.length >= 2;
-    final coherence = hasMatrix
-        ? matrix!.coherenceFor(files.map((f) => f.path))
-        : null;
+    // Prefer LogosGit multi-axis coherence when the engine is warm — it
+    // factors coupling AND frequency AND directory proximity AND
+    // volatility, not just Jaccard. Graceful fallback to single-axis
+    // matrix.coherenceFor() when the engine hasn't finished its first
+    // build, so UI never stalls.
+    final paths = files.map((f) => f.path);
+    final repoPath = context.read<RepositoryState>().activePath;
+    final engine = repoPath == null
+        ? null
+        : context.watch<LogosGitState>().engineFor(repoPath);
+    final hasSignal =
+        files.length >= 2 && (matrix != null || engine != null);
+    final coherence = !hasSignal
+        ? null
+        : (engine != null
+            ? engine.coherence(paths)
+            : matrix!.coherenceFor(paths));
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -5234,13 +5293,25 @@ class _FilePillStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // PR-level coherence — average pairwise Jaccard across files. Pills
+    // use this to scale their cascade intensity: dense PRs (everything
+    // moves together) damp the cascade so the strip doesn't read as
+    // uniform glow; sparse PRs amplify it so the rare strong coupling
+    // stands out. Single matrix sweep, shared across every pill.
+    final m = couplingMatrix;
+    final coherence = (m != null && files.length >= 2)
+        ? m.coherenceFor(files.map((f) => f.path))
+        : 0.0;
     final pills = <Widget>[
       for (final f in files)
         _FilePill(
           file: f,
           isActive: f.path == activePath,
+          activePath: activePath,
           clusterId: clusterByPath[f.path],
+          clusterByPath: clusterByPath,
           heat: heatByPath[f.path] ?? 0,
+          coherence: coherence,
           auroraSource: auroraSource,
           couplingMatrix: couplingMatrix,
           onTap: () => onSelect(f.path),
@@ -5338,17 +5409,32 @@ class _DashedBorderPainter extends CustomPainter {
 class _FilePill extends StatefulWidget {
   final PrFile file;
   final bool isActive;
+  /// Path of the currently-selected file in the strip. Used to paint a
+  /// quiet, persistent coupling aura over neighbors of the selection
+  /// so the cascade stays visible after a click, not just on hover.
+  final String activePath;
   /// Cluster id from the coupling matrix. Null = isolated file (no
   /// stripe). Pills sharing a cluster share their stripe color, the
   /// same identity used by the changes-panel rail — files that move
   /// together visually belong together.
   final int? clusterId;
+  /// Full path → cluster-id map for the strip. Used to resolve the
+  /// cluster colors of the SELECTION and HOVER source files so the
+  /// cascade tint can blend AWAY from this pill's local identity
+  /// TOWARD whichever anchor is energizing it — the visual analog of
+  /// "the signal is flowing from there into here."
+  final Map<String, int> clusterByPath;
   /// Thermal heat 0..1 — exponentially-decayed commit density on this
   /// file. Drives an ember glow on the pill: hot files have a bright
   /// orange-tinted left edge; cold files are silent. Tells the
   /// reviewer "the team currently lives in this file" without any
   /// label.
   final double heat;
+  /// PR-level coherence 0..1 — average pairwise Jaccard across all
+  /// files in the strip. Modulates cascade intensity: a sparse PR
+  /// (low coherence) amplifies the cascade so rare coupling reads,
+  /// a dense PR damps it so the strip doesn't melt into uniform glow.
+  final double coherence;
   /// Lens-level currently-hovered file (RESONANCE AURORA source).
   /// When non-null AND the matrix says this pill's file has a
   /// coupling Jaccard ≥ 0.4 with the source, we paint a halo
@@ -5359,8 +5445,11 @@ class _FilePill extends StatefulWidget {
   const _FilePill({
     required this.file,
     required this.isActive,
+    required this.activePath,
     required this.clusterId,
+    required this.clusterByPath,
     required this.heat,
+    required this.coherence,
     required this.auroraSource,
     required this.couplingMatrix,
     required this.onTap,
@@ -5375,15 +5464,25 @@ class _FilePillState extends State<_FilePill> {
   /// 0 if not part of the current aurora; otherwise the Jaccard
   /// coupling between this pill's file and the hovered source. The
   /// pill itself (the source) returns 0 here; rendering treats the
-  /// source separately via _hovered.
+  /// source separately via _hovered. Hovering the SELECTED pill also
+  /// returns 0 — it's the same anchor as the selection cascade, so
+  /// we'd double-count the same signal and fire spurious bridge rings
+  /// across every coupled neighbor (sqrt(s·s) = s for every pill).
   double _auroraStrength(String? source) {
     if (source == null) return 0;
     if (source == widget.file.path) return 0;
+    if (source == widget.activePath) return 0;
     final m = widget.couplingMatrix;
     if (m == null) return 0;
     final s = m.score(source, widget.file.path);
     return s >= 0.4 ? s : 0;
   }
+
+  /// Selection-anchored cascade. Reuses the same Jaccard threshold as
+  /// the hover aura but stays painted as long as a file is selected,
+  /// so neighbors of the click stay visually grouped after the cursor
+  /// moves on. Selected pill itself returns 0 (already lit by isActive).
+  double get _selectionAura => _auroraStrength(widget.activePath);
 
   @override
   Widget build(BuildContext context) {
@@ -5392,10 +5491,156 @@ class _FilePillState extends State<_FilePill> {
     final accent = t.accentBright;
     final filename = widget.file.path.split('/').last;
     final clusterColor = t.clusterStripeColor(widget.clusterId);
+    // Resolve the SELECTION source's cluster color once per build —
+    // doesn't depend on the live aurora notifier.
+    final selSrcColor = widget.activePath.isEmpty
+        ? null
+        : t.clusterStripeColor(widget.clusterByPath[widget.activePath]);
     return ValueListenableBuilder<String?>(
       valueListenable: widget.auroraSource,
       builder: (context, source, _) {
         final aurora = _auroraStrength(source);
+        final selAura = _selectionAura;
+        // Resolve the HOVER source's cluster color from the live notifier.
+        final hoverSrcColor = source == null
+            ? null
+            : t.clusterStripeColor(widget.clusterByPath[source]);
+
+        // ─── PILL CHROME — anchored signal system ───────────────────
+        //
+        // Both coupling cascades (selection-anchored AND hover-anchored)
+        // light BOTH chrome channels (fill + border) so the reader can
+        // visually compare "files coupled to what I clicked" against
+        // "files coupled to what I'm aiming at" at a glance — a pill
+        // lit only by selection looks distinct from one lit only by
+        // hover (different anchor, different mass), and a pill lit by
+        // both stacks louder. The bridge ring (inner stroke) is the
+        // precise intersection indicator: it reads as a different
+        // SHAPE, so a true path-node is unambiguous even when alphas
+        // happen to coincide.
+        //
+        //   STATE                  CHANNELS              ENCODING
+        //   ─────────────────────────────────────────────────────────
+        //   cluster identity       Left stripe           static color
+        //   heat (commit density)  Left ember            static gradient
+        //   selected pill          Fill + border α↑      accent, promoted α
+        //   hovered pill           Fill + border bump    cross-channel lift
+        //   coupled → CURSOR       Fill + border         cluster, jh × intensity
+        //   coupled → SELECTION    Fill + border         cluster, js × intensity·decay
+        //   bridge (both)          Inner ring (own)      √(jh·js) × ringMax
+        //
+        // Cascade intensities adapt to PR coherence (sparse PRs amp,
+        // dense PRs damp). Hot files boost the direct hover affordance.
+        // The bridge ring is intentionally non-adaptive — rare, precise,
+        // always reads at full clarity.
+
+        // One anchor primitive; everything derives from it.
+        const restingBorderAlpha = 0.3;
+        const selectedBorderAlpha = restingBorderAlpha * 2;
+        const selectedFillAlpha = restingBorderAlpha * 0.5;
+        const restingFillAlpha = 0.4; // surface1 wash on idle pills
+        const hoverBorderBump = restingBorderAlpha * 0.6;
+        const hoverFillBump = restingBorderAlpha / 3;
+        // Bridge ring peaks at 1.5× resting border — louder than chrome,
+        // quieter than the selected outline, so it reads as "real signal"
+        // without stealing primary attention from the selected pill.
+        const bridgeRingMax = restingBorderAlpha * 1.5;
+
+        // Cascade peaks at Jaccard 1.0 saturate at the same alpha the
+        // anchor itself would (selected fill / promotion delta), so a
+        // strongly-coupled neighbor visually IS "what the anchor looks
+        // like" attenuated by graph distance.
+        final hoverCascade = 1.0 - widget.coherence * 0.4;
+        final selectionCascade =
+            hoverCascade * (0.55 - widget.coherence * 0.2);
+        final hoverFillPeak = selectedFillAlpha * hoverCascade;
+        final hoverBorderPeak =
+            (selectedBorderAlpha - restingBorderAlpha) * hoverCascade;
+        final selectionFillPeak = selectedFillAlpha * selectionCascade;
+        final selectionBorderPeak =
+            (selectedBorderAlpha - restingBorderAlpha) * selectionCascade;
+
+        // Hot files boost the direct hover bump only (cascades stay
+        // neutral). Heat 0 → baseline; heat 1 → +50%.
+        final heatBoost = 1.0 + widget.heat * 0.5;
+        final liveHoverFill = _hovered ? hoverFillBump * heatBoost : 0.0;
+        final liveHoverBorder = _hovered ? hoverBorderBump * heatBoost : 0.0;
+
+        // ─── COLOR MIXING ───────────────────────────────────────────
+        // The cascade tint of a non-selected pill blends the cluster
+        // colors of its two anchors (selection + hover) weighted by
+        // each anchor's cascade contribution. The pill's body bleeds
+        // AWAY from its own cluster identity TOWARD whichever anchor
+        // is energizing it — mycelium energy literally flowing in.
+        //
+        // Pure selection cascade → tint = selection-source color
+        // Pure hover cascade     → tint = hover-source color
+        // Both                   → linear blend, ratio = sel / (sel+hov)
+        // Neither                → fall back to local cluster identity
+        Color cascadeTint() {
+          final sFallback = clusterColor ?? accent;
+          final wHover = aurora;
+          final wSel = selAura;
+          if (wHover + wSel <= 0) return sFallback;
+          final hSrc = hoverSrcColor ?? sFallback;
+          final sSrc = selSrcColor ?? sFallback;
+          final mix = wSel / (wHover + wSel);
+          return Color.lerp(hSrc, sSrc, mix) ?? sFallback;
+        }
+
+        // ─── Channel composition ───────────────────────────────────
+        // FILL: selection wash + both cascades + hover bump.
+        final fillTouched =
+            widget.isActive || aurora > 0 || selAura > 0 || _hovered;
+        final fillAlpha = (widget.isActive ? selectedFillAlpha : 0.0) +
+            aurora * hoverFillPeak +
+            selAura * selectionFillPeak +
+            liveHoverFill;
+        final fillColor = fillTouched
+            ? (widget.isActive ? accent : cascadeTint())
+                .withValues(alpha: fillAlpha.clamp(0.0, 0.55))
+            : t.surface1.withValues(alpha: restingFillAlpha);
+
+        // BORDER: resting/selected base + both cascades + hover bump.
+        final borderTouched =
+            widget.isActive || aurora > 0 || selAura > 0 || _hovered;
+        final borderAlpha = (widget.isActive
+                ? selectedBorderAlpha
+                : restingBorderAlpha) +
+            aurora * hoverBorderPeak +
+            selAura * selectionBorderPeak +
+            liveHoverBorder;
+        final borderColor = (widget.isActive
+                ? accent
+                : borderTouched
+                    ? cascadeTint()
+                    : t.chromeBorder)
+            .withValues(alpha: borderAlpha.clamp(0.0, 0.95));
+
+        // BRIDGE ring (own channel) — geometric mean suppresses
+        // asymmetric pairs; balanced couplings get full brightness.
+        // The ring color is the perfect 50/50 blend of the two source
+        // colors (selection + hover): bridges visibly carry BOTH
+        // identities, not a weighted compromise. Distinct SHAPE so
+        // intersection is unambiguous even when alphas coincide.
+        final bridge = (aurora > 0 && selAura > 0)
+            ? math.sqrt(aurora * selAura)
+            : 0.0;
+        // Both auroras inherit the Jaccard 0.4 floor when nonzero, so
+        // the minimum visible bridge is 0.4. A simple "is nonzero" gate
+        // is the honest threshold — any earlier "0.04" looked meaningful
+        // but was unreachable.
+        final showBridge = bridge > 0;
+        final bridgeBlend = Color.lerp(
+                hoverSrcColor ?? clusterColor ?? accent,
+                selSrcColor ?? clusterColor ?? accent,
+                0.5) ??
+            (clusterColor ?? accent);
+        final bridgeColor =
+            bridgeBlend.withValues(alpha: bridge * bridgeRingMax);
+
+        final pillRadius = context.surfaceShader.geometry.pillRadius;
+
         return MouseRegion(
           cursor: SystemMouseCursors.click,
           onEnter: (_) {
@@ -5417,33 +5662,36 @@ class _FilePillState extends State<_FilePill> {
             child: AnimatedContainer(
               duration: context.motion(shader.duration),
               curve: shader.safeCurve,
-              padding: const EdgeInsets.fromLTRB(0, 5, 8, 5),
               decoration: BoxDecoration(
-                color: widget.isActive
-                    ? accent.withValues(alpha: 0.15)
-                    // Aurora wash is the second-strongest hover-state
-                    // color — louder than the resting state, quieter
-                    // than the user's actual hover.
-                    : aurora > 0
-                        ? (clusterColor ?? accent)
-                            .withValues(alpha: 0.10 + aurora * 0.18)
-                        : (_hovered
-                            ? t.chromeBorder.withValues(alpha: 0.15)
-                            : t.surface1.withValues(alpha: 0.4)),
-                borderRadius: BorderRadius.circular(
-                    context.surfaceShader.geometry.pillRadius),
-                border: Border.all(
-                  color: widget.isActive
-                      ? accent.withValues(alpha: 0.6)
-                      : aurora > 0
-                          ? (clusterColor ?? accent)
-                              .withValues(alpha: 0.3 + aurora * 0.5)
-                          : t.chromeBorder.withValues(alpha: 0.3),
-                ),
+                color: fillColor,
+                borderRadius: BorderRadius.circular(pillRadius),
+                border: Border.all(color: borderColor),
               ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+              child: Stack(
+                children: [
+                  // Bridge ring — inset 1px stroke. Lives on its own
+                  // visual channel so a true path-node reads as a
+                  // distinct shape, not just brighter alpha.
+                  if (showBridge)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: AnimatedContainer(
+                          duration: context.motion(shader.duration),
+                          curve: shader.safeCurve,
+                          margin: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: bridgeColor),
+                            borderRadius:
+                                BorderRadius.circular(pillRadius - 2),
+                          ),
+                        ),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(0, 5, 8, 5),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
               // Left cluster stripe — same palette as the changes-panel
               // rail. Always reserves the slot so pill widths stay
               // aligned whether or not a file is in a cluster.
@@ -5519,10 +5767,13 @@ class _FilePillState extends State<_FilePill> {
                     fontFamily: 'JetBrainsMono',
                     fontFeatures: const [FontFeature.tabularFigures()],
                   )),
-            ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
         );
       },
     );
@@ -7882,7 +8133,16 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     final totalAdds = widget.prFiles.fold<int>(0, (s, f) => s + f.additions);
     final totalDels = widget.prFiles.fold<int>(0, (s, f) => s + f.deletions);
     final clusters = _computeClusters(widget.prFiles, widget.couplingMatrix);
-    final ghosts = _resonanceForecast(widget.prFiles, widget.couplingMatrix);
+    final ghosts = _resonanceForecast(
+      widget.prFiles,
+      widget.couplingMatrix,
+      engine: () {
+        final repo = context.read<RepositoryState>().activePath;
+        return repo == null
+            ? null
+            : context.read<LogosGitState>().engineFor(repo);
+      }(),
+    );
 
     return Dialog(
       backgroundColor: Colors.transparent,

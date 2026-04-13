@@ -9,7 +9,17 @@ import 'ai_audit_store.dart';
 import '../diagnostics/diagnostics_state.dart';
 import 'commit_format.dart';
 import 'dtos.dart';
+import 'engram_fit.dart';
+import 'file_coupling.dart' show logCommitSeparator;
+import 'git.dart';
 import 'git_result.dart';
+import 'logos_git.dart';
+import 'logos_git_calibration.dart';
+import 'logos_git_diagnostics.dart';
+import 'logos_git_probe.dart';
+import 'logos_git_resolver.dart';
+import 'logos_chunks.dart' as chunks;
+import 'logos_hunks.dart' as hunks;
 
 const _providerSpecs = <_ProviderSpec>[
   _ProviderSpec(id: 'codex', binary: 'codex', kind: _ProviderKind.codex),
@@ -80,7 +90,6 @@ final Map<String, _TimedValue<_ProviderModelDiscovery?>>
 const _modelValueSeparator = ':';
 const _diffStatWidth = 140;
 const _diffTimeoutSeconds = 50;
-const _maxChangedLineLength = 120;
 const _previewMaxLength = 800;
 const _truncationSuffix = '...';
 const _findingOriginDraft = 'draft';
@@ -315,6 +324,12 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
     }
 
     final bundle = diffContext.data!;
+    // Logos shape signal — lets the LLM pick scope/voice/coverage from
+    // the diff's own attention regime. Null is fine (engine cold-start).
+    final commitShape = await _collectLogosCommitShape(
+      repositoryPath: repositoryPath,
+      diffText: bundle.diffBundle.promptBody,
+    );
     final prompt = _buildCommitMessagePrompt(
       branchName: bundle.branchName,
       modelCategoryLabel: modelCategoryLabel,
@@ -333,6 +348,7 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       structure: structure,
       voice: voice,
       coverage: coverage,
+      logosShape: commitShape,
     );
 
     // --- API providers: direct HTTP, no CLI ---
@@ -355,7 +371,6 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
           modelId: modelId,
           message: message,
           scopeLabel: scopeLabel,
-          usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
           promptCharacters: prompt.length,
           diffCharacters: bundle.diffBundle.originalDiffCharacters,
         ),
@@ -423,7 +438,6 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
         modelId: modelId,
         message: message,
         scopeLabel: scopeLabel,
-        usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
         promptCharacters: prompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
       ),
@@ -755,6 +769,17 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       );
     }
 
+    // Feed cited paths from the review back into the SSE calibration
+    // store. Closes the Logos self-learning loop: axes that surfaced
+    // useful context get reinforced per-regime, per-repo. Fire-and-
+    // forget — review results are returned regardless.
+    // ignore: unawaited_futures
+    _recordLogosCitationFeedback(
+      repositoryPath: repositoryPath,
+      aiOutput: providerOutput.output!,
+      record: bundle.logosEmissionRecord,
+    );
+
     if (!doubleCheckEnabled) {
       return GitResult.ok(
         AiCommitReviewData(
@@ -763,7 +788,6 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
           modelCategoryLabel: modelCategoryLabel,
           guardrailStage: guardrailStage,
           scopeLabel: scopeLabel,
-          usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
           promptCharacters: draftPrompt.length,
           diffCharacters: bundle.diffBundle.originalDiffCharacters,
           verdict: draftReview.verdict,
@@ -819,7 +843,6 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
         modelCategoryLabel: modelCategoryLabel,
         guardrailStage: guardrailStage,
         scopeLabel: scopeLabel,
-        usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
         verdict: draftReview.verdict,
@@ -849,7 +872,6 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
           modelCategoryLabel: modelCategoryLabel,
           guardrailStage: guardrailStage,
           scopeLabel: scopeLabel,
-          usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
           promptCharacters: draftPrompt.length + verifyPrompt.length,
           diffCharacters: bundle.diffBundle.originalDiffCharacters,
           verdict: draftReview.verdict,
@@ -891,7 +913,6 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
         modelCategoryLabel: modelCategoryLabel,
         guardrailStage: guardrailStage,
         scopeLabel: scopeLabel,
-        usedCondensedDiff: bundle.diffBundle.usedCondensedDiff,
         promptCharacters: draftPrompt.length + verifyPrompt.length,
         diffCharacters: bundle.diffBundle.originalDiffCharacters,
         verdict: merged.verdict,
@@ -1609,7 +1630,10 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     );
   }
 
-  final diffBundle = _buildDiffPromptBundle(fullDiff);
+  final diffBundle = await _buildDiffPromptBundle(
+    fullDiff,
+    repositoryPath: repositoryPath,
+  );
 
   // ── Parallel context enrichment ──────────────────────────────────────
   // Five anti-hallucination layers gathered simultaneously. Budget adapts
@@ -1634,9 +1658,24 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // Adaptive split: file context is most valuable, but with 50+ files
   // the metadata summary becomes more important than trying to include
   // all source. The ratio slides smoothly between the extremes.
+  //
+  // A sixth slice — relevance neighborhood (Logos-inspired diffusion) —
+  // surfaces files NOT in the diff but strongly coupled to it. Budget
+  // ~20% of context; cut from file-context since these usually overlap
+  // the same semantic space (callers, historical co-changers).
   final metadataWeight = (changedFileCount / 100).clamp(0.1, 0.3);
-  final fileContextWeight = 1.0 - metadataWeight - 0.1; // 10% headroom
+  const relevanceWeight = 0.20;
+  final fileContextWeight =
+      1.0 - metadataWeight - relevanceWeight - 0.1; // 10% headroom
 
+  // Kick off the relevance future separately so its richer return type
+  // (text + emission record) doesn't widen the Future.wait list to
+  // List<Object>. Both futures still run in parallel.
+  final relevanceFuture = _collectRelevanceNeighborhood(
+    repositoryPath: repositoryPath,
+    diffText: fullDiff,
+    budgetChars: (contextBudget * relevanceWeight).round(),
+  );
   final contextFutures = await Future.wait([
     _collectFileContext(
       repositoryPath: repositoryPath,
@@ -1663,6 +1702,9 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   final fileMetadata = contextFutures[1];
   final changeTypes = contextFutures[2];
   final structuralVerification = contextFutures[3];
+  final relevance = await relevanceFuture;
+  final relevanceNeighborhood = relevance.text;
+  final logosEmissionRecord = relevance.record;
 
   // Append enrichment sections to the diff bundle.
   final enrichedParts = <String>[diffBundle.promptBody];
@@ -1679,11 +1721,15 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   if (fileContext.isNotEmpty) {
     enrichedParts.add('<file_context>\n$fileContext</file_context>');
   }
+  if (relevanceNeighborhood.isNotEmpty) {
+    enrichedParts.add(
+      '<relevance_neighborhood>\n$relevanceNeighborhood</relevance_neighborhood>',
+    );
+  }
   final enrichedPromptBody = enrichedParts.join('\n\n');
 
   final enrichedBundle = _DiffPromptBundle(
     promptBody: enrichedPromptBody,
-    usedCondensedDiff: diffBundle.usedCondensedDiff,
     originalDiffCharacters: diffBundle.originalDiffCharacters,
   );
 
@@ -1738,6 +1784,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
       lastCommitAge: lastCommitAge,
       projectAge: projectAge,
       uniqueContributors: uniqueContributors,
+      logosEmissionRecord: logosEmissionRecord,
     ),
   );
 }
@@ -2352,56 +2399,680 @@ Future<String> _collectFileContext({
       pathPattern.allMatches(diffText).map((m) => m.group(1)!).toSet();
   if (paths.isEmpty) return '';
 
-  // Read files in parallel, filter to those that exist and are small enough.
-  // Threshold between "include full source" vs "outline only". Adapts to
-  // budget — generous budget lets us include larger files whole, tight
-  // budget makes us more selective. The budget cap naturally limits how
-  // many files fit regardless.
-  final maxFileLines = budgetChars > 100000
-      ? 1200 // Tons of room — include most files whole
-      : budgetChars > 50000
-          ? 800 // Moderate room
-          : budgetChars > 20000
-              ? 500 // Tight — be selective
-              : 300; // Very tight — only tiny files
+  // Logos-driven prioritization. Instead of arbitrary line-count
+  // thresholds + alphabetical iteration (which happened to drop a
+  // critical `z*.dart` while keeping a trivial `a*.dart`), use the
+  // attention-codec engine to rank touched files by their self-φ
+  // (post-diffusion heat retained at the source). The "core" files of
+  // the change — the ones the surrounding manifold attests are most
+  // central — get included first. Marginal files drop off naturally
+  // when budget exhausts.
+  //
+  // Full content first; if a file blows the remaining budget at full
+  // size, fall back to intra-file chunk diffusion (logos_chunks): chunk
+  // the file on signature boundaries, build a mini chunk-graph, diffuse
+  // from the diff-touched line ranges as the heat source, and greedy-
+  // pack chunks by φ. The "snaking attention head" — adjacent admitted
+  // chunks render as continuous excerpts. Neighborhood diffusion does
+  // NOT backstop primary paths (it excludes them by design), so this is
+  // where structural awareness for large diff-touched files lives.
+  final pathList = paths.toList();
+  List<String> orderedPaths;
+  try {
+    final engine = await resolveLogosGit(repositoryPath);
+    if (engine != null) {
+      // Self-φ via heat-kernel: how much heat each source file retains
+      // after t=1.0 diffusion. Files coupled to a strong neighborhood
+      // bleed less; isolated files bleed most. Highest-retention files
+      // are the most "anchored" parts of the change.
+      final sourceWeights = {for (final p in pathList) p: 1.0};
+      final scores =
+          engine.diffuseWeighted(sourceWeights, excludePaths: const {});
+      final phi = {for (final s in scores) s.path: s.phi};
+      orderedPaths = [...pathList]..sort((a, b) {
+          final pa = phi[a] ?? 0.0;
+          final pb = phi[b] ?? 0.0;
+          final cmp = pb.compareTo(pa); // desc
+          if (cmp != 0) return cmp;
+          return a.compareTo(b); // alphabetical tiebreaker for determinism
+        });
+    } else {
+      // No engine available (early profile build, empty repo). Fall
+      // back to alphabetical — better than randomized iteration order.
+      orderedPaths = [...pathList]..sort();
+    }
+  } catch (_) {
+    orderedPaths = [...pathList]..sort();
+  }
+
   final buffer = StringBuffer();
   var remaining = budgetChars;
-
-  // Sort by path so output is deterministic.
-  final sortedPaths = paths.toList()..sort();
-
-  // Use async I/O to avoid blocking the Flutter event loop.
-  for (final filePath in sortedPaths) {
-    if (remaining <= 200) break;
-
+  for (final filePath in orderedPaths) {
+    if (remaining <= 0) break;
     try {
       final file = File(p.join(repositoryPath, filePath));
       if (!await file.exists()) continue;
-
       final content = await file.readAsString();
       final lineCount = '\n'.allMatches(content).length + 1;
-
-      if (lineCount <= maxFileLines) {
-        final block = '--- $filePath ($lineCount lines) ---\n$content\n';
-        if (block.length > remaining) continue;
-
+      final block = '--- $filePath ($lineCount lines) ---\n$content\n';
+      if (block.length <= remaining) {
         buffer.write(block);
         remaining -= block.length;
         continue;
       }
-
-      // Large file — function/class outline for structural awareness.
-      final outline = _buildFileOutline(content, filePath, lineCount);
-      if (outline.length > remaining) continue;
-
-      buffer.write(outline);
-      remaining -= outline.length;
+      // Over-budget at full size — try the chunk-pack fallback. Build
+      // touched line ranges from the diff so the chunk diffusion knows
+      // where the heat source is.
+      final touched = chunks.touchedRangesFromDiff(
+        filePath: filePath,
+        diffText: diffText,
+      );
+      final pack = chunks.packRelevantChunks(
+        filePath: filePath,
+        content: content,
+        touchedRanges: touched,
+        budgetChars: remaining,
+      );
+      if (pack.body.isEmpty) continue;
+      buffer.write(pack.body);
+      remaining -= pack.body.length;
     } catch (_) {
       continue;
     }
   }
 
   return buffer.toString();
+}
+
+/// Collect *relevance neighborhood* — files NOT in the diff but strongly
+/// connected to it via historical co-change, directory proximity, global
+/// touch frequency, and volatility match. This surfaces the "hidden
+/// caller" class of bugs: things the reviewer needs to see even though
+/// they weren't changed.
+///
+/// Uses the Logos-inspired git engine ([LogosGit]). The diff's touched
+/// paths become a heat source ρ; relevance φ is the heat-kernel
+/// diffusion φ = exp(-t·L_sym)·ρ at t=1.0 (commit-review scope).
+///
+/// Emission follows a greedy-density knapsack with three tiers:
+///   FULL       — full source; chunk-pack fallback if oversized
+///   SIGNATURE  — outline (same format as [_buildFileOutline])
+///   BREADCRUMB — one-liner with path + score + dominant axis
+///
+/// Budget-bounded. Returns an empty string on any error — this is a
+/// best-effort enrichment layer; failures never poison the primary
+/// context path.
+/// Returns the prompt section *and* the emission record for this call,
+/// so the caller can feed citations back to SSE without relying on
+/// process-level globals (which would race across overlapping reviews).
+Future<({String text, LogosEmissionRecord? record})>
+    _collectRelevanceNeighborhood({
+  required String repositoryPath,
+  required String diffText,
+  required int budgetChars,
+  double temperature = 1.0,
+}) async {
+  if (budgetChars <= 500) return (text: '', record: null);
+  try {
+    // Resolve or build the engine through the shared resolver so that
+    // UI state class + this code path share one cache and one in-flight
+    // build per (repo, HEAD).
+    final engine = await resolveLogosGit(repositoryPath);
+    if (engine == null) return (text: '', record: null);
+
+    // Construct the full probe: primary diff paths + M-axis pickaxe
+    // enrichment (files containing added/removed identifiers) + Ab-axis
+    // path mirrors (test/source pairs). Temperature adapts to the
+    // diff's own coherence — see [LogosGitProbeBuilder.adaptiveTemperature].
+    final probe = await buildDiffProbe(
+      repoPath: repositoryPath,
+      diffText: diffText,
+      engine: engine,
+    );
+    if (probe.sourceWeights.isEmpty) return (text: '', record: null);
+
+    // Base temperature: caller override, else the probe's coherence-
+    // adaptive suggestion. Then scale by the branch orbit: converging
+    // chains get a cooler diffusion (trust the core), diverging chains
+    // get a hotter one (reach wider to surface the sprawl's tails).
+    // Neutral when the orbit has no signal, so behaviour is backward-
+    // compatible on short / insufficient histories.
+    final orbit = await _probeBranchOrbit(repositoryPath);
+    final baseT = temperature == 1.0
+        ? probe.suggestedTemperature ?? 1.0
+        : temperature;
+    final resolvedT = baseT * _temperatureMultiplierFromOrbit(orbit);
+
+    // Diffuse. Heat-kernel linearity means weighted-source diffusion
+    // equals the weighted sum of single-source diffusions.
+    final diffuseStart = Stopwatch()..start();
+    final scores = diffuseFromProbe(
+      engine: engine,
+      probe: probe,
+      temperatureOverride: resolvedT,
+    );
+    LogosGitDiagnostics.instance.recordDiffuse(
+      repoPath: repositoryPath,
+      sourceCount: probe.sourceWeights.length,
+      duration: diffuseStart.elapsed,
+      temperature: resolvedT,
+    );
+    if (scores.isEmpty) return (text: '', record: null);
+
+    // No candidate trim — let the knapsack see the full ranking. The
+    // budget closes the long tail naturally; an arbitrary pre-trim
+    // would discard tail-φ items that the planner might have chosen
+    // at a cheaper tier.
+    final plan = engine.plan(scores, budget: budgetChars);
+    if (plan.isEmpty) return (text: '', record: null);
+
+    // Classify the regime + record which axis put each file on the
+    // emission list. The SSE store consumes this after the AI responds
+    // — citations are matched back and axis utilities updated per-repo.
+    final regime = LogosRegime.classify(
+      fileCount: probe.stats.primaryCount,
+      coherence: probe.stats.coherence,
+    );
+    final axisByPath = <String, LogosAxis>{
+      for (final item in plan) item.path: _classifyAxis(item.path, probe),
+    };
+    final emissionRecord = LogosEmissionRecord(
+      regime: regime,
+      axisByPath: axisByPath,
+    );
+    // Fire-and-forget emission tally — failure doesn't fail the review.
+    // ignore: unawaited_futures
+    LogosSseStore(repositoryPath).recordEmissions(emissionRecord);
+
+    final buffer = StringBuffer();
+    buffer.writeln(
+      '(diff=${probe.stats.primaryCount} file${probe.stats.primaryCount == 1 ? '' : 's'}'
+      ', M-axis=${probe.stats.mMatches} file${probe.stats.mMatches == 1 ? '' : 's'}'
+      ' via ${probe.stats.mSymbols} symbol${probe.stats.mSymbols == 1 ? '' : 's'}'
+      ', Ab-axis=${probe.stats.abMatches} mirror${probe.stats.abMatches == 1 ? '' : 's'}'
+      ', coherence=${probe.stats.coherence.toStringAsFixed(2)}'
+      ', regime=${regime.name}'
+      ', t=${resolvedT.toStringAsFixed(2)}'
+      '; ${plan.length} neighbors surfaced)',
+    );
+    var remaining = budgetChars - buffer.length;
+
+    for (final item in plan) {
+      if (remaining <= 120) break;
+      final header =
+          '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)} ---';
+      if (item.tier == EmissionTier.breadcrumb) {
+        final line = '$header\n';
+        if (line.length > remaining) continue;
+        buffer.write(line);
+        remaining -= line.length;
+        continue;
+      }
+      try {
+        final file = File(p.join(repositoryPath, item.path));
+        if (!await file.exists()) continue;
+        final content = await file.readAsString();
+        final lineCount = '\n'.allMatches(content).length + 1;
+        if (item.tier == EmissionTier.full) {
+          final fullBlock = '$header\n$content\n';
+          if (fullBlock.length <= remaining) {
+            buffer.write(fullBlock);
+            remaining -= fullBlock.length;
+            continue;
+          }
+          // Over-budget at full size — fall back to intra-file chunk
+          // diffusion. Neighborhood files have no diff-touched ranges,
+          // so the chunk packer uses byte-mass ρ and surfaces the most
+          // central chunks. Geometry, not an arbitrary line cap.
+          final pack = chunks.packRelevantChunks(
+            filePath: item.path,
+            content: content,
+            touchedRanges: const [],
+            budgetChars: remaining,
+          );
+          if (pack.body.isEmpty) continue;
+          buffer.write(pack.body);
+          remaining -= pack.body.length;
+        } else {
+          final block = _buildFileOutline(content, item.path, lineCount);
+          if (block.length > remaining) continue;
+          buffer.write(block);
+          remaining -= block.length;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return (text: buffer.toString(), record: emissionRecord);
+  } catch (e, st) {
+    // No more silent swallow — surface failures through diagnostics
+    // so debug panels can show them and tests can assert on them.
+    // The empty-string return preserves the fail-safe behaviour for
+    // the prompt (worst case: prompt loses one enrichment section).
+    LogosGitDiagnostics.instance.recordFailure(
+      repositoryPath,
+      'relevance_neighborhood: $e',
+      Duration.zero,
+      st,
+    );
+    return (text: '', record: null);
+  }
+}
+
+String _tierName(EmissionTier tier) => switch (tier) {
+      EmissionTier.full => 'full',
+      EmissionTier.signature => 'sig',
+      EmissionTier.breadcrumb => 'bread',
+    };
+
+/// Which observable put `path` on the emission list. Primary if it's
+/// in the diff, M if pickaxe pulled it in, Ab if a path-mirror did.
+/// Anything left is graph-diffusion surfaced (CC/SP/V/F0 collectively).
+LogosAxis _classifyAxis(String path, DiffProbe probe) {
+  if (probe.primaryPaths.contains(path)) return LogosAxis.primary;
+  // The probe's sourceWeights map tracks explicit (M, Ab) additions.
+  // We can't tell M from Ab just by path membership after-the-fact, so
+  // we heuristic: if the path *looks* like a test-mirror of a primary
+  // path, call it Ab; otherwise M.
+  if (probe.sourceWeights.containsKey(path)) {
+    final looksMirror = _pathLooksLikeMirrorOf(path, probe.primaryPaths);
+    return looksMirror ? LogosAxis.ab : LogosAxis.m;
+  }
+  return LogosAxis.graph;
+}
+
+bool _pathLooksLikeMirrorOf(String candidate, Set<String> primary) {
+  // Mirror = candidate is a test-ish path AND its basename-stem matches
+  // some primary path's stem. Test-path detection routes through the
+  // same classifier the probe uses so axis tags stay consistent across
+  // the probe builder and this downstream citation path.
+  if (!looksLikeTestPath(candidate)) return false;
+  final candBase = p.basenameWithoutExtension(candidate)
+      .replaceAll(RegExp(r'(_test|_spec|\.test|\.spec)$'), '');
+  for (final pri in primary) {
+    final priBase = p.basenameWithoutExtension(pri);
+    if (candBase == priBase) return true;
+  }
+  return false;
+}
+
+/// Feed the AI's structured output back into the SSE store. Extracts
+/// cited paths from `<findings>` XML and records them against the
+/// emission record produced for *this* review call. Fire-and-forget;
+/// failure is logged but never surfaces to the user.
+///
+/// The record is passed in explicitly (not read from a global) so two
+/// reviews running concurrently can't cross-contaminate each other's
+/// citation tallies.
+Future<void> _recordLogosCitationFeedback({
+  required String repositoryPath,
+  required String aiOutput,
+  required LogosEmissionRecord? record,
+}) async {
+  if (record == null) return;
+  try {
+    final cited = extractCitedPathsFromReviewOutput(aiOutput);
+    await LogosSseStore(repositoryPath).recordCitations(
+      record: record,
+      citedPaths: cited,
+    );
+  } catch (e, st) {
+    LogosGitDiagnostics.instance.recordFailure(
+      repositoryPath,
+      'sse citation feedback: $e',
+      Duration.zero,
+      st,
+    );
+  }
+}
+
+/// Logos-derived shape signal for the commit-message generation path.
+/// Review needs file bodies; message generation needs SHAPE HINTS:
+///   - What is this commit about? (scope centroid)
+///   - How cohesive is it? (regime + coherence)
+///   - Anything likely forgotten? (missing mass)
+/// The LLM consumes these to pick scope prefixes, voice, coverage, and
+/// whether to warn about forgotten files.
+/// Stability bucket thresholds for the commit-shape prompt. These
+/// correspond to the self-same buckets documented in the stability
+/// primitive's own docstring ("firm / soft / knife-edge"), kept in
+/// sync as named constants so the language gating and the primitive
+/// itself don't drift. Derived: 0.7 and 0.4 partition [0, 1] into
+/// thirds biased toward stability (confidence has to be earned).
+const double _stabilityFirmThreshold = 0.7;
+const double _stabilitySoftThreshold = 0.4;
+
+class LogosCommitShape {
+  final LogosRegime regime;
+  final double coherence;
+  final String? scopeCentroid;
+  final List<RelevanceScore> missingMass;
+  final int primaryCount;
+  final double temperature;
+  /// Per-axis fraction of the diffused mass — `primary`, `m`, `ab`,
+  /// `graph` (the axis labels of [_classifyAxis]). Sums to ~1. Empty
+  /// when attribution wasn't computed (engine fell back to plain
+  /// weighted diffusion).
+  final Map<String, double> axisShares;
+  /// For each surfaced missing-mass file, the dominant axis label that
+  /// pulled it in. Lets the prompt say "the test-mirror axis surfaced
+  /// foo_test.dart" instead of just naming the file.
+  final Map<String, String> dominantAxisByPath;
+  /// Stability of the top-K ranking under small source perturbations,
+  /// in [0, 1]. High = trust the missing-mass suggestions; low = they
+  /// are on a knife-edge — the prompt should soften the language.
+  /// Null when not computed (engine cold, single-source diff, etc.).
+  final double? stability;
+  /// Short branch-trajectory label ('converging', 'diverging', 'steady')
+  /// derived from a Whisper Engram AR(2) fit on the preceding commits'
+  /// file-set Jaccard series. Null when the branch is too short to
+  /// characterise or the fit degenerated. When non-null, the AI should
+  /// tune the commit message voice: converging → confident ("this
+  /// completes the foo refactor"), diverging → hedged ("fold back into
+  /// a tighter scope if possible"), steady → neutral.
+  final String? branchTrajectory;
+
+  const LogosCommitShape({
+    required this.regime,
+    required this.coherence,
+    required this.scopeCentroid,
+    required this.missingMass,
+    required this.primaryCount,
+    required this.temperature,
+    this.axisShares = const {},
+    this.dominantAxisByPath = const {},
+    this.stability,
+    this.branchTrajectory,
+  });
+}
+
+/// Collect a [LogosCommitShape] for the commit-message generation path.
+/// Best-effort — returns null when the engine isn't ready or the diff
+/// is trivially empty.
+/// Shared branch-orbit probe. One `git log -n N --name-only` run,
+/// parsed into per-commit file sets, fed into the Engram AR(2) fit.
+/// Returns null on any failure (non-git dir, empty history, parse
+/// error) so callers degrade silently. Cheap enough to run per-AI-
+/// call — ~30 commits' metadata, no blob reads.
+Future<BranchOrbit?> _probeBranchOrbit(String repositoryPath) async {
+  try {
+    final logResult = await runGitProbe(repositoryPath, [
+      'log',
+      '-n', '30',
+      '--no-merges',
+      '--name-only',
+      '--format=$logCommitSeparator%H',
+    ]);
+    if (logResult.exitCode != 0) return null;
+    final raw = logResult.stdout.toString();
+    final commitSets = <Set<String>>[];
+    Set<String>? current;
+    for (final line in const LineSplitter().convert(raw)) {
+      if (line.startsWith(logCommitSeparator)) {
+        if (current != null && current.isNotEmpty) {
+          commitSets.add(current);
+        }
+        current = <String>{};
+        continue;
+      }
+      final trimmed = line.trim();
+      if (trimmed.isEmpty || current == null) continue;
+      current.add(trimmed.replaceAll('\\', '/'));
+    }
+    if (current != null && current.isNotEmpty) commitSets.add(current);
+    // git log returns newest-first; branch-orbit expects oldest→tip.
+    return computeBranchOrbit(commitSets.reversed.toList());
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Map a branch orbit to a diffusion-temperature multiplier. A
+/// converging branch — scope narrowing toward the tip — benefits
+/// from a *cooler* diffusion that trusts the core touched files and
+/// doesn't reach far afield. A diverging branch, scope sprawling,
+/// benefits from the opposite: a hotter diffusion that casts a
+/// wider net to catch the sprawl's real boundaries. Steady /
+/// null / insufficient orbits get neutral (×1.0).
+///
+/// Values derived from the orbit's own semantics, not tuned:
+///   converging → 1 − trendSlope magnitude → cooler (min 0.75)
+///   diverging  → 1 + trendSlope magnitude → hotter (max 1.25)
+double _temperatureMultiplierFromOrbit(BranchOrbit? orbit) {
+  if (orbit == null || !orbit.hasSignal) return 1.0;
+  // trendSlope magnitude bounds the departure from neutral. The
+  // fit's slope already sits in a small range (empirically ≪ 0.2
+  // for real repos), so we clamp to a narrow band that can't
+  // overwhelm the adaptive-from-coherence temperature.
+  final mag = orbit.trendSlope.abs().clamp(0.0, 0.25);
+  if (orbit.isConverging) return (1.0 - mag).clamp(0.75, 1.0);
+  if (orbit.isDiverging) return (1.0 + mag).clamp(1.0, 1.25);
+  return 1.0;
+}
+
+Future<LogosCommitShape?> _collectLogosCommitShape({
+  required String repositoryPath,
+  required String diffText,
+}) async {
+  try {
+    final engine = await resolveLogosGit(repositoryPath);
+    if (engine == null) return null;
+    final probe = await buildDiffProbe(
+      repoPath: repositoryPath,
+      diffText: diffText,
+      engine: engine,
+    );
+    if (probe.sourceWeights.isEmpty) return null;
+
+    final regime = LogosRegime.classify(
+      fileCount: probe.stats.primaryCount,
+      coherence: probe.stats.coherence,
+    );
+    final t = probe.suggestedTemperature ?? 1.0;
+
+    // Scope centroid: the touched file that pulls the most mass from
+    // the OTHER touched files — proxies the "semantic subject" of the
+    // commit. Single-file diffs trivially centroid on themselves.
+    String? scopeCentroid;
+    if (probe.primaryPaths.length == 1) {
+      scopeCentroid = probe.primaryPaths.first;
+    } else {
+      var bestPath = '';
+      var bestSum = -1.0;
+      for (final source in probe.primaryPaths) {
+        final singleScores = engine.diffuse({source}, t: t);
+        final sumToOthers = singleScores
+            .where((s) => probe.primaryPaths.contains(s.path))
+            .fold<double>(0, (acc, s) => acc + s.phi);
+        if (sumToOthers > bestSum) {
+          bestSum = sumToOthers;
+          bestPath = source;
+        }
+      }
+      scopeCentroid = bestPath.isEmpty ? null : bestPath;
+    }
+
+    // Missing mass: files NOT in the diff but strongly pulled by it.
+    // Use the per-axis attribution diffusion so we can label *which*
+    // axis surfaced each missing file (graph vs M-pickaxe vs Ab-mirror)
+    // — much more actionable in the prompt than just a φ score.
+    final axisLabels = <String, String>{
+      for (final entry in probe.sourceWeights.entries)
+        entry.key: _classifyAxis(entry.key, probe).name,
+    };
+    final attr = engine.diffuseWithAttribution(
+      weightsByPath: probe.sourceWeights,
+      axisLabelByPath: axisLabels,
+      t: t,
+      excludePaths: probe.primaryPaths,
+    );
+
+    List<RelevanceScore> missing;
+    Map<String, double> axisShares = const {};
+    Map<String, String> dominantByPath = const {};
+    if (attr != null) {
+      missing = attr.combined.take(5).toList();
+      axisShares = attr.axisMassFractions();
+      dominantByPath = {
+        for (final s in missing)
+          if (attr.dominantAxis[s.path] != null)
+            s.path: attr.dominantAxis[s.path]!,
+      };
+    } else {
+      // Fallback: plain weighted diffusion (engine returns empty if no
+      // sources land in graph). Same behaviour as before this upgrade.
+      final scores = diffuseFromProbe(
+        engine: engine,
+        probe: probe,
+        temperatureOverride: t,
+      );
+      missing = scores.take(5).toList();
+    }
+
+    // Branch trajectory via Engram orbit fit on the last N commits.
+    // Shared probe — see [_probeBranchOrbit]. Result also gets reused
+    // by `_collectRelevanceNeighborhood` to tune diffusion temperature.
+    final orbit = await _probeBranchOrbit(repositoryPath);
+    final branchTrajectory = orbit?.characterLabel;
+
+    // Stability: how firm is the top-K ranking under small source
+    // perturbations? Null for degenerate inputs (single source or
+    // empty missing mass) — the score isn't meaningful there.
+    double? stability;
+    if (missing.length >= 2 && probe.sourceWeights.length >= 2) {
+      try {
+        stability = engine.diffuseStability(
+          probe.sourceWeights,
+          t: t,
+          topK: missing.length,
+        );
+      } catch (_) {
+        stability = null;
+      }
+    }
+
+    return LogosCommitShape(
+      regime: regime,
+      coherence: probe.stats.coherence,
+      scopeCentroid: scopeCentroid,
+      missingMass: missing,
+      primaryCount: probe.stats.primaryCount,
+      temperature: t,
+      axisShares: axisShares,
+      dominantAxisByPath: dominantByPath,
+      stability: stability,
+      branchTrajectory: branchTrajectory,
+    );
+  } catch (e, st) {
+    LogosGitDiagnostics.instance.recordFailure(
+      repositoryPath,
+      'commit_shape: $e',
+      Duration.zero,
+      st,
+    );
+    return null;
+  }
+}
+
+/// Format a [LogosCommitShape] as a prompt XML block. Null / empty
+/// shapes yield empty strings so callers can concat safely.
+String _formatCommitShapeBlock(LogosCommitShape? shape) {
+  if (shape == null) return '';
+  final buf = StringBuffer('<logos_shape>\n');
+  buf.writeln('regime: ${shape.regime.name}');
+  buf.writeln('coherence: ${shape.coherence.toStringAsFixed(2)}');
+  buf.writeln('primary files: ${shape.primaryCount}');
+  buf.writeln('diffusion t: ${shape.temperature.toStringAsFixed(2)}');
+  if (shape.scopeCentroid != null) {
+    buf.writeln(
+      'scope centroid (likely semantic subject): ${shape.scopeCentroid}',
+    );
+  }
+  // Regime-specific writing hints the LLM can leverage — matches the
+  // codec philosophy: the observable (regime) tunes the output shape.
+  switch (shape.regime) {
+    case LogosRegime.focused:
+      buf.writeln('hint: focused commit — narrow scope prefix OK '
+          '(feat(module): …). Can describe fully.');
+      break;
+    case LogosRegime.scoped:
+      buf.writeln(
+          'hint: scoped commit — single scope prefix, balanced coverage.');
+      break;
+    case LogosRegime.sweep:
+      buf.writeln('hint: broad sweep — prefer bulletless or bullet-list '
+          'body. Keep title high-level; no scope prefix.');
+      break;
+    case LogosRegime.uncategorised:
+      break;
+  }
+  if (shape.branchTrajectory != null) {
+    // Engram AR(2) orbit fit on the preceding 30 commits' file-set
+    // similarity series. Three possible labels: `converging` (scope
+    // narrowing toward this tip — confident voice), `diverging` (scope
+    // sprawling — hedge the message, suggest a split), `steady`
+    // (stable pattern — neutral).
+    buf.writeln('branch trajectory: ${shape.branchTrajectory}');
+  }
+  if (shape.stability != null) {
+    // Confidence handle — derived from re-running the diffusion with
+    // perturbed source weights and measuring top-K ranking agreement.
+    // >= 0.7 = firm; 0.4–0.7 = soft; < 0.4 = knife-edge (do not surface
+    // missing-mass suggestions in the commit body without hedging).
+    buf.writeln('ranking stability: ${shape.stability!.toStringAsFixed(2)}');
+  }
+  if (shape.axisShares.isNotEmpty) {
+    // Per-axis composition of the diffused field. Tells the model
+    // *what kind of evidence* is driving the relevance — heavy `m`
+    // share = pickaxe-grounded (symbol-level), heavy `ab` = test-mirror
+    // hits, heavy `graph` = co-change history without explicit symbol
+    // grounding. Use this to calibrate confidence in any cross-file
+    // claims you make.
+    buf.writeln('axis composition (fraction of diffused mass per axis):');
+    final entries = shape.axisShares.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    for (final entry in entries) {
+      buf.writeln('  - ${entry.key}: ${(entry.value * 100).toStringAsFixed(0)}%');
+    }
+  }
+  if (shape.missingMass.isNotEmpty) {
+    // Stability buckets the intro language:
+    //   stable (≥ 0.7)   → confident "these are tightly coupled"
+    //   soft   (0.4–0.7) → the original "may be forgotten" hedge
+    //   volatile (< 0.4) → explicitly flag ranking as speculative so
+    //                      the AI doesn't confidently surface knife-
+    //                      edge suggestions as body notes.
+    // Null stability (no signal) falls back to the soft middle.
+    final s = shape.stability;
+    final String preface;
+    if (s == null) {
+      preface = 'missing mass (files NOT in the diff but strongly coupled '
+          'to it — may be forgotten; surface to the user inside a gentle '
+          '"you might also be changing:" body note ONLY IF the relevance '
+          'is genuinely notable):';
+    } else if (s >= _stabilityFirmThreshold) {
+      preface = 'tightly-coupled neighbourhood (stable ranking — these files '
+          'move with the diff reliably; safe to surface as a "you might also '
+          'be changing:" body note when the relevance is notable):';
+    } else if (s >= _stabilitySoftThreshold) {
+      preface = 'missing mass (files coupled to the diff but ranking is soft; '
+          'surface only if the relevance is genuinely notable, in a gentle '
+          '"you might also be changing:" body note):';
+    } else {
+      preface = 'candidate neighbours (ranking is volatile — perturbing the '
+          'source weights reshuffles these substantially, so treat as '
+          'speculative and DO NOT surface in the commit body unless the '
+          'relevance is obvious from the diff itself):';
+    }
+    buf.writeln(preface);
+    for (final m in shape.missingMass) {
+      final axis = shape.dominantAxisByPath[m.path];
+      final axisTag = axis != null ? '  via=$axis' : '';
+      buf.writeln('  - ${m.path} (φ=${m.phi.toStringAsFixed(3)}$axisTag)');
+    }
+  }
+  buf.writeln('</logos_shape>');
+  return buf.toString();
 }
 
 /// Build a compact outline of a large file — class/function/method signatures
@@ -2447,178 +3118,59 @@ String _buildFileOutline(String content, String filePath, int lineCount) {
   return outline.toString();
 }
 
-_DiffPromptBundle _buildDiffPromptBundle(String fullDiff) {
-  final parsedFiles = _parseDiffFiles(fullDiff);
+Future<_DiffPromptBundle> _buildDiffPromptBundle(
+  String fullDiff, {
+  required String repositoryPath,
+}) async {
   if (fullDiff.length <= _maxFullDiffChars) {
     return _DiffPromptBundle(
       promptBody: '<full_diff>\n$fullDiff\n</full_diff>',
-      usedCondensedDiff: false,
       originalDiffCharacters: fullDiff.length,
     );
   }
 
-  final overview = StringBuffer();
-  var totalAdditions = 0;
-  var totalDeletions = 0;
-  for (final file in parsedFiles) {
-    totalAdditions += file.additions;
-    totalDeletions += file.deletions;
-  }
-
-  overview.writeln(
-    'Full diff was condensed because it exceeded the inline prompt budget.',
-  );
-  overview.writeln(
-    'Files changed: ${parsedFiles.length} | additions: $totalAdditions | deletions: $totalDeletions',
-  );
-  overview.writeln();
-  overview.writeln('<all_files>');
-  for (final file in parsedFiles) {
-    overview.writeln(
-      '- ${file.path} | +${file.additions} -${file.deletions} | hunks ${file.hunks.length}',
+  // Overflow path — hand off to logos hunk diffusion. Every hunk is a
+  // node; edges via shared identifiers, parent-file coupling (factored
+  // through LogosGit's file-φ), within-file proximity, add/delete
+  // balance. Hunks ranked by heat-kernel φ; greedy-packed at full
+  // content until the diff budget exhausts. Peripheral mass-edit hunks
+  // drop off first; structurally-central hunks stay. Scales to
+  // arbitrary hunk count.
+  final parsed = hunks.parseDiffHunks(fullDiff);
+  if (parsed.isEmpty) {
+    // Malformed diff or nothing to rank — emit the head of the diff
+    // truncated at the full-diff cap. Honest fallback.
+    final truncated = fullDiff.substring(
+      0,
+      math.min(_maxFullDiffChars, fullDiff.length),
+    );
+    return _DiffPromptBundle(
+      promptBody: '<full_diff_truncated>\n$truncated\n</full_diff_truncated>',
+      originalDiffCharacters: fullDiff.length,
     );
   }
-  overview.writeln('</all_files>');
-  overview.writeln();
-  overview.writeln('<file_digests>');
 
-  final rankedFiles = [...parsedFiles]..sort(
-      (left, right) => (right.additions + right.deletions)
-          .compareTo(left.additions + left.deletions),
-    );
-  var remainingBudget = _maxCondensedDiffChars - overview.length - 40;
-  for (final file in rankedFiles) {
-    if (remainingBudget <= _maxChangedLineLength) {
-      break;
-    }
-    final digest = _buildFileDigest(file);
-    if (digest.length > remainingBudget) {
-      final compactDigest = _buildCompactFileDigest(file);
-      if (compactDigest.length > remainingBudget) {
-        continue;
-      }
-      overview.write(compactDigest);
-      remainingBudget -= compactDigest.length;
-      continue;
-    }
-    overview.write(digest);
-    remainingBudget -= digest.length;
+  LogosGit? engine;
+  try {
+    engine = await resolveLogosGit(repositoryPath);
+  } catch (_) {
+    engine = null;
   }
-  overview.writeln('</file_digests>');
 
-  var promptBody = overview.toString();
+  final ranking = hunks.rankHunksByPhi(hunks: parsed, logosEngine: engine);
+  final pack = hunks.packHunksUnderBudget(
+    rankings: ranking.rankings,
+    budgetChars: _maxCondensedDiffChars,
+  );
+
+  var promptBody = pack.body;
   if (promptBody.length > _maxPromptChars) {
     promptBody = promptBody.substring(0, _maxPromptChars);
   }
   return _DiffPromptBundle(
     promptBody: promptBody,
-    usedCondensedDiff: true,
     originalDiffCharacters: fullDiff.length,
   );
-}
-
-List<_ParsedDiffFile> _parseDiffFiles(String diffText) {
-  final files = <_ParsedDiffFile>[];
-  _ParsedDiffFile? current;
-  _ParsedDiffHunk? currentHunk;
-
-  void closeHunk() {
-    if (current != null && currentHunk != null) {
-      current!.hunks.add(currentHunk!);
-    }
-    currentHunk = null;
-  }
-
-  void closeFile() {
-    closeHunk();
-    if (current != null) {
-      files.add(current!);
-    }
-    current = null;
-  }
-
-  for (final line in diffText.split('\n')) {
-    if (line.startsWith('diff --git ')) {
-      closeFile();
-      current = _ParsedDiffFile(path: _pathFromDiffHeader(line));
-      continue;
-    }
-    if (current == null) {
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      closeHunk();
-      currentHunk = _ParsedDiffHunk(header: line.trim(), samples: []);
-      continue;
-    }
-    if (line.startsWith('+++ ') || line.startsWith('--- ')) {
-      continue;
-    }
-    if (line.startsWith('+')) {
-      current!.additions += 1;
-      currentHunk?.pushSample('+${_clipChangedLine(line.substring(1))}');
-      continue;
-    }
-    if (line.startsWith('-')) {
-      current!.deletions += 1;
-      currentHunk?.pushSample('-${_clipChangedLine(line.substring(1))}');
-    }
-  }
-
-  closeFile();
-  return files;
-}
-
-String _buildFileDigest(_ParsedDiffFile file) {
-  final buffer = StringBuffer();
-  buffer.writeln(
-    'FILE ${file.path} | +${file.additions} -${file.deletions} | hunks ${file.hunks.length}',
-  );
-  for (final hunk in file.hunks.take(6)) {
-    buffer.writeln('  HUNK ${hunk.header}');
-    for (final sample in hunk.samples.take(8)) {
-      buffer.writeln('    $sample');
-    }
-  }
-  buffer.writeln();
-  return buffer.toString();
-}
-
-String _buildCompactFileDigest(_ParsedDiffFile file) {
-  final buffer = StringBuffer();
-  buffer.writeln(
-    'FILE ${file.path} | +${file.additions} -${file.deletions} | hunks ${file.hunks.length}',
-  );
-  final firstHunk = file.hunks.firstOrNull;
-  if (firstHunk != null) {
-    buffer.writeln('  HUNK ${firstHunk.header}');
-    for (final sample in firstHunk.samples.take(3)) {
-      buffer.writeln('    $sample');
-    }
-  }
-  buffer.writeln();
-  return buffer.toString();
-}
-
-String _pathFromDiffHeader(String line) {
-  final parts = line.split(' ');
-  if (parts.length < 4) {
-    return 'unknown';
-  }
-  final candidate = parts[3];
-  return candidate.startsWith('b/') ? candidate.substring(2) : candidate;
-}
-
-String _clipChangedLine(String line) {
-  final trimmed = line.trim();
-  if (trimmed.isEmpty) {
-    return '';
-  }
-  const maxLength = 120;
-  if (trimmed.length <= maxLength) {
-    return trimmed;
-  }
-  return '${trimmed.substring(0, maxLength - 3)}...';
 }
 
 String _buildCommitMessagePrompt({
@@ -2639,6 +3191,7 @@ String _buildCommitMessagePrompt({
   CommitStructure structure = kDefaultCommitStructure,
   CommitVoice voice = kDefaultCommitVoice,
   CommitCoverage coverage = kDefaultCommitCoverage,
+  LogosCommitShape? logosShape,
 }) {
   final buffer = StringBuffer();
   buffer.writeln('You are generating a git commit message.');
@@ -2651,6 +3204,14 @@ String _buildCommitMessagePrompt({
   buffer.writeln(_coverageDirective(coverage));
   buffer.writeln('</commit_message_structure>');
   buffer.writeln();
+  // Logos shape block — regime + centroid + missing mass. Shape HINTS,
+  // not requirements; the user's explicit structure/voice/coverage
+  // prefs always override.
+  final shapeBlock = _formatCommitShapeBlock(logosShape);
+  if (shapeBlock.isNotEmpty) {
+    buffer.writeln(shapeBlock);
+    buffer.writeln();
+  }
   buffer.writeln(
       'If <user_instructions> are present, follow them — they override format, tone, and style.');
   buffer.writeln();
@@ -2917,6 +3478,11 @@ String _buildCommitReviewPrompt({
     'use it to calibrate risk and flag untested high-churn files.\n'
     '  • <file_context> provides full source of small changed files — '
     'use it to verify imports, function signatures, and surrounding code.\n'
+    '  • <relevance_neighborhood> surfaces files NOT in the diff but strongly '
+    'coupled to it — historical co-change, directory proximity, ownership '
+    'overlap. Use it to spot hidden callers, broken invariants elsewhere, '
+    'or missed update sites. Each neighbor is tagged with φ (relevance '
+    'score) and tier (full / sig / bread).\n'
     'Only report findings you can cite concrete evidence for. '
     'Omit anything that requires guessing. '
     'When verification data confirms something, treat it as fact.',
@@ -3213,13 +3779,21 @@ _ParsedReviewResult? _parseDraftReview(String raw) {
   final scoreRaw = _extractTag(normalized, 'score');
   final summary = _extractTag(normalized, 'summary');
   final summaryReasoning = _extractTag(normalized, 'summary_reasoning');
-  if (verdict == null ||
-      scoreRaw == null ||
-      summary == null ||
-      summaryReasoning == null) {
+  // Hard-required: the verdict + score + summary triad. Without these
+  // the report can't be rendered meaningfully. `summary_reasoning` is
+  // soft-required — weaker models often omit it, and refusing the
+  // whole report over a missing reasoning blurb wastes the rest of
+  // the parsed work. Empty string is the graceful fallback.
+  if (verdict == null || scoreRaw == null || summary == null) {
     return null;
   }
-  final score = int.tryParse(scoreRaw.trim());
+  // Tolerate models that wrap the score with extra prose: `72/100`,
+  // `**72**`, `72 (high confidence)`, etc. Pull the first integer
+  // out of the tag content rather than expecting a clean digit string.
+  // Was strict `int.tryParse(scoreRaw.trim())` which broke on any
+  // formatting variation the model decided to add.
+  final scoreDigits = RegExp(r'\d+').firstMatch(scoreRaw);
+  final score = scoreDigits == null ? null : int.tryParse(scoreDigits.group(0)!);
   if (score == null) {
     return null;
   }
@@ -3231,7 +3805,10 @@ _ParsedReviewResult? _parseDraftReview(String raw) {
     verdict: _normalizeVerdict(verdict),
     score: score.clamp(0, 100),
     summary: summary.trim(),
-    reasoningReport: summaryReasoning.trim(),
+    // Empty fallback when the model didn't include reasoning — the
+    // UI handles an empty reasoningReport (just doesn't render the
+    // section). Better than failing the entire parse.
+    reasoningReport: summaryReasoning?.trim() ?? '',
     findings: findings,
     observations: observations,
   );
@@ -3243,13 +3820,18 @@ AiCommitReviewVerificationData? _parseVerificationReview(String raw) {
   final scoreAdjustmentRaw = _extractTag(normalized, 'score_adjustment');
   final finalSummary = _extractTag(normalized, 'final_summary');
   final summaryReasoning = _extractTag(normalized, 'summary_reasoning');
-  if (notes == null ||
-      scoreAdjustmentRaw == null ||
-      finalSummary == null ||
-      summaryReasoning == null) {
+  // Same parser-resilience policy as `_parseDraftReview`: notes +
+  // scoreAdjustment + finalSummary are hard-required (the verification
+  // pass is meaningless without them); summaryReasoning is soft —
+  // empty fallback if the model omits it.
+  if (notes == null || scoreAdjustmentRaw == null || finalSummary == null) {
     return null;
   }
-  final scoreAdjustment = int.tryParse(scoreAdjustmentRaw.trim());
+  // Tolerate prose-wrapped score adjustments (`-4`, `-4 points`,
+  // `-4 (raised confidence)`, etc.). Pull the first signed integer.
+  final scoreMatch = RegExp(r'-?\d+').firstMatch(scoreAdjustmentRaw);
+  final scoreAdjustment =
+      scoreMatch == null ? null : int.tryParse(scoreMatch.group(0)!);
   if (scoreAdjustment == null) {
     return null;
   }
@@ -3273,7 +3855,10 @@ AiCommitReviewVerificationData? _parseVerificationReview(String raw) {
             : _normalizeVerdict(verdictAdjustment),
     verificationNotes: notes.trim(),
     finalSummary: finalSummary.trim(),
-    finalReasoningReport: summaryReasoning.trim(),
+    // Same null-tolerant pattern as the draft parser — empty string
+    // when the model omits the reasoning blurb. The UI gates the
+    // reasoning section on `isNotEmpty` so empty just hides the panel.
+    finalReasoningReport: summaryReasoning?.trim() ?? '',
   );
 }
 
@@ -5238,6 +5823,7 @@ class _CommitDiffContext {
   final String lastCommitAge;
   final String projectAge;
   final int uniqueContributors;
+  final LogosEmissionRecord? logosEmissionRecord;
 
   const _CommitDiffContext({
     required this.branchName,
@@ -5250,6 +5836,7 @@ class _CommitDiffContext {
     this.lastCommitAge = '',
     this.projectAge = '',
     this.uniqueContributors = 0,
+    this.logosEmissionRecord,
   });
 }
 
@@ -5290,12 +5877,10 @@ class _ReviewPromptSpec {
 
 class _DiffPromptBundle {
   final String promptBody;
-  final bool usedCondensedDiff;
   final int originalDiffCharacters;
 
   const _DiffPromptBundle({
     required this.promptBody,
-    required this.usedCondensedDiff,
     required this.originalDiffCharacters,
   });
 }
@@ -5332,32 +5917,6 @@ class _MergedReviewResult {
     required this.reasoningReport,
     required this.findings,
   });
-}
-
-class _ParsedDiffFile {
-  final String path;
-  int additions = 0;
-  int deletions = 0;
-  final List<_ParsedDiffHunk> hunks;
-
-  _ParsedDiffFile({
-    required this.path,
-    List<_ParsedDiffHunk>? hunks,
-  }) : hunks = hunks ?? [];
-}
-
-class _ParsedDiffHunk {
-  final String header;
-  final List<String> samples;
-
-  _ParsedDiffHunk({required this.header, required this.samples});
-
-  void pushSample(String value) {
-    if (samples.length >= 10 || value.trim().isEmpty) {
-      return;
-    }
-    samples.add(value);
-  }
 }
 
 enum _ProviderKind { codex, claude, geminiApi, openCode }

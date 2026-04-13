@@ -366,6 +366,28 @@ class RepositoryXrayHotspotData {
   final String? latestCommitHash;
   final String? latestShortHash;
 
+  /// Keystone score. Ecological sense: a file is "keystone" if a
+  /// disproportionately large share of the repo's co-change mass
+  /// flows through it, relative to how often it's actually touched.
+  /// The bridge-species file — quiet on its own, but losing it
+  /// collapses clusters. Derived as:
+  ///
+  ///   keystoneScore = pull / log1p(touchCount)
+  ///
+  /// where `pull` is the sum of the file's Jaccard couplings to its
+  /// neighbourhood (read from the co-change matrix). High pull with
+  /// low touch count means many clusters depend on this file without
+  /// the file itself being busy. Null when no coupling data was
+  /// available at snapshot time.
+  final double? keystoneScore;
+
+  /// True when [keystoneScore] is in the top band of this repo's own
+  /// distribution — pre-computed at snapshot time so renderers don't
+  /// need to re-bucket. Using a relative percentile keeps the flag
+  /// repo-adaptive: a 10-file project and a 10k-file monorepo can
+  /// both surface their top keystones without sharing thresholds.
+  final bool isKeystone;
+
   const RepositoryXrayHotspotData({
     required this.kind,
     required this.path,
@@ -374,6 +396,8 @@ class RepositoryXrayHotspotData {
     required this.lastTouchedAt,
     this.latestCommitHash,
     this.latestShortHash,
+    this.keystoneScore,
+    this.isKeystone = false,
   });
 }
 
@@ -475,6 +499,56 @@ class RepositoryXraySignalIntegrityData {
   });
 }
 
+/// Repo-wide metabolism derived from a Whisper Engram AR(2) fit on
+/// the daily commit-rate series. Answers "is this repo alive, steady,
+/// or slowing?" as physics, not vibes.
+///
+///   [spectralRadius] — |λ| of the oscillator. ≈ 1 means the repo
+///   homeostats (active-day bursts beget more active days at roughly
+///   the same amplitude); < 0.5 means activity spikes decay fast
+///   (maintenance mode); > 1 means unbounded growth (almost certainly
+///   an anomaly or a very fresh repo).
+///
+///   [halfLifeDays] — activity memory depth in days. Short = volatile
+///   ("what mattered last week doesn't matter this week"); long =
+///   slow, contemplative repo.
+///
+///   [activeDays] — how many distinct days had at least one commit in
+///   the window. The sample count behind the fit; low values mean the
+///   radius/half-life readings are wobbly.
+///
+///   [sparkline] — normalised commits-per-day counts in chronological
+///   order, clipped to the recent window used for the fit. Already-
+///   normalised so renderers can plot without recomputation.
+class RepositoryXrayMetabolismData {
+  final double spectralRadius;
+  final double? halfLifeDays;
+  final bool isOrbital;
+  final String trajectoryLabel;
+  final int activeDays;
+  final List<double> sparkline;
+
+  const RepositoryXrayMetabolismData({
+    required this.spectralRadius,
+    required this.halfLifeDays,
+    required this.isOrbital,
+    required this.trajectoryLabel,
+    required this.activeDays,
+    required this.sparkline,
+  });
+
+  /// Empty snapshot — returned when the window is too short to fit.
+  /// Renderers should check [activeDays] before displaying anything.
+  static const empty = RepositoryXrayMetabolismData(
+    spectralRadius: 0,
+    halfLifeDays: null,
+    isOrbital: false,
+    trajectoryLabel: '',
+    activeDays: 0,
+    sparkline: [],
+  );
+}
+
 class RepositoryXraySnapshotData {
   final RepositoryXrayHeaderData header;
   final RepositoryXraySignalIntegrityData signalIntegrity;
@@ -488,6 +562,7 @@ class RepositoryXraySnapshotData {
   final List<RepositoryXrayStratumData> strata;
   final List<RepositoryXrayPivotCommitData> pivots;
   final List<RepositoryXrayPivotCommitData> rawPivots;
+  final RepositoryXrayMetabolismData metabolism;
 
   const RepositoryXraySnapshotData({
     required this.header,
@@ -502,6 +577,7 @@ class RepositoryXraySnapshotData {
     required this.strata,
     required this.pivots,
     required this.rawPivots,
+    this.metabolism = RepositoryXrayMetabolismData.empty,
   });
 }
 
@@ -617,7 +693,6 @@ class AiCommitMessageData {
   final String modelId;
   final String message;
   final String scopeLabel;
-  final bool usedCondensedDiff;
   final int promptCharacters;
   final int diffCharacters;
 
@@ -626,7 +701,6 @@ class AiCommitMessageData {
     required this.modelId,
     required this.message,
     required this.scopeLabel,
-    required this.usedCondensedDiff,
     required this.promptCharacters,
     required this.diffCharacters,
   });
@@ -717,7 +791,6 @@ class AiCommitReviewData {
   final String modelCategoryLabel;
   final int guardrailStage;
   final String scopeLabel;
-  final bool usedCondensedDiff;
   final int promptCharacters;
   final int diffCharacters;
   final String verdict;
@@ -741,7 +814,6 @@ class AiCommitReviewData {
     this.modelCategoryLabel = '',
     this.guardrailStage = 1,
     required this.scopeLabel,
-    required this.usedCondensedDiff,
     required this.promptCharacters,
     required this.diffCharacters,
     required this.verdict,
