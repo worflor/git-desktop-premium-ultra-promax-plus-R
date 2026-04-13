@@ -4,20 +4,45 @@ import '../ui/tokens.dart';
 
 enum KeybindingProfile { classic, compact }
 
+/// Single source of truth for how each [KeybindingProfile] is labelled in
+/// the UI. The settings page dropdown, the onboarding picker, and anything
+/// else that needs to name a profile all read from here so a rename or a
+/// new profile only has to be updated in one place.
+extension KeybindingProfileLabels on KeybindingProfile {
+  String get label => switch (this) {
+        KeybindingProfile.classic => 'Porcelain',
+        KeybindingProfile.compact => 'Numeric',
+      };
+
+  String get description => switch (this) {
+        KeybindingProfile.classic => 'Chorded shortcuts (G then C, H, B…).',
+        KeybindingProfile.compact => 'Single-key numeric shortcuts (1, 2, 3…).',
+      };
+}
+
 class ThemeState extends ChangeNotifier {
+  // Two concepts: what's *displayed* (tokens feed the UI) and what's
+  // *committed* (the persisted choice). Preview paints without persist so
+  // the onboarding picker can reskin live on hover without saving every
+  // mouse-move, and without leaving the user stuck on the last-hovered
+  // theme if they drift away from the list.
   AppThemeId _themeId = defaultThemeId;
+  AppThemeId _committedThemeId = defaultThemeId;
   AppTokens _tokens = AppTokens.fromId(defaultThemeId);
   double _sidebarWidth = 188;
   KeybindingProfile _keybindingProfile = KeybindingProfile.classic;
 
   AppThemeId get themeId => _themeId;
+  AppThemeId get committedThemeId => _committedThemeId;
   AppTokens get tokens => _tokens;
   double get sidebarWidth => _sidebarWidth;
   KeybindingProfile get keybindingProfile => _keybindingProfile;
 
   Future<void> load() async {
     final settings = await SettingsStore.load();
-    _setThemeInMemory(normalizeThemeId(settings.themeId));
+    final id = normalizeThemeId(settings.themeId);
+    _committedThemeId = id;
+    _setThemeInMemory(id);
     _sidebarWidth = settings.sidebarWidthPx.toDouble();
     _keybindingProfile = settings.keybindingProfile == 'compact'
         ? KeybindingProfile.compact
@@ -26,35 +51,29 @@ class ThemeState extends ChangeNotifier {
   }
 
   Future<void> setTheme(AppThemeId id) async {
+    final changed = _committedThemeId != id || _themeId != id;
+    _committedThemeId = id;
+    _setThemeInMemory(id);
+    if (!changed) return;
+    final settings = await SettingsStore.load();
+    await SettingsStore.persist(settings.copyWith(themeId: id.name));
+    notifyListeners();
+  }
+
+  /// Preview a theme without persisting. Swap the displayed tokens so the
+  /// UI reskins live, but keep [committedThemeId] pinned to the last real
+  /// selection so [clearPreview] can undo the preview cleanly.
+  void previewTheme(AppThemeId id) {
     if (_themeId == id) return;
     _setThemeInMemory(id);
-    final settings = await SettingsStore.load();
-    await SettingsStore.persist(
-      AppSettingsSnapshot(
-        guardrailValue: settings.guardrailValue,
-        aiReadOnlyDefault: settings.aiReadOnlyDefault,
-        logoAnimatesWhenUnfocused: settings.logoAnimatesWhenUnfocused,
-        telemetryRetentionDays: settings.telemetryRetentionDays,
-        telemetryRetentionMb: settings.telemetryRetentionMb,
-        updateChannel: settings.updateChannel,
-        crashReportingEnabled: settings.crashReportingEnabled,
-        themeId: id.name,
-        keybindingProfile: settings.keybindingProfile,
-        sidebarWidthPx: settings.sidebarWidthPx,
-        sidebarPosition: settings.sidebarPosition,
-        utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-        utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        reduceMotion: settings.reduceMotion,
-        reduceMotionPhase: settings.reduceMotionPhase,
-        stashCabinetDefaultExpanded: settings.stashCabinetDefaultExpanded,
-        instantBlameHover: settings.instantBlameHover,
-        fileSortGuide: settings.fileSortGuide,
-        fileSortInverted: settings.fileSortInverted,
-        commitStructure: settings.commitStructure,
-        commitVoice: settings.commitVoice,
-        commitCoverage: settings.commitCoverage,
-      ),
-    );
+    notifyListeners();
+  }
+
+  /// Revert any active preview to the committed theme. No-op if nothing
+  /// was previewed (or the preview matched the commit).
+  void clearPreview() {
+    if (_themeId == _committedThemeId) return;
+    _setThemeInMemory(_committedThemeId);
     notifyListeners();
   }
 
@@ -67,30 +86,7 @@ class ThemeState extends ChangeNotifier {
     _sidebarWidth = w.clamp(140, 380);
     final settings = await SettingsStore.load();
     await SettingsStore.persist(
-      AppSettingsSnapshot(
-        guardrailValue: settings.guardrailValue,
-        aiReadOnlyDefault: settings.aiReadOnlyDefault,
-        logoAnimatesWhenUnfocused: settings.logoAnimatesWhenUnfocused,
-        telemetryRetentionDays: settings.telemetryRetentionDays,
-        telemetryRetentionMb: settings.telemetryRetentionMb,
-        updateChannel: settings.updateChannel,
-        crashReportingEnabled: settings.crashReportingEnabled,
-        themeId: settings.themeId,
-        keybindingProfile: settings.keybindingProfile,
-        sidebarWidthPx: _sidebarWidth.round(),
-        sidebarPosition: settings.sidebarPosition,
-        utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-        utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        reduceMotion: settings.reduceMotion,
-        reduceMotionPhase: settings.reduceMotionPhase,
-        stashCabinetDefaultExpanded: settings.stashCabinetDefaultExpanded,
-        instantBlameHover: settings.instantBlameHover,
-        fileSortGuide: settings.fileSortGuide,
-        fileSortInverted: settings.fileSortInverted,
-        commitStructure: settings.commitStructure,
-        commitVoice: settings.commitVoice,
-        commitCoverage: settings.commitCoverage,
-      ),
+      settings.copyWith(sidebarWidthPx: _sidebarWidth.round()),
     );
     notifyListeners();
   }
@@ -99,30 +95,7 @@ class ThemeState extends ChangeNotifier {
     _keybindingProfile = profile;
     final settings = await SettingsStore.load();
     await SettingsStore.persist(
-      AppSettingsSnapshot(
-        guardrailValue: settings.guardrailValue,
-        aiReadOnlyDefault: settings.aiReadOnlyDefault,
-        logoAnimatesWhenUnfocused: settings.logoAnimatesWhenUnfocused,
-        telemetryRetentionDays: settings.telemetryRetentionDays,
-        telemetryRetentionMb: settings.telemetryRetentionMb,
-        updateChannel: settings.updateChannel,
-        crashReportingEnabled: settings.crashReportingEnabled,
-        themeId: settings.themeId,
-        keybindingProfile: profile.name,
-        sidebarWidthPx: settings.sidebarWidthPx,
-        sidebarPosition: settings.sidebarPosition,
-        utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-        utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        reduceMotion: settings.reduceMotion,
-        reduceMotionPhase: settings.reduceMotionPhase,
-        stashCabinetDefaultExpanded: settings.stashCabinetDefaultExpanded,
-        instantBlameHover: settings.instantBlameHover,
-        fileSortGuide: settings.fileSortGuide,
-        fileSortInverted: settings.fileSortInverted,
-        commitStructure: settings.commitStructure,
-        commitVoice: settings.commitVoice,
-        commitCoverage: settings.commitCoverage,
-      ),
+      settings.copyWith(keybindingProfile: profile.name),
     );
     notifyListeners();
   }

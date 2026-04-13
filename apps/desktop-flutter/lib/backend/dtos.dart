@@ -632,6 +632,27 @@ class AiCommitMessageData {
   });
 }
 
+/// Result of a one-shot AI call that expects a unified diff back.
+/// The `patch` field is the raw text that should apply via `git apply`;
+/// callers verify with `applyPatch(..., dryRun: true)` before mutating
+/// the tree. When the model wraps output in code fences we strip them
+/// here so callers get clean `--- a/ +++ b/` headers either way.
+class AiPatchData {
+  final String providerId;
+  final String modelId;
+  final String patch;
+  final int promptCharacters;
+  final int patchCharacters;
+
+  const AiPatchData({
+    required this.providerId,
+    required this.modelId,
+    required this.patch,
+    required this.promptCharacters,
+    required this.patchCharacters,
+  });
+}
+
 class AiCommitReviewFindingData {
   final String id;
   final String severity;

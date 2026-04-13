@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../backend/settings_store.dart';
+
 const Object _tagSentinel = Object();
 
 @immutable
@@ -57,6 +59,31 @@ class AppIdentityState extends ChangeNotifier {
     }
     _identity = next;
     notifyListeners();
+  }
+
+  /// Rehydrates the identity's user-customizable fields from the settings
+  /// snapshot. Only [AppIdentity.shortName] is persisted; the rest is
+  /// derived so code and marketing copy stay the source of truth.
+  void loadFromSettings(AppSettingsSnapshot settings) {
+    final name = settings.appShortName.trim().isEmpty
+        ? defaultAppIdentity.shortName
+        : settings.appShortName.trim();
+    setIdentity(_identity.copyWith(shortName: name));
+  }
+
+  /// Updates the short name in memory (instant UI update) and persists
+  /// asynchronously. Callers that need the writeback to complete can await.
+  Future<void> setShortName(String value) async {
+    final trimmed = value.trim();
+    final normalized = trimmed.isEmpty ? defaultAppIdentity.shortName : trimmed;
+    if (normalized != _identity.shortName) {
+      setIdentity(_identity.copyWith(shortName: normalized));
+    }
+    final settings = await SettingsStore.load();
+    if (settings.appShortName == normalized) return;
+    await SettingsStore.persist(
+      settings.copyWith(appShortName: normalized),
+    );
   }
 }
 

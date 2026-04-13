@@ -92,12 +92,15 @@ ControlChromeState modeButtonChrome(
   required bool pressed,
   required bool active,
 }) {
+  // Animated lerp endpoints share RGB; only alpha changes. `Colors.transparent`
+  // is fully-transparent BLACK — animating to a colored hover state runs the
+  // lerp through translucent-black midpoints (visible as a gray flash).
   final baseBackground = active
       ? t.itemActiveBg
-      : (hovered ? t.secondaryBtnHoverBg : Colors.transparent);
+      : (hovered ? t.secondaryBtnHoverBg : t.secondaryBtnHoverBg.withValues(alpha: 0));
   final borderColor = active
       ? t.itemActiveBorder
-      : (hovered ? t.secondaryBtnBorder : Colors.transparent);
+      : (hovered ? t.secondaryBtnBorder : t.secondaryBtnBorder.withValues(alpha: 0));
   return ControlChromeState(
     scale: _buttonScale(t, hovered: hovered, pressed: pressed, enabled: true),
     offset: _buttonOffset(t, hovered: hovered, pressed: pressed, enabled: true),
@@ -132,8 +135,9 @@ ControlChromeState ghostButtonChrome(
   required bool enabled,
   required Color baseBorderColor,
 }) {
-  final baseBackground =
-      hovered && enabled ? t.secondaryBtnHoverBg : Colors.transparent;
+  final baseBackground = hovered && enabled
+      ? t.secondaryBtnHoverBg
+      : t.secondaryBtnHoverBg.withValues(alpha: 0);
   final borderColor = hovered && enabled ? t.inputFocusBorder : baseBorderColor;
   return ControlChromeState(
     scale: 1,
@@ -250,16 +254,34 @@ List<BoxShadow> _primaryButtonShadows(
   required bool pressed,
   required bool enabled,
 }) {
-  if (!enabled || pressed) return const [];
+  // ALL returns produce a non-empty list of the same length (1) so
+  // `AnimatedContainer.boxShadow.lerp` interpolates between two real
+  // shadows (alpha + offset only) instead of injecting a phantom
+  // shadow toward `Colors.transparent` (= transparent BLACK), which
+  // is what produced the gray-flash on hover-enter and hover-exit
+  // for every primary button. Theme-color shadow base (`t.shadowElev`)
+  // also keeps the shadow in-theme instead of hard-black.
+  final base = t.shadowElev;
+  if (!enabled || pressed) {
+    return [
+      BoxShadow(
+        color: base.withValues(alpha: 0),
+        offset: const Offset(1, 1),
+      ),
+    ];
+  }
   if (!hovered) {
     return switch (t.id) {
-      AppThemeId.redshift => const [],
-      AppThemeId.nightwalker => const [],
+      AppThemeId.redshift || AppThemeId.nightwalker => [
+          BoxShadow(
+            color: base.withValues(alpha: 0),
+            offset: const Offset(1, 1),
+          ),
+        ],
       _ => [
           BoxShadow(
-            color: Colors.black.withValues(alpha: t.isDark ? 0.22 : 0.10),
+            color: base.withValues(alpha: t.isDark ? 0.22 : 0.10),
             offset: const Offset(1, 1),
-            blurRadius: 0,
           ),
         ],
     };
@@ -273,7 +295,12 @@ List<BoxShadow> _primaryButtonShadows(
           spreadRadius: 0.5,
         ),
       ],
-    _ => const [],
+    _ => [
+        BoxShadow(
+          color: base.withValues(alpha: 0),
+          offset: const Offset(1, 1),
+        ),
+      ],
   };
 }
 
@@ -294,7 +321,15 @@ List<BoxShadow> _modeButtonShadows(
   required bool pressed,
   required bool active,
 }) {
-  if (pressed) return const [];
+  // Same-shape lists across all states so the lerp animates alpha/
+  // offset only — never inserts a transparent-BLACK phantom that
+  // would gray-flash on the (1,1) offset during hover transitions.
+  final phantom = BoxShadow(
+    color: t.accentBright.withValues(alpha: 0),
+    blurRadius: 1,
+    spreadRadius: 0.5,
+  );
+  if (pressed) return [phantom];
   if (active) {
     return [
       BoxShadow(
@@ -304,10 +339,10 @@ List<BoxShadow> _modeButtonShadows(
       ),
     ];
   }
-  if (!hovered) return const [];
+  if (!hovered) return [phantom];
   return switch (t.id) {
     AppThemeId.nightwalker => _nightwalkerAccentShadow(t),
-    _ => const [],
+    _ => [phantom],
   };
 }
 

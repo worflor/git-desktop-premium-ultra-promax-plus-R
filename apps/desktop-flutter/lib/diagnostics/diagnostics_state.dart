@@ -1537,29 +1537,9 @@ class DiagnosticsState extends ChangeNotifier {
   Future<void> _persistRetention() async {
     final settings = await SettingsStore.load();
     await SettingsStore.persist(
-      AppSettingsSnapshot(
-        guardrailValue: settings.guardrailValue,
-        aiReadOnlyDefault: settings.aiReadOnlyDefault,
-        logoAnimatesWhenUnfocused: settings.logoAnimatesWhenUnfocused,
+      settings.copyWith(
         telemetryRetentionDays: _retentionDays,
         telemetryRetentionMb: _retentionMb,
-        updateChannel: settings.updateChannel,
-        crashReportingEnabled: settings.crashReportingEnabled,
-        themeId: settings.themeId,
-        keybindingProfile: settings.keybindingProfile,
-        sidebarWidthPx: settings.sidebarWidthPx,
-        sidebarPosition: settings.sidebarPosition,
-        utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-        utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        reduceMotion: settings.reduceMotion,
-        reduceMotionPhase: settings.reduceMotionPhase,
-        stashCabinetDefaultExpanded: settings.stashCabinetDefaultExpanded,
-        instantBlameHover: settings.instantBlameHover,
-        fileSortGuide: settings.fileSortGuide,
-        fileSortInverted: settings.fileSortInverted,
-        commitStructure: settings.commitStructure,
-        commitVoice: settings.commitVoice,
-        commitCoverage: settings.commitCoverage,
       ),
     );
   }

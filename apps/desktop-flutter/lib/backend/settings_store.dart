@@ -34,6 +34,12 @@ class AppSettingsSnapshot {
   final String commitStructure; // 'title_body' | 'title_only' | 'freeform'
   final String commitVoice;     // 'verb_led' | 'descriptive' | 'narrative'
   final String commitCoverage;  // 'essentials' | 'balanced' | 'everything'
+  /// User-customizable short name for the app, set during onboarding.
+  /// The full identity is reconstructed from this single field.
+  final String appShortName;
+  /// True once the user has finished (or dismissed) the onboarding flow.
+  /// Defaults to false — first launch with a missing key shows onboarding.
+  final bool onboardingComplete;
 
   const AppSettingsSnapshot({
     required this.guardrailValue,
@@ -58,6 +64,8 @@ class AppSettingsSnapshot {
     required this.commitStructure,
     required this.commitVoice,
     required this.commitCoverage,
+    required this.appShortName,
+    required this.onboardingComplete,
   });
 
   Map<String, dynamic> toJson() => {
@@ -83,6 +91,8 @@ class AppSettingsSnapshot {
         'commitStructure': commitStructure,
         'commitVoice': commitVoice,
         'commitCoverage': commitCoverage,
+        'appShortName': appShortName,
+        'onboardingComplete': onboardingComplete,
       };
 
   factory AppSettingsSnapshot.defaults() => const AppSettingsSnapshot(
@@ -108,6 +118,8 @@ class AppSettingsSnapshot {
         commitStructure: 'title_body',
         commitVoice: 'verb_led',
         commitCoverage: 'balanced',
+        appShortName: 'Manifold',
+        onboardingComplete: false,
       );
 
   factory AppSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -207,6 +219,73 @@ class AppSettingsSnapshot {
           defaults.commitCoverage,
         ),
       ),
+      appShortName: SettingsStore._normalizeAppShortName(
+        SettingsStore._stringOr(json['appShortName'], defaults.appShortName),
+      ),
+      onboardingComplete: SettingsStore._boolOr(
+        json['onboardingComplete'],
+        defaults.onboardingComplete,
+      ),
+    );
+  }
+
+  AppSettingsSnapshot copyWith({
+    double? guardrailValue,
+    bool? aiReadOnlyDefault,
+    bool? logoAnimatesWhenUnfocused,
+    int? telemetryRetentionDays,
+    int? telemetryRetentionMb,
+    String? updateChannel,
+    bool? crashReportingEnabled,
+    String? themeId,
+    String? keybindingProfile,
+    int? sidebarWidthPx,
+    String? sidebarPosition,
+    bool? utilityDrawerDefaultExpanded,
+    int? utilityDrawerHeightPx,
+    bool? reduceMotion,
+    double? reduceMotionPhase,
+    bool? stashCabinetDefaultExpanded,
+    bool? instantBlameHover,
+    String? fileSortGuide,
+    bool? fileSortInverted,
+    String? commitStructure,
+    String? commitVoice,
+    String? commitCoverage,
+    String? appShortName,
+    bool? onboardingComplete,
+  }) {
+    return AppSettingsSnapshot(
+      guardrailValue: guardrailValue ?? this.guardrailValue,
+      aiReadOnlyDefault: aiReadOnlyDefault ?? this.aiReadOnlyDefault,
+      logoAnimatesWhenUnfocused:
+          logoAnimatesWhenUnfocused ?? this.logoAnimatesWhenUnfocused,
+      telemetryRetentionDays:
+          telemetryRetentionDays ?? this.telemetryRetentionDays,
+      telemetryRetentionMb: telemetryRetentionMb ?? this.telemetryRetentionMb,
+      updateChannel: updateChannel ?? this.updateChannel,
+      crashReportingEnabled:
+          crashReportingEnabled ?? this.crashReportingEnabled,
+      themeId: themeId ?? this.themeId,
+      keybindingProfile: keybindingProfile ?? this.keybindingProfile,
+      sidebarWidthPx: sidebarWidthPx ?? this.sidebarWidthPx,
+      sidebarPosition: sidebarPosition ?? this.sidebarPosition,
+      utilityDrawerDefaultExpanded:
+          utilityDrawerDefaultExpanded ?? this.utilityDrawerDefaultExpanded,
+      utilityDrawerHeightPx:
+          utilityDrawerHeightPx ?? this.utilityDrawerHeightPx,
+      reduceMotion: reduceMotion ?? this.reduceMotion,
+      reduceMotionPhase: reduceMotionPhase ?? this.reduceMotionPhase,
+      stashCabinetDefaultExpanded:
+          stashCabinetDefaultExpanded ?? this.stashCabinetDefaultExpanded,
+      instantBlameHover: instantBlameHover ?? this.instantBlameHover,
+      fileSortGuide: fileSortGuide ?? this.fileSortGuide,
+      fileSortInverted: fileSortInverted ?? this.fileSortInverted,
+      commitStructure: commitStructure ?? this.commitStructure,
+      commitVoice: commitVoice ?? this.commitVoice,
+      commitCoverage: commitCoverage ?? this.commitCoverage,
+      appShortName: appShortName ?? this.appShortName,
+      onboardingComplete: onboardingComplete ?? this.onboardingComplete,
     );
   }
 }
@@ -297,5 +376,11 @@ class SettingsStore {
     final v = value.trim().toLowerCase();
     if (v == 'essentials' || v == 'everything') return v;
     return 'balanced';
+  }
+
+  static String _normalizeAppShortName(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return 'Manifold';
+    return trimmed.length > 24 ? trimmed.substring(0, 24) : trimmed;
   }
 }

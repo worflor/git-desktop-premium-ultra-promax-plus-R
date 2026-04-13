@@ -17,7 +17,9 @@ import '../../app/ai_settings_state.dart';
 import '../../app/preferences_state.dart';
 import '../../app/theme_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import '../onboarding/onboarding_state.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/design_primitives.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/morph_text.dart';
@@ -1191,6 +1193,9 @@ class _SettingsPageState extends State<SettingsPage> {
           title: 'Release Deployment',
           summary: 'Update feeds, crash diagnostics, and environment posture.',
           wide: true,
+          action: _ReplayOnboardingButton(
+            onTap: () => context.read<OnboardingState>().replay(),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1514,12 +1519,16 @@ class _StateCard extends StatelessWidget {
   final String summary;
   final Widget child;
   final bool wide;
+  /// Optional top-right action — e.g., a small icon button aligned with
+  /// the title row. Padded consistently with the card's insets.
+  final Widget? action;
 
   const _StateCard({
     required this.title,
     required this.summary,
     required this.child,
     this.wide = false,
+    this.action,
   });
 
   @override
@@ -1536,13 +1545,21 @@ class _StateCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: TextStyle(
-              color: t.textStrong,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (action != null) action!,
+            ],
           ),
           const SizedBox(height: 6),
           Text(
@@ -1552,6 +1569,68 @@ class _StateCard extends StatelessWidget {
           const SizedBox(height: 12),
           child,
         ],
+      ),
+    );
+  }
+}
+
+/// Small icon button living in the top-right of the Release Deployment
+/// card. Re-opens the first-run onboarding flow — handy for debugging
+/// and a quiet "hello again" for anyone who pokes around.
+class _ReplayOnboardingButton extends StatefulWidget {
+  final VoidCallback onTap;
+  const _ReplayOnboardingButton({required this.onTap});
+
+  @override
+  State<_ReplayOnboardingButton> createState() =>
+      _ReplayOnboardingButtonState();
+}
+
+class _ReplayOnboardingButtonState extends State<_ReplayOnboardingButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Tooltip(
+      message: 'Replay onboarding',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
+            duration: AppMotion.snap,
+            width: 28,
+            height: 28,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _hover
+                  ? t.accentBright.withValues(alpha: 0.14)
+                  : t.accentBright.withValues(alpha: 0),
+              border: Border.all(
+                color: _hover
+                    ? t.accentBright.withValues(alpha: 0.5)
+                    : t.chromeBorder.withValues(alpha: 0.5),
+              ),
+              borderRadius: BorderRadius.circular(
+                themeDefinitionFor(t.id)
+                    .shader
+                    .geometry
+                    .radius
+                    .clamp(4.0, 8.0)
+                    .toDouble(),
+              ),
+            ),
+            child: Icon(
+              Icons.waving_hand_outlined,
+              size: 14,
+              color: _hover ? t.accentBright : t.textFaint,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1915,7 +1994,7 @@ class _ChannelRibbonItemState extends State<_ChannelRibbonItem> {
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: widget.active ? activeColor : Colors.transparent,
+                color: widget.active ? activeColor : activeColor.withValues(alpha: 0),
                 width: 2,
               ),
             ),
@@ -1983,15 +2062,12 @@ class _ProfileSelect extends StatelessWidget {
             height: 32,
             fontWeight: FontWeight.w600,
             menuColor: t.surface1,
-            items: const [
-              DropdownMenuItem(
-                value: KeybindingProfile.classic,
-                child: Text('Porcelain'),
-              ),
-              DropdownMenuItem(
-                value: KeybindingProfile.compact,
-                child: Text('Numeric'),
-              ),
+            items: [
+              for (final profile in KeybindingProfile.values)
+                DropdownMenuItem(
+                  value: profile,
+                  child: Text(profile.label),
+                ),
             ],
             onChanged: (profile) {
               if (profile != null) {
@@ -2939,7 +3015,9 @@ class _GhostMiniButtonState extends State<_GhostMiniButton> {
       hovered: _hovered,
       pressed: _pressed,
       enabled: widget.onTap != null,
-      baseBorderColor: Colors.transparent,
+      // Same-RGB-as-hover-border so the lerp animates only alpha and
+      // doesn't pass through translucent black.
+      baseBorderColor: t.inputFocusBorder.withValues(alpha: 0),
     );
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
@@ -3086,7 +3164,7 @@ class _TelemetrySwitcherItemState extends State<_TelemetrySwitcherItem> {
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: widget.active ? activeColor : Colors.transparent,
+                color: widget.active ? activeColor : activeColor.withValues(alpha: 0),
                 width: 2,
               ),
             ),

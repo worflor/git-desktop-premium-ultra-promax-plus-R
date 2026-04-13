@@ -7,6 +7,32 @@ ThemeData buildTheme(AppTokens t) {
   return _themeCache.putIfAbsent(t.id, () => _buildTheme(t));
 }
 
+/// Flatten a translucent palette token against [t.bg0] to produce a
+/// guaranteed-opaque equivalent.
+///
+/// **Why this exists**: Material3 widgets (Card, PopupMenu, anything
+/// with an elevation overlay, anything reading `colorScheme.surface`)
+/// internally call `Color.alphaBlend(surfaceTint, baseColor)` to
+/// compute their final fill. `Color.alphaBlend` treats the BASE as
+/// fully opaque before blending — so passing a translucent
+/// `colorScheme.surface` produces a fully-opaque pixel regardless of
+/// the declared alpha. This silently flattens any translucency the
+/// theme palette intended.
+///
+/// **The invariant**: every Material-system color slot
+/// (`ColorScheme.surface`, `CardTheme.color`, `PopupMenuTheme.color`,
+/// any other widget theme that takes a "background" Color) must
+/// receive a fully-opaque value. Translucent surface effects come
+/// EXCLUSIVELY from `MaterialSurface`, which owns its own
+/// `BackdropFilter` machinery and is not subject to `alphaBlend`
+/// flattening.
+///
+/// `Color.alphaBlend(translucent, opaque)` here pre-bakes the visual
+/// result the translucent token described, producing an opaque pixel
+/// that Material widgets can use as a canvas without surprise.
+Color _opaqueOnBg(AppTokens t, Color translucent) =>
+    Color.alphaBlend(translucent, t.bg0);
+
 ThemeData _buildTheme(AppTokens t) {
   final shader = themeDefinitionFor(t.id).shader;
   final radius = shader.geometry.radius.clamp(0, 18).toDouble();
@@ -14,6 +40,10 @@ ThemeData _buildTheme(AppTokens t) {
   final fontFallback = _fontFallbackFor(t.id);
   final fontScale = shader.geometry.fontScale;
   final letterSpacingEm = shader.geometry.letterSpacingEm;
+  // Pre-flatten the canonical surface tone once. Reused across
+  // ColorScheme + CardTheme + PopupMenuTheme so all Material widgets
+  // see the same opaque substrate.
+  final opaqueSurface = _opaqueOnBg(t, t.surface1);
   final colorScheme = ColorScheme(
     brightness: t.isDark ? Brightness.dark : Brightness.light,
     primary: t.accentBright,
@@ -22,8 +52,15 @@ ThemeData _buildTheme(AppTokens t) {
     onSecondary: t.isDark ? Colors.black : Colors.white,
     error: t.danger,
     onError: Colors.white,
-    surface: t.surface1,
+    surface: opaqueSurface,
     onSurface: t.textNormal,
+    // Disable Material3's elevation tint. By default `surfaceTint`
+    // falls back to `primary`, and Material widgets composite an
+    // elevation-derived overlay of that color via `Color.alphaBlend`
+    // onto every elevated surface — flattening any translucent fill
+    // and painting an unwanted accent wash. `MaterialSurface` owns
+    // all surface visuals; no Material widget should ever add tint.
+    surfaceTint: Colors.transparent,
   );
 
   return ThemeData(
@@ -33,7 +70,7 @@ ThemeData _buildTheme(AppTokens t) {
     fontFamily: fontFamily,
     extensions: [AppThemeExtension(t)],
     cardTheme: CardThemeData(
-      color: t.surface1,
+      color: opaqueSurface,
       surfaceTintColor: Colors.transparent,
       shadowColor: t.shadowElev,
       shape: RoundedRectangleBorder(
@@ -101,7 +138,7 @@ ThemeData _buildTheme(AppTokens t) {
       thumbShape: _sliderThumbShape(t),
     ),
     popupMenuTheme: PopupMenuThemeData(
-      color: t.surface1,
+      color: opaqueSurface,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radius),
@@ -152,6 +189,28 @@ ThemeData _buildTheme(AppTokens t) {
     splashFactory: NoSplash.splashFactory,
     highlightColor: Colors.transparent,
     hoverColor: Colors.transparent,
+    // Material3 button widgets (IconButton/TextButton/ElevatedButton/etc)
+    // ignore `hoverColor` and `splashFactory` — they resolve their own
+    // per-state `WidgetStateProperty<Color?>` overlay, defaulting to
+    // `colorScheme.onSurface @ 8%` on hover and 12% on press. That's
+    // the gray flash visible on hover-in AND hover-out (since the
+    // overlay fades in then back out). Disable it on every Material
+    // button class so only our custom hover styling shows.
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(overlayColor: Colors.transparent),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(overlayColor: Colors.transparent),
+    ),
+    elevatedButtonTheme: ElevatedButtonThemeData(
+      style: ElevatedButton.styleFrom(overlayColor: Colors.transparent),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(overlayColor: Colors.transparent),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(overlayColor: Colors.transparent),
+    ),
   );
 }
 
@@ -166,6 +225,7 @@ List<String>? _fontFallbackFor(AppThemeId id) {
       return const ['Consolas', 'Courier New', 'monospace'];
     case AppThemeId.nightwalker:
     case AppThemeId.redshift:
+    case AppThemeId.phosphor:
       return const ['Consolas', 'Courier New', 'monospace'];
     case AppThemeId.halo:
       return const ['Georgia', 'Times New Roman', 'serif'];
@@ -173,7 +233,10 @@ List<String>? _fontFallbackFor(AppThemeId id) {
     case AppThemeId.helix:
     case AppThemeId.aether:
     case AppThemeId.quanta:
+    case AppThemeId.kirby:
       return const ['Segoe UI', 'Arial', 'sans-serif'];
+    case AppThemeId.nacre:
+      return const ['Georgia', 'Times New Roman', 'serif'];
   }
 }
 
@@ -213,6 +276,21 @@ SliderComponentShape _sliderThumbShape(AppTokens t) => switch (t.id) {
         ),
       AppThemeId.blackboard =>
         const _SquareSliderThumbShape(size: 16, radius: 2, borderWidth: 2),
+      AppThemeId.kirby =>
+        // Square inked thumb — chunky border matches the theme's ink line.
+        const _SquareSliderThumbShape(
+            size: 18, radius: 4, borderWidth: 2.5, insetShadow: false),
+      AppThemeId.phosphor =>
+        // Square block thumb — like a CRT cursor. Sharp, no fill,
+        // monospaced-block aesthetic.
+        const _SquareSliderThumbShape(
+            size: 14, radius: 0, borderWidth: 2, insetShadow: false),
+      AppThemeId.nacre => _GlassSliderThumbShape(
+          size: 18,
+          fillColor: Colors.white.withValues(alpha: 0.6),
+          borderColor: t.accentBright,
+          glowColor: t.accentBright.withValues(alpha: 0.4),
+        ),
     };
 
 class _ThemedSliderTrackShape extends SliderTrackShape
@@ -344,6 +422,20 @@ class _ThemedSliderTrackShape extends SliderTrackShape
       case AppThemeId.crafty:
       case AppThemeId.quanta:
         break;
+      case AppThemeId.kirby:
+        // Comic ink stroke around the entire track.
+        _strokeTrack(canvas, trackRRect, tokens.textStrong, width: 2);
+      case AppThemeId.phosphor:
+        // Phosphor green hairline around the track — feels like a
+        // CRT pixel rectangle.
+        _strokeTrack(canvas, trackRRect, tokens.chromeAccent, width: 1);
+      case AppThemeId.nacre:
+        _strokeTrack(
+          canvas,
+          trackRRect,
+          tokens.accentBright.withValues(alpha: 0.35),
+          width: 0.8,
+        );
     }
   }
 

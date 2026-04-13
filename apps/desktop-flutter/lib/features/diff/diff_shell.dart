@@ -34,101 +34,9 @@ class _HunkHeader {
   const _HunkHeader(this.lineIndex, this.label);
 }
 
-// ── Parser ────────────────────────────────────────────────────────────────────
-
-List<ParsedLine> _parseDiff(String diff) {
-  final rawLines = diff.split('\n');
-  final result = <ParsedLine>[];
-  int oldLine = 0, newLine = 0, hunkIdx = -1;
-  String? currentFile;
-
-  final diffHeaderRe = RegExp(r'^diff --git a/(.+) b/(.+)$');
-  for (final line in rawLines) {
-    if (line.startsWith('diff --git')) {
-      final m = diffHeaderRe.firstMatch(line);
-      if (m != null) currentFile = m.group(2) ?? m.group(1);
-      continue;
-    }
-    if (line.startsWith('diff ') || line.startsWith('index ')) {
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      final m =
-          RegExp(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@').firstMatch(line);
-      if (m != null) {
-        oldLine = int.tryParse(m.group(1)!) ?? 0;
-        newLine = int.tryParse(m.group(2)!) ?? 0;
-      }
-      hunkIdx++;
-      result.add(ParsedLine(
-          text: line,
-          lowerText: line.toLowerCase(),
-          kind: LineKind.hunk,
-          hunkIndex: hunkIdx,
-          filePath: currentFile));
-    } else if (line.startsWith('+') && !line.startsWith('+++')) {
-      result.add(ParsedLine(
-          text: line,
-          lowerText: line.toLowerCase(),
-          kind: LineKind.added,
-          lineNumNew: newLine++,
-          hunkIndex: hunkIdx,
-          filePath: currentFile));
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      result.add(ParsedLine(
-          text: line,
-          lowerText: line.toLowerCase(),
-          kind: LineKind.deleted,
-          lineNumOld: oldLine++,
-          hunkIndex: hunkIdx,
-          filePath: currentFile));
-    } else if (line.startsWith('\\')) {
-      // Git's "\ No newline at end of file" marker. It's not a line of
-      // content — it annotates the *previous* line (which is the final
-      // line on its side of the diff and has no trailing newline). Pop
-      // and re-push that line with the flag set so the patch engine can
-      // reconstruct the marker on regeneration. Crucially, do NOT emit
-      // a ParsedLine of our own: a prior version fell into the context
-      // branch below and bumped `oldLine` / `newLine` for a line that
-      // isn't real content, corrupting every subsequent hunk position.
-      if (result.isNotEmpty) {
-        final prev = result.removeLast();
-        result.add(prev.copyWith(noNewlineAtEof: true));
-      }
-    } else if (line.startsWith('new file mode ') ||
-        line.startsWith('deleted file mode ') ||
-        line.startsWith('old mode ') ||
-        line.startsWith('new mode ') ||
-        line.startsWith('similarity index ') ||
-        line.startsWith('rename from ') ||
-        line.startsWith('rename to ') ||
-        line.startsWith('Binary files ') ||
-        line.startsWith('GIT binary patch') ||
-        line.startsWith('--- ') ||
-        line.startsWith('+++ ')) {
-      result.add(ParsedLine(
-          text: line, lowerText: line.toLowerCase(), kind: LineKind.meta,
-          filePath: currentFile));
-    } else if (line.isNotEmpty) {
-      result.add(ParsedLine(
-          text: line,
-          lowerText: line.toLowerCase(),
-          kind: LineKind.context,
-          lineNumOld: oldLine++,
-          lineNumNew: newLine++,
-          hunkIndex: hunkIdx,
-          filePath: currentFile));
-    } else {
-      result.add(ParsedLine(
-          text: line,
-          lowerText: '',
-          kind: LineKind.context,
-          hunkIndex: hunkIdx));
-    }
-  }
-
-  return result;
-}
+// Parser lives in `diff_models.dart` as `parseUnifiedDiff` so any
+// surface that needs to read a diff (changes panel, patch engine, PR
+// detail) shares the same model.
 
 List<_HunkHeader> _extractHunks(List<ParsedLine> lines) {
   final result = <_HunkHeader>[];
@@ -497,7 +405,7 @@ class _DiffShellState extends State<DiffShell> {
       final stagedKeys =
           _lines.where((l) => l.isStaged).map((l) => l.stagingKey).toSet();
 
-      final parsedLines = _parseDiff(widget.diffContent!);
+      final parsedLines = parseUnifiedDiff(widget.diffContent!);
       var newLines = widget.showFileHeader
           ? _trimLeadingMetaLines(parsedLines)
           : parsedLines;
@@ -1335,7 +1243,7 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   void _reparse(String content) {
-    final parsed = _parseDiff(content);
+    final parsed = parseUnifiedDiff(content);
     _lines = widget.showFileHeader ? _trimLeadingMetaLines(parsed) : parsed;
     _hunks = _extractHunks(_lines);
     _refreshDisplayLines();
@@ -1550,7 +1458,7 @@ class _DiffShellState extends State<DiffShell> {
                                 _keyboardLineIndex! >= 0 &&
                                 _keyboardLineIndex! < _lines.length &&
                                 identical(_lines[_keyboardLineIndex!], line);
-                            return _DiffLine(
+                            return DiffLineView(
                               key: ValueKey(line),
                               line: line,
                               tokens: t,
@@ -1651,7 +1559,7 @@ class _DiffShellState extends State<DiffShell> {
 
 // ── Diff line ─────────────────────────────────────────────────────────────────
 
-class _DiffLine extends StatefulWidget {
+class DiffLineView extends StatefulWidget {
   final ParsedLine line;
   final AppTokens tokens;
   final BlameLineData? blameEntry;
@@ -1678,7 +1586,7 @@ class _DiffLine extends StatefulWidget {
   /// Double-click on the hunk header row — toggles the whole hunk.
   final VoidCallback? onHunkDoubleTap;
 
-  const _DiffLine({
+  const DiffLineView({
     Key? key,
     required this.line,
     required this.tokens,
@@ -1700,10 +1608,10 @@ class _DiffLine extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  State<_DiffLine> createState() => _DiffLineState();
+  State<DiffLineView> createState() => _DiffLineState();
 }
 
-class _DiffLineState extends State<_DiffLine> {
+class _DiffLineState extends State<DiffLineView> {
   /// Hover anywhere across the left click zone (ribbon + sigil + gutter).
   /// Drives the sigil's hover-border affordance so the whole margin reads
   /// as clickable.
@@ -2771,7 +2679,7 @@ class _ToolbarBtnState extends State<_ToolbarBtn> {
           decoration: BoxDecoration(
             color: widget.active
                 ? t.itemActiveBg
-                : (_hov ? t.itemHoverBg : Colors.transparent),
+                : (_hov ? t.itemHoverBg : t.itemHoverBg.withValues(alpha: 0)),
             borderRadius: BorderRadius.circular(4),
             border:
                 widget.active ? Border.all(color: t.itemActiveBorder) : null,

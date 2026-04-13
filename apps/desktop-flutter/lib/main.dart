@@ -15,16 +15,30 @@ import 'app/brand_lockup.dart';
 import 'app/sidebar_rail.dart';
 import 'app/theme_state.dart';
 import 'app/workspace_shell.dart';
+import 'backend/settings_store.dart';
 import 'diagnostics/diagnostics_state.dart';
+import 'features/onboarding/onboarding_flow.dart';
+import 'features/onboarding/onboarding_state.dart';
+import 'ui/liquid_glass.dart';
 import 'ui/material_surface.dart';
 import 'ui/theme.dart';
+import 'ui/theme_shaders.dart';
 import 'ui/tokens.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await windowManager.ensureInitialized();
+
+  // Settings drive identity + onboarding gate — load once up front so
+  // first paint reflects persisted state (the user's chosen name and
+  // whether they've already completed onboarding).
+  final settings = await SettingsStore.load();
   final appIdentityState = AppIdentityState();
+  appIdentityState.loadFromSettings(settings);
+  final onboardingState = OnboardingState();
+  onboardingState.hydrateFromSettings(settings);
+
   final windowOptions = WindowOptions(
     size: Size(980, 660),
     minimumSize: Size(620, 500),
@@ -38,6 +52,13 @@ void main() async {
     await windowManager.show();
     await windowManager.focus();
   });
+
+  // Kick off shader compilation in the background — fire-and-forget.
+  // First paint that needs cellshade falls back to the non-shader path
+  // until the program is ready (typically <100ms after launch).
+  ThemeShaders.cellshade();
+  ThemeShaders.iridescent();
+  ThemeShaders.glass();
 
   final themeState = ThemeState();
   await themeState.load();
@@ -69,6 +90,7 @@ void main() async {
         ChangeNotifierProvider.value(value: aiSettingsState),
         ChangeNotifierProvider.value(value: diagnosticsState),
         ChangeNotifierProvider.value(value: appIdentityState),
+        ChangeNotifierProvider.value(value: onboardingState),
         ChangeNotifierProvider(create: (_) => HyperReactivity()),
       ],
       child: const GitDesktopApp(),
@@ -120,17 +142,29 @@ class _GitDesktopAppState extends State<GitDesktopApp> {
     final identity = context.watch<AppIdentityState>().identity;
     final tokens = themeState.tokens;
 
+    final onboardingComplete =
+        context.select<OnboardingState, bool>((o) => o.isComplete);
+
     return MaterialApp(
       title: identity.shortName,
       debugShowCheckedModeBanner: false,
       theme: buildTheme(tokens),
-      home: const _AppFrame(),
+      home: LiquidGlassProvider(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 500),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          child: onboardingComplete
+              ? const _AppFrame(key: ValueKey('workspace'))
+              : const OnboardingFlow(key: ValueKey('onboarding')),
+        ),
+      ),
     );
   }
 }
 
 class _AppFrame extends StatefulWidget {
-  const _AppFrame();
+  const _AppFrame({super.key});
 
   @override
   State<_AppFrame> createState() => _AppFrameState();
@@ -179,15 +213,17 @@ class _AppFrameState extends State<_AppFrame> {
             if (_showsTextureBackdrop(definition.shader))
               Positioned.fill(
                 child: IgnorePointer(
-                  child: RepaintBoundary(
-                    child: CustomPaint(
-                      painter: MaterialTexturePainter(
-                        tokens: t,
-                        shader: definition.shader,
-                        blendMode: _rootTextureBlendMode(t),
-                        opacityScale: _rootTextureOpacity(t),
-                      ),
-                    ),
+                  // MaterialTextureLayer wraps in pulse subscription
+                  // when the texture is iridescent — so the app-root
+                  // backdrop gets the same time-drift + window-tilt
+                  // parallax as per-surface iridescent passes. Other
+                  // texture kinds (grain/scanlines/pixels/halftone)
+                  // route through a plain CustomPaint, no overhead.
+                  child: MaterialTextureLayer(
+                    tokens: t,
+                    shader: definition.shader,
+                    blendMode: _rootTextureBlendMode(t),
+                    opacityScale: _rootTextureOpacity(t),
                   ),
                 ),
               ),
@@ -227,7 +263,7 @@ class _AppFrameState extends State<_AppFrame> {
                           width: 9,
                           color: _resizing
                               ? t.accentBright.withValues(alpha: 0.22)
-                              : Colors.transparent,
+                              : t.accentBright.withValues(alpha: 0),
                         ),
                       ),
                     ),
@@ -310,7 +346,13 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
   // controller's 0→1 cycle.
   final List<_Whisp> _whisps = [];
   final List<_Debris> _debris = [];
-  final math.Random _simRng = math.Random(0xCAFEFEED);
+  // Time-seeded so each session reads as a fresh weather pattern instead
+  // of the same three ribbons drifting the same paths every launch.
+  final math.Random _simRng = math.Random();
+  // Last edge a whisp spawned from. Re-roll if the next pick matches —
+  // cheap way to keep ribbons feeling like they come from everywhere
+  // instead of clustering on the same side.
+  int _lastSpawnEdge = -1;
   DateTime? _lastSimAt;
 
   @override
@@ -340,8 +382,10 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
   }
 
   void _simulateWhisps(double dt) {
-    // Maintain up to 3 whisps at all times.
-    while (_whisps.length < 3) {
+    // Maintain up to 3 whisps. Spawn at most one per frame so two
+    // whisps dying together don't replace themselves in lockstep —
+    // staggered births read as wind, not a metronome.
+    if (_whisps.length < 3) {
       _whisps.add(_spawnWhisp());
     }
     for (final w in _whisps) {
@@ -381,9 +425,16 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
 
   _Whisp _spawnWhisp() {
     // Spawn on a random edge, aim roughly inward with a bit of drift.
-    final edge = _simRng.nextInt(4);
-    final cross = _simRng.nextDouble();
-    final baseSpeed = 0.10 + _simRng.nextDouble() * 0.08;
+    // Avoid repeating the previous edge so consecutive whisps don't
+    // pile in from the same side.
+    var edge = _simRng.nextInt(4);
+    if (edge == _lastSpawnEdge) edge = (edge + 1 + _simRng.nextInt(3)) % 4;
+    _lastSpawnEdge = edge;
+    // Bias cross-position into [0.15, 0.85] so whisps don't clip the
+    // corners; corners are visually cramped and the ribbon barely shows
+    // before exiting.
+    final cross = 0.15 + _simRng.nextDouble() * 0.70;
+    final baseSpeed = 0.08 + _simRng.nextDouble() * 0.12;
     Offset head;
     Offset velocity;
     switch (edge) {
@@ -516,6 +567,7 @@ bool _particlesAnimate(SurfaceMaterialShader shader) {
     case ThemeParticles.voxels:
     case ThemeParticles.chalkdust:
     case ThemeParticles.whisps:
+    case ThemeParticles.inkblots:
       return true;
     case ThemeParticles.none:
     case ThemeParticles.stardust:
@@ -539,6 +591,10 @@ Duration _particleAnimationDuration(SurfaceMaterialShader shader) {
       // Whisps use their own wall-clock dt; controller just needs to
       // tick every frame. A short repeat cycle keeps the ticker alive.
       return const Duration(seconds: 10);
+    case ThemeParticles.inkblots:
+      // Slow drift across the page. Long period so blots glide rather
+      // than zip — keeps the comic-book stillness while still moving.
+      return const Duration(seconds: 45);
     case ThemeParticles.stardust:
     case ThemeParticles.quantum:
     case ThemeParticles.ethereal:
@@ -612,6 +668,48 @@ class _ParticleBackdropPainter extends CustomPainter {
         );
       case ThemeParticles.whisps:
         _drawWhisps(canvas, size);
+      case ThemeParticles.inkblots:
+        _drawInkblots(canvas, size);
+    }
+  }
+
+  /// Kirby ambient — a handful of black ink blots drift across
+  /// the cream paper. Each blot is a stable Path keyed by its index +
+  /// progress, so positions move smoothly but shapes are constant.
+  /// All blots share one Paint; total cost is ~6 path draws/frame.
+  /// Color updated per call from `tokens.chromeBorder` so the blot ink
+  /// stays in sync with the theme's panel-border ink line.
+  static final Paint _inkblotPaint = Paint()..style = PaintingStyle.fill;
+
+  void _drawInkblots(Canvas canvas, Size size) {
+    _inkblotPaint.color = tokens.chromeBorder.withValues(alpha: 0.05);
+    const blots = 6;
+    final w = size.width;
+    final h = size.height;
+    final base = progress; // 0..1 cycling once per controller period
+    final parallax = _parallaxOffset * 0.4;
+    for (var i = 0; i < blots; i++) {
+      // Each blot has its own slow phase + horizontal lane. Wraps with
+      // modulo so blots loop without snap.
+      final phase = (base + i / blots) % 1.0;
+      final lane = (i * 0.17 + 0.08) % 1.0;
+      final cx = (lane * w) + parallax.dx + math.sin(phase * math.pi * 2) * 30;
+      final cy = phase * (h + 80) - 40 + parallax.dy;
+      final radius = 18.0 + (i % 3) * 6.0;
+      // Hand-drawn-feeling blot: a circle nudged with two off-center
+      // bumps via quadratic bezier. Stable shape per blot index.
+      final path = Path()
+        ..moveTo(cx + radius, cy)
+        ..quadraticBezierTo(cx + radius * 1.2, cy - radius * 0.3,
+            cx + radius * 0.4, cy - radius)
+        ..quadraticBezierTo(cx - radius * 0.6, cy - radius * 1.1,
+            cx - radius, cy - radius * 0.2)
+        ..quadraticBezierTo(cx - radius * 1.1, cy + radius * 0.7,
+            cx - radius * 0.3, cy + radius)
+        ..quadraticBezierTo(cx + radius * 0.8, cy + radius * 1.0,
+            cx + radius, cy)
+        ..close();
+      canvas.drawPath(path, _inkblotPaint);
     }
   }
 

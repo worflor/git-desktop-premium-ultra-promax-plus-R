@@ -969,11 +969,14 @@ class _BranchPillState extends State<_BranchPill> {
 
     _overlay = OverlayEntry(builder: (_) {
       return _BranchPanelOverlay(
-        // Panel starts at pill's top — pill fades out, panel morphs in
+        // Panel starts at pill's top — pill fades out, panel morphs in.
+        // Panel width matches the pill's actual rendered width so the
+        // morph reads as a continuation, not an expansion into a
+        // neighboring region.
         top: origin.dy,
         left: origin.dx,
         pillHeight: pillSize.height,
-        minWidth: 240.0,
+        minWidth: pillSize.width.clamp(240.0, _kBranchPillMaxWidth),
         branches: _branches,
         loading: _loading,
         switching: _switching,
@@ -1048,32 +1051,49 @@ class _BranchPillState extends State<_BranchPill> {
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
           onTap: _toggle,
-          child: AnimatedContainer(
-            key: _pillKey,
-            duration: context.motion(const Duration(milliseconds: 150)),
-            curve: Curves.easeOut,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: _hovered ? t.itemHoverBg : t.surface0,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: borderColor),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AppIcon(name: 'git-branch', size: 11, color: t.accentBright),
-                const SizedBox(width: 5),
-                Text(
-                  widget.branch,
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w600,
+          child: ConstrainedBox(
+            // Cap the pill's width so long branch names can't balloon
+            // the pill wider than the popup that overlays it. Without
+            // this cap, a long branch name pushed the next desk tab
+            // rightward, leaving visible dead space between the popup
+            // (fixed-width) and the next tab when the popup was open.
+            constraints:
+                const BoxConstraints(maxWidth: _kBranchPillMaxWidth),
+            child: AnimatedContainer(
+              key: _pillKey,
+              duration: context.motion(const Duration(milliseconds: 150)),
+              curve: Curves.easeOut,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _hovered ? t.itemHoverBg : t.surface0,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: borderColor),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AppIcon(
+                      name: 'git-branch', size: 11, color: t.accentBright),
+                  const SizedBox(width: 5),
+                  Flexible(
+                    child: Text(
+                      widget.branch,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                      style: TextStyle(
+                        color: t.textNormal,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 4),
-                AppIcon(name: 'chevron-right', size: 10, color: t.textMuted),
-              ],
+                  const SizedBox(width: 4),
+                  AppIcon(
+                      name: 'chevron-right', size: 10, color: t.textMuted),
+                ],
+              ),
             ),
           ),
         ),
@@ -1081,6 +1101,13 @@ class _BranchPillState extends State<_BranchPill> {
     );
   }
 }
+
+/// Hard cap for the branch pill + its overlay panel. Chosen to fit most
+/// conventional branch names in full (e.g. `feature/long-descriptive-name`)
+/// while clipping truly hostile ones like CI-generated codex branches.
+/// Pill and panel share this so the panel visually replaces the pill
+/// without leaving a gap against the next desk tab.
+const double _kBranchPillMaxWidth = 280;
 
 // ── Panel overlay ─────────────────────────────────────────────────────────────
 
@@ -1223,12 +1250,17 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
                                         size: 11,
                                         color: t.accentBright),
                                     const SizedBox(width: 5),
-                                    ThemeMorphText(
-                                      widget.currentBranch,
-                                      style: TextStyle(
-                                        color: t.textNormal,
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w600,
+                                    Flexible(
+                                      child: ThemeMorphText(
+                                        widget.currentBranch,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        softWrap: false,
+                                        style: TextStyle(
+                                          color: t.textNormal,
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                       ),
                                     ),
                                     const SizedBox(width: 4),
@@ -1409,7 +1441,7 @@ class _BranchRowState extends State<_BranchRow> {
               const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           color: _hovered && canSwitch
               ? t.secondaryBtnHoverBg
-              : Colors.transparent,
+              : t.secondaryBtnHoverBg.withValues(alpha: 0),
           child: Row(
             children: [
               // Current indicator dot
@@ -1484,7 +1516,7 @@ class _BranchRowState extends State<_BranchRow> {
                   )
                 else if (_hovered)
                   Tooltip(
-                    message: 'Open on a new desk',
+                    message: 'Open on a side desk',
                     child: GestureDetector(
                       onTap: widget.onOpenAsDesk,
                       child: Text(
@@ -1596,11 +1628,15 @@ class _NewDeskRowState extends State<_NewDeskRow> {
         child: AnimatedContainer(
           duration: context.motion(const Duration(milliseconds: 80)),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          color: _hovered ? t.secondaryBtnHoverBg : Colors.transparent,
+          // RGB-matched lerp endpoint to avoid the gray-flash that
+          // `Colors.transparent` (= transparent BLACK) produces.
+          color: _hovered
+              ? t.secondaryBtnHoverBg
+              : t.secondaryBtnHoverBg.withValues(alpha: 0),
           child: Row(
             children: [
               Text(
-                '+ New desk',
+                '+ Side desk',
                 style: TextStyle(
                   color: _hovered ? t.textNormal : t.textMuted,
                   fontSize: 11,
@@ -1650,7 +1686,9 @@ class _NavRowState extends State<_NavRow> {
           padding:
               const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
-            color: _hovered ? t.secondaryBtnHoverBg : Colors.transparent,
+            color: _hovered
+                ? t.secondaryBtnHoverBg
+                : t.secondaryBtnHoverBg.withValues(alpha: 0),
             borderRadius: const BorderRadius.only(
               bottomLeft: Radius.circular(6),
               bottomRight: Radius.circular(6),

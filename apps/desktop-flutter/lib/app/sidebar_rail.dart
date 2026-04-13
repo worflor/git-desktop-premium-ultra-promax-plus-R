@@ -1,6 +1,6 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../backend/file_picker.dart';
 import '../backend/git.dart';
 import '../components/icons/app_icons.dart';
 import '../ui/control_chrome.dart';
@@ -79,10 +79,6 @@ class _SidebarRailState extends State<SidebarRail> {
     });
   }
 
-  Future<String?> _pickDirectory(String title) {
-    return FilePicker.platform.getDirectoryPath(dialogTitle: title);
-  }
-
   Future<void> _onOpen() async {
     try {
       if (_entryMode == _RepositoryEntryMode.clone) {
@@ -97,7 +93,7 @@ class _SidebarRailState extends State<SidebarRail> {
       final repo = context.read<RepositoryState>();
       var path = _pathController.text.trim();
       if (path.isEmpty) {
-        final picked = await _pickDirectory('Open Repository');
+        final picked = await pickDirectory('Open Repository');
         if (picked == null) return;
         path = picked;
         _pathController.text = path;
@@ -192,7 +188,7 @@ class _SidebarRailState extends State<SidebarRail> {
     try {
       var path = _pathController.text.trim();
       if (path.isEmpty) {
-        final picked = await _pickDirectory('Create Repository');
+        final picked = await pickDirectory('Create Repository');
         if (picked == null) return;
         path = picked;
         _pathController.text = path;
@@ -678,11 +674,15 @@ class _ProjectItemState extends State<_ProjectItem> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    // RGB-matched lerp endpoints (`X.withValues(alpha: 0)` instead of
+    // `Colors.transparent` = transparent BLACK) prevent the gray flash
+    // that mid-lerp transparent-black causes during hover transitions.
     final background = widget.isActive
         ? t.itemActiveBg
-        : (_hovered ? t.itemHoverBg : Colors.transparent);
-    final borderColor =
-        widget.isActive ? t.itemActiveBorder : Colors.transparent;
+        : (_hovered ? t.itemHoverBg : t.itemHoverBg.withValues(alpha: 0));
+    final borderColor = widget.isActive
+        ? t.itemActiveBorder
+        : t.itemActiveBorder.withValues(alpha: 0);
 
     return HoverLift(
       liftBy: widget.isActive ? 0 : 2,
@@ -791,12 +791,14 @@ class _SidebarIconBtnState extends State<_SidebarIconBtn> {
             decoration: BoxDecoration(
               color: widget.active
                   ? t.itemActiveBg
-                  : (_hovered ? t.secondaryBtnHoverBg : Colors.transparent),
+                  : (_hovered
+                      ? t.secondaryBtnHoverBg
+                      : t.secondaryBtnHoverBg.withValues(alpha: 0)),
               borderRadius: BorderRadius.circular(context.surfaceShader.geometry.radius),
               border: Border.all(
                 color: widget.active || _hovered
                     ? t.secondaryBtnBorder
-                    : Colors.transparent,
+                    : t.secondaryBtnBorder.withValues(alpha: 0),
               ),
             ),
             child: Center(

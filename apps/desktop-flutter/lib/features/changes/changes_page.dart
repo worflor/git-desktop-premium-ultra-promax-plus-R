@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../ui/animated_icons.dart';
+import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/morph_text.dart';
@@ -25,6 +26,7 @@ import '../../app/file_coupling_state.dart';
 import '../../app/preferences_state.dart';
 import '../../app/repository_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import '../branches/branches_page.dart' show showPatchPreviewDialog;
 import '../diff/diff_shell.dart';
 import '../diff/diff_models.dart';
 
@@ -107,6 +109,16 @@ class _ChangesPageState extends State<ChangesPage> {
   static const _minLeftPanelWidth = 220.0;
   static const _maxLeftPanelWidth = 520.0;
   bool _commitOnlyMode = false;
+  bool _mergeResolving = false;
+  bool _shaping = false;
+  // Inline shape-commit mode. When true, the composer field swaps to
+  // bind the shape controller (preserving the commit draft in the
+  // background) and the bottom split-button morphs into "ask with [cat]"
+  // with a chevron that cycles AI categories on each click.
+  bool _shapeMode = false;
+  final TextEditingController _shapeCtrl = TextEditingController();
+  final FocusNode _shapeFocus = FocusNode();
+  int _shapeCategoryIndex = 0;
   Timer? _commitDraftSaveDebounce;
   String? _lastDraftRepoPath;
   String? _lastDraftBranch;
@@ -270,7 +282,26 @@ class _ChangesPageState extends State<ChangesPage> {
     }
     _commitMsgCtrl.dispose();
     _commitMsgFocusNode.dispose();
+    _shapeCtrl.dispose();
+    _shapeFocus.dispose();
     super.dispose();
+  }
+
+  /// Returns the AI categories the user has configured at least one
+  /// model for. Used to drive the chevron-cycle on the shape ask
+  /// button. Order is stable (insertion order from the prefs map).
+  List<String> _shapeCategories(AiSettingsState ai) => ai.modelSelections.entries
+      .where((e) => e.value.isNotEmpty)
+      .map((e) => e.key)
+      .toList(growable: false);
+
+  /// Toggles inline shape-commit mode. Focus follows the active field.
+  void _toggleShapeMode() {
+    setState(() => _shapeMode = !_shapeMode);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      (_shapeMode ? _shapeFocus : _commitMsgFocusNode).requestFocus();
+    });
   }
 
   bool _isDirty(String s) => s.trim().isNotEmpty;
@@ -532,6 +563,186 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
+  /// Show the per-file right-click menu, anchored at [globalPos]. Four
+  /// sections: discard, ignore, copy, reveal. Click outside or
+  /// right-click elsewhere to dismiss.
+  void _showFileContextMenu(
+    BuildContext context,
+    Offset globalPos,
+    RepositoryStatusFile file,
+    String repoPath,
+  ) {
+    final isUntracked = file.staged.isEmpty && file.unstaged == '?';
+    final ext = _fileExtension(file.path);
+    final sections = <List<AppContextMenuItem>>[
+      [
+        AppContextMenuItem(
+          icon: isUntracked
+              ? Icons.delete_outline
+              : Icons.history_outlined,
+          label: isUntracked ? 'Delete file…' : 'Discard changes…',
+          destructive: true,
+          onTap: () => _confirmDiscardFile(context, file, repoPath),
+        ),
+      ],
+      [
+        AppContextMenuItem(
+          icon: Icons.block_outlined,
+          label: 'Ignore file (add to .gitignore)',
+          onTap: () => _ignorePattern(context, repoPath, file.path),
+        ),
+        if (ext != null)
+          AppContextMenuItem(
+            icon: Icons.block_outlined,
+            label: 'Ignore all .$ext files (add to .gitignore)',
+            onTap: () => _ignorePattern(context, repoPath, '*.$ext'),
+          ),
+      ],
+      [
+        AppContextMenuItem(
+          icon: Icons.content_copy_outlined,
+          label: 'Copy file path',
+          onTap: () => _copyToClipboard(file.path),
+        ),
+      ],
+      [
+        AppContextMenuItem(
+          icon: Icons.folder_open_outlined,
+          label: 'Show in Explorer',
+          onTap: () => _revealInExplorer(repoPath, file.path),
+        ),
+      ],
+    ];
+    showAppContextMenu(context, globalPos, sections);
+  }
+
+  /// File extension *without* the leading dot, or null when the path
+  /// has none (e.g. `Makefile`, `.env`). Used to decide whether the
+  /// "Ignore all .ext files" row is meaningful.
+  String? _fileExtension(String path) {
+    final name = path.split(RegExp(r'[/\\]')).last;
+    final i = name.lastIndexOf('.');
+    if (i <= 0 || i == name.length - 1) return null;
+    return name.substring(i + 1);
+  }
+
+  /// Append [pattern] to the repo's `.gitignore` then refresh the
+  /// changes list (an untracked file matched by the pattern will
+  /// disappear immediately). Errors surface via [_actionError].
+  Future<void> _ignorePattern(
+    BuildContext context,
+    String repoPath,
+    String pattern,
+  ) async {
+    final repoState = context.read<RepositoryState>();
+    final result = await addToGitignore(repoPath, pattern);
+    if (!mounted) return;
+    if (!result.ok) {
+      setState(() {
+        _actionError = result.error ?? 'Failed to update .gitignore.';
+        _actionMessage = null;
+      });
+      return;
+    }
+    await repoState.refreshStatus();
+  }
+
+  Future<void> _copyToClipboard(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+  }
+
+  /// Open the OS file explorer with the file selected. Windows: invoke
+  /// `explorer.exe /select,<path>`. macOS: `open -R <path>`. Linux:
+  /// `xdg-open <dir>` (no per-file selection in standard xdg-open).
+  Future<void> _revealInExplorer(String repoPath, String relPath) async {
+    final absPath = '$repoPath${Platform.pathSeparator}'
+        '${relPath.replaceAll('/', Platform.pathSeparator)}';
+    try {
+      if (Platform.isWindows) {
+        await Process.start('explorer.exe', ['/select,$absPath']);
+      } else if (Platform.isMacOS) {
+        await Process.start('open', ['-R', absPath]);
+      } else {
+        // Linux best-effort: open the containing folder.
+        final dir =
+            absPath.substring(0, absPath.lastIndexOf(Platform.pathSeparator));
+        await Process.start('xdg-open', [dir]);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _actionError = 'Failed to open file explorer: $e';
+        _actionMessage = null;
+      });
+    }
+  }
+
+  /// Centred confirm dialog before invoking [discardFile]. Two
+  /// outcomes: cancel (no-op) or confirm (runs the git op + refreshes
+  /// the status panel; surfaces errors via [_actionError]).
+  Future<void> _confirmDiscardFile(
+    BuildContext context,
+    RepositoryStatusFile file,
+    String repoPath,
+  ) async {
+    // Capture the RepositoryState reference before any await so we
+    // don't have to revisit `context` after async gaps. The `mounted`
+    // checks below still gate the setState calls.
+    final repoState = context.read<RepositoryState>();
+    final isUntracked = file.staged.isEmpty && file.unstaged == '?';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final t = ctx.tokens;
+        return AlertDialog(
+          backgroundColor: t.surface1,
+          title: Text(
+            isUntracked ? 'Delete file?' : 'Discard changes?',
+            style: TextStyle(color: t.textStrong, fontSize: 14),
+          ),
+          content: Text(
+            isUntracked
+                ? '${file.path} will be removed from disk. '
+                    'This cannot be undone from inside the app.'
+                : 'All changes to ${file.path} will be reverted to '
+                    'their state in HEAD. This cannot be undone.',
+            style: TextStyle(color: t.textNormal, fontSize: 12),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                isUntracked ? 'Delete' : 'Discard',
+                style: TextStyle(color: t.stateDeleted),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+    final result = await discardFile(repoPath, file);
+    if (!mounted) return;
+    if (!result.ok) {
+      setState(() {
+        _actionError = result.error ?? 'Failed to discard changes.';
+        _actionMessage = null;
+      });
+      return;
+    }
+    setState(() {
+      _includedPaths.remove(file.path);
+      _actionError = null;
+      _actionMessage = null;
+    });
+    await repoState.refreshStatus();
+  }
+
   void _includeAll(RepositoryStatus status) {
     setState(() {
       _clearReviewState();
@@ -760,6 +971,392 @@ class _ChangesPageState extends State<ChangesPage> {
       _commitAiError = null;
     });
     return aiSettings.runtimeModelCategories;
+  }
+
+  /// Builds the merge-resolution prompt + context and invokes the AI
+  /// with the chosen model category. Reads every conflicted file's
+  /// current on-disk contents (markers included) so the model sees the
+  /// FULL picture in one shot — resolving file A sometimes requires
+  /// knowing what the resolution in file B will be (rename coherence,
+  /// callsite updates). One call, one patch, verified via `apply --check`.
+  ///
+  /// [categoryId] picks which model slot to use ('fast' by default; the
+  /// chevron lets the user override to 'quality' etc.). On success the
+  /// returned patch goes straight into [showPatchPreviewDialog] — same
+  /// surface as the PR lens uses for imported patches. On failure the
+  /// working tree is untouched; the user sees a snackbar.
+  Future<void> _resolveMergeConflicts(
+    String repoPath,
+    String categoryId,
+  ) async {
+    if (_mergeResolving) return;
+    final status = context.read<RepositoryState>().status;
+    if (status == null) return;
+    final conflicted = status.files
+        .where((f) => f.staged == 'U' || f.unstaged == 'U')
+        .map((f) => f.path)
+        .toList();
+    if (conflicted.isEmpty) return;
+
+    final aiSettings = context.read<AiSettingsState>();
+    final modelValue = aiSettings.modelSelections[categoryId] ?? '';
+    if (modelValue.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'No model configured for "${aiSettings.labelForCategory(categoryId, categoryId)}". '
+              'Set one in Settings → AI.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _mergeResolving = true);
+    try {
+      final snapshots = <({String path, String content})>[];
+      var skippedSensitive = 0;
+      for (final p in conflicted) {
+        // Hard default: never send credentials-shaped paths to a
+        // provider. User still sees them as UU in the file list and
+        // resolves by hand. No config, no toggle — this is a floor
+        // the feature respects automatically.
+        if (isSensitivePath(p)) {
+          skippedSensitive++;
+          continue;
+        }
+        try {
+          final text = await File(p.startsWith('/') || p.contains(':')
+                  ? p
+                  : '$repoPath${Platform.pathSeparator}$p')
+              .readAsString();
+          snapshots.add((path: p, content: text));
+        } catch (_) {
+          // Skip unreadable files; the prompt will just not include them.
+        }
+      }
+      if (snapshots.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(skippedSensitive > 0
+                  ? '$skippedSensitive sensitive file${skippedSensitive == 1 ? '' : 's'} skipped — resolve by hand.'
+                  : 'Could not read any conflicted files.')),
+        );
+        return;
+      }
+
+      final prompt = _buildMergeResolutionPrompt(snapshots);
+      // Second-pass guardrail: even if the path wasn't sensitive, the
+      // contents might be (API key pasted into a normal file). Refuse
+      // before the transport layer sees it.
+      final secretHit = detectLikelySecretInPrompt(prompt);
+      if (secretHit != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Blocked — a conflicted file looks like it contains a $secretHit. Resolve by hand.'),
+          ),
+        );
+        return;
+      }
+      final r = await generatePatch(
+        repositoryPath: repoPath,
+        modelValue: modelValue,
+        prompt: prompt,
+        commandLabelPrefix: 'ai.merge_resolve',
+      );
+      if (!mounted) return;
+      if (!r.ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Resolution failed: ${r.error}')),
+        );
+        return;
+      }
+      // Parse the returned patch up-front so we can reconcile against
+      // the UU set the user was shown. The preview will do this too,
+      // but we need the path list here to gate stagePaths correctly —
+      // otherwise a partial resolution silently `git add`'s files that
+      // still have markers in them. That's the #1 failure-mode flagged
+      // by maintainers ("I trusted the green badge and shipped UU
+      // markers").
+      final resolvedLines = parseUnifiedDiff(r.data!.patch);
+      final resolvedPaths = <String>{
+        for (final l in resolvedLines)
+          if (l.filePath != null) l.filePath!,
+      };
+      final expectedPaths = snapshots.map((s) => s.path).toSet();
+      final intersect = expectedPaths.intersection(resolvedPaths);
+      await showPatchPreviewDialog(
+        context,
+        repoPath: repoPath,
+        rawPatch: r.data!.patch,
+        sourceLabel:
+            '◇ merge resolution · ${intersect.length}/${expectedPaths.length} files · ${aiSettings.labelForCategory(categoryId, categoryId)}',
+        expectedPaths: expectedPaths,
+        onApplied: () async {
+          // Only stage the files the patch ACTUALLY touched. Any UU
+          // file the AI skipped must stay UU so the user sees it on
+          // the next refresh and can resolve it manually. `git add`
+          // on a file with markers is the silent-drop footgun.
+          if (intersect.isNotEmpty) {
+            await stagePaths(repoPath, intersect.toList());
+          }
+          if (mounted) {
+            await context.read<RepositoryState>().refreshStatus();
+          }
+        },
+      );
+    } finally {
+      if (mounted) setState(() => _mergeResolving = false);
+    }
+  }
+
+  /// Natural-language partial staging. Takes the user's English
+  /// sentence + the full working-tree diff and asks the AI for a
+  /// subset patch containing ONLY the hunks the sentence describes.
+  /// That patch goes through the existing preview surface (stage
+  /// mode → `git apply --cached`) so the user sees exactly what will
+  /// be staged before it happens. Working tree stays untouched either
+  /// way; if the AI returns garbage, `apply --check` catches it and
+  /// the index is never mutated.
+  Future<void> _runShape(
+    String repoPath,
+    RepositoryStatus status,
+    String sentence,
+    String categoryId,
+  ) async {
+    if (_shaping) return;
+    final trimmed = sentence.trim();
+    if (trimmed.isEmpty) return;
+    if (status.files.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No changes to shape.')),
+      );
+      return;
+    }
+
+    final aiSettings = context.read<AiSettingsState>();
+    final modelValue = aiSettings.modelSelections[categoryId] ?? '';
+    if (modelValue.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+              'No model configured for "${aiSettings.labelForCategory(categoryId, categoryId)}".'),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _shaping = true);
+    try {
+      // Grab the full working-tree diff (staged + unstaged, over every
+      // dirty file). The AI needs to see everything to decide what to
+      // include and what to exclude.
+      final diffResult = await getSelectionDiff(repoPath, status.files);
+      if (!diffResult.ok) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not read diff: ${diffResult.error}')),
+        );
+        return;
+      }
+      final fullDiffRaw = (diffResult.data ?? '').trim();
+      if (fullDiffRaw.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Nothing to shape — diff is empty.')),
+        );
+        return;
+      }
+      // Silently drop sections for sensitive paths before the AI ever
+      // sees them. If shape ends up empty after filtering, the user
+      // gets a clean "only sensitive files dirty" message rather than
+      // a leak. No config, no toggle.
+      final fullDiff = _stripSensitivePathsFromDiff(fullDiffRaw);
+      if (fullDiff.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+                  'Only sensitive files are dirty — skipped, resolve by hand.')),
+        );
+        return;
+      }
+
+      final prompt = _buildShapePrompt(trimmed, fullDiff);
+      final secretHit = detectLikelySecretInPrompt(prompt);
+      if (secretHit != null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Blocked — dirty files look like they contain a $secretHit. Stage by hand.'),
+          ),
+        );
+        return;
+      }
+      final r = await generatePatch(
+        repositoryPath: repoPath,
+        modelValue: modelValue,
+        prompt: prompt,
+        commandLabelPrefix: 'ai.shape_stage',
+      );
+      if (!mounted) return;
+      if (!r.ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Shape failed: ${r.error}')),
+        );
+        return;
+      }
+      await showPatchPreviewDialog(
+        context,
+        repoPath: repoPath,
+        rawPatch: r.data!.patch,
+        sourceLabel: '◈ shape → index · "$trimmed"',
+        stageMode: true,
+        onApplied: () {
+          // Popover manages its own controller lifecycle now — no
+          // page-level reset needed. refreshStatus fires downstream
+          // from the preview dialog's onApplied path.
+        },
+        onRefine: (refinement) async {
+          // Stack refinement onto the original sentence so the AI sees
+          // the cumulative intent. Keeps the UX of "one refinement at
+          // a time" while the prompt itself gets the whole story.
+          if (!mounted) return;
+          final combined = '$trimmed. $refinement';
+          await _runShape(repoPath, status, combined, categoryId);
+        },
+      );
+    } finally {
+      if (mounted) setState(() => _shaping = false);
+    }
+  }
+
+  /// Shape-staging prompt. Very strict: output must be a SUBSET of the
+  /// supplied diff. The model is explicitly forbidden from inventing
+  /// hunks — that's the invariant that lets `apply --check` act as a
+  /// hard safety gate. Ambiguity defaults to exclusion.
+  String _buildShapePrompt(String sentence, String fullDiff) {
+    final buf = StringBuffer();
+    buf.writeln(
+        'You are shaping a git commit by staging a subset of the working tree.');
+    buf.writeln(
+        'The user will describe what to include, in plain English. Your job is');
+    buf.writeln(
+        'to return a unified diff that is a strict SUBSET of the diff below —');
+    buf.writeln(
+        'include only the hunks matching the description, omit the rest.');
+    buf.writeln();
+    buf.writeln('Rules:');
+    buf.writeln(
+        '  1. Output ONLY a unified diff. No fences, no prose, no explanation.');
+    buf.writeln(
+        '  2. Every hunk you emit MUST exist in the diff below — never invent.');
+    buf.writeln(
+        '  3. You may omit hunks; you may NOT reorder, merge, split, or edit them.');
+    buf.writeln(
+        '  4. Preserve hunk headers exactly (line numbers, @@ markers).');
+    buf.writeln(
+        '  5. If the user\'s sentence is ambiguous about a hunk, OMIT it.');
+    buf.writeln(
+        '  6. File headers (--- a/ +++ b/) are required for each file you emit.');
+    buf.writeln(
+        '  7. Edge-case files: for a NEW file keep its full "new file mode"');
+    buf.writeln(
+        '     preamble verbatim; for a RENAME keep the "rename from/to"');
+    buf.writeln(
+        '     lines; for a BINARY file ("GIT binary patch" marker) emit the');
+    buf.writeln(
+        '     entire binary hunk UNCHANGED or omit the file — never try to');
+    buf.writeln(
+        '     partial-stage a binary blob.');
+    buf.writeln();
+    buf.writeln('<user_intent>');
+    buf.writeln(sentence);
+    buf.writeln('</user_intent>');
+    buf.writeln();
+    buf.writeln('<working_tree_diff>');
+    buf.writeln(fullDiff);
+    buf.writeln('</working_tree_diff>');
+    buf.writeln();
+    buf.writeln(
+        'Emit the subset unified diff now. Remember: strict subset only.');
+    return buf.toString();
+  }
+
+  /// Walks a unified diff and drops every per-file section whose path
+  /// matches [isSensitivePath]. Works at the `diff --git` boundary so
+  /// we never split a hunk — either a file is fully included or fully
+  /// excluded. Robust against diffs that start with either `diff --git`
+  /// headers (the standard) or bare `--- a/path` pairs (rare but git
+  /// does emit these for some merge-base outputs).
+  String _stripSensitivePathsFromDiff(String fullDiff) {
+    final lines = fullDiff.split('\n');
+    final out = <String>[];
+    var skip = false;
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (line.startsWith('diff --git ')) {
+        // `diff --git a/path b/path` — extract the `b/` side and check.
+        final m = RegExp(r'^diff --git a/(.+) b/(.+)$').firstMatch(line);
+        final path = m?.group(2) ?? '';
+        skip = path.isNotEmpty && isSensitivePath(path);
+      } else if (line.startsWith('--- ') &&
+          i + 1 < lines.length &&
+          lines[i + 1].startsWith('+++ ')) {
+        // Bare `--- a/path` pair fallback (no `diff --git` header).
+        final path = lines[i + 1].startsWith('+++ b/')
+            ? lines[i + 1].substring('+++ b/'.length)
+            : lines[i + 1].substring('+++ '.length);
+        skip = path.isNotEmpty && isSensitivePath(path);
+      }
+      if (!skip) out.add(line);
+    }
+    return out.join('\n').trim();
+  }
+
+  /// Builds the merge-resolution prompt. Strict about output shape so
+  /// the one-shot round-trip works: unified diff only, no prose, no
+  /// fences. [_extractPatchFromModelOutput] in ai.dart also defends us
+  /// if the model ignores the format instruction.
+  String _buildMergeResolutionPrompt(
+    List<({String path, String content})> files,
+  ) {
+    final buf = StringBuffer();
+    buf.writeln(
+        'You are resolving git merge conflicts in a working tree. For each file');
+    buf.writeln(
+        'below, the text contains unresolved conflict markers (<<<<<<<, =======, >>>>>>>).');
+    buf.writeln();
+    buf.writeln('Rules:');
+    buf.writeln(
+        '  1. Produce ONE unified diff that applies with `git apply` over the current tree.');
+    buf.writeln(
+        '  2. Every conflict marker must be removed — no <<<<<<<, =======, or >>>>>>> lines in the output.');
+    buf.writeln(
+        '  3. Preserve the MEANING of both sides. Rename/callsite changes on one side should propagate to the other side\'s callsites if both sides edit the same symbol.');
+    buf.writeln(
+        '  4. Do NOT introduce new functionality the conflict didn\'t already introduce.');
+    buf.writeln(
+        '  5. Output format: unified diff only. No code fences, no prose, no explanations.');
+    buf.writeln();
+    buf.writeln(
+        'Files (each shown with current on-disk contents, markers included):');
+    buf.writeln();
+    for (final f in files) {
+      buf.writeln('--- file: ${f.path} ---');
+      buf.writeln(f.content);
+      buf.writeln('--- end: ${f.path} ---');
+      buf.writeln();
+    }
+    buf.writeln(
+        'Output the unified diff that resolves every conflict across all files above.');
+    return buf.toString();
   }
 
   Future<void> _generateCommitMessage(
@@ -1547,6 +2144,14 @@ class _ChangesPageState extends State<ChangesPage> {
                   Expanded(
                     child: Column(
                       children: [
+                        if (conflictedPaths.isNotEmpty)
+                          _MergeResolveStrip(
+                            conflictedPaths: conflictedPaths,
+                            totalHunks: null,
+                            busy: _mergeResolving,
+                            onResolve: (categoryId) =>
+                                _resolveMergeConflicts(repoPath, categoryId),
+                          ),
                         Expanded(
                           child: Builder(builder: (context) {
                             // `clusters` hoisted at build-method scope so the
@@ -1625,7 +2230,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                   file: file,
                                   tokens: t,
                                   clusterColor:
-                                      _clusterStripeColor(t, cid),
+                                      t.clusterStripeColor(cid),
                                   stripeConnectTop: connectTop,
                                   stripeConnectBottom: connectBottom,
                                   isDiffSelected:
@@ -1662,6 +2267,9 @@ class _ChangesPageState extends State<ChangesPage> {
                                           _loadDiff(repoPath, file.path),
                                   onIncludeChanged: (value) =>
                                       _toggleIncluded(file.path, value),
+                                  onSecondaryTap: (pos) =>
+                                      _showFileContextMenu(
+                                          context, pos, file, repoPath),
                                 );
                                 if (showGap) {
                                   return Column(children: [
@@ -1784,11 +2392,25 @@ class _ChangesPageState extends State<ChangesPage> {
                           },
                           child: _CommitComposerField(
                             tokens: t,
-                            controller: _commitMsgCtrl,
-                            focusNode: _commitMsgFocusNode,
+                            // Bind the active controller based on mode.
+                            // The unbound controller keeps its text so
+                            // exiting shape-mode restores the commit
+                            // draft that was being composed.
+                            controller: _shapeMode
+                                ? _shapeCtrl
+                                : _commitMsgCtrl,
+                            focusNode: _shapeMode
+                                ? _shapeFocus
+                                : _commitMsgFocusNode,
+                            hintText: _shapeMode
+                                ? 'describe what to stage, in your own words'
+                                : 'Commit message...',
+                            shapeMode: _shapeMode,
                             enabled: !_actionRunning,
                             onChanged: (value) {
-                              _saveCommitDraft(value);
+                              if (!_shapeMode) {
+                                _saveCommitDraft(value);
+                              }
                               setState(() {});
                             },
                             aiEnabled: canGenerate,
@@ -1813,10 +2435,48 @@ class _ChangesPageState extends State<ChangesPage> {
                               }
                               _reviewCommit(repoPath, status);
                             },
+                            // ◈ shape: now toggles inline shape-mode
+                            // instead of opening a floating popover.
+                            // The composer field morphs in place; the
+                            // bottom split-button morphs too.
+                            shapeEnabled: status.files.isNotEmpty &&
+                                !_actionRunning &&
+                                !_shaping,
+                            shapeLoading: _shaping,
+                            shapeTooltip: _shapeMode
+                                ? 'exit shape · back to commit message'
+                                : 'shape commit · in your own words, not code',
+                            onToggleShape: status.files.isEmpty
+                                ? null
+                                : _toggleShapeMode,
                           ),
                         ),
                         const SizedBox(height: 8),
-                        _SplitCommitBtn(
+                        if (_shapeMode)
+                          _ShapeAskButton(
+                            tokens: t,
+                            categories: _shapeCategories(aiSettings),
+                            categoryIndex: _shapeCategoryIndex,
+                            busy: _shaping,
+                            enabled: !_actionRunning &&
+                                _shapeCtrl.text.trim().isNotEmpty,
+                            onCycle: () {
+                              final cats = _shapeCategories(aiSettings);
+                              if (cats.isEmpty) return;
+                              setState(() => _shapeCategoryIndex =
+                                  (_shapeCategoryIndex + 1) % cats.length);
+                            },
+                            onAsk: () async {
+                              final text = _shapeCtrl.text.trim();
+                              if (text.isEmpty) return;
+                              final cats = _shapeCategories(aiSettings);
+                              if (cats.isEmpty) return;
+                              final cat = cats[
+                                  _shapeCategoryIndex.clamp(0, cats.length - 1)];
+                              await _runShape(repoPath, status, text, cat);
+                            },
+                          )
+                        else _SplitCommitBtn(
                           label: _actionRunning
                               ? 'Working…'
                               : (_commitOnlyMode
@@ -4097,6 +4757,216 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
   }
 }
 
+// ── Shape-ask split button ───────────────────────────────────────────────
+//
+// Inline replacement for `_SplitCommitBtn` while the composer is in
+// shape mode. Same chrome (primaryButtonChrome, same height/radius/border)
+// so the morph from commit-button to shape-ask-button reads as the SAME
+// button changing identity, not a different control. Main area asks the
+// AI for a subset patch; the chevron CYCLES through configured AI
+// categories on each click (instead of opening a menu).
+class _ShapeAskButton extends StatefulWidget {
+  final AppTokens tokens;
+  final List<String> categories;
+  final int categoryIndex;
+  final bool busy;
+  final bool enabled;
+  final VoidCallback onCycle;
+  final VoidCallback onAsk;
+
+  const _ShapeAskButton({
+    required this.tokens,
+    required this.categories,
+    required this.categoryIndex,
+    required this.busy,
+    required this.enabled,
+    required this.onCycle,
+    required this.onAsk,
+  });
+
+  @override
+  State<_ShapeAskButton> createState() => _ShapeAskButtonState();
+}
+
+class _ShapeAskButtonState extends State<_ShapeAskButton> {
+  bool _mainHovered = false;
+  bool _mainPressed = false;
+  bool _chevronHovered = false;
+  bool _chevronPressed = false;
+
+  bool get _anyHovered => _mainHovered || _chevronHovered;
+  bool get _anyPressed => _mainPressed && !_chevronPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final hasCats = widget.categories.isNotEmpty;
+    final activeCat = hasCats
+        ? widget.categories[
+            widget.categoryIndex.clamp(0, widget.categories.length - 1)]
+        : '';
+    final chrome = primaryButtonChrome(
+      t,
+      hovered: _anyHovered,
+      pressed: _anyPressed,
+      enabled: widget.enabled && hasCats,
+    );
+
+    return AnimatedOpacity(
+      duration: context.motion(const Duration(milliseconds: 180)),
+      opacity: widget.busy && !_anyHovered ? 0.45 : 1.0,
+      child: Transform.translate(
+        offset: chrome.offset,
+        child: Transform.scale(
+          scale: chrome.scale,
+          child: SizedBox(
+            height: 36,
+            child: AnimatedContainer(
+              duration: context.motion(const Duration(milliseconds: 100)),
+              decoration: BoxDecoration(
+                color: chrome.background,
+                gradient: chrome.gradient,
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.radius),
+                border: Border.all(color: chrome.borderColor),
+                boxShadow: chrome.shadows,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(
+                    (context.surfaceShader.geometry.radius - 1)
+                        .clamp(0, double.infinity)),
+                child: Row(
+                  children: [
+                    // Main "ask with [category]" area
+                    Expanded(
+                      child: MouseRegion(
+                        cursor: widget.enabled && hasCats
+                            ? SystemMouseCursors.click
+                            : SystemMouseCursors.basic,
+                        onEnter: (_) => setState(() => _mainHovered = true),
+                        onExit: (_) => setState(() => _mainHovered = false),
+                        child: GestureDetector(
+                          onTap: (widget.enabled && hasCats && !widget.busy)
+                              ? widget.onAsk
+                              : null,
+                          onTapDown: widget.enabled && hasCats
+                              ? (_) => setState(() => _mainPressed = true)
+                              : null,
+                          onTapCancel: () =>
+                              setState(() => _mainPressed = false),
+                          onTapUp: (_) =>
+                              setState(() => _mainPressed = false),
+                          child: Center(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '↵',
+                                  style: TextStyle(
+                                    color: widget.enabled && hasCats
+                                        ? t.btnText
+                                        : t.textMuted,
+                                    fontSize: 12,
+                                    fontFamily: 'JetBrainsMono',
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                // Inner cross-fade so cycling the
+                                // category re-labels the button without
+                                // a layout jump.
+                                AnimatedSwitcher(
+                                  duration: context.motion(
+                                      const Duration(milliseconds: 140)),
+                                  switchInCurve: Curves.easeOutCubic,
+                                  switchOutCurve: Curves.easeInCubic,
+                                  child: Text(
+                                    hasCats
+                                        ? widget.busy
+                                            ? 'asking with $activeCat…'
+                                            : 'ask with $activeCat'
+                                        : 'no AI model configured',
+                                    key: ValueKey(
+                                        '${widget.busy}|$activeCat'),
+                                    style: TextStyle(
+                                      color: widget.enabled && hasCats
+                                          ? t.btnText
+                                          : t.textMuted,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Divider
+                    Container(
+                      width: 1,
+                      height: 18,
+                      color: t.chromeBorder
+                          .withValues(alpha: _anyHovered ? 0.35 : 0.22),
+                    ),
+                    // Chevron — cycles through categories on each tap
+                    // (no menu). Tooltip exposes what the next category
+                    // will be so users learn the cycle order.
+                    Tooltip(
+                      message: hasCats && widget.categories.length > 1
+                          ? 'next: ${widget.categories[(widget.categoryIndex + 1) % widget.categories.length]}'
+                          : 'only one AI category configured',
+                      waitDuration: const Duration(milliseconds: 600),
+                      child: MouseRegion(
+                        cursor: hasCats && widget.categories.length > 1
+                            ? SystemMouseCursors.click
+                            : SystemMouseCursors.basic,
+                        onEnter: (_) =>
+                            setState(() => _chevronHovered = true),
+                        onExit: (_) =>
+                            setState(() => _chevronHovered = false),
+                        child: GestureDetector(
+                          onTap: hasCats && widget.categories.length > 1
+                              ? widget.onCycle
+                              : null,
+                          onTapDown: (_) =>
+                              setState(() => _chevronPressed = true),
+                          onTapCancel: () =>
+                              setState(() => _chevronPressed = false),
+                          onTapUp: (_) =>
+                              setState(() => _chevronPressed = false),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 80),
+                            width: 32,
+                            color: Colors.white.withValues(
+                                alpha: _chevronHovered ? 0.10 : 0.0),
+                            child: Center(
+                              child: Text(
+                                '▾',
+                                style: TextStyle(
+                                  color: t.btnText.withValues(alpha: 0.80),
+                                  fontSize: 12,
+                                  fontFamily: 'JetBrainsMono',
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ── Shelf control (merged shelve + expand button) ─────────────────────────
 //
 // One unified pill that replaces the former split "↓ shelve" vs "N shelved ▾"
@@ -4159,7 +5029,7 @@ class _ShelfControlState extends State<_ShelfControl> {
             decoration: BoxDecoration(
               color: hovered
                   ? t.chromeAccent.withValues(alpha: 0.08)
-                  : Colors.transparent,
+                  : t.chromeAccent.withValues(alpha: 0),
               borderRadius: radius,
             ),
             child: Text(
@@ -4307,7 +5177,9 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
         ? t.itemActiveBg
         : (widget.isOpen
             ? t.surface1.withValues(alpha: 0.6)
-            : (_hovered ? t.secondaryBtnHoverBg : Colors.transparent));
+            : (_hovered
+                ? t.secondaryBtnHoverBg
+                : t.secondaryBtnHoverBg.withValues(alpha: 0)));
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
@@ -4570,6 +5442,7 @@ class _StashAction extends StatelessWidget {
   }
 }
 
+
 class _FileRow extends StatefulWidget {
   final RepositoryStatusFile file;
   final AppTokens tokens;
@@ -4599,6 +5472,11 @@ class _FileRow extends StatefulWidget {
   final VoidCallback? onRailEnter;
   /// Called when the mouse leaves this row's stripe.
   final VoidCallback? onRailExit;
+  /// Right-click handler. Fires with the screen-space position of the
+  /// pointer down event so the caller can position a context menu
+  /// against it. Caller decides what menu items to show; the row is
+  /// agnostic.
+  final ValueChanged<Offset>? onSecondaryTap;
 
   const _FileRow({
     required this.file,
@@ -4615,6 +5493,7 @@ class _FileRow extends StatefulWidget {
     this.isRailSubject = false,
     this.onRailEnter,
     this.onRailExit,
+    this.onSecondaryTap,
   });
 
   @override
@@ -4659,6 +5538,9 @@ class _FileRowState extends State<_FileRow> {
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
+        onSecondaryTapDown: widget.onSecondaryTap == null
+            ? null
+            : (details) => widget.onSecondaryTap!(details.globalPosition),
         child: IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4704,13 +5586,15 @@ class _FileRowState extends State<_FileRow> {
                         ? t.chromeBorder.withValues(alpha: 0.1)
                         : (widget.included
                             ? t.stateAdded.withValues(alpha: 0.05)
-                            : (_hovered ? t.itemHoverBg : Colors.transparent)),
+                            : (_hovered
+                                ? t.itemHoverBg
+                                : t.itemHoverBg.withValues(alpha: 0))),
                     borderRadius: BorderRadius.circular(
                         context.surfaceShader.geometry.radius),
                     border: Border.all(
                       color: widget.included
                           ? t.stateAdded.withValues(alpha: 0.18)
-                          : Colors.transparent,
+                          : t.stateAdded.withValues(alpha: 0),
                     ),
                   ),
           child: Row(
@@ -4892,28 +5776,10 @@ class _RailStripe extends StatelessWidget {
   }
 }
 
-Color? _clusterStripeColor(AppTokens t, int? clusterId) {
-  if (clusterId == null || clusterId < 0) return null;
-  // Hypercube palette — same color identity as the app's logo. By
-  // construction hyperChromatic1 and hyperChromatic2 are the logo's
-  // chromatic-aberration pair, so they're guaranteed distinct in every
-  // theme; eventStartTone is the theme's neutral taupe/slate; stateAdded
-  // is the green fallback for the 4th cluster.
-  //
-  // No alarm semantics (avoids stateConflicted / stateDeleted) — a second
-  // cluster shouldn't look like an error.
-  final base = switch (clusterId % 4) {
-    0 => t.hyperChromatic1,
-    1 => t.hyperChromatic2,
-    2 => t.eventStartTone,
-    _ => t.stateAdded,
-  };
-  // Step alpha down for 5th+ cluster so far-out groups fade, not flash.
-  // 0.65 ceiling keeps stripes subordinate to state badges.
-  final step = clusterId ~/ 4;
-  final alpha = (0.65 - step * 0.18).clamp(0.25, 0.65).toDouble();
-  return base.withValues(alpha: alpha);
-}
+// `_clusterStripeColor` was promoted to `AppTokens.clusterStripeColor`
+// in `lib/ui/tokens.dart` so the branches lens (PR file pills) and any
+// future surface visualizing coupling share the exact same palette.
+// Call sites updated to `t.clusterStripeColor(cid)` directly.
 
 _ChangeBadgeSpec? _describeGitChange(
   String code, {
@@ -4992,6 +5858,9 @@ class _CommitComposerField extends StatefulWidget {
   final FocusNode focusNode;
   final bool enabled;
   final ValueChanged<String> onChanged;
+  /// Hint shown when the bound `controller` is empty. Parent picks based
+  /// on mode (commit message vs shape input).
+  final String hintText;
   final bool aiEnabled;
   final bool aiLoading;
   final bool aiSuccess;
@@ -5003,6 +5872,17 @@ class _CommitComposerField extends StatefulWidget {
   final String reviewTooltip;
   final VoidCallback onGenerate;
   final VoidCallback onReview;
+  /// Inline shape-commit mode. When true, the field binds the shape
+  /// controller (parent swaps which controller is passed in based on
+  /// this flag) and the ◈ button reads as a "exit shape" toggle.
+  final bool shapeMode;
+  final bool shapeEnabled;
+  final bool shapeLoading;
+  final String shapeTooltip;
+  /// Toggles inline shape mode. Was previously `onShape` which opened
+  /// a floating popover; now the parent owns the mode flag and the
+  /// composer just morphs in place.
+  final VoidCallback? onToggleShape;
 
   const _CommitComposerField({
     required this.tokens,
@@ -5010,6 +5890,7 @@ class _CommitComposerField extends StatefulWidget {
     required this.focusNode,
     required this.enabled,
     required this.onChanged,
+    this.hintText = 'Commit message...',
     required this.aiEnabled,
     required this.aiLoading,
     this.aiSuccess = false,
@@ -5021,6 +5902,11 @@ class _CommitComposerField extends StatefulWidget {
     required this.reviewTooltip,
     required this.onGenerate,
     required this.onReview,
+    this.shapeMode = false,
+    this.shapeEnabled = false,
+    this.shapeLoading = false,
+    this.shapeTooltip = '',
+    this.onToggleShape,
   });
 
   @override
@@ -5187,10 +6073,13 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                             border: InputBorder.none,
                             enabledBorder: InputBorder.none,
                             focusedBorder: InputBorder.none,
-                            hintText: 'Commit message...',
+                            hintText: widget.hintText,
                             hintStyle: TextStyle(
                               color: tokens.textMuted.withValues(alpha: 0.55),
                               fontSize: 12,
+                              fontStyle: widget.shapeMode
+                                  ? FontStyle.italic
+                                  : FontStyle.normal,
                             ),
                           ),
                         ),
@@ -5205,6 +6094,27 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      if (widget.onToggleShape != null) ...[
+                        // Plain mode-toggle button — was an OverlayPortal-
+                        // hosted popover; the inline shape-mode now
+                        // morphs the same TextField + bottom button in
+                        // place, so no overlay machinery needed.
+                        _CommitAiToolbarBtn(
+                          tokens: tokens,
+                          enabled: widget.shapeEnabled || widget.shapeMode,
+                          loading: widget.shapeLoading,
+                          // When already in shape mode, treat as the
+                          // active state so the button reads as armed
+                          // (the next tap exits).
+                          success: widget.shapeMode,
+                          tooltip: widget.shapeTooltip,
+                          hasText: hasText,
+                          fieldRadius: effectiveRadius,
+                          iconKind: _AiToolbarIconKind.shape,
+                          onTap: widget.onToggleShape!,
+                        ),
+                        const SizedBox(width: 4),
+                      ],
                       _CommitAiToolbarBtn(
                         tokens: tokens,
                         enabled: widget.reviewEnabled,
@@ -5243,7 +6153,133 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
 
 // ── AI toolbar button (lives inside the commit composer's bottom toolbar) ──────
 
-enum _AiToolbarIconKind { search, sparkle }
+enum _AiToolbarIconKind { search, sparkle, shape }
+
+/// Shape glyph (`◈`) with state-aware motion. Idle is a still diamond.
+/// Hover gently scales it up. The "active" state — used while inline
+/// shape-mode is engaged — slowly rotates the diamond and emits a
+/// periodic glint (a brief scale + brightness pulse) so the toolbar
+/// reads as live without being noisy. Loading rotates faster, no glint
+/// (the brightness-pulse would compete with the loading affordance).
+class _AnimatedShapeIcon extends StatefulWidget {
+  final IconAnimState state;
+  final Color color;
+  final double size;
+  const _AnimatedShapeIcon({
+    required this.state,
+    required this.color,
+    required this.size,
+  });
+
+  @override
+  State<_AnimatedShapeIcon> createState() => _AnimatedShapeIconState();
+}
+
+class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    // 3.6s gives one revolution slow enough to feel ambient (not
+    // distracting), with two glint pulses per cycle.
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 3600),
+    );
+    _syncTickerToState();
+  }
+
+  @override
+  void didUpdateWidget(_AnimatedShapeIcon old) {
+    super.didUpdateWidget(old);
+    if (old.state != widget.state) _syncTickerToState();
+  }
+
+  void _syncTickerToState() {
+    final shouldAnimate = widget.state == IconAnimState.success ||
+        widget.state == IconAnimState.loading;
+    if (shouldAnimate) {
+      // Loading runs at 1.6× the active cadence — visibly busier,
+      // not just "kinda spinning."
+      _ctrl.duration = widget.state == IconAnimState.loading
+          ? const Duration(milliseconds: 2200)
+          : const Duration(milliseconds: 3600);
+      if (!_ctrl.isAnimating) _ctrl.repeat();
+    } else {
+      _ctrl.stop();
+      _ctrl.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = widget.state == IconAnimState.success;
+    final isHovered = widget.state == IconAnimState.hovered;
+
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, __) {
+        final t = _ctrl.value; // 0..1
+        // Two glint pulses per revolution. `pow(sin, 6)` makes each
+        // pulse a sharp brief peak rather than a smooth sine — reads
+        // as a "flash" instead of a slow brightness wave.
+        final glintPhase = (t * 2.0) % 1.0;
+        final raw = math.sin(glintPhase * math.pi);
+        final glint = isActive ? math.pow(raw.abs(), 6).toDouble() : 0.0;
+
+        // Slow continuous rotation when active; faster on loading.
+        final rotation = (isActive || widget.state == IconAnimState.loading)
+            ? t * 2 * math.pi
+            : 0.0;
+
+        // Scale: hover bumps slightly; active glints add a brief peak
+        // on top of the base; loading just rotates without scaling.
+        final base = isHovered ? 1.08 : 1.0;
+        final scale = base + glint * 0.18;
+
+        // Color: brighten on glint peak. Cap alpha at 1.
+        final glintColor = Color.lerp(
+          widget.color,
+          widget.color.withValues(alpha: 1.0),
+          glint,
+        )!;
+
+        return Transform.rotate(
+          angle: rotation,
+          child: Transform.scale(
+            scale: scale,
+            child: Text(
+              '◈',
+              style: TextStyle(
+                color: glintColor,
+                fontSize: widget.size,
+                fontFamily: 'JetBrainsMono',
+                fontWeight: FontWeight.w800,
+                height: 1.0,
+                shadows: glint > 0.4
+                    ? [
+                        Shadow(
+                          color: widget.color.withValues(alpha: glint * 0.6),
+                          blurRadius: 4 + glint * 4,
+                        ),
+                      ]
+                    : null,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
 
 class _CommitAiToolbarBtn extends StatefulWidget {
   final AppTokens tokens;
@@ -5348,6 +6384,11 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
                     state: _iconState,
                     color: iconColor,
                     size: 14,
+                  ),
+                _AiToolbarIconKind.shape => _AnimatedShapeIcon(
+                    state: _iconState,
+                    color: iconColor,
+                    size: 13,
                   ),
               },
             ),
@@ -5461,7 +6502,7 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
               decoration: BoxDecoration(
                 color: _hoveredSingle && widget.enabled
                     ? t.secondaryBtnHoverBg
-                    : Colors.transparent,
+                    : t.secondaryBtnHoverBg.withValues(alpha: 0),
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(color: borderColor),
               ),
@@ -5529,7 +6570,7 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
             width: 28,
             color: hovered && widget.enabled
                 ? t.secondaryBtnHoverBg
-                : Colors.transparent,
+                : t.secondaryBtnHoverBg.withValues(alpha: 0),
             child: Center(
               child: Icon(
                 icon,
@@ -5598,4 +6639,578 @@ class _PanelDividerState extends State<_PanelDivider> {
 
 extension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Merge resolve strip — only visible when the working tree has UU files.
+// Sits above the file list. One click resolves ALL conflicts across ALL
+// files in a single AI call (tokens amortized, semantic coherence
+// preserved). Chevron on the button's right edge offers to override the
+// default model category — default is 'fast' (low-latency resolution)
+// but pros can pick 'quality' for sticky refactor-heavy conflicts.
+// ────────────────────────────────────────────────────────────────────────
+
+class _MergeResolveStrip extends StatelessWidget {
+  final Set<String> conflictedPaths;
+  final int? totalHunks;
+  final bool busy;
+  final ValueChanged<String> onResolve;
+
+  const _MergeResolveStrip({
+    required this.conflictedPaths,
+    required this.totalHunks,
+    required this.busy,
+    required this.onResolve,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final ai = context.watch<AiSettingsState>();
+    // Prefer 'fast' for resolution — low-latency, most conflicts are
+    // mechanical. Fall back to any category that has a model configured.
+    final defaultCategory = ai.modelSelections.containsKey('fast') &&
+            ai.modelSelections['fast']!.isNotEmpty
+        ? 'fast'
+        : (ai.modelSelections.entries
+                .firstWhere(
+                  (e) => e.value.isNotEmpty,
+                  orElse: () => const MapEntry('', ''),
+                )
+                .key);
+    final count = conflictedPaths.length;
+    return MaterialSurface(
+      tone: AppMaterialTone.surface0,
+      radius: 0,
+      border: Border(
+        top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.12)),
+        bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.18)),
+      ),
+      elevated: false,
+      padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+      child: Row(
+        children: [
+          Text('◇',
+              style: TextStyle(
+                color: t.stateConflicted,
+                fontSize: 14,
+                fontFamily: 'JetBrainsMono',
+                fontWeight: FontWeight.w700,
+              )),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              busy
+                  ? 'reading $count file${count == 1 ? '' : 's'} · drafting resolution…'
+                  : '$count conflict${count == 1 ? '' : 's'} across $count file${count == 1 ? '' : 's'}',
+              style: TextStyle(
+                color: t.textNormal,
+                fontSize: 12,
+                fontFamily: 'JetBrainsMono',
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ),
+          if (defaultCategory.isEmpty)
+            Text('no AI model configured',
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 10.5,
+                  fontFamily: 'JetBrainsMono',
+                  fontStyle: FontStyle.italic,
+                ))
+          else
+            _MergeResolveSplitButton(
+              defaultCategoryId: defaultCategory,
+              busy: busy,
+              onResolve: onResolve,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Split button: main label click runs resolution with [defaultCategoryId];
+/// chevron click opens a menu of the other configured categories so power
+/// users can bump to 'quality' for a particularly gnarly conflict.
+class _MergeResolveSplitButton extends StatefulWidget {
+  final String defaultCategoryId;
+  final bool busy;
+  final ValueChanged<String> onResolve;
+  /// Verb prefix shown before the category label. Merge resolver uses
+  /// 'resolve with', shape-staging uses 'shape with'. Keeps the grammar
+  /// aligned while letting one widget serve both features.
+  final String actionLabel;
+  /// When the button's chevron menu is hosted inside another overlay
+  /// (e.g. the shape popover), passing the host's [TapRegion] groupId
+  /// here makes the menu register in the same group. A tap on the menu
+  /// then doesn't count as "outside" the host, so the host doesn't
+  /// self-dismiss mid-menu-interaction — which otherwise disposes the
+  /// button's State and invalidates the menu's LayerLink.
+  final Object? menuTapRegionGroupId;
+  const _MergeResolveSplitButton({
+    required this.defaultCategoryId,
+    required this.busy,
+    required this.onResolve,
+    this.actionLabel = 'resolve with',
+    this.menuTapRegionGroupId,
+  });
+  @override
+  State<_MergeResolveSplitButton> createState() =>
+      _MergeResolveSplitButtonState();
+}
+
+class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
+  final LayerLink _link = LayerLink();
+  OverlayEntry? _entry;
+  bool _hoverMain = false;
+  bool _hoverChev = false;
+
+  void _openMenu() {
+    final overlay = Overlay.of(context);
+    final ai = context.read<AiSettingsState>();
+    final t = context.tokens;
+    // Categories that have a model configured AND aren't the default.
+    final alt = ai.modelSelections.entries
+        .where((e) => e.value.isNotEmpty && e.key != widget.defaultCategoryId)
+        .toList();
+    if (alt.isEmpty) return;
+    final groupId = widget.menuTapRegionGroupId;
+    _entry = OverlayEntry(builder: (ctx) {
+      Widget menuCard = CompositedTransformFollower(
+        link: _link,
+        followerAnchor: Alignment.topRight,
+        targetAnchor: Alignment.bottomRight,
+        offset: const Offset(0, 6),
+        child: MaterialSurface(
+          tone: AppMaterialTone.surface1,
+          radius: ctx.surfaceShader.geometry.cardRadius,
+          elevated: true,
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: IntrinsicWidth(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                  child: Text('OR WITH',
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 9,
+                        letterSpacing: 1.4,
+                        fontFamily: 'JetBrainsMono',
+                        fontWeight: FontWeight.w800,
+                      )),
+                ),
+                for (final e in alt)
+                  _ModelCategoryRow(
+                    label: ai.labelForCategory(e.key, e.key),
+                    modelValue: e.value,
+                    onTap: () {
+                      _closeMenu();
+                      widget.onResolve(e.key);
+                    },
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
+      // When a host groupId is provided, register the menu in the same
+      // tap group so the host's TapRegion.onTapOutside doesn't fire on
+      // menu clicks (which would dispose this button's state and
+      // invalidate the menu's LayerLink mid-interaction).
+      if (groupId != null) {
+        menuCard = TapRegion(
+          groupId: groupId,
+          onTapOutside: (_) => _closeMenu(),
+          child: menuCard,
+        );
+      }
+      return Stack(children: [
+        // Fallback dismiss catcher for non-grouped usage (the merge
+        // resolve strip) — opaque so it doesn't consume hits meant
+        // for widgets in overlays stacked above.
+        if (groupId == null)
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (_) => _closeMenu(),
+            ),
+          ),
+        Positioned(child: menuCard),
+      ]);
+    });
+    overlay.insert(_entry!);
+  }
+
+  void _closeMenu() {
+    _entry?.remove();
+    _entry = null;
+  }
+
+  @override
+  void dispose() {
+    _entry?.remove();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final shader = context.surfaceShader;
+    final ai = context.watch<AiSettingsState>();
+    final label =
+        ai.labelForCategory(widget.defaultCategoryId, widget.defaultCategoryId);
+    final modelValue = ai.modelSelections[widget.defaultCategoryId] ?? '';
+    final modelDisplay = _modelDisplayName(modelValue);
+    return CompositedTransformTarget(
+      link: _link,
+      child: MouseRegion(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Main label
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              onEnter: (_) => setState(() => _hoverMain = true),
+              onExit: (_) => setState(() => _hoverMain = false),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.busy
+                    ? null
+                    : () => widget.onResolve(widget.defaultCategoryId),
+                child: Tooltip(
+                  message: modelDisplay.isEmpty
+                      ? '${widget.actionLabel} $label'
+                      : '${widget.actionLabel} $label  ·  $modelDisplay',
+                  child: AnimatedContainer(
+                    duration: context.motion(shader.duration),
+                    curve: shader.safeCurve,
+                    padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+                    decoration: BoxDecoration(
+                      color: widget.busy
+                          ? t.accentBright.withValues(alpha: 0.08)
+                          : (_hoverMain
+                              ? t.accentBright.withValues(alpha: 0.14)
+                              : t.accentBright.withValues(alpha: 0.08)),
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(shader.geometry.badgeRadius),
+                        bottomLeft:
+                            Radius.circular(shader.geometry.badgeRadius),
+                      ),
+                      border: Border.all(
+                        color: t.accentBright.withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: Text(
+                      widget.busy
+                          ? (widget.actionLabel == 'shape with'
+                              ? 'shaping…'
+                              : 'resolving…')
+                          : '↵  ${widget.actionLabel} $label',
+                      style: TextStyle(
+                        color: t.accentBright,
+                        fontSize: 11,
+                        fontFamily: 'JetBrainsMono',
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Chevron split
+            MouseRegion(
+              cursor: SystemMouseCursors.click,
+              onEnter: (_) => setState(() => _hoverChev = true),
+              onExit: (_) => setState(() => _hoverChev = false),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.busy ? null : _openMenu,
+                child: Tooltip(
+                  message: 'or with another model',
+                  child: AnimatedContainer(
+                    duration: context.motion(shader.duration),
+                    curve: shader.safeCurve,
+                    padding: const EdgeInsets.fromLTRB(6, 7, 8, 7),
+                    decoration: BoxDecoration(
+                      color: _hoverChev
+                          ? t.accentBright.withValues(alpha: 0.16)
+                          : t.accentBright.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.only(
+                        topRight: Radius.circular(shader.geometry.badgeRadius),
+                        bottomRight:
+                            Radius.circular(shader.geometry.badgeRadius),
+                      ),
+                      // Uniform border — Flutter's `Border.paint` asserts
+                      // on a non-uniform border combined with non-zero
+                      // borderRadius (the previous left-dim-alpha was
+                      // firing 600+ assertions per session). The seam
+                      // between this chevron and the abutting main
+                      // button now renders as a thin double-stroked
+                      // vertical line at the join, which is the
+                      // intended split-button look anyway.
+                      border: Border.all(
+                          color: t.accentBright.withValues(alpha: 0.45)),
+                    ),
+                    child: Text(
+                      '▾',
+                      style: TextStyle(
+                        color: t.accentBright,
+                        fontSize: 10,
+                        fontFamily: 'JetBrainsMono',
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelCategoryRow extends StatefulWidget {
+  final String label;
+  final String modelValue;
+  final VoidCallback onTap;
+  const _ModelCategoryRow({
+    required this.label,
+    required this.modelValue,
+    required this.onTap,
+  });
+  @override
+  State<_ModelCategoryRow> createState() => _ModelCategoryRowState();
+}
+
+class _ModelCategoryRowState extends State<_ModelCategoryRow> {
+  bool _hover = false;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final shader = context.surfaceShader;
+    final modelDisplay = _modelDisplayName(widget.modelValue);
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: context.motion(shader.duration),
+          curve: shader.safeCurve,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color:
+                _hover ? t.accentBright.withValues(alpha: 0.08) : Colors.transparent,
+          ),
+          child: Row(
+            children: [
+              Text(widget.label,
+                  style: TextStyle(
+                    color: t.textNormal,
+                    fontSize: 12,
+                    fontFamily: 'JetBrainsMono',
+                    fontWeight: FontWeight.w600,
+                  )),
+              const SizedBox(width: 14),
+              Text(modelDisplay,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontFamily: 'JetBrainsMono',
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Take a `provider:modelId` string (e.g. `claude:claude-3-5-sonnet`) and
+/// return the human-readable model name. Empty input → empty output.
+String _modelDisplayName(String modelValue) {
+  if (modelValue.isEmpty) return '';
+  final i = modelValue.indexOf(':');
+  if (i < 0 || i >= modelValue.length - 1) return modelValue;
+  return modelValue.substring(i + 1);
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// ◈ Shape staging — natural-language partial staging. A glyph next to
+// the select-all toggle expands a slim prompt bar; the sentence goes
+// to the AI with the working-tree diff; the returned subset patch is
+// previewed in stage mode and applied via `git apply --cached`.
+// Working tree never mutates — only the index shapes.
+// ────────────────────────────────────────────────────────────────────────
+
+/// Floating popover anchored above the commit composer's ◈ shape
+/// button. Compact card — one input, one submit split button. Lives
+/// alongside the other AI toolbar buttons (review, generate) so all
+/// AI affordances share the same region of the screen.
+class _ShapePopover extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool busy;
+  final ValueChanged<String> onSubmit;
+  final VoidCallback onClose;
+  /// Tap-group the popover was opened under. The chevron menu on the
+  /// submit split button registers in the same group so clicking a
+  /// menu item doesn't dismiss the popover.
+  final Object? tapRegionGroupId;
+  const _ShapePopover({
+    required this.controller,
+    required this.focusNode,
+    required this.busy,
+    required this.onSubmit,
+    required this.onClose,
+    this.tapRegionGroupId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final ai = context.watch<AiSettingsState>();
+    final defaultCategory = ai.modelSelections.containsKey('fast') &&
+            ai.modelSelections['fast']!.isNotEmpty
+        ? 'fast'
+        : (ai.modelSelections.entries
+            .firstWhere(
+              (e) => e.value.isNotEmpty,
+              orElse: () => const MapEntry('', ''),
+            )
+            .key);
+    return Material(
+      color: Colors.transparent,
+      child: MaterialSurface(
+        tone: AppMaterialTone.surface1,
+        radius: context.surfaceShader.geometry.cardRadius,
+        elevated: true,
+        padding: const EdgeInsets.all(10),
+        child: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Heading row: glyph + tiny label + close ×.
+              Row(
+                children: [
+                  Text('◈',
+                      style: TextStyle(
+                        color: t.accentBright,
+                        fontSize: 12,
+                        fontFamily: 'JetBrainsMono',
+                        fontWeight: FontWeight.w800,
+                      )),
+                  const SizedBox(width: 8),
+                  Text('SHAPE COMMIT',
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.4,
+                      )),
+                  const Spacer(),
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: busy ? null : onClose,
+                      child: Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: Text('×',
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 14,
+                              fontFamily: 'JetBrainsMono',
+                              fontWeight: FontWeight.w700,
+                              height: 1.0,
+                            )),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Input field.
+              Container(
+                decoration: BoxDecoration(
+                  color: t.inputBg,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: t.inputBorder.withValues(alpha: 0.85),
+                  ),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                child: TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  enabled: !busy,
+                  onSubmitted: (_) {
+                    if (defaultCategory.isNotEmpty) onSubmit(defaultCategory);
+                  },
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 12,
+                  ),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    hintText: busy
+                        ? 'drafting subset patch…'
+                        : 'describe what to stage, in your own words',
+                    hintStyle: TextStyle(
+                      color: t.textMuted.withValues(alpha: 0.7),
+                      fontSize: 12,
+                      fontStyle: FontStyle.italic,
+                    ),
+                    contentPadding:
+                        const EdgeInsets.symmetric(vertical: 9),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              // Submit row: right-aligned split button. Mirrors the
+              // merge resolver's submit grammar ("ask with <category>").
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (defaultCategory.isEmpty)
+                    Text('no AI model configured',
+                        style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 10.5,
+                          fontFamily: 'JetBrainsMono',
+                          fontStyle: FontStyle.italic,
+                        ))
+                  else
+                    _MergeResolveSplitButton(
+                      defaultCategoryId: defaultCategory,
+                      busy: busy,
+                      onResolve: onSubmit,
+                      actionLabel: 'ask with',
+                      menuTapRegionGroupId: tapRegionGroupId,
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

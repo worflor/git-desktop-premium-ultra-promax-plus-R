@@ -138,6 +138,7 @@ Duration _durationFor(ThemeInteraction mode) => switch (mode) {
       ThemeInteraction.warp => const Duration(milliseconds: 220),
       ThemeInteraction.vibration => const Duration(milliseconds: 180),
       ThemeInteraction.chalk => const Duration(milliseconds: 200),
+      ThemeInteraction.inkSplat => const Duration(milliseconds: 220),
       ThemeInteraction.none => Duration.zero,
     };
 
@@ -161,6 +162,8 @@ CustomPainter _feedbackPainter({
           origin: origin, color: accent, t: progress);
     case ThemeInteraction.chalk:
       return _ChalkPainter(origin: origin, color: accent, t: progress);
+    case ThemeInteraction.inkSplat:
+      return _InkSplatPainter(origin: origin, t: progress);
     case ThemeInteraction.none:
       return _NoopPainter();
   }
@@ -352,6 +355,83 @@ class _ChalkPainter extends CustomPainter {
   @override
   bool shouldRepaint(_ChalkPainter old) =>
       old.t != t || old.origin != origin || old.color != color;
+}
+
+// ── Ink Splat (Kirby) — comic-book POW-shape starburst ────────────────────
+class _InkSplatPainter extends CustomPainter {
+  final Offset origin;
+  final double t;
+  _InkSplatPainter({required this.origin, required this.t});
+
+  // Hoisted Paths reused per paint — building once is cheaper than
+  // re-allocating on every animation tick.
+  static final Path _starPath = Path();
+  static final Path _ringPath = Path();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fade = (1 - t).clamp(0.0, 1.0);
+    if (fade <= 0.01) return;
+
+    // ── Yellow POW! starburst behind the click ────────────────────
+    // 8-pointed star whose long spikes alternate with short ones —
+    // classic Marvel-Comics impact-burst silhouette. Radius pops
+    // outward over the first half then holds.
+    final pop = (t * 2).clamp(0.0, 1.0);
+    final outerR = 6.0 + 14.0 * pop;
+    final innerR = outerR * 0.42;
+    _starPath.reset();
+    const points = 8;
+    for (var i = 0; i < points * 2; i++) {
+      final r = i.isEven ? outerR : innerR;
+      final ang = (i * math.pi / points) - math.pi / 2;
+      final p = origin + Offset(math.cos(ang) * r, math.sin(ang) * r);
+      if (i == 0) {
+        _starPath.moveTo(p.dx, p.dy);
+      } else {
+        _starPath.lineTo(p.dx, p.dy);
+      }
+    }
+    _starPath.close();
+    // Yellow fill — the comic-book impact color
+    canvas.drawPath(
+      _starPath,
+      Paint()
+        ..color = const Color(0xFFFFD300).withValues(alpha: fade * 0.85)
+        ..style = PaintingStyle.fill,
+    );
+    // Heavy ink line on the star — every comic burst gets inked
+    canvas.drawPath(
+      _starPath,
+      Paint()
+        ..color = const Color(0xFF14141A).withValues(alpha: fade)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..strokeJoin = StrokeJoin.miter,
+    );
+
+    // ── Three short ink-line "speed flecks" radiating outward ─────
+    // Like the impact lines around a comic-book punch.
+    final flickPaint = Paint()
+      ..color = const Color(0xFF14141A).withValues(alpha: fade * 0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round;
+    for (var i = 0; i < 4; i++) {
+      final ang = (i * math.pi * 2 / 4) + math.pi / 4;
+      final innerEnd = outerR + 2;
+      final outerEnd = outerR + 6 + fade * 4;
+      canvas.drawLine(
+        origin + Offset(math.cos(ang) * innerEnd, math.sin(ang) * innerEnd),
+        origin + Offset(math.cos(ang) * outerEnd, math.sin(ang) * outerEnd),
+        flickPaint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_InkSplatPainter old) =>
+      old.t != t || old.origin != origin;
 }
 
 class _NoopPainter extends CustomPainter {

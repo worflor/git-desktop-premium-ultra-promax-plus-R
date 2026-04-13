@@ -2269,11 +2269,14 @@ class _PivotList extends StatelessWidget {
                   duration: const Duration(milliseconds: 80),
                   height: 36,
                   decoration: BoxDecoration(
-                    color: active ? t.itemActiveBg : Colors.transparent,
+                    color: active
+                        ? t.itemActiveBg
+                        : t.itemActiveBg.withValues(alpha: 0),
                     border: Border(
                       left: BorderSide(
-                        color:
-                            active ? t.accentBright : Colors.transparent,
+                        color: active
+                            ? t.accentBright
+                            : t.accentBright.withValues(alpha: 0),
                         width: 3,
                       ),
                       bottom: i < pivots.length - 1
@@ -2395,7 +2398,9 @@ class _SignalRow extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
           decoration: BoxDecoration(
-            color: active ? t.itemActiveBg : Colors.transparent,
+            color: active
+                ? t.itemActiveBg
+                : t.itemActiveBg.withValues(alpha: 0),
             border: Border(
               left: BorderSide(
                 color: active ? accent : accent.withValues(alpha: 0.35),

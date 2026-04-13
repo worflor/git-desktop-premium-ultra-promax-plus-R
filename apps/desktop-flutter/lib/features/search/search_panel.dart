@@ -308,7 +308,7 @@ class _ResultRowState extends State<_ResultRow> {
           decoration: BoxDecoration(
             color: _hovered
                 ? t.chromeBorder.withValues(alpha: 0.06)
-                : Colors.transparent,
+                : t.chromeBorder.withValues(alpha: 0),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Column(

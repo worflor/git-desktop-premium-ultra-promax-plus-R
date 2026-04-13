@@ -29,6 +29,25 @@ class FileCouplingMatrix {
     return jaccard[a]?[b] ?? jaccard[b]?[a] ?? 0.0;
   }
 
+  /// Coherence of a *set* of files: the mean of all pairwise scores.
+  /// Returns 1.0 for ≤1 files (trivially coherent — nothing to compare).
+  /// Used as a "semantic resonance" signal on PR rows: high = the PR
+  /// touches files that historically move together (a focused change);
+  /// low = scattered worklines (a sweep, a chore, or an unfocused PR).
+  double coherenceFor(Iterable<String> paths) {
+    final list = paths.toList();
+    if (list.length < 2) return 1.0;
+    double sum = 0.0;
+    int pairs = 0;
+    for (var i = 0; i < list.length; i++) {
+      for (var j = i + 1; j < list.length; j++) {
+        sum += score(list[i], list[j]);
+        pairs++;
+      }
+    }
+    return pairs == 0 ? 1.0 : sum / pairs;
+  }
+
   static const empty = FileCouplingMatrix(
     jaccard: {},
     headHash: '',

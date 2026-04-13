@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:path/path.dart' as p;
 import 'repository_xray.dart';
 import 'dtos.dart';
@@ -895,6 +896,87 @@ Future<GitResult<Map<String, FileChangeWeight>>> fileChangeWeights(
   return GitResult.ok(weights);
 }
 
+/// Aggregated signals from a single `git log` scan over a set of
+/// paths — reused by the PR detail view to surface "who knows this
+/// code" + "how hot is this code right now" without doing two scans.
+class FileSignals {
+  /// Per-author commit count across the path union, sorted desc.
+  final List<({String email, int commits})> authors;
+  /// Per-path "heat" in 0..1 — exponentially-decayed commit density
+  /// over the last [thermalWindowDays]. 0 = stone cold, 1 = on fire
+  /// right now. Used to render the ember-glow on file pills.
+  final Map<String, double> heatByPath;
+  const FileSignals({required this.authors, required this.heatByPath});
+
+  static const empty = FileSignals(authors: [], heatByPath: {});
+}
+
+/// One scan, two signals: who has been touching this code AND how hot
+/// each file is right now (exponentially-decayed commit density).
+/// Used by the PR detail surface for the PEOPLE section + per-file
+/// thermal glow. Pure local git; transferable to any host.
+///
+/// Cost: O(paths) git log invocations, each capped at [maxPerFile]
+/// commits. Cheap for typical PR file lists.
+Future<GitResult<FileSignals>> scanFileSignals(
+  String repo,
+  List<String> paths, {
+  int maxPerFile = 20,
+  int sinceDays = 365,
+  double thermalTauDays = 14,
+}) async {
+  if (paths.isEmpty) return const GitResult.ok(FileSignals.empty);
+  final since = '$sinceDays.days.ago';
+  final counts = <String, int>{};
+  final heatByPath = <String, double>{};
+  final now = DateTime.now();
+  for (final p in paths) {
+    final r = await _git(repo, [
+      'log',
+      '--no-merges',
+      // Author email + commit timestamp (epoch seconds).
+      '--format=%ae|%at',
+      '-n',
+      '$maxPerFile',
+      '--since',
+      since,
+      '--',
+      p,
+    ]);
+    if (r.exitCode != 0) continue;
+    double heat = 0;
+    for (final raw in (r.stdout as String).split('\n')) {
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      final pipe = line.indexOf('|');
+      final email = pipe > 0 ? line.substring(0, pipe) : line;
+      final tsStr = pipe > 0 ? line.substring(pipe + 1) : '';
+      if (email.isNotEmpty) {
+        counts[email] = (counts[email] ?? 0) + 1;
+      }
+      // Exponential decay: each commit contributes exp(-Δd/τ) to the
+      // file's heat. Recent commits dominate; old ones fade. Heat is
+      // capped at 1.0 for visualization (rare to exceed even in
+      // active files).
+      final ts = int.tryParse(tsStr);
+      if (ts != null) {
+        final commitAt = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
+        final ageDays = now.difference(commitAt).inHours / 24.0;
+        heat += math.exp(-ageDays / thermalTauDays);
+      }
+    }
+    if (heat > 0) {
+      heatByPath[p] = heat.clamp(0.0, 1.0).toDouble();
+    }
+  }
+  final authors = counts.entries
+      .map((e) => (email: e.key, commits: e.value))
+      .toList()
+    ..sort((a, b) => b.commits.compareTo(a.commits));
+  return GitResult.ok(FileSignals(authors: authors, heatByPath: heatByPath));
+}
+
+
 Future<GitResult<void>> stagePaths(String repo, List<String> paths) async {
   final r = await _git(repo, ['add', '--', ...paths]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
@@ -907,16 +989,95 @@ Future<GitResult<void>> unstagePaths(String repo, List<String> paths) async {
   return const GitResult.ok(null);
 }
 
-/// Pipes a unified diff to `git apply`. Used for line-level staging.
-/// `cached` writes to the index (--cached); `reverse` inverts the patch.
+/// Discard all changes (staged AND unstaged) for a single file, matching
+/// the GitHub Desktop "Discard changes" behaviour:
+///
+///   * **Untracked** (`?`) — nothing to restore from git's side; just
+///     remove the file from disk. Git never knew about it.
+///   * **Newly added in the index** (`A`, not yet in HEAD) — `git
+///     checkout HEAD --` would error with "did not match any file(s)
+///     known to git" because the path doesn't exist there. Unstage with
+///     `git rm --cached` first, then delete the working copy.
+///   * **Anything else** (modified, deleted, renamed, copied, conflict)
+///     — `git checkout HEAD -- <path>` resets the path to its HEAD
+///     state in one shot, wiping both staged and unstaged changes.
+///
+/// Irreversible. Caller is expected to confirm before invoking.
+Future<GitResult<void>> discardFile(
+  String repo,
+  RepositoryStatusFile file,
+) async {
+  final isUntracked = file.staged.isEmpty && file.unstaged == '?';
+  if (isUntracked) {
+    return _deleteFromDisk(repo, file.path);
+  }
+  if (file.staged == 'A') {
+    final unstage =
+        await _git(repo, ['rm', '--cached', '--force', '--', file.path]);
+    if (unstage.exitCode != 0) {
+      return GitResult.err(unstage.stderr.toString().trim());
+    }
+    return _deleteFromDisk(repo, file.path);
+  }
+  final r = await _git(repo, ['checkout', 'HEAD', '--', file.path]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+Future<GitResult<void>> _deleteFromDisk(String repo, String relPath) async {
+  try {
+    final f = File(p.join(repo, relPath));
+    if (await f.exists()) await f.delete();
+    return const GitResult.ok(null);
+  } catch (e) {
+    return GitResult.err('Failed to delete file: $e');
+  }
+}
+
+/// Append a single pattern to the repository's `.gitignore`. Creates
+/// the file if it doesn't exist; ensures the existing content ends
+/// with a newline before appending; no-ops if the exact pattern (after
+/// trimming) is already present, so repeated invocations stay clean.
+Future<GitResult<void>> addToGitignore(String repo, String pattern) async {
+  try {
+    final f = File(p.join(repo, '.gitignore'));
+    final existing = await f.exists() ? await f.readAsString() : '';
+    final trimmedPattern = pattern.trim();
+    final alreadyPresent = existing
+        .split('\n')
+        .any((l) => l.trim() == trimmedPattern && trimmedPattern.isNotEmpty);
+    if (alreadyPresent) return const GitResult.ok(null);
+    final needsLeadingNewline =
+        existing.isNotEmpty && !existing.endsWith('\n');
+    final next =
+        '$existing${needsLeadingNewline ? '\n' : ''}$trimmedPattern\n';
+    await f.writeAsString(next);
+    return const GitResult.ok(null);
+  } catch (e) {
+    return GitResult.err('Failed to update .gitignore: $e');
+  }
+}
+
+/// Pipes a unified diff to `git apply`. Used for line-level staging AND
+/// for the patch-loop (external .patch files).
+///
+/// - `cached` writes to the index (--cached). Mutually exclusive with the
+///   patch-loop options; setting `threeWay` or `dryRun` overrides implicit
+///   cached semantics per git's own rules.
+/// - `reverse` inverts the patch (`-R`).
+/// - `dryRun` uses `--check` — parses + simulates, never mutates.
+/// - `threeWay` uses `-3` — falls back to 3-way merge on context drift.
 Future<GitResult<void>> applyPatch(
   String repo,
   String patch, {
   bool cached = true,
   bool reverse = false,
+  bool dryRun = false,
+  bool threeWay = false,
+  String? telemetryLabel,
 }) async {
   if (patch.trim().isEmpty) return const GitResult.ok(null);
-  final commandLabel = 'git.apply';
+  final commandLabel = telemetryLabel ?? 'git.apply';
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(
     type: 'start',
@@ -925,7 +1086,9 @@ Future<GitResult<void>> applyPatch(
   try {
     final args = <String>['apply'];
     if (cached) args.add('--cached');
-    if (reverse) args.add('--reverse');
+    if (reverse) args.add('-R');
+    if (dryRun) args.add('--check');
+    if (threeWay) args.add('--3way');
     args.addAll(['--whitespace=nowarn', '-']);
     final process =
         await Process.start('git', args, workingDirectory: repo);

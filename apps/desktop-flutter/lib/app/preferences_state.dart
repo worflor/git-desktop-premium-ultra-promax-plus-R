@@ -93,32 +93,21 @@ class PreferencesState extends ChangeNotifier {
   }) async {
     final s = await SettingsStore.load();
     await SettingsStore.persist(
-      AppSettingsSnapshot(
-        guardrailValue: guardrailValue ?? s.guardrailValue,
-        aiReadOnlyDefault: aiReadOnlyDefault ?? s.aiReadOnlyDefault,
-        logoAnimatesWhenUnfocused:
-            logoAnimatesWhenUnfocused ?? s.logoAnimatesWhenUnfocused,
-        telemetryRetentionDays: s.telemetryRetentionDays,
-        telemetryRetentionMb: s.telemetryRetentionMb,
-        updateChannel: updateChannel ?? s.updateChannel,
-        crashReportingEnabled:
-            crashReportingEnabled ?? s.crashReportingEnabled,
-        themeId: s.themeId,
-        keybindingProfile: s.keybindingProfile,
-        sidebarWidthPx: s.sidebarWidthPx,
-        sidebarPosition: s.sidebarPosition,
-        utilityDrawerDefaultExpanded: s.utilityDrawerDefaultExpanded,
-        utilityDrawerHeightPx: s.utilityDrawerHeightPx,
-        reduceMotion: reduceMotion ?? s.reduceMotion,
-        reduceMotionPhase: reduceMotionPhase ?? s.reduceMotionPhase,
-        stashCabinetDefaultExpanded:
-            stashCabinetDefaultExpanded ?? s.stashCabinetDefaultExpanded,
-        instantBlameHover: instantBlameHover ?? s.instantBlameHover,
-        fileSortGuide: fileSortGuide ?? s.fileSortGuide,
-        fileSortInverted: fileSortInverted ?? s.fileSortInverted,
-        commitStructure: commitStructure ?? s.commitStructure,
-        commitVoice: commitVoice ?? s.commitVoice,
-        commitCoverage: commitCoverage ?? s.commitCoverage,
+      s.copyWith(
+        guardrailValue: guardrailValue,
+        aiReadOnlyDefault: aiReadOnlyDefault,
+        logoAnimatesWhenUnfocused: logoAnimatesWhenUnfocused,
+        updateChannel: updateChannel,
+        crashReportingEnabled: crashReportingEnabled,
+        reduceMotion: reduceMotion,
+        reduceMotionPhase: reduceMotionPhase,
+        stashCabinetDefaultExpanded: stashCabinetDefaultExpanded,
+        instantBlameHover: instantBlameHover,
+        fileSortGuide: fileSortGuide,
+        fileSortInverted: fileSortInverted,
+        commitStructure: commitStructure,
+        commitVoice: commitVoice,
+        commitCoverage: commitCoverage,
       ),
     );
   }

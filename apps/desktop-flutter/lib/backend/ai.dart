@@ -433,6 +433,234 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
   }
 }
 
+/// One-shot "context → unified diff" primitive. Caller builds the
+/// [prompt] from whatever context is relevant (conflicted files, a
+/// dirty tree diff + English intent, a stale patch + live tree, …),
+/// provides the [modelValue] (`provider:modelId` as used by all other
+/// AI calls), and gets back raw `.patch` text the caller can hand to
+/// `applyPatch(..., dryRun: true)` to verify. Code fences (```diff …)
+/// are stripped so downstream only ever sees clean `--- a/ +++ b/`
+/// headers regardless of how the model decided to frame its output.
+///
+/// This function deliberately stays dumb about WHAT context went in —
+/// the clever context engineering lives at call sites. Keeping the
+/// primitive generic lets the merge resolver, NL partial staging, and
+/// future patch-emitting features all share the same transport.
+Future<GitResult<AiPatchData>> generatePatch({
+  required String repositoryPath,
+  required String modelValue,
+  required String prompt,
+  String commandLabelPrefix = 'ai.patch',
+  bool readOnly = true,
+}) async {
+  try {
+    if (prompt.trim().isEmpty) {
+      return GitResult.err('Prompt is empty.');
+    }
+    final modelParse = _parseModelValue(modelValue);
+    if (!modelParse.ok) {
+      return GitResult.err(modelParse.error!);
+    }
+    final provider = modelParse.data!.provider;
+    final modelId = modelParse.data!.modelId;
+
+    final availability = await _inspectProviderCached(provider);
+    if (!availability.ready || availability.resolution == null) {
+      return GitResult.err(
+        'Provider ${provider.id} is not ready. ${_formatProviderHealth(availability)}',
+      );
+    }
+
+    // --- API providers: direct HTTP ---
+    if (provider.kind == _ProviderKind.geminiApi) {
+      final geminiModel = modelId.startsWith('gemini ')
+          ? modelId.substring('gemini '.length)
+          : modelId;
+      final apiResult = await _runGeminiApiRequest(prompt, geminiModel);
+      if (apiResult.text == null) {
+        return GitResult.err(
+            apiResult.error ?? 'Gemini API returned no response.');
+      }
+      final patch = _extractPatchFromModelOutput(apiResult.text!);
+      if (patch.isEmpty) {
+        return GitResult.err('Model returned no usable patch.');
+      }
+      return GitResult.ok(AiPatchData(
+        providerId: provider.id,
+        modelId: modelId,
+        patch: patch,
+        promptCharacters: prompt.length,
+        patchCharacters: patch.length,
+      ));
+    }
+
+    // --- CLI providers: same attempt-fallback loop as generateCommitMessage ---
+    final attempts = _buildProviderAttempts(
+      provider.kind,
+      modelId,
+      readOnly: readOnly,
+      resolvedCommand: availability.resolution!.command,
+    );
+    String? providerOutput;
+    String? lastError;
+    for (final attempt in attempts) {
+      final effectiveArgs =
+          attempt.useStdinForPrompt ? attempt.args : [...attempt.args, prompt];
+      final effectiveStdin = attempt.useStdinForPrompt ? prompt : null;
+      final result = await _runObservedProcess(
+        commandLabel: '$commandLabelPrefix.${provider.id}.${attempt.name}',
+        scope: 'ai',
+        command: availability.resolution!.command,
+        args: effectiveArgs,
+        timeout: _providerRuntimeTimeout,
+        workingDirectory: repositoryPath,
+        stdinPayload: effectiveStdin,
+        environment: _providerEnvironment(provider.kind),
+      );
+
+      if (result == null) {
+        lastError = 'Provider command timed out.';
+        continue;
+      }
+      final formatted = _formatProviderOutput(
+        attempt.outputMode,
+        result.stdout,
+        result.stderr,
+      );
+      if (result.exitCode == 0 &&
+          formatted != null &&
+          formatted.trim().isNotEmpty &&
+          !_looksLikeProviderError(provider.kind, formatted)) {
+        providerOutput = formatted;
+        break;
+      }
+      lastError = formatted?.trim().isNotEmpty == true
+          ? _normalizeProviderError(provider.kind, formatted!)
+          : result.stderr.trim().isNotEmpty
+              ? _normalizeProviderError(provider.kind, result.stderr.trim())
+              : 'Provider exited with code ${result.exitCode}.';
+    }
+
+    if (providerOutput == null) {
+      return GitResult.err(lastError ?? 'Provider did not return a patch.');
+    }
+    final patch = _extractPatchFromModelOutput(providerOutput);
+    if (patch.isEmpty) {
+      return GitResult.err('Model returned no usable patch.');
+    }
+    return GitResult.ok(AiPatchData(
+      providerId: provider.id,
+      modelId: modelId,
+      patch: patch,
+      promptCharacters: prompt.length,
+      patchCharacters: patch.length,
+    ));
+  } catch (error) {
+    return GitResult.err('Patch generation failed: $error');
+  }
+}
+
+/// Paths we will NEVER send to an AI provider, regardless of what the
+/// user asked for. Set-it-and-forget-it defaults — no `.aiignore`, no
+/// settings toggle. Secrets that shouldn't leave the machine by any
+/// normal workflow. Matches against the path's BASENAME or a simple
+/// glob-like prefix/infix ("secrets/", ".git/") so both `/.env` and
+/// `config/.env.prod` are covered. If the user has a file that trips
+/// this but legitimately needs AI help, that's a signal the file
+/// itself is in the wrong place — we don't negotiate.
+bool isSensitivePath(String path) {
+  // Normalize slashes so Windows paths behave identically.
+  final lower = path.toLowerCase().replaceAll('\\', '/');
+  final name = lower.split('/').last;
+  // Dir-prefix matches (path contains `/<prefix>/`).
+  const dirPrefixes = ['secrets/', '.secrets/', 'private/'];
+  for (final p in dirPrefixes) {
+    if (lower.startsWith(p) || lower.contains('/$p')) return true;
+  }
+  // Basename matches — the canonical secret-bearing files devs create.
+  if (name.startsWith('.env')) return true; // .env, .env.prod, .env.local
+  if (name.startsWith('id_rsa') || name.startsWith('id_ed25519')) return true;
+  if (name.startsWith('credentials')) return true;
+  if (name == 'auth.json' || name == 'client_secret.json') return true;
+  if (name.endsWith('.pem') ||
+      name.endsWith('.key') ||
+      name.endsWith('.p12') ||
+      name.endsWith('.pfx') ||
+      name.endsWith('.tfvars') ||
+      name.endsWith('.kubeconfig') ||
+      name == 'kubeconfig') {
+    return true;
+  }
+  return false;
+}
+
+/// Scans a prompt body for well-known secret shapes right before it
+/// would be sent to a provider. Returns the first matching hint (for a
+/// user-facing error) or null if clean. Zero-config defense against
+/// the "I accidentally committed an API key and the AI just shipped
+/// it to Google" scenario. Uses the same regex set as [_scrubSecrets]
+/// so a secret that leaks in an error reply is ALSO one that would
+/// have been caught on the way out.
+///
+/// This is an HONEST-EFFORT scan — regexes are bypassable by
+/// obfuscation and it only knows common token shapes. But the normal
+/// failure mode (dev has `sk-abc123…` hardcoded in a .env that's
+/// somehow tracked) is exactly what regexes catch.
+String? detectLikelySecretInPrompt(String prompt) {
+  final patterns = <(RegExp, String)>[
+    (RegExp(r'AKIA[0-9A-Z]{16}'), 'AWS access key ID'),
+    (RegExp(r'AIza[0-9A-Za-z_\-]{35}'), 'Google API key'),
+    (RegExp(r'gh[pousr]_[A-Za-z0-9]{30,}'), 'GitHub token'),
+    (RegExp(r'sk-(?:ant-)?[A-Za-z0-9_\-]{20,}'),
+        'OpenAI/Anthropic secret key'),
+    (RegExp(r'xox[baprs]-[A-Za-z0-9\-]{10,}'), 'Slack token'),
+    (RegExp(
+          r'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'),
+        'JWT'),
+    // Private-key block header.
+    (RegExp(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'),
+        'private key block'),
+  ];
+  for (final (re, label) in patterns) {
+    if (re.hasMatch(prompt)) return label;
+  }
+  return null;
+}
+
+/// Strip common wrappings from the model's raw output so downstream
+/// only sees the unified diff. Handles:
+///   - ```diff ... ``` fences (GPT/Claude default)
+///   - ``` ... ``` fences without a language tag
+///   - leading/trailing prose lines (keeps everything from the first
+///     `diff --git` / `--- ` / `Index:` header onward, drops anything
+///     after the last `\n` that doesn't look like patch content).
+/// Never mangles the patch body itself — only trims the wrapping.
+String _extractPatchFromModelOutput(String raw) {
+  var text = raw.trim();
+  // Strip a single outer fenced block if present: ```diff ... ```
+  final fence =
+      RegExp(r'^```(?:diff|patch|udiff)?\s*\n(.*?)\n```\s*$', dotAll: true);
+  final match = fence.firstMatch(text);
+  if (match != null) {
+    text = match.group(1)!.trim();
+  }
+  // Drop leading prose: find the first line that looks like a patch
+  // header and slice from there.
+  final lines = text.split('\n');
+  var start = -1;
+  for (var i = 0; i < lines.length; i++) {
+    final l = lines[i];
+    if (l.startsWith('diff --git ') ||
+        l.startsWith('--- ') ||
+        l.startsWith('Index: ')) {
+      start = i;
+      break;
+    }
+  }
+  if (start <= 0) return text;
+  return lines.sublist(start).join('\n').trim();
+}
+
 Future<GitResult<AiCommitReviewData>> reviewCommit({
   required String repositoryPath,
   required String modelValue,
@@ -3596,16 +3824,46 @@ String _normalizeProviderError(_ProviderKind kind, String raw) {
     return 'The provider did not return a usable response.';
   }
 
-  switch (kind) {
-    case _ProviderKind.openCode:
-      return _normalizeOpenCodeError(normalized);
-    case _ProviderKind.codex:
-      return _normalizeCodexError(normalized);
-    case _ProviderKind.claude:
-      return normalized;
-    case _ProviderKind.geminiApi:
-      return _normalizeGeminiError(normalized);
-  }
+  final provider = switch (kind) {
+    _ProviderKind.openCode => _normalizeOpenCodeError(normalized),
+    _ProviderKind.codex => _normalizeCodexError(normalized),
+    _ProviderKind.claude => normalized,
+    _ProviderKind.geminiApi => _normalizeGeminiError(normalized),
+  };
+  // Never let a provider echo a bearer token, API key, or session cred
+  // into a snackbar, log, or DiagnosticsState record. Providers ARE
+  // observed to dump auth headers on 401/403 (verified with Gemini +
+  // some Claude setups); sanitize at the single chokepoint so every
+  // call site is protected.
+  return _scrubSecrets(provider);
+}
+
+/// Redacts common secret shapes from provider/CLI error output before
+/// it escapes into user-visible text or diagnostics. Not exhaustive —
+/// intentionally focused on the patterns most likely to appear in
+/// provider error echoes. False positives (masking a non-secret that
+/// matches the pattern) are acceptable; false negatives leak tokens.
+String _scrubSecrets(String input) {
+  var s = input;
+  // Authorization: Bearer … (HTTP auth header in stderr)
+  s = s.replaceAll(
+      RegExp(r'([Bb]earer\s+)[A-Za-z0-9._\-]+', multiLine: true), r'$1[redacted]');
+  // Google API keys (AIza…, 39 chars)
+  s = s.replaceAll(
+      RegExp(r'AIza[0-9A-Za-z_\-]{35}'), '[redacted:google-api-key]');
+  // GitHub personal access tokens, app tokens, etc.
+  s = s.replaceAll(
+      RegExp(r'gh[pousr]_[A-Za-z0-9]{30,}'), '[redacted:gh-token]');
+  // OpenAI / Anthropic / generic sk- tokens
+  s = s.replaceAll(
+      RegExp(r'sk-(?:ant-)?[A-Za-z0-9_\-]{20,}'), '[redacted:sk-token]');
+  // AWS access keys
+  s = s.replaceAll(RegExp(r'AKIA[0-9A-Z]{16}'), '[redacted:aws-akid]');
+  // JWT-ish triplets (base64.base64.base64)
+  s = s.replaceAll(
+      RegExp(r'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'),
+      '[redacted:jwt]');
+  return s;
 }
 
 String _normalizeOpenCodeError(String raw) {
@@ -3991,13 +4249,22 @@ Future<_CommandResult?> _runObservedProcess({
     );
     return null;
   } finally {
-    // Clean up temp files.
-    try {
-      stdinTempFile?.deleteSync();
-    } catch (_) {}
-    try {
-      File('${stdinTempFile?.path}.bat').deleteSync();
-    } catch (_) {}
+    // Clean up the stdin temp file + its .bat sibling. On Windows the
+    // prompt body lives on disk briefly; shrink the exposure window by
+    // overwriting with empty content before unlinking, and skip the
+    // sibling-delete attempt when no stdin file was created (avoids a
+    // pointless File('null.bat').deleteSync throwing every call).
+    if (stdinTempFile != null) {
+      try {
+        stdinTempFile.writeAsStringSync('', flush: true);
+      } catch (_) {}
+      try {
+        stdinTempFile.deleteSync();
+      } catch (_) {}
+      try {
+        File('${stdinTempFile.path}.bat').deleteSync();
+      } catch (_) {}
+    }
   }
 }
 

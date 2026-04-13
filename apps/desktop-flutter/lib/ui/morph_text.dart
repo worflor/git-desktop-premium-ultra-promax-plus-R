@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui show ImageFilter;
 
 import 'package:flutter/material.dart';
 
@@ -19,12 +20,28 @@ class ThemeMorphText extends StatefulWidget {
   final String text;
   final TextStyle? style;
   final TextDirection? textDirection;
+  /// Max lines. Null = unbounded (matches [Text] defaults). When set and
+  /// the text doesn't fit, the widget falls back to a static render with
+  /// the configured [overflow] (ellipsis, clip). Morph still plays for
+  /// text that *does* fit — graceful degradation, not silent breakage.
+  final int? maxLines;
+  /// How to handle text that exceeds the available width or [maxLines].
+  /// Defaults to [TextOverflow.clip] to preserve prior behavior; the
+  /// outer [ClipRect] continues to do the clipping in that case.
+  final TextOverflow overflow;
+  /// Whether text should wrap onto multiple lines. `false` is equivalent
+  /// to `maxLines: 1` unless [maxLines] is explicitly set — mirrors
+  /// [Text.softWrap] so drop-in replacement is predictable.
+  final bool softWrap;
 
   const ThemeMorphText(
     this.text, {
     super.key,
     this.style,
     this.textDirection,
+    this.maxLines,
+    this.overflow = TextOverflow.clip,
+    this.softWrap = true,
   });
 
   @override
@@ -44,6 +61,8 @@ class _ThemeMorphTextState extends State<ThemeMorphText>
   TextStyle? _cachedStyleKey;
   TextDirection? _cachedDir;
   double? _cachedMaxWidth;
+  int? _cachedMaxLines;
+  TextOverflow? _cachedOverflow;
 
   @override
   void initState() {
@@ -134,16 +153,38 @@ class _ThemeMorphTextState extends State<ThemeMorphText>
         final raw = constraints.maxWidth;
         final maxWidth = (raw.isFinite && raw >= 1) ? raw : double.infinity;
 
+        // softWrap: false with no explicit maxLines → single line (matches
+        // Text widget semantics). Otherwise honour maxLines as given.
+        final effectiveMaxLines =
+            widget.softWrap ? widget.maxLines : (widget.maxLines ?? 1);
         if (_cachedStyleKey != style ||
             _cachedDir != dir ||
             _cachedMaxWidth != maxWidth ||
+            _cachedMaxLines != effectiveMaxLines ||
+            _cachedOverflow != widget.overflow ||
             _toLayout == null) {
           _invalidateLayouts();
-          _fromLayout = _LaidOut.build(_fromText, style, dir, maxWidth);
-          _toLayout = _LaidOut.build(_toText, style, dir, maxWidth);
+          _fromLayout = _LaidOut.build(
+            _fromText,
+            style,
+            dir,
+            maxWidth,
+            maxLines: effectiveMaxLines,
+            overflow: widget.overflow,
+          );
+          _toLayout = _LaidOut.build(
+            _toText,
+            style,
+            dir,
+            maxWidth,
+            maxLines: effectiveMaxLines,
+            overflow: widget.overflow,
+          );
           _cachedStyleKey = style;
           _cachedDir = dir;
           _cachedMaxWidth = maxWidth;
+          _cachedMaxLines = effectiveMaxLines;
+          _cachedOverflow = widget.overflow;
         }
 
         final to = _toLayout!;
@@ -176,6 +217,12 @@ class _ThemeMorphTextState extends State<ThemeMorphText>
                   effect: shader.textEffect,
                   accent: tokens.accentBright,
                   ambient: tokens.themeAmbient ?? tokens.chromeAccent,
+                  outlineInk: tokens.textStrong,
+                  // Text outline is typically a hair thinner than chrome
+                  // outlines so glyphs don't look bloated.
+                  outlineWidth: shader.textEffect == ThemeTextEffect.outline
+                      ? (shader.outlineWidth * 0.6).clamp(0.5, 2.0)
+                      : 0,
                 ),
               ),
             ),
@@ -241,18 +288,48 @@ class _LaidOut {
   final List<Offset> positions;
   final List<TextPainter> glyphs;
   final Size size;
+  /// Non-null when the text overflowed the available width/lines under
+  /// a non-clip overflow mode (ellipsis). The painter falls back to
+  /// rendering this unit directly instead of running the per-glyph
+  /// morph, since morphing glyphs across an ellipsis boundary never
+  /// paints cleanly. Morph still plays for text that fits.
+  final TextPainter? overflowPainter;
 
-  _LaidOut._(this.positions, this.glyphs, this.size);
+  _LaidOut._(this.positions, this.glyphs, this.size, {this.overflowPainter});
 
   factory _LaidOut.build(
-      String text, TextStyle style, TextDirection dir, double maxWidth) {
+    String text,
+    TextStyle style,
+    TextDirection dir,
+    double maxWidth, {
+    int? maxLines,
+    TextOverflow overflow = TextOverflow.clip,
+  }) {
     if (text.isEmpty) {
       return _LaidOut._(const [], const [], const Size(0, 14));
     }
+    final ellipsis =
+        overflow == TextOverflow.ellipsis ? '\u2026' : null;
     final master = TextPainter(
       text: TextSpan(text: text, style: style),
       textDirection: dir,
+      maxLines: maxLines,
+      ellipsis: ellipsis,
     )..layout(maxWidth: maxWidth);
+
+    // If the master truncated (either via maxLines ellipsis or hard
+    // overflow) AND the caller wants ellipsis, keep the master alive
+    // and short-circuit the per-glyph path. Master paint() draws the
+    // ellipsis correctly; per-glyph paint would miss it.
+    if (ellipsis != null && master.didExceedMaxLines) {
+      return _LaidOut._(
+        const [],
+        const [],
+        master.size,
+        overflowPainter: master,
+      );
+    }
+
     final positions = <Offset>[];
     final glyphs = <TextPainter>[];
     for (var i = 0; i < text.length; i++) {
@@ -272,6 +349,7 @@ class _LaidOut {
     for (final g in glyphs) {
       g.dispose();
     }
+    overflowPainter?.dispose();
   }
 }
 
@@ -285,6 +363,12 @@ class _MorphPainter extends CustomPainter {
   final ThemeTextEffect effect;
   final Color accent;
   final Color ambient;
+  /// Ink-line outline parameters for the [ThemeTextEffect.outline]
+  /// effect. Outline ink is the color, width is the offset distance
+  /// (typically 1.0–2.0). When width is 0 outline rendering is
+  /// skipped entirely so other effects pay nothing.
+  final Color outlineInk;
+  final double outlineWidth;
 
   // Computed once per paint() and reused by every per-glyph helper —
   // avoids the quadratic blowup of recomputing the text bbox inside
@@ -299,11 +383,22 @@ class _MorphPainter extends CustomPainter {
     required this.effect,
     required this.accent,
     required this.ambient,
+    this.outlineInk = const Color(0xFF000000),
+    this.outlineWidth = 0,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final t = progress;
+    // Overflow fallback: either side has a master painter (ellipsis
+    // truncated the text). Morphing glyphs across a clip boundary can
+    // never paint cleanly, so render the truncated layout as a unit.
+    // Bias toward `to` — that's the post-morph state the user is on.
+    final overflow = to.overflowPainter ?? from.overflowPainter;
+    if (overflow != null) {
+      overflow.paint(canvas, Offset.zero);
+      return;
+    }
     // Initial mount (no transition has fired yet) — render the current
     // text directly instead of the empty ops list. Without this the
     // painter would loop zero times and paint nothing on first build.
@@ -483,6 +578,51 @@ class _MorphPainter extends CustomPainter {
           const Color(0xFF2288FF), ghostAlpha);
     }
 
+    // CMYK-misregistration outline (kirby). Real newsprint
+    // printing was 4 plates (cyan/magenta/yellow/black) that almost
+    // never aligned perfectly — the iconic "color halo" you see on old
+    // comic pages is each plate slightly off. We paint cyan + magenta
+    // ghosts offset diagonally; the natural glyph fills on top in
+    // black. Yellow plate is omitted (invisible against cream paper).
+    if (effect == ThemeTextEffect.outline && outlineWidth > 0) {
+      final w = outlineWidth;
+      final rect = pos & glyph.size;
+      // Cyan plate — offset to the upper-left
+      _paintGhost(canvas, glyph, pos + Offset(-w, -w * 0.4), rect,
+          const Color(0xFF00ACC8), a * 0.85);
+      // Magenta plate — offset to the lower-right
+      _paintGhost(canvas, glyph, pos + Offset(w, w * 0.4), rect,
+          const Color(0xFFE91E5F), a * 0.85);
+      // Black ink ghost — provides the chunky outline anchor
+      _paintGhost(canvas, glyph, pos + Offset(0, w * 0.5), rect,
+          outlineInk, a);
+    }
+
+    // Phosphor glow + CRT bleed (phosphor theme). CRT pixels never
+    // had hard edges — phosphor decays in a halo. We paint a blurred
+    // accent-colored halo behind every glyph, plus a 1-px horizontal
+    // ghost in the same hue to mimic signal bleed across the
+    // electron beam's scan direction.
+    if (effect == ThemeTextEffect.phosphor) {
+      final rect = pos & glyph.size;
+      // Soft halo via ImageFilter blur on a saveLayer. The colorFilter
+      // forces every pixel to the accent (green) color, so the glow
+      // reads as the phosphor's own light, not the natural glyph color.
+      canvas.saveLayer(
+        rect.inflate(4),
+        Paint()
+          ..color = Color.fromRGBO(255, 255, 255, a * 0.6)
+          ..imageFilter = ui.ImageFilter.blur(sigmaX: 1.6, sigmaY: 1.6)
+          ..colorFilter = ColorFilter.mode(accent, BlendMode.srcATop),
+      );
+      glyph.paint(canvas, pos);
+      canvas.restore();
+      // Tight 1-px horizontal ghost — CRT signal bleeds along the
+      // scanline direction, never vertically.
+      _paintGhost(canvas, glyph, pos + const Offset(1, 0), rect, accent,
+          a * 0.4);
+    }
+
     // Main glyph. Optional scale is applied around the glyph's center
     // so the character grows/shrinks in place.
     Offset paintPos = pos;
@@ -539,6 +679,7 @@ class _MorphPainter extends CustomPainter {
     if (t <= 0 || t >= 1) return 1.0;
     final isKeep = op.fromIdx >= 0 && op.toIdx >= 0;
     final isInsert = op.fromIdx < 0 && op.toIdx >= 0;
+    final isRemove = op.fromIdx >= 0 && op.toIdx < 0;
     final localT = _neighborLocalT(t, dist);
     final falloff = _neighborFalloff(dist);
     switch (effect) {
@@ -553,17 +694,74 @@ class _MorphPainter extends CustomPainter {
         }
         return 1.0;
       case ThemeTextEffect.sparkle:
+        // Inserts pop in with a brief overshoot to mirror the tint flash.
+        if (isInsert) {
+          return 1.0 + _triangle(t, peak: 0.3) * 0.06;
+        }
         if (isKeep) {
           return 1.0 + _wavePulse(t, glyphX) * 0.04;
         }
         return 1.0;
       case ThemeTextEffect.burn:
-      case ThemeTextEffect.twinkle:
-      case ThemeTextEffect.warmth:
-        // Subtle ripple: neighbors scale up briefly as the change
-        // echoes through them.
+        // Cool arrivals scale up slightly as they materialize; embers
+        // shrink as they leave; neighbors get the heat-ripple echo.
+        if (isInsert) {
+          return 1.0 + _triangle(t, peak: 0.35) * 0.05;
+        }
+        if (isRemove) {
+          return 1.0 - t * 0.06;
+        }
         if (isKeep && falloff > 0) {
           return 1.0 + _triangle(localT) * 0.02 * falloff;
+        }
+        return 1.0;
+      case ThemeTextEffect.twinkle:
+        if (isInsert) {
+          return 1.0 + _triangle(t, peak: 0.3) * 0.06;
+        }
+        if (isKeep && falloff > 0) {
+          return 1.0 + _triangle(localT) * 0.02 * falloff;
+        }
+        return 1.0;
+      case ThemeTextEffect.warmth:
+        // Departures shrink slightly as they cool; neighbors ripple.
+        if (isRemove) {
+          return 1.0 - t * 0.04;
+        }
+        if (isKeep && falloff > 0) {
+          return 1.0 + _triangle(localT) * 0.02 * falloff;
+        }
+        return 1.0;
+      case ThemeTextEffect.pop:
+        // Crafty's namesake: arriving char SNAPS in with overshoot,
+        // adjacent blocks JIGGLE from the impact (the "thump"). This
+        // is the effect's whole personality — without it, pop was
+        // promising a snap and delivering a static glyph.
+        if (isInsert) {
+          // Sharp early peak with a tiny settle — block lands at t≈0.2,
+          // wobbles down to 1.0 by mid-transition.
+          if (t < 0.25) return 1.0 + (t / 0.25) * 0.18;
+          return 1.0 + (1 - (t - 0.25) / 0.4).clamp(0.0, 1.0) * 0.18;
+        }
+        if (isKeep && falloff > 0) {
+          // Neighbor thump — adjacent blocks jolt down then settle.
+          // Negative bump (compress) reads as "shaken by impact".
+          return 1.0 - _triangle(localT, peak: 0.2) * 0.06 * falloff;
+        }
+        return 1.0;
+      case ThemeTextEffect.iridescent:
+        // Glyphs breathe with the shimmer wave — slightly bigger as
+        // the iridescent crest passes them, plus a stronger pulse on
+        // inserted chars and a mirroring pulse on departures so the
+        // shimmer feels symmetric.
+        if (isInsert) {
+          return 1.0 + _triangle(t, peak: 0.4) * 0.07;
+        }
+        if (isRemove) {
+          return 1.0 + _triangle(t, peak: 0.3) * 0.05;
+        }
+        if (isKeep) {
+          return 1.0 + _wavePulse(t, glyphX) * 0.05;
         }
         return 1.0;
       default:
@@ -678,9 +876,15 @@ class _MorphPainter extends CustomPainter {
         return const Color(0xFFFFE08A).withValues(alpha: wave * 0.9);
       case ThemeTextEffect.twinkle || ThemeTextEffect.sparkle:
         // Arriving chars flash to accent-bright at arrival, settle to
-        // normal by mid-transition.
+        // normal by mid-transition. Leaving chars also twinkle as they
+        // fade — a star going dark, not just disappearing silently.
         if (isInsert) {
           final intensity = (1 - t * 2).clamp(0.0, 1.0);
+          return accent.withValues(alpha: intensity);
+        }
+        if (isRemove) {
+          // Twinkle-out: peaks early then fades with the glyph itself.
+          final intensity = _triangle(t, peak: 0.3) * 0.75;
           return accent.withValues(alpha: intensity);
         }
         // Sparkle: its wave ripples kept chars L→R already. Twinkle
@@ -701,10 +905,17 @@ class _MorphPainter extends CustomPainter {
       case ThemeTextEffect.stamp:
         // Arriving chars snap in with a brief accent-tint pulse.
         // Neighbors pick up a tiny echo so the stamp feels like it
-        // shakes the word.
+        // shakes the word. Leaving chars get a quick accent flash too —
+        // the stamp lifting off the page leaves an inverse impression.
         if (isInsert) {
           final intensity = (1 - t * 2).clamp(0.0, 1.0);
           return accent.withValues(alpha: intensity * 0.9);
+        }
+        if (isRemove) {
+          // Mirror of insert but earlier-peaking — stamp releases at
+          // the start of the transition, then ink dissolves.
+          final intensity = (1 - t * 1.8).clamp(0.0, 1.0);
+          return accent.withValues(alpha: intensity * 0.55);
         }
         if (isKeep && falloff > 0) {
           final intensity = (1 - localT * 2).clamp(0.0, 1.0) * falloff * 0.35;
@@ -725,6 +936,53 @@ class _MorphPainter extends CustomPainter {
         if (isKeep && falloff > 0) {
           final intensity = _triangle(localT) * falloff * 0.3;
           return const Color(0xFFFFB366).withValues(alpha: intensity);
+        }
+        return null;
+      case ThemeTextEffect.outline:
+        // Outline effect is rendered intrinsically via _paintGlyph's
+        // ink-stamp pass; no per-op tint needed here.
+        return null;
+      case ThemeTextEffect.phosphor:
+        // Phosphor halo + bleed are rendered intrinsically in
+        // _paintGlyph; the natural glyph color (theme textNormal /
+        // green) carries the look without per-op tinting.
+        return null;
+      case ThemeTextEffect.iridescent:
+        // Mother-of-pearl shimmer. Each glyph picks up a hue derived
+        // from its horizontal position + animation time, cycling
+        // cyan → pink → lavender → gold like soap-film iridescence.
+        // Inserts/removes get the strongest pulse (peak mid-transition);
+        // keeps get a gentler L→R shimmer wave so the entire word
+        // ripples instead of just the changing letters. No particles —
+        // every shimmer atom is in the glyph paint itself.
+        final bbox = _cachedBbox;
+        final norm = bbox != null
+            ? ((glyphX - bbox.left) /
+                    (bbox.right - bbox.left).clamp(1.0, double.infinity))
+                .clamp(0.0, 1.0)
+            : 0.5;
+        // Position-driven hue shift + faster time component so each
+        // glyph's hue drifts during the transition. 1.2 wraps roughly
+        // once across a 10-char word, so adjacent glyphs read distinct.
+        final hue = ((norm * 1.2 + t * 1.6) % 1.0) * 360.0;
+        // Pastel saturation = pearl, not psychedelic. Matches the
+        // iridescent fragment shader's HSV pick (0.32) but slightly
+        // bumped here so the tint reads on top of textNormal.
+        final shimmer = HSVColor.fromAHSV(1.0, hue, 0.42, 1.0).toColor();
+        if (isInsert || isRemove) {
+          // Strong pulse on changing chars — peaks early so the
+          // shimmer is visible during the slide-in, fades by end.
+          final intensity = _triangle(t, peak: 0.4);
+          return shimmer.withValues(alpha: intensity * 0.95);
+        }
+        if (isKeep) {
+          // Continuous L→R shimmer wave + neighbor echo near changes.
+          final wave = _wavePulse(t, glyphX);
+          final echo = falloff > 0
+              ? _triangle(localT, peak: 0.4) * falloff * 0.55
+              : 0.0;
+          final intensity = (wave * 0.65 + echo).clamp(0.0, 1.0);
+          return shimmer.withValues(alpha: intensity * 0.7);
         }
         return null;
       case ThemeTextEffect.pop:

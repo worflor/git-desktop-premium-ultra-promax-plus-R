@@ -475,10 +475,22 @@ class _TimelineStripState extends State<_TimelineStrip> {
   bool _dragging = false;
   _GLayout? _layout;
   List<double> _percents = [];
-  int _layoutVersion = 0;
+  // Content signature, not length. Length-only cache keys missed:
+  //   (a) growth without rebuilding churn maps → second half rendered
+  //       gray because later hashes weren't in the (stale) churnNorm map
+  //   (b) same-length-different-content updates (branch switch, filter
+  //       toggle, HEAD moved) → layout + colors stayed stale
+  // Signature combines length + first/last commit hash, which catches
+  // every reasonable mutation while staying O(1) to compute.
+  String _layoutSignature = '';
   Map<String, double> _churnNorm = {};
   Map<String, double> _netRatio = {};
   int _cacheVersion = 0;
+
+  static String _signatureOf(List<CommitHistoryEntry> commits) {
+    if (commits.isEmpty) return '';
+    return '${commits.length}|${commits.first.commitHash}|${commits.last.commitHash}';
+  }
 
   @override
   void dispose() {
@@ -490,7 +502,7 @@ class _TimelineStripState extends State<_TimelineStrip> {
   void _rebuildLayout() {
     _layout = _buildLayout(widget.commits);
     _percents = _computePercents(widget.commits);
-    _layoutVersion = widget.commits.length;
+    _layoutSignature = _signatureOf(widget.commits);
     _rebuildChurnMaps();
   }
 
@@ -503,10 +515,16 @@ class _TimelineStripState extends State<_TimelineStrip> {
   @override
   void didUpdateWidget(_TimelineStrip old) {
     super.didUpdateWidget(old);
-    if (old.commits.length != widget.commits.length) {
+    final newSig = _signatureOf(widget.commits);
+    if (_signatureOf(old.commits) != newSig) {
+      // Content changed (length OR first/last hash). Force full rebuild;
+      // _rebuildLayout also rebuilds churn maps so colors stay synced
+      // with the new commit set.
       _layout = null;
-    }
-    if (old.detailCache.length != widget.detailCache.length) {
+    } else if (!identical(old.detailCache, widget.detailCache) ||
+        old.detailCache.length != widget.detailCache.length) {
+      // Commits unchanged but cache mutated (details streamed in for
+      // visible commits) — refresh colors only, no layout rework needed.
       _rebuildChurnMaps();
     }
   }
@@ -531,7 +549,7 @@ class _TimelineStripState extends State<_TimelineStrip> {
   Widget build(BuildContext context) {
     if (widget.commits.isEmpty) return const SizedBox.shrink();
 
-    if (_layout == null || _layoutVersion != widget.commits.length)
+    if (_layout == null || _layoutSignature != _signatureOf(widget.commits))
       _rebuildLayout();
 
     return LayoutBuilder(builder: (ctx, constraints) {
@@ -930,9 +948,17 @@ class _HistoryPageState extends State<HistoryPage> {
     if (commits.isEmpty) return;
     final r = await bulkGetCommitDetails(repo, commits, limit: _historyLimit);
     if (!mounted || !r.ok) return;
-    for (final entry in r.data!.entries) {
-      _detailCache.putIfAbsent('$repo::${entry.key}', () => entry.value);
-    }
+    // Bulk fill the cache, then notify so anything depending on
+    // `_detailCache` (timeline rail churn colors, file impact summary,
+    // etc.) actually rebuilds. Without setState, the cache silently
+    // populates but no widget knows — the timeline rail stayed gray
+    // until the user happened to click a commit and trigger an
+    // unrelated setState in `_loadDetail`.
+    setState(() {
+      for (final entry in r.data!.entries) {
+        _detailCache.putIfAbsent('$repo::${entry.key}', () => entry.value);
+      }
+    });
   }
 
   Future<void> _loadReflog(String repo) async {
@@ -1291,11 +1317,14 @@ class _CommitRowState extends State<_CommitRow> {
                 ? t.itemActiveBg
                 : widget.inRange
                     ? t.chromeAccent.withValues(alpha: 0.06)
-                    : (_hovered ? t.itemHoverBg : Colors.transparent),
+                    : (_hovered
+                        ? t.itemHoverBg
+                        : t.itemHoverBg.withValues(alpha: 0)),
             border: Border(
               left: BorderSide(
-                color:
-                    widget.isSelected ? t.itemActiveBorder : Colors.transparent,
+                color: widget.isSelected
+                    ? t.itemActiveBorder
+                    : t.itemActiveBorder.withValues(alpha: 0),
                 width: 2,
               ),
               bottom: BorderSide(color: t.chromeBorderFaint),
@@ -1458,7 +1487,7 @@ class _ReflogRowState extends State<_ReflogRow> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
           padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),
-          color: _hovered ? t.itemHoverBg : Colors.transparent,
+          color: _hovered ? t.itemHoverBg : t.itemHoverBg.withValues(alpha: 0),
           child: Opacity(
             opacity: 0.7,
             child: Row(children: [

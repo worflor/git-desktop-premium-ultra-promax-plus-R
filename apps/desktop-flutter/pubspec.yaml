@@ -16,6 +16,10 @@ dependencies:
   path: ^1.9.0
   flutter_svg: ^2.0.10+1
   file_picker: ^8.1.4
+  # Renders GitHub-flavored markdown in PR/issue comment bodies.
+  # Without this the codex-style review comments show as raw text
+  # (`### Codex Review`, `**Reviewed commit**`, etc).
+  flutter_markdown: ^0.7.4
 
 dev_dependencies:
   flutter_test:
@@ -58,3 +62,7 @@ flutter:
     - family: VT323
       fonts:
         - asset: assets/fonts/VT323-Regular.ttf
+  shaders:
+    - shaders/cellshade.frag
+    - shaders/iridescent.frag
+    - shaders/glass.frag

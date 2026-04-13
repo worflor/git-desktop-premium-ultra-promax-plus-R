@@ -3,6 +3,8 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import 'liquid_glass.dart';
+import 'theme_shaders.dart';
 import 'tokens.dart';
 
 enum AppMaterialTone {
@@ -132,6 +134,35 @@ class MaterialSurface extends StatelessWidget {
         radius ?? shader.geometry.radius.clamp(0, 18).toDouble();
     final fill = _resolvedFill(t, shader, runtime);
     final border = borderColor ?? t.chromeBorder;
+    // Kirby (and any future ink-line theme) opts into a thick
+    // opaque border via shader.outlineWidth. Real cell-shading reads
+    // as DIRECTIONAL — like a fixed light source from the top-left —
+    // so the border is asymmetric: bright accent rim on top + left
+    // (catches the imaginary key light), heavier ink line on bottom +
+    // right (the shadow side).
+    final inkOutline = shader.outlineWidth > 0;
+    final BoxBorder? resolvedBorder;
+    if (this.border != null) {
+      resolvedBorder = this.border;
+    } else if (inkOutline) {
+      // Variable line weight — the #1 thing that separates a real
+      // comic-book ink line from a CAD stroke. Top+left are the
+      // lightest (rim of the form catching key light), right is
+      // heavier (shadow side), bottom is heaviest (the line carries
+      // the form's weight, settles into the page). This 1:1.4:2 ratio
+      // is roughly what you'd see in a Coipel or Maleev panel.
+      final w = shader.outlineWidth;
+      final rimColor = t.accentBright;
+      resolvedBorder = Border(
+        top: BorderSide(color: rimColor, width: w * 0.5),
+        left: BorderSide(color: rimColor, width: w * 0.5),
+        right: BorderSide(color: border, width: w * 1.2),
+        bottom: BorderSide(color: border, width: w * 1.5),
+      );
+    } else {
+      resolvedBorder =
+          Border.all(color: border.withValues(alpha: borderAlpha));
+    }
     Widget content = SizedBox(
       width: width,
       height: height,
@@ -141,8 +172,7 @@ class MaterialSurface extends StatelessWidget {
           decoration: BoxDecoration(
             color: fill,
             borderRadius: BorderRadius.circular(resolvedRadius),
-            border: this.border ??
-                Border.all(color: border.withValues(alpha: borderAlpha)),
+            border: resolvedBorder,
             boxShadow:
                 _materialShadows(t, shader, runtime, elevated, hardShadow),
           ),
@@ -152,22 +182,17 @@ class MaterialSurface extends StatelessWidget {
               if (texture && shader.texture != ThemeTexture.none)
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: CustomPaint(
-                      painter:
-                          MaterialTexturePainter(tokens: t, shader: shader),
-                    ),
+                    child: MaterialTextureLayer(tokens: t, shader: shader),
                   ),
                 ),
               if (_showsStructuralGlaze(t, shader))
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _SurfaceGlazePainter(
-                        tokens: t,
-                        runtime: runtime,
-                        radius: resolvedRadius,
-                        isGlass: shader.mode == SurfaceMaterialMode.glass,
-                      ),
+                    child: _GlazeLayer(
+                      tokens: t,
+                      runtime: runtime,
+                      radius: resolvedRadius,
+                      isGlass: shader.mode == SurfaceMaterialMode.glass,
                     ),
                   ),
                 ),
@@ -366,6 +391,20 @@ List<BoxShadow> _materialShadows(
   bool elevated,
   bool hardShadow,
 ) {
+  // Kirby: comic-book "popped-off-page" hard shadow, no blur,
+  // offset down-right. Color sourced from chromeBorder so the shadow
+  // and the panel-border ink line stay matched if the theme palette
+  // is ever retuned.
+  if (shader.outlineWidth > 0) {
+    if (!elevated) return const [];
+    return [
+      BoxShadow(
+        color: t.chromeBorder,
+        offset: const Offset(3, 3),
+        blurRadius: 0,
+      ),
+    ];
+  }
   if (t.usesStampedShadow) {
     final shadows = <BoxShadow>[];
     if (elevated) {
@@ -427,12 +466,19 @@ class MaterialTexturePainter extends CustomPainter {
   final SurfaceMaterialShader shader;
   final BlendMode blendMode;
   final double opacityScale;
+  /// Live state from `LiquidGlassProvider`. Only consumed by the
+  /// `iridescent` texture path — drives the shader's time-drift and
+  /// window-tilt parallax. Other texture types ignore it and the
+  /// painter's `shouldRepaint` doesn't trigger on pulse changes for
+  /// them, so they pay nothing.
+  final LiquidGlassPulse pulse;
 
   const MaterialTexturePainter({
     required this.tokens,
     required this.shader,
     this.blendMode = BlendMode.overlay,
     this.opacityScale = 1,
+    this.pulse = LiquidGlassPulse.zero,
   });
 
   @override
@@ -457,7 +503,16 @@ class MaterialTexturePainter extends CustomPainter {
           canvas.drawCircle(Offset(x, y), 0.35 + (i % 4) * 0.16, paint);
         }
       case ThemeTexture.scanlines:
-        paint.color = Colors.black.withValues(alpha: intensity);
+        // Scanline color: theme's ambient hue on dark themes (the
+        // phosphor-coating-glows-between-rows effect), or pure black
+        // on light themes (the standard darker-stripe-between-pixels
+        // effect). Both produce visible contrast against the bg
+        // — the old hardcoded black was invisible on dark themes
+        // because dark-on-dark has no contrast.
+        final scanColor = tokens.isDark
+            ? (tokens.themeAmbient ?? tokens.textNormal)
+            : Colors.black;
+        paint.color = scanColor.withValues(alpha: intensity);
         for (var y = 0.0; y < size.height; y += 4) {
           canvas.drawRect(Rect.fromLTWH(0, y, size.width, 2), paint);
         }
@@ -478,6 +533,53 @@ class MaterialTexturePainter extends CustomPainter {
             }
           }
         }
+      case ThemeTexture.halftone:
+        // GPU shader pass: one drawRect with the cellshade fragment
+        // program. Far cheaper than the per-cell software loops above
+        // — it's a couple of dozen ALU ops per pixel running on the
+        // GPU. Falls through to a flat ink overlay until the shader
+        // asset finishes loading on first frame.
+        final fragShader = ThemeShaders.cellshadeShader(
+          width: size.width,
+          height: size.height,
+          mode: 0, // halftone
+          dotSize: 6,
+          intensity: intensity,
+          ink: tokens.textStrong,
+          paper: const Color(0x00000000), // transparent — paper bleeds through
+          outline: 0, // surface borders carry the ink line, not this layer
+        );
+        if (fragShader != null) {
+          canvas.drawRect(
+            Offset.zero & size,
+            Paint()..shader = fragShader,
+          );
+        }
+      case ThemeTexture.iridescent:
+        // GPU shader pass: position-derived hue spectrum + time-drift +
+        // window-tilt parallax. Drawn srcOver (not overlay) at a
+        // controlled alpha so the shimmer reads as the surface's own
+        // optical character. The pulse sourcing comes from
+        // `LiquidGlassProvider` — when the user drags the window, the
+        // tilt vector slides the iridescent gradient like real
+        // mother-of-pearl catching a different angle of light.
+        final fragShader = ThemeShaders.iridescentShader(
+          width: size.width,
+          height: size.height,
+          intensity: intensity,
+          pearlBase: tokens.bg0.withValues(alpha: 1 - intensity * 0.65),
+          tiltX: pulse.tilt.dx,
+          tiltY: pulse.tilt.dy,
+          time: pulse.time,
+        );
+        if (fragShader != null) {
+          canvas.drawRect(
+            Offset.zero & size,
+            Paint()
+              ..shader = fragShader
+              ..blendMode = BlendMode.srcOver,
+          );
+        }
       case ThemeTexture.none:
         break;
     }
@@ -488,7 +590,116 @@ class MaterialTexturePainter extends CustomPainter {
       oldDelegate.tokens != tokens ||
       oldDelegate.shader != shader ||
       oldDelegate.blendMode != blendMode ||
-      oldDelegate.opacityScale != opacityScale;
+      oldDelegate.opacityScale != opacityScale ||
+      // Pulse drives the iridescent shader's drift + parallax. For
+      // non-iridescent textures the wrapper widget doesn't subscribe
+      // to pulse, so old.pulse == new.pulse and this is a no-op.
+      oldDelegate.pulse.time != pulse.time ||
+      oldDelegate.pulse.tilt != pulse.tilt;
+}
+
+/// Wrapper around `MaterialTexturePainter` that subscribes the
+/// iridescent texture to `LiquidGlassProvider` so the shader's time
+/// drift + window-tilt parallax actually drive repaints. Other texture
+/// kinds (grain, scanlines, pixels, halftone) get a plain CustomPaint
+/// with no pulse subscription — they pay zero cost.
+///
+/// Used both for per-surface texture passes inside `MaterialSurface`
+/// and for the app-root texture backdrop in `main.dart` so iridescent
+/// parallax behaves identically wherever the texture appears.
+class MaterialTextureLayer extends StatelessWidget {
+  final AppTokens tokens;
+  final SurfaceMaterialShader shader;
+  final BlendMode blendMode;
+  final double opacityScale;
+
+  const MaterialTextureLayer({
+    super.key,
+    required this.tokens,
+    required this.shader,
+    this.blendMode = BlendMode.overlay,
+    this.opacityScale = 1,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (shader.texture == ThemeTexture.iridescent) {
+      final pulse = LiquidGlassProvider.of(context);
+      return RepaintBoundary(
+        child: ValueListenableBuilder<LiquidGlassPulse>(
+          valueListenable: pulse,
+          builder: (_, value, __) => CustomPaint(
+            painter: MaterialTexturePainter(
+              tokens: tokens,
+              shader: shader,
+              blendMode: blendMode,
+              opacityScale: opacityScale,
+              pulse: value,
+            ),
+          ),
+        ),
+      );
+    }
+    return CustomPaint(
+      painter: MaterialTexturePainter(
+        tokens: tokens,
+        shader: shader,
+        blendMode: blendMode,
+        opacityScale: opacityScale,
+      ),
+    );
+  }
+}
+
+/// Wrapper around `_SurfaceGlazePainter` that subscribes glass-using
+/// nacre surfaces to `LiquidGlassProvider` so the shader's time/tilt
+/// drift drives repaints. Other themes get a plain CustomPaint with no
+/// subscription — they pay zero cost.
+///
+/// `RepaintBoundary` isolates the per-frame glass repaint from the rest
+/// of the surface tree (text, borders, shadows). Without it, every
+/// pulse tick would invalidate the whole surface subtree.
+class _GlazeLayer extends StatelessWidget {
+  final AppTokens tokens;
+  final SurfaceMaterialRuntime runtime;
+  final double radius;
+  final bool isGlass;
+
+  const _GlazeLayer({
+    required this.tokens,
+    required this.runtime,
+    required this.radius,
+    required this.isGlass,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isGlass && tokens.id == AppThemeId.nacre) {
+      final pulse = LiquidGlassProvider.of(context);
+      return RepaintBoundary(
+        child: ValueListenableBuilder<LiquidGlassPulse>(
+          valueListenable: pulse,
+          builder: (_, value, __) => CustomPaint(
+            painter: _SurfaceGlazePainter(
+              tokens: tokens,
+              runtime: runtime,
+              radius: radius,
+              isGlass: isGlass,
+              pulse: value,
+            ),
+          ),
+        ),
+      );
+    }
+    return CustomPaint(
+      painter: _SurfaceGlazePainter(
+        tokens: tokens,
+        runtime: runtime,
+        radius: radius,
+        isGlass: isGlass,
+      ),
+    );
+  }
 }
 
 /// Draws the structural glaze + (for glass) a bottom-right falloff wash.
@@ -500,12 +711,18 @@ class _SurfaceGlazePainter extends CustomPainter {
   final SurfaceMaterialRuntime runtime;
   final double radius;
   final bool isGlass;
+  /// Live state from `LiquidGlassProvider` — drives the glass shader's
+  /// time/tilt drift. Only consumed by the nacre branch; other themes
+  /// ignore it and the painter compares-equal across pulse changes so
+  /// they don't repaint.
+  final LiquidGlassPulse pulse;
 
   const _SurfaceGlazePainter({
     required this.tokens,
     required this.runtime,
     required this.radius,
     required this.isGlass,
+    this.pulse = LiquidGlassPulse.zero,
   });
 
   @override
@@ -516,6 +733,50 @@ class _SurfaceGlazePainter extends CustomPainter {
     );
     canvas.save();
     canvas.clipRRect(rrect);
+
+    // Nacre uses the real-time liquid-glass fragment shader: rounded-rect
+    // SDF rim with chromatic dispersion, two-term spec (soft body + hot
+    // core) wrapping a faux-dome normal, center darken for thickness,
+    // and time/tilt drift driven by `LiquidGlassProvider`. The pulse's
+    // tilt comes from window-position delta so the spec genuinely
+    // shifts as the user drags the window. Falls back to no glaze on
+    // first frame until the shader program finishes loading.
+    if (isGlass && tokens.id == AppThemeId.nacre) {
+      // Corner radius scales with the surface radius but biased larger
+      // so the meniscus reads as gloopier than the actual clip rect.
+      final cornerR = math.max(radius * 1.6, 12.0);
+      final fragShader = ThemeShaders.glassShader(
+        width: size.width,
+        height: size.height,
+        tint: const Color(0x00000000),
+        highlight: Colors.white,
+        // Cool dichroic — pearl-violet so Nacre's identity color shows
+        // up in the dichroic side wash, not just generic white.
+        highlightCool: tokens.accentBright,
+        tiltX: pulse.tilt.dx,
+        tiltY: pulse.tilt.dy,
+        time: pulse.time,
+        intensity: 1.0,
+        fresnelPx: 24,
+        chromatic: 1.6,
+        specSharp: 10,
+        specCore: 4,
+        thickness: 0.55,
+        cornerRadius: cornerR,
+        noise: 0.55,
+        anim: 1,
+      );
+      if (fragShader != null) {
+        canvas.drawRect(
+          Offset.zero & size,
+          Paint()
+            ..shader = fragShader
+            ..blendMode = BlendMode.plus,
+        );
+      }
+      canvas.restore();
+      return;
+    }
 
     // Per-instance geometry: rotation in [-0.14, 0.14] rad (~±8°) and
     // stop offset in [-0.04, 0.04] pulled from a hash of the surface size.
@@ -569,5 +830,10 @@ class _SurfaceGlazePainter extends CustomPainter {
       old.tokens != tokens ||
       old.runtime != runtime ||
       old.radius != radius ||
-      old.isGlass != isGlass;
+      old.isGlass != isGlass ||
+      // Nacre is the only theme that consumes pulse — comparing on
+      // every shouldRepaint is fine because the AnimatedBuilder above
+      // already gates non-nacre surfaces from receiving pulse changes.
+      old.pulse.time != pulse.time ||
+      old.pulse.tilt != pulse.tilt;
 }
