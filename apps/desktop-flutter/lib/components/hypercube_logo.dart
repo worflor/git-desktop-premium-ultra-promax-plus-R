@@ -30,6 +30,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   Duration? _lastElapsed;
   bool _isTickerModeVisible = true;
   bool _animateWhenUnfocused = true;
+  bool _reduceMotion = false;
   bool _hasViewFocus = true;
   AppLifecycleState? _appLifecycleState;
   PreferencesState? _prefs;
@@ -52,25 +53,53 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     // of PreferencesState) trigger _syncTicker — equivalent to context.select
     // but valid outside of build().
     final prefs = context.read<PreferencesState>();
+    final bool isFirstPrefSync = _prefs == null;
     if (_prefs != prefs) {
       _prefs?.removeListener(_onPrefsChanged);
       _prefs = prefs;
       _prefs!.addListener(_onPrefsChanged);
       _animateWhenUnfocused = prefs.logoAnimatesWhenUnfocused;
+      _reduceMotion = prefs.reduceMotion;
+      // Fresh mount with reduce-motion already on: randomize the frozen
+      // pose so cold launches don't all show the same still image.
+      // Mid-session toggles (handled in _onPrefsChanged) never randomize
+      // — they preserve whatever pose the user was looking at.
+      if (_reduceMotion) {
+        _engine.setReduced(true, randomizeOnEnter: isFirstPrefSync);
+      }
     }
 
     _syncTicker();
   }
 
   void _onPrefsChanged() {
-    final newValue = _prefs!.logoAnimatesWhenUnfocused;
-    if (newValue != _animateWhenUnfocused) {
-      _animateWhenUnfocused = newValue;
+    final prefs = _prefs!;
+    final newAnimate = prefs.logoAnimatesWhenUnfocused;
+    final newReduce = prefs.reduceMotion;
+    if (newAnimate != _animateWhenUnfocused || newReduce != _reduceMotion) {
+      _animateWhenUnfocused = newAnimate;
+      if (newReduce != _reduceMotion) {
+        _reduceMotion = newReduce;
+        // Mid-session toggle: freeze where we are (or thaw from there).
+        // Never randomize — that would be a jarring pose jump and defeat
+        // the whole "graceful stop" fantasy.
+        _engine.setReduced(newReduce, randomizeOnEnter: false);
+      }
       _syncTicker();
     }
   }
 
   void _syncTicker() {
+    // Reduce motion: the engine needs a few hundred ms of ticking to
+    // gracefully lerp to its rest pose. Keep the ticker running until
+    // [isAtReducedRest] flips true; after that _tick() self-stops.
+    if (_reduceMotion) {
+      if (!_engine.isAtReducedRest && !_ticker.isActive) {
+        _lastElapsed = null;
+        _ticker.start();
+      }
+      return;
+    }
     final AppLifecycleState lifecycleState =
         _appLifecycleState ?? AppLifecycleState.resumed;
     final bool isFocused =
@@ -152,6 +181,14 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     if (mounted) {
       setState(() {});
     }
+
+    // Reduce-motion self-stop: once the engine has eased into its rest
+    // pose, kill the ticker so we stop painting frames. The widget will
+    // hold at the canonical pose until reduce-motion is toggled off.
+    if (_reduceMotion && _engine.isAtReducedRest && _ticker.isActive) {
+      _ticker.stop();
+      _lastElapsed = null;
+    }
   }
 
   void _updatePointer(Offset localPosition, {Offset? globalPosition}) {
@@ -198,6 +235,14 @@ class _HypercubeLogoState extends State<HypercubeLogo>
             details.localPosition,
             globalPosition: details.globalPosition,
           );
+          // In reduced mode the ticker may have stopped after the cube
+          // settled. Drag is intentional motion — wake the ticker so
+          // warp updates render live. _tick self-stops again after the
+          // drag releases and the post-drag damping decays to zero.
+          if (_reduceMotion && !_ticker.isActive) {
+            _lastElapsed = null;
+            _ticker.start();
+          }
         },
         onPanUpdate: (DragUpdateDetails details) {
           _updatePointer(

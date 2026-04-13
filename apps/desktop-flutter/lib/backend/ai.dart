@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'ai_audit_store.dart';
 import '../diagnostics/diagnostics_state.dart';
+import 'commit_format.dart';
 import 'dtos.dart';
 import 'git_result.dart';
 
@@ -271,6 +272,13 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
   String customPrompt = '',
   String existingMessage = '',
   bool readOnly = true,
+  // Commit format preferences. Caller (the commit composer) threads
+  // these from PreferencesState; the prompt builder turns them into
+  // inline instructions so the AI's output respects the user's chosen
+  // structure/voice/coverage.
+  CommitStructure structure = kDefaultCommitStructure,
+  CommitVoice voice = kDefaultCommitVoice,
+  CommitCoverage coverage = kDefaultCommitCoverage,
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
@@ -322,6 +330,9 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       statusSummary: bundle.statusSummary,
       statSummary: bundle.statSummary,
       diffSummary: bundle.diffBundle.promptBody,
+      structure: structure,
+      voice: voice,
+      coverage: coverage,
     );
 
     // --- API providers: direct HTTP, no CLI ---
@@ -2397,6 +2408,9 @@ String _buildCommitMessagePrompt({
   String lastCommitAge = '',
   String projectAge = '',
   int uniqueContributors = 0,
+  CommitStructure structure = kDefaultCommitStructure,
+  CommitVoice voice = kDefaultCommitVoice,
+  CommitCoverage coverage = kDefaultCommitCoverage,
 }) {
   final buffer = StringBuffer();
   buffer.writeln('You are generating a git commit message.');
@@ -2404,14 +2418,9 @@ String _buildCommitMessagePrompt({
       .writeln('Return only the message — plain text, ASCII characters only.');
   buffer.writeln();
   buffer.writeln('<commit_message_structure>');
-  buffer.writeln(
-      'Subject line: start with an imperative verb, keep it tight enough to read in a git log.');
-  buffer.writeln(
-      '  Examples: "add OAuth token refresh", "fix pipe deadlock on Windows", "refactor diff context collection"');
-  buffer.writeln(
-      'Body (optional): separated by a blank line. Explain the motivation and impact — the diff already shows the mechanics.');
-  buffer.writeln(
-      '  Include a body when the change has non-obvious motivation, affects multiple concerns, or has caveats.');
+  buffer.writeln(_structureDirective(structure));
+  buffer.writeln(_voiceDirective(voice));
+  buffer.writeln(_coverageDirective(coverage));
   buffer.writeln('</commit_message_structure>');
   buffer.writeln();
   buffer.writeln(
@@ -2468,6 +2477,67 @@ String _buildCommitMessagePrompt({
     payload = payload.substring(0, _maxPromptChars);
   }
   return payload;
+}
+
+// ── Commit-message format directives ────────────────────────────────────
+//
+// Each user-facing preference axis maps to an explicit instruction the
+// model can follow. The three strings below are appended in sequence
+// inside <commit_message_structure>; together they fully specify the
+// skeleton, prose voice, and coverage depth the user picked in settings.
+//
+// Prompt discipline:
+//   * positive phrasing only — every line tells the model what the
+//     output IS, never what to avoid.
+//   * no examples — models anchor too strongly on inline samples and
+//     start echoing their specifics.
+//   * no numbers or caps — thresholds like "at most two" invite the
+//     model to either game the count or contort to satisfy it. The
+//     user's chosen axis already carries the size signal.
+
+String _structureDirective(CommitStructure s) {
+  switch (s) {
+    case CommitStructure.titleBody:
+      return 'Structure: open with a single subject line, then a blank line, '
+          'then a body paragraph. Let the subject read tight enough for the '
+          'git log. Let the body carry motivation and impact.';
+    case CommitStructure.titleOnly:
+      return 'Structure: write a single subject line that stands on its own. '
+          'Let every meaningful point sit inside that one line.';
+    case CommitStructure.freeform:
+      return 'Structure: write one flowing paragraph. Let the thought build '
+          'naturally from the first sentence onward.';
+  }
+}
+
+String _voiceDirective(CommitVoice v) {
+  switch (v) {
+    case CommitVoice.verbLed:
+      return 'Voice: imperative mood. Open with an action verb in present '
+          'tense. Let each sentence carry forward motion.';
+    case CommitVoice.descriptive:
+      return 'Voice: descriptive. Lead with nouns in present tense. State '
+          'what the commit contains as a label of its content.';
+    case CommitVoice.narrative:
+      return 'Voice: narrative. Past tense and conversational. Tell the story '
+          'of what happened and why.';
+  }
+}
+
+String _coverageDirective(CommitCoverage c) {
+  switch (c) {
+    case CommitCoverage.essentials:
+      return 'Coverage: name the headline change. Trust the diff to speak '
+          'for the details.';
+    case CommitCoverage.balanced:
+      return 'Coverage: name the headline change along with the material '
+          'consequences that matter most — the ones that ripple into '
+          'callers or invariants.';
+    case CommitCoverage.everything:
+      return 'Coverage: surface the headline change along with every '
+          'meaningfully-touched area. Name modules, call out invariants, '
+          'trace downstream effects.';
+  }
 }
 
 ReviewGuardrailProfile _guardrailProfileForStage(int stage) {

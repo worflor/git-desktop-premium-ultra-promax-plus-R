@@ -56,10 +56,27 @@ enum ThemeParticles {
   chalkdust,
   ethereal,
   voidRain,
-  quantum
+  quantum,
+  whisps,
 }
 
 enum ThemeInteraction { none, vibration, caustic, etch, warp, chalk }
+
+/// Per-theme flavor layer on top of the base [ThemeMorphText] per-char
+/// morph. Each value adds a small decorative pass during the transition
+/// window — the base LCS-aligned slide + fade is always the substrate,
+/// and the effect decorates which chars are arriving/leaving.
+enum ThemeTextEffect {
+  none, // pure fade+slide (petrichor — restraint)
+  glint, // warm accent sweep L→R across the morph region (halo)
+  stamp, // offset drop-shadow settling in on inserted chars (nightwalker)
+  burn, // amber glow on leaving chars; cool glow on arriving (redshift)
+  chalk, // small dust speckles at changing char positions (blackboard)
+  pop, // single-frame scale snap on inserted chars (crafty)
+  twinkle, // pale star-dots flash near inserted chars (aether)
+  sparkle, // twinkle + a diagonal streak at collision (quanta)
+  warmth, // amber tint on leaving chars as they fade (helix)
+}
 
 const defaultThemeId = AppThemeId.aether;
 
@@ -100,6 +117,7 @@ class SurfaceMaterialShader {
   final ThemeParticles particles;
   final double parallaxStrength;
   final ThemeInteraction interaction;
+  final ThemeTextEffect textEffect;
   final SurfaceMaterialGeometry geometry;
 
   const SurfaceMaterialShader({
@@ -115,6 +133,7 @@ class SurfaceMaterialShader {
     this.particles = ThemeParticles.none,
     this.parallaxStrength = 0.5,
     this.interaction = ThemeInteraction.none,
+    this.textEffect = ThemeTextEffect.none,
     this.geometry = const SurfaceMaterialGeometry(),
   });
 
@@ -137,6 +156,24 @@ class SurfaceMaterialShader {
         return Curves.easeInOutCubic;
       case ThemeMotion.elastic:
         return Curves.easeOutBack;
+    }
+  }
+
+  /// Bounded counterpart to [curve] — never overshoots [0, 1]. Use this
+  /// when you're animating a value with asserted bounds (BoxShadow
+  /// blurRadius, Opacity, Color alpha) — extrapolation past 1.0 from
+  /// [Curves.easeOutBack] makes `BoxShadow.lerp` compute a negative
+  /// blurRadius, which trips a `Shadow` assertion in dart:ui/painting.dart
+  /// and breaks the paint tree. For pure translation or scale effects
+  /// where overshoot reads as character, keep using [curve].
+  Curve get safeCurve {
+    switch (motion) {
+      case ThemeMotion.snappy:
+        return Curves.easeOutCubic;
+      case ThemeMotion.fluid:
+        return Curves.easeInOutCubic;
+      case ThemeMotion.elastic:
+        return Curves.easeOutCubic;
     }
   }
 }
@@ -527,7 +564,7 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFD24F22,
       0xFF2F9F71,
       0xFF6D7F95,
-      0xFFCD7F2D,
+      0xFF4E7F5E,
       0xFF0F8F74,
       0xFFA58A6E,
       0xFFCD7F2D,
@@ -553,9 +590,9 @@ final _tokens = <AppThemeId, AppTokens>{
       0x4CCD7F2D,
       0x3D5C4524,
       0xFFCD7F2D,
-      0xFF49372A,
+      0xFF4E7F5E,
       0xFF2F2519,
-      0xFF49372A,
+      0xFF4E7F5E,
       0xFFCD7F2D,
       0xFF9B835D,
       0x73A58A6E,
@@ -566,15 +603,15 @@ final _tokens = <AppThemeId, AppTokens>{
       0xD6FFE6E0,
       0xFF9B835D,
     ],
-    themeAmbient: const Color(0xFFCD7F2D),
-    themeSparkOpacity: 0.06,
+    themeAmbient: const Color(0xFF8D7F4A),
+    themeSparkOpacity: 0.09,
     themeSparkSpeed: const Duration(seconds: 34),
     backdropBlur: 0,
     backdropSaturate: 1,
     appGradientColors: const [
       Color(0xFFF4D8B5),
       Color(0xFFEFE7D6),
-      Color(0xFFDFD4BF)
+      Color(0xFFDED5BD)
     ],
     appGradientAlignments: const [
       Alignment.topLeft,
@@ -627,7 +664,7 @@ final _tokens = <AppThemeId, AppTokens>{
       0x0F51617E,
       0x4051617E,
       0x4C7899FF,
-      0x99000000,
+      0x99080A1C,
       0xFFFF00FF,
       0xFF00FFFF,
       0xFFFFFFFF,
@@ -703,7 +740,7 @@ final _tokens = <AppThemeId, AppTokens>{
       0x4D050C08,
       0xFF1A3A25,
       0x3300FF88,
-      0xB3000000,
+      0xB300120C,
       0xFF00FF88,
       0xFF00E0FF,
       0xFFFFFFFF,
@@ -779,7 +816,7 @@ final _tokens = <AppThemeId, AppTokens>{
       0x0F782832,
       0xFF1C0A0F,
       0x40FF0044,
-      0xCC000000,
+      0xCC160408,
       0xFFFF0044,
       0xFFFF7700,
       0xFFFFFFFF,
@@ -972,6 +1009,7 @@ const themeDefinitions = <AppThemeDefinition>[
       motion: ThemeMotion.fluid,
       luminescence: 1.5,
       particles: ThemeParticles.ethereal,
+      textEffect: ThemeTextEffect.glint,
       parallaxStrength: 0.25,
       interaction: ThemeInteraction.caustic,
       geometry: SurfaceMaterialGeometry(
@@ -997,6 +1035,7 @@ const themeDefinitions = <AppThemeDefinition>[
       motion: ThemeMotion.snappy,
       luminescence: 0.2,
       particles: ThemeParticles.voidRain,
+      textEffect: ThemeTextEffect.stamp,
       parallaxStrength: 0.3,
       interaction: ThemeInteraction.etch,
       geometry: SurfaceMaterialGeometry(
@@ -1041,6 +1080,7 @@ const themeDefinitions = <AppThemeDefinition>[
       motion: ThemeMotion.snappy,
       luminescence: 0.1,
       parallaxStrength: 0,
+      textEffect: ThemeTextEffect.warmth,
     ),
   ),
   AppThemeDefinition(
@@ -1060,6 +1100,7 @@ const themeDefinitions = <AppThemeDefinition>[
       motion: ThemeMotion.fluid,
       luminescence: 0.4,
       particles: ThemeParticles.stardust,
+      textEffect: ThemeTextEffect.twinkle,
       parallaxStrength: 0.26,
       interaction: ThemeInteraction.warp,
     ),
@@ -1081,6 +1122,7 @@ const themeDefinitions = <AppThemeDefinition>[
       motion: ThemeMotion.fluid,
       luminescence: 0.5,
       particles: ThemeParticles.quantum,
+      textEffect: ThemeTextEffect.sparkle,
       parallaxStrength: 0.3,
       interaction: ThemeInteraction.vibration,
       geometry: SurfaceMaterialGeometry(
@@ -1092,7 +1134,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.redshift,
       'Redshift',
-      'Deep space signals and cosmic radiation. Blue energy forward; Red tides receding.',
+      'CRT glass on a ship that never stops, where things ahead sharpen into strangers and things behind soften into goodbyes.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.glass,
@@ -1104,7 +1146,8 @@ const themeDefinitions = <AppThemeDefinition>[
       textureOpacity: 0.08,
       motion: ThemeMotion.fluid,
       luminescence: 0.45,
-      particles: ThemeParticles.embers,
+      particles: ThemeParticles.whisps,
+      textEffect: ThemeTextEffect.burn,
       parallaxStrength: 0.35,
       geometry: SurfaceMaterialGeometry(
         radius: 0,
@@ -1129,6 +1172,7 @@ const themeDefinitions = <AppThemeDefinition>[
       motion: ThemeMotion.snappy,
       luminescence: 0.1,
       particles: ThemeParticles.chalkdust,
+      textEffect: ThemeTextEffect.chalk,
       parallaxStrength: 0.12,
       interaction: ThemeInteraction.chalk,
       geometry: SurfaceMaterialGeometry(
@@ -1155,6 +1199,7 @@ const themeDefinitions = <AppThemeDefinition>[
       motion: ThemeMotion.snappy,
       luminescence: 0.4,
       particles: ThemeParticles.voxels,
+      textEffect: ThemeTextEffect.pop,
       parallaxStrength: 0.3,
       geometry: SurfaceMaterialGeometry(
         radius: 0,
@@ -1171,12 +1216,14 @@ final themeOptions = themeDefinitions
     .map((definition) => definition.option)
     .toList(growable: false);
 
-AppThemeDefinition themeDefinitionFor(AppThemeId id) {
-  for (final definition in themeDefinitions) {
-    if (definition.option.id == id) return definition;
-  }
-  return themeDefinitionFor(defaultThemeId);
-}
+// Built once (O(9)) and reused — avoids the O(9) linear scan that was
+// happening on every `context.themeDefinition` access.
+final Map<AppThemeId, AppThemeDefinition> _themeDefinitionById = {
+  for (final definition in themeDefinitions) definition.option.id: definition,
+};
+
+AppThemeDefinition themeDefinitionFor(AppThemeId id) =>
+    _themeDefinitionById[id] ?? _themeDefinitionById[defaultThemeId]!;
 
 class AppThemeExtension extends ThemeExtension<AppThemeExtension> {
   final AppTokens tokens;

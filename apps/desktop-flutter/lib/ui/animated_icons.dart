@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
+import 'motion.dart';
+
 // ── Animated icon state machine ──────────────────────────────────────────────
 // Each icon transitions between these states. The widget manages its own
 // AnimationControllers internally — callers just set the desired state.
@@ -36,8 +38,8 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
 
   late final AnimationController _hover = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 250),
-    reverseDuration: const Duration(milliseconds: 400),
+    duration: const Duration(milliseconds: 180),
+    reverseDuration: const Duration(milliseconds: 240),
   );
 
   @override
@@ -52,29 +54,54 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
     if (old.state != widget.state) _applyState(widget.state);
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // React to a live toggle of Reduce Motion — if the user flips it ON
+    // while an icon is mid-loop, immediately stop the loop.
+    if (context.reduceMotion) {
+      if (_loop.isAnimating) _loop.stop();
+      if (_hover.isAnimating) _hover.stop();
+    } else {
+      // If the icon is currently in a state that wants a loop but it isn't
+      // running (because we stopped it earlier), resume.
+      if ((widget.state == IconAnimState.loading ||
+              widget.state == IconAnimState.error) &&
+          !_loop.isAnimating) {
+        _loop.repeat();
+      }
+    }
+  }
+
   void _applyState(IconAnimState s) {
+    final reduce = mounted ? context.reduceMotionRead : false;
     switch (s) {
       case IconAnimState.idle:
         _loop.stop();
-        _hover.reverse();
+        reduce ? _hover.value = 0 : _hover.reverse();
       case IconAnimState.hovered:
         _loop.stop();
-        _hover.forward();
+        reduce ? _hover.value = 1 : _hover.forward();
       case IconAnimState.loading:
-        _hover.reverse();
-        _loop.repeat();
+        reduce ? _hover.value = 0 : _hover.reverse();
+        if (!reduce) _loop.repeat();
       case IconAnimState.success:
         _loop.stop();
-        _hover.reverse();
-        _flash.forward(from: 0);
+        reduce ? _hover.value = 0 : _hover.reverse();
+        if (!reduce) _flash.forward(from: 0);
+        else {
+          _flash.value = 1;
+        }
       case IconAnimState.error:
-        _hover.reverse();
-        _loop.repeat();
-        Future.delayed(const Duration(milliseconds: 600), () {
-          if (mounted && widget.state == IconAnimState.error) {
-            _loop.stop();
-          }
-        });
+        reduce ? _hover.value = 0 : _hover.reverse();
+        if (!reduce) {
+          _loop.repeat();
+          Future.delayed(const Duration(milliseconds: 600), () {
+            if (mounted && widget.state == IconAnimState.error) {
+              _loop.stop();
+            }
+          });
+        }
     }
   }
 
@@ -1661,29 +1688,23 @@ class _BranchesPainter extends CustomPainter {
         flowSpeed = 0.0; nParticles = 0; activity = 0.0;
     }
 
-    // ── Pipeline particles — phase driven by loop × flowSpeed ──
-    // Each particle's position t ∈ [0, 1]:
-    //   [0 → 0.42]  base → split  (ascending)
-    //   [0.42 → 1]  split → tips  (duplicates on BOTH branches)
-    final particleTs = <double>[];
-    for (int i = 0; i < nParticles; i++) {
-      particleTs.add((loop * flowSpeed + i / nParticles) % 1.0);
-    }
-
-    // ── Node reactions: particles trigger physical pulses ──
+    // ── Pipeline particles — compute phases once, reuse for pulses
+    //    AND downstream particle rendering. The `particleTs` list is
+    //    a tiny nParticles-sized (≤3) allocation; per-element pulse
+    //    accumulation is fused into the same pass so we only traverse
+    //    once here.
+    final particleTs = List<double>.filled(nParticles, 0.0, growable: false);
     double basePulse = 0, splitPulse = 0, leftTipPulse = 0, rightTipPulse = 0;
-    for (final t in particleTs) {
-      // Base emission window (particle just spawned at t ~ 0)
+    for (int i = 0; i < nParticles; i++) {
+      final t = (loop * flowSpeed + i / nParticles) % 1.0;
+      particleTs[i] = t;
       if (t < 0.10) {
         basePulse = math.max(basePulse, (1.0 - t / 0.10) * 0.75);
       }
-      // Split transit — particle passes through at t ≈ 0.42
       if (t > 0.32 && t < 0.52) {
         final prox = 1.0 - (t - 0.42).abs() / 0.10;
-        splitPulse =
-            math.max(splitPulse, prox.clamp(0.0, 1.0) * 0.85);
+        splitPulse = math.max(splitPulse, prox.clamp(0.0, 1.0) * 0.85);
       }
-      // Tip landing — particle arrives (t → 1.0), both tips fire
       if (t > 0.90) {
         final decay = ((1.0 - t) / 0.10).clamp(0.0, 1.0);
         leftTipPulse = math.max(leftTipPulse, decay * 0.9);
@@ -1691,9 +1712,16 @@ class _BranchesPainter extends CustomPainter {
       }
     }
 
-    // ── Continuous line shimmer — a slow, faint dot gliding each line
-    //    to keep the pipes feeling alive between commit passes. Gated
-    //    on activity so idle is perfectly still. ──
+    // ── Reusable Paints — one for shimmer, one for node halo, one
+    //    for node fill-flash. Previously each helper call allocated a
+    //    fresh Paint; shimmer ran 3×/frame and drawNode ran 4×/frame,
+    //    for up to 14 Paint allocs per frame per icon.
+    final shimmerPaint = Paint()..style = PaintingStyle.fill;
+    final nodeHaloPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.9 * s;
+    final nodeFillPaint = Paint()..style = PaintingStyle.fill;
+
     void shimmer(Offset a, Offset b, double phaseOffset) {
       if (activity < 0.05) return;
       final phase = (loop * flowSpeed * 0.7 + phaseOffset) % 1.0;
@@ -1701,15 +1729,10 @@ class _BranchesPainter extends CustomPainter {
       final py = a.dy + (b.dy - a.dy) * phase;
       final sA = activity * 0.4 * math.sin(phase * math.pi);
       if (sA < 0.04) return;
-      canvas.drawCircle(
-        Offset(px, py), 0.45 * s,
-        Paint()
-          ..color = color.withValues(alpha: sA)
-          ..style = PaintingStyle.fill,
-      );
+      shimmerPaint.color = color.withValues(alpha: sA);
+      canvas.drawCircle(Offset(px, py), 0.45 * s, shimmerPaint);
     }
 
-    // ── Edges (base stroke), then shimmer over them ──
     paint.strokeWidth = 1.5 * s;
     canvas.drawLine(Offset(baseX, baseY), Offset(splitX, splitY), paint);
     canvas.drawLine(Offset(splitX, splitY), Offset(leftX, leftY), paint);
@@ -1719,29 +1742,17 @@ class _BranchesPainter extends CustomPainter {
     shimmer(Offset(splitX, splitY), Offset(leftX, leftY), 0.33);
     shimmer(Offset(splitX, splitY), Offset(rightX, rightY), 0.66);
 
-    // ── Node drawing helper: stroke + fill flash when pulsed ──
     void drawNode(double x, double y, double pulse) {
       final r = nodeR * (1.0 + pulse * 0.55);
-      // Pulse halo (ring expanding outward during pulse)
+      final center = Offset(x, y);
       if (pulse > 0.15) {
-        canvas.drawCircle(
-          Offset(x, y), r + pulse * 1.3 * s,
-          Paint()
-            ..color = color.withValues(alpha: pulse * 0.4)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 0.9 * s,
-        );
+        nodeHaloPaint.color = color.withValues(alpha: pulse * 0.4);
+        canvas.drawCircle(center, r + pulse * 1.3 * s, nodeHaloPaint);
       }
-      // Body
-      canvas.drawCircle(Offset(x, y), r, paint);
-      // Interior fill flash
+      canvas.drawCircle(center, r, paint);
       if (pulse > 0.05) {
-        canvas.drawCircle(
-          Offset(x, y), r * 0.65,
-          Paint()
-            ..color = color.withValues(alpha: pulse)
-            ..style = PaintingStyle.fill,
-        );
+        nodeFillPaint.color = color.withValues(alpha: pulse);
+        canvas.drawCircle(center, r * 0.65, nodeFillPaint);
       }
     }
 
@@ -2082,19 +2093,18 @@ class _XrayPainter extends CustomPainter {
         (cy, scanMidA),
         (cy + halfH * 0.55, scanBotA),
       ];
+      final scanPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.9 * s
+        ..strokeCap = StrokeCap.round;
+      final lineL = cx - halfW + 1.5 * s;
+      final lineR = cx + halfW - 1.5 * s;
       for (final pair in pairs) {
         final y = pair.$1;
         final a = pair.$2;
         if (a <= 0.01) continue;
-        canvas.drawLine(
-          Offset(cx - halfW + 1.5 * s, y),
-          Offset(cx + halfW - 1.5 * s, y),
-          Paint()
-            ..color = color.withValues(alpha: a)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 0.9 * s
-            ..strokeCap = StrokeCap.round,
-        );
+        scanPaint.color = color.withValues(alpha: a);
+        canvas.drawLine(Offset(lineL, y), Offset(lineR, y), scanPaint);
       }
     }
     canvas.restore();

@@ -1551,6 +1551,15 @@ class DiagnosticsState extends ChangeNotifier {
         sidebarPosition: settings.sidebarPosition,
         utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
         utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
+        reduceMotion: settings.reduceMotion,
+        reduceMotionPhase: settings.reduceMotionPhase,
+        stashCabinetDefaultExpanded: settings.stashCabinetDefaultExpanded,
+        instantBlameHover: settings.instantBlameHover,
+        fileSortGuide: settings.fileSortGuide,
+        fileSortInverted: settings.fileSortInverted,
+        commitStructure: settings.commitStructure,
+        commitVoice: settings.commitVoice,
+        commitCoverage: settings.commitCoverage,
       ),
     );
   }

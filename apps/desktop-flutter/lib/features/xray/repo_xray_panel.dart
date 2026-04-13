@@ -8,7 +8,9 @@ import '../../app/repository_xray_state.dart';
 import '../../backend/dtos.dart';
 import '../../components/icons/app_icons.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
+import '../../ui/motion.dart';
 import '../../ui/status_view.dart';
 import '../../ui/tokens.dart';
 
@@ -64,7 +66,6 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
     final repoPath = context.watch<RepositoryState>().activePath;
     return MaterialSurface(
       tone: AppMaterialTone.panelStrong,
-      radius: 14,
       borderAlpha: 0.22,
       elevated: true,
       innerHighlight: true,
@@ -324,7 +325,7 @@ class _Header extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                    color: t.chromeBorder.withValues(alpha: 0.28)),
+                    color: t.chromeBorderStrong),
               ),
               child: Center(
                 child: AppIcon(
@@ -459,7 +460,7 @@ class _DiagnosisStrip extends StatelessWidget {
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(
-            color: t.chromeBorder.withValues(alpha: 0.28),
+            color: t.chromeBorderStrong,
             width: 0.5,
           ),
         ),
@@ -814,7 +815,6 @@ class _PanelBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialSurface(
       tone: AppMaterialTone.surface1,
-      radius: 12,
       borderAlpha: 0.16,
       elevated: false,
       innerHighlight: true,
@@ -880,10 +880,10 @@ class _DiagnosisTokenState extends State<_DiagnosisToken> {
                 clipBehavior: Clip.none,
                 children: [
                   // Invisible wider hit surface
-                  SizedBox(width: 10, height: 28),
+                  const SizedBox(width: 10, height: 28),
                   AnimatedContainer(
-                    duration: const Duration(milliseconds: 120),
-                    curve: Curves.easeOutCubic,
+                    duration: context.motion(context.surfaceShader.duration),
+                    curve: context.surfaceShader.safeCurve,
                     width: barW,
                     height: barH,
                     decoration: BoxDecoration(
@@ -1392,17 +1392,17 @@ class _ChromeChipState extends State<_ChromeChip> {
     );
     final borderColor = widget.activeBorderColor ?? chrome.borderColor;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapUp: (_) => setState(() => _pressed = false),
-        onTapCancel: () => setState(() => _pressed = false),
+    return InteractionFeedback(
+      onTap: widget.onTap,
+      borderRadius: BorderRadius.circular(999),
+      onHoverChanged: (h) => setState(() => _hovered = h),
+      child: Listener(
+        onPointerDown: (_) => setState(() => _pressed = true),
+        onPointerUp: (_) => setState(() => _pressed = false),
+        onPointerCancel: (_) => setState(() => _pressed = false),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 90),
+          duration: context.motion(context.surfaceShader.duration),
+          curve: context.surfaceShader.safeCurve,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
             color: chrome.background,
@@ -1715,7 +1715,6 @@ class _TerritoryBoard extends StatelessWidget {
 
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
-      radius: 12,
       elevated: false,
       innerHighlight: true,
       glaze: false,
@@ -1817,7 +1816,8 @@ class _TerritoryCell extends StatelessWidget {
             message: '${parcel.label}  ·  ${parcel.count}×',
             waitDuration: const Duration(milliseconds: 400),
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 90),
+              duration: context.motion(context.surfaceShader.duration),
+              curve: context.surfaceShader.safeCurve,
               margin: EdgeInsets.all(isChild ? 1.5 : 2.5),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -2001,7 +2001,6 @@ class _CadenceRhythmBoard extends StatelessWidget {
 
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
-      radius: 12,
       elevated: false,
       innerHighlight: true,
       glaze: false,
@@ -2249,7 +2248,6 @@ class _PivotList extends StatelessWidget {
 
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
-      radius: 12,
       elevated: false,
       innerHighlight: false,
       glaze: false,
@@ -2281,7 +2279,7 @@ class _PivotList extends StatelessWidget {
                       bottom: i < pivots.length - 1
                           ? BorderSide(
                               color:
-                                  t.chromeBorder.withValues(alpha: 0.08))
+                                  t.chromeBorderFaint)
                           : BorderSide.none,
                     ),
                   ),
@@ -2406,7 +2404,7 @@ class _SignalRow extends StatelessWidget {
               bottom: isLast
                   ? BorderSide.none
                   : BorderSide(
-                      color: t.chromeBorder.withValues(alpha: 0.08)),
+                      color: t.chromeBorderFaint),
             ),
           ),
           padding:
@@ -2571,14 +2569,6 @@ String _fmtDateMD(DateTime date) {
   return '${months[date.month - 1]} ${date.day}';
 }
 
-String _fmtDateShort(DateTime date) {
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-  return "${months[date.month - 1]} '${date.year.toString().substring(2)}";
-}
-
 String _relativeTime(String iso) {
   final d = DateTime.tryParse(iso);
   if (d == null) return iso;
@@ -2628,17 +2618,18 @@ class _MiniButtonState extends State<_MiniButton> {
         pressed: _pressed,
         enabled: widget.enabled,
         baseBorderColor: t.secondaryBtnBorder);
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor:
-          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      child: GestureDetector(
-        onTap: widget.enabled ? widget.onTap : null,
-        onTapDown:
+    return InteractionFeedback(
+      onTap: widget.enabled ? widget.onTap : null,
+      borderRadius: BorderRadius.circular(6),
+      onHoverChanged: (h) => setState(() => _hovered = h),
+      cursor: widget.enabled
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
+      child: Listener(
+        onPointerDown:
             widget.enabled ? (_) => setState(() => _pressed = true) : null,
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
+        onPointerUp: (_) => setState(() => _pressed = false),
+        onPointerCancel: (_) => setState(() => _pressed = false),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),

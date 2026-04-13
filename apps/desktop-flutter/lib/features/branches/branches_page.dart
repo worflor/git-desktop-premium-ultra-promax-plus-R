@@ -5,6 +5,7 @@ import '../../ui/control_chrome.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
@@ -421,13 +422,14 @@ class _BranchCardState extends State<_BranchCard> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 80),
+        duration: context.motion(const Duration(milliseconds: 80)),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: b.current
               ? t.accentBright.withOpacity(0.06)
               : (_hovered ? t.itemHoverBg : t.surface1),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius:
+              BorderRadius.circular(context.surfaceShader.geometry.radius),
           border: Border.all(
             color: b.current
                 ? t.accentBright.withOpacity(0.2)
@@ -553,11 +555,12 @@ class _TagCard extends StatelessWidget {
       onEnter: (_) => onHoverChange(true),
       onExit: (_) => onHoverChange(false),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 80),
+        duration: context.motion(const Duration(milliseconds: 80)),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: t.surface1,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius:
+              BorderRadius.circular(context.surfaceShader.geometry.radius),
           border: Border.all(color: t.chromeBorder.withOpacity(0.08)),
         ),
         child: Row(children: [
@@ -658,10 +661,10 @@ class _ChromeButtonState extends State<_ChromeButton> {
         child: Opacity(
           opacity: widget.enabled ? 1 : 0.4,
           child: AnimatedScale(
-            duration: const Duration(milliseconds: 80),
+            duration: context.motion(const Duration(milliseconds: 80)),
             scale: chrome.scale,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 80),
+              duration: context.motion(const Duration(milliseconds: 80)),
               padding: EdgeInsets.symmetric(
                 horizontal: widget.compact ? 10 : 12,
                 vertical: widget.compact ? 4 : 6,
@@ -722,7 +725,7 @@ class _BranchIconActionState extends State<_BranchIconAction> {
       child: GestureDetector(
         onTap: widget.enabled ? widget.onTap : null,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           width: 24,
           height: 24,
           decoration: BoxDecoration(

@@ -4,7 +4,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import '../../app/preferences_state.dart';
+import '../../ui/motion.dart';
 import '../../ui/material_surface.dart';
+import '../../ui/morph_text.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/status_view.dart';
 import '../../ui/tokens.dart';
@@ -12,37 +17,10 @@ import '../../backend/git.dart';
 import '../../backend/dtos.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import 'diff_models.dart';
+import 'patch_engine.dart';
 
-// ── Data types ────────────────────────────────────────────────────────────────
-
-enum _LineKind { added, deleted, hunk, meta, context }
-
-const int _kModeAMaxChangedLines = 15000;
-const int _kModeAMaxPayloadBytes = 3 * 1024 * 1024;
-const int _kAnimatedDiffMaxChangedLines = 24;
-const int _kAnimatedDiffMaxPayloadBytes = 4 * 1024;
-const Duration _kBlameHoverDelay = Duration(milliseconds: 180);
-const Duration _kInitialFrameCaptureWindow = Duration(milliseconds: 900);
-const Duration _kScrollFrameCaptureQuietWindow = Duration(milliseconds: 280);
-
-class _ParsedLine {
-  final String text;
-  final String lowerText;
-  final _LineKind kind;
-  final int? lineNumOld;
-  final int? lineNumNew;
-  final int hunkIndex; // which hunk this belongs to (-1 for meta)
-  final String? filePath; // which file this line belongs to (multi-file diffs)
-  const _ParsedLine({
-    required this.text,
-    required this.lowerText,
-    required this.kind,
-    this.lineNumOld,
-    this.lineNumNew,
-    this.hunkIndex = -1,
-    this.filePath,
-  });
-}
+// ── Data types (Moved to diff_models.dart) ────────────────────────────────────
 
 class _AgeRange {
   final DateTime min;
@@ -58,9 +36,9 @@ class _HunkHeader {
 
 // ── Parser ────────────────────────────────────────────────────────────────────
 
-List<_ParsedLine> _parseDiff(String diff) {
+List<ParsedLine> _parseDiff(String diff) {
   final rawLines = diff.split('\n');
-  final result = <_ParsedLine>[];
+  final result = <ParsedLine>[];
   int oldLine = 0, newLine = 0, hunkIdx = -1;
   String? currentFile;
 
@@ -82,28 +60,41 @@ List<_ParsedLine> _parseDiff(String diff) {
         newLine = int.tryParse(m.group(2)!) ?? 0;
       }
       hunkIdx++;
-      result.add(_ParsedLine(
+      result.add(ParsedLine(
           text: line,
           lowerText: line.toLowerCase(),
-          kind: _LineKind.hunk,
+          kind: LineKind.hunk,
           hunkIndex: hunkIdx,
           filePath: currentFile));
     } else if (line.startsWith('+') && !line.startsWith('+++')) {
-      result.add(_ParsedLine(
+      result.add(ParsedLine(
           text: line,
           lowerText: line.toLowerCase(),
-          kind: _LineKind.added,
+          kind: LineKind.added,
           lineNumNew: newLine++,
           hunkIndex: hunkIdx,
           filePath: currentFile));
     } else if (line.startsWith('-') && !line.startsWith('---')) {
-      result.add(_ParsedLine(
+      result.add(ParsedLine(
           text: line,
           lowerText: line.toLowerCase(),
-          kind: _LineKind.deleted,
+          kind: LineKind.deleted,
           lineNumOld: oldLine++,
           hunkIndex: hunkIdx,
           filePath: currentFile));
+    } else if (line.startsWith('\\')) {
+      // Git's "\ No newline at end of file" marker. It's not a line of
+      // content — it annotates the *previous* line (which is the final
+      // line on its side of the diff and has no trailing newline). Pop
+      // and re-push that line with the flag set so the patch engine can
+      // reconstruct the marker on regeneration. Crucially, do NOT emit
+      // a ParsedLine of our own: a prior version fell into the context
+      // branch below and bumped `oldLine` / `newLine` for a line that
+      // isn't real content, corrupting every subsequent hunk position.
+      if (result.isNotEmpty) {
+        final prev = result.removeLast();
+        result.add(prev.copyWith(noNewlineAtEof: true));
+      }
     } else if (line.startsWith('new file mode ') ||
         line.startsWith('deleted file mode ') ||
         line.startsWith('old mode ') ||
@@ -115,23 +106,23 @@ List<_ParsedLine> _parseDiff(String diff) {
         line.startsWith('GIT binary patch') ||
         line.startsWith('--- ') ||
         line.startsWith('+++ ')) {
-      result.add(_ParsedLine(
-          text: line, lowerText: line.toLowerCase(), kind: _LineKind.meta,
+      result.add(ParsedLine(
+          text: line, lowerText: line.toLowerCase(), kind: LineKind.meta,
           filePath: currentFile));
     } else if (line.isNotEmpty) {
-      result.add(_ParsedLine(
+      result.add(ParsedLine(
           text: line,
           lowerText: line.toLowerCase(),
-          kind: _LineKind.context,
+          kind: LineKind.context,
           lineNumOld: oldLine++,
           lineNumNew: newLine++,
           hunkIndex: hunkIdx,
           filePath: currentFile));
     } else {
-      result.add(_ParsedLine(
+      result.add(ParsedLine(
           text: line,
           lowerText: '',
-          kind: _LineKind.context,
+          kind: LineKind.context,
           hunkIndex: hunkIdx));
     }
   }
@@ -139,10 +130,10 @@ List<_ParsedLine> _parseDiff(String diff) {
   return result;
 }
 
-List<_HunkHeader> _extractHunks(List<_ParsedLine> lines) {
+List<_HunkHeader> _extractHunks(List<ParsedLine> lines) {
   final result = <_HunkHeader>[];
   for (int i = 0; i < lines.length; i++) {
-    if (lines[i].kind == _LineKind.hunk) {
+    if (lines[i].kind == LineKind.hunk) {
       final text = lines[i].text;
       // Extract just the @@ ... @@ portion as label
       final m = RegExp(r'^(@@ [^ ]+ [^ ]+ @@)(.*)$').firstMatch(text);
@@ -310,7 +301,7 @@ class _DiffFileHeaderState extends State<_DiffFileHeader> {
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
+              ThemeMorphText(
                 statusLabel,
                 style: TextStyle(
                   color: t.textMuted,
@@ -325,7 +316,7 @@ class _DiffFileHeaderState extends State<_DiffFileHeader> {
                 color: t.chromeBorder.withValues(alpha: 0.35),
               ),
               const SizedBox(width: 6),
-              Text(
+              ThemeMorphText(
                 hunkLabel,
                 style: TextStyle(
                   color: t.textMuted,
@@ -353,6 +344,16 @@ class DiffShell extends StatefulWidget {
   final int jumpToLineRequestId;
   final bool showFileHeader;
 
+  /// When true, line-level staging gestures are enabled. Toggles are applied
+  /// live to the index via `git apply --cached`. The parent is notified via
+  /// [onStagingApplied] after a successful apply so it can refresh its diff
+  /// and working-tree status.
+  final bool enableStaging;
+
+  /// Called after each successful live apply so the host can refresh its
+  /// diff view and status. Not called on failure.
+  final VoidCallback? onStagingApplied;
+
   const DiffShell({
     super.key,
     required this.filePath,
@@ -364,6 +365,8 @@ class DiffShell extends StatefulWidget {
     this.jumpToLineIndex,
     this.jumpToLineRequestId = 0,
     this.showFileHeader = true,
+    this.enableStaging = false,
+    this.onStagingApplied,
   });
 
   @override
@@ -371,6 +374,15 @@ class DiffShell extends StatefulWidget {
 }
 
 class _DiffShellState extends State<DiffShell> {
+  static const int _kAnimatedDiffMaxChangedLines = 24;
+  static const int _kAnimatedDiffMaxPayloadBytes = 4 * 1024;
+  static const Duration _kInitialFrameCaptureWindow = Duration(milliseconds: 1500);
+  static const Duration _kBlameHoverDelay = Duration(milliseconds: 180);
+  static const int _kModeAMaxChangedLines = 15000;
+  static const int _kModeAMaxPayloadBytes = 3 * 1024 * 1024;
+  static const Duration _kScrollFrameCaptureQuietWindow =
+      Duration(milliseconds: 280);
+
   final _searchCtrl = TextEditingController();
   String _searchTerm = '';
   bool _searchVisible = false;
@@ -395,7 +407,7 @@ class _DiffShellState extends State<DiffShell> {
   bool _useAnimatedTextMode = false;
   int _sessionChangedLines = 0;
   int _sessionPayloadBytes = 0;
-  List<_ParsedLine> _displayLines = const [];
+  List<ParsedLine> _displayLines = const [];
   Timer? _blameHoverTimer;
   Timer? _sessionFlushTimer;
   late final TimingsCallback _frameTimingsCallback;
@@ -417,7 +429,26 @@ class _DiffShellState extends State<DiffShell> {
 
   // Hunk navigation
   List<_HunkHeader> _hunks = [];
-  List<_ParsedLine> _lines = [];
+  List<ParsedLine> _lines = [];
+
+  // Preference snapshots, refreshed every build so async callbacks
+  // (blame hover timer) can read them without a BuildContext.
+  bool _reduceMotion = false;
+  bool _instantBlameHover = false;
+
+  // ── Staging ────────────────────────────────────────────────────────────
+  static const Duration _kApplyDebounce = Duration(milliseconds: 250);
+  final FocusNode _stagingFocus = FocusNode(debugLabel: 'DiffShellStaging');
+  Timer? _applyDebounce;
+  bool _applying = false;
+  String? _stagingError;
+  int? _keyboardLineIndex; // index into _lines
+  int? _lastToggledLineIndex; // for shift-range anchor (into _lines)
+
+  // Paint-drag (press-and-drag over the stage column to paint multiple lines)
+  bool _paintActive = false;
+  bool _paintTargetStaged = false;
+  final Set<String> _paintedKeys = {};
 
   @override
   void initState() {
@@ -462,10 +493,26 @@ class _DiffShellState extends State<DiffShell> {
 
   void _rebuild() {
     if (widget.diffContent != null && widget.diffContent!.isNotEmpty) {
+      // Capture existing stage state to re-hydrate after parse
+      final stagedKeys =
+          _lines.where((l) => l.isStaged).map((l) => l.stagingKey).toSet();
+
       final parsedLines = _parseDiff(widget.diffContent!);
-      _lines = widget.showFileHeader
+      var newLines = widget.showFileHeader
           ? _trimLeadingMetaLines(parsedLines)
           : parsedLines;
+
+      // Re-hydrate isStaged state
+      if (stagedKeys.isNotEmpty) {
+        newLines = newLines.map((l) {
+          if (stagedKeys.contains(l.stagingKey)) {
+            return l.copyWith(isStaged: true);
+          }
+          return l;
+        }).toList();
+      }
+
+      _lines = newLines;
       _hunks = _extractHunks(_lines);
       _refreshDisplayLines();
       _computeMaxLineWidth();
@@ -500,7 +547,7 @@ class _DiffShellState extends State<DiffShell> {
         : utf8.encode(widget.diffContent!).length;
     _sessionChangedLines = _lines
         .where((line) =>
-            line.kind == _LineKind.added || line.kind == _LineKind.deleted)
+            line.kind == LineKind.added || line.kind == LineKind.deleted)
         .length;
     _useAnimatedTextMode = !_sessionSearchActivated &&
         _sessionChangedLines <= _kAnimatedDiffMaxChangedLines &&
@@ -640,6 +687,8 @@ class _DiffShellState extends State<DiffShell> {
     _flushRenderMetrics();
     _blameHoverTimer?.cancel();
     _sessionFlushTimer?.cancel();
+    _applyDebounce?.cancel();
+    _stagingFocus.dispose();
     SchedulerBinding.instance.removeTimingsCallback(_frameTimingsCallback);
     _searchCtrl.dispose();
     _scrollCtrl.dispose();
@@ -796,7 +845,9 @@ class _DiffShellState extends State<DiffShell> {
       return;
     }
     _blameHoverTimer?.cancel();
-    _blameHoverTimer = Timer(_kBlameHoverDelay, () {
+    final delay =
+        _instantBlameHover ? Duration.zero : _kBlameHoverDelay;
+    _blameHoverTimer = Timer(delay, () {
       if (!mounted || _hoveredLine != lineNum) {
         return;
       }
@@ -804,9 +855,297 @@ class _DiffShellState extends State<DiffShell> {
     });
   }
 
+  // ── Staging orchestration ─────────────────────────────────────────────
+
+  bool get _stagingEnabled =>
+      widget.enableStaging && widget.repositoryPath != null;
+
+  /// The staging cell (click target) is to the LEFT of the gutter.
+  /// Width chosen to feel like a comfortable target without crowding
+  /// the line number.
+  static const double _stageCellWidth = 16.0;
+
+  /// Height of every diff row. Used for paint-drag hit-testing.
+  static const double _lineItemExtent = 18.0;
+
+  /// Toggle staging on a single line (by its index in [_lines]). Optionally
+  /// pair-aware: if [autoPair] is true and the line is part of a -/+
+  /// replacement, the partner is toggled coherently to the same target
+  /// state. Does NOT apply on its own — callers should schedule apply.
+  void _setLineStaged(int index, bool staged, {bool autoPair = true}) {
+    if (index < 0 || index >= _lines.length) return;
+    final line = _lines[index];
+    if (line.kind != LineKind.added && line.kind != LineKind.deleted) return;
+    if (line.isStaged == staged) return;
+    _lines[index] = line.copyWith(isStaged: staged);
+    if (autoPair) {
+      final pair = findReplacementPair(_lines, index);
+      if (pair != null && _lines[pair].isStaged != staged) {
+        _lines[pair] = _lines[pair].copyWith(isStaged: staged);
+      }
+    }
+  }
+
+  /// Click on the sigil of a single line. Supports shift-extend (range from
+  /// the last toggled line) and alt (disable auto-pairing).
+  void _handleSigilTap(
+    ParsedLine line, {
+    required bool shift,
+    required bool alt,
+  }) {
+    final idx = _lines.indexWhere((l) => identical(l, line));
+    if (idx < 0) return;
+    final target = !_lines[idx].isStaged;
+
+    setState(() {
+      if (shift && _lastToggledLineIndex != null) {
+        final anchor = _lastToggledLineIndex!;
+        final a = math.min(anchor, idx);
+        final b = math.max(anchor, idx);
+        for (int i = a; i <= b; i++) {
+          _setLineStaged(i, target, autoPair: !alt);
+        }
+      } else {
+        _setLineStaged(idx, target, autoPair: !alt);
+      }
+      _lastToggledLineIndex = idx;
+      _keyboardLineIndex = idx;
+      _refreshDisplayLines();
+    });
+    _scheduleApply();
+  }
+
+  /// Double-click on a hunk header toggles every +/- line in that hunk.
+  /// Target state = "stage all if any are unstaged, otherwise unstage all."
+  void _handleHunkDoubleTap(int hunkIndex) {
+    final inHunk = <int>[];
+    for (int i = 0; i < _lines.length; i++) {
+      final l = _lines[i];
+      if (l.hunkIndex != hunkIndex) continue;
+      if (l.kind == LineKind.added || l.kind == LineKind.deleted) {
+        inHunk.add(i);
+      }
+    }
+    if (inHunk.isEmpty) return;
+    final anyUnstaged = inHunk.any((i) => !_lines[i].isStaged);
+    setState(() {
+      for (final i in inHunk) {
+        _setLineStaged(i, anyUnstaged, autoPair: false);
+      }
+      _refreshDisplayLines();
+    });
+    _scheduleApply();
+  }
+
+  /// Toggle every +/- line across the diff. Bound to F key.
+  void _handleFileStageToggle() {
+    final targetables = <int>[];
+    for (int i = 0; i < _lines.length; i++) {
+      final k = _lines[i].kind;
+      if (k == LineKind.added || k == LineKind.deleted) targetables.add(i);
+    }
+    if (targetables.isEmpty) return;
+    final anyUnstaged = targetables.any((i) => !_lines[i].isStaged);
+    setState(() {
+      for (final i in targetables) {
+        _setLineStaged(i, anyUnstaged, autoPair: false);
+      }
+      _refreshDisplayLines();
+    });
+    _scheduleApply();
+  }
+
+  // ── Paint-drag ────────────────────────────────────────────────────────
+
+  void _beginPaint(ParsedLine line) {
+    final idx = _lines.indexWhere((l) => identical(l, line));
+    if (idx < 0) return;
+    _paintActive = true;
+    _paintTargetStaged = !_lines[idx].isStaged;
+    _paintedKeys
+      ..clear()
+      ..add(line.stagingKey);
+    setState(() {
+      _setLineStaged(idx, _paintTargetStaged);
+      _lastToggledLineIndex = idx;
+      _keyboardLineIndex = idx;
+      _refreshDisplayLines();
+    });
+  }
+
+  /// Paint-drag continues: hit-test against the display list using the
+  /// pointer's global Y position. Only fires when [_paintActive].
+  void _paintUpdate(Offset globalPosition) {
+    if (!_paintActive) return;
+    final box = _listViewKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final local = box.globalToLocal(globalPosition);
+    if (local.dy < 0 || local.dy > box.size.height) return;
+    final scroll = _scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0;
+    final displayIndex = ((local.dy + scroll) / _lineItemExtent).floor();
+    if (displayIndex < 0 || displayIndex >= _displayLines.length) return;
+    final line = _displayLines[displayIndex];
+    if (_paintedKeys.contains(line.stagingKey)) return;
+    if (line.kind != LineKind.added && line.kind != LineKind.deleted) return;
+    _paintedKeys.add(line.stagingKey);
+    final idx = _lines.indexWhere((l) => identical(l, line));
+    if (idx < 0) return;
+    setState(() {
+      _setLineStaged(idx, _paintTargetStaged);
+      _lastToggledLineIndex = idx;
+      _keyboardLineIndex = idx;
+      _refreshDisplayLines();
+    });
+  }
+
+  void _endPaint() {
+    if (!_paintActive) return;
+    _paintActive = false;
+    _paintedKeys.clear();
+    _scheduleApply();
+  }
+
+  final GlobalKey _listViewKey = GlobalKey();
+
+  // ── Keyboard navigation ───────────────────────────────────────────────
+
+  KeyEventResult _handleKey(FocusNode _, KeyEvent event) {
+    if (!_stagingEnabled) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    final isShift =
+        HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.shiftLeft) ||
+            HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.shiftRight);
+
+    if (key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.keyJ) {
+      _moveKeyboardCursor(1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.keyK) {
+      _moveKeyboardCursor(-1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.space && _keyboardLineIndex != null) {
+      final line = _lines[_keyboardLineIndex!];
+      _handleSigilTap(line, shift: isShift, alt: false);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyH && _keyboardLineIndex != null) {
+      _handleHunkDoubleTap(_lines[_keyboardLineIndex!].hunkIndex);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyF) {
+      _handleFileStageToggle();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _moveKeyboardCursor(int delta) {
+    if (_lines.isEmpty) return;
+    int start = _keyboardLineIndex ?? -1;
+    int cur = start;
+    for (int step = 0; step < _lines.length; step++) {
+      cur += delta;
+      if (cur < 0 || cur >= _lines.length) return;
+      final k = _lines[cur].kind;
+      if (k == LineKind.added || k == LineKind.deleted) {
+        setState(() => _keyboardLineIndex = cur);
+        _scrollToLine(_lines[cur]);
+        return;
+      }
+    }
+  }
+
+  void _scrollToLine(ParsedLine line) {
+    if (!_scrollCtrl.hasClients) return;
+    final displayIdx = _displayLines.indexWhere(
+      (l) => l.stagingKey == line.stagingKey,
+    );
+    if (displayIdx < 0) return;
+    final targetY = displayIdx * _lineItemExtent;
+    final viewH = _scrollCtrl.position.viewportDimension;
+    final offset = _scrollCtrl.offset;
+    if (targetY < offset) {
+      _scrollCtrl.motionAnimateTo(targetY,
+          context: context,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut);
+    } else if (targetY > offset + viewH - _lineItemExtent) {
+      _scrollCtrl.motionAnimateTo(targetY - viewH + _lineItemExtent * 2,
+          context: context,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut);
+    }
+  }
+
+  // ── Live apply ────────────────────────────────────────────────────────
+
+  void _scheduleApply() {
+    if (!_stagingEnabled) return;
+    _applyDebounce?.cancel();
+    _applyDebounce = Timer(_kApplyDebounce, _runApply);
+  }
+
+  Future<void> _runApply() async {
+    if (!_stagingEnabled || _applying) {
+      if (_applying) _scheduleApply();
+      return;
+    }
+    final repo = widget.repositoryPath!;
+    // Group lines by file path so multi-file diffs apply per-file.
+    final byFile = <String, List<ParsedLine>>{};
+    for (final line in _lines) {
+      final path = line.filePath ?? widget.filePath;
+      byFile.putIfAbsent(path, () => []).add(line);
+    }
+
+    // Snapshot for rollback on failure.
+    final snapshot = _lines.map((l) => l.isStaged).toList(growable: false);
+
+    _applying = true;
+    String? firstError;
+    for (final entry in byFile.entries) {
+      final patch = PatchEngine.buildStagedPatch(entry.key, entry.value);
+      final r = await applyFileStaging(repo, entry.key, patch);
+      if (!r.ok) {
+        firstError = r.error ?? 'git apply failed';
+        break;
+      }
+    }
+    _applying = false;
+    if (!mounted) return;
+
+    if (firstError != null) {
+      // Rollback optimistic toggles.
+      setState(() {
+        for (int i = 0; i < _lines.length && i < snapshot.length; i++) {
+          if (_lines[i].isStaged != snapshot[i]) {
+            _lines[i] = _lines[i].copyWith(isStaged: snapshot[i]);
+          }
+        }
+        _stagingError = firstError;
+        _refreshDisplayLines();
+      });
+      return;
+    }
+
+    if (_stagingError != null) {
+      setState(() => _stagingError = null);
+    }
+    widget.onStagingApplied?.call();
+  }
+
   void _refreshDisplayLines() {
     final sourceLines =
         widget.showFileHeader ? _trimLeadingMetaLines(_lines) : _lines;
+    
+    // Un-staged lines are no longer filtered out completely. They remain in the UI
+    // and visually dim, allowing users to tap/drag them again to un-stage.
     final term = _searchTerm.toLowerCase();
     if (term.isEmpty) {
       _displayLines = sourceLines;
@@ -844,10 +1183,10 @@ class _DiffShellState extends State<DiffShell> {
     _maxLineWidth = (gutterW + sidePad + maxChars * charWidth).clamp(minW, maxW);
   }
 
-  List<_ParsedLine> _trimLeadingMetaLines(List<_ParsedLine> lines) {
+  List<ParsedLine> _trimLeadingMetaLines(List<ParsedLine> lines) {
     var firstContentIndex = 0;
     while (firstContentIndex < lines.length &&
-        lines[firstContentIndex].kind == _LineKind.meta) {
+        lines[firstContentIndex].kind == LineKind.meta) {
       firstContentIndex++;
     }
     return firstContentIndex == 0 ? lines : lines.sublist(firstContentIndex);
@@ -869,10 +1208,11 @@ class _DiffShellState extends State<DiffShell> {
         0.0,
         _scrollCtrl.position.maxScrollExtent,
       );
-      _scrollCtrl.animateTo(
+      _scrollCtrl.motionAnimateTo(
         targetOffset,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
+        context: context,
+        duration: context.surfaceShader.duration,
+        curve: context.surfaceShader.safeCurve,
       );
     });
   }
@@ -1005,6 +1345,12 @@ class _DiffShellState extends State<DiffShell> {
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
+    final prefs = context.watch<PreferencesState>();
+    // Cache prefs so async methods (blame hover timer) can read them without
+    // needing a BuildContext. Overwrite on every build so pref changes
+    // propagate immediately.
+    _reduceMotion = prefs.reduceMotion;
+    _instantBlameHover = prefs.instantBlameHover;
     final hasContent =
         widget.diffContent != null && widget.diffContent!.isNotEmpty;
 
@@ -1168,67 +1514,122 @@ class _DiffShellState extends State<DiffShell> {
 
         // ── Diff lines ────────────────────────────────────────────────────
         Expanded(
-          child: ScrollConfiguration(
-            behavior:
-                ScrollConfiguration.of(context).copyWith(scrollbars: true),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                // Content is at least as wide as the viewport so there's no
-                // unnecessary horizontal scroll when lines are short.
-                final contentWidth =
-                    _maxLineWidth > constraints.maxWidth
+          child: Focus(
+            focusNode: _stagingFocus,
+            onKeyEvent: _handleKey,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _stagingEnabled ? () => _stagingFocus.requestFocus() : null,
+              child: ScrollConfiguration(
+                behavior:
+                    ScrollConfiguration.of(context).copyWith(scrollbars: true),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Content is at least as wide as the viewport so there's
+                    // no unnecessary horizontal scroll when lines are short.
+                    final contentWidth = _maxLineWidth > constraints.maxWidth
                         ? _maxLineWidth
                         : constraints.maxWidth;
-                return SingleChildScrollView(
-                  controller: _hScrollCtrl,
-                  scrollDirection: Axis.horizontal,
-                  physics: const ClampingScrollPhysics(),
-                  child: SizedBox(
-                    width: contentWidth,
-                    child: ListView.builder(
-                      controller: _searchVisible ? null : _scrollCtrl,
-                      padding: const EdgeInsets.only(bottom: 16),
-                      itemCount: displayLines.length,
-                      itemExtent: 18,
-                      itemBuilder: (ctx, i) {
-                        final line = displayLines[i];
-                        // Resolve file path: prefer the line's own tag (for multi-file diffs),
-                        // fall back to the widget's filePath for single-file views.
-                        final lineFile = line.filePath ?? widget.filePath;
-                        return _DiffLine(
-                          line: line,
-                          tokens: t,
-                          blameEntry: line.lineNumNew != null
-                              ? _blameFor(lineFile, line.lineNumNew!)
-                              : null,
-                          hovered: _hoveredLine == line.lineNumNew &&
-                              line.lineNumNew != null,
-                          onGutterEnter:
-                              _canShowInlineBlame && line.lineNumNew != null
+                    return SingleChildScrollView(
+                      controller: _hScrollCtrl,
+                      scrollDirection: Axis.horizontal,
+                      physics: const ClampingScrollPhysics(),
+                      child: SizedBox(
+                        width: contentWidth,
+                        child: ListView.builder(
+                          key: _listViewKey,
+                          controller: _searchVisible ? null : _scrollCtrl,
+                          padding: const EdgeInsets.only(bottom: 16),
+                          itemCount: displayLines.length,
+                          itemExtent: _lineItemExtent,
+                          itemBuilder: (ctx, i) {
+                            final line = displayLines[i];
+                            final lineFile = line.filePath ?? widget.filePath;
+                            final kbFocused = _stagingEnabled &&
+                                _keyboardLineIndex != null &&
+                                _keyboardLineIndex! >= 0 &&
+                                _keyboardLineIndex! < _lines.length &&
+                                identical(_lines[_keyboardLineIndex!], line);
+                            return _DiffLine(
+                              key: ValueKey(line),
+                              line: line,
+                              tokens: t,
+                              blameEntry: line.lineNumNew != null
+                                  ? _blameFor(lineFile, line.lineNumNew!)
+                                  : null,
+                              hovered: _hoveredLine == line.lineNumNew &&
+                                  line.lineNumNew != null,
+                              onGutterEnter: _canShowInlineBlame &&
+                                      line.lineNumNew != null
                                   ? () {
-                                      setState(
-                                          () => _hoveredLine = line.lineNumNew!);
-                                      _scheduleBlameLoad(lineFile, line.lineNumNew!);
+                                      setState(() =>
+                                          _hoveredLine = line.lineNumNew!);
+                                      _scheduleBlameLoad(
+                                          lineFile, line.lineNumNew!);
                                     }
                                   : null,
-                          onGutterExit: () {
-                            _blameHoverTimer?.cancel();
-                            setState(() => _hoveredLine = null);
+                              onGutterExit: () {
+                                _blameHoverTimer?.cancel();
+                                setState(() => _hoveredLine = null);
+                              },
+                              searchTerm: _searchTerm,
+                              useAnimatedTextMode:
+                                  _useAnimatedTextMode && !_reduceMotion,
+                              wearIntensity: _wearMapVisible &&
+                                      line.lineNumNew != null
+                                  ? _wearIntensityFor(
+                                      lineFile, line.lineNumNew!)
+                                  : null,
+                              stageCellWidth: _stageCellWidth,
+                              stagingEnabled: _stagingEnabled,
+                              keyboardFocused: kbFocused,
+                              onSigilTap: _stagingEnabled
+                                  ? (shift, alt) {
+                                      _stagingFocus.requestFocus();
+                                      _handleSigilTap(line,
+                                          shift: shift, alt: alt);
+                                    }
+                                  : null,
+                              onPaintStart: _stagingEnabled
+                                  ? () {
+                                      _stagingFocus.requestFocus();
+                                      _beginPaint(line);
+                                    }
+                                  : null,
+                              onPaintMove:
+                                  _stagingEnabled ? _paintUpdate : null,
+                              onPaintEnd: _stagingEnabled ? _endPaint : null,
+                              onHunkDoubleTap: _stagingEnabled
+                                  ? () {
+                                      _stagingFocus.requestFocus();
+                                      _handleHunkDoubleTap(line.hunkIndex);
+                                    }
+                                  : null,
+                            );
                           },
-                          searchTerm: _searchTerm,
-                          useAnimatedTextMode: _useAnimatedTextMode,
-                          wearIntensity: _wearMapVisible && line.lineNumNew != null
-                              ? _wearIntensityFor(lineFile, line.lineNumNew!)
-                              : null,
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ),
           ),
         ),
+        if (_stagingError != null)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            color: t.stateDeleted.withValues(alpha: 0.12),
+            child: Text(
+              'Partial stage failed: $_stagingError',
+              style: TextStyle(
+                color: t.stateDeleted,
+                fontSize: 10.5,
+                fontFamily: 'JetBrainsMono',
+              ),
+            ),
+          ),
       ]),
       Positioned(
         top: 0,
@@ -1250,8 +1651,8 @@ class _DiffShellState extends State<DiffShell> {
 
 // ── Diff line ─────────────────────────────────────────────────────────────────
 
-class _DiffLine extends StatelessWidget {
-  final _ParsedLine line;
+class _DiffLine extends StatefulWidget {
+  final ParsedLine line;
   final AppTokens tokens;
   final BlameLineData? blameEntry;
   final bool hovered;
@@ -1259,9 +1660,26 @@ class _DiffLine extends StatelessWidget {
   final VoidCallback onGutterExit;
   final String searchTerm;
   final bool useAnimatedTextMode;
-  final double? wearIntensity; // 0 = newest, 1 = oldest; null = no wear map
+  final double? wearIntensity;
+
+  // Staging
+  final double stageCellWidth;
+  final bool stagingEnabled;
+  final bool keyboardFocused;
+
+  /// Tap on the stage sigil. Booleans carry shift/alt modifier state.
+  final void Function(bool shift, bool alt)? onSigilTap;
+
+  /// Vertical drag started on the stage sigil of this line — paint mode.
+  final VoidCallback? onPaintStart;
+  final void Function(Offset globalPosition)? onPaintMove;
+  final VoidCallback? onPaintEnd;
+
+  /// Double-click on the hunk header row — toggles the whole hunk.
+  final VoidCallback? onHunkDoubleTap;
 
   const _DiffLine({
+    Key? key,
     required this.line,
     required this.tokens,
     required this.blameEntry,
@@ -1271,35 +1689,64 @@ class _DiffLine extends StatelessWidget {
     required this.searchTerm,
     required this.useAnimatedTextMode,
     this.wearIntensity,
-  });
+    this.stageCellWidth = 16.0,
+    this.stagingEnabled = false,
+    this.keyboardFocused = false,
+    this.onSigilTap,
+    this.onPaintStart,
+    this.onPaintMove,
+    this.onPaintEnd,
+    this.onHunkDoubleTap,
+  }) : super(key: key);
+
+  @override
+  State<_DiffLine> createState() => _DiffLineState();
+}
+
+class _DiffLineState extends State<_DiffLine> {
+  /// Hover anywhere across the left click zone (ribbon + sigil + gutter).
+  /// Drives the sigil's hover-border affordance so the whole margin reads
+  /// as clickable.
+  bool _lineHover = false;
 
   @override
   Widget build(BuildContext context) {
-    final t = tokens;
-    final l = line;
-    final isMeta = l.kind == _LineKind.meta;
+    final t = widget.tokens;
+    final l = widget.line;
+    final isMeta = l.kind == LineKind.meta;
+    final isAdded = l.kind == LineKind.added;
+    final isDeleted = l.kind == LineKind.deleted;
+    final isHunk = l.kind == LineKind.hunk;
+    final isStageable = isAdded || isDeleted;
+
+    // Tint strength: staged lines get a slightly stronger wash so their
+    // membership is unmistakable without dimming text contrast.
+    final double tintAlpha = l.isStaged ? 0.18 : 0.10;
 
     Color? lineBg;
     Color textColor;
+    Color sigilColor = t.textMuted;
 
     switch (l.kind) {
-      case _LineKind.added:
-        lineBg = t.stateAdded.withValues(alpha: 0.1);
+      case LineKind.added:
+        lineBg = t.stateAdded.withValues(alpha: tintAlpha);
         textColor = t.stateAdded;
+        sigilColor = t.stateAdded;
         break;
-      case _LineKind.deleted:
-        lineBg = t.stateDeleted.withValues(alpha: 0.1);
+      case LineKind.deleted:
+        lineBg = t.stateDeleted.withValues(alpha: tintAlpha);
         textColor = t.stateDeleted;
+        sigilColor = t.stateDeleted;
         break;
-      case _LineKind.hunk:
+      case LineKind.hunk:
         lineBg = t.chromeAccent.withValues(alpha: 0.07);
         textColor = t.accentBright;
         break;
-      case _LineKind.meta:
+      case LineKind.meta:
         lineBg = t.surface0.withValues(alpha: 0.18);
         textColor = t.textMuted.withValues(alpha: 0.72);
         break;
-      case _LineKind.context:
+      case LineKind.context:
         lineBg = null;
         textColor = t.textNormal;
         break;
@@ -1307,13 +1754,13 @@ class _DiffLine extends StatelessWidget {
 
     // Build gutter text (old | new line numbers or hunk marker)
     String gutterText = '';
-    if (l.kind == _LineKind.hunk) {
+    if (isHunk) {
       gutterText = '···';
-    } else if (l.kind == _LineKind.added) {
+    } else if (isAdded) {
       gutterText = l.lineNumNew != null ? '${l.lineNumNew}' : '';
-    } else if (l.kind == _LineKind.deleted) {
+    } else if (isDeleted) {
       gutterText = l.lineNumOld != null ? '${l.lineNumOld}' : '';
-    } else if (l.kind == _LineKind.context) {
+    } else if (l.kind == LineKind.context) {
       gutterText = l.lineNumNew != null ? '${l.lineNumNew}' : '';
     }
 
@@ -1321,15 +1768,15 @@ class _DiffLine extends StatelessWidget {
     // toward hypercubeNegative (oldest). Alpha scales by intensity so ancient
     // lines fade out while recent ones glow in the theme's warm tone.
     Color? wearBg;
-    if (wearIntensity != null && !isMeta && l.kind != _LineKind.hunk) {
+    if (widget.wearIntensity != null && !isMeta && !isHunk) {
       wearBg = Color.lerp(
         t.hypercubePositive.withValues(alpha: 0.32),
         t.hypercubeNegative.withValues(alpha: 0.08),
-        wearIntensity!,
+        widget.wearIntensity!,
       );
     }
 
-    final Color gutterBg = hovered
+    final Color gutterBg = widget.hovered
         ? t.accentBright.withValues(alpha: 0.06)
         : isMeta
             ? Colors.transparent
@@ -1345,8 +1792,8 @@ class _DiffLine extends StatelessWidget {
       child: Text(
         gutterText,
         style: TextStyle(
-          color: hovered
-              ? (blameEntry != null
+          color: widget.hovered
+              ? (widget.blameEntry != null
                   ? t.hyperChromatic1.withValues(alpha: 0.9)
                   : t.textMuted)
               : t.textMuted.withValues(alpha: 0.5),
@@ -1355,23 +1802,23 @@ class _DiffLine extends StatelessWidget {
         ),
       ),
     );
-    final gutterContent = onGutterEnter == null && !hovered
+    final gutterContent = widget.onGutterEnter == null && !widget.hovered
         ? gutterCell
         : MouseRegion(
-            onEnter: onGutterEnter != null ? (_) => onGutterEnter!() : null,
-            onExit: (_) => onGutterExit(),
-            cursor: onGutterEnter != null
+            onEnter: widget.onGutterEnter != null
+                ? (_) => widget.onGutterEnter!()
+                : null,
+            onExit: (_) => widget.onGutterExit(),
+            cursor: widget.onGutterEnter != null
                 ? SystemMouseCursors.cell
                 : MouseCursor.defer,
             child: gutterCell,
           );
 
-    final useAnimatedText = useAnimatedTextMode &&
-        searchTerm.isEmpty &&
+    final useAnimatedText = widget.useAnimatedTextMode &&
+        widget.searchTerm.isEmpty &&
         l.text.length <= 160 &&
-        (l.kind == _LineKind.added ||
-            l.kind == _LineKind.deleted ||
-            l.kind == _LineKind.hunk);
+        (isAdded || isDeleted || isHunk);
     final textChild = useAnimatedText
         ? _DiffMeltText(
             text: l.text,
@@ -1381,10 +1828,31 @@ class _DiffLine extends StatelessWidget {
             l.text.isEmpty ? ' ' : l.text,
             textColor,
             t,
-            searchTerm,
+            widget.searchTerm,
             fontSize: isMeta ? 11 : 12,
             height: isMeta ? 1.3 : 1.5,
           );
+
+    // ── Stage sigil column ────────────────────────────────────────────
+    // The sigil itself is drag-only (paint mode). Click is handled by the
+    // outer zone below so the whole left margin is one generous hit target.
+    final Widget stageCell = widget.stagingEnabled
+        ? SizedBox(
+            width: widget.stageCellWidth,
+            child: isStageable
+                ? _StageSigil(
+                    tokens: t,
+                    kind: l.kind,
+                    staged: l.isStaged,
+                    hovered: _lineHover,
+                    color: sigilColor,
+                    onPaintStart: () => widget.onPaintStart?.call(),
+                    onPaintMove: (g) => widget.onPaintMove?.call(g),
+                    onPaintEnd: () => widget.onPaintEnd?.call(),
+                  )
+                : const SizedBox.shrink(),
+          )
+        : const SizedBox.shrink();
 
     Widget lineContent = Expanded(
       child: Container(
@@ -1395,75 +1863,233 @@ class _DiffLine extends StatelessWidget {
       ),
     );
 
+    // Left ribbon: a solid 2px stripe at the very edge marking staged lines.
+    // Keeps staged lines legible at full contrast — no opacity dimming.
+    final bool showStageChrome = widget.stagingEnabled;
+    final Color ribbonColor = l.isStaged
+        ? (isAdded ? t.stateAdded : t.stateDeleted)
+        : Colors.transparent;
+    final Widget ribbon = showStageChrome
+        ? (widget.keyboardFocused
+            ? Container(
+                width: 2,
+                decoration: BoxDecoration(
+                  color: t.accentBright,
+                  boxShadow: [
+                    BoxShadow(
+                      color: t.accentBright.withValues(alpha: 0.45),
+                      blurRadius: 6,
+                    ),
+                  ],
+                ),
+              )
+            : Container(width: 2, color: ribbonColor))
+        : const SizedBox.shrink();
+
+    // Left margin — ribbon + sigil + line number — is one generous click
+    // zone for stageable lines. Clicking anywhere toggles stage with
+    // shift/alt modifier awareness. Paint-drag is still owned by the
+    // sigil cell itself so vertical scroll keeps working when you grab
+    // the gutter on non-stageable lines.
+    final leftCells = [
+      SizedBox(height: 18, child: ribbon),
+      stageCell,
+      gutterContent,
+    ];
+    final bool leftInteractive =
+        widget.stagingEnabled && isStageable && widget.onSigilTap != null;
+    final Widget leftZone = leftInteractive
+        ? MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _lineHover = true),
+            onExit: (_) => setState(() => _lineHover = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapUp: (_) {
+                final isShift = HardwareKeyboard.instance
+                        .isLogicalKeyPressed(
+                            LogicalKeyboardKey.shiftLeft) ||
+                    HardwareKeyboard.instance.isLogicalKeyPressed(
+                        LogicalKeyboardKey.shiftRight);
+                final isAlt = HardwareKeyboard.instance
+                        .isLogicalKeyPressed(LogicalKeyboardKey.altLeft) ||
+                    HardwareKeyboard.instance
+                        .isLogicalKeyPressed(LogicalKeyboardKey.altRight);
+                widget.onSigilTap!(isShift, isAlt);
+              },
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: leftCells,
+              ),
+            ),
+          )
+        : Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: leftCells,
+          );
+
     final baseRow = Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [gutterContent, lineContent],
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [leftZone, lineContent],
     );
 
-    // Blame annotation overlay — shown inline left of gutter on hover (matches original)
-    final showBlame = hovered && blameEntry != null;
-    if (!showBlame) return baseRow;
+    // Double-click on hunk header toggles the hunk.
+    final Widget interactiveRow = isHunk && widget.onHunkDoubleTap != null
+        ? GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onDoubleTap: widget.onHunkDoubleTap,
+            child: baseRow,
+          )
+        : baseRow;
 
-    final b = blameEntry!;
+    // Blame annotation overlay — shown inline left of gutter on hover.
+    final showBlame = widget.hovered && widget.blameEntry != null;
+    if (!showBlame) return interactiveRow;
+
+    final b = widget.blameEntry!;
     final initial =
         b.authorName.isNotEmpty ? b.authorName[0].toUpperCase() : '?';
     final timeStr = _formatBlameTime(b.authoredAt);
-    // Deterministic author color from name hash
     final hue = (b.authorName.codeUnits.fold(0, (a, c) => a + c) * 37) % 360;
     final authorColor =
         HSLColor.fromAHSL(1.0, hue.toDouble(), 0.55, 0.55).toColor();
 
     return Stack(clipBehavior: Clip.none, children: [
-      baseRow,
+      interactiveRow,
       Positioned(
         left: 0,
         top: 0,
         bottom: 0,
-        child: AnimatedOpacity(
-          opacity: 1.0,
-          duration: const Duration(milliseconds: 150),
-          child: Container(
-            width: 140,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: t.surface1,
-              border: Border(
-                right: BorderSide(
-                    color: t.hyperChromatic1.withValues(alpha: 0.4), width: 2),
-              ),
-            ),
-            child: Row(children: [
-              // Author initial circle
-              Container(
-                width: 18,
-                height: 18,
-                decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: authorColor.withValues(alpha: 0.2)),
-                child: Center(
-                  child: Text(initial,
-                      style: TextStyle(
-                          color: authorColor,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700)),
+        child: IgnorePointer(
+          child: AnimatedOpacity(
+            opacity: 1.0,
+            duration: const Duration(milliseconds: 150),
+            child: Container(
+              width: 140,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: t.surface1,
+                border: Border(
+                  right: BorderSide(
+                      color: t.hyperChromatic1.withValues(alpha: 0.4),
+                      width: 2),
                 ),
               ),
-              const SizedBox(width: 6),
-              Expanded(
-                  child: Text(
-                    '${b.shortHash} · $timeStr',
-                    style: TextStyle(
-                      color: t.hyperChromatic1,
-                      fontSize: 9,
-                      fontFamily: 'JetBrainsMono',
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  )),
-            ]),
+              child: Row(children: [
+                Container(
+                  width: 18,
+                  height: 18,
+                  decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: authorColor.withValues(alpha: 0.2)),
+                  child: Center(
+                    child: Text(initial,
+                        style: TextStyle(
+                            color: authorColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                    child: Text(
+                  '${b.shortHash} · $timeStr',
+                  style: TextStyle(
+                    color: t.hyperChromatic1,
+                    fontSize: 9,
+                    fontFamily: 'JetBrainsMono',
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                )),
+              ]),
+            ),
           ),
         ),
       ),
     ]);
+  }
+}
+
+// ── Stage sigil ──────────────────────────────────────────────────────────────
+//
+// The only staging affordance: a click target on the left of every +/- line.
+// Shows a filled glyph when staged, outlined when not. Tap = toggle. Vertical
+// drag = paint across multiple lines. Shift+tap = extend range from the last
+// toggled line; Alt+tap = disable auto-pairing of replacement -/+ lines.
+
+class _StageSigil extends StatelessWidget {
+  final AppTokens tokens;
+  final LineKind kind;
+  final bool staged;
+  final bool hovered;
+  final Color color;
+  final VoidCallback onPaintStart;
+  final void Function(Offset globalPosition) onPaintMove;
+  final VoidCallback onPaintEnd;
+
+  const _StageSigil({
+    required this.tokens,
+    required this.kind,
+    required this.staged,
+    required this.hovered,
+    required this.color,
+    required this.onPaintStart,
+    required this.onPaintMove,
+    required this.onPaintEnd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final glyph = kind == LineKind.added ? '+' : '−';
+    final Color effective = hovered || staged
+        ? color
+        : color.withValues(alpha: 0.55);
+
+    // Hover border — crisp 1px ring around the sigil glyph that says
+    // "this is a button." Only when the left zone is hovered AND the line
+    // isn't already staged (filled dot already carries its own weight).
+    final Border? hoverBorder = (hovered && !staged)
+        ? Border.all(color: color.withValues(alpha: 0.75), width: 1)
+        : null;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragStart: (_) => onPaintStart(),
+      onVerticalDragUpdate: (d) => onPaintMove(d.globalPosition),
+      onVerticalDragEnd: (_) => onPaintEnd(),
+      onVerticalDragCancel: () => onPaintEnd(),
+      child: Padding(
+        padding: const EdgeInsets.all(2),
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: staged ? color.withValues(alpha: 0.10) : Colors.transparent,
+            border: hoverBorder,
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: staged
+              // Filled dot: unmistakable "this is in."
+              ? Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: effective,
+                  ),
+                )
+              : Text(
+                  glyph,
+                  style: TextStyle(
+                    color: effective,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'JetBrainsMono',
+                    height: 1.0,
+                  ),
+                ),
+        ),
+      ),
+    );
   }
 }
 
@@ -2064,7 +2690,7 @@ class _TrailRailPainter extends CustomPainter {
     final markerX = left + usableWidth * progress.clamp(0.0, 1.0);
 
     final baseRail = Paint()
-      ..color = tokens.chromeBorder.withValues(alpha: 0.28)
+      ..color = tokens.chromeBorderStrong
       ..strokeWidth = 1.6
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(Offset(left, centerY), Offset(right, centerY), baseRail);

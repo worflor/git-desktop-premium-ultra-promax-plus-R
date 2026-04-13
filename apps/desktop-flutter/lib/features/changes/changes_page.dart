@@ -5,22 +5,28 @@ import 'dart:math' as math;
 import 'package:path/path.dart' as p;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../ui/animated_icons.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/material_surface.dart';
+import '../../ui/morph_text.dart';
 import '../../ui/status_view.dart';
 import '../../ui/resonance_text.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/ai.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
+import '../../backend/file_coupling.dart';
 import '../../app/ai_settings_state.dart';
+import '../../app/file_coupling_state.dart';
 import '../../app/preferences_state.dart';
 import '../../app/repository_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../diff/diff_shell.dart';
+import '../diff/diff_models.dart';
 
 String _guardrailLabelForStage(int stage) {
   switch (stage.clamp(0, 3)) {
@@ -76,6 +82,11 @@ class _ChangesPageState extends State<ChangesPage> {
   String? _multiDiffCurrentPath;
   int? _multiDiffJumpLineIndex;
   int _multiDiffJumpRequestId = 0;
+  // True while the user is actively driving the diff scroll (drag, wheel,
+  // ballistic fling). Programmatic animations (jump-to-section) do NOT set
+  // this, so the timeline dot tracks user intent and never flickers back
+  // to the previous section during an animated jump.
+  bool _multiDiffUserDriving = false;
   bool _actionRunning = false;
   bool _generateRunning = false;
   bool _generateSuccess = false;
@@ -100,11 +111,34 @@ class _ChangesPageState extends State<ChangesPage> {
   String? _lastDraftRepoPath;
   String? _lastDraftBranch;
 
+  // Coupling rail — path under the mouse right now. Drives live peer
+  // highlighting so moving the cursor along the rail visualizes which
+  // files are most tightly coupled to the currently-hovered one.
+  String? _railHoverPath;
+
+  // Per-path line churn (adds + dels) feeding the "by impact" sort.
+  // Refreshed whenever the status signature changes. Empty until the
+  // first fetch lands; until then impact-sort tiebreaks alphabetically.
+  Map<String, FileChangeWeight> _changeWeights = const {};
+  String? _weightsFetchedForKey;
+
   // Filing cabinet (stashes)
   List<StashEntryData> _stashes = const [];
   bool _stashesLoading = false;
   bool _stashesExpanded = false;
+  bool _stashExpandedInitialized = false;
   String? _stashPeekDiff;
+  // Per-stash expanded state (keyed by stash.index) — the filing-cabinet
+  // divider. Independent of the list-level _stashesExpanded toggle.
+  final Set<int> _stashOpenIndices = {};
+  // Lazy-loaded file list per stash (index → files). Populated on first
+  // expand; dropped when the stash list is reloaded.
+  final Map<int, List<StashFileStat>> _stashFiles = {};
+  final Set<int> _stashFilesLoading = {};
+
+  // Coupling-matrix loader guard: tracks "I kicked off a compute for this
+  // repo in this session" so we don't spam the provider on every rebuild.
+  String? _couplingKickedOffFor;
   int? _stashPeekIndex;
 
   @override
@@ -811,6 +845,9 @@ class _ChangesPageState extends State<ChangesPage> {
       customPrompt: aiSettings.commitMessagePrompt,
       existingMessage: _commitMsgCtrl.text.trim(),
       readOnly: preferences.aiReadOnlyDefault,
+      structure: preferences.commitStructure,
+      voice: preferences.commitVoice,
+      coverage: preferences.commitCoverage,
     );
     if (!mounted) {
       return;
@@ -1149,7 +1186,40 @@ class _ChangesPageState extends State<ChangesPage> {
     setState(() {
       _stashesLoading = false;
       _stashes = result.ok ? result.data! : const [];
+      // Invalidate per-stash caches — indices and contents may have shifted
+      // after pop/drop/push.
+      _stashFiles.clear();
+      _stashFilesLoading.clear();
+      // Drop open-state entries whose index no longer exists so reopening
+      // a new stash at the same slot doesn't surprise the user.
+      final validIndices = _stashes.map((s) => s.index).toSet();
+      _stashOpenIndices.removeWhere((i) => !validIndices.contains(i));
     });
+  }
+
+  Future<void> _loadStashFiles(String repo, int index) async {
+    if (_stashFiles.containsKey(index) ||
+        _stashFilesLoading.contains(index)) return;
+    setState(() => _stashFilesLoading.add(index));
+    final r = await stashFiles(repo, index: index);
+    if (!mounted) return;
+    setState(() {
+      _stashFilesLoading.remove(index);
+      if (r.ok) _stashFiles[index] = r.data!;
+    });
+  }
+
+  void _toggleStashOpen(String repo, int index) {
+    setState(() {
+      if (_stashOpenIndices.contains(index)) {
+        _stashOpenIndices.remove(index);
+      } else {
+        _stashOpenIndices.add(index);
+      }
+    });
+    if (_stashOpenIndices.contains(index)) {
+      unawaited(_loadStashFiles(repo, index));
+    }
   }
 
   Future<void> _shelveFiles(String repo, List<String> paths, {String? label}) async {
@@ -1229,11 +1299,53 @@ class _ChangesPageState extends State<ChangesPage> {
     final aiSettings = context.watch<AiSettingsState>();
     final preferences = context.watch<PreferencesState>();
     final repo = context.watch<RepositoryState>();
+    final coupling = context.watch<FileCouplingState>();
     final repoPath = repo.activePath;
     final status = repo.status;
 
+    // Seed the stash drawer from the user's "default expanded" preference
+    // once per session, as soon as we actually have shelves to show. After
+    // that the user's manual toggles take over.
+    if (!_stashExpandedInitialized && _stashes.isNotEmpty) {
+      _stashExpandedInitialized = true;
+      if (preferences.stashCabinetDefaultExpanded && !_stashesExpanded) {
+        _stashesExpanded = true;
+      }
+    }
+
     if (repoPath == null) {
       return const AppStatusView.noRepository();
+    }
+
+    // Kick off a coupling-matrix compute whenever the observable repo state
+    // changes (new repo, new commit, branch switch, ahead/behind moved).
+    // The FileCouplingState does its own HEAD-check before recomputing, so
+    // calling it on state changes is cheap. Fire-and-forget — the list
+    // renders without cluster stripes until notifyListeners brings us back.
+    final couplingStateKey =
+        '$repoPath|${status?.branch ?? ''}|${status?.files.length ?? 0}|'
+        '${status?.ahead ?? 0}|${status?.behind ?? 0}';
+    if (_couplingKickedOffFor != couplingStateKey) {
+      _couplingKickedOffFor = couplingStateKey;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<FileCouplingState>().loadForRepo(repoPath);
+      });
+    }
+    // Refresh per-file impact weights whenever the status signature
+    // changes. One numstat call per refresh; results feed the "by impact"
+    // sort. Fire-and-forget — the list uses whatever's cached until the
+    // new fetch lands, then rebuilds.
+    if (_weightsFetchedForKey != couplingStateKey) {
+      _weightsFetchedForKey = couplingStateKey;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        final r = await fileChangeWeights(repoPath);
+        if (!mounted || _weightsFetchedForKey != couplingStateKey) return;
+        if (r.ok) {
+          setState(() => _changeWeights = r.data!);
+        }
+      });
     }
     // Detect repo or branch switch — cancel any pending saves,
     // then load the correct draft.
@@ -1286,6 +1398,61 @@ class _ChangesPageState extends State<ChangesPage> {
     final includedFiles = status.files
         .where((file) => _includedPaths.contains(file.path))
         .toList();
+
+    // Coupling clusters for the current change set. Computed once per build;
+    // falls back to "all isolated" when the matrix isn't ready yet.
+    final couplingMatrix = coupling.matrixFor(repoPath);
+    final _currentPaths = status.files.map((f) => f.path).toList();
+
+    // Universal: gather merge-conflict paths. Any file with 'U' on either
+    // side is conflicted and must float to the top regardless of sort.
+    final conflictedPaths = <String>{};
+    for (final f in status.files) {
+      if (f.staged == 'U' || f.unstaged == 'U') {
+        conflictedPaths.add(f.path);
+      }
+    }
+
+    // "By impact" weighting — cognitive weight, not raw line count:
+    //   * Binary files get a baseline so they don't sink to 0.
+    //   * Deletions count 1.2× additions (intentional removal is usually
+    //     more deliberate than piling on code).
+    //   * New files get a small bonus — adding a file is conceptually
+    //     heavy even when small.
+    //   * Untracked files with no numstat entry still get the new-file
+    //     bonus so they don't all bucket at 0.
+    const double binaryBaseline = 20.0;
+    const double newFileBonus = 10.0;
+    const double delWeight = 1.2;
+    final impactScores = <String, double>{};
+    for (final f in status.files) {
+      final isNew =
+          f.staged == 'A' || f.staged == '?' || f.unstaged == '?';
+      final w = _changeWeights[f.path];
+      double score;
+      if (w == null) {
+        score = isNew ? newFileBonus : 0.0;
+      } else if (w.binary) {
+        score = binaryBaseline + (isNew ? newFileBonus : 0.0);
+      } else {
+        score = w.adds + w.dels * delWeight;
+        if (isNew) score += newFileBonus;
+      }
+      impactScores[f.path] = score;
+    }
+
+    final clusters = couplingMatrix != null && _currentPaths.isNotEmpty
+        ? clusterFiles(
+            _currentPaths,
+            couplingMatrix,
+            sortGuide: preferences.fileSortGuide,
+            impactScores: impactScores,
+            conflictedPaths: conflictedPaths,
+            includedPaths: _includedPaths,
+            inverted: preferences.fileSortInverted,
+          )
+        : FileClusters.empty(_currentPaths);
+
     final inspectionOverridePath = _inspectionDiffPath;
     final inspectingSingleDiff = includedFiles.length > 1 &&
         inspectionOverridePath != null &&
@@ -1381,30 +1548,131 @@ class _ChangesPageState extends State<ChangesPage> {
                     child: Column(
                       children: [
                         Expanded(
-                          child: ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            itemCount: status.files.length,
-                            itemBuilder: (ctx, i) {
-                              final file = status.files[i];
-                              return _FileRow(
-                                file: file,
-                                tokens: t,
-                                isDiffSelected: activeDiffPath == file.path,
-                                included: _includedPaths.contains(file.path),
-                                onTap: includedFiles.length > 1
-                                    ? () {
-                                        if (_includedPaths.contains(file.path)) {
-                                          _jumpToMultiDiffPath(file.path);
-                                        } else {
-                                          _inspectSingleDiff(repoPath, file.path);
+                          child: Builder(builder: (context) {
+                            // `clusters` hoisted at build-method scope so the
+                            // header + list share the same clustering.
+                            final fileByPath = {
+                              for (final f in status.files) f.path: f
+                            };
+                            final ordered = <RepositoryStatusFile>[
+                              for (final p in clusters.orderedPaths)
+                                if (fileByPath[p] != null) fileByPath[p]!,
+                            ];
+                            // Defensive: any file that didn't land in ordered.
+                            final orderedSet =
+                                clusters.orderedPaths.toSet();
+                            for (final f in status.files) {
+                              if (!orderedSet.contains(f.path)) ordered.add(f);
+                            }
+                            return ListView.builder(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              itemCount: ordered.length,
+                              itemBuilder: (ctx, i) {
+                                final file = ordered[i];
+                                final cid = clusters.byPath[file.path] ??
+                                    FileClusters.clusterIdIsolated;
+                                final prevCid = i > 0
+                                    ? (clusters.byPath[ordered[i - 1].path] ??
+                                        FileClusters.clusterIdIsolated)
+                                    : null;
+                                final nextCid = i < ordered.length - 1
+                                    ? (clusters.byPath[ordered[i + 1].path] ??
+                                        FileClusters.clusterIdIsolated)
+                                    : null;
+                                final showGap =
+                                    prevCid != null && prevCid != cid;
+                                final inRealCluster =
+                                    cid != FileClusters.clusterIdIsolated;
+                                // Stripe fuses with neighbour's stripe iff
+                                // same real cluster AND no gap boundary.
+                                final connectTop = inRealCluster &&
+                                    prevCid == cid &&
+                                    !showGap;
+                                final connectBottom = inRealCluster &&
+                                    nextCid != null &&
+                                    nextCid == cid;
+                                // Peer emphasis: when the mouse is on
+                                // another row's stripe in the same cluster,
+                                // look up the coupling score between this
+                                // file and the subject. Null = not in the
+                                // hovered cluster (leave row unchanged).
+                                final subjectPath = _railHoverPath;
+                                final subjectCid = subjectPath == null
+                                    ? null
+                                    : clusters.byPath[subjectPath];
+                                double? peerScore;
+                                bool isRailSubject = false;
+                                if (subjectPath != null &&
+                                    subjectCid != null &&
+                                    subjectCid ==
+                                        FileClusters.clusterIdIsolated) {
+                                  // Hovered row is isolated — no peers to light up.
+                                } else if (subjectPath != null &&
+                                    subjectCid == cid &&
+                                    inRealCluster) {
+                                  if (subjectPath == file.path) {
+                                    isRailSubject = true;
+                                    peerScore = 1.0;
+                                  } else if (couplingMatrix != null) {
+                                    peerScore = combinedCouplingScore(
+                                        subjectPath,
+                                        file.path,
+                                        couplingMatrix);
+                                  }
+                                }
+                                final row = _FileRow(
+                                  file: file,
+                                  tokens: t,
+                                  clusterColor:
+                                      _clusterStripeColor(t, cid),
+                                  stripeConnectTop: connectTop,
+                                  stripeConnectBottom: connectBottom,
+                                  isDiffSelected:
+                                      activeDiffPath == file.path,
+                                  included:
+                                      _includedPaths.contains(file.path),
+                                  inRealCluster: inRealCluster,
+                                  peerScore: peerScore,
+                                  isRailSubject: isRailSubject,
+                                  onRailEnter: inRealCluster
+                                      ? () {
+                                          if (_railHoverPath != file.path) {
+                                            setState(() =>
+                                                _railHoverPath = file.path);
+                                          }
                                         }
-                                      }
-                                    : () => _loadDiff(repoPath, file.path),
-                                onIncludeChanged: (value) =>
-                                    _toggleIncluded(file.path, value),
-                              );
-                            },
-                          ),
+                                      : null,
+                                  onRailExit: () {
+                                    if (_railHoverPath == file.path) {
+                                      setState(() => _railHoverPath = null);
+                                    }
+                                  },
+                                  onTap: includedFiles.length > 1
+                                      ? () {
+                                          if (_includedPaths
+                                              .contains(file.path)) {
+                                            _jumpToMultiDiffPath(file.path);
+                                          } else {
+                                            _inspectSingleDiff(
+                                                repoPath, file.path);
+                                          }
+                                        }
+                                      : () =>
+                                          _loadDiff(repoPath, file.path),
+                                  onIncludeChanged: (value) =>
+                                      _toggleIncluded(file.path, value),
+                                );
+                                if (showGap) {
+                                  return Column(children: [
+                                    const SizedBox(height: 4),
+                                    row,
+                                  ]);
+                                }
+                                return row;
+                              },
+                            );
+                          }),
                         ),
                       ],
                     ),
@@ -1425,7 +1693,7 @@ class _ChangesPageState extends State<ChangesPage> {
                         Row(
                           children: [
                             Expanded(
-                              child: Text(
+                              child: ThemeMorphText(
                                 includedCount == 0
                                     ? (stagedCount > 0
                                         ? 'Nothing selected · $stagedCount staged'
@@ -1440,64 +1708,55 @@ class _ChangesPageState extends State<ChangesPage> {
                                 ),
                               ),
                             ),
-                            if (_stashes.isNotEmpty || _stashesLoading)
-                              GestureDetector(
-                                onTap: () => setState(() => _stashesExpanded = !_stashesExpanded),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      '${_stashes.length} shelved',
-                                      style: TextStyle(
-                                        color: t.chromeAccent.withValues(alpha: 0.7),
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 3),
-                                    Text(
-                                      _stashesExpanded ? '▾' : '▸',
-                                      style: TextStyle(color: t.textMuted, fontSize: 9),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            else
-                              GestureDetector(
-                                onTap: status.files.isNotEmpty ? () => _shelveAll(repoPath) : null,
-                                child: Text(
-                                  '↓ shelve',
-                                  style: TextStyle(
-                                    color: status.files.isNotEmpty
-                                        ? t.textMuted
-                                        : t.textMuted.withValues(alpha: 0.3),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
+                            _ShelfControl(
+                              tokens: t,
+                              count: _stashes.length,
+                              loading: _stashesLoading,
+                              expanded: _stashesExpanded,
+                              canShelve: status.files.isNotEmpty,
+                              onShelve: status.files.isNotEmpty
+                                  ? () => _shelveAll(repoPath)
+                                  : null,
+                              onToggleExpanded: _stashes.isEmpty
+                                  ? null
+                                  : () => setState(() =>
+                                      _stashesExpanded = !_stashesExpanded),
+                            ),
                           ],
                         ),
                         // ── Filing cabinet drawers (inline) ────────
                         if (_stashesExpanded && _stashes.isNotEmpty)
                           Padding(
-                            padding: const EdgeInsets.only(top: 6, bottom: 2),
+                            padding: const EdgeInsets.only(top: 8, bottom: 2),
                             child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxHeight: 120),
+                              constraints:
+                                  const BoxConstraints(maxHeight: 360),
                               child: ListView.builder(
                                 shrinkWrap: true,
                                 padding: EdgeInsets.zero,
                                 itemCount: _stashes.length,
                                 itemBuilder: (ctx, i) {
                                   final stash = _stashes[i];
-                                  final isPeeking = _stashPeekIndex == stash.index;
+                                  final isPeeking =
+                                      _stashPeekIndex == stash.index;
+                                  final isOpen = _stashOpenIndices
+                                      .contains(stash.index);
                                   return _StashDrawerCard(
                                     tokens: t,
                                     stash: stash,
                                     isPeeking: isPeeking,
-                                    onPickUp: () => _pickUpStash(repoPath, stash.index),
-                                    onPeek: () => _peekStash(repoPath, stash.index),
-                                    onToss: () => _tossStash(repoPath, stash.index),
+                                    isOpen: isOpen,
+                                    files: _stashFiles[stash.index],
+                                    filesLoading: _stashFilesLoading
+                                        .contains(stash.index),
+                                    onToggleOpen: () => _toggleStashOpen(
+                                        repoPath, stash.index),
+                                    onPickUp: () =>
+                                        _pickUpStash(repoPath, stash.index),
+                                    onPeek: () =>
+                                        _peekStash(repoPath, stash.index),
+                                    onToss: () =>
+                                        _tossStash(repoPath, stash.index),
                                   );
                                 },
                               ),
@@ -1630,6 +1889,11 @@ class _ChangesPageState extends State<ChangesPage> {
                     );
                   }
                   if (_reviewActive) {
+                    final contentForStats = showMultiDiff ? _multiDiffContent : _diffContent;
+                    final stats = contentForStats != null 
+                        ? DiffStats.fromRawDiff(contentForStats)
+                        : const DiffStats();
+
                     return MaterialSurface(
                       tone: AppMaterialTone.surface0,
                       radius: 0,
@@ -1638,6 +1902,9 @@ class _ChangesPageState extends State<ChangesPage> {
                       child: _CommitReviewPane(
                         tokens: t,
                         includedCount: includedCount,
+                        diffAdds: stats.adds,
+                        diffDels: stats.dels,
+                        diffHunks: stats.hunks,
                         modelLabel: _reviewModelLabel(aiSettings),
                         guardrailLabel:
                             _guardrailLabelForStage(preferences.guardrailStage),
@@ -1697,8 +1964,39 @@ class _ChangesPageState extends State<ChangesPage> {
                             // so its events arrive at depth>0.
                             child: NotificationListener<ScrollNotification>(
                               onNotification: (notification) {
-                                if (notification.metrics.axis ==
+                                if (notification.metrics.axis !=
                                     Axis.vertical) {
+                                  return false;
+                                }
+                                // UserScrollNotification flags the start and
+                                // end of user-initiated scrolling. Programmatic
+                                // animateTo never fires it — which is exactly
+                                // the signal we need to ignore jump-induced
+                                // intermediate offsets.
+                                if (notification is UserScrollNotification) {
+                                  if (notification.direction !=
+                                      ScrollDirection.idle) {
+                                    _multiDiffUserDriving = true;
+                                  }
+                                  return false;
+                                }
+                                // On scroll end (both user-driven and
+                                // programmatic), finalize currentPath against
+                                // the settled offset so we reflect where we
+                                // actually landed.
+                                if (notification is ScrollEndNotification) {
+                                  _handleMultiDiffScroll(
+                                    notification.metrics,
+                                  );
+                                  _multiDiffUserDriving = false;
+                                  return false;
+                                }
+                                // Live updates only while the user is
+                                // driving — animation frames from a jump
+                                // are skipped, eliminating the flicker.
+                                if (notification
+                                        is ScrollUpdateNotification &&
+                                    _multiDiffUserDriving) {
                                   _handleMultiDiffScroll(
                                     notification.metrics,
                                   );
@@ -1719,6 +2017,14 @@ class _ChangesPageState extends State<ChangesPage> {
                                 jumpToLineIndex: _multiDiffJumpLineIndex,
                                 jumpToLineRequestId: _multiDiffJumpRequestId,
                                 showFileHeader: false,
+                                enableStaging: true,
+                                onStagingApplied: () {
+                                  unawaited(_loadMultiDiff(
+                                    repoPath,
+                                    includedFiles,
+                                  ));
+                                  unawaited(repo.refreshStatus());
+                                },
                               ),
                             ),
                           ),
@@ -1749,6 +2055,15 @@ class _ChangesPageState extends State<ChangesPage> {
                             error: _diffError,
                             tokens: t,
                             repositoryPath: repoPath,
+                            enableStaging: true,
+                            onStagingApplied: () {
+                              final path =
+                                  _visibleDiffPath ?? _selectedDiffPath;
+                              if (path != null) {
+                                unawaited(_loadDiff(repoPath, path));
+                              }
+                              unawaited(repo.refreshStatus());
+                            },
                           ),
                   );
                 },
@@ -2058,7 +2373,7 @@ class _MultiDiffProgressRailPainter extends CustomPainter {
     final markerX = left + usableWidth * progress.clamp(0.0, 1.0);
 
     final baseRail = Paint()
-      ..color = tokens.chromeBorder.withValues(alpha: 0.28)
+      ..color = tokens.chromeBorderStrong
       ..strokeWidth = 1.6
       ..strokeCap = StrokeCap.round;
 
@@ -2106,6 +2421,9 @@ class _MultiDiffProgressRailPainter extends CustomPainter {
 class _CommitReviewPane extends StatelessWidget {
   final AppTokens tokens;
   final int includedCount;
+  final int? diffAdds;
+  final int? diffDels;
+  final int? diffHunks;
   final String modelLabel;
   final String guardrailLabel;
   final int guardrailStage;
@@ -2125,6 +2443,9 @@ class _CommitReviewPane extends StatelessWidget {
   const _CommitReviewPane({
     required this.tokens,
     required this.includedCount,
+    this.diffAdds,
+    this.diffDels,
+    this.diffHunks,
     required this.modelLabel,
     required this.guardrailLabel,
     required this.guardrailStage,
@@ -2170,11 +2491,22 @@ class _CommitReviewPane extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 3),
-                  Text(
-                    '$includedCount included file${includedCount == 1 ? '' : 's'}',
-                    style: TextStyle(
-                      color: tokens.textMuted,
-                      fontSize: 10.5,
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(text: '$includedCount included file${includedCount == 1 ? '' : 's'}'),
+                        if (diffAdds != null && diffDels != null && diffHunks != null) ...[
+                          const TextSpan(text: ' • '),
+                          TextSpan(text: '+$diffAdds', style: TextStyle(color: tokens.stateAdded, fontWeight: FontWeight.w600)),
+                          TextSpan(text: ' -$diffDels', style: TextStyle(color: tokens.stateDeleted, fontWeight: FontWeight.w600)),
+                          const TextSpan(text: ' • '),
+                          TextSpan(text: '$diffHunks hunk${diffHunks == 1 ? '' : 's'}', style: TextStyle(color: tokens.accentBright, fontWeight: FontWeight.w600)),
+                        ],
+                      ],
+                      style: TextStyle(
+                        color: tokens.textMuted,
+                        fontSize: 10.5,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -2310,11 +2642,22 @@ class _CommitReviewPane extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 3),
-                          Text(
-                            '$includedCount included file${includedCount == 1 ? '' : 's'}',
-                            style: TextStyle(
-                              color: tokens.textMuted,
-                              fontSize: 10.5,
+                          Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(text: '$includedCount included file${includedCount == 1 ? '' : 's'}'),
+                                if (diffAdds != null && diffDels != null && diffHunks != null) ...[
+                                  const TextSpan(text: ' • '),
+                                  TextSpan(text: '+$diffAdds', style: TextStyle(color: tokens.stateAdded, fontWeight: FontWeight.w600)),
+                                  TextSpan(text: ' -$diffDels', style: TextStyle(color: tokens.stateDeleted, fontWeight: FontWeight.w600)),
+                                  const TextSpan(text: ' • '),
+                                  TextSpan(text: '$diffHunks hunk${diffHunks == 1 ? '' : 's'}', style: TextStyle(color: tokens.accentBright, fontWeight: FontWeight.w600)),
+                                ],
+                              ],
+                              style: TextStyle(
+                                color: tokens.textMuted,
+                                fontSize: 10.5,
+                              ),
                             ),
                           ),
                         ],
@@ -2419,7 +2762,8 @@ class _CommitReviewPane extends StatelessWidget {
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: tokens.stateConflicted.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(
+                          context.surfaceShader.geometry.radius),
                       border: Border.all(
                         color: tokens.stateConflicted.withValues(alpha: 0.22),
                       ),
@@ -2538,9 +2882,10 @@ class _CommitReviewPane extends StatelessWidget {
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
                           color: tokens.rowBg,
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(
+                              context.surfaceShader.geometry.radius),
                           border: Border.all(
-                            color: tokens.chromeBorder.withValues(alpha: 0.08),
+                            color: tokens.chromeBorderFaint,
                           ),
                         ),
                         child: Column(
@@ -2861,8 +3206,9 @@ class _ReviewDisclosureCard extends StatelessWidget {
       width: double.infinity,
       decoration: BoxDecoration(
         color: tokens.rowBg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.14)),
+        borderRadius:
+            BorderRadius.circular(context.surfaceShader.geometry.radius),
+        border: Border.all(color: tokens.chromeBorderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2956,8 +3302,9 @@ class _ReviewFindingCard extends StatelessWidget {
       child: Container(
       decoration: BoxDecoration(
         color: tokens.rowBg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.14)),
+        borderRadius:
+            BorderRadius.circular(context.surfaceShader.geometry.radius),
+        border: Border.all(color: tokens.chromeBorderSubtle),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3083,8 +3430,9 @@ class _TracePanel extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: tokens.rowBg,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: tokens.chromeBorder.withValues(alpha: 0.14)),
+        borderRadius:
+            BorderRadius.circular(context.surfaceShader.geometry.radius),
+        border: Border.all(color: tokens.chromeBorderSubtle),
       ),
       child: Column(
         children: [
@@ -3509,12 +3857,13 @@ class _ActionBtnState extends State<_ActionBtn> {
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 100),
+          duration: context.motion(const Duration(milliseconds: 100)),
           height: 28,
           decoration: BoxDecoration(
             color: chrome.background,
             gradient: chrome.gradient,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius:
+                BorderRadius.circular(context.surfaceShader.geometry.radius),
             border: Border.all(color: chrome.borderColor),
             boxShadow: chrome.shadows,
           ),
@@ -3588,7 +3937,7 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
     );
 
     return AnimatedOpacity(
-      duration: const Duration(milliseconds: 180),
+      duration: context.motion(const Duration(milliseconds: 180)),
       opacity: widget.aiGenerating && !_anyHovered ? 0.45 : 1.0,
       child: Transform.translate(
       offset: chrome.offset,
@@ -3597,16 +3946,19 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
         child: SizedBox(
           height: 36,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
+            duration: context.motion(const Duration(milliseconds: 100)),
             decoration: BoxDecoration(
               color: chrome.background,
               gradient: chrome.gradient,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius:
+                  BorderRadius.circular(context.surfaceShader.geometry.radius),
               border: Border.all(color: chrome.borderColor),
               boxShadow: chrome.shadows,
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(7),
+              borderRadius: BorderRadius.circular(
+                  (context.surfaceShader.geometry.radius - 1)
+                      .clamp(0, double.infinity)),
               child: Row(
                 children: [
                   // ── Main action area ──────────────────────────────────────
@@ -3693,7 +4045,8 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
                                   alpha: _chevronHovered ? 0.10 : 0.0),
                           child: Center(
                             child: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 250),
+                              duration:
+                                  context.motion(const Duration(milliseconds: 250)),
                               switchInCurve: Curves.easeOutCubic,
                               switchOutCurve: Curves.easeInCubic,
                               transitionBuilder: (child, anim) {
@@ -3744,12 +4097,152 @@ class _SplitCommitBtnState extends State<_SplitCommitBtn> {
   }
 }
 
+// ── Shelf control (merged shelve + expand button) ─────────────────────────
+//
+// One unified pill that replaces the former split "↓ shelve" vs "N shelved ▾"
+// buttons. When shelves exist the pill shows both segments — left toggles the
+// cabinet open/closed, right adds another shelf — with a hairline divider
+// between them so the two actions read as one artifact.
+
+class _ShelfControl extends StatefulWidget {
+  final AppTokens tokens;
+  final int count;
+  final bool loading;
+  final bool expanded;
+  final bool canShelve;
+  final VoidCallback? onShelve;
+  final VoidCallback? onToggleExpanded;
+
+  const _ShelfControl({
+    required this.tokens,
+    required this.count,
+    required this.loading,
+    required this.expanded,
+    required this.canShelve,
+    required this.onShelve,
+    required this.onToggleExpanded,
+  });
+
+  @override
+  State<_ShelfControl> createState() => _ShelfControlState();
+}
+
+class _ShelfControlState extends State<_ShelfControl> {
+  int _hoverSegment = 0; // 0 none, 1 toggle, 2 shelve
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final hasShelves = widget.count > 0;
+    final borderColor = t.chromeBorder.withValues(alpha: 0.25);
+
+    Widget segment({
+      required String text,
+      required VoidCallback? onTap,
+      required int id,
+      required Color baseColor,
+      BorderRadius? radius,
+    }) {
+      final hovered = _hoverSegment == id && onTap != null;
+      return MouseRegion(
+        cursor: onTap != null
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        onEnter: (_) => setState(() => _hoverSegment = id),
+        onExit: (_) => setState(
+            () => _hoverSegment = _hoverSegment == id ? 0 : _hoverSegment),
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: hovered
+                  ? t.chromeAccent.withValues(alpha: 0.08)
+                  : Colors.transparent,
+              borderRadius: radius,
+            ),
+            child: Text(
+              text,
+              style: TextStyle(
+                color: onTap == null
+                    ? baseColor.withValues(alpha: 0.35)
+                    : baseColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (!hasShelves && !widget.loading) {
+      // Single-purpose pill: just shelve.
+      return Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: borderColor),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: segment(
+          text: '↓ shelve',
+          onTap: widget.canShelve ? widget.onShelve : null,
+          id: 2,
+          baseColor: t.textMuted,
+          radius: BorderRadius.circular(4),
+        ),
+      );
+    }
+
+    // Two-segment pill with hairline divider.
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: borderColor),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            segment(
+              text: widget.loading
+                  ? '…'
+                  : '${widget.count} shelved ${widget.expanded ? '▾' : '▸'}',
+              onTap: widget.onToggleExpanded,
+              id: 1,
+              baseColor: t.chromeAccent.withValues(alpha: 0.85),
+              radius: const BorderRadius.horizontal(left: Radius.circular(4)),
+            ),
+            Container(width: 1, color: borderColor),
+            segment(
+              text: '↓',
+              onTap: widget.canShelve ? widget.onShelve : null,
+              id: 2,
+              baseColor: t.textMuted,
+              radius:
+                  const BorderRadius.horizontal(right: Radius.circular(4)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ── Stash drawer card ─────────────────────────────────────────────────────
+//
+// Filing-cabinet divider. Header shows label + age + file count and toggles
+// open/closed on click. When open, the card reveals the file list with
+// per-file add/del counts and exposes the action strip (pick up, peek, toss).
 
 class _StashDrawerCard extends StatefulWidget {
   final AppTokens tokens;
   final StashEntryData stash;
   final bool isPeeking;
+  final bool isOpen;
+  final List<StashFileStat>? files;
+  final bool filesLoading;
+  final VoidCallback onToggleOpen;
   final VoidCallback onPickUp;
   final VoidCallback onPeek;
   final VoidCallback onToss;
@@ -3758,6 +4251,10 @@ class _StashDrawerCard extends StatefulWidget {
     required this.tokens,
     required this.stash,
     required this.isPeeking,
+    required this.isOpen,
+    required this.files,
+    required this.filesLoading,
+    required this.onToggleOpen,
     required this.onPickUp,
     required this.onPeek,
     required this.onToss,
@@ -3770,82 +4267,272 @@ class _StashDrawerCard extends StatefulWidget {
 class _StashDrawerCardState extends State<_StashDrawerCard> {
   bool _hovered = false;
 
+  /// Strips git's auto-generated `WIP on <branch>: <shorthash> <msg>` /
+  /// `On <branch>: <msg>` prefixes, but ONLY when they match the strict
+  /// autogen shape — user-supplied labels that happen to start with "WIP"
+  /// are left alone.
+  static String _displayLabel(String raw) {
+    // Strict WIP form: branch token has no colon; hash is 7-40 hex; tail non-empty.
+    final wip = RegExp(r'^WIP on ([^:\s]+): ([0-9a-f]{7,40}) (.+)$')
+        .firstMatch(raw);
+    if (wip != null) return wip.group(3)!;
+    final on = RegExp(r'^On ([^:\s]+): (.+)$').firstMatch(raw);
+    if (on != null) return on.group(2)!;
+    return raw;
+  }
+
+  static String _relativeAge(String iso) {
+    try {
+      final t = DateTime.parse(iso).toLocal();
+      final diff = DateTime.now().difference(t);
+      if (diff.inMinutes < 1) return 'just now';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+      if (diff.inHours < 24) return '${diff.inHours}h ago';
+      if (diff.inDays < 30) return '${diff.inDays}d ago';
+      if (diff.inDays < 365) return '${(diff.inDays / 30).floor()}mo ago';
+      return '${(diff.inDays / 365).floor()}y ago';
+    } catch (_) {
+      return '';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final stash = widget.stash;
-    // Clean up the default "WIP on branch: hash message" format.
-    var label = stash.message;
-    final wipMatch = RegExp(r'^WIP on .+?: [a-f0-9]+ (.+)$').firstMatch(label);
-    if (wipMatch != null) label = wipMatch.group(1)!;
-    final onMatch = RegExp(r'^On .+?: (.+)$').firstMatch(label);
-    if (onMatch != null) label = onMatch.group(1)!;
+    final label = _displayLabel(stash.message);
+    final age = _relativeAge(stash.createdAt);
+
+    final Color surfaceColor = widget.isPeeking
+        ? t.itemActiveBg
+        : (widget.isOpen
+            ? t.surface1.withValues(alpha: 0.6)
+            : (_hovered ? t.secondaryBtnHoverBg : Colors.transparent));
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        margin: const EdgeInsets.only(bottom: 3),
         decoration: BoxDecoration(
-          color: widget.isPeeking
-              ? t.itemActiveBg
-              : (_hovered ? t.secondaryBtnHoverBg : Colors.transparent),
-          borderRadius: BorderRadius.circular(4),
+          color: surfaceColor,
+          borderRadius: BorderRadius.circular(5),
           border: widget.isPeeking
-              ? Border.all(color: t.chromeAccent.withValues(alpha: 0.3))
-              : null,
+              ? Border.all(color: t.chromeAccent.withValues(alpha: 0.35))
+              : (widget.isOpen
+                  ? Border.all(
+                      color: t.chromeBorder.withValues(alpha: 0.25))
+                  : null),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: t.textNormal,
-                      fontSize: 11,
+            // ── Divider header ────────────────────────────────────────
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onToggleOpen,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Row(
+                  children: [
+                    // Chevron — rotates via AnimatedRotation.
+                    AnimatedRotation(
+                      turns: widget.isOpen ? 0.25 : 0,
+                      duration: context.motion(
+                          const Duration(milliseconds: 120)),
+                      child: Text(
+                        '▸',
+                        style: TextStyle(
+                          color: t.textMuted.withValues(alpha: 0.8),
+                          fontSize: 9,
+                        ),
+                      ),
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 1),
-                  Text(
-                    '${stash.fileCount} file${stash.fileCount == 1 ? '' : 's'}',
-                    style: TextStyle(
-                      color: t.textMuted,
-                      fontSize: 9,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            label,
+                            style: TextStyle(
+                              color: t.textNormal,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 1),
+                          Text(
+                            '${stash.fileCount} file${stash.fileCount == 1 ? '' : 's'}'
+                            '${age.isEmpty ? '' : ' · $age'}',
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 9,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                    // Quick actions (hover-revealed on collapsed rows to
+                    // stay uncluttered; always visible when open).
+                    if (_hovered ||
+                        widget.isPeeking ||
+                        widget.isOpen) ...[
+                      _StashAction(
+                        icon: '↑',
+                        tooltip: 'pick up',
+                        color: t.accentBright,
+                        onTap: widget.onPickUp,
+                      ),
+                      const SizedBox(width: 6),
+                      _StashAction(
+                        icon: widget.isPeeking ? '◉' : '◎',
+                        tooltip: 'peek',
+                        color: t.chromeAccent,
+                        onTap: widget.onPeek,
+                      ),
+                      const SizedBox(width: 6),
+                      _StashAction(
+                        icon: '×',
+                        tooltip: 'toss',
+                        color: t.textMuted,
+                        onTap: widget.onToss,
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
-            if (_hovered || widget.isPeeking) ...[
-              _StashAction(
-                icon: '↑',
-                tooltip: 'pick up',
-                color: t.accentBright,
-                onTap: widget.onPickUp,
+            // ── Drawer contents ───────────────────────────────────────
+            if (widget.isOpen)
+              _StashDrawerContents(
+                tokens: t,
+                files: widget.files,
+                loading: widget.filesLoading,
               ),
-              const SizedBox(width: 4),
-              _StashAction(
-                icon: widget.isPeeking ? '◉' : '◎',
-                tooltip: 'peek',
-                color: t.chromeAccent,
-                onTap: widget.onPeek,
-              ),
-              const SizedBox(width: 4),
-              _StashAction(
-                icon: '×',
-                tooltip: 'toss',
-                color: t.textMuted,
-                onTap: widget.onToss,
-              ),
-            ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _StashDrawerContents extends StatelessWidget {
+  final AppTokens tokens;
+  final List<StashFileStat>? files;
+  final bool loading;
+
+  const _StashDrawerContents({
+    required this.tokens,
+    required this.files,
+    required this.loading,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final divider = Container(
+      height: 1,
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      color: t.chromeBorder.withValues(alpha: 0.18),
+    );
+
+    Widget body;
+    if (loading && (files == null || files!.isEmpty)) {
+      body = Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 12, 10),
+        child: Text(
+          'reading shelf…',
+          style: TextStyle(color: t.textMuted, fontSize: 10),
+        ),
+      );
+    } else if (files == null || files!.isEmpty) {
+      body = Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 12, 10),
+        child: Text(
+          'empty shelf',
+          style: TextStyle(color: t.textMuted, fontSize: 10),
+        ),
+      );
+    } else {
+      body = Padding(
+        padding: const EdgeInsets.fromLTRB(24, 4, 10, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final f in files!) _StashFileRow(tokens: t, file: f),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [divider, body],
+    );
+  }
+}
+
+class _StashFileRow extends StatelessWidget {
+  final AppTokens tokens;
+  final StashFileStat file;
+
+  const _StashFileRow({required this.tokens, required this.file});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1.5),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              file.path,
+              style: TextStyle(
+                color: t.textNormal,
+                fontSize: 10.5,
+                fontFamily: 'JetBrainsMono',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (file.binary)
+            Text(
+              'bin',
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 9,
+                fontFamily: 'JetBrainsMono',
+              ),
+            )
+          else ...[
+            Text(
+              '+${file.adds}',
+              style: TextStyle(
+                color: t.stateAdded,
+                fontSize: 9.5,
+                fontFamily: 'JetBrainsMono',
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '−${file.dels}',
+              style: TextStyle(
+                color: t.stateDeleted,
+                fontSize: 9.5,
+                fontFamily: 'JetBrainsMono',
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -3890,6 +4577,28 @@ class _FileRow extends StatefulWidget {
   final bool included;
   final VoidCallback onTap;
   final ValueChanged<bool> onIncludeChanged;
+  /// Cluster stripe color. Null = no coupling signal / matrix not ready.
+  final Color? clusterColor;
+  /// When true, stripe extends to the very top of the row (no inset, no
+  /// rounded top) so it fuses with the previous row's stripe in the same
+  /// cluster. Caller computes this from adjacent cluster ids.
+  final bool stripeConnectTop;
+  /// Same contract for the bottom edge.
+  final bool stripeConnectBottom;
+  /// Whether this file is part of a real coupling cluster (i.e., stripe
+  /// is colored). Rail hover only activates on clustered rows.
+  final bool inRealCluster;
+  /// Coupling score between this row and the currently rail-hovered file.
+  /// Null when nothing is hovered OR this row isn't in the hovered cluster.
+  /// 1.0 iff this row IS the hover subject.
+  final double? peerScore;
+  /// True iff the mouse is over this row's own stripe.
+  final bool isRailSubject;
+  /// Called when the mouse enters this row's stripe. Null for non-clustered
+  /// rows (no meaningful hover target).
+  final VoidCallback? onRailEnter;
+  /// Called when the mouse leaves this row's stripe.
+  final VoidCallback? onRailExit;
 
   const _FileRow({
     required this.file,
@@ -3898,6 +4607,14 @@ class _FileRow extends StatefulWidget {
     required this.included,
     required this.onTap,
     required this.onIncludeChanged,
+    this.clusterColor,
+    this.stripeConnectTop = false,
+    this.stripeConnectBottom = false,
+    this.inRealCluster = false,
+    this.peerScore,
+    this.isRailSubject = false,
+    this.onRailEnter,
+    this.onRailExit,
   });
 
   @override
@@ -3942,23 +4659,60 @@ class _FileRowState extends State<_FileRow> {
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
-          margin: const EdgeInsets.symmetric(vertical: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-          decoration: BoxDecoration(
-            color: widget.isDiffSelected
-                ? t.chromeBorder.withValues(alpha: 0.1)
-                : (widget.included
-                    ? t.stateAdded.withValues(alpha: 0.05)
-                    : (_hovered ? t.itemHoverBg : Colors.transparent)),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: widget.included
-                  ? t.stateAdded.withValues(alpha: 0.18)
-                  : Colors.transparent,
-            ),
-          ),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Cluster stripe — only rendered for files that belong to a
+              // real coupling cluster. Isolated / standalone files get no
+              // stripe or spacer at all, so the presence of a stripe is
+              // itself the at-a-glance "coupled" signal. When consecutive
+              // rows share a cluster the stripe runs edge-to-edge (no inset
+              // / no rounding) so it visually fuses into one continuous
+              // capsule spanning the group.
+              // Stripe slot is ALWAYS reserved (3px stripe + 5px spacer)
+              // so the checkbox / card column stays in the same x position
+              // for every row, whether or not it's in a cluster. The
+              // stripe's *color* is what changes: a theme-derived tint for
+              // coupled files, transparent for isolated. Clustered rows in
+              // sequence fuse edge-to-edge (no inset / no rounding) into a
+              // continuous capsule spanning the group.
+              // Rail — its own MouseRegion so sliding the cursor along the
+              // stripe updates the hover subject without touching the card's
+              // click target. The stripe itself is the full visualization:
+              // width pulses by coupling strength, brightness fades by score.
+              // No inline labels — nothing that can push the card around.
+              _RailStripe(
+                tokens: t,
+                clusterColor: widget.clusterColor,
+                inRealCluster: widget.inRealCluster,
+                peerScore: widget.peerScore,
+                isRailSubject: widget.isRailSubject,
+                onEnter: widget.onRailEnter,
+                onExit: widget.onRailExit,
+                connectTop: widget.stripeConnectTop,
+                connectBottom: widget.stripeConnectBottom,
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 80),
+                  margin: const EdgeInsets.symmetric(vertical: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: widget.isDiffSelected
+                        ? t.chromeBorder.withValues(alpha: 0.1)
+                        : (widget.included
+                            ? t.stateAdded.withValues(alpha: 0.05)
+                            : (_hovered ? t.itemHoverBg : Colors.transparent)),
+                    borderRadius: BorderRadius.circular(
+                        context.surfaceShader.geometry.radius),
+                    border: Border.all(
+                      color: widget.included
+                          ? t.stateAdded.withValues(alpha: 0.18)
+                          : Colors.transparent,
+                    ),
+                  ),
           child: Row(
             children: [
               SizedBox(
@@ -4017,6 +4771,10 @@ class _FileRowState extends State<_FileRow> {
                 ),
             ],
           ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -4028,6 +4786,133 @@ class _ChangeBadgeSpec {
   final Color color;
 
   const _ChangeBadgeSpec({required this.label, required this.color});
+}
+
+/// Cluster stripe color derived from the active theme. Returns null for
+/// isolated / standalone files — those render with no stripe at all, so the
+/// visible stripes read purely as "here is a coupled group".
+///
+/// For real clusters we cycle through four semantic accents the theme
+/// already defines and step the alpha down for the 5th+ cluster so distant
+/// clusters fade rather than flash.
+/// One vertical segment of the coupling rail. The stripe is the *only*
+/// visualization layer — its width and alpha both modulate by coupling
+/// score to the hovered subject, so moving the cursor along a long rail
+/// produces a live gradient of stripe thickness + glow across the cluster.
+/// Nothing else shifts; no labels enter the row's layout flow.
+class _RailStripe extends StatelessWidget {
+  final AppTokens tokens;
+  final Color? clusterColor;
+  final bool inRealCluster;
+  final double? peerScore;
+  final bool isRailSubject;
+  final VoidCallback? onEnter;
+  final VoidCallback? onExit;
+  final bool connectTop;
+  final bool connectBottom;
+
+  const _RailStripe({
+    required this.tokens,
+    required this.clusterColor,
+    required this.inRealCluster,
+    required this.peerScore,
+    required this.isRailSubject,
+    required this.onEnter,
+    required this.onExit,
+    required this.connectTop,
+    required this.connectBottom,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final shader = themeDefinitionFor(tokens.id).shader;
+    final reduceMotion = context.watch<PreferencesState>().reduceMotion;
+    // Width: 3 at rest, 5 when this row is the subject, 2.5..4.5 for peers
+    // proportional to score. Creates a physical "bulge" toward strong
+    // peers, fading toward weak ones.
+    final width = isRailSubject
+        ? 5.0
+        : peerScore == null
+            ? 3.0
+            : (2.5 + peerScore! * 2.0).clamp(2.5, 4.5);
+
+    // Color: subject stays full cluster color; peers fade alpha by score;
+    // unsubjected rails render steady.
+    final base = clusterColor ?? Colors.transparent;
+    final Color color;
+    if (peerScore == null || isRailSubject) {
+      color = base;
+    } else {
+      final scale = (0.15 + peerScore! * 0.95).clamp(0.15, 1.0);
+      color = base.withValues(alpha: base.a * scale);
+    }
+
+    return MouseRegion(
+      onEnter: onEnter == null ? null : (_) => onEnter!(),
+      onExit: onExit == null ? null : (_) => onExit!(),
+      cursor: inRealCluster ? SystemMouseCursors.basic : MouseCursor.defer,
+      // Reserve the max rail width (5) so adjacent rows don't jitter when
+      // one of them becomes the subject and widens. Stripe sizes inside
+      // this slot; nothing in the row re-lays out.
+      child: SizedBox(
+        width: 5,
+        child: Padding(
+          padding: EdgeInsets.only(
+            top: connectTop ? 0 : 4,
+            bottom: connectBottom ? 0 : 4,
+          ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: AnimatedContainer(
+              duration: reduceMotion ? Duration.zero : shader.duration,
+              curve: shader.safeCurve,
+              width: width,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.only(
+                  topLeft: connectTop
+                      ? Radius.zero
+                      : const Radius.circular(1.5),
+                  topRight: connectTop
+                      ? Radius.zero
+                      : const Radius.circular(1.5),
+                  bottomLeft: connectBottom
+                      ? Radius.zero
+                      : const Radius.circular(1.5),
+                  bottomRight: connectBottom
+                      ? Radius.zero
+                      : const Radius.circular(1.5),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Color? _clusterStripeColor(AppTokens t, int? clusterId) {
+  if (clusterId == null || clusterId < 0) return null;
+  // Hypercube palette — same color identity as the app's logo. By
+  // construction hyperChromatic1 and hyperChromatic2 are the logo's
+  // chromatic-aberration pair, so they're guaranteed distinct in every
+  // theme; eventStartTone is the theme's neutral taupe/slate; stateAdded
+  // is the green fallback for the 4th cluster.
+  //
+  // No alarm semantics (avoids stateConflicted / stateDeleted) — a second
+  // cluster shouldn't look like an error.
+  final base = switch (clusterId % 4) {
+    0 => t.hyperChromatic1,
+    1 => t.hyperChromatic2,
+    2 => t.eventStartTone,
+    _ => t.stateAdded,
+  };
+  // Step alpha down for 5th+ cluster so far-out groups fade, not flash.
+  // 0.65 ceiling keeps stripes subordinate to state badges.
+  final step = clusterId ~/ 4;
+  final alpha = (0.65 - step * 0.18).clamp(0.25, 0.65).toDouble();
+  return base.withValues(alpha: alpha);
 }
 
 _ChangeBadgeSpec? _describeGitChange(
@@ -4159,18 +5044,39 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
-    if (widget.aiLoading) _pulseCtrl.repeat(reverse: true);
+    // _pulseCtrl is gated via didChangeDependencies so Reduce Motion
+    // silences the border pulse; _doneCtrl forwards only when motion is
+    // allowed.
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduce = context.reduceMotion;
+    if (widget.aiLoading) {
+      if (reduce) {
+        if (_pulseCtrl.isAnimating) _pulseCtrl.stop();
+        _pulseCtrl.value = 0;
+      } else if (!_pulseCtrl.isAnimating) {
+        _pulseCtrl.repeat(reverse: true);
+      }
+    }
   }
 
   @override
   void didUpdateWidget(_CommitComposerField old) {
     super.didUpdateWidget(old);
+    final reduce = context.reduceMotionRead;
     if (widget.aiLoading && !old.aiLoading) {
       _doneCtrl.stop();
-      _pulseCtrl.repeat(reverse: true);
+      if (!reduce) _pulseCtrl.repeat(reverse: true);
     } else if (!widget.aiLoading && old.aiLoading) {
       _pulseCtrl.stop();
-      _doneCtrl.forward(from: 0);
+      if (reduce) {
+        _doneCtrl.value = 1; // land at the bloomed end-state without animating
+      } else {
+        _doneCtrl.forward(from: 0);
+      }
     }
   }
 

@@ -11,6 +11,11 @@ dist/
 src-tauri/target/
 apps/desktop/src-tauri/target/
 
+# Claude Code runtime state — session locks, ephemeral PIDs etc.
+# Settings/agents under .claude/ that ARE source-controlled stay tracked
+# explicitly; this only catches the live-process noise.
+.claude/scheduled_tasks.lock
+
 # IDE and OS
 .vscode/
 .idea/

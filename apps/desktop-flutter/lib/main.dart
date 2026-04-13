@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui show Gradient;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -7,6 +8,7 @@ import 'app/ai_settings_state.dart';
 import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
 import 'app/repository_xray_state.dart';
+import 'app/file_coupling_state.dart';
 import 'app/worktree_state.dart';
 import 'app/hyper_reactivity.dart';
 import 'app/brand_lockup.dart';
@@ -43,6 +45,7 @@ void main() async {
   final repoState = RepositoryState();
   await repoState.loadRecents();
   final repoXrayState = RepositoryXrayState();
+  final fileCouplingState = FileCouplingState();
   final worktreeState = WorktreeState(repoState);
 
   final preferencesState = PreferencesState();
@@ -60,6 +63,7 @@ void main() async {
         ChangeNotifierProvider.value(value: themeState),
         ChangeNotifierProvider.value(value: repoState),
         ChangeNotifierProvider.value(value: repoXrayState),
+        ChangeNotifierProvider.value(value: fileCouplingState),
         ChangeNotifierProvider.value(value: worktreeState),
         ChangeNotifierProvider.value(value: preferencesState),
         ChangeNotifierProvider.value(value: aiSettingsState),
@@ -285,20 +289,164 @@ class _ParticleBackdrop extends StatefulWidget {
 }
 
 class _ParticleBackdropState extends State<_ParticleBackdrop>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver, WindowListener {
   late final AnimationController _controller;
+
+  /// Delta from the first-captured window position. As the user drags the
+  /// window around the screen, this tracks `current - base`. The painter
+  /// uses it (scaled by `shader.parallaxStrength`) to shift particles
+  /// opposite the drag, so they read as anchored in world-space rather
+  /// than glued to the window — the "distant stars" depth illusion.
+  final ValueNotifier<Offset> _windowDelta = ValueNotifier(Offset.zero);
+  Offset? _baseWindowPos;
+
+  // ── Whisp simulation state ──────────────────────────────────────────
+  // Redshift's `ThemeParticles.whisps` runs a tiny physics sim: up to 3
+  // trailing ribbons drift around the backdrop in normalized coords, and
+  // when any two heads come within a few percent of each other they
+  // annihilate into a small debris burst that fades out over ~700ms.
+  // All coords are [0, 1] so resolution/window changes don't affect
+  // behavior. Sim updates are dt-based (wall clock), independent of the
+  // controller's 0→1 cycle.
+  final List<_Whisp> _whisps = [];
+  final List<_Debris> _debris = [];
+  final math.Random _simRng = math.Random(0xCAFEFEED);
+  DateTime? _lastSimAt;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    windowManager.addListener(this);
     _controller = AnimationController(
       vsync: this,
       duration: _particleAnimationDuration(widget.shader),
     );
+    _controller.addListener(_tickSim);
     if (_particlesAnimate(widget.shader)) {
       _controller.repeat();
     }
+    _captureBaseWindowPos();
+  }
+
+  void _tickSim() {
+    if (widget.shader.particles != ThemeParticles.whisps) return;
+    final now = DateTime.now();
+    final dt = _lastSimAt == null
+        ? 0.016
+        : now.difference(_lastSimAt!).inMicroseconds / 1e6;
+    _lastSimAt = now;
+    _simulateWhisps(dt.clamp(0.0, 0.05));
+  }
+
+  void _simulateWhisps(double dt) {
+    // Maintain up to 3 whisps at all times.
+    while (_whisps.length < 3) {
+      _whisps.add(_spawnWhisp());
+    }
+    for (final w in _whisps) {
+      if (w.alive) w.update(dt, _simRng);
+    }
+    // Head-to-head collisions → annihilation + debris burst.
+    for (var i = 0; i < _whisps.length; i++) {
+      for (var j = i + 1; j < _whisps.length; j++) {
+        final a = _whisps[i];
+        final b = _whisps[j];
+        if (!a.alive || !b.alive) continue;
+        if ((a.head - b.head).distance < 0.04) {
+          final mid = (a.head + b.head) / 2;
+          for (var k = 0; k < 10; k++) {
+            final angle = k * math.pi * 2 / 10 + _simRng.nextDouble() * 0.4;
+            final speed = 0.25 + _simRng.nextDouble() * 0.2;
+            _debris.add(_Debris(
+              position: mid,
+              velocity: Offset(math.cos(angle), math.sin(angle)) * speed,
+            ));
+          }
+          a.alive = false;
+          b.alive = false;
+        }
+      }
+    }
+    // One `pow()` call shared across every debris particle this tick —
+    // was being called per-particle (10+ calls/frame) at ~20–50× the
+    // cost of a multiply.
+    final drag = math.pow(0.94, dt * 60).toDouble();
+    for (final d in _debris) {
+      d.update(dt, drag);
+    }
+    _whisps.removeWhere((w) => !w.alive || w.offScreen);
+    _debris.removeWhere((d) => d.dead);
+  }
+
+  _Whisp _spawnWhisp() {
+    // Spawn on a random edge, aim roughly inward with a bit of drift.
+    final edge = _simRng.nextInt(4);
+    final cross = _simRng.nextDouble();
+    final baseSpeed = 0.10 + _simRng.nextDouble() * 0.08;
+    Offset head;
+    Offset velocity;
+    switch (edge) {
+      case 0: // top
+        head = Offset(cross, -0.05);
+        velocity = Offset(0, baseSpeed);
+      case 1: // right
+        head = Offset(1.05, cross);
+        velocity = Offset(-baseSpeed, 0);
+      case 2: // bottom
+        head = Offset(cross, 1.05);
+        velocity = Offset(0, -baseSpeed);
+      default: // left
+        head = Offset(-0.05, cross);
+        velocity = Offset(baseSpeed, 0);
+    }
+    velocity = Offset(
+      velocity.dx + (_simRng.nextDouble() - 0.5) * 0.06,
+      velocity.dy + (_simRng.nextDouble() - 0.5) * 0.06,
+    );
+    return _Whisp(head: head, velocity: velocity);
+  }
+
+  Future<void> _captureBaseWindowPos() async {
+    try {
+      final pos = await windowManager.getPosition();
+      if (!mounted) return;
+      _baseWindowPos = pos;
+    } catch (_) {
+      // Non-desktop platforms or misconfigured environments — no parallax.
+    }
+  }
+
+  // Throttle the native `getPosition()` round-trip. Window move events
+  // fire at up to native event-loop rate (120+ Hz on fast drags), but
+  // the parallax only needs to repaint once per frame. Skipping
+  // redundant calls avoids the cost of an async platform channel
+  // round-trip 60+ times per second during a single drag gesture.
+  DateTime? _lastWindowMovePoll;
+  bool _windowMoveInFlight = false;
+
+  @override
+  void onWindowMove() {
+    if (_windowMoveInFlight) return;
+    final now = DateTime.now();
+    if (_lastWindowMovePoll != null &&
+        now.difference(_lastWindowMovePoll!).inMilliseconds < 16) {
+      return;
+    }
+    _lastWindowMovePoll = now;
+    _windowMoveInFlight = true;
+    // Fire-and-forget; the async round-trip updates the ValueNotifier
+    // which drives the CustomPaint via AnimatedBuilder.
+    () async {
+      try {
+        final pos = await windowManager.getPosition();
+        if (!mounted) return;
+        final base = _baseWindowPos ??= pos;
+        _windowDelta.value = pos - base;
+      } catch (_) {/* ignore */} finally {
+        _windowMoveInFlight = false;
+      }
+    }();
   }
 
   @override
@@ -330,29 +478,31 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
 
   @override
   void dispose() {
+    windowManager.removeListener(this);
     WidgetsBinding.instance.removeObserver(this);
+    _windowDelta.dispose();
     _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_particlesAnimate(widget.shader)) {
-      return CustomPaint(
-        painter: _ParticleBackdropPainter(
-          tokens: widget.tokens,
-          shader: widget.shader,
-          progress: 0,
-        ),
-      );
-    }
+    // Merge the animation controller with the window-delta notifier so the
+    // painter re-paints on either particle tick *or* window move, without
+    // any full widget rebuilds in the subtree.
+    final listenable = _particlesAnimate(widget.shader)
+        ? Listenable.merge([_controller, _windowDelta])
+        : _windowDelta;
     return AnimatedBuilder(
-      animation: _controller,
+      animation: listenable,
       builder: (context, _) => CustomPaint(
         painter: _ParticleBackdropPainter(
           tokens: widget.tokens,
           shader: widget.shader,
-          progress: _controller.value,
+          progress: _particlesAnimate(widget.shader) ? _controller.value : 0,
+          windowDelta: _windowDelta.value,
+          whisps: _whisps,
+          debris: _debris,
         ),
       ),
     );
@@ -365,6 +515,7 @@ bool _particlesAnimate(SurfaceMaterialShader shader) {
     case ThemeParticles.voidRain:
     case ThemeParticles.voxels:
     case ThemeParticles.chalkdust:
+    case ThemeParticles.whisps:
       return true;
     case ThemeParticles.none:
     case ThemeParticles.stardust:
@@ -384,6 +535,10 @@ Duration _particleAnimationDuration(SurfaceMaterialShader shader) {
       return const Duration(seconds: 18);
     case ThemeParticles.chalkdust:
       return const Duration(seconds: 200);
+    case ThemeParticles.whisps:
+      // Whisps use their own wall-clock dt; controller just needs to
+      // tick every frame. A short repeat cycle keeps the ticker alive.
+      return const Duration(seconds: 10);
     case ThemeParticles.stardust:
     case ThemeParticles.quantum:
     case ThemeParticles.ethereal:
@@ -396,12 +551,24 @@ class _ParticleBackdropPainter extends CustomPainter {
   final AppTokens tokens;
   final SurfaceMaterialShader shader;
   final double progress;
+  /// Window-drag delta. Particles shift by `-windowDelta * parallaxStrength`
+  /// so they feel anchored in world-space as the window moves — the
+  /// "distant stars stay put" depth illusion.
+  final Offset windowDelta;
+  final List<_Whisp> whisps;
+  final List<_Debris> debris;
 
   const _ParticleBackdropPainter({
     required this.tokens,
     required this.shader,
     required this.progress,
+    this.windowDelta = Offset.zero,
+    this.whisps = const [],
+    this.debris = const [],
   });
+
+  /// World-space offset applied to every particle layer.
+  Offset get _parallaxOffset => -windowDelta * shader.parallaxStrength;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -421,7 +588,7 @@ class _ParticleBackdropPainter extends CustomPainter {
           size,
           tileSize: 1000,
           opacity: 0.3,
-          offset: Offset(0, -1000 + 2000 * progress),
+          offset: Offset(0, -1000 + 2000 * progress) + _parallaxOffset,
           drawTile: _drawVoidTile,
         );
       case ThemeParticles.voxels:
@@ -430,7 +597,7 @@ class _ParticleBackdropPainter extends CustomPainter {
           size,
           tileSize: 1000,
           opacity: 0.6,
-          offset: Offset(0, -1000 + 2000 * progress),
+          offset: Offset(0, -1000 + 2000 * progress) + _parallaxOffset,
           drawTile: _drawVoxelTile,
         );
       case ThemeParticles.chalkdust:
@@ -439,19 +606,89 @@ class _ParticleBackdropPainter extends CustomPainter {
           size,
           tileSize: size.shortestSide.clamp(760, 1500).toDouble(),
           opacity: 0.46,
-          offset: Offset.zero,
+          // Chalk dust shifts minimally — it's a near-field texture.
+          offset: _parallaxOffset * 0.3,
           drawTile: _drawChalkTile,
         );
+      case ThemeParticles.whisps:
+        _drawWhisps(canvas, size);
     }
   }
 
+  // Paints hoisted out of the inner loops — reused across every whisp
+  // and debris particle per frame. Mutating `.shader`/`.color` on an
+  // existing Paint is free; allocating new `Paint()` + `MaskFilter` on
+  // every iteration was thrashing the GPU kernel cache.
+  static final Paint _whispPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.5
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5);
+  static final Paint _debrisPaint = Paint()
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.8);
+
+  void _drawWhisps(Canvas canvas, Size size) {
+    // Whisp ribbons: gradient from transparent red (tail) to bright
+    // blue-white (head). Paint + MaskFilter are shared across iterations;
+    // we only swap the gradient shader per whisp.
+    final w0 = size.width;
+    final h0 = size.height;
+    for (final w in whisps) {
+      final len = w.trail.length;
+      if (len < 2) continue;
+      final first = w.trail.first;
+      final last = w.trail.last;
+      final startPt = Offset(first.dx * w0, first.dy * h0);
+      final endPt = Offset(last.dx * w0, last.dy * h0);
+      final path = Path()..moveTo(startPt.dx, startPt.dy);
+      // Build path directly from normalized coords — skipping the
+      // intermediate List<Offset> allocation (~30 allocs per whisp).
+      for (var i = 1; i < len; i++) {
+        final p = w.trail[i];
+        path.lineTo(p.dx * w0, p.dy * h0);
+      }
+      _whispPaint.shader = ui.Gradient.linear(
+        startPt,
+        endPt,
+        const [
+          Color(0x00FF2244),
+          Color(0x59FF5566),
+          Color(0xBF77DDFF),
+        ],
+        const [0.0, 0.55, 1.0],
+      );
+      canvas.drawPath(path, _whispPaint);
+    }
+    // Debris: small bright flashes decaying out. Drawn after whisps so
+    // collision bursts read in front of any surviving trails nearby.
+    for (final d in debris) {
+      final a = d.life.clamp(0.0, 1.0);
+      _debrisPaint.color = Color.fromRGBO(255, 240, 230, a * 0.75);
+      canvas.drawCircle(
+        Offset(d.position.dx * w0, d.position.dy * h0),
+        1.2 + a * 2.2,
+        _debrisPaint,
+      );
+    }
+  }
+
+  /// Per-layer parallax depth multiplier. Closer (visually bigger/brighter)
+  /// layers shift MORE as the window moves — same physics as passing fence
+  /// posts vs. distant mountains. Uniform parallax would look flat; this
+  /// gives real depth.
+  Offset _layerOffset(double depth) => _parallaxOffset * depth;
+
   void _drawStardustLayers(Canvas canvas, Size size) {
+    // Depth multipliers rise with visual size/brightness: smallest stars
+    // sit at infinity (barely move), the brightest foreground stars drift
+    // the most as the window moves.
     _drawRepeatedTile(
       canvas,
       size,
       tileSize: 560,
       opacity: 0.4,
-      offset: Offset.zero,
+      offset: _layerOffset(0.4),
       drawTile: (tile, scale) =>
           _drawStardustTile(tile, scale, 34, 0.14, 0.46, 89.4),
     );
@@ -460,7 +697,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 1940,
       opacity: 0.6,
-      offset: Offset.zero,
+      offset: _layerOffset(0.7),
       drawTile: (tile, scale) =>
           _drawStardustTile(tile, scale, 28, 0.29, 0.66, 57.8),
     );
@@ -469,7 +706,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 1540,
       opacity: 0.6,
-      offset: Offset.zero,
+      offset: _layerOffset(1.0),
       drawTile: (tile, scale) =>
           _drawStardustTile(tile, scale, 20, 0.48, 1.04, 31.2),
     );
@@ -478,7 +715,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 1120,
       opacity: 0.6,
-      offset: Offset.zero,
+      offset: _layerOffset(1.4),
       drawTile: (tile, scale) =>
           _drawStardustTile(tile, scale, 14, 0.78, 1.65, 1.7),
     );
@@ -490,7 +727,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 460,
       opacity: 0.46,
-      offset: Offset.zero,
+      offset: _layerOffset(0.4),
       drawTile: (tile, scale) =>
           _drawQuantumTile(tile, scale, 10, 0.22, 0.7, 72.9, 5, 290),
     );
@@ -499,7 +736,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 1700,
       opacity: 0.6,
-      offset: Offset.zero,
+      offset: _layerOffset(0.7),
       drawTile: (tile, scale) =>
           _drawQuantumTile(tile, scale, 14, 0.33, 0.84, 47.6, 4, 255),
     );
@@ -508,7 +745,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 1320,
       opacity: 0.6,
-      offset: Offset.zero,
+      offset: _layerOffset(1.0),
       drawTile: (tile, scale) =>
           _drawQuantumTile(tile, scale, 20, 0.48, 1, 21.4, 3, 215),
     );
@@ -517,7 +754,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 900,
       opacity: 0.6,
-      offset: Offset.zero,
+      offset: _layerOffset(1.4),
       drawTile: (tile, scale) =>
           _drawQuantumTile(tile, scale, 26, 0.62, 1.22, 3.2, 2, 170),
     );
@@ -539,24 +776,24 @@ class _ParticleBackdropPainter extends CustomPainter {
     final startY = -tileSize - overscan + wrapped.dy;
     final endX = size.width + tileSize + overscan;
     final endY = size.height + tileSize + overscan;
+    final scale = tileSize / 1000;
+    // ONE saveLayer around the entire grid for opacity modulation
+    // instead of one per tile — 4–16 tile cells would otherwise each
+    // allocate a full offscreen buffer per frame.
+    canvas.saveLayer(
+      Offset.zero & size,
+      Paint()..color = Colors.white.withValues(alpha: opacity),
+    );
     for (var x = startX; x < endX; x += tileSize) {
       for (var y = startY; y < endY; y += tileSize) {
-        canvas.saveLayer(
-          Rect.fromLTWH(
-            x - overscan,
-            y - overscan,
-            tileSize + overscan * 2,
-            tileSize + overscan * 2,
-          ),
-          Paint()..color = Colors.white.withValues(alpha: opacity),
-        );
+        canvas.save();
         canvas.translate(x, y);
-        final scale = tileSize / 1000;
         canvas.scale(scale);
         drawTile(canvas, scale);
         canvas.restore();
       }
     }
+    canvas.restore();
   }
 
   void _drawStardustTile(
@@ -613,7 +850,8 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 1320,
       opacity: 0.2,
-      offset: Offset(-180 * progress, 120 * progress),
+      offset:
+          Offset(-180 * progress, 120 * progress) + _layerOffset(0.5),
       drawTile: (tile, scale) => _drawEmberFieldTile(
         tile,
         seed: 0x0E8B3A12,
@@ -634,7 +872,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 980,
       opacity: 0.3,
-      offset: Offset(120 * progress, -840 * progress),
+      offset: Offset(120 * progress, -840 * progress) + _layerOffset(0.9),
       drawTile: (tile, scale) => _drawEmberFieldTile(
         tile,
         seed: 0x0E8B3A7F,
@@ -655,7 +893,8 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 1180,
       opacity: 0.18,
-      offset: Offset(-90 * progress, -1220 * progress),
+      offset:
+          Offset(-90 * progress, -1220 * progress) + _layerOffset(1.3),
       drawTile: (tile, scale) => _drawEmberFieldTile(
         tile,
         seed: 0x0E8B401D,
@@ -993,7 +1232,9 @@ class _ParticleBackdropPainter extends CustomPainter {
   bool shouldRepaint(_ParticleBackdropPainter oldDelegate) =>
       oldDelegate.tokens != tokens ||
       oldDelegate.shader != shader ||
-      (_particlesAnimate(shader) && oldDelegate.progress != progress);
+      (_particlesAnimate(shader) && oldDelegate.progress != progress) ||
+      (shader.parallaxStrength > 0 &&
+          oldDelegate.windowDelta != windowDelta);
 }
 
 class _SourceRandom {
@@ -1003,5 +1244,67 @@ class _SourceRandom {
   double next() {
     _state = (1664525 * _state + 1013904223) & 0xffffffff;
     return _state / 0xffffffff;
+  }
+}
+
+// ── Redshift whisp simulation ──────────────────────────────────────────
+// Tiny self-contained physics for the redshift backdrop. 3 ribbons drift
+// in normalized [0,1] space; when any two heads come within ~4% of each
+// other they annihilate into a burst of short-lived debris. All state
+// lives in `_ParticleBackdropState`; these classes are plain data.
+
+class _Whisp {
+  Offset head;
+  Offset velocity;
+  final List<Offset> trail = [];
+  bool alive = true;
+
+  _Whisp({required this.head, required this.velocity});
+
+  bool get offScreen =>
+      head.dx < -0.15 ||
+      head.dx > 1.15 ||
+      head.dy < -0.15 ||
+      head.dy > 1.15;
+
+  void update(double dt, math.Random rng) {
+    // Gentle curl so whisps don't just fly in straight lines — each axis
+    // gets a small random nudge scaled by dt, giving the trails their
+    // organic wander.
+    velocity = Offset(
+      velocity.dx + (rng.nextDouble() - 0.5) * 0.12 * dt,
+      velocity.dy + (rng.nextDouble() - 0.5) * 0.12 * dt,
+    );
+    final speed = velocity.distance;
+    // Clamp speed so curl never stalls a whisp or lets it rocket away.
+    if (speed > 0.28) {
+      velocity = velocity * (0.28 / speed);
+    } else if (speed < 0.08) {
+      velocity = velocity * (0.08 / speed);
+    }
+    head = head + velocity * dt;
+    trail.add(head);
+    if (trail.length > 30) {
+      trail.removeAt(0);
+    }
+  }
+}
+
+class _Debris {
+  Offset position;
+  Offset velocity;
+  double life = 1.0;
+
+  _Debris({required this.position, required this.velocity});
+
+  bool get dead => life <= 0;
+
+  void update(double dt, double dragFactor) {
+    position = position + velocity * dt;
+    // Drag factor is precomputed per-frame in the simulator (one `pow()`
+    // call shared across all particles in a tick) instead of paying the
+    // math-library call per-particle.
+    velocity = velocity * dragFactor;
+    life -= dt * 1.5;
   }
 }

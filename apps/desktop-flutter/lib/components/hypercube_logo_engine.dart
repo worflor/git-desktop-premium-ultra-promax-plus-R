@@ -83,6 +83,22 @@ class HypercubeLogoEngine {
   static const double _spring = 800;
   static const double _dampingPerSecond = 21.400478750629333;
 
+  // Accelerated damping for warp/tilt residue when reducing, so hover/drag
+  // trails die quickly without a visible spring wobble. The pose itself
+  // stays frozen wherever it was at the moment of toggle — no canonical
+  // "rest index", no teleport to a preset pose.
+  static const double _reducedDampingMultiplier = 2.0;
+
+  // Reduce-motion singularity teleport. When the user releases a drag
+  // under reduce-motion, the cube doesn't drift back via spring physics
+  // (that would be sustained motion). Instead it shrinks to a point at
+  // the drag-release location, then grows back at origin — two brief
+  // impulses totalling ~290ms. Technically still motion, but the kind
+  // that satisfies the spirit of "reduced": no continuous drift, no
+  // spring oscillation.
+  static const double _implodeRatePerSecond = 8.0; // 1 → 0 in ~125ms
+  static const double _explodeRatePerSecond = 6.0; // 0 → 1 in ~166ms
+
   int _rngState;
   final List<int> _history = <int>[0, 1];
 
@@ -100,6 +116,36 @@ class HypercubeLogoEngine {
   double warpVx = 0;
   double warpVy = 0;
 
+  bool _reduced = false;
+
+  // 1.0 = fully visible; 0.0 = collapsed to a singularity. Multiplied
+  // into the projection's scale, so the cube shrinks/grows uniformly
+  // around its current position. Only non-1.0 during the reduced-motion
+  // drag-release teleport.
+  double _materialize = 1.0;
+  _MaterializePhase _materializePhase = _MaterializePhase.idle;
+
+  bool get isReduced => _reduced;
+
+  /// True when the engine's *transient* state (warp, tilt, hover) has
+  /// fully settled in reduced mode. The pose itself is already frozen —
+  /// widgets just wait for residual motion to die out before stopping
+  /// the ticker.
+  ///
+  /// Never true while:
+  ///   * dragging — the user is actively moving the cube
+  ///   * materializing — the implode/explode sequence needs frames
+  ///   * materialize scale hasn't fully returned to 1
+  bool get isAtReducedRest {
+    if (!_reduced) return false;
+    if (dragging) return false;
+    if (_materializePhase != _MaterializePhase.idle) return false;
+    if ((_materialize - 1.0).abs() > warpSettledThreshold) return false;
+    return (warpX.abs() + warpY.abs() + warpVx.abs() + warpVy.abs() +
+            tiltX.abs() + tiltY.abs() + near) <
+        warpSettledThreshold;
+  }
+
   Offset get tilt => Offset(tiltX, tiltY);
   Offset get warp => Offset(warpX, warpY);
 
@@ -112,6 +158,10 @@ class HypercubeLogoEngine {
   }
 
   void step(double dt, {double speed = 0.85}) {
+    if (_reduced) {
+      _stepReduced(dt);
+      return;
+    }
     final double targetBoost = 1 + near * 1.2 + (dragging ? 2.3 : 0);
     smoothBoost += (targetBoost - smoothBoost) * dt * 12;
     time += dt * speed * smoothBoost;
@@ -146,6 +196,131 @@ class HypercubeLogoEngine {
         warpVy = 0;
       }
     }
+  }
+
+  /// Reduce-motion step.
+  ///
+  /// Freezes the pose exactly where the engine was at toggle time:
+  ///   * `time` does not advance → projection-pipeline breathing locked.
+  ///   * `transition` does not advance → the state lerp stops at its
+  ///      current fraction, so a mid-transition toggle holds that
+  ///      intermediate pose rather than snapping to either endpoint.
+  ///   * `smoothBoost` re-settles to 1 so a re-enter into normal mode
+  ///      doesn't inherit a stale hover boost.
+  ///   * While dragging, warp is driven directly by [updatePointer] each
+  ///     frame — we don't apply damping here or the user's pull would
+  ///     get fought. After release, damping kicks in and the cube
+  ///     glides back to its resting pose.
+  void _stepReduced(double dt) {
+    smoothBoost = 1;
+    if (dragging) {
+      // Active drag — user owns the warp. Abort any residual phase so
+      // re-grab during an in-flight materialize aborts gracefully.
+      _materialize = 1.0;
+      _materializePhase = _MaterializePhase.idle;
+      return;
+    }
+
+    // Phase 1: implode. Shrink at the current (warped) position.
+    if (_materializePhase == _MaterializePhase.imploding) {
+      _materialize -= _implodeRatePerSecond * dt;
+      if (_materialize <= 0) {
+        _materialize = 0;
+        // Singularity reached — teleport home and flip to explode.
+        warpX = 0;
+        warpY = 0;
+        warpVx = 0;
+        warpVy = 0;
+        tiltX = 0;
+        tiltY = 0;
+        near = 0;
+        _materializePhase = _MaterializePhase.exploding;
+      }
+      return;
+    }
+
+    // Phase 2: explode. Grow back from singularity at origin.
+    if (_materializePhase == _MaterializePhase.exploding) {
+      _materialize += _explodeRatePerSecond * dt;
+      if (_materialize >= 1.0) {
+        _materialize = 1.0;
+        _materializePhase = _MaterializePhase.idle;
+      }
+      return;
+    }
+
+    // Idle: just damp any leftover hover residue. No spring restore —
+    // that would be the continuous drift we're specifically avoiding.
+    final double damping =
+        math.exp(-_dampingPerSecond * _reducedDampingMultiplier * dt);
+    warpVx *= damping;
+    warpVy *= damping;
+    warpX += warpVx * dt;
+    warpY += warpVy * dt;
+    tiltX *= damping;
+    tiltY *= damping;
+    near *= damping;
+    if (warpX.abs() < warpSettledThreshold) warpX = 0;
+    if (warpY.abs() < warpSettledThreshold) warpY = 0;
+    if (warpVx.abs() < warpSettledThreshold) warpVx = 0;
+    if (warpVy.abs() < warpSettledThreshold) warpVy = 0;
+    if (tiltX.abs() < warpSettledThreshold) tiltX = 0;
+    if (tiltY.abs() < warpSettledThreshold) tiltY = 0;
+    if (near.abs() < warpSettledThreshold) near = 0;
+  }
+
+  /// Flip the engine into / out of reduce-motion mode.
+  ///
+  /// When entering, the pose freezes exactly where it is — no target
+  /// pose, no teleport. When [randomizeOnEnter] is true the engine
+  /// *first* picks a random pose (current + target indices and a random
+  /// mid-transition fraction), then freezes. Use this on fresh launches
+  /// where reduce-motion was already on — the alternative is every cold
+  /// start showing the same initial pose, which reads as mechanical.
+  ///
+  /// When exiting, cycling resumes from wherever the pose was held.
+  void setReduced(bool value, {bool randomizeOnEnter = false}) {
+    if (_reduced == value) return;
+    _reduced = value;
+    // Abort any in-flight materialize. Whichever mode we're entering
+    // owns the warp from here — normal spring physics if leaving
+    // reduce, idle damping if entering.
+    _materialize = 1.0;
+    _materializePhase = _MaterializePhase.idle;
+    if (value && randomizeOnEnter) {
+      _randomizeFrozenPose();
+    }
+  }
+
+  /// Pick a random pose to freeze at. Used only when entering reduce-
+  /// motion at widget mount — mid-session toggles intentionally preserve
+  /// whatever pose the user was looking at.
+  void _randomizeFrozenPose() {
+    final int count = hypercubeStates.length;
+    final int fresh = (_xorshift64() * count).floor().clamp(0, count - 1);
+    currentIndex = fresh;
+    int other;
+    do {
+      other = (_xorshift64() * count).floor().clamp(0, count - 1);
+    } while (other == fresh);
+    targetIndex = other;
+    // 0..1 mid-transition fraction — allows the frozen pose to be
+    // anywhere along the lerp between the two states, not just at a
+    // canonical endpoint.
+    transition = _xorshift64();
+    // Reset history so a later exit-from-reduced doesn't start cycling
+    // based on stale indices from before mount.
+    _history
+      ..clear()
+      ..addAll(<int>[currentIndex, targetIndex]);
+    // Kill transient state so the cube reads as still from frame 0.
+    warpX = 0;
+    warpY = 0;
+    warpVx = 0;
+    warpVy = 0;
+    tiltX = 0;
+    tiltY = 0;
+    near = 0;
   }
 
   int pickNextIndex() {
@@ -184,6 +359,20 @@ class HypercubeLogoEngine {
     required Offset delta,
     required double size,
   }) {
+    // Reduce-motion: the logo is still a grabbable, movable object — the
+    // drag is intentional, user-initiated motion, not ambient ornament.
+    // Only the passive hover responses (tilt + near-proximity boost) are
+    // suppressed so the cube doesn't wiggle or glow when the cursor
+    // merely crosses it.
+    if (_reduced) {
+      if (dragging) {
+        warpX = delta.dx;
+        warpY = delta.dy;
+        warpVx = 0;
+        warpVy = 0;
+      }
+      return;
+    }
     final double distance = delta.distance;
     tiltX = delta.dx / size;
     tiltY = delta.dy / size;
@@ -197,7 +386,24 @@ class HypercubeLogoEngine {
   }
 
   void setDragging(bool value) {
+    final wasDragging = dragging;
     dragging = value;
+    if (value) {
+      // Starting a new drag — abort any in-flight materialize so the
+      // cube snaps back to full size at the user's cursor. Regrabbing
+      // mid-materialize shouldn't leave them tugging on a shrunken ghost.
+      _materialize = 1.0;
+      _materializePhase = _MaterializePhase.idle;
+      return;
+    }
+    if (wasDragging && _reduced) {
+      // Released under reduce-motion. If the cube is displaced, kick
+      // off the implode → teleport → explode sequence. Otherwise stay
+      // idle — nothing to teleport.
+      if (warpX.abs() + warpY.abs() > warpSettledThreshold) {
+        _materializePhase = _MaterializePhase.imploding;
+      }
+    }
   }
 
   void handlePointerExit() {
@@ -278,8 +484,14 @@ class HypercubeLogoEngine {
     required double fovOffset,
     required bool useWarp,
   }) {
-    final double scale =
-        size * 1.55 * (1 + math.sin((time + tOffset) * 0.4) * 0.05 * near);
+    // `_materialize` is 1.0 outside the reduce-motion teleport. During
+    // the implode → explode sequence it ramps 1 → 0 → 1, collapsing all
+    // vertices to the current canvas offset (warped, then origin after
+    // the mid-sequence teleport) and growing them back.
+    final double scale = size *
+        1.55 *
+        (1 + math.sin((time + tOffset) * 0.4) * 0.05 * near) *
+        _materialize;
     final double warpRotation = useWarp ? (warpX + warpY) / size * 0.2 : 0;
     final double oscillation = math.sin((time + tOffset) * 0.1) * 0.05;
     final _RotationFrame rotation = _RotationFrame(
@@ -451,6 +663,12 @@ List<double> rotate4D(List<double> coords, List<double> angles) {
 
   return <double>[x, y, z, w];
 }
+
+/// Phase machine for the reduce-motion drag-release teleport.
+///   idle       — no teleport in flight; materialize held at 1.0.
+///   imploding  — _materialize ramping 1 → 0 at the drag-release offset.
+///   exploding  — _materialize ramping 0 → 1 at origin after teleport.
+enum _MaterializePhase { idle, imploding, exploding }
 
 class _RotationPair {
   const _RotationPair({required this.c, required this.s});

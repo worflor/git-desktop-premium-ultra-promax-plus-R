@@ -1,0 +1,739 @@
+import 'dart:convert' show LineSplitter;
+import 'dart:math' as math;
+
+import 'git.dart';
+import 'git_result.dart';
+
+/// Co-change coupling: files appearing in the same commit over and over are
+/// *semantically* related. This is the truth git already holds — we just have
+/// to read it out and cluster the current change set by it.
+///
+/// Built once per repo (keyed by HEAD hash) and reused across every render.
+class FileCouplingMatrix {
+  /// Jaccard coefficient keyed by (path → other path → score in 0..1).
+  /// Symmetric: jaccard[A][B] == jaccard[B][A].
+  final Map<String, Map<String, double>> jaccard;
+  final String headHash;
+  final int commitsAnalyzed;
+
+  const FileCouplingMatrix({
+    required this.jaccard,
+    required this.headHash,
+    required this.commitsAnalyzed,
+  });
+
+  /// Co-change score for an ordered pair. Storage is upper-triangle (lex)
+  /// so we check both directions.
+  double score(String a, String b) {
+    if (a == b) return 1.0;
+    return jaccard[a]?[b] ?? jaccard[b]?[a] ?? 0.0;
+  }
+
+  static const empty = FileCouplingMatrix(
+    jaccard: {},
+    headHash: '',
+    commitsAnalyzed: 0,
+  );
+}
+
+/// Compute co-change matrix for a repo from the last [commitLimit] commits.
+/// Single git-log pass — the format embeds HEAD hash in the first commit
+/// separator, so we don't need a separate `rev-parse HEAD` round-trip.
+///
+/// Skips commits with > [largeCommitCutoff] files (merges/imports/vendor
+/// bumps); they're noise for co-change signal and would dominate pair counts.
+Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
+  String repo, {
+  int commitLimit = 1000,
+  int largeCommitCutoff = 60,
+}) async {
+  final logProbe = await runGitProbe(repo, [
+    'log',
+    '-n', '$commitLimit',
+    '--no-merges',
+    '--name-only',
+    '--format=__C__%H',
+  ]);
+  if (logProbe.exitCode != 0) {
+    return GitResult.err(logProbe.stderr.toString().trim());
+  }
+
+  // Parse in one pass — avoid building intermediate String list per line.
+  // Commit separator lines look like "__C__<sha>"; we extract HEAD from the
+  // first one and commit hashes are otherwise ignored.
+  final stdout = logProbe.stdout.toString();
+  String headHash = '';
+  final commits = <List<String>>[];
+  List<String>? current;
+
+  for (final rawLine in const LineSplitter().convert(stdout)) {
+    if (rawLine.startsWith('__C__')) {
+      if (current != null &&
+          current.isNotEmpty &&
+          current.length <= largeCommitCutoff) {
+        commits.add(current);
+      }
+      current = <String>[];
+      if (headHash.isEmpty) {
+        headHash = rawLine.substring(5).trim();
+      }
+      continue;
+    }
+    if (current == null) continue;
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty) continue;
+    current.add(trimmed.replaceAll('\\', '/'));
+  }
+  if (current != null &&
+      current.isNotEmpty &&
+      current.length <= largeCommitCutoff) {
+    commits.add(current);
+  }
+
+  // One pass: per-file commit count + per-pair co-count. Only upper-triangle
+  // (a < b lexicographic) — cuts pair inserts in half. Score lookup checks
+  // both orders.
+  final fileCommits = <String, int>{};
+  final pairCount = <String, Map<String, int>>{};
+  for (final files in commits) {
+    for (final f in files) {
+      fileCommits[f] = (fileCommits[f] ?? 0) + 1;
+    }
+    final n = files.length;
+    if (n < 2) continue;
+    for (var i = 0; i < n; i++) {
+      final a = files[i];
+      for (var j = i + 1; j < n; j++) {
+        final b = files[j];
+        // Lexicographic ordering → store once, halve memory.
+        final lo = a.compareTo(b) < 0 ? a : b;
+        final hi = a.compareTo(b) < 0 ? b : a;
+        final row = pairCount.putIfAbsent(lo, () => {});
+        row[hi] = (row[hi] ?? 0) + 1;
+      }
+    }
+  }
+
+  // Jaccard: |A ∩ B| / |A ∪ B| = co / (Na + Nb - co)
+  final jaccard = <String, Map<String, double>>{};
+  pairCount.forEach((a, row) {
+    final na = fileCommits[a] ?? 0;
+    final dest = jaccard.putIfAbsent(a, () => {});
+    row.forEach((b, co) {
+      final union = na + (fileCommits[b] ?? 0) - co;
+      if (union > 0) dest[b] = co / union;
+    });
+  });
+
+  // Ensure every file that appeared in any commit has a (possibly empty) row
+  // so `jaccard.containsKey(path)` reliably answers "is this tracked?".
+  for (final path in fileCommits.keys) {
+    jaccard.putIfAbsent(path, () => {});
+  }
+
+  return GitResult.ok(FileCouplingMatrix(
+    jaccard: jaccard,
+    headHash: headHash,
+    commitsAnalyzed: commits.length,
+  ));
+}
+
+/// How files are ordered in the change list once they've been clustered.
+enum FileSortGuide {
+  /// Files arranged so tightly-coupled pairs sit adjacent. Clusters kept
+  /// together; the rail's hover visualization reads as a continuous band.
+  relatedProximity,
+
+  /// Plain A→Z by path. Cluster colors still render; position ignores them.
+  alphabetical,
+
+  /// Ranked by the weight of *this* change — hunk count + line churn in
+  /// the current diff. The noisiest files rise to the top; tiny edits
+  /// drop to the bottom. Where the action is, not where it might echo.
+  impact,
+}
+
+/// Result of agglomerative clustering on the current change set.
+///
+/// Files with a coupling score ≥ [threshold] to any current peer end up in
+/// the same cluster (single-link). Files with no qualifying peer get
+/// [clusterIdIsolated] (-1) — rendered as a muted stripe so they read as
+/// "standalone, no coupling signal" rather than "part of cluster N".
+class FileClusters {
+  final Map<String, int> byPath;
+  final int clusterCount;
+
+  /// Paths in render order — same cluster ids are contiguous; clusters
+  /// themselves are ordered by size (largest first), with isolated at the end.
+  final List<String> orderedPaths;
+
+  const FileClusters({
+    required this.byPath,
+    required this.clusterCount,
+    required this.orderedPaths,
+  });
+
+  static const clusterIdIsolated = -1;
+
+  static FileClusters empty(List<String> fallbackOrder) => FileClusters(
+        byPath: {for (final p in fallbackOrder) p: clusterIdIsolated},
+        clusterCount: 0,
+        orderedPaths: fallbackOrder,
+      );
+}
+
+/// Single-link clustering over the current change set.
+///
+/// Scales cleanly from 1 file to 10,000+ by:
+///   * enumerating only above-threshold pairs (no O(n²) score scan),
+///   * using Union-Find for merges (near-linear in pair count),
+///   * bucketing untracked files by path prefix before enumerating path
+///     pairs, so path-affinity lookups stay O(n·avg_bucket_size) rather
+///     than O(n²) when the change set is dominated by untracked files.
+FileClusters clusterFiles(
+  List<String> currentPaths,
+  FileCouplingMatrix matrix, {
+  double threshold = 0.25,
+  FileSortGuide sortGuide = FileSortGuide.relatedProximity,
+  // Per-path impact weight for [FileSortGuide.impact]. Callers supply
+  // change-weight signals from their diff stats (hunks, lines). Missing
+  // entries score 0.
+  Map<String, double>? impactScores,
+  // Paths currently in a merge-conflict state. Regardless of sortGuide
+  // these float to the very top of the list — unresolvable conflicts
+  // block every commit, so the user must see them first.
+  Set<String>? conflictedPaths,
+  // Paths the user has checked for inclusion in the current commit.
+  // Only consulted by [FileSortGuide.relatedProximity]: within a cluster
+  // included files sort above excluded, and clusters with any included
+  // files sort above fully-excluded clusters.
+  Set<String>? includedPaths,
+  // "Smart invert" toggle. Reverses the effective order per mode —
+  // conflicts always stay pinned at the top regardless. Each mode
+  // carries its own interpretation of "opposite":
+  //   * related: tight clusters drop to the bottom, isolated/one-off
+  //     files rise — "show me the odd ones out."
+  //   * alphabetical: Z → A.
+  //   * impact: smallest churn first — "quick wins on top."
+  bool inverted = false,
+}) {
+  final n = currentPaths.length;
+  if (n == 0) {
+    return const FileClusters(byPath: {}, clusterCount: 0, orderedPaths: []);
+  }
+
+  // Index paths so we can refer to them by int everywhere.
+  final pathIndex = <String, int>{
+    for (var i = 0; i < n; i++) currentPaths[i]: i,
+  };
+
+  // Collect candidate pairs above threshold. Each pair stored at most once
+  // via a lexicographic (lo, hi) key in a compact int-encoded set.
+  final candidates = <_PairScore>[];
+  final seen = <int>{};
+
+  int encode(int a, int b) {
+    final lo = a < b ? a : b;
+    final hi = a < b ? b : a;
+    return lo * n + hi;
+  }
+
+  // -- 1. Historical pairs: sparse iteration over the jaccard matrix.
+  //    For each current file, walk its neighbour row; only add pairs where
+  //    the neighbour is also in the current change set.
+  for (var i = 0; i < n; i++) {
+    final a = currentPaths[i];
+    final row = matrix.jaccard[a];
+    if (row == null) continue;
+    row.forEach((b, s) {
+      if (s < threshold) return;
+      final j = pathIndex[b];
+      if (j == null || i == j) return;
+      final key = encode(i, j);
+      if (seen.add(key)) candidates.add(_PairScore(s, i, j));
+    });
+  }
+
+  // -- 2. Path-affinity pairs for new/untracked files (and for pairs the
+  //    historical matrix doesn't cover). Bucket by top-2 path segments to
+  //    keep enumeration near-linear even for huge change sets.
+  final buckets = <String, List<int>>{};
+  for (var i = 0; i < n; i++) {
+    final p = currentPaths[i];
+    final segs = p.replaceAll('\\', '/').split('/');
+    final key = segs.length >= 2
+        ? '${segs[0]}/${segs[1]}'
+        : (segs.isNotEmpty ? segs[0] : '');
+    buckets.putIfAbsent(key, () => <int>[]).add(i);
+  }
+  buckets.forEach((_, idxs) {
+    // O(m²) within bucket, but avg bucket is tiny for typical projects.
+    for (var ii = 0; ii < idxs.length; ii++) {
+      for (var jj = ii + 1; jj < idxs.length; jj++) {
+        final i = idxs[ii];
+        final j = idxs[jj];
+        final a = currentPaths[i];
+        final b = currentPaths[j];
+        final aTracked = matrix.jaccard.containsKey(a);
+        final bTracked = matrix.jaccard.containsKey(b);
+        if (aTracked && bTracked) continue; // history-only for that case
+        final s = pathAffinity(a, b);
+        if (s < threshold) continue;
+        final key = encode(i, j);
+        if (seen.add(key)) candidates.add(_PairScore(s, i, j));
+      }
+    }
+  });
+
+  // -- 3. Union-Find: merge pairs in descending-score order.
+  candidates.sort((a, b) => b.score.compareTo(a.score));
+  final uf = _UnionFind(n);
+  for (final p in candidates) {
+    uf.union(p.a, p.b);
+  }
+
+  // -- 4. Build clusters from UF roots. Singletons (their own root) become
+  //    isolated — they had no pair above threshold by definition.
+  final byRoot = <int, List<int>>{};
+  for (var i = 0; i < n; i++) {
+    byRoot.putIfAbsent(uf.find(i), () => <int>[]).add(i);
+  }
+
+  // Build unsorted clusters (int index lists). Actual seriation + member
+  // ordering happens inside each branch below so the related branch can
+  // be include-aware without affecting the other modes.
+  final realClusters = <List<int>>[];
+  final isolatedIdx = <int>[];
+  byRoot.forEach((root, members) {
+    if (members.length <= 1) {
+      isolatedIdx.addAll(members);
+    } else {
+      realClusters.add(members);
+    }
+  });
+  bool _clusterHasIncluded(List<int> members) {
+    if (includedPaths == null || includedPaths.isEmpty) return true;
+    return members.any((i) => includedPaths.contains(currentPaths[i]));
+  }
+  realClusters.sort((x, y) {
+    // Primary: clusters with any included files sort above fully-excluded
+    // clusters. A fully-unchecked cluster is context, not a concern.
+    final xIn = _clusterHasIncluded(x) ? 0 : 1;
+    final yIn = _clusterHasIncluded(y) ? 0 : 1;
+    if (xIn != yIn) return xIn - yIn;
+    // Secondary: bigger clusters first.
+    final s = y.length.compareTo(x.length);
+    if (s != 0) return s;
+    // Tertiary: stable alphabetical by first member.
+    return currentPaths[x.first].compareTo(currentPaths[y.first]);
+  });
+  isolatedIdx.sort((x, y) => currentPaths[x].compareTo(currentPaths[y]));
+
+  // byPath — cluster membership is independent of ordering; clusters
+  // are still drawn via the rail stripe regardless of sort mode.
+  final byPath = <String, int>{};
+  for (var ci = 0; ci < realClusters.length; ci++) {
+    for (final idx in realClusters[ci]) {
+      byPath[currentPaths[idx]] = ci;
+    }
+  }
+  for (final idx in isolatedIdx) {
+    byPath[currentPaths[idx]] = FileClusters.clusterIdIsolated;
+  }
+
+  // orderedPaths — the actual row order. Strategy depends on sortGuide.
+  final orderedPaths = <String>[];
+  switch (sortGuide) {
+    case FileSortGuide.relatedProximity:
+      // Grouped: clusters first (largest-with-included → smallest →
+      // excluded-only → isolated). Inside each cluster, split by
+      // inclusion and nearest-neighbour-chain each subgroup — so the
+      // "files I'm actually committing" sit above the surrounding
+      // context, each sub-chain still locally tight.
+      for (final cluster in realClusters) {
+        final included = <int>[];
+        final excluded = <int>[];
+        for (final idx in cluster) {
+          if (includedPaths == null ||
+              includedPaths.contains(currentPaths[idx])) {
+            included.add(idx);
+          } else {
+            excluded.add(idx);
+          }
+        }
+        final chain = <int>[
+          ..._seriateCluster(included, currentPaths, matrix),
+          ..._seriateCluster(excluded, currentPaths, matrix),
+        ];
+        for (final idx in chain) {
+          orderedPaths.add(currentPaths[idx]);
+        }
+      }
+      // Isolated-but-included files above isolated-but-excluded.
+      final isolatedIncluded = <int>[];
+      final isolatedExcluded = <int>[];
+      for (final idx in isolatedIdx) {
+        if (includedPaths == null ||
+            includedPaths.contains(currentPaths[idx])) {
+          isolatedIncluded.add(idx);
+        } else {
+          isolatedExcluded.add(idx);
+        }
+      }
+      for (final idx in isolatedIncluded) {
+        orderedPaths.add(currentPaths[idx]);
+      }
+      for (final idx in isolatedExcluded) {
+        orderedPaths.add(currentPaths[idx]);
+      }
+    case FileSortGuide.alphabetical:
+      // Natural, case-insensitive sort. Matches how humans read file
+      // names: migration-2.sql before migration-10.sql, README.md and
+      // readme.md sort together, not flipped apart by capital codepoints.
+      orderedPaths.addAll(
+        List<String>.from(currentPaths)..sort(_naturalCompare),
+      );
+    case FileSortGuide.impact:
+      // Rank by caller-supplied change weight (weighted for binaries,
+      // new files, and del-heaviness before reaching us), desc. Missing
+      // entries score 0 and drop to the bottom; tiebreak is a natural
+      // compare so equal-weight files still read humanely.
+      final ranked = List<String>.from(currentPaths);
+      final weights = impactScores ?? const <String, double>{};
+      ranked.sort((a, b) {
+        final sa = weights[a] ?? 0.0;
+        final sb = weights[b] ?? 0.0;
+        final c = sb.compareTo(sa);
+        if (c != 0) return c;
+        return _naturalCompare(a, b);
+      });
+      orderedPaths.addAll(ranked);
+  }
+
+  // Smart invert: reverse the mode's ordered list. Applied BEFORE the
+  // conflict float so conflicts still end up at position 0 regardless.
+  // Each mode's notion of "opposite" is just "flip the list" — but
+  // because each mode has its own ordering logic (cluster grouping,
+  // alphabetical, weight), the reversal produces the semantically
+  // appropriate inverse automatically:
+  //   * related reversed → isolated-excluded first, tight-cluster-
+  //     included last → "odd ones out on top."
+  //   * alphabetical reversed → Z → A.
+  //   * impact reversed → smallest churn first.
+  if (inverted) {
+    orderedPaths.setAll(0, orderedPaths.reversed.toList());
+  }
+
+  // Universal float-to-top: merge conflicts block every commit. Whatever
+  // the sort mode, conflicted files belong at eye level. Preserves their
+  // relative order as produced by the main sort below.
+  if (conflictedPaths != null && conflictedPaths.isNotEmpty) {
+    final conflicted = <String>[];
+    final rest = <String>[];
+    for (final p in orderedPaths) {
+      if (conflictedPaths.contains(p)) {
+        conflicted.add(p);
+      } else {
+        rest.add(p);
+      }
+    }
+    orderedPaths
+      ..clear()
+      ..addAll(conflicted)
+      ..addAll(rest);
+  }
+
+  return FileClusters(
+    byPath: byPath,
+    clusterCount: realClusters.length,
+    orderedPaths: orderedPaths,
+  );
+}
+
+/// Natural, case-insensitive path comparator.
+///
+/// Walks both strings in lockstep, comparing digit runs *numerically*
+/// and non-digit runs *case-insensitively*. So `migration-10.sql` sorts
+/// after `migration-2.sql`, and `README.md` doesn't leapfrog `src/` just
+/// because uppercase codepoints are lower in ASCII.
+///
+/// Falls back to the raw `compareTo` as a final tiebreaker so the sort
+/// is deterministic even for strings that differ only in case.
+int _naturalCompare(String a, String b) {
+  final aLen = a.length;
+  final bLen = b.length;
+  var i = 0;
+  var j = 0;
+  while (i < aLen && j < bLen) {
+    final ca = a.codeUnitAt(i);
+    final cb = b.codeUnitAt(j);
+    final aDigit = _isDigit(ca);
+    final bDigit = _isDigit(cb);
+    if (aDigit && bDigit) {
+      // Consume both digit runs, compare numerically by length then value.
+      var aEnd = i;
+      while (aEnd < aLen && _isDigit(a.codeUnitAt(aEnd))) {
+        aEnd++;
+      }
+      var bEnd = j;
+      while (bEnd < bLen && _isDigit(b.codeUnitAt(bEnd))) {
+        bEnd++;
+      }
+      // Strip leading zeros for magnitude compare; shorter = smaller.
+      final aDigits = _stripLeadingZeros(a.substring(i, aEnd));
+      final bDigits = _stripLeadingZeros(b.substring(j, bEnd));
+      if (aDigits.length != bDigits.length) {
+        return aDigits.length - bDigits.length;
+      }
+      final cmp = aDigits.compareTo(bDigits);
+      if (cmp != 0) return cmp;
+      i = aEnd;
+      j = bEnd;
+    } else if (aDigit != bDigit) {
+      // One side is numeric, the other textual — numeric sorts earlier
+      // so "v2" < "v_alpha". Subjective but consistent with most UIs.
+      return aDigit ? -1 : 1;
+    } else {
+      // Both non-digit — compare case-insensitively, then case-sensitively
+      // on equality so 'a' and 'A' stay stable relative to each other.
+      final la = _toLower(ca);
+      final lb = _toLower(cb);
+      if (la != lb) return la - lb;
+      if (ca != cb) return ca - cb;
+      i++;
+      j++;
+    }
+  }
+  if (i < aLen) return 1;
+  if (j < bLen) return -1;
+  return 0;
+}
+
+bool _isDigit(int codeUnit) => codeUnit >= 0x30 && codeUnit <= 0x39;
+
+int _toLower(int codeUnit) {
+  if (codeUnit >= 0x41 && codeUnit <= 0x5A) return codeUnit + 0x20;
+  return codeUnit;
+}
+
+String _stripLeadingZeros(String digits) {
+  var i = 0;
+  while (i < digits.length - 1 && digits.codeUnitAt(i) == 0x30) {
+    i++;
+  }
+  return i == 0 ? digits : digits.substring(i);
+}
+
+/// Seriate a cluster's members so that adjacent files in the returned
+/// order have the strongest pairwise coupling possible.
+///
+/// Greedy nearest-neighbour chain:
+///   1. Seed with the highest-scoring pair in the cluster.
+///   2. Extend from either end by the unplaced member with the strongest
+///      coupling to that endpoint.
+///
+/// O(n²) per cluster — trivial for real change sets. Ties break on lex
+/// order of the path so the output stays deterministic across runs and
+/// files that truly have no coupling signal degrade gracefully to
+/// alphabetical.
+List<int> _seriateCluster(
+  List<int> members,
+  List<String> paths,
+  FileCouplingMatrix matrix,
+) {
+  if (members.length <= 2) return members;
+
+  double score(int i, int j) =>
+      combinedCouplingScore(paths[i], paths[j], matrix);
+
+  // Pick the best starting pair. Alphabetical tiebreak so equal-scoring
+  // pairs pick a stable seed.
+  double bestPairScore = -1;
+  int seedA = members[0];
+  int seedB = members[1];
+  for (var i = 0; i < members.length; i++) {
+    for (var j = i + 1; j < members.length; j++) {
+      final s = score(members[i], members[j]);
+      if (s > bestPairScore ||
+          (s == bestPairScore &&
+              _lexBefore(
+                paths[members[i]],
+                paths[members[j]],
+                paths[seedA],
+                paths[seedB],
+              ))) {
+        bestPairScore = s;
+        seedA = members[i];
+        seedB = members[j];
+      }
+    }
+  }
+
+  // Orient the seed so the lex-smaller endpoint starts, for stable output.
+  if (paths[seedB].compareTo(paths[seedA]) < 0) {
+    final t = seedA;
+    seedA = seedB;
+    seedB = t;
+  }
+
+  final chain = <int>[seedA, seedB];
+  final remaining = members.where((m) => m != seedA && m != seedB).toList();
+
+  while (remaining.isNotEmpty) {
+    int bestIdx = 0;
+    bool bestPrepend = false;
+    double bestScore = -1;
+    String? bestTiebreak;
+    for (var i = 0; i < remaining.length; i++) {
+      final candidate = remaining[i];
+      final frontScore = score(candidate, chain.first);
+      final backScore = score(candidate, chain.last);
+      // Prefer the stronger side; on a tie prefer appending (keeps growth
+      // toward the lex-larger tail — cosmetic stability).
+      final prepend = frontScore > backScore;
+      final localScore = prepend ? frontScore : backScore;
+      final localTiebreak = paths[candidate];
+      final betterScore = localScore > bestScore;
+      final equalScore = localScore == bestScore;
+      final lexBreak = equalScore &&
+          (bestTiebreak == null || localTiebreak.compareTo(bestTiebreak) < 0);
+      if (betterScore || lexBreak) {
+        bestScore = localScore;
+        bestIdx = i;
+        bestPrepend = prepend;
+        bestTiebreak = localTiebreak;
+      }
+    }
+    final picked = remaining.removeAt(bestIdx);
+    if (bestPrepend) {
+      chain.insert(0, picked);
+    } else {
+      chain.add(picked);
+    }
+  }
+
+  return chain;
+}
+
+/// Compare two pairs of paths for a stable tiebreak when seed-pair scores
+/// are equal: prefer the pair whose min-path is lex-smaller.
+bool _lexBefore(String a, String b, String seedA, String seedB) {
+  final candidate = a.compareTo(b) < 0 ? a : b;
+  final seed = seedA.compareTo(seedB) < 0 ? seedA : seedB;
+  return candidate.compareTo(seed) < 0;
+}
+
+class _PairScore {
+  final double score;
+  final int a;
+  final int b;
+  const _PairScore(this.score, this.a, this.b);
+}
+
+class _UnionFind {
+  final List<int> parent;
+  final List<int> rank;
+  _UnionFind(int n)
+      : parent = List<int>.generate(n, (i) => i, growable: false),
+        rank = List<int>.filled(n, 0);
+
+  int find(int x) {
+    while (parent[x] != x) {
+      parent[x] = parent[parent[x]]; // path compression (halving)
+      x = parent[x];
+    }
+    return x;
+  }
+
+  void union(int a, int b) {
+    final ra = find(a);
+    final rb = find(b);
+    if (ra == rb) return;
+    if (rank[ra] < rank[rb]) {
+      parent[ra] = rb;
+    } else if (rank[ra] > rank[rb]) {
+      parent[rb] = ra;
+    } else {
+      parent[rb] = ra;
+      rank[ra]++;
+    }
+  }
+}
+
+/// Language-agnostic path-structure signal. Returns 0..1 based on how much
+/// of the directory path and filename stem two paths share.
+///
+/// Used as a fallback coupling signal for files with no git history yet
+/// (new/untracked files). No regex matching on language-specific patterns —
+/// just string overlap, so it works for any filesystem layout.
+double pathAffinity(String a, String b) {
+  if (a == b) return 1.0;
+  final aNorm = a.replaceAll('\\', '/');
+  final bNorm = b.replaceAll('\\', '/');
+  final aSegs = aNorm.split('/');
+  final bSegs = bNorm.split('/');
+
+  // Shared directory prefix (excludes the filename itself).
+  var sharedDirs = 0;
+  final maxPrefix = math.min(aSegs.length, bSegs.length) - 1;
+  for (var i = 0; i < maxPrefix; i++) {
+    if (aSegs[i] != bSegs[i]) break;
+    sharedDirs++;
+  }
+  final maxDirs = math.max(aSegs.length, bSegs.length) - 1;
+  final dirScore = maxDirs > 0 ? sharedDirs / maxDirs : 0.0;
+
+  // Basename stem similarity — longest common prefix of the bare names,
+  // stripped of the rightmost extension.
+  final aStem = _stripExt(aSegs.last);
+  final bStem = _stripExt(bSegs.last);
+  var common = 0;
+  final minStem = math.min(aStem.length, bStem.length);
+  for (var i = 0; i < minStem; i++) {
+    if (aStem[i] != bStem[i]) break;
+    common++;
+  }
+  final maxStem = math.max(aStem.length, bStem.length);
+  final stemScore = maxStem > 0 ? common / maxStem : 0.0;
+
+  // Require BOTH some dir overlap AND some name overlap to couple by path.
+  // This prevents unrelated files in a flat directory from being grouped
+  // (same-dir alone is too weak a signal; same-name alone is too).
+  return dirScore * stemScore;
+}
+
+String _stripExt(String filename) {
+  final dot = filename.lastIndexOf('.');
+  return dot > 0 ? filename.substring(0, dot) : filename;
+}
+
+/// Blend historical co-change with path-structure affinity.
+///
+/// If both files appear in git history we trust the historical Jaccard —
+/// files that have previously co-evolved are strongly coupled.
+/// If either file has no history (new/untracked), fall back to path
+/// affinity so structurally-related but unstaged siblings still cluster.
+double combinedCouplingScore(String a, String b, FileCouplingMatrix m) {
+  final hist = m.score(a, b);
+  final aTracked = m.jaccard.containsKey(a);
+  final bTracked = m.jaccard.containsKey(b);
+  if (aTracked && bTracked) {
+    // Both tracked: trust history. Path affinity used only as a tiebreaker
+    // when history shows non-zero but low coupling.
+    if (hist > 0) return hist;
+    return 0.0;
+  }
+  // At least one file is new / untracked / moved — path signal takes over.
+  return pathAffinity(a, b);
+}
+
+/// How many cluster colors we cycle through before stepping the alpha down.
+/// Exposed for the color helper to stay in sync.
+const int kFileClusterPaletteSize = 4;
+
+/// Estimate how much information was used for a coupling decision.
+/// Useful when rendering the header signal (low data → less confident).
+double couplingConfidence(FileCouplingMatrix matrix) {
+  if (matrix.commitsAnalyzed <= 0) return 0;
+  return math.min(1.0, matrix.commitsAnalyzed / 200.0);
+}

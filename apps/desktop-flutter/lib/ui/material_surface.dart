@@ -16,6 +16,50 @@ enum AppMaterialTone {
   danger,
 }
 
+/// Derived per-theme surface tones. Lets feature code ask "what's the right
+/// tone for the topbar/rail/panel chrome?" without branching on `t.id`.
+/// Single source of truth for any per-theme UI quirk.
+extension AppTokenSurfaceTones on AppTokens {
+  /// Tone used for chrome that sits inside the window frame (topbar,
+  /// sidebar rail, floating command palette). Most themes use `surface0`
+  /// (lightest translucent layer); Redshift uses `surface1` so its
+  /// red-leaning chrome reads as an inset rather than bleeding out of the
+  /// gradient underneath.
+  AppMaterialTone get chromeTone => id == AppThemeId.redshift
+      ? AppMaterialTone.surface1
+      : AppMaterialTone.surface0;
+
+  /// Tone for panels that float one depth below the chrome (command
+  /// palettes, floating popovers). Steps one tone deeper than [chromeTone]
+  /// so the panel reads as elevated above chrome, not flush with it.
+  AppMaterialTone get innerPanelTone => id == AppThemeId.redshift
+      ? AppMaterialTone.surface2
+      : AppMaterialTone.surface1;
+
+  /// Aether & Quanta darken their glass fills slightly so the backdrop
+  /// blur reads as a pane, not a wash. Other glass themes (halo, redshift)
+  /// keep the declared alpha. Returns 1.0 = no damping.
+  bool get glassNeedsOpacityDamping =>
+      id == AppThemeId.aether || id == AppThemeId.quanta;
+
+  /// Crafty paints hard stamped drop-shadows (minecraft-block aesthetic)
+  /// instead of the soft elevated glow every other theme uses. Opt-in flag
+  /// so shadow logic stays declarative.
+  bool get usesStampedShadow => id == AppThemeId.crafty;
+
+  /// Design-system border scale. Three tiers let feature code pick by
+  /// intent (hairline vs. subtle vs. emphasized) instead of rolling
+  /// bespoke alphas. Tuned against the 40+ scattered chromeBorder.withValues
+  /// sites that drifted across 0.05–0.30.
+  ///
+  /// faint (0.08)  — inner grid lines, near-invisible dividers
+  /// subtle (0.14) — standard card chrome, default choice
+  /// strong (0.28) — accent dividers, emphasis
+  Color get chromeBorderFaint => chromeBorder.withValues(alpha: 0.08);
+  Color get chromeBorderSubtle => chromeBorder.withValues(alpha: 0.14);
+  Color get chromeBorderStrong => chromeBorder.withValues(alpha: 0.28);
+}
+
 class SurfaceMaterialRuntime {
   final ImageFilter? filter;
   final double alphaScale;
@@ -23,6 +67,11 @@ class SurfaceMaterialRuntime {
   final Color cellShadow;
   final Color rimLight;
   final Color glowColor;
+  // Precomputed glaze colors — cached per (theme, shader, dpr) via
+  // MaterialRuntimeCache so the painter doesn't redo the withValues math
+  // on every paint call.
+  final Color glazeTopTint;
+  final Color glazeMidTint;
 
   const SurfaceMaterialRuntime({
     required this.filter,
@@ -31,6 +80,8 @@ class SurfaceMaterialRuntime {
     required this.cellShadow,
     required this.rimLight,
     required this.glowColor,
+    required this.glazeTopTint,
+    required this.glazeMidTint,
   });
 }
 
@@ -110,10 +161,12 @@ class MaterialSurface extends StatelessWidget {
               if (_showsStructuralGlaze(t, shader))
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(resolvedRadius),
-                        gradient: _surfaceGlaze(t, runtime),
+                    child: CustomPaint(
+                      painter: _SurfaceGlazePainter(
+                        tokens: t,
+                        runtime: runtime,
+                        radius: resolvedRadius,
+                        isGlass: shader.mode == SurfaceMaterialMode.glass,
                       ),
                     ),
                   ),
@@ -194,7 +247,7 @@ class MaterialSurface extends StatelessWidget {
       return base;
     }
 
-    if (t.id == AppThemeId.aether || t.id == AppThemeId.quanta) {
+    if (t.glassNeedsOpacityDamping) {
       final alpha = _alphaOf(base);
       final factor = switch (tone) {
         AppMaterialTone.surface0 => 0.88,
@@ -218,25 +271,6 @@ class MaterialSurface extends StatelessWidget {
     return t.id != AppThemeId.nightwalker;
   }
 
-  Gradient _surfaceGlaze(AppTokens t, SurfaceMaterialRuntime runtime) {
-    final strength = switch (t.id) {
-      AppThemeId.aether => 0.16,
-      AppThemeId.quanta => 0.18,
-      AppThemeId.redshift => 0.12,
-      AppThemeId.halo => 0.18,
-      _ => 0.1,
-    };
-    return LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [
-        Colors.white.withValues(alpha: strength * 0.28),
-        runtime.glowColor.withValues(alpha: strength * 0.32),
-        Colors.transparent,
-      ],
-      stops: const [0, 0.24, 0.72],
-    );
-  }
 
   bool get _usesRuntimeOverlay {
     switch (tone) {
@@ -282,6 +316,15 @@ class MaterialRuntimeCache {
         ((shader.edgeIntensity * 40 * glass).round().clamp(0, 256)) / 256.0;
     final ambient = tokens.themeAmbient;
     final glow = ambient ?? Colors.white;
+    final glowColor =
+        glow.withValues(alpha: (0.2 * shader.luminescence).clamp(0.0, 0.8));
+    final glazeStrength = switch (tokens.id) {
+      AppThemeId.aether => 0.16,
+      AppThemeId.quanta => 0.18,
+      AppThemeId.redshift => 0.12,
+      AppThemeId.halo => 0.18,
+      _ => 0.1,
+    };
     return SurfaceMaterialRuntime(
       filter: glass < 0.5 || clampedBlur < 0.25
           ? null
@@ -292,8 +335,9 @@ class MaterialRuntimeCache {
           ? const Color(0x80000000)
           : Color.lerp(Colors.black, ambient, 0.5)!.withValues(alpha: 0.45),
       rimLight: glow.withValues(alpha: (alphaScale * 0.35).clamp(0.05, 0.8)),
-      glowColor:
-          glow.withValues(alpha: (0.2 * shader.luminescence).clamp(0.0, 0.8)),
+      glowColor: glowColor,
+      glazeTopTint: Colors.white.withValues(alpha: glazeStrength * 0.28),
+      glazeMidTint: glowColor.withValues(alpha: glazeStrength * 0.32),
     );
   }
 }
@@ -322,7 +366,7 @@ List<BoxShadow> _materialShadows(
   bool elevated,
   bool hardShadow,
 ) {
-  if (t.id == AppThemeId.crafty) {
+  if (t.usesStampedShadow) {
     final shadows = <BoxShadow>[];
     if (elevated) {
       shadows.add(
@@ -361,6 +405,20 @@ List<BoxShadow> _materialShadows(
       offset: Offset(0, shader.mode == SurfaceMaterialMode.glass ? 12 : 6),
     ),
   );
+  // Glass-only chromatic edge fringe: a hair of the theme's ambient color
+  // bled into the rim, so light reads as refracted at the edge instead of
+  // stopped dead. One extra shadow, no new allocations — ambient is already
+  // a stored token.
+  if (shader.mode == SurfaceMaterialMode.glass) {
+    final ambient = t.themeAmbient ?? t.chromeAccent;
+    shadows.add(
+      BoxShadow(
+        color: ambient.withValues(alpha: 0.12),
+        blurRadius: 1,
+        spreadRadius: -0.5,
+      ),
+    );
+  }
   return shadows;
 }
 
@@ -389,10 +447,13 @@ class MaterialTexturePainter extends CustomPainter {
     switch (shader.texture) {
       case ThemeTexture.grain:
         final count = (size.width * size.height / 1600).clamp(24, 280).round();
+        // Per-surface seed so adjacent panels don't stamp identical noise
+        // fields; stable across paints for the same size, so no flicker.
+        final seed = size.width.toInt() * 37 + size.height.toInt() * 17;
         paint.color = ambient.withValues(alpha: intensity * 0.55);
         for (var i = 0; i < count; i++) {
-          final x = ((i * 127) % 1000) / 1000 * size.width;
-          final y = ((i * 313) % 1000) / 1000 * size.height;
+          final x = (((i * 127) + seed) % 1000) / 1000 * size.width;
+          final y = (((i * 313) + seed * 3) % 1000) / 1000 * size.height;
           canvas.drawCircle(Offset(x, y), 0.35 + (i % 4) * 0.16, paint);
         }
       case ThemeTexture.scanlines:
@@ -401,13 +462,18 @@ class MaterialTexturePainter extends CustomPainter {
           canvas.drawRect(Rect.fromLTWH(0, y, size.width, 2), paint);
         }
       case ThemeTexture.pixels:
+        // Precompute the two possible cell colors ONCE — the inner
+        // nested loop previously allocated a new Color per drawn cell
+        // via `.withValues()`, for up to ~180 cells on a typical panel.
         final dark = Color.lerp(tokens.bg0, Colors.black, 0.22)!;
+        final cellAlpha = (intensity * 0.65).clamp(0.0, 1.0);
+        final ambientCell = ambient.withValues(alpha: cellAlpha);
+        final darkCell = dark.withValues(alpha: cellAlpha);
         for (var x = 0.0; x < size.width; x += 16) {
           for (var y = 0.0; y < size.height; y += 16) {
             final seed = (x ~/ 16) * 31 + (y ~/ 16) * 17;
             if (seed % 5 == 0 || seed % 11 == 0) {
-              paint.color = (seed % 2 == 0 ? ambient : dark)
-                  .withValues(alpha: intensity * 0.65);
+              paint.color = seed.isEven ? ambientCell : darkCell;
               canvas.drawRect(Rect.fromLTWH(x, y, 4, 4), paint);
             }
           }
@@ -423,4 +489,85 @@ class MaterialTexturePainter extends CustomPainter {
       oldDelegate.shader != shader ||
       oldDelegate.blendMode != blendMode ||
       oldDelegate.opacityScale != opacityScale;
+}
+
+/// Draws the structural glaze + (for glass) a bottom-right falloff wash.
+/// Per-instance seeded from canvas size so adjacent surfaces read as
+/// independent panes instead of stamped copies. Stable across paints:
+/// same size → same seed → no flicker on scroll or rebuild.
+class _SurfaceGlazePainter extends CustomPainter {
+  final AppTokens tokens;
+  final SurfaceMaterialRuntime runtime;
+  final double radius;
+  final bool isGlass;
+
+  const _SurfaceGlazePainter({
+    required this.tokens,
+    required this.runtime,
+    required this.radius,
+    required this.isGlass,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rrect = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      Radius.circular(radius),
+    );
+    canvas.save();
+    canvas.clipRRect(rrect);
+
+    // Per-instance geometry: rotation in [-0.14, 0.14] rad (~±8°) and
+    // stop offset in [-0.04, 0.04] pulled from a hash of the surface size.
+    // Two panels of different sizes get visually distinct glazes without
+    // any randomness at paint-time.
+    final seed = (size.width.toInt() * 73 + size.height.toInt() * 131) & 0xFFFF;
+    final angle = ((seed % 29) - 14) / 100.0;
+    final stopShift = (((seed >> 5) % 9) - 4) / 100.0;
+
+    final mid = (0.24 + stopShift).clamp(0.1, 0.38);
+    final far = (0.72 + stopShift).clamp(0.55, 0.9);
+
+    final diag = math.sqrt(size.width * size.width + size.height * size.height);
+    final center = Offset(size.width / 2, size.height / 2);
+    final dir = Offset(math.cos(angle - math.pi / 4), math.sin(angle - math.pi / 4));
+    final start = center - dir * (diag / 2);
+    final end = center + dir * (diag / 2);
+
+    final rect = Offset.zero & size;
+    final glazePaint = Paint()
+      ..shader = LinearGradient(
+        begin: FractionalOffset(start.dx / size.width, start.dy / size.height),
+        end: FractionalOffset(end.dx / size.width, end.dy / size.height),
+        colors: [runtime.glazeTopTint, runtime.glazeMidTint, const Color(0x00000000)],
+        stops: [0.0, mid, far],
+      ).createShader(rect);
+    canvas.drawRect(rect, glazePaint);
+
+    // Glass-only bottom-right falloff — reads as light dropping off across
+    // the pane, not just a flat overlay. Uses runtime.cellShadow which is
+    // already theme-tinted (ambient-blended black), so it inherits identity
+    // for free.
+    if (isGlass) {
+      final falloff = Paint()
+        ..shader = LinearGradient(
+          begin: const FractionalOffset(0.45, 0.45),
+          end: const FractionalOffset(1, 1),
+          colors: [
+            const Color(0x00000000),
+            runtime.cellShadow.withValues(alpha: 0.12),
+          ],
+        ).createShader(rect);
+      canvas.drawRect(rect, falloff);
+    }
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_SurfaceGlazePainter old) =>
+      old.tokens != tokens ||
+      old.runtime != runtime ||
+      old.radius != radius ||
+      old.isGlass != isGlass;
 }

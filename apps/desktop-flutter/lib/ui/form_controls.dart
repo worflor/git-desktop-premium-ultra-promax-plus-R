@@ -294,6 +294,16 @@ class _AppMultilineTextFieldState extends State<AppMultilineTextField> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final textStyle = TextStyle(
+      color: t.textStrong,
+      fontSize: widget.fontSize,
+      fontFamily: widget.mono ? 'JetBrains Mono' : null,
+    );
+    // EditableText is the raw primitive — no InputDecoration, no Material
+    // ink, no ambient theme can paint chrome on it. The bordered pill is
+    // drawn exactly once, by the AppInputShell below. Hint text isn't
+    // native to EditableText, so we overlay a Text placeholder that hides
+    // as soon as the controller holds any text.
     return AppInputShell(
       height: widget.minHeight,
       padding: widget.padding,
@@ -305,28 +315,44 @@ class _AppMultilineTextFieldState extends State<AppMultilineTextField> {
           maxHeight: widget.maxHeight,
         ),
         child: Scrollbar(
-          child: TextField(
-            controller: widget.controller,
-            focusNode: _focusNode,
-            autofocus: widget.autofocus,
-            enabled: widget.enabled,
-            minLines: null,
-            maxLines: null,
-            expands: true,
-            onChanged: widget.onChanged,
-            cursorColor: t.accentBright,
-            style: TextStyle(
-              color: t.textStrong,
-              fontSize: widget.fontSize,
-              fontFamily: widget.mono ? 'JetBrains Mono' : null,
-            ),
-            decoration: InputDecoration.collapsed(
-              hintText: widget.hintText,
-              hintStyle: TextStyle(
-                color: t.textMuted.withValues(alpha: 0.5),
-                fontSize: widget.fontSize,
+          child: Stack(
+            children: [
+              if (widget.hintText != null && widget.hintText!.isNotEmpty)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedBuilder(
+                      animation: widget.controller,
+                      builder: (context, _) {
+                        if (widget.controller.text.isNotEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        return Text(
+                          widget.hintText!,
+                          style: textStyle.copyWith(
+                            color: t.textMuted.withValues(alpha: 0.5),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              EditableText(
+                controller: widget.controller,
+                focusNode: _focusNode,
+                autofocus: widget.autofocus,
+                readOnly: !widget.enabled,
+                minLines: null,
+                maxLines: null,
+                expands: true,
+                onChanged: widget.onChanged,
+                cursorColor: t.accentBright,
+                backgroundCursorColor: t.textMuted,
+                style: textStyle,
+                contextMenuBuilder: (context, state) =>
+                    AdaptiveTextSelectionToolbar.editableText(
+                        editableTextState: state),
               ),
-            ),
+            ],
           ),
         ),
       ),

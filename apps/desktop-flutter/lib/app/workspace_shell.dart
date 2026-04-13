@@ -14,7 +14,10 @@ import '../features/settings/settings_page.dart';
 import '../features/xray/repo_xray_panel.dart';
 import '../ui/animated_icons.dart';
 import '../ui/control_chrome.dart';
+import '../ui/interaction_feedback.dart';
 import '../ui/material_surface.dart';
+import '../ui/morph_text.dart';
+import '../ui/motion.dart';
 import '../ui/tokens.dart';
 import '../diagnostics/diagnostics_state.dart';
 import 'hyper_reactivity.dart';
@@ -121,8 +124,9 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                 ),
                 child: TweenAnimationBuilder<double>(
                   tween: Tween(begin: 0, end: 1),
-                  duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOut,
+                  duration: context.surfaceShader.duration,
+                  // safeCurve — value feeds Opacity which asserts [0, 1].
+                  curve: context.surfaceShader.safeCurve,
                   builder: (context, value, child) => Opacity(
                     opacity: value,
                     child: Transform.translate(
@@ -147,26 +151,93 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                 ),
               ),
             ),
-          if (_panel == _Panel.settings)
-            _SlidePanel(
-              title: 'Settings',
-              onClose: () => setState(() => _panel = _Panel.none),
-              child: const SettingsPage(),
-            ),
-          if (_panel == _Panel.search)
-            _SlidePanel(
-              onClose: () => setState(() => _panel = _Panel.none),
-              child: SearchPanel(
-                onClose: () => setState(() => _panel = _Panel.none),
-                onCommitSelected: (hash) {
-                  setState(() {
-                    _selectedCommitHash = hash;
-                    _mode = _WorkspaceMode.history;
-                    _panel = _Panel.none;
-                  });
-                },
+          // Settings/search panel overlay. Backdrop and panel animate
+          // INDEPENDENTLY:
+          //   - Backdrop fades only (stays full-screen, doesn't slide)
+          //   - Panel fades + slides
+          // Merging them would slide the backdrop with the panel, leaving
+          // the top of the screen un-dimmed during the close-slide for a
+          // frame.
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: _panel != _Panel.settings && _panel != _Panel.search,
+              child: Stack(
+                children: [
+                  // ── Dim backdrop: opacity-only, static position ──────
+                  Positioned.fill(
+                    child: AnimatedOpacity(
+                      duration: context.surfaceShader.duration,
+                      curve: context.surfaceShader.safeCurve,
+                      opacity: (_panel == _Panel.settings ||
+                              _panel == _Panel.search)
+                          ? 1.0
+                          : 0.0,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () =>
+                            setState(() => _panel = _Panel.none),
+                        child: Container(
+                            color: Colors.black.withValues(alpha: 0.4)),
+                      ),
+                    ),
+                  ),
+                  // ── Panel body: fade + slide via AnimatedSwitcher ────
+                  Positioned.fill(
+                    child: AnimatedSwitcher(
+                      duration: context.surfaceShader.duration,
+                      reverseDuration: context.surfaceShader.duration,
+                      switchInCurve: context.surfaceShader.safeCurve,
+                      switchOutCurve: context.surfaceShader.safeCurve,
+                      layoutBuilder: (currentChild, previousChildren) =>
+                          Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ...previousChildren,
+                          if (currentChild != null) currentChild,
+                        ],
+                      ),
+                      transitionBuilder: (child, anim) => FadeTransition(
+                        opacity: anim,
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.04),
+                            end: Offset.zero,
+                          ).animate(anim),
+                          child: child,
+                        ),
+                      ),
+                      child: switch (_panel) {
+                        _Panel.settings => _SlidePanel(
+                            key: const ValueKey('settings'),
+                            title: 'Settings',
+                            onClose: () =>
+                                setState(() => _panel = _Panel.none),
+                            child: const SettingsPage(),
+                          ),
+                        _Panel.search => _SlidePanel(
+                            key: const ValueKey('search'),
+                            onClose: () =>
+                                setState(() => _panel = _Panel.none),
+                            child: SearchPanel(
+                              onClose: () =>
+                                  setState(() => _panel = _Panel.none),
+                              onCommitSelected: (hash) {
+                                setState(() {
+                                  _selectedCommitHash = hash;
+                                  _mode = _WorkspaceMode.history;
+                                  _panel = _Panel.none;
+                                });
+                              },
+                            ),
+                          ),
+                        _ => const SizedBox.shrink(key: ValueKey('none')),
+                      },
+                    ),
+                  ),
+                ],
               ),
             ),
+          ),
         ],
       ),
     );
@@ -329,9 +400,7 @@ class _Topbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final topbarTone = t.id == AppThemeId.redshift
-        ? AppMaterialTone.surface1
-        : AppMaterialTone.surface0;
+    final topbarTone = t.chromeTone;
     final repo = context.watch<RepositoryState>();
     final repoName = repo.activeRepoName;
     final status = repo.status;
@@ -439,6 +508,11 @@ class _ModeBtnState extends State<_ModeBtn> {
   bool _hovered = false;
   bool _pressed = false;
 
+  // Mode-button icons opt into animation one at a time. Icons that have a
+  // hand-painted `Animated<Name>Icon` are dispatched here; everything else
+  // (e.g. 'changes', and any future icon added to the top bar) falls through
+  // to a static `AppIcon` — deliberate graceful fallback, not a missing
+  // case. Adding animation is a per-icon effort, not an automatic upgrade.
   Widget _buildIcon(Color color) {
     final state =
         _hovered ? IconAnimState.hovered : IconAnimState.idle;
@@ -467,27 +541,28 @@ class _ModeBtnState extends State<_ModeBtn> {
         ? t.accentBright
         : (_hovered ? t.textNormal : t.textMuted);
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
+    return InteractionFeedback(
+      onTap: widget.onTap,
+      borderRadius: BorderRadius.circular(6),
+      onHoverChanged: (h) => setState(() => _hovered = h),
+      child: Listener(
+        onPointerDown: (_) => setState(() => _pressed = true),
+        onPointerUp: (_) => setState(() => _pressed = false),
+        onPointerCancel: (_) => setState(() => _pressed = false),
         child: HyperReactive(
           selected: widget.active,
           borderRadius: 6,
           child: AnimatedScale(
             scale: chrome.scale,
-            duration:
-                Duration(milliseconds: t.id == AppThemeId.aether ? 400 : 80),
-            curve: Curves.easeOut,
+            duration: context.motion(context.surfaceShader.duration),
+            curve: context.surfaceShader.curve,
             child: AnimatedContainer(
-              duration:
-                  Duration(milliseconds: t.id == AppThemeId.aether ? 400 : 80),
-              curve: Curves.easeOut,
+              duration: context.motion(context.surfaceShader.duration),
+              // safeCurve (no overshoot) because this AnimatedContainer
+              // lerps boxShadow — easeOutBack's overshoot past 1.0 drives
+              // BoxShadow.lerp to extrapolate blurRadius negative,
+              // tripping a Shadow assertion on elastic themes.
+              curve: context.surfaceShader.safeCurve,
               width: widget.width,
               height: 28,
               margin: const EdgeInsets.symmetric(horizontal: 1),
@@ -559,7 +634,7 @@ class _RepoNameLabelState extends State<_RepoNameLabel> {
       child: GestureDetector(
         onTap: widget.hasRepo ? _fetch : null,
         child: AnimatedDefaultTextStyle(
-          duration: const Duration(milliseconds: 100),
+          duration: context.motion(const Duration(milliseconds: 100)),
           style: TextStyle(
             color: _fetching ? t.accentBright.withValues(alpha: 0.6) : color,
             fontSize: 14,
@@ -704,7 +779,7 @@ class _DeskTabState extends State<_DeskTab> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           height: 26,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
@@ -729,7 +804,7 @@ class _DeskTabState extends State<_DeskTab> {
                   children: [
                     AnimatedOpacity(
                       opacity: showCloseOverDot ? 0.0 : 1.0,
-                      duration: const Duration(milliseconds: 100),
+                      duration: context.motion(const Duration(milliseconds: 100)),
                       child: Container(
                         width: 6,
                         height: 6,
@@ -742,7 +817,7 @@ class _DeskTabState extends State<_DeskTab> {
                     if (canClose)
                       AnimatedOpacity(
                         opacity: showCloseOverDot ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 100),
+                        duration: context.motion(const Duration(milliseconds: 100)),
                         child: GestureDetector(
                           onTap: widget.onClose,
                           behavior: HitTestBehavior.opaque,
@@ -966,7 +1041,7 @@ class _BranchPillState extends State<_BranchPill> {
     // Fade out when open — panel takes over, morphing from this exact position
     return AnimatedOpacity(
       opacity: _open ? 0.0 : 1.0,
-      duration: const Duration(milliseconds: 100),
+      duration: context.motion(const Duration(milliseconds: 100)),
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovered = true),
         onExit: (_) => setState(() => _hovered = false),
@@ -975,7 +1050,7 @@ class _BranchPillState extends State<_BranchPill> {
           onTap: _toggle,
           child: AnimatedContainer(
             key: _pillKey,
-            duration: const Duration(milliseconds: 150),
+            duration: context.motion(const Duration(milliseconds: 150)),
             curve: Curves.easeOut,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
@@ -1061,7 +1136,17 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
     );
     _reveal = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
     _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeIn);
-    _ctrl.forward();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Honor reduce-motion on reveal: snap straight to the opened state.
+    if (context.reduceMotion) {
+      _ctrl.value = 1;
+    } else if (_ctrl.value < 1 && !_ctrl.isAnimating) {
+      _ctrl.forward();
+    }
   }
 
   @override
@@ -1138,7 +1223,7 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
                                         size: 11,
                                         color: t.accentBright),
                                     const SizedBox(width: 5),
-                                    Text(
+                                    ThemeMorphText(
                                       widget.currentBranch,
                                       style: TextStyle(
                                         color: t.textNormal,
@@ -1319,7 +1404,7 @@ class _BranchRowState extends State<_BranchRow> {
       child: GestureDetector(
         onTap: canSwitch ? widget.onTap : null,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           padding:
               const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           color: _hovered && canSwitch
@@ -1509,7 +1594,7 @@ class _NewDeskRowState extends State<_NewDeskRow> {
           });
         },
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           color: _hovered ? t.secondaryBtnHoverBg : Colors.transparent,
           child: Row(
@@ -1561,7 +1646,7 @@ class _NavRowState extends State<_NavRow> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           padding:
               const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
@@ -1591,9 +1676,13 @@ class _NavRowState extends State<_NavRow> {
 }
 
 /// Keeps all three pages alive so that in-progress work (like a running
-/// review) survives page switches. Uses an [IndexedStack] underneath
-/// with [TickerMode] to pause off-screen pages' tickers/animations.
-class _KeepAlivePages extends StatelessWidget {
+/// review) survives page switches, while cross-fading + sliding the new
+/// page in so rail navigation reads as motion, not a teleport. Direction
+/// of the slide follows rail order (downward rail step = incoming rises
+/// from below). Duration + curve come from `context.surfaceShader` so
+/// each theme asserts its own nav cadence. Reduce-motion short-circuits
+/// the animation entirely — state is preserved, visual is instant.
+class _KeepAlivePages extends StatefulWidget {
   final _WorkspaceMode mode;
   final String? selectedCommitHash;
   final VoidCallback onOpenXray;
@@ -1605,21 +1694,101 @@ class _KeepAlivePages extends StatelessWidget {
   });
 
   @override
+  State<_KeepAlivePages> createState() => _KeepAlivePagesState();
+}
+
+class _KeepAlivePagesState extends State<_KeepAlivePages>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ac = AnimationController(vsync: this, value: 1);
+  int _from = 0;
+  int _to = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _from = widget.mode.index;
+    _to = widget.mode.index;
+  }
+
+  @override
+  void didUpdateWidget(covariant _KeepAlivePages old) {
+    super.didUpdateWidget(old);
+    if (old.mode == widget.mode) return;
+    _from = old.mode.index;
+    _to = widget.mode.index;
+    if (context.reduceMotionRead) {
+      _ac.value = 1;
+      return;
+    }
+    final shader = context.surfaceShader;
+    _ac
+      ..duration = shader.duration
+      ..stop()
+      ..value = 0
+      // safeCurve — our opacity read (`t`) asserts [0, 1]; the lerp
+      // math downstream (width, color) also can't extrapolate safely.
+      ..animateTo(1, curve: shader.safeCurve);
+  }
+
+  @override
+  void dispose() {
+    _ac.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
       const ChangesPage(),
       HistoryPage(
-        initialCommitHash: selectedCommitHash,
-        onOpenXray: onOpenXray,
+        initialCommitHash: widget.selectedCommitHash,
+        onOpenXray: widget.onOpenXray,
       ),
       const BranchesPage(),
     ];
-    return IndexedStack(
-      index: mode.index,
-      children: [
-        for (var i = 0; i < pages.length; i++)
-          TickerMode(enabled: i == mode.index, child: pages[i]),
-      ],
+    // Pure crossfade — no slide. Sliding looked bad when both pages
+    // shared content (e.g. the "no repository selected" empty state):
+    // identical text would fade out 10px up while identical text faded
+    // in from 10px down, producing a ghost-double effect mid-transition.
+    // With opacity-only, two identical glyphs at the same position lerp
+    // between themselves and visually stay still — the transition reads
+    // as "nothing changed" for shared content, and as a clean fade for
+    // pages with distinct content.
+    return ClipRect(
+      child: AnimatedBuilder(
+        animation: _ac,
+        builder: (context, _) {
+          final t = _ac.value;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              for (var i = 0; i < pages.length; i++)
+                _buildLayer(pages[i], i, t),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildLayer(Widget page, int i, double t) {
+    final isIncoming = i == _to;
+    final isOutgoing = i == _from && _from != _to && t < 1;
+    // Any page that isn't the incoming or the outgoing stays offstage
+    // but mounted — TickerMode off so its animations don't burn cycles.
+    if (!isIncoming && !isOutgoing) {
+      return Offstage(
+        offstage: true,
+        child: TickerMode(enabled: false, child: page),
+      );
+    }
+    final opacity = isIncoming ? t : (1 - t);
+    return IgnorePointer(
+      ignoring: !isIncoming,
+      child: Opacity(
+        opacity: opacity.clamp(0.0, 1.0),
+        child: TickerMode(enabled: isIncoming, child: page),
+      ),
     );
   }
 }
@@ -1630,6 +1799,7 @@ class _SlidePanel extends StatelessWidget {
   final Widget child;
 
   const _SlidePanel({
+    super.key,
     this.title,
     required this.onClose,
     required this.child,
@@ -1638,51 +1808,28 @@ class _SlidePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final panelTone = t.id == AppThemeId.redshift
-        ? AppMaterialTone.surface2
-        : AppMaterialTone.surface1;
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onClose,
-            child: Container(color: Colors.black.withValues(alpha: 0.4)),
-          ),
-        ),
-        Positioned(
-          top: 48,
-          left: 8,
-          right: 8,
-          bottom: 8,
-          child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: 1),
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-            builder: (context, value, child) => Opacity(
-              opacity: value,
-              child: Transform.translate(
-                offset: Offset(0, (1 - value) * 40),
-                child: child,
+    final panelTone = t.innerPanelTone;
+    // Enter/exit motion is driven by the parent AnimatedSwitcher — no
+    // internal TweenAnimationBuilder here so the two can't double-animate
+    // and fight each other on rapid toggles.
+    // Backdrop is rendered separately by the parent so it can fade
+    // without sliding when the panel animates in/out. This widget is
+    // now just the panel body.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 48, 8, 8),
+      child: MaterialSurface(
+        tone: panelTone,
+        borderAlpha: 0.30,
+        elevated: true,
+        child: title == null
+            ? child
+            : Column(
+                children: [
+                  _SlideHeader(title: title!, onClose: onClose),
+                  Expanded(child: child),
+                ],
               ),
-            ),
-            child: MaterialSurface(
-              tone: panelTone,
-              radius: 12,
-              borderAlpha: 0.30,
-              elevated: true,
-              child: title == null
-                  ? child
-                  : Column(
-                      children: [
-                        _SlideHeader(title: title!, onClose: onClose),
-                        Expanded(child: child),
-                      ],
-                    ),
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -1757,10 +1904,10 @@ class _PanelCloseButtonState extends State<_PanelCloseButton> {
         child: HyperReactive(
           borderRadius: 6,
           child: AnimatedScale(
-            duration: const Duration(milliseconds: 80),
+            duration: context.motion(const Duration(milliseconds: 80)),
             scale: chrome.scale,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 80),
+              duration: context.motion(const Duration(milliseconds: 80)),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: chrome.background,

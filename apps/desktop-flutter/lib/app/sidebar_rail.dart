@@ -5,7 +5,9 @@ import '../backend/git.dart';
 import '../components/icons/app_icons.dart';
 import '../ui/control_chrome.dart';
 import '../ui/form_controls.dart';
+import '../ui/hover_lift.dart';
 import '../ui/material_surface.dart';
+import '../ui/motion.dart';
 import '../ui/tokens.dart';
 import 'brand_lockup.dart';
 import 'hyper_reactivity.dart';
@@ -241,9 +243,7 @@ class _SidebarRailState extends State<SidebarRail> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final repo = context.watch<RepositoryState>();
-    final railTone = t.id == AppThemeId.redshift
-        ? AppMaterialTone.surface1
-        : AppMaterialTone.surface0;
+    final railTone = t.chromeTone;
 
     return MaterialSurface(
       tone: railTone,
@@ -527,7 +527,7 @@ class _ModeChoiceBtn extends StatelessWidget {
         height: 24,
         decoration: BoxDecoration(
           color: active ? t.itemActiveBg : t.surface0,
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(context.surfaceShader.geometry.radius),
           border: Border.all(
             color: active ? t.itemActiveBorder : t.secondaryBtnBorder,
           ),
@@ -628,7 +628,7 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
             decoration: BoxDecoration(
               color: chrome.background,
               gradient: chrome.gradient,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(context.surfaceShader.geometry.radius),
               border: Border.all(
                 color: chrome.borderColor,
               ),
@@ -684,21 +684,23 @@ class _ProjectItemState extends State<_ProjectItem> {
     final borderColor =
         widget.isActive ? t.itemActiveBorder : Colors.transparent;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 80),
-          margin: const EdgeInsets.symmetric(vertical: 1),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          decoration: BoxDecoration(
-            color: background,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: borderColor),
-          ),
+    return HoverLift(
+      liftBy: widget.isActive ? 0 : 2,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 80),
+            margin: const EdgeInsets.symmetric(vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(context.surfaceShader.geometry.radius),
+              border: Border.all(color: borderColor),
+            ),
           // Tooltip exposes the full path so duplicate-named entries (e.g.
           // the same repo cloned in two locations) can be told apart.
           child: Tooltip(
@@ -747,6 +749,7 @@ class _ProjectItemState extends State<_ProjectItem> {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -789,7 +792,7 @@ class _SidebarIconBtnState extends State<_SidebarIconBtn> {
               color: widget.active
                   ? t.itemActiveBg
                   : (_hovered ? t.secondaryBtnHoverBg : Colors.transparent),
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(context.surfaceShader.geometry.radius),
               border: Border.all(
                 color: widget.active || _hovered
                     ? t.secondaryBtnBorder
@@ -820,7 +823,7 @@ class _PulsingDot extends StatefulWidget {
 }
 
 class _PulsingDotState extends State<_PulsingDot>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, MotionLoopSync {
   late final AnimationController _controller;
   late final Animation<double> _opacity;
 
@@ -830,9 +833,18 @@ class _PulsingDotState extends State<_PulsingDot>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
-    )..repeat(reverse: true);
+    );
+    // MotionLoopSync starts/stops _controller in didChangeDependencies,
+    // reacting live to Reduce Motion. At rest (reduce on) _controller.value
+    // is 0 → opacity sits at 0.3, a static faint dot rather than a pulse.
     _opacity = Tween(begin: 0.3, end: 1.0).animate(_controller);
   }
+
+  @override
+  List<AnimationController> get motionLoops => [_controller];
+
+  @override
+  List<bool> get motionLoopReverse => const [true];
 
   @override
   void dispose() {

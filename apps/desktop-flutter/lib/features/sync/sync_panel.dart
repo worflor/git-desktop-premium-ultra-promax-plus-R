@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
@@ -169,7 +170,6 @@ class _SyncPanelState extends State<SyncPanel> {
 
     return MaterialSurface(
       tone: AppMaterialTone.panelStrong,
-      radius: 14,
       borderAlpha: 0.22,
       elevated: true,
       innerHighlight: true,
@@ -418,7 +418,6 @@ class _SyncBody extends StatelessWidget {
       children: [
         MaterialSurface(
           tone: AppMaterialTone.surface1,
-          radius: 12,
           borderAlpha: 0.12,
           elevated: false,
           innerHighlight: true,
@@ -690,7 +689,7 @@ class _MetricsSection extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         border: Border(
-            top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.08))),
+            top: BorderSide(color: t.chromeBorderFaint)),
       ),
       padding: const EdgeInsets.only(top: 10),
       child: Column(
@@ -808,7 +807,6 @@ class _ActivityLog extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialSurface(
       tone: AppMaterialTone.surface0,
-      radius: 8,
       elevated: false,
       borderAlpha: 0.15,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -879,10 +877,10 @@ class _PrimaryBtnState extends State<_PrimaryBtn> {
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedScale(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           scale: chrome.scale,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
+            duration: context.motion(const Duration(milliseconds: 100)),
             height: 36,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
@@ -959,7 +957,7 @@ class _GhostBtnState extends State<_GhostBtn> {
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 100),
+          duration: context.motion(const Duration(milliseconds: 100)),
           height: compact ? 28 : 36,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(

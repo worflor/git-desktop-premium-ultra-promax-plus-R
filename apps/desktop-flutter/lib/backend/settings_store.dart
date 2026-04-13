@@ -17,6 +17,23 @@ class AppSettingsSnapshot {
   final String sidebarPosition;
   final bool utilityDrawerDefaultExpanded;
   final int utilityDrawerHeightPx;
+  final bool reduceMotion;
+  /// Last-known phase (0..1) of the reduce-motion toggle's pulse wave.
+  /// Persisted so the bump resumes from where it was frozen on the
+  /// previous session instead of snapping back to zero on restart.
+  final double reduceMotionPhase;
+  final bool stashCabinetDefaultExpanded;
+  final bool instantBlameHover;
+  /// Change list sort guide: 'related' | 'alphabetical' | 'impact'.
+  final String fileSortGuide;
+  /// When true, the active sort guide is applied in reverse per its own
+  /// notion of "opposite". See `FileCoupling.clusterFiles(inverted:)`.
+  final bool fileSortInverted;
+  /// Commit-message format preferences. Consumed by the AI prompt
+  /// builder and by the manual commit composer to shape defaults.
+  final String commitStructure; // 'title_body' | 'title_only' | 'freeform'
+  final String commitVoice;     // 'verb_led' | 'descriptive' | 'narrative'
+  final String commitCoverage;  // 'essentials' | 'balanced' | 'everything'
 
   const AppSettingsSnapshot({
     required this.guardrailValue,
@@ -32,6 +49,15 @@ class AppSettingsSnapshot {
     required this.sidebarPosition,
     required this.utilityDrawerDefaultExpanded,
     required this.utilityDrawerHeightPx,
+    required this.reduceMotion,
+    required this.reduceMotionPhase,
+    required this.stashCabinetDefaultExpanded,
+    required this.instantBlameHover,
+    required this.fileSortGuide,
+    required this.fileSortInverted,
+    required this.commitStructure,
+    required this.commitVoice,
+    required this.commitCoverage,
   });
 
   Map<String, dynamic> toJson() => {
@@ -48,6 +74,15 @@ class AppSettingsSnapshot {
         'sidebarPosition': sidebarPosition,
         'utilityDrawerDefaultExpanded': utilityDrawerDefaultExpanded,
         'utilityDrawerHeightPx': utilityDrawerHeightPx,
+        'reduceMotion': reduceMotion,
+        'reduceMotionPhase': reduceMotionPhase,
+        'stashCabinetDefaultExpanded': stashCabinetDefaultExpanded,
+        'instantBlameHover': instantBlameHover,
+        'fileSortGuide': fileSortGuide,
+        'fileSortInverted': fileSortInverted,
+        'commitStructure': commitStructure,
+        'commitVoice': commitVoice,
+        'commitCoverage': commitCoverage,
       };
 
   factory AppSettingsSnapshot.defaults() => const AppSettingsSnapshot(
@@ -64,6 +99,15 @@ class AppSettingsSnapshot {
         sidebarPosition: 'left',
         utilityDrawerDefaultExpanded: false,
         utilityDrawerHeightPx: 180,
+        reduceMotion: false,
+        reduceMotionPhase: 0.0,
+        stashCabinetDefaultExpanded: false,
+        instantBlameHover: false,
+        fileSortGuide: 'related',
+        fileSortInverted: false,
+        commitStructure: 'title_body',
+        commitVoice: 'verb_led',
+        commitCoverage: 'balanced',
       );
 
   factory AppSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -119,6 +163,50 @@ class AppSettingsSnapshot {
         json['utilityDrawerHeightPx'],
         defaults.utilityDrawerHeightPx,
       ).clamp(120, 420),
+      reduceMotion: SettingsStore._boolOr(
+        json['reduceMotion'],
+        defaults.reduceMotion,
+      ),
+      reduceMotionPhase: SettingsStore._doubleOr(
+        json['reduceMotionPhase'],
+        defaults.reduceMotionPhase,
+      ).clamp(0.0, 1.0),
+      stashCabinetDefaultExpanded: SettingsStore._boolOr(
+        json['stashCabinetDefaultExpanded'],
+        defaults.stashCabinetDefaultExpanded,
+      ),
+      instantBlameHover: SettingsStore._boolOr(
+        json['instantBlameHover'],
+        defaults.instantBlameHover,
+      ),
+      fileSortGuide: SettingsStore._normalizeSortGuide(
+        SettingsStore._stringOr(
+          json['fileSortGuide'],
+          defaults.fileSortGuide,
+        ),
+      ),
+      fileSortInverted: SettingsStore._boolOr(
+        json['fileSortInverted'],
+        defaults.fileSortInverted,
+      ),
+      commitStructure: SettingsStore._normalizeCommitStructure(
+        SettingsStore._stringOr(
+          json['commitStructure'],
+          defaults.commitStructure,
+        ),
+      ),
+      commitVoice: SettingsStore._normalizeCommitVoice(
+        SettingsStore._stringOr(
+          json['commitVoice'],
+          defaults.commitVoice,
+        ),
+      ),
+      commitCoverage: SettingsStore._normalizeCommitCoverage(
+        SettingsStore._stringOr(
+          json['commitCoverage'],
+          defaults.commitCoverage,
+        ),
+      ),
     );
   }
 }
@@ -185,5 +273,29 @@ class SettingsStore {
 
   static String _normalizeSidebarPosition(String value) {
     return value.trim().toLowerCase() == 'right' ? 'right' : 'left';
+  }
+
+  static String _normalizeSortGuide(String value) {
+    final v = value.trim().toLowerCase();
+    if (v == 'alphabetical' || v == 'impact') return v;
+    return 'related';
+  }
+
+  static String _normalizeCommitStructure(String value) {
+    final v = value.trim().toLowerCase();
+    if (v == 'title_only' || v == 'freeform') return v;
+    return 'title_body';
+  }
+
+  static String _normalizeCommitVoice(String value) {
+    final v = value.trim().toLowerCase();
+    if (v == 'descriptive' || v == 'narrative') return v;
+    return 'verb_led';
+  }
+
+  static String _normalizeCommitCoverage(String value) {
+    final v = value.trim().toLowerCase();
+    if (v == 'essentials' || v == 'everything') return v;
+    return 'balanced';
   }
 }

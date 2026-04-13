@@ -2,6 +2,36 @@ import 'package:flutter/material.dart';
 
 import 'tokens.dart';
 
+/// Per-theme button-chrome quirks. Lets the chrome builders stay declarative
+/// (just consume getters) instead of scattering `t.id == AppThemeId.X`
+/// branches across every paint path. Single source of truth per quirk.
+///
+/// Null-returning getters mean "no override — caller uses its fallback."
+extension AppTokenButtonChrome on AppTokens {
+  /// Nightwalker shifts its button content up-and-left on hover as part of
+  /// the etch/obsidian-stamp aesthetic. Other themes return null (no shift).
+  Offset? get buttonHoverShift => id == AppThemeId.nightwalker
+      ? const Offset(-1.25, -1.25)
+      : null;
+
+  /// Blackboard overrides the hover background to translucent white — the
+  /// "chalk mark" on the slate. Others fall through to the normal hover bg.
+  Color? get buttonHoverBgOverride => id == AppThemeId.blackboard
+      ? Colors.white.withValues(alpha: 0.05)
+      : null;
+
+  /// Blackboard also brightens the border on hover/active to read as a
+  /// chalk underline. Other themes return null.
+  Color? get buttonHoverBorderOverride => id == AppThemeId.blackboard
+      ? Colors.white.withValues(alpha: 0.6)
+      : null;
+
+  /// Alpha for the glow shadow behind active mode buttons. Blackboard opts
+  /// out (slate doesn't glow); everyone else uses 0.25.
+  double get activeButtonGlowAlpha =>
+      id == AppThemeId.blackboard ? 0 : 0.25;
+}
+
 class ControlChromeState {
   final double scale;
   final Offset offset;
@@ -163,8 +193,9 @@ Offset _buttonOffset(
       _ => const Offset(1, 1),
     };
   }
-  if (hovered && t.id == AppThemeId.nightwalker) {
-    return const Offset(-1.25, -1.25);
+  if (hovered) {
+    final shift = t.buttonHoverShift;
+    if (shift != null) return shift;
   }
   return Offset.zero;
 }
@@ -174,14 +205,12 @@ Gradient? _buttonGradient(AppTokens t,
   if (!hovered || pressed || t.id != AppThemeId.redshift) {
     return null;
   }
-  return const LinearGradient(
+  final ambient =
+      (t.themeAmbient ?? t.chromeAccent).withValues(alpha: 0.10);
+  return LinearGradient(
     begin: Alignment.centerLeft,
     end: Alignment.centerRight,
-    colors: [
-      Colors.transparent,
-      Color(0x1AFF0044),
-      Colors.transparent,
-    ],
+    colors: [Colors.transparent, ambient, Colors.transparent],
   );
 }
 
@@ -193,8 +222,9 @@ Color _buttonBackgroundOverride(
   required bool enabled,
 }) {
   if (!enabled) return fallback;
-  if (t.id == AppThemeId.blackboard && hovered) {
-    return Colors.white.withValues(alpha: 0.05);
+  if (hovered) {
+    final override = t.buttonHoverBgOverride;
+    if (override != null) return override;
   }
   return fallback;
 }
@@ -207,8 +237,9 @@ Color _buttonBorderOverride(
   bool active = false,
 }) {
   if (!enabled) return fallback;
-  if (t.id == AppThemeId.blackboard && (hovered || active)) {
-    return Colors.white.withValues(alpha: 0.6);
+  if (hovered || active) {
+    final override = t.buttonHoverBorderOverride;
+    if (override != null) return override;
   }
   return fallback;
 }
@@ -234,13 +265,7 @@ List<BoxShadow> _primaryButtonShadows(
     };
   }
   return switch (t.id) {
-    AppThemeId.nightwalker => [
-        BoxShadow(
-          color: t.chromeAccent.withValues(alpha: 0.1),
-          offset: const Offset(2.5, 2.5),
-          blurRadius: 0,
-        ),
-      ],
+    AppThemeId.nightwalker => _nightwalkerAccentShadow(t),
     AppThemeId.blackboard => [
         BoxShadow(
           color: Colors.white.withValues(alpha: 0.2),
@@ -252,6 +277,17 @@ List<BoxShadow> _primaryButtonShadows(
   };
 }
 
+/// Nightwalker's signature offset accent drop — used for primary button
+/// hover and mode-button hover. Extracted so the two call-sites stay in
+/// sync; the offset and alpha are a deliberate theme identity choice.
+List<BoxShadow> _nightwalkerAccentShadow(AppTokens t) => [
+      BoxShadow(
+        color: t.chromeAccent.withValues(alpha: 0.1),
+        offset: const Offset(2.5, 2.5),
+        blurRadius: 0,
+      ),
+    ];
+
 List<BoxShadow> _modeButtonShadows(
   AppTokens t, {
   required bool hovered,
@@ -262,8 +298,7 @@ List<BoxShadow> _modeButtonShadows(
   if (active) {
     return [
       BoxShadow(
-        color: t.accentBright
-            .withValues(alpha: t.id == AppThemeId.blackboard ? 0 : 0.25),
+        color: t.accentBright.withValues(alpha: t.activeButtonGlowAlpha),
         blurRadius: 1,
         spreadRadius: 0.5,
       ),
@@ -271,13 +306,7 @@ List<BoxShadow> _modeButtonShadows(
   }
   if (!hovered) return const [];
   return switch (t.id) {
-    AppThemeId.nightwalker => [
-        BoxShadow(
-          color: t.chromeAccent.withValues(alpha: 0.1),
-          offset: const Offset(2.5, 2.5),
-          blurRadius: 0,
-        ),
-      ],
+    AppThemeId.nightwalker => _nightwalkerAccentShadow(t),
     _ => const [],
   };
 }

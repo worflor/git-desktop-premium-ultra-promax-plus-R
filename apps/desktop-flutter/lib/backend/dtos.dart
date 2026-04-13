@@ -11,6 +11,22 @@ class RepositoryStatusFile {
           path: j['path'], staged: j['staged'], unstaged: j['unstaged']);
 }
 
+/// Per-file numstat breakdown. Feeds the "by impact" sort with enough
+/// granularity to apply UX-aware weighting (binaries get a baseline,
+/// deletions carry more weight than additions, etc.).
+class FileChangeWeight {
+  final int adds;
+  final int dels;
+  final bool binary;
+  const FileChangeWeight({
+    required this.adds,
+    required this.dels,
+    required this.binary,
+  });
+
+  static const empty = FileChangeWeight(adds: 0, dels: 0, binary: false);
+}
+
 class RepositoryStatus {
   final String branch;
   final String? upstream;
@@ -737,6 +753,23 @@ class StashEntryData {
     required this.hash,
     required this.createdAt,
     this.fileCount = 0,
+  });
+}
+
+/// One file entry inside a stash, for the filing-cabinet UI. Adds/dels come
+/// from `git stash show --numstat`. Binary files report -/- in numstat —
+/// surfaced as [binary] so the UI can render a placeholder instead of 0/0.
+class StashFileStat {
+  final String path;
+  final int adds;
+  final int dels;
+  final bool binary;
+
+  const StashFileStat({
+    required this.path,
+    required this.adds,
+    required this.dels,
+    this.binary = false,
   });
 }
 

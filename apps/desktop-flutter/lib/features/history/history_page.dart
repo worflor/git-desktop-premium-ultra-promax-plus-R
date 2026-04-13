@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/material_surface.dart';
+import '../../ui/morph_text.dart';
 import '../../ui/status_view.dart';
 import '../../ui/resonance_text.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
@@ -243,23 +246,25 @@ class _TimelinePainter extends CustomPainter {
   final _GLayout layout;
   final List<double> baseXs;
   final String? selectedHash;
-  final String? hoveredHash;
-  final double? hoverX;
+  // Hover state comes in as Listenables so the painter can be wired to
+  // `super(repaint: ...)` and repaint on pointer move without any
+  // widget-tree rebuilds above it.
+  final ValueListenable<String?> hoveredHashListenable;
+  final ValueListenable<double?> hoverXListenable;
   final AppTokens tokens;
   final double width;
   final double height;
   final double vertInset;
   final double laneStep;
-  // Per-commit data for size + color encoding. May be empty if cache not ready.
-  final Map<String, double> churnNorm;   // 0.0–1.0, log-normalized across window
-  final Map<String, double> netRatio;    // 0.0=all-deletions … 1.0=all-additions
+  final Map<String, double> churnNorm;
+  final Map<String, double> netRatio;
 
-  const _TimelinePainter({
+  _TimelinePainter({
     required this.layout,
     required this.baseXs,
     required this.selectedHash,
-    required this.hoveredHash,
-    required this.hoverX,
+    required this.hoveredHashListenable,
+    required this.hoverXListenable,
     required this.tokens,
     required this.width,
     required this.height,
@@ -267,7 +272,12 @@ class _TimelinePainter extends CustomPainter {
     required this.laneStep,
     required this.churnNorm,
     required this.netRatio,
-  });
+  }) : super(
+          repaint: Listenable.merge([hoveredHashListenable, hoverXListenable]),
+        );
+
+  String? get hoveredHash => hoveredHashListenable.value;
+  double? get hoverX => hoverXListenable.value;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -308,7 +318,21 @@ class _TimelinePainter extends CustomPainter {
         ..style = PaintingStyle.stroke,
     );
 
-    // Edges
+    // ── Edges ───────────────────────────────────────────────────────
+    // Two reusable Paints (mainline vs. branch) + one reusable Path
+    // shared across every edge. Previously allocated ~2 objects per
+    // edge per frame = up to 2000 allocs/frame on a 1000-edge graph.
+    final mainlineEdgePaint = Paint()
+      ..color = tokens.chromeAccent.withValues(alpha: 0.45)
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final branchEdgePaint = Paint()
+      ..color = tokens.textNormal.withValues(alpha: 0.28)
+      ..strokeWidth = 1.4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final edgePath = Path();
     for (final edge in layout.edges) {
       final from = metricsMap[edge.from];
       final to = metricsMap[edge.to];
@@ -316,32 +340,31 @@ class _TimelinePainter extends CustomPainter {
 
       final dx = to.x - from.x;
       final dy = to.y - from.y;
-      final dist = sqrt(dx * dx + dy * dy);
-      if (dist < 0.1) continue;
-
-      final startX = from.x + (dx / dist) * (_kNodeRadius * from.scale);
-      final startY = from.y + (dy / dist) * (_kNodeRadius * from.scale);
-      final endX = to.x - (dx / dist) * (_kNodeRadius * to.scale);
-      final endY = to.y - (dy / dist) * (_kNodeRadius * to.scale);
+      final dist2 = dx * dx + dy * dy;
+      if (dist2 < 0.01) continue;
+      // Sqrt once — downstream math needs scalar distance.
+      final dist = sqrt(dist2);
+      final inv = 1.0 / dist;
+      final nx = dx * inv;
+      final ny = dy * inv;
+      final startX = from.x + nx * (_kNodeRadius * from.scale);
+      final startY = from.y + ny * (_kNodeRadius * from.scale);
+      final endX = to.x - nx * (_kNodeRadius * to.scale);
+      final endY = to.y - ny * (_kNodeRadius * to.scale);
 
       final isMainline = edge.fromLane == 0 && edge.toLane == 0;
       final isSameLane = edge.fromLane == edge.toLane;
 
-      final paint = Paint()
-        ..color = (isMainline ? tokens.chromeAccent : tokens.textNormal)
-            .withValues(alpha: isMainline ? 0.45 : 0.28)
-        ..strokeWidth = isMainline ? 2.0 : 1.4
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round;
-
-      final path = Path()..moveTo(startX, startY);
+      edgePath.reset();
+      edgePath.moveTo(startX, startY);
       if (isSameLane) {
-        path.lineTo(endX, endY);
+        edgePath.lineTo(endX, endY);
       } else {
         final ctrlX = startX + (endX - startX) * 0.48;
-        path.cubicTo(ctrlX, startY, ctrlX, endY, endX, endY);
+        edgePath.cubicTo(ctrlX, startY, ctrlX, endY, endX, endY);
       }
-      canvas.drawPath(path, paint);
+      canvas.drawPath(
+          edgePath, isMainline ? mainlineEdgePaint : branchEdgePaint);
     }
 
     // Nodes (selected on top)
@@ -355,48 +378,45 @@ class _TimelinePainter extends CustomPainter {
       return z(a.entry.commitHash).compareTo(z(b.entry.commitHash));
     });
 
+    // ── Nodes ───────────────────────────────────────────────────────
+    // Two reusable Paints — fill (color swaps per node) and selected
+    // ring (constant). Replaces 2 Paint allocs per commit per frame.
+    // Precompute the churn-lerp endpoints once since they're shared
+    // across every churn-ed node.
+    final nodeFillPaint = Paint()..style = PaintingStyle.fill;
+    final selectedRingPaint = Paint()
+      ..color = tokens.accentBright.withValues(alpha: 0.3)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    final churnLerpA = tokens.hypercubeNegative.withValues(alpha: 0.85);
+    final churnLerpB = tokens.hypercubePositive.withValues(alpha: 0.85);
+    final fallbackNodeColor = tokens.chromeBorder.withValues(alpha: 0.7);
+    final selectedNodeColor = tokens.accentBright;
     for (final node in sorted) {
       final m = metricsMap[node.entry.commitHash];
       if (m == null) continue;
       final hash = node.entry.commitHash;
       final isSelected = hash == selectedHash;
 
-      // Size: base lens scale + churn boost (up to 1.5x extra)
       final churn = churnNorm[hash] ?? 0.0;
       final r = _kNodeRadius * m.scale * (1.0 + churn * 0.5);
 
-      // Color: lerp hypercubeNegative → hypercubePositive by net ratio
       final Color nodeColor;
       if (isSelected) {
-        nodeColor = tokens.accentBright;
+        nodeColor = selectedNodeColor;
       } else if (churnNorm.containsKey(hash)) {
-        final t = netRatio[hash] ?? 0.5;
-        nodeColor = Color.lerp(
-          tokens.hypercubeNegative.withValues(alpha: 0.85),
-          tokens.hypercubePositive.withValues(alpha: 0.85),
-          t,
-        )!;
+        final tLerp = netRatio[hash] ?? 0.5;
+        nodeColor = Color.lerp(churnLerpA, churnLerpB, tLerp)!;
       } else {
-        nodeColor = tokens.chromeBorder.withValues(alpha: 0.7);
+        nodeColor = fallbackNodeColor;
       }
 
-      canvas.drawCircle(
-        Offset(m.x, m.y),
-        r,
-        Paint()
-          ..color = nodeColor
-          ..style = PaintingStyle.fill,
-      );
+      nodeFillPaint.color = nodeColor;
+      final center = Offset(m.x, m.y);
+      canvas.drawCircle(center, r, nodeFillPaint);
 
       if (isSelected) {
-        canvas.drawCircle(
-          Offset(m.x, m.y),
-          r + 1.5,
-          Paint()
-            ..color = tokens.accentBright.withValues(alpha: 0.3)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.0,
-        );
+        canvas.drawCircle(center, r + 1.5, selectedRingPaint);
       }
     }
   }
@@ -413,9 +433,10 @@ class _TimelinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_TimelinePainter old) =>
+      // Hover state changes route through the `repaint:` Listenable
+      // so they don't need to be checked here — this method only fires
+      // when the enclosing widget rebuilds with new structural props.
       old.selectedHash != selectedHash ||
-      old.hoveredHash != hoveredHash ||
-      old.hoverX != hoverX ||
       old.layout != layout ||
       old.baseXs != baseXs ||
       old.churnNorm != churnNorm ||
@@ -444,8 +465,13 @@ class _TimelineStrip extends StatefulWidget {
 }
 
 class _TimelineStripState extends State<_TimelineStrip> {
-  double? _hoverX;
-  String? _hoveredHash;
+  // Pointer state held in ValueNotifiers — painter repaints via the
+  // `repaint:` parameter on CustomPainter, bypassing widget rebuild
+  // entirely. Was calling setState on every onPointerMove (60+/sec
+  // during drag), rebuilding Container → Padding → Listener →
+  // MouseRegion → CustomPaint every frame; now only the painter runs.
+  final ValueNotifier<double?> _hoverXNotifier = ValueNotifier(null);
+  final ValueNotifier<String?> _hoveredHashNotifier = ValueNotifier(null);
   bool _dragging = false;
   _GLayout? _layout;
   List<double> _percents = [];
@@ -453,6 +479,13 @@ class _TimelineStripState extends State<_TimelineStrip> {
   Map<String, double> _churnNorm = {};
   Map<String, double> _netRatio = {};
   int _cacheVersion = 0;
+
+  @override
+  void dispose() {
+    _hoverXNotifier.dispose();
+    _hoveredHashNotifier.dispose();
+    super.dispose();
+  }
 
   void _rebuildLayout() {
     _layout = _buildLayout(widget.commits);
@@ -490,7 +523,7 @@ class _TimelineStripState extends State<_TimelineStrip> {
       }
     }
     final hash = _layout!.nodes[nearest].entry.commitHash;
-    setState(() => _hoveredHash = hash);
+    _hoveredHashNotifier.value = hash;
     widget.onSelected(hash);
   }
 
@@ -529,46 +562,50 @@ class _TimelineStripState extends State<_TimelineStrip> {
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: _kHorizPad),
           child: Listener(
-            onPointerHover: (e) => setState(() {
-              _hoverX = e.localPosition.dx;
-              _hoveredHash = _nearestHash(e.localPosition.dx, baseXs);
-            }),
+            onPointerHover: (e) {
+              _hoverXNotifier.value = e.localPosition.dx;
+              _hoveredHashNotifier.value =
+                  _nearestHash(e.localPosition.dx, baseXs);
+            },
             onPointerDown: (e) {
-              setState(() {
-                _hoverX = e.localPosition.dx;
-                _dragging = true;
-              });
+              _hoverXNotifier.value = e.localPosition.dx;
+              _dragging = true;
               _selectNearest(e.localPosition.dx, baseXs);
             },
             onPointerMove: (e) {
               if (_dragging) {
-                setState(() => _hoverX = e.localPosition.dx);
+                _hoverXNotifier.value = e.localPosition.dx;
                 _selectNearest(e.localPosition.dx, baseXs);
               }
             },
-            onPointerUp: (_) => setState(() => _dragging = false),
+            onPointerUp: (_) => _dragging = false,
             child: MouseRegion(
               cursor: SystemMouseCursors.click,
-              onExit: (_) => setState(() {
-                _hoverX = null;
-                _hoveredHash = null;
-              }),
-              child: CustomPaint(
-                painter: _TimelinePainter(
-                  layout: _layout!,
-                  baseXs: baseXs,
-                  selectedHash: widget.selectedHash,
-                  hoveredHash: _hoveredHash,
-                  hoverX: _hoverX,
-                  tokens: widget.tokens,
-                  width: width,
-                  height: height,
-                  vertInset: _kVertInset,
-                  laneStep: laneStep,
-                  churnNorm: _churnNorm,
-                  netRatio: _netRatio,
+              onExit: (_) {
+                _hoverXNotifier.value = null;
+                _hoveredHashNotifier.value = null;
+              },
+              // RepaintBoundary isolates the timeline's repaint region
+              // so the header/siblings don't get invalidated on every
+              // hover tick.
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _TimelinePainter(
+                    layout: _layout!,
+                    baseXs: baseXs,
+                    selectedHash: widget.selectedHash,
+                    hoveredHashListenable: _hoveredHashNotifier,
+                    hoverXListenable: _hoverXNotifier,
+                    tokens: widget.tokens,
+                    width: width,
+                    height: height,
+                    vertInset: _kVertInset,
+                    laneStep: laneStep,
+                    churnNorm: _churnNorm,
+                    netRatio: _netRatio,
+                  ),
+                  size: Size(width, totalHeight),
                 ),
-                size: Size(width, totalHeight),
               ),
             ),
           ),
@@ -1008,7 +1045,7 @@ class _HistoryPageState extends State<HistoryPage> {
         tone: AppMaterialTone.surface0,
         radius: 0,
         border: Border(
-          bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.08)),
+          bottom: BorderSide(color: t.chromeBorderFaint),
         ),
         elevated: false,
         height: 36,
@@ -1261,7 +1298,7 @@ class _CommitRowState extends State<_CommitRow> {
                     widget.isSelected ? t.itemActiveBorder : Colors.transparent,
                 width: 2,
               ),
-              bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.08)),
+              bottom: BorderSide(color: t.chromeBorderFaint),
             ),
           ),
           child: Padding(
@@ -1604,13 +1641,18 @@ class _CommitDetail extends StatelessWidget {
             .toSet() ??
         <String>{};
     return ListView(padding: const EdgeInsets.all(20), children: [
-      // Subject (primary heading)
-      resonanceText(d.subject, t,
-          baseStyle: TextStyle(
-              color: t.textStrong,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              height: 1.35)),
+      // Subject (primary heading) — morphs when you click a different
+      // commit so the panel reads as a swap, not a teleport. Trades off
+      // resonanceText's markdown styling since commit subjects are
+      // overwhelmingly plain prose.
+      ThemeMorphText(
+        d.subject,
+        style: TextStyle(
+            color: t.textStrong,
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            height: 1.35),
+      ),
 
       const SizedBox(height: 14),
 
@@ -1674,7 +1716,8 @@ class _CommitDetail extends StatelessWidget {
           GestureDetector(
             onTap: onToggleTag,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
+              duration: context.motion(context.surfaceShader.duration),
+              curve: context.surfaceShader.safeCurve,
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: tagInputVisible
@@ -1803,8 +1846,8 @@ class _CommitDetailTransition extends StatelessWidget {
     return Stack(
       children: [
         AnimatedSwitcher(
-          duration: const Duration(milliseconds: 150),
-          reverseDuration: const Duration(milliseconds: 60),
+          duration: context.motion(const Duration(milliseconds: 150)),
+          reverseDuration: context.motion(const Duration(milliseconds: 60)),
           switchInCurve: Curves.easeOut,
           switchOutCurve: Curves.easeIn,
           transitionBuilder: (child, animation) {
@@ -1830,7 +1873,7 @@ class _CommitDetailTransition extends StatelessWidget {
           right: 0,
           child: AnimatedOpacity(
             opacity: loading ? 1 : 0,
-            duration: const Duration(milliseconds: 80),
+            duration: context.motion(const Duration(milliseconds: 80)),
             child: LinearProgressIndicator(
               minHeight: 2,
               color: tokens.accentBright.withValues(alpha: 0.75),
@@ -2163,10 +2206,10 @@ class _RebaseBtnState extends State<_RebaseBtn> {
         onTapCancel: () => setState(() => _pressed = false),
         onTapUp: (_) => setState(() => _pressed = false),
         child: AnimatedScale(
-          duration: const Duration(milliseconds: 80),
+          duration: context.motion(const Duration(milliseconds: 80)),
           scale: chrome.scale,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
+            duration: context.motion(const Duration(milliseconds: 80)),
             height: 32,
             decoration: BoxDecoration(
               color: chrome.background,

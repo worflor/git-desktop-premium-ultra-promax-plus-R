@@ -42,27 +42,34 @@ ThemeData _buildTheme(AppTokens t) {
       ),
     ),
     checkboxTheme: CheckboxThemeData(
-      fillColor: WidgetStateProperty.resolveWith(
-        (states) {
-          if (!states.contains(WidgetState.selected)) return t.inputBg;
-          if (t.id == AppThemeId.blackboard) return Colors.transparent;
-          if (t.id == AppThemeId.crafty) return t.sliderThumb;
-          return t.accentBright;
+      fillColor: WidgetStateProperty.resolveWith((states) {
+        if (!states.contains(WidgetState.selected)) return t.inputBg;
+        return switch (t.id) {
+          AppThemeId.blackboard => Colors.transparent,
+          AppThemeId.crafty => t.sliderThumb,
+          _ => t.accentBright,
+        };
+      }),
+      checkColor: WidgetStatePropertyAll(
+        switch (t.id) {
+          AppThemeId.crafty => t.btnBorder,
+          _ => t.bg0,
         },
       ),
-      checkColor: WidgetStatePropertyAll(
-        t.id == AppThemeId.crafty ? t.btnBorder : t.bg0,
-      ),
       side: BorderSide(
-        color: t.id == AppThemeId.blackboard
-            ? Colors.white
-            : (t.id == AppThemeId.crafty ? t.btnBorder : t.inputBorder),
+        color: switch (t.id) {
+          AppThemeId.blackboard => Colors.white,
+          AppThemeId.crafty => t.btnBorder,
+          _ => t.inputBorder,
+        },
       ),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(
-          t.id == AppThemeId.crafty
-              ? 0
-              : (t.id == AppThemeId.blackboard ? 2 : 4),
+          switch (t.id) {
+            AppThemeId.crafty => 0,
+            AppThemeId.blackboard => 2,
+            _ => 4,
+          },
         ),
       ),
     ),
@@ -170,61 +177,43 @@ List<String>? _fontFallbackFor(AppThemeId id) {
   }
 }
 
-SliderComponentShape _sliderThumbShape(AppTokens t) {
-  if (t.id == AppThemeId.aether) {
-    return _GlassSliderThumbShape(
-      size: 20,
-      fillColor: Colors.white.withValues(alpha: 0.15),
-      borderColor: Colors.white.withValues(alpha: 0.4),
-      glowColor: t.chromeAccent.withValues(alpha: 0.3),
-    );
-  }
-  if (t.id == AppThemeId.helix) {
-    return const _BrassSliderThumbShape(size: 18);
-  }
-  if (t.id == AppThemeId.petrichor) {
-    return const _DropletSliderThumbShape(size: 20);
-  }
-  if (t.id == AppThemeId.quanta) {
-    return _DiamondSliderThumbShape(
-      size: 14,
-      fillColor: t.accentBright,
-      borderColor: Colors.black.withValues(alpha: 0.5),
-      glowColor: t.chromeAccent.withValues(alpha: 0.4),
-    );
-  }
-  if (t.id == AppThemeId.redshift) {
-    return _SightSliderThumbShape(
-      size: const Size(12, 24),
-      fillColor: t.accentBright,
-      glowColor: const Color(0x66FF0044),
-    );
-  }
-  if (t.id == AppThemeId.halo) {
-    return _HaloSliderThumbShape(
-      size: 18,
-      fillColor: Colors.white,
-      borderColor: t.accentBright,
-    );
-  }
-  if (t.id == AppThemeId.crafty) {
-    return const _SquareSliderThumbShape(
-      size: 16,
-      borderWidth: 3.5,
-      insetShadow: true,
-    );
-  }
-  if (t.id == AppThemeId.nightwalker) {
-    return _RingSliderThumbShape(
-      size: 22,
-      ringColor: t.accentBright,
-    );
-  }
-  if (t.id == AppThemeId.blackboard) {
-    return const _SquareSliderThumbShape(size: 16, radius: 2, borderWidth: 2);
-  }
-  return const RoundSliderThumbShape(enabledThumbRadius: 7);
-}
+SliderComponentShape _sliderThumbShape(AppTokens t) => switch (t.id) {
+      AppThemeId.aether => _GlassSliderThumbShape(
+          size: 20,
+          fillColor: Colors.white.withValues(alpha: 0.15),
+          borderColor: Colors.white.withValues(alpha: 0.4),
+          glowColor: t.chromeAccent.withValues(alpha: 0.3),
+        ),
+      AppThemeId.helix => const _BrassSliderThumbShape(size: 18),
+      AppThemeId.petrichor => const _DropletSliderThumbShape(size: 20),
+      AppThemeId.quanta => _DiamondSliderThumbShape(
+          size: 14,
+          fillColor: t.accentBright,
+          borderColor: Colors.black.withValues(alpha: 0.5),
+          glowColor: t.chromeAccent.withValues(alpha: 0.4),
+        ),
+      AppThemeId.redshift => _SightSliderThumbShape(
+          size: const Size(12, 24),
+          fillColor: t.accentBright,
+          glowColor: const Color(0x66FF0044),
+        ),
+      AppThemeId.halo => _HaloSliderThumbShape(
+          size: 18,
+          fillColor: Colors.white,
+          borderColor: t.accentBright,
+        ),
+      AppThemeId.crafty => const _SquareSliderThumbShape(
+          size: 16,
+          borderWidth: 3.5,
+          insetShadow: true,
+        ),
+      AppThemeId.nightwalker => _RingSliderThumbShape(
+          size: 22,
+          ringColor: t.accentBright,
+        ),
+      AppThemeId.blackboard =>
+        const _SquareSliderThumbShape(size: 16, radius: 2, borderWidth: 2),
+    };
 
 class _ThemedSliderTrackShape extends SliderTrackShape
     with BaseSliderTrackShape {
@@ -474,7 +463,6 @@ class _DiamondSliderThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final canvas = context.canvas;
-    final half = size / 2;
     final rect = Rect.fromCenter(center: center, width: size, height: size);
     final diamond = Path()
       ..moveTo(center.dx, rect.top)
@@ -544,10 +532,12 @@ class _BrassSliderThumbShape extends SliderComponentShape {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2,
     );
+    // Inner dot centered on the thumb — previously offset by (1, 1) for a
+    // 3D embossed look, which shifted the perceived center off the rail.
     canvas.drawCircle(
-      center.translate(1, 1),
-      size * 0.26,
-      Paint()..color = Colors.black.withValues(alpha: 0.18),
+      center,
+      size * 0.22,
+      Paint()..color = Colors.black.withValues(alpha: 0.12),
     );
   }
 }

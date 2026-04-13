@@ -860,6 +860,41 @@ Future<GitResult<List<CommitSearchResultData>>> searchCommits(
   return GitResult.ok(results);
 }
 
+/// Per-file change breakdown (adds / dels / binary flag) across the
+/// working tree. Combines cached and unstaged numstats from one diff
+/// pass each. Binary files report `-<TAB>-` in numstat; we surface
+/// `binary: true` so callers can weight them with a baseline instead
+/// of the 0 they'd otherwise get from line counts.
+Future<GitResult<Map<String, FileChangeWeight>>> fileChangeWeights(
+    String repo) async {
+  final weights = <String, FileChangeWeight>{};
+  for (final cached in [false, true]) {
+    final args = <String>['diff', '--numstat', if (cached) '--cached'];
+    final r = await _git(repo, args);
+    if (r.exitCode != 0) continue;
+    for (final raw in r.stdout.toString().split('\n')) {
+      final line = raw.trim();
+      if (line.isEmpty) continue;
+      final parts = line.split('\t');
+      if (parts.length < 3) continue;
+      final addsRaw = parts[0];
+      final delsRaw = parts[1];
+      final path = parts.sublist(2).join('\t').trim();
+      if (path.isEmpty) continue;
+      final isBinary = addsRaw == '-' || delsRaw == '-';
+      final adds = isBinary ? 0 : (int.tryParse(addsRaw) ?? 0);
+      final dels = isBinary ? 0 : (int.tryParse(delsRaw) ?? 0);
+      final existing = weights[path];
+      weights[path] = FileChangeWeight(
+        adds: (existing?.adds ?? 0) + adds,
+        dels: (existing?.dels ?? 0) + dels,
+        binary: isBinary || (existing?.binary ?? false),
+      );
+    }
+  }
+  return GitResult.ok(weights);
+}
+
 Future<GitResult<void>> stagePaths(String repo, List<String> paths) async {
   final r = await _git(repo, ['add', '--', ...paths]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
@@ -870,6 +905,77 @@ Future<GitResult<void>> unstagePaths(String repo, List<String> paths) async {
   final r = await _git(repo, ['restore', '--staged', '--', ...paths]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
+}
+
+/// Pipes a unified diff to `git apply`. Used for line-level staging.
+/// `cached` writes to the index (--cached); `reverse` inverts the patch.
+Future<GitResult<void>> applyPatch(
+  String repo,
+  String patch, {
+  bool cached = true,
+  bool reverse = false,
+}) async {
+  if (patch.trim().isEmpty) return const GitResult.ok(null);
+  final commandLabel = 'git.apply';
+  final stopwatch = Stopwatch()..start();
+  DiagnosticsState.instance.recordCommandLifecycleEvent(
+    type: 'start',
+    command: commandLabel,
+  );
+  try {
+    final args = <String>['apply'];
+    if (cached) args.add('--cached');
+    if (reverse) args.add('--reverse');
+    args.addAll(['--whitespace=nowarn', '-']);
+    final process =
+        await Process.start('git', args, workingDirectory: repo);
+    process.stdin.write(patch);
+    if (!patch.endsWith('\n')) process.stdin.writeln();
+    await process.stdin.flush();
+    await process.stdin.close();
+    final stderrFuture = process.stderr.transform(utf8.decoder).join();
+    final exit = await process.exitCode;
+    final stderrText = (await stderrFuture).trim();
+    stopwatch.stop();
+    final elapsedMs = stopwatch.elapsedMicroseconds / 1000;
+    final ok = exit == 0;
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: ok ? 'success' : 'failure',
+      command: commandLabel,
+      durationMs: elapsedMs,
+      errorCode: ok ? null : 'git.exit_$exit',
+      message: ok ? null : stderrText,
+    );
+    if (!ok) return GitResult.err(stderrText.isEmpty ? 'git apply exit $exit' : stderrText);
+    return const GitResult.ok(null);
+  } catch (e) {
+    stopwatch.stop();
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'failure',
+      command: commandLabel,
+      durationMs: stopwatch.elapsedMicroseconds / 1000,
+      errorCode: 'git.invoke_failed',
+      message: e.toString(),
+    );
+    return GitResult.err(e.toString());
+  }
+}
+
+/// Atomic per-file partial staging: resets the index entry for the file to
+/// HEAD, then applies the user's partial patch — so the index reflects
+/// exactly the set of lines the user has marked staged in the UI.
+///
+/// Reset failures are ignored (untracked files have no HEAD entry).
+/// An empty patch ends with the file fully unstaged — which is the
+/// correct outcome when the user has deselected every line.
+Future<GitResult<void>> applyFileStaging(
+  String repo,
+  String filePath,
+  String patch,
+) async {
+  await _git(repo, ['reset', '-q', 'HEAD', '--', filePath]);
+  if (patch.trim().isEmpty) return const GitResult.ok(null);
+  return applyPatch(repo, patch, cached: true);
 }
 
 Future<GitResult<CommitData>> createCommit(String repo, String message,
@@ -1116,6 +1222,37 @@ Future<GitResult<String>> stashShow(String repo, {int index = 0}) async {
   final r = await _git(repo, ['stash', 'show', '-p', 'stash@{$index}']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(r.stdout.toString());
+}
+
+/// List files touched by a stash, with per-file add/del counts.
+/// Uses --numstat (tab-separated `adds<TAB>dels<TAB>path`). Binary files
+/// render as `-<TAB>-<TAB>path` in numstat.
+Future<GitResult<List<StashFileStat>>> stashFiles(
+  String repo, {
+  int index = 0,
+}) async {
+  final r = await _git(
+      repo, ['stash', 'show', '--numstat', 'stash@{$index}']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  final out = <StashFileStat>[];
+  for (final raw in r.stdout.toString().split('\n')) {
+    final line = raw.trim();
+    if (line.isEmpty) continue;
+    final parts = line.split('\t');
+    if (parts.length < 3) continue;
+    final addsRaw = parts[0].trim();
+    final delsRaw = parts[1].trim();
+    final path = parts.sublist(2).join('\t').trim();
+    if (path.isEmpty) continue;
+    final binary = addsRaw == '-' || delsRaw == '-';
+    out.add(StashFileStat(
+      path: path,
+      adds: binary ? 0 : (int.tryParse(addsRaw) ?? 0),
+      dels: binary ? 0 : (int.tryParse(delsRaw) ?? 0),
+      binary: binary,
+    ));
+  }
+  return GitResult.ok(out);
 }
 
 // ── Parallel Desks (worktrees) ──────────────────────────────────────────────

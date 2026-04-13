@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../backend/commit_format.dart';
+import '../backend/file_coupling.dart';
 import '../backend/settings_store.dart';
 import '../diagnostics/diagnostics_state.dart';
 
@@ -18,6 +20,15 @@ class PreferencesState extends ChangeNotifier {
   bool _crashReportingEnabled = false;
   bool _aiReadOnlyDefault = true;
   bool _logoAnimatesWhenUnfocused = true;
+  bool _reduceMotion = false;
+  double _reduceMotionPhase = 0.0;
+  bool _stashCabinetDefaultExpanded = false;
+  bool _instantBlameHover = false;
+  FileSortGuide _fileSortGuide = FileSortGuide.relatedProximity;
+  bool _fileSortInverted = false;
+  CommitStructure _commitStructure = kDefaultCommitStructure;
+  CommitVoice _commitVoice = kDefaultCommitVoice;
+  CommitCoverage _commitCoverage = kDefaultCommitCoverage;
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
@@ -27,6 +38,15 @@ class PreferencesState extends ChangeNotifier {
   bool get crashReportingEnabled => _crashReportingEnabled;
   bool get aiReadOnlyDefault => _aiReadOnlyDefault;
   bool get logoAnimatesWhenUnfocused => _logoAnimatesWhenUnfocused;
+  bool get reduceMotion => _reduceMotion;
+  double get reduceMotionPhase => _reduceMotionPhase;
+  bool get stashCabinetDefaultExpanded => _stashCabinetDefaultExpanded;
+  bool get instantBlameHover => _instantBlameHover;
+  FileSortGuide get fileSortGuide => _fileSortGuide;
+  bool get fileSortInverted => _fileSortInverted;
+  CommitStructure get commitStructure => _commitStructure;
+  CommitVoice get commitVoice => _commitVoice;
+  CommitCoverage get commitCoverage => _commitCoverage;
 
   Future<void> load() async {
     if (_loaded) {
@@ -39,8 +59,159 @@ class PreferencesState extends ChangeNotifier {
     _crashReportingEnabled = settings.crashReportingEnabled;
     _aiReadOnlyDefault = settings.aiReadOnlyDefault;
     _logoAnimatesWhenUnfocused = settings.logoAnimatesWhenUnfocused;
+    _reduceMotion = settings.reduceMotion;
+    _reduceMotionPhase = settings.reduceMotionPhase;
+    _stashCabinetDefaultExpanded = settings.stashCabinetDefaultExpanded;
+    _instantBlameHover = settings.instantBlameHover;
+    _fileSortGuide = _sortGuideFromString(settings.fileSortGuide);
+    _fileSortInverted = settings.fileSortInverted;
+    _commitStructure = commitStructureFromKey(settings.commitStructure);
+    _commitVoice = commitVoiceFromKey(settings.commitVoice);
+    _commitCoverage = commitCoverageFromKey(settings.commitCoverage);
     _loaded = true;
     notifyListeners();
+  }
+
+  /// Read the current on-disk snapshot and persist a copy with the provided
+  /// fields overwritten. Avoids spelling out every field at every setter
+  /// callsite — new preferences only need to extend this helper's signature.
+  Future<void> _persistWith({
+    double? guardrailValue,
+    bool? aiReadOnlyDefault,
+    bool? logoAnimatesWhenUnfocused,
+    String? updateChannel,
+    bool? crashReportingEnabled,
+    bool? reduceMotion,
+    double? reduceMotionPhase,
+    bool? stashCabinetDefaultExpanded,
+    bool? instantBlameHover,
+    String? fileSortGuide,
+    bool? fileSortInverted,
+    String? commitStructure,
+    String? commitVoice,
+    String? commitCoverage,
+  }) async {
+    final s = await SettingsStore.load();
+    await SettingsStore.persist(
+      AppSettingsSnapshot(
+        guardrailValue: guardrailValue ?? s.guardrailValue,
+        aiReadOnlyDefault: aiReadOnlyDefault ?? s.aiReadOnlyDefault,
+        logoAnimatesWhenUnfocused:
+            logoAnimatesWhenUnfocused ?? s.logoAnimatesWhenUnfocused,
+        telemetryRetentionDays: s.telemetryRetentionDays,
+        telemetryRetentionMb: s.telemetryRetentionMb,
+        updateChannel: updateChannel ?? s.updateChannel,
+        crashReportingEnabled:
+            crashReportingEnabled ?? s.crashReportingEnabled,
+        themeId: s.themeId,
+        keybindingProfile: s.keybindingProfile,
+        sidebarWidthPx: s.sidebarWidthPx,
+        sidebarPosition: s.sidebarPosition,
+        utilityDrawerDefaultExpanded: s.utilityDrawerDefaultExpanded,
+        utilityDrawerHeightPx: s.utilityDrawerHeightPx,
+        reduceMotion: reduceMotion ?? s.reduceMotion,
+        reduceMotionPhase: reduceMotionPhase ?? s.reduceMotionPhase,
+        stashCabinetDefaultExpanded:
+            stashCabinetDefaultExpanded ?? s.stashCabinetDefaultExpanded,
+        instantBlameHover: instantBlameHover ?? s.instantBlameHover,
+        fileSortGuide: fileSortGuide ?? s.fileSortGuide,
+        fileSortInverted: fileSortInverted ?? s.fileSortInverted,
+        commitStructure: commitStructure ?? s.commitStructure,
+        commitVoice: commitVoice ?? s.commitVoice,
+        commitCoverage: commitCoverage ?? s.commitCoverage,
+      ),
+    );
+  }
+
+  Future<void> setReduceMotion(bool value) async {
+    if (_reduceMotion == value) return;
+    _reduceMotion = value;
+    await _persistWith(reduceMotion: value);
+    notifyListeners();
+  }
+
+  /// Persist the pulse-wave phase that the reduce-motion toggle froze
+  /// at. Intentionally does NOT call [notifyListeners] — nothing in the
+  /// app watches this value reactively; it's only read once in the
+  /// toggle widget's initState to seed the phase on restart. Skipping
+  /// the broadcast avoids pointless rebuilds across every preference
+  /// watcher each time the wave comes to rest.
+  Future<void> setReduceMotionPhase(double value) async {
+    final clamped = value.clamp(0.0, 1.0);
+    if (_reduceMotionPhase == clamped) return;
+    _reduceMotionPhase = clamped;
+    await _persistWith(reduceMotionPhase: clamped);
+  }
+
+  Future<void> setStashCabinetDefaultExpanded(bool value) async {
+    if (_stashCabinetDefaultExpanded == value) return;
+    _stashCabinetDefaultExpanded = value;
+    await _persistWith(stashCabinetDefaultExpanded: value);
+    notifyListeners();
+  }
+
+  Future<void> setInstantBlameHover(bool value) async {
+    if (_instantBlameHover == value) return;
+    _instantBlameHover = value;
+    await _persistWith(instantBlameHover: value);
+    notifyListeners();
+  }
+
+  Future<void> setFileSortGuide(FileSortGuide value) async {
+    if (_fileSortGuide == value) return;
+    _fileSortGuide = value;
+    await _persistWith(fileSortGuide: _sortGuideToString(value));
+    notifyListeners();
+  }
+
+  Future<void> setFileSortInverted(bool value) async {
+    if (_fileSortInverted == value) return;
+    _fileSortInverted = value;
+    await _persistWith(fileSortInverted: value);
+    notifyListeners();
+  }
+
+  Future<void> setCommitStructure(CommitStructure value) async {
+    if (_commitStructure == value) return;
+    _commitStructure = value;
+    await _persistWith(commitStructure: commitStructureKey(value));
+    notifyListeners();
+  }
+
+  Future<void> setCommitVoice(CommitVoice value) async {
+    if (_commitVoice == value) return;
+    _commitVoice = value;
+    await _persistWith(commitVoice: commitVoiceKey(value));
+    notifyListeners();
+  }
+
+  Future<void> setCommitCoverage(CommitCoverage value) async {
+    if (_commitCoverage == value) return;
+    _commitCoverage = value;
+    await _persistWith(commitCoverage: commitCoverageKey(value));
+    notifyListeners();
+  }
+
+  static FileSortGuide _sortGuideFromString(String s) {
+    switch (s.trim().toLowerCase()) {
+      case 'alphabetical':
+        return FileSortGuide.alphabetical;
+      case 'impact':
+        return FileSortGuide.impact;
+      default:
+        return FileSortGuide.relatedProximity;
+    }
+  }
+
+  static String _sortGuideToString(FileSortGuide g) {
+    switch (g) {
+      case FileSortGuide.alphabetical:
+        return 'alphabetical';
+      case FileSortGuide.impact:
+        return 'impact';
+      case FileSortGuide.relatedProximity:
+        return 'related';
+    }
   }
 
   String get guardrailProfile {
@@ -70,24 +241,7 @@ class PreferencesState extends ChangeNotifier {
     );
     try {
       _guardrailValue = value;
-      final settings = await SettingsStore.load();
-      await SettingsStore.persist(
-        AppSettingsSnapshot(
-          guardrailValue: _guardrailValue,
-          aiReadOnlyDefault: _aiReadOnlyDefault,
-          logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
-          telemetryRetentionDays: settings.telemetryRetentionDays,
-          telemetryRetentionMb: settings.telemetryRetentionMb,
-          updateChannel: settings.updateChannel,
-          crashReportingEnabled: settings.crashReportingEnabled,
-          themeId: settings.themeId,
-          keybindingProfile: settings.keybindingProfile,
-          sidebarWidthPx: settings.sidebarWidthPx,
-          sidebarPosition: settings.sidebarPosition,
-          utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-          utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        ),
-      );
+      await _persistWith(guardrailValue: _guardrailValue);
       notifyListeners();
       stopwatch.stop();
       DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -132,24 +286,7 @@ class PreferencesState extends ChangeNotifier {
     );
     try {
       _updateChannel = normalized;
-      final settings = await SettingsStore.load();
-      await SettingsStore.persist(
-        AppSettingsSnapshot(
-          guardrailValue: settings.guardrailValue,
-          aiReadOnlyDefault: _aiReadOnlyDefault,
-          logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
-          telemetryRetentionDays: settings.telemetryRetentionDays,
-          telemetryRetentionMb: settings.telemetryRetentionMb,
-          updateChannel: _updateChannel,
-          crashReportingEnabled: settings.crashReportingEnabled,
-          themeId: settings.themeId,
-          keybindingProfile: settings.keybindingProfile,
-          sidebarWidthPx: settings.sidebarWidthPx,
-          sidebarPosition: settings.sidebarPosition,
-          utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-          utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        ),
-      );
+      await _persistWith(updateChannel: _updateChannel);
       notifyListeners();
       stopwatch.stop();
       DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -193,24 +330,7 @@ class PreferencesState extends ChangeNotifier {
     );
     try {
       _crashReportingEnabled = value;
-      final settings = await SettingsStore.load();
-      await SettingsStore.persist(
-        AppSettingsSnapshot(
-          guardrailValue: settings.guardrailValue,
-          aiReadOnlyDefault: _aiReadOnlyDefault,
-          logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
-          telemetryRetentionDays: settings.telemetryRetentionDays,
-          telemetryRetentionMb: settings.telemetryRetentionMb,
-          updateChannel: settings.updateChannel,
-          crashReportingEnabled: _crashReportingEnabled,
-          themeId: settings.themeId,
-          keybindingProfile: settings.keybindingProfile,
-          sidebarWidthPx: settings.sidebarWidthPx,
-          sidebarPosition: settings.sidebarPosition,
-          utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-          utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-        ),
-      );
+      await _persistWith(crashReportingEnabled: _crashReportingEnabled);
       notifyListeners();
       stopwatch.stop();
       DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -248,24 +368,7 @@ class PreferencesState extends ChangeNotifier {
     }
 
     _aiReadOnlyDefault = value;
-    final settings = await SettingsStore.load();
-    await SettingsStore.persist(
-      AppSettingsSnapshot(
-        guardrailValue: settings.guardrailValue,
-        aiReadOnlyDefault: _aiReadOnlyDefault,
-        logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
-        telemetryRetentionDays: settings.telemetryRetentionDays,
-        telemetryRetentionMb: settings.telemetryRetentionMb,
-        updateChannel: settings.updateChannel,
-        crashReportingEnabled: settings.crashReportingEnabled,
-        themeId: settings.themeId,
-        keybindingProfile: settings.keybindingProfile,
-        sidebarWidthPx: settings.sidebarWidthPx,
-        sidebarPosition: settings.sidebarPosition,
-        utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-        utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-      ),
-    );
+    await _persistWith(aiReadOnlyDefault: _aiReadOnlyDefault);
     notifyListeners();
   }
 
@@ -273,26 +376,8 @@ class PreferencesState extends ChangeNotifier {
     if (_logoAnimatesWhenUnfocused == value) {
       return;
     }
-
     _logoAnimatesWhenUnfocused = value;
-    final settings = await SettingsStore.load();
-    await SettingsStore.persist(
-      AppSettingsSnapshot(
-        guardrailValue: settings.guardrailValue,
-        aiReadOnlyDefault: _aiReadOnlyDefault,
-        logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused,
-        telemetryRetentionDays: settings.telemetryRetentionDays,
-        telemetryRetentionMb: settings.telemetryRetentionMb,
-        updateChannel: settings.updateChannel,
-        crashReportingEnabled: settings.crashReportingEnabled,
-        themeId: settings.themeId,
-        keybindingProfile: settings.keybindingProfile,
-        sidebarWidthPx: settings.sidebarWidthPx,
-        sidebarPosition: settings.sidebarPosition,
-        utilityDrawerDefaultExpanded: settings.utilityDrawerDefaultExpanded,
-        utilityDrawerHeightPx: settings.utilityDrawerHeightPx,
-      ),
-    );
+    await _persistWith(logoAnimatesWhenUnfocused: _logoAnimatesWhenUnfocused);
     notifyListeners();
   }
 

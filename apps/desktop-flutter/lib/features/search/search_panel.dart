@@ -7,6 +7,7 @@ import '../../backend/git.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/status_view.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 
 String _detectScope(String query) {
@@ -264,7 +265,7 @@ class _ResultsBody extends StatelessWidget {
           right: 0,
           child: AnimatedOpacity(
             opacity: loading ? 1 : 0,
-            duration: const Duration(milliseconds: 80),
+            duration: context.motion(const Duration(milliseconds: 80)),
             child: TopProgressLine(color: t.accentBright),
           ),
         ),
@@ -302,7 +303,7 @@ class _ResultRowState extends State<_ResultRow> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 100),
+          duration: context.motion(const Duration(milliseconds: 100)),
           padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
           decoration: BoxDecoration(
             color: _hovered
@@ -401,10 +402,10 @@ class _CloseButtonState extends State<_CloseButton> {
         child: HyperReactive(
           borderRadius: 6,
           child: AnimatedScale(
-            duration: const Duration(milliseconds: 80),
+            duration: context.motion(const Duration(milliseconds: 80)),
             scale: chrome.scale,
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 80),
+              duration: context.motion(const Duration(milliseconds: 80)),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
                 color: chrome.background,
