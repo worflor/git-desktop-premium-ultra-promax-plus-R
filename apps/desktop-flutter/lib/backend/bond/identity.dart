@@ -59,6 +59,16 @@ class MasterSeed {
   MasterSeed._(this._bytes);
   final Uint8List _bytes;
 
+  /// Adopts a 32-byte seed from external storage (typically OS
+  /// keychain auto-unlock). Caller transfers ownership — the array
+  /// must not be retained or wiped externally; [wipe] handles that.
+  factory MasterSeed.adoptBytes(Uint8List bytes) {
+    if (bytes.length != 32) {
+      throw ArgumentError('master seed must be exactly 32 bytes');
+    }
+    return MasterSeed._(bytes);
+  }
+
   /// Read-only view of the raw bytes. Callers should not retain
   /// references longer than a single derivation step.
   Uint8List get bytes => Uint8List.fromList(_bytes);

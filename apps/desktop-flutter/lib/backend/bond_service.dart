@@ -24,12 +24,15 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
 import 'bond/bond_backend.dart';
 import 'bond/bond_id.dart';
 import 'bond/identity.dart';
 import 'bond/invite.dart';
 import 'bond/objects.dart';
 import 'bond/safety_number.dart';
+import 'bond/storage.dart';
 import 'bond/transport.dart';
 
 /// One repo ↔ one bond mapping, persisted under
@@ -61,6 +64,18 @@ class BondService extends ChangeNotifier {
 
   final BondTransport _transport;
   late final BondBackend _backend;
+  final FlutterSecureStorage _secure = const FlutterSecureStorage();
+
+  /// Key under which the master-seed bytes are cached in OS keychain
+  /// when the user opts into auto-unlock. Bond-namespaced so it
+  /// doesn't collide with other apps using flutter_secure_storage.
+  static const String _kSecureSeedKey = 'bond.identity.master.v1';
+  static const String _kSecureSeedExpiryKey = 'bond.identity.expiry.v1';
+
+  /// Sliding auto-unlock window. Past this since last activity, the
+  /// cached seed is treated as expired and we fall back to phrase
+  /// prompt. Cheap to extend on activity, conservative on idle.
+  static const Duration _autoUnlockTtl = Duration(hours: 12);
 
   MasterSeed? _master;
   final Map<String, SwarmKeyPair> _keys = {};
@@ -86,7 +101,7 @@ class BondService extends ChangeNotifier {
   /// Argon2id off the UI thread is the caller's responsibility (this
   /// method awaits synchronously); wrap in `compute` when calling
   /// from a button handler. Throws on empty phrase.
-  Future<void> unlock(String phrase) async {
+  Future<void> unlock(String phrase, {bool persistToKeychain = false}) async {
     if (phrase.trim().isEmpty) {
       throw ArgumentError('phrase is required');
     }
@@ -97,20 +112,89 @@ class BondService extends ChangeNotifier {
     // jank for the duration.
     final seed = await compute<String, MasterSeed>(_deriveMasterInIsolate, phrase);
     _master = seed;
+    if (persistToKeychain) {
+      await _persistSeedToKeychain(seed);
+    }
     notifyListeners();
+    // Resume every bond we already know about — successful unlock
+    // means the resumeBond gate (isUnlocked) is now open.
+    for (final repoPath in _byRepo.keys.toList(growable: false)) {
+      unawaited(resumeBond(repoPath));
+    }
+  }
+
+  /// Try to restore the master seed from the OS keychain, respecting
+  /// the sliding TTL. Returns true on success. The expiry is touched
+  /// on every successful load so active users stay unlocked while
+  /// truly-idle users fall back to the phrase prompt.
+  Future<bool> tryAutoUnlock() async {
+    try {
+      final expiryMs = await _secure.read(key: _kSecureSeedExpiryKey);
+      if (expiryMs == null) return false;
+      final expiry = int.tryParse(expiryMs);
+      if (expiry == null || expiry < DateTime.now().millisecondsSinceEpoch) {
+        await _wipeKeychainSeed();
+        return false;
+      }
+      final b64 = await _secure.read(key: _kSecureSeedKey);
+      if (b64 == null) return false;
+      final bytes = base64.decode(b64);
+      if (bytes.length != 32) {
+        await _wipeKeychainSeed();
+        return false;
+      }
+      _master = MasterSeed.adoptBytes(Uint8List.fromList(bytes));
+      _keys.clear();
+      // Touch the expiry forward — sliding window.
+      await _secure.write(
+        key: _kSecureSeedExpiryKey,
+        value: (DateTime.now().millisecondsSinceEpoch + _autoUnlockTtl.inMilliseconds).toString(),
+      );
+      notifyListeners();
+      return true;
+    } catch (_) {
+      // Keychain unavailable / disabled / corrupted — fall back.
+      return false;
+    }
+  }
+
+  Future<void> _persistSeedToKeychain(MasterSeed seed) async {
+    try {
+      await _secure.write(
+        key: _kSecureSeedKey,
+        value: base64.encode(seed.bytes),
+      );
+      await _secure.write(
+        key: _kSecureSeedExpiryKey,
+        value: (DateTime.now().millisecondsSinceEpoch + _autoUnlockTtl.inMilliseconds).toString(),
+      );
+    } catch (_) {
+      // Keychain write failed (no plugin, locked, etc.). Silent —
+      // the in-memory unlock still succeeded; user just won't get
+      // auto-unlock next launch.
+    }
+  }
+
+  Future<void> _wipeKeychainSeed() async {
+    try {
+      await _secure.delete(key: _kSecureSeedKey);
+      await _secure.delete(key: _kSecureSeedExpiryKey);
+    } catch (_) {}
   }
 
   /// Wipes the in-memory master and all derived subkeys. The UI
   /// should call this on app lock / screen lock / user logout.
   /// Also tears down active peer sessions via the backend so we
   /// don't keep signing with keys that no longer match the unlocked
-  /// identity.
+  /// identity, and wipes the keychain copy so a re-launch doesn't
+  /// auto-unlock back into the same identity.
   void lock() {
     _master?.wipe();
     _master = null;
     _keys.clear();
     notifyListeners();
     unawaited(_backend.onIdentityChanged());
+    unawaited(_wipeKeychainSeed());
   }
 
   /// Registers a repo ↔ bond mapping. If the mapping is new it is
@@ -142,7 +226,9 @@ class BondService extends ChangeNotifier {
   }
 
   /// Reload memberships from disk for the given repo. Called when a
-  /// repo opens, before any collaboration surface renders.
+  /// repo opens, before any collaboration surface renders. If the
+  /// identity is already unlocked, also kicks off a background
+  /// resume — redial known peers, fetch what they have.
   Future<void> loadFromDisk(String repoPath) async {
     final configs = await _readRepoConfigs(repoPath);
     if (configs.isEmpty) return;
@@ -151,6 +237,90 @@ class BondService extends ChangeNotifier {
     final first = configs.first;
     _byRepo[repoPath] = first;
     notifyListeners();
+    if (isUnlocked) {
+      unawaited(resumeBond(repoPath));
+    }
+  }
+
+  /// Background reconnect orchestrator. Reads peers.jsonl for the
+  /// repo's bond, joins the swarm via the transport (so future
+  /// inbound peers attach), and fires off best-effort dials to every
+  /// recently-seen pubkey. Returns once the dial fan-out completes
+  /// or a 60s budget elapses; fetches happen async after each dial.
+  ///
+  /// Safe to call multiple times; the backend's per-peer attach is
+  /// idempotent and connect() de-dups on pubkey.
+  Future<void> resumeBond(String repoPath) async {
+    final m = _byRepo[repoPath];
+    if (m == null) return;
+    if (!isUnlocked) return;
+    try {
+      // Open the swarm handle so inbound peers route here. If the
+      // transport is NullBondTransport this is a cheap no-op handle.
+      await _backend.transport.joinSwarm(
+        bondId: m.bondId.bytes,
+        addressing: BondAddressViaTracker(
+          trackers: const <String>[],
+          iceServers: const <String>[],
+        ),
+      );
+      // Read peers.jsonl, dedup recently-seen pubkeys, redial each.
+      final store = await BondStore.open(repoPath);
+      final peerLog = await readJsonl(store.peersPathFor(m.bondId));
+      final cutoffMs = DateTime.now()
+          .subtract(const Duration(days: 14))
+          .millisecondsSinceEpoch;
+      final seen = <String, int>{};
+      for (final rec in peerLog) {
+        final hex = rec['pubkey'];
+        final ts = rec['seen_ms'];
+        if (hex is! String || ts is! int) continue;
+        if (ts < cutoffMs) continue;
+        if (hex.length != 64) continue;
+        final prior = seen[hex] ?? 0;
+        if (ts > prior) seen[hex] = ts;
+      }
+      // Sort newest-first so peers we saw most recently get the
+      // earliest dial slot. Cap fan-out so we don't punish trackers
+      // on a swarm with many dormant members.
+      final candidates = seen.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final pubkeys = candidates.take(16).map((e) => e.key).toList();
+      // Best-effort parallel dials with a global budget. Failures
+      // surface as drop counters on the runtime; not awaited per-peer.
+      final budget = Future<void>.delayed(const Duration(seconds: 60));
+      final dials = pubkeys.map((hex) async {
+        try {
+          final pubkey = _unhex(hex);
+          await _backend.connect(
+            repoPath: repoPath,
+            remotePubkey: pubkey,
+            addressing: const BondAddressViaTracker(
+              trackers: <String>[],
+              iceServers: <String>[],
+            ),
+          );
+        } catch (_) {
+          // NullBondTransport will throw here; ignored. Once Whisper
+          // lands, real failures show up via the connect() GitResult
+          // and we can surface them on a dedicated stream.
+        }
+      });
+      await Future.any(<Future<void>>[
+        Future.wait(dials),
+        budget,
+      ]);
+    } catch (_) {
+      // resume is best-effort; user can manually fetch from BondPage.
+    }
+  }
+
+  Uint8List _unhex(String hex) {
+    final out = Uint8List(hex.length ~/ 2);
+    for (var i = 0; i < out.length; i++) {
+      out[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
+    }
+    return out;
   }
 
   /// Returns the bond membership for a given repo, or null if the

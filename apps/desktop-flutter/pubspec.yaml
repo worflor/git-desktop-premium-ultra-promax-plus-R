@@ -30,6 +30,13 @@ dependencies:
   cryptography: ^2.7.0
   pointycastle: ^3.9.1
   cbor: ^6.2.0
+  #   flutter_secure_storage: OS-keychain-backed master-seed cache
+  #                 (Keychain on macOS, libsecret on Linux,
+  #                 DPAPI/CredentialManager on Windows). Optional —
+  #                 BondService falls back to phrase-each-launch when
+  #                 the user opts out or when the platform plugin
+  #                 isn't available.
+  flutter_secure_storage: ^9.2.2
 
 dev_dependencies:
   flutter_test:

@@ -40,6 +40,7 @@ class _BondPageState extends State<BondPage> {
   final TextEditingController _phrase = TextEditingController();
   String? _error;
   bool _busy = false;
+  bool _persistUnlock = true;
 
   @override
   void initState() {
@@ -60,7 +61,10 @@ class _BondPageState extends State<BondPage> {
       _error = null;
     });
     try {
-      await context.read<BondService>().unlock(_phrase.text);
+      await context.read<BondService>().unlock(
+            _phrase.text,
+            persistToKeychain: _persistUnlock,
+          );
       _phrase.clear();
     } catch (e) {
       setState(() => _error = _friendly(e));
@@ -129,6 +133,8 @@ class _BondPageState extends State<BondPage> {
                   phrase: _phrase,
                   onUnlock: _onUnlock,
                   onLock: service.lock,
+                  persistUnlock: _persistUnlock,
+                  onPersistChanged: (v) => setState(() => _persistUnlock = v),
                 ),
                 const SizedBox(height: 16),
                 if (service.isUnlocked && membership == null)
@@ -205,12 +211,16 @@ class _IdentityCard extends StatelessWidget {
     required this.phrase,
     required this.onUnlock,
     required this.onLock,
+    required this.persistUnlock,
+    required this.onPersistChanged,
   });
 
   final bool isUnlocked;
   final TextEditingController phrase;
   final Future<void> Function() onUnlock;
   final VoidCallback onLock;
+  final bool persistUnlock;
+  final ValueChanged<bool> onPersistChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -254,13 +264,29 @@ class _IdentityCard extends StatelessWidget {
                 onSubmitted: (_) => onUnlock(),
               ),
               const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: onUnlock,
-                  icon: const Icon(Icons.lock_open),
-                  label: const Text('Unlock'),
-                ),
+              Row(
+                children: [
+                  Checkbox(
+                    value: persistUnlock,
+                    onChanged: (v) => onPersistChanged(v ?? false),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => onPersistChanged(!persistUnlock),
+                      child: Text(
+                        'Stay unlocked on this device for 12h (uses OS keychain)',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                  ),
+                  FilledButton.icon(
+                    onPressed: onUnlock,
+                    icon: const Icon(Icons.lock_open),
+                    label: const Text('Unlock'),
+                  ),
+                ],
               ),
             ] else
               Align(

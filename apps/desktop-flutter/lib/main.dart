@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui show Gradient;
 import 'package:flutter/material.dart';
@@ -86,6 +87,10 @@ void main() async {
   // Whisper adapter lands. Feature-flag gated in settings; the UI only
   // shows Bond surfaces when enabled.
   final bondService = BondService(transport: const NullBondTransport());
+  // Try OS keychain auto-unlock — succeeds if the user opted in last
+  // session and the sliding TTL hasn't elapsed. Fire-and-forget so
+  // first paint isn't blocked on keychain IO.
+  unawaited(bondService.tryAutoUnlock());
 
   runApp(
     MultiProvider(
