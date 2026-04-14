@@ -126,7 +126,10 @@ class AppSettingsSnapshot {
         commitCoverage: 'balanced',
         appShortName: 'Manifold',
         onboardingComplete: false,
-        bondExperimentEnabled: false,
+        // On the bond branch the experiment ships on by default —
+        // the whole point of the worktree is to exercise the
+        // surface. Main keeps it false.
+        bondExperimentEnabled: true,
       );
 
   factory AppSettingsSnapshot.fromJson(Map<String, dynamic> json) {

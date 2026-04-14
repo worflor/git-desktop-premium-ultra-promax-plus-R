@@ -23,7 +23,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../app/preferences_state.dart';
 import '../../app/repository_state.dart';
 import '../../backend/bond/bond_backend.dart';
 import '../../backend/bond_service.dart';
@@ -47,9 +46,9 @@ class _BondDockState extends State<BondDock> {
 
   @override
   Widget build(BuildContext context) {
-    final prefs = context.watch<PreferencesState>();
-    if (!prefs.bondExperimentEnabled) return const SizedBox.shrink();
-
+    // The bond worktree always shows the dock — it's the *point* of
+    // the worktree. On main, the experiment flag still gates whether
+    // the workspace_shell topbar exposes the deeper panel.
     final repoPath = context.watch<RepositoryState>().activePath;
     final service = context.watch<BondService>();
     final membership = repoPath == null
@@ -141,10 +140,13 @@ class _DockSurface extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Subtle (not faint) divider — the dock IS the bottom of the
+        // sidebar; the line tells the eye where the projects list
+        // ends and bond chrome begins.
         Container(
           height: 1,
           margin: const EdgeInsets.symmetric(horizontal: 4),
-          color: t.chromeBorderFaint,
+          color: t.chromeBorderSubtle,
         ),
         child,
       ],
@@ -182,29 +184,36 @@ class _DockStrip extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+          // Slightly taller than its raw children so the strip reads
+          // as a deliberate footer rather than collapsed chrome.
+          padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
           child: Row(
             children: [
               _StateDot(state: state),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   state.label,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: state.urgent ? t.accentBright : t.textMuted,
-                    fontSize: 11,
+                    // Use the normal text colour for non-urgent
+                    // states so the strip is legible against the
+                    // sidebar's parchment surface — the prior muted
+                    // tone was almost the same value as the
+                    // background.
+                    color: state.urgent ? t.accentBright : t.textNormal,
+                    fontSize: 12,
                     fontWeight: state.urgent
                         ? FontWeight.w600
                         : FontWeight.w500,
-                    letterSpacing: 0.2,
+                    letterSpacing: 0.3,
                   ),
                 ),
               ),
               if (membership != null)
                 Icon(
                   open ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
-                  size: 14,
+                  size: 16,
                   color: t.textMuted,
                 ),
             ],
