@@ -30,6 +30,7 @@ class PreferencesState extends ChangeNotifier {
   CommitVoice _commitVoice = kDefaultCommitVoice;
   CommitCoverage _commitCoverage = kDefaultCommitCoverage;
   bool _bondExperimentEnabled = false;
+  bool _bondDockOpenedOnce = false;
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
@@ -49,6 +50,7 @@ class PreferencesState extends ChangeNotifier {
   CommitVoice get commitVoice => _commitVoice;
   CommitCoverage get commitCoverage => _commitCoverage;
   bool get bondExperimentEnabled => _bondExperimentEnabled;
+  bool get bondDockOpenedOnce => _bondDockOpenedOnce;
 
   Future<void> load() async {
     if (_loaded) {
@@ -71,6 +73,7 @@ class PreferencesState extends ChangeNotifier {
     _commitVoice = commitVoiceFromKey(settings.commitVoice);
     _commitCoverage = commitCoverageFromKey(settings.commitCoverage);
     _bondExperimentEnabled = settings.bondExperimentEnabled;
+    _bondDockOpenedOnce = settings.bondDockOpenedOnce;
     _loaded = true;
     notifyListeners();
   }
@@ -94,6 +97,7 @@ class PreferencesState extends ChangeNotifier {
     String? commitVoice,
     String? commitCoverage,
     bool? bondExperimentEnabled,
+    bool? bondDockOpenedOnce,
   }) async {
     final s = await SettingsStore.load();
     await SettingsStore.persist(
@@ -113,6 +117,7 @@ class PreferencesState extends ChangeNotifier {
         commitVoice: commitVoice,
         commitCoverage: commitCoverage,
         bondExperimentEnabled: bondExperimentEnabled,
+        bondDockOpenedOnce: bondDockOpenedOnce,
       ),
     );
   }
@@ -121,6 +126,15 @@ class PreferencesState extends ChangeNotifier {
     if (_bondExperimentEnabled == value) return;
     _bondExperimentEnabled = value;
     await _persistWith(bondExperimentEnabled: value);
+    notifyListeners();
+  }
+
+  /// One-shot — flips true and persists on first dock interaction.
+  /// Once true, stays true; the discovery hint never reappears.
+  Future<void> markBondDockOpened() async {
+    if (_bondDockOpenedOnce) return;
+    _bondDockOpenedOnce = true;
+    await _persistWith(bondDockOpenedOnce: true);
     notifyListeners();
   }
 

@@ -23,21 +23,369 @@
 // tap, ghost dividers, MorphText where motion adds value.
 // ═════════════════════════════════════════════════════════════════════════
 
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../app/preferences_state.dart';
 import '../../app/repository_state.dart';
 import '../../backend/bond/bond_backend.dart';
 import '../../backend/bond/objects.dart';
 import '../../backend/bond/transport.dart';
 import '../../backend/bond_service.dart';
+import '../../backend/dtos.dart' show CommitHistoryEntry;
+import '../../backend/git.dart' show listCommitHistory;
 import '../../ui/material_surface.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import 'creatures/creature.dart';
+import 'creatures/fox.dart';
+
+/// The active creature for the bond pen. Modular hand-off: swap this
+/// const for any other [BondCreature] (cat, owl, snake) and the
+/// strip + drawer pick it up everywhere. Stateless instance so it's
+/// safe as a single shared singleton.
+const BondCreature _kPenCreature = FoxCreature();
+
+/// Pen contents — discovery hint when the user has never opened the
+/// dock ("bond" lowercase text), morphing into the creature once
+/// they have. Crossfades on the prefs flag flip; both children are
+/// always laid out so the morph swaps without a layout jump.
+///
+/// Stateful because it derives [BondCreatureSignals] from the active
+/// repo's history + working tree — those signals drive every
+/// reactive thing the creature does (drift speed, head-turn,
+/// hyperfold flourish on commit).
+///
+/// [interestKey] is an optional GlobalKey on the widget the host
+/// wants the creature to drift toward (e.g. the chevron). When non-
+/// null the pen continually computes that widget's centre in
+/// pen-local normalised coords and passes it as a goal — the
+/// creature glides toward it via the runtime's eased pursuit. No
+/// magic numbers; goal tracks layout automatically.
+class _PenContent extends StatefulWidget {
+  const _PenContent({
+    required this.mood,
+    required this.height,
+    this.interestKey,
+  });
+  final BondCreatureMood mood;
+  final double height;
+  final GlobalKey? interestKey;
+
+  @override
+  State<_PenContent> createState() => _PenContentState();
+}
+
+class _PenContentState extends State<_PenContent>
+    with WidgetsBindingObserver {
+  List<CommitHistoryEntry>? _commits;
+  String? _lastHeadHash;
+  int? _lastEventMs;
+  String? _lastRepoPath;
+  // Self-key on the pen's outer SizedBox — used together with
+  // widget.interestKey to compute the interest target's position
+  // in our local coordinate space.
+  final GlobalKey _penKey = GlobalKey();
+  Offset? _interestGoal;
+  // Pen-normalised cursor position while the pointer is inside the
+  // pen region (null = pointer elsewhere). Drives the creature's
+  // eye gaze. Narrow tracking region on purpose — we don't want the
+  // fox to follow the mouse across the whole window, that would
+  // feel needy; it notices when you approach its pen.
+  Offset? _cursor;
+  // OS-level window focus — tracked via the WidgetsBindingObserver
+  // lifecycle, not MouseRegion. True = our window is the foreground
+  // app; false = user has alt-tabbed. Creature curls when false.
+  bool _windowFocused = true;
+  // Global-app idle detector. Any pointer event anywhere in the
+  // window refreshes [_lastActivityMs]; every second a Timer
+  // re-evaluates `_userIdle = (now - last) > _idleThresholdMs`.
+  // Meta beats (look-around, notice-you) fire only when idle so
+  // they don't pull focus during active work.
+  static const int _idleThresholdMs = 20000;
+  int _lastActivityMs = DateTime.now().millisecondsSinceEpoch;
+  bool _userIdle = false;
+  Timer? _idleTimer;
+  // Pet gesture state.
+  int? _petFiredMs;
+  Timer? _petTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _windowFocused =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    // Capture every pointer event in the app — not for input, just
+    // to know whether the user is doing *anything* right now. Cheap
+    // (O(1) per event) and doesn't interfere with hit-testing.
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_onAnyPointer);
+    _idleTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _evaluateIdle(),
+    );
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_onAnyPointer);
+    _idleTimer?.cancel();
+    _petTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onAnyPointer(PointerEvent e) {
+    // Only "real" input counts — filter out hover-moves with no
+    // buttons so a cursor that sits still and jitters due to OS
+    // noise doesn't hold us awake. Moves + down/up + scroll count.
+    if (e is PointerHoverEvent || e is PointerMoveEvent ||
+        e is PointerDownEvent || e is PointerUpEvent ||
+        e is PointerScrollEvent) {
+      _lastActivityMs = DateTime.now().millisecondsSinceEpoch;
+      if (_userIdle) {
+        // Flip back to active immediately — don't wait for the
+        // 1-sec timer. Creature's meta beats go quiet right away.
+        if (mounted) setState(() => _userIdle = false);
+      }
+    }
+  }
+
+  void _evaluateIdle() {
+    final idle = (DateTime.now().millisecondsSinceEpoch - _lastActivityMs) >
+        _idleThresholdMs;
+    if (idle != _userIdle && mounted) {
+      setState(() => _userIdle = idle);
+    }
+  }
+
+  /// Fires the "pet" response. Host calls this on a long-press or
+  /// deliberate pointer dwell on the pen. Records a timestamp the
+  /// creature's painter decays from; starts a short timer to clear
+  /// it once the animation budget is exhausted (so idle-settle can
+  /// stop the ticker).
+  void _firePet() {
+    setState(() => _petFiredMs = DateTime.now().millisecondsSinceEpoch);
+    _petTimer?.cancel();
+    _petTimer = Timer(const Duration(milliseconds: 3200), () {
+      if (mounted) setState(() => _petFiredMs = null);
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final focused = state == AppLifecycleState.resumed;
+    if (focused != _windowFocused && mounted) {
+      setState(() => _windowFocused = focused);
+    }
+  }
+
+  void _handlePointer(PointerEvent e) {
+    // Gaze tracking only matters when the drawer is actually open —
+    // watching the mouse while the fox is asleep in the strip is
+    // cycles-for-nobody and (per users) mildly distracting.
+    if (widget.mood != BondCreatureMood.awake) {
+      if (_cursor != null) setState(() => _cursor = null);
+      return;
+    }
+    final penBox = _penKey.currentContext?.findRenderObject() as RenderBox?;
+    if (penBox == null || !penBox.hasSize) return;
+    final local = penBox.globalToLocal(e.position);
+    final size = penBox.size;
+    // Expand the tracking band slightly outside the pen — the fox
+    // should see your cursor approach from just above/below the row
+    // (the sidebar's narrow, so strict containment would mean eyes
+    // never get to track). Still bounded so a cursor on the other
+    // side of the screen is ignored.
+    const slack = 24.0;
+    final inside = local.dx >= -slack &&
+        local.dx <= size.width + slack &&
+        local.dy >= -slack &&
+        local.dy <= size.height + slack;
+    if (!inside) {
+      if (_cursor != null) setState(() => _cursor = null);
+      return;
+    }
+    final nx = (local.dx / size.width).clamp(-0.2, 1.2);
+    final ny = (local.dy / size.height).clamp(-0.2, 1.2);
+    final newCursor = Offset(nx.toDouble(), ny.toDouble());
+    if (_cursor != newCursor) setState(() => _cursor = newCursor);
+  }
+
+  void _handleExit(PointerEvent _) {
+    if (_cursor != null) setState(() => _cursor = null);
+  }
+
+  /// Reads the interest widget's render box (when present) and
+  /// translates its centre into pen-local (0..1, 0..1) coordinates.
+  /// Returns null if either render object isn't laid out yet.
+  void _recomputeGoal() {
+    final iKey = widget.interestKey;
+    if (iKey == null) {
+      if (_interestGoal != null) {
+        setState(() => _interestGoal = null);
+      }
+      return;
+    }
+    final penBox = _penKey.currentContext?.findRenderObject() as RenderBox?;
+    final iBox = iKey.currentContext?.findRenderObject() as RenderBox?;
+    if (penBox == null || iBox == null || !penBox.hasSize || !iBox.hasSize) {
+      return;
+    }
+    final iCentreGlobal = iBox.localToGlobal(
+      Offset(iBox.size.width / 2, iBox.size.height / 2),
+    );
+    final iCentreLocal = penBox.globalToLocal(iCentreGlobal);
+    final size = penBox.size;
+    if (size.width <= 0 || size.height <= 0) return;
+    // Clamp to a comfortable inner band so the creature never tries
+    // to walk off the pen edge — the interest point may be just
+    // outside the pen's rect (e.g. the chevron sits past the right
+    // edge), which is fine; we read its direction, not its precise
+    // location.
+    final nx = (iCentreLocal.dx / size.width).clamp(0.0, 1.0);
+    final ny = (iCentreLocal.dy / size.height).clamp(0.0, 1.0);
+    // Goal anchor — pull near the interest, not literally onto it,
+    // so the creature reads as "approaching" rather than "stuck on."
+    final goalNx = (0.65 + nx * 0.25).clamp(0.05, 0.95);
+    final goalNy = ny;
+    final newGoal = Offset(goalNx, goalNy);
+    if (_interestGoal != newGoal) {
+      setState(() => _interestGoal = newGoal);
+    }
+  }
+
+  Future<void> _loadCommits(String repoPath) async {
+    final r = await listCommitHistory(repoPath, limit: 32);
+    if (!mounted) return;
+    final commits = r.ok ? r.data : null;
+    final newHead = (commits?.isNotEmpty ?? false) ? commits!.first.commitHash : null;
+    setState(() {
+      _commits = commits;
+      // First load on this repo: just record the HEAD without
+      // firing an event. Subsequent changes fire a hyperfold.
+      if (_lastHeadHash != null && newHead != null && newHead != _lastHeadHash) {
+        _lastEventMs = DateTime.now().millisecondsSinceEpoch;
+      }
+      _lastHeadHash = newHead;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final opened = context.watch<PreferencesState>().bondDockOpenedOnce;
+    final repoPath = context.watch<RepositoryState>().activePath;
+    // Reload commits on repo switch (and on first build for this
+    // repo). Cheap — git log -n 32.
+    if (repoPath != null && repoPath != _lastRepoPath) {
+      _lastRepoPath = repoPath;
+      _commits = null;
+      _lastHeadHash = null;
+      _loadCommits(repoPath);
+    }
+    final dirtyCount =
+        context.watch<RepositoryState>().status?.files.length ?? 0;
+    // Re-evaluate the interest goal each frame the parent rebuilds —
+    // catches chevron movement from drawer open/close/resize without
+    // needing every parent to call us.
+    if (widget.interestKey != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _recomputeGoal();
+      });
+    }
+    final signals = _computeSignals(dirtyCount);
+    return MouseRegion(
+      opaque: false,
+      onHover: _handlePointer,
+      onEnter: _handlePointer,
+      onExit: _handleExit,
+      // Long-press on the pen = "pet". Only wires in drawer-open
+      // mode so it doesn't interfere with the collapsed strip's
+      // tap-to-expand gesture.
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onLongPress: widget.mood == BondCreatureMood.awake
+            ? _firePet
+            : null,
+        child: SizedBox(
+      key: _penKey,
+      height: widget.height,
+      child: AnimatedSwitcher(
+        duration: context.motion(const Duration(milliseconds: 320)),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        child: opened
+            ? KeyedSubtree(
+                key: const ValueKey('creature'),
+                child: BondCreatureWidget(
+                  creature: _kPenCreature,
+                  mood: widget.mood,
+                  signals: signals,
+                  stroke: t.textNormal,
+                  accent: t.accentBright,
+                  muted: t.textMuted,
+                  height: widget.height,
+                ),
+              )
+            : Align(
+                key: const ValueKey('label'),
+                alignment: Alignment.centerLeft,
+                child: _DiscoveryWordmark(color: t.textNormal),
+              ),
+      ),
+      ),
+      ),
+    );
+  }
+
+  /// Maps live repo state to creature signals. All numbers derived,
+  /// none hard-coded to time-of-day or hand-tuned thresholds beyond
+  /// natural normalisation bounds.
+  BondCreatureSignals _computeSignals(int dirtyCount) {
+    final commits = _commits ?? const <CommitHistoryEntry>[];
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    // Excitement: how many commits in the last hour.
+    var recentCount = 0;
+    int? lastCommitMs;
+    for (final c in commits) {
+      try {
+        final ms = DateTime.parse(c.authoredAt).millisecondsSinceEpoch;
+        lastCommitMs ??= ms;
+        if (nowMs - ms < 3600000) recentCount++;
+      } catch (_) {}
+    }
+    // 5 commits/hour saturates; relaxed creature for slower work.
+    final excitement = (recentCount / 5).clamp(0.0, 1.0);
+    // Attention: dirty file count, capped. Same scale the HEAD
+    // halo uses on the constellation, kept consistent on purpose.
+    final attention = (dirtyCount / 12).clamp(0.0, 1.0);
+    // Restlessness: hours since last activity, capped at a day.
+    var restlessness = 0.0;
+    if (lastCommitMs != null) {
+      final hours = (nowMs - lastCommitMs) / 3600000;
+      restlessness = (hours / 24).clamp(0.0, 1.0);
+    }
+    return BondCreatureSignals(
+      excitement: excitement,
+      attention: attention,
+      restlessness: restlessness,
+      lastEventMs: _lastEventMs,
+      lastPetMs: _petFiredMs,
+      goal: _interestGoal,
+      cursor: _cursor,
+      windowFocused: _windowFocused,
+      userIdle: _userIdle,
+    );
+  }
+}
 
 enum _DockMode { collapsed, overview, start, join, compose, policy }
 
@@ -107,7 +455,13 @@ class _BondDockState extends State<BondDock> {
         membership: membership,
         snapshot: snapshot,
         online: online,
-        onTap: () => setState(() => _mode = _DockMode.overview),
+        onTap: () {
+          // First click flips the discovery hint off forever — the
+          // text "bond" morphs to the creature on next paint via the
+          // PreferencesState rebuild.
+          context.read<PreferencesState>().markBondDockOpened();
+          setState(() => _mode = _DockMode.overview);
+        },
       );
     }
     return _DrawerColumn(
@@ -174,6 +528,10 @@ class _CollapsedStrip extends StatefulWidget {
 
 class _CollapsedStripState extends State<_CollapsedStrip> {
   bool _hover = false;
+  // Stable key that travels with the chevron icon. Lives on state so
+  // it survives rebuilds — the pen reads its render box each frame
+  // to steer the creature toward it without hard-coded coordinates.
+  final GlobalKey _chevronKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
@@ -199,24 +557,23 @@ class _CollapsedStripState extends State<_CollapsedStrip> {
             children: [
               _StateDot(state: state),
               const SizedBox(width: 10),
+              // Pen — text "bond" until first interaction, morphs
+              // into the creature (asleep here, awake in the drawer
+              // header) thereafter.
               Expanded(
-                child: Text(
-                  state.label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: state.urgent ? t.accentBright : t.textNormal,
-                    fontSize: 12,
-                    fontWeight: state.urgent
-                        ? FontWeight.w600
-                        : FontWeight.w500,
-                    letterSpacing: 0.4,
-                  ),
+                child: _PenContent(
+                  mood: BondCreatureMood.asleep,
+                  height: 18,
+                  interestKey: _chevronKey,
                 ),
               ),
-              Icon(
-                Icons.keyboard_arrow_up,
-                size: 16,
-                color: _hover ? t.textNormal : t.textMuted,
+              KeyedSubtree(
+                key: _chevronKey,
+                child: Icon(
+                  Icons.keyboard_arrow_up,
+                  size: 16,
+                  color: _hover ? t.textNormal : t.textMuted,
+                ),
               ),
             ],
           ),
@@ -274,7 +631,7 @@ class _DrawerColumn extends StatelessWidget {
           ),
           Flexible(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
               child: _drawerContent(context, t),
             ),
           ),
@@ -350,7 +707,7 @@ class _DrawerColumn extends StatelessWidget {
   }
 }
 
-class _DrawerHeader extends StatelessWidget {
+class _DrawerHeader extends StatefulWidget {
   const _DrawerHeader({
     required this.mode,
     required this.membership,
@@ -369,43 +726,42 @@ class _DrawerHeader extends StatelessWidget {
   final VoidCallback? onBack;
 
   @override
+  State<_DrawerHeader> createState() => _DrawerHeaderState();
+}
+
+class _DrawerHeaderState extends State<_DrawerHeader> {
+  // Stable across rebuilds — the pen reads this render box to pull
+  // the creature toward the chevron regardless of layout.
+  final GlobalKey _chevronKey = GlobalKey();
+
+  @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
-    final title = switch (mode) {
-      _DockMode.start => 'start a bond',
-      _DockMode.join => 'join a bond',
-      _DockMode.compose => 'propose',
-      _DockMode.policy => 'policy',
-      _ => membership?.displayName ?? 'bond',
-    };
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+      padding: const EdgeInsets.fromLTRB(12, 6, 8, 4),
       child: Row(
         children: [
-          if (onBack != null)
+          if (widget.onBack != null)
             _GhostIconButton(
               icon: Icons.arrow_back,
               tooltip: 'back',
-              onTap: onBack!,
+              onTap: widget.onBack!,
             )
           else
             _StateDot(state: _resolveState(
                 Provider.of<BondService>(context, listen: false),
-                membership, snapshot, online), small: true),
+                widget.membership,
+                widget.snapshot,
+                widget.online), small: true),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              title.toUpperCase(),
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: t.textNormal,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.6,
-              ),
+            child: _PenContent(
+              mood: BondCreatureMood.awake,
+              height: 16,
+              interestKey: _chevronKey,
             ),
           ),
-          if (membership != null && mode != _DockMode.overview)
+          if (widget.membership != null &&
+              widget.mode != _DockMode.overview)
             _GhostIconButton(
               icon: Icons.close,
               tooltip: 'cancel',
@@ -415,10 +771,12 @@ class _DrawerHeader extends StatelessWidget {
                 state?.setState(() => state._mode = _DockMode.overview);
               },
             ),
-          _GhostIconButton(
-            icon: Icons.keyboard_arrow_down,
-            tooltip: 'collapse',
-            onTap: onCollapse,
+          KeyedSubtree(
+            key: _chevronKey,
+            child: _GhostIconButton(
+              icon: Icons.keyboard_arrow_down,
+              onTap: widget.onCollapse,
+            ),
           ),
         ],
       ),
@@ -436,18 +794,24 @@ class _SetupChoices extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'this repo isn’t bonded.',
-          style: TextStyle(color: t.textMuted, fontSize: 11),
+        // Two glyph-led tiles, no explanatory paragraph. The state-dot
+        // in the strip already says "no membership" — the drawer
+        // shouldn't repeat that.
+        _CodexAction(
+          label: 'start',
+          subtitle: 'a new bond',
+          glyph: '✦',
+          onTap: onStart,
         ),
-        const SizedBox(height: 12),
-        _CodexAction(label: 'Start a new bond', glyph: '+', onTap: onStart),
-        const _Hairline(),
-        _CodexAction(label: 'Join with an invite', glyph: '⌁', onTap: onJoin),
+        _CodexAction(
+          label: 'join',
+          subtitle: 'an invite',
+          glyph: '⌁',
+          onTap: onJoin,
+        ),
       ],
     );
   }
@@ -456,10 +820,12 @@ class _SetupChoices extends StatelessWidget {
 class _CodexAction extends StatefulWidget {
   const _CodexAction({
     required this.label,
+    required this.subtitle,
     required this.glyph,
     required this.onTap,
   });
   final String label;
+  final String subtitle;
   final String glyph;
   final VoidCallback onTap;
 
@@ -480,36 +846,60 @@ class _CodexActionState extends State<_CodexAction> {
         behavior: HitTestBehavior.opaque,
         onPointerUp: (_) => widget.onTap(),
         child: AnimatedContainer(
-          duration: context.motion(const Duration(milliseconds: 120)),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-          color: _hover ? t.chromeBorderFaint : Colors.transparent,
+          duration: context.motion(const Duration(milliseconds: 140)),
+          padding: const EdgeInsets.fromLTRB(10, 14, 10, 14),
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          decoration: BoxDecoration(
+            color: _hover
+                ? t.accentBright.withValues(alpha: 0.06)
+                : Colors.transparent,
+            border: Border(
+              left: BorderSide(
+                color: _hover ? t.accentBright : t.chromeBorderSubtle,
+                width: 2,
+              ),
+            ),
+          ),
           child: Row(
             children: [
               SizedBox(
-                width: 18,
+                width: 22,
                 child: Text(
                   widget.glyph,
+                  textAlign: TextAlign.center,
                   style: TextStyle(
-                    color: _hover ? t.accentBright : t.textMuted,
-                    fontSize: 14,
-                    fontFamily: 'JetBrainsMono',
+                    color: _hover ? t.accentBright : t.textNormal,
+                    fontSize: 18,
+                    height: 1,
                   ),
                 ),
               ),
-              const SizedBox(width: 6),
-              Text(
-                widget.label,
-                style: TextStyle(
-                  color: t.textNormal,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.label,
+                      style: TextStyle(
+                        color: t.textNormal,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      widget.subtitle,
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 10,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const Spacer(),
-              Icon(
-                Icons.chevron_right,
-                size: 16,
-                color: _hover ? t.textNormal : t.textMuted,
               ),
             ],
           ),
@@ -520,7 +910,7 @@ class _CodexActionState extends State<_CodexAction> {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// Identity unlock — inline phrase + checkbox
+// Identity unlock — visual sigil + minimal phrase field
 
 class _IdentityField extends StatefulWidget {
   const _IdentityField({required this.repoPath});
@@ -533,7 +923,8 @@ class _IdentityFieldState extends State<_IdentityField> {
   final _phrase = TextEditingController();
   bool _persist = true;
   bool _busy = false;
-  String? _err;
+  Object? _errSignal;
+  _BondErrKind _errKind = _BondErrKind.fail;
 
   @override
   void dispose() {
@@ -544,7 +935,7 @@ class _IdentityFieldState extends State<_IdentityField> {
   Future<void> _unlock() async {
     setState(() {
       _busy = true;
-      _err = null;
+      _errSignal = null;
     });
     try {
       await context.read<BondService>().unlock(
@@ -553,7 +944,10 @@ class _IdentityFieldState extends State<_IdentityField> {
           );
       _phrase.clear();
     } catch (e) {
-      setState(() => _err = '$e');
+      setState(() {
+        _errSignal = Object();
+        _errKind = _classifyErr(e);
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -561,52 +955,98 @@ class _IdentityFieldState extends State<_IdentityField> {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'enter your phrase to derive your bond identity. it never leaves this device.',
-          style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.45),
-        ),
-        const SizedBox(height: 14),
+        // Same constellation as the bonded overview — the repo's
+        // git DAG. Lets the user see what they're about to bond
+        // into before they unlock. Compact height on the locked
+        // surface so the unlock affordance dominates.
+        _RepoConstellation(repoPath: widget.repoPath, height: 56),
+        const SizedBox(height: 6),
         _GhostInput(
           controller: _phrase,
           obscure: true,
-          hint: 'identity phrase',
+          hint: 'phrase',
           enabled: !_busy,
           onSubmit: _unlock,
         ),
         const SizedBox(height: 10),
         Row(
           children: [
-            _GhostCheck(
+            _GhostKeepUnlockedToggle(
               value: _persist,
               onChanged: (v) => setState(() => _persist = v),
             ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => setState(() => _persist = !_persist),
-                child: Text(
-                  'stay unlocked 12h',
-                  style: TextStyle(color: t.textMuted, fontSize: 11),
-                ),
-              ),
-            ),
+            const Spacer(),
             _GhostButton(
-              label: _busy ? '…' : 'unlock',
-              onTap: _busy ? null : _unlock,
+              label: 'unlock',
+              onTap: _unlock,
+              busy: _busy,
               accent: true,
+              errorToken: _errSignal,
+              errorKind: _errKind,
             ),
           ],
         ),
-        if (_err != null) ...[
-          const SizedBox(height: 6),
-          _ErrorMurmur(_err!),
-        ],
       ],
+    );
+  }
+}
+
+/// Compact "12h" pill that toggles like a checkbox but reads as a
+/// duration chip — much narrower than a labelled checkbox + sentence.
+class _GhostKeepUnlockedToggle extends StatefulWidget {
+  const _GhostKeepUnlockedToggle({
+    required this.value,
+    required this.onChanged,
+  });
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  @override
+  State<_GhostKeepUnlockedToggle> createState() =>
+      _GhostKeepUnlockedToggleState();
+}
+
+class _GhostKeepUnlockedToggleState extends State<_GhostKeepUnlockedToggle> {
+  bool _hover = false;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final on = widget.value;
+    // Icon-only toggle. The lock-clock glyph itself already reads
+    // as "stay unlocked over time" — adding the "12h" text on the
+    // button was redundant chrome. The tooltip carries the exact
+    // duration for users who need it.
+    return Tooltip(
+      message: 'stay unlocked 12h',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerUp: (_) => widget.onChanged(!on),
+          child: AnimatedContainer(
+            duration: context.motion(const Duration(milliseconds: 100)),
+            padding: const EdgeInsets.all(5),
+            decoration: BoxDecoration(
+              color: on
+                  ? t.accentBright.withValues(alpha: 0.10)
+                  : (_hover ? t.chromeBorderFaint : Colors.transparent),
+              border: Border.all(
+                color: on ? t.accentBright : t.chromeBorderSubtle,
+                width: 1,
+              ),
+            ),
+            child: Icon(
+              on ? Icons.lock_clock : Icons.lock_clock_outlined,
+              size: 14,
+              color: on ? t.accentBright : t.textMuted,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -627,7 +1067,8 @@ class _StartFormState extends State<_StartForm> {
   final _bootstrap = TextEditingController();
   final _swarm = TextEditingController();
   bool _busy = false;
-  String? _err;
+  Object? _errSignal;
+  _BondErrKind _errKind = _BondErrKind.fail;
 
   @override
   void initState() {
@@ -674,7 +1115,7 @@ class _StartFormState extends State<_StartForm> {
   Future<void> _bind() async {
     setState(() {
       _busy = true;
-      _err = null;
+      _errSignal = null;
     });
     try {
       await context.read<BondService>().bindBond(
@@ -685,7 +1126,10 @@ class _StartFormState extends State<_StartForm> {
           );
       widget.onDone();
     } catch (e) {
-      setState(() => _err = '$e');
+      setState(() {
+        _errSignal = Object();
+        _errKind = _classifyErr(e);
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -693,24 +1137,18 @@ class _StartFormState extends State<_StartForm> {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'pick a commit every peer already has — usually the root. paired with the swarm phrase, that derives the bond id.',
-          style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.45),
-        ),
-        const SizedBox(height: 12),
-        _GhostInput(controller: _name, hint: 'local label', enabled: !_busy),
-        const SizedBox(height: 8),
+        _GhostInput(controller: _name, hint: 'name', enabled: !_busy),
+        const SizedBox(height: 6),
         _GhostInput(
           controller: _bootstrap,
-          hint: 'bootstrap commit hash',
+          hint: 'bootstrap commit',
           enabled: !_busy,
           mono: true,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         _GhostInput(
           controller: _swarm,
           hint: 'swarm phrase',
@@ -722,16 +1160,15 @@ class _StartFormState extends State<_StartForm> {
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             _GhostButton(
-              label: _busy ? '…' : 'create',
-              onTap: _busy ? null : _bind,
+              label: 'create',
+              onTap: _bind,
+              busy: _busy,
               accent: true,
+              errorToken: _errSignal,
+              errorKind: _errKind,
             ),
           ],
         ),
-        if (_err != null) ...[
-          const SizedBox(height: 6),
-          _ErrorMurmur(_err!),
-        ],
       ],
     );
   }
@@ -752,7 +1189,8 @@ class _JoinFormState extends State<_JoinForm> {
   final _invite = TextEditingController();
   final _swarm = TextEditingController();
   bool _busy = false;
-  String? _err;
+  Object? _errSignal;
+  _BondErrKind _errKind = _BondErrKind.fail;
 
   @override
   void dispose() {
@@ -773,7 +1211,7 @@ class _JoinFormState extends State<_JoinForm> {
   Future<void> _join() async {
     setState(() {
       _busy = true;
-      _err = null;
+      _errSignal = null;
     });
     try {
       await context.read<BondService>().bindFromInvite(
@@ -783,7 +1221,10 @@ class _JoinFormState extends State<_JoinForm> {
           );
       widget.onDone();
     } catch (e) {
-      setState(() => _err = '$e');
+      setState(() {
+        _errSignal = Object();
+        _errKind = _classifyErr(e);
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -791,15 +1232,9 @@ class _JoinFormState extends State<_JoinForm> {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'paste the bond1: invite your teammate sent. the swarm phrase comes separately — that\'s deliberate.',
-          style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.45),
-        ),
-        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
@@ -814,7 +1249,7 @@ class _JoinFormState extends State<_JoinForm> {
             _GhostButton(label: 'paste', onTap: _busy ? null : _paste),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         _GhostInput(
           controller: _swarm,
           hint: 'swarm phrase',
@@ -826,16 +1261,15 @@ class _JoinFormState extends State<_JoinForm> {
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             _GhostButton(
-              label: _busy ? '…' : 'join',
-              onTap: _busy ? null : _join,
+              label: 'join',
+              onTap: _join,
+              busy: _busy,
               accent: true,
+              errorToken: _errSignal,
+              errorKind: _errKind,
             ),
           ],
         ),
-        if (_err != null) ...[
-          const SizedBox(height: 6),
-          _ErrorMurmur(_err!),
-        ],
       ],
     );
   }
@@ -887,17 +1321,30 @@ class _OverviewBody extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        if (snapshot != null && peers.any((p) => p.coordinate != null))
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: _LatticeGlyph(snapshot: snapshot!),
-          ),
+        // Constellation = the repo's actual git DAG. Stars are real
+        // commits from listCommitHistory; positions encode (recency,
+        // author bucket); edges are real parent-child links from
+        // each commit's parentHashes; HEAD is the pulsing "you are
+        // here." No peer/bond data here — that's the strip's job.
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: _RepoConstellation(repoPath: repoPath, height: 76),
+        ),
         // Section: peers
         _SectionLabel('peers · ${peers.length}'),
         if (peers.isEmpty)
           const _Murmur('no peers yet — share the invite.')
         else
-          for (final p in peers) _PeerLine(repoPath: repoPath, peer: p),
+          // ValueKey on the peer's pubkey — when a peer joins /
+          // leaves / reorders, Flutter matches by identity instead
+          // of list position, so surviving peer rows don't get
+          // unmounted and remounted (which reads as pop-in-pop-out).
+          for (final p in peers)
+            _PeerLine(
+              key: ValueKey(p.pubkeyHex),
+              repoPath: repoPath,
+              peer: p,
+            ),
         const _Hairline(),
         // Section: proposals
         Row(
@@ -910,7 +1357,11 @@ class _OverviewBody extends StatelessWidget {
           const _Murmur('nothing pending.')
         else
           for (final pr in proposals.take(3))
-            _ProposalLine(repoPath: repoPath, proposal: pr),
+            _ProposalLine(
+              key: ValueKey(pr.proposalId),
+              repoPath: repoPath,
+              proposal: pr,
+            ),
         const _Hairline(),
         // Section: policy
         Row(
@@ -998,7 +1449,7 @@ class _OverviewBody extends StatelessWidget {
 }
 
 class _PeerLine extends StatelessWidget {
-  const _PeerLine({required this.repoPath, required this.peer});
+  const _PeerLine({super.key, required this.repoPath, required this.peer});
   final String repoPath;
   final BondPeerView peer;
   @override
@@ -1052,7 +1503,8 @@ class _PeerLine extends StatelessWidget {
 }
 
 class _ProposalLine extends StatelessWidget {
-  const _ProposalLine({required this.repoPath, required this.proposal});
+  const _ProposalLine(
+      {super.key, required this.repoPath, required this.proposal});
   final String repoPath;
   final BondProposalView proposal;
   @override
@@ -1142,7 +1594,8 @@ class _ComposeFormState extends State<_ComposeForm> {
   String? _commitHex;
   String _sourceRef = '';
   bool _busy = false;
-  String? _err;
+  Object? _errSignal;
+  _BondErrKind _errKind = _BondErrKind.fail;
 
   @override
   void initState() {
@@ -1184,12 +1637,15 @@ class _ComposeFormState extends State<_ComposeForm> {
 
   Future<void> _publish() async {
     if (_commitHex == null) {
-      setState(() => _err = 'no HEAD detected.');
+      setState(() {
+        _errSignal = Object();
+        _errKind = _BondErrKind.fail;
+      });
       return;
     }
     setState(() {
       _busy = true;
-      _err = null;
+      _errSignal = null;
     });
     try {
       final r = await context.read<BondService>().publishProposal(
@@ -1202,12 +1658,18 @@ class _ComposeFormState extends State<_ComposeForm> {
             body: _body.text.trim(),
           );
       if (r.error != null) {
-        setState(() => _err = r.error);
+        setState(() {
+        _errSignal = Object();
+        _errKind = _BondErrKind.fail;
+      });
       } else {
         widget.onDone();
       }
     } catch (e) {
-      setState(() => _err = '$e');
+      setState(() {
+        _errSignal = Object();
+        _errKind = _classifyErr(e);
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1251,16 +1713,15 @@ class _ComposeFormState extends State<_ComposeForm> {
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             _GhostButton(
-              label: _busy ? '…' : 'publish',
-              onTap: _busy ? null : _publish,
+              label: 'publish',
+              onTap: _publish,
+              busy: _busy,
               accent: true,
+              errorToken: _errSignal,
+              errorKind: _errKind,
             ),
           ],
         ),
-        if (_err != null) ...[
-          const SizedBox(height: 6),
-          _ErrorMurmur(_err!),
-        ],
       ],
     );
   }
@@ -1286,7 +1747,8 @@ class _PolicyFormState extends State<_PolicyForm> {
   final _ref = TextEditingController(text: 'refs/heads/main');
   final _min = TextEditingController(text: '1');
   bool _busy = false;
-  String? _err;
+  Object? _errSignal;
+  _BondErrKind _errKind = _BondErrKind.fail;
 
   @override
   void initState() {
@@ -1308,12 +1770,15 @@ class _PolicyFormState extends State<_PolicyForm> {
   Future<void> _publish() async {
     final n = int.tryParse(_min.text.trim());
     if (n == null || n < 0 || _ref.text.trim().isEmpty) {
-      setState(() => _err = 'invalid rule.');
+      setState(() {
+        _errSignal = Object();
+        _errKind = _BondErrKind.fail;
+      });
       return;
     }
     setState(() {
       _busy = true;
-      _err = null;
+      _errSignal = null;
     });
     try {
       final err = await context.read<BondService>().publishPolicy(
@@ -1323,12 +1788,18 @@ class _PolicyFormState extends State<_PolicyForm> {
         ],
       );
       if (err != null) {
-        setState(() => _err = err);
+        setState(() {
+        _errSignal = Object();
+        _errKind = _BondErrKind.fail;
+      });
       } else {
         widget.onDone();
       }
     } catch (e) {
-      setState(() => _err = '$e');
+      setState(() {
+        _errSignal = Object();
+        _errKind = _classifyErr(e);
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -1336,25 +1807,19 @@ class _PolicyFormState extends State<_PolicyForm> {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'gate one ref pattern by N approvals from any non-revoked signer.',
-          style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.45),
-        ),
-        const SizedBox(height: 12),
         _GhostInput(
           controller: _ref,
           hint: 'ref pattern',
           mono: true,
           enabled: !_busy,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         _GhostInput(
           controller: _min,
-          hint: 'min approvals',
+          hint: 'min ✓',
           enabled: !_busy,
         ),
         const SizedBox(height: 12),
@@ -1362,85 +1827,648 @@ class _PolicyFormState extends State<_PolicyForm> {
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             _GhostButton(
-              label: _busy ? '…' : 'publish',
-              onTap: _busy ? null : _publish,
+              label: 'publish',
+              onTap: _publish,
+              busy: _busy,
               accent: true,
+              errorToken: _errSignal,
+              errorKind: _errKind,
             ),
           ],
         ),
-        if (_err != null) ...[
-          const SizedBox(height: 6),
-          _ErrorMurmur(_err!),
-        ],
       ],
     );
   }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// Lattice braille glyph
+// Repo-DAG constellation — the actual git history rendered as stars
+//
+// Stars come from `listCommitHistory(repoPath)` — every dot is a real
+// commit. Position:
+//   x = recency (newest right, oldest left)
+//   y = deterministic author bucket (FNV1a(authorEmail) → row)
+// Edges are real parent-child relationships from CommitHistoryEntry's
+// `parentHashes`. HEAD (the newest commit) gets the pulsing self
+// marker. Branch tips (entries with non-empty `refNames`) render as
+// larger circles. Merges (`isMerge`) get a hairline outer ring.
+//
+// Nothing faked. Nothing decorative. Every visual element maps to
+// data the user could verify with `git log --graph` if they wanted.
 
-class _LatticeGlyph extends StatelessWidget {
-  const _LatticeGlyph({required this.snapshot});
-  final BondUiSnapshot snapshot;
-  static const int _rows = 3;
-  static const int _cols = 12;
-  static const int _dotsX = _cols * 2;
-  static const int _dotsY = _rows * 4;
+class _RepoConstellation extends StatefulWidget {
+  const _RepoConstellation({required this.repoPath, this.height = 96});
+  final String repoPath;
+  final double height;
 
-  String _layer(bool attachedOnly) {
-    final grid = List.generate(_rows, (_) => List<int>.filled(_cols, 0));
-    for (final p in snapshot.peers) {
-      final c = p.coordinate;
-      if (c == null) continue;
-      if (attachedOnly && !p.attached) continue;
-      final dx = (c.value >> 8) * (_dotsX - 1) ~/ 255;
-      final dy = (c.value & 0xFF) * (_dotsY - 1) ~/ 255;
-      final cx = dx ~/ 2;
-      final cy = dy ~/ 4;
-      grid[cy][cx] |= _bit(dx % 2, dy % 4);
-    }
-    return grid
-        .map((row) =>
-            row.map((b) => String.fromCharCode(0x2800 + b)).join())
-        .join('\n');
+  @override
+  State<_RepoConstellation> createState() => _RepoConstellationState();
+}
+
+class _RepoConstellationState extends State<_RepoConstellation>
+    with SingleTickerProviderStateMixin {
+  // Pulse controller — only ticks when there's a real reason
+  // (dirty tree, fresh HEAD commit, or sync in flight). Idle repos
+  // freeze at the midpoint phase so HEAD reads as stable, not as
+  // breathing-for-no-reason.
+  late final AnimationController _pulse =
+      AnimationController(vsync: this, duration: const Duration(seconds: 3));
+  List<CommitHistoryEntry>? _commits;
+  bool _loading = true;
+  static const _kCommitWindow = 96;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
 
-  static int _bit(int x, int y) {
-    const m = [
-      [0x01, 0x02, 0x04, 0x40],
-      [0x08, 0x10, 0x20, 0x80],
-    ];
-    return m[x][y];
+  @override
+  void didUpdateWidget(_RepoConstellation old) {
+    super.didUpdateWidget(old);
+    if (old.repoPath != widget.repoPath) {
+      _commits = null;
+      _loading = true;
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final r = await listCommitHistory(widget.repoPath, limit: _kCommitWindow);
+    if (!mounted) return;
+    setState(() {
+      _commits = r.ok ? r.data : null;
+      _loading = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return SizedBox(
-      width: double.infinity,
-      child: Stack(
-        children: [
-          Text(_layer(false),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: t.textMuted.withValues(alpha: 0.32),
-                fontFamily: 'JetBrainsMono',
-                fontSize: 13,
-                height: 1.05,
-              )),
-          Text(_layer(true),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: t.accentBright,
-                fontFamily: 'JetBrainsMono',
-                fontSize: 13,
-                height: 1.05,
-              )),
-        ],
+    final commits = _commits;
+    if (commits == null || commits.isEmpty) {
+      return SizedBox(
+        height: widget.height,
+        child: Center(
+          child: Text(
+            _loading ? '' : 'no commits yet',
+            style: TextStyle(color: t.textMuted, fontSize: 10),
+          ),
+        ),
+      );
+    }
+    // Working-tree state — drives the HEAD-halo "warm" tint when the
+    // repo is dirty AND gates whether the pulse animates at all.
+    final repoState = context.watch<RepositoryState>();
+    final dirtyCount = repoState.status?.files.length ?? 0;
+    final headAgeMs = _ageOfHead(commits);
+    final shouldAnimate =
+        dirtyCount > 0 || (headAgeMs != null && headAgeMs < 60000);
+    _syncPulse(shouldAnimate);
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, _) => SizedBox(
+        width: double.infinity,
+        height: widget.height,
+        child: CustomPaint(
+          painter: _RepoConstellationPainter(
+            commits: commits,
+            phase: _pulse.value,
+            animating: shouldAnimate,
+            accent: t.accentBright,
+            text: t.textMuted,
+            border: t.chromeBorderSubtle,
+            dirtyFileCount: dirtyCount,
+          ),
+        ),
       ),
     );
   }
+
+  /// Switches the pulse on iff [active] is true; if it's false,
+  /// stops the animator at a stable midpoint phase so HEAD reads
+  /// as a steady halo rather than freezing mid-breath.
+  void _syncPulse(bool active) {
+    if (active) {
+      if (!_pulse.isAnimating) _pulse.repeat();
+    } else {
+      if (_pulse.isAnimating) {
+        _pulse.stop();
+        // Park the phase at 0.5 — the halo's "neutral" radius. Any
+        // other value would freeze mid-pulse and look glitched.
+        _pulse.value = 0.5;
+      }
+    }
+  }
+
+  /// Milliseconds since the newest commit was authored, or null if
+  /// the timestamp didn't parse.
+  int? _ageOfHead(List<CommitHistoryEntry> commits) {
+    if (commits.isEmpty) return null;
+    final ts = commits.first.authoredAt;
+    if (ts.isEmpty) return null;
+    try {
+      return DateTime.now().millisecondsSinceEpoch -
+          DateTime.parse(ts).millisecondsSinceEpoch;
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+class _RepoConstellationPainter extends CustomPainter {
+  _RepoConstellationPainter({
+    required this.commits,
+    required this.phase,
+    required this.animating,
+    required this.accent,
+    required this.text,
+    required this.border,
+    required this.dirtyFileCount,
+  });
+
+  /// Real commit log — newest first, as `listCommitHistory` returns.
+  final List<CommitHistoryEntry> commits;
+
+  /// Pulse phase 0..1. Only meaningful when [animating] is true;
+  /// when false the painter ignores it and draws the static halo.
+  final double phase;
+
+  /// True when the HEAD halo should pulse — set by the state when
+  /// the working tree is dirty or HEAD is fresh. False = halo
+  /// renders at a stable mid-radius; no animation.
+  final bool animating;
+
+  final Color accent;
+  final Color text;
+  final Color border;
+
+  /// Working-tree dirtiness — drives the warm tint on HEAD's halo.
+  /// Maps file count → 0..1 intensity, capped at 12 files.
+  final int dirtyFileCount;
+
+  static const double _padX = 10;
+  // Vertical pad — leaves enough room for the HEAD halo (max
+  // ~11 px) AND for the lane-jitter to spread vertically without
+  // clipping. Tightening this beyond ~10 collapses linear-history
+  // repos to a flat band; loosening past ~14 leaves the stars
+  // marooned in empty parchment.
+  static const double _padY = 10;
+
+  /// FNV-1a 32 over a string. Stable across launches; used for
+  /// per-commit y-jitter so single-author / linear repos still get
+  /// vertical spread instead of collapsing to a line.
+  int _fnv1a(String s) {
+    var h = 0x811c9dc5;
+    for (final cu in s.codeUnits) {
+      h ^= cu;
+      h = (h * 0x01000193) & 0xffffffff;
+    }
+    return h;
+  }
+
+  /// Topological lane assignment — the same idea `git log --graph`
+  /// uses. Walking newest-to-oldest, each commit takes a lane:
+  /// - if a previously-seen child claimed a lane "waiting for" this
+  ///   parent, the parent inherits it (DAG continuation)
+  /// - otherwise it opens a fresh lane (branch divergence in display
+  ///   space, even if linear in commit history)
+  /// First parent wins the inherited lane on a merge; the second
+  /// parent of a merge spawns its own lane (so merges visibly
+  /// converge two tracks into one).
+  Map<String, int> _assignLanes() {
+    final lanes = <String, int>{};
+    // For each commit, the lane index it was placed into.
+    // `waiting` maps "I am a parent expected by this lane" → lane idx.
+    final waiting = <String, int>{};
+    final reusable = <int>[]; // lanes whose last consumer used them
+    var nextLane = 0;
+    for (final c in commits) {
+      int lane;
+      if (waiting.containsKey(c.commitHash)) {
+        lane = waiting.remove(c.commitHash)!;
+      } else if (reusable.isNotEmpty) {
+        // Recycle a lane vacated by an earlier merge — keeps the
+        // canvas dense rather than ever-growing.
+        lane = reusable.removeAt(0);
+      } else {
+        lane = nextLane++;
+      }
+      lanes[c.commitHash] = lane;
+      // Reserve the lane for this commit's first parent (DAG
+      // continuation). Later parents — i.e., merges — open new lanes.
+      for (var pi = 0; pi < c.parentHashes.length; pi++) {
+        final ph = c.parentHashes[pi];
+        if (pi == 0) {
+          waiting[ph] = lane;
+        } else {
+          // Merge side parent — give it a fresh lane and remember
+          // the original lane is free once this commit is past.
+          if (!waiting.containsKey(ph)) {
+            waiting[ph] = nextLane++;
+          }
+        }
+      }
+    }
+    return lanes;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final n = commits.length;
+    if (n == 0) return;
+    final usableW = size.width - 2 * _padX;
+    final usableH = size.height - 2 * _padY;
+
+    // Real DAG-derived lanes. Single-lane repos (linear history,
+    // solo author) still get spread via per-commit hash jitter so
+    // the canvas isn't a single horizontal line.
+    final lanes = _assignLanes();
+    final laneCount = (lanes.values.isEmpty
+            ? 1
+            : (lanes.values.reduce((a, b) => a > b ? a : b) + 1))
+        .clamp(1, 8);
+
+    // Project each commit. x = recency (commits[0] newest → right);
+    // y = lane index normalised to canvas height, plus a small
+    // hash-derived jitter so densely-shared lanes don't overlap.
+    final positions = <String, Offset>{};
+    for (var i = 0; i < n; i++) {
+      final c = commits[i];
+      final fx = n == 1 ? 1.0 : 1.0 - (i / (n - 1));
+      final lane = lanes[c.commitHash] ?? 0;
+      final laneFy = laneCount == 1 ? 0.5 : lane / (laneCount - 1);
+      // ±0.18 of usableH band per lane, so commits in the same lane
+      // separate vertically by their hash but never bleed into the
+      // adjacent lane's band.
+      final jitter =
+          ((_fnv1a(c.commitHash) & 0xffff) / 0xffff - 0.5) * 0.36;
+      final laneBand = laneCount == 1 ? 1.0 : 1.0 / laneCount;
+      final fy = (laneFy + jitter * laneBand).clamp(0.05, 0.95);
+      positions[c.commitHash] = Offset(
+        _padX + fx * usableW,
+        _padY + fy * usableH,
+      );
+    }
+
+    // Real DAG edges — parent → child. Skip parents that fell off
+    // the loaded window (we only fetched 96 commits; older parents
+    // simply aren't drawn rather than faked in).
+    final edgePaint = Paint()
+      ..color = text.withValues(alpha: 0.35)
+      ..strokeWidth = 0.7;
+    for (final c in commits) {
+      final childPos = positions[c.commitHash];
+      if (childPos == null) continue;
+      for (final ph in c.parentHashes) {
+        final parentPos = positions[ph];
+        if (parentPos == null) continue;
+        canvas.drawLine(parentPos, childPos, edgePaint);
+      }
+    }
+
+    // Stars. Each author gets a deterministic hue rotation around
+    // the theme accent; recency drives alpha; today's commits get
+    // an extra small glow; HEAD is the pulsing "you are here";
+    // dirty working tree adds a warm tint to HEAD's halo.
+    final accentHsv = HSVColor.fromColor(accent);
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    const dayMs = 24 * 60 * 60 * 1000;
+    for (var i = 0; i < n; i++) {
+      final c = commits[i];
+      final pos = positions[c.commitHash];
+      if (pos == null) continue;
+      final isHead = i == 0;
+      final isTip = c.refNames.isNotEmpty;
+      final tFade = n == 1 ? 1.0 : 1.0 - (i / (n - 1));
+      final baseAlpha = 0.32 + 0.58 * tFade;
+
+      // Per-author hue — rotate ±30° around the theme accent. Same
+      // author = same colour across launches; visually distinct
+      // contributors without ever leaving the palette family.
+      final authorKey = (c.authorEmail.isNotEmpty
+              ? c.authorEmail
+              : c.authorName)
+          .toLowerCase();
+      final shift = ((_fnv1a(authorKey) & 0xff) / 255.0 - 0.5) * 60.0;
+      final hue = (accentHsv.hue + shift) % 360;
+      final starHsv = accentHsv.withHue(hue < 0 ? hue + 360 : hue);
+      // Saturation droops with age so old commits look like ash.
+      final sat = (starHsv.saturation * (0.45 + 0.55 * tFade)).clamp(0.0, 1.0);
+      final val = (starHsv.value * (0.55 + 0.45 * tFade)).clamp(0.0, 1.0);
+      final starColor = isHead
+          ? accent
+          : starHsv.withSaturation(sat).withValue(val).toColor()
+              .withValues(alpha: baseAlpha);
+
+      // Today's commits — subtle outer halo so recent activity
+      // visibly glows even before HEAD.
+      final ageMs = _parseAuthoredAt(c.authoredAt);
+      if (!isHead && ageMs != null && nowMs - ageMs < dayMs) {
+        final freshness =
+            1.0 - ((nowMs - ageMs) / dayMs).clamp(0.0, 1.0);
+        canvas.drawCircle(
+          pos,
+          (isTip ? 2.8 : 2.0) + 3 * freshness,
+          Paint()
+            ..color = starHsv
+                .withSaturation(sat)
+                .withValue(val)
+                .toColor()
+                .withValues(alpha: 0.18 * freshness)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5),
+        );
+      }
+
+      final radius = isHead ? 3.2 : (isTip ? 2.6 : 1.8);
+      if (isHead) {
+        // Halo radius: animated only when there's a real reason
+        // (dirty tree or fresh commit). Otherwise static at the
+        // midpoint — same visual weight, no breathing.
+        final pulseT = animating ? (1 - (phase * 2 - 1).abs()) : 0.5;
+        final pulseR = 7 + 4 * pulseT;
+        final fillAlpha = animating
+            ? (0.10 + 0.12 * (1 - phase))
+            : 0.16;
+        // Dirty working tree warms the HEAD halo. 0 files = pure
+        // accent; >=12 files = full warmth (rotate hue 30° toward
+        // amber/orange).
+        final dirtyT =
+            (dirtyFileCount / 12).clamp(0.0, 1.0).toDouble();
+        final haloHue = (accentHsv.hue + 30 * dirtyT) % 360;
+        final haloColor =
+            accentHsv.withHue(haloHue < 0 ? haloHue + 360 : haloHue).toColor();
+        canvas.drawCircle(
+          pos,
+          pulseR,
+          Paint()
+            ..color = haloColor.withValues(alpha: fillAlpha)
+            ..style = PaintingStyle.fill,
+        );
+        canvas.drawCircle(
+          pos,
+          pulseR,
+          Paint()
+            ..color = haloColor.withValues(alpha: 0.55)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1,
+        );
+      }
+      canvas.drawCircle(pos, radius, Paint()..color = starColor);
+      if (c.isMerge) {
+        canvas.drawCircle(
+          pos,
+          radius + 1.6,
+          Paint()
+            ..color = starColor.withValues(alpha: 0.55)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 0.8,
+        );
+      }
+    }
+
+  }
+
+  /// Parses git's ISO-8601-ish timestamps. Returns epoch ms or null
+  /// on any parse hiccup — the today-glow falls back to "no glow"
+  /// rather than guessing.
+  int? _parseAuthoredAt(String s) {
+    if (s.isEmpty) return null;
+    try {
+      return DateTime.parse(s).millisecondsSinceEpoch;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RepoConstellationPainter old) =>
+      // Only repaint on phase delta when actually animating; otherwise
+      // a non-animating painter shouldn't churn frames.
+      (animating && old.phase != phase) ||
+      old.animating != animating ||
+      !identical(old.commits, commits) ||
+      old.dirtyFileCount != dirtyFileCount;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Discovery wordmark — shown in the pen before the user's first dock
+// click. A slow opacity breath (0.65 ↔ 1.0 over ~2.6s) invites the
+// click without adding UI chrome or tooltip copy. Once the user
+// interacts, this widget is never mounted again for that install.
+
+class _DiscoveryWordmark extends StatefulWidget {
+  const _DiscoveryWordmark({required this.color});
+  final Color color;
+
+  @override
+  State<_DiscoveryWordmark> createState() => _DiscoveryWordmarkState();
+}
+
+class _DiscoveryWordmarkState extends State<_DiscoveryWordmark>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2600),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, _) {
+        // Eased triangle: dwell at low end slightly longer than the
+        // high end so the word reads as "inhaling attention."
+        final p = _pulse.value;
+        final eased = Curves.easeInOutSine.transform(p);
+        final alpha = 0.65 + 0.35 * eased;
+        return Text(
+          'bond',
+          style: TextStyle(
+            color: widget.color.withValues(alpha: alpha),
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.4,
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Error glyph vocabulary — manga-style particle pops above a ghost
+// button when its errorToken changes. Each kind is a small vector
+// glyph that matches the wireframe-fox stroke aesthetic. No text.
+
+/// Classifies an arbitrary error into one of the three [_BondErrKind]
+/// glyph vocabularies at the catch site — this is the only place in
+/// the app where an error's text form is inspected. After this point
+/// the UI carries only the symbolic kind, not the string.
+_BondErrKind _classifyErr(Object e) {
+  final s = e.toString().toLowerCase();
+  if (s.contains('socket') ||
+      s.contains('timeout') ||
+      s.contains('network') ||
+      s.contains('connection') ||
+      s.contains('dns') ||
+      s.contains('unreachable')) {
+    return _BondErrKind.offline;
+  }
+  if (s.contains('exists') ||
+      s.contains('taken') ||
+      s.contains('conflict') ||
+      s.contains('already') ||
+      s.contains('in use')) {
+    return _BondErrKind.busy;
+  }
+  return _BondErrKind.fail;
+}
+
+enum _BondErrKind {
+  /// Rejected input (wrong passphrase, bad credential) — drawn as
+  /// a struck-through cross. Snappy entry, slight settle.
+  fail,
+
+  /// Network / connection failure — drawn as three dots drifting
+  /// apart on the horizontal. Communicates "something far away."
+  offline,
+
+  /// Already-taken / conflict — drawn as a double-bang glyph ‼.
+  /// Communicates "tried something that's already spoken for."
+  busy,
+}
+
+class _ErrorGlyph extends StatelessWidget {
+  const _ErrorGlyph({
+    required this.kind,
+    required this.progress,
+    required this.color,
+  });
+
+  final _BondErrKind kind;
+  /// 0..1 animation progress (same controller as the button shake).
+  final double progress;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    if (progress <= 0 || progress >= 1) {
+      return const SizedBox.shrink();
+    }
+    return IgnorePointer(
+      child: CustomPaint(
+        size: const Size(18, 14),
+        painter: _ErrorGlyphPainter(
+          kind: kind,
+          progress: progress,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorGlyphPainter extends CustomPainter {
+  _ErrorGlyphPainter({
+    required this.kind,
+    required this.progress,
+    required this.color,
+  });
+  final _BondErrKind kind;
+  final double progress;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Common particle lifecycle — rise ~4px and fade out over the
+    // second half of the animation. The ascent is eased-out so the
+    // glyph pops up fast and lingers.
+    final rise = Curves.easeOutCubic.transform(progress) * 4.0;
+    final alpha = progress < 0.15
+        ? (progress / 0.15)
+        : math.max(0.0, 1.0 - (progress - 0.4) / 0.55);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..strokeWidth = 1.4
+      ..color = color.withValues(alpha: alpha.clamp(0.0, 1.0));
+    final cx = size.width / 2;
+    final cy = size.height / 2 - rise;
+
+    switch (kind) {
+      case _BondErrKind.fail:
+        // Cross "×" — two diagonal strokes. Snappy read = rejected.
+        const r = 4.0;
+        canvas.drawLine(
+          Offset(cx - r, cy - r),
+          Offset(cx + r, cy + r),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(cx + r, cy - r),
+          Offset(cx - r, cy + r),
+          paint,
+        );
+        break;
+
+      case _BondErrKind.offline:
+        // Three dots drifting apart. Spread scales with progress
+        // so the reading is: ". . ." → "...    ...    ..." — it
+        // *goes* far away, matching the concept.
+        final spread = 3.0 + 4.0 * progress;
+        for (var i = -1; i <= 1; i++) {
+          canvas.drawCircle(
+            Offset(cx + i * spread, cy),
+            1.3,
+            Paint()
+              ..color =
+                  color.withValues(alpha: alpha.clamp(0.0, 1.0)),
+          );
+        }
+        break;
+
+      case _BondErrKind.busy:
+        // Double-bang "‼" — two short verticals + two dots below.
+        // Reads as "already! already!" (conflict).
+        const bars = 3.0;
+        const gap = 2.8;
+        canvas.drawLine(
+          Offset(cx - gap / 2, cy - bars),
+          Offset(cx - gap / 2, cy + bars * 0.3),
+          paint,
+        );
+        canvas.drawLine(
+          Offset(cx + gap / 2, cy - bars),
+          Offset(cx + gap / 2, cy + bars * 0.3),
+          paint,
+        );
+        final dotPaint = Paint()
+          ..color = color.withValues(alpha: alpha.clamp(0.0, 1.0));
+        canvas.drawCircle(Offset(cx - gap / 2, cy + bars), 1.1, dotPaint);
+        canvas.drawCircle(Offset(cx + gap / 2, cy + bars), 1.1, dotPaint);
+        break;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ErrorGlyphPainter old) =>
+      old.progress != progress ||
+      old.kind != kind ||
+      old.color != color;
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1490,19 +2518,6 @@ class _Murmur extends StatelessWidget {
         text,
         style: TextStyle(color: t.textMuted, fontSize: 11, height: 1.45),
       ),
-    );
-  }
-}
-
-class _ErrorMurmur extends StatelessWidget {
-  const _ErrorMurmur(this.text);
-  final String text;
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Text(
-      text,
-      style: TextStyle(color: t.stateDeleted, fontSize: 11),
     );
   }
 }
@@ -1572,17 +2587,89 @@ class _GhostButton extends StatefulWidget {
     required this.onTap,
     this.accent = false,
     this.danger = false,
+    this.busy = false,
+    this.errorToken,
+    this.errorKind = _BondErrKind.fail,
   });
+  /// Label text — stays stable across busy transitions. Do NOT
+  /// swap this to '…' or a spinner character on busy; use the
+  /// [busy] flag instead so the button's widget identity never
+  /// changes shape. Changing the text causes visible pop-in.
   final String label;
+  /// `null` disables taps (disabled look). Can coexist with [busy]
+  /// but [busy] alone also internally disables taps.
   final VoidCallback? onTap;
   final bool accent;
   final bool danger;
+
+  /// True while the action is in flight. Renders a subtle inline
+  /// pulse next to the label and suppresses taps internally — the
+  /// label itself stays put so the button doesn't visually jump.
+  final bool busy;
+
+  /// Opaque token — when it changes to a new non-null value the
+  /// button plays a red-flash + shake animation AND pops an error
+  /// glyph above it. Each distinct failure produces a distinct
+  /// token and re-triggers the anim.
+  final Object? errorToken;
+
+  /// Which glyph to pop above the button when [errorToken] fires.
+  /// See [_BondErrKind] — callers classify the error into a kind
+  /// (wrong input / offline / conflict) at the catch site.
+  final _BondErrKind errorKind;
   @override
   State<_GhostButton> createState() => _GhostButtonState();
 }
 
-class _GhostButtonState extends State<_GhostButton> {
+class _GhostButtonState extends State<_GhostButton>
+    with TickerProviderStateMixin {
   bool _hover = false;
+  // Shake + flash controller. 420 ms total: horizontal damped
+  // sinusoid kicked into a bounded translation + border colour
+  // lerp toward stateDeleted. Stays off at rest (no leak cycles).
+  late final AnimationController _errorCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+  );
+  // Busy pulse controller. Repeats while [widget.busy] is true —
+  // a slow heartbeat drives a faint inline dot next to the label.
+  // Never changes the button's label text or size, so the widget
+  // tree stays identical across busy transitions.
+  late final AnimationController _busyCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.busy) _busyCtrl.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(_GhostButton old) {
+    super.didUpdateWidget(old);
+    final tok = widget.errorToken;
+    if (tok != null && tok != old.errorToken) {
+      _errorCtrl.forward(from: 0);
+    }
+    if (widget.busy != old.busy) {
+      if (widget.busy) {
+        _busyCtrl.repeat(reverse: true);
+      } else {
+        _busyCtrl.stop();
+        _busyCtrl.value = 0;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _errorCtrl.dispose();
+    _busyCtrl.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -1600,31 +2687,124 @@ class _GhostButtonState extends State<_GhostButton> {
       onExit: (_) => setState(() => _hover = false),
       child: Listener(
         behavior: HitTestBehavior.opaque,
-        onPointerUp: (_) => widget.onTap?.call(),
-        child: AnimatedContainer(
-          duration: context.motion(const Duration(milliseconds: 100)),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: _hover && !disabled
-                ? base.withValues(alpha: 0.10)
-                : Colors.transparent,
-            border: Border.all(
-              color: _hover && !disabled
-                  ? base
-                  : t.chromeBorderSubtle,
-              width: 1,
-            ),
-          ),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              color: disabled ? t.textMuted : base,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
-            ),
-          ),
+        // Busy internally suppresses taps (in addition to onTap being
+        // null). Callers don't have to double-gate — passing busy:true
+        // is enough.
+        onPointerUp: (_) {
+          if (!widget.busy) widget.onTap?.call();
+        },
+        child: AnimatedBuilder(
+          animation: Listenable.merge(<Listenable>[_errorCtrl, _busyCtrl]),
+          builder: (context, _) {
+            // Damped sinusoid: 4 cycles over the animation, amplitude
+            // decays linearly from 3 px to 0.
+            final p = _errorCtrl.value;
+            final shake = p > 0
+                ? math.sin(p * math.pi * 8) * 3.0 * (1 - p)
+                : 0.0;
+            // Red flash: rises to peak near p=0.15 then ebbs. A quick
+            // tap of colour, not a held state — the button is back to
+            // normal by the time the user re-reads it.
+            final flash = p > 0
+                ? math.max(0.0, 1 - (p / 0.6)) *
+                    math.min(1.0, p / 0.08)
+                : 0.0;
+            final borderColor = Color.lerp(
+              _hover && !disabled ? base : t.chromeBorderSubtle,
+              t.stateDeleted,
+              flash,
+            )!;
+            final textColor = Color.lerp(
+              disabled ? t.textMuted : base,
+              t.stateDeleted,
+              flash,
+            )!;
+            final bgColor = _hover && !disabled
+                ? Color.lerp(
+                    base.withValues(alpha: 0.10),
+                    t.stateDeleted.withValues(alpha: 0.16),
+                    flash,
+                  )!
+                : Color.lerp(
+                    Colors.transparent,
+                    t.stateDeleted.withValues(alpha: 0.10),
+                    flash,
+                  )!;
+            // Busy indicator — eased triangle wave driving opacity of
+            // a small dot rendered next to the label. Space for it is
+            // *always* reserved (SizedBox width 10) so the button
+            // width doesn't jump when busy toggles. Dot is invisible
+            // at rest, pulses while busy.
+            final busyPhase = Curves.easeInOutSine
+                .transform(_busyCtrl.value);
+            final dotAlpha = widget.busy ? (0.35 + 0.55 * busyPhase) : 0.0;
+            final button = Transform.translate(
+              offset: Offset(shake, 0),
+              child: AnimatedContainer(
+                duration:
+                    context.motion(const Duration(milliseconds: 100)),
+                // Horizontal padding tightened from 10 → 8. The
+                // narrow-sidebar use-case (unlock row: 12h pill +
+                // unlock button + 1px borders) was overflowing by
+                // ~14px; trimming 2px per side per button closes
+                // the gap without needing to wrap the row.
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  border: Border.all(color: borderColor, width: 1),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.label,
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    // Always reserve the slot; only the dot fades.
+                    // Keeps button width stable between idle and busy.
+                    // Gap + dot tightened (6+4 → 4+3) for the same
+                    // overflow reason as above.
+                    const SizedBox(width: 4),
+                    Container(
+                      width: 3,
+                      height: 3,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: textColor.withValues(alpha: dotAlpha),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+            // Error glyph pops above the button — rises ~4px, fades
+            // in the first 15% then out across the remainder. The
+            // Stack always includes both children (no collection-if)
+            // so the children list length never changes; the glyph
+            // widget itself renders an empty box when idle. This
+            // keeps the widget tree identity stable across rebuilds.
+            return Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.topCenter,
+              children: [
+                button,
+                Positioned(
+                  top: -16,
+                  child: _ErrorGlyph(
+                    kind: widget.errorKind,
+                    progress: p,
+                    color: t.stateDeleted,
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -1707,11 +2887,11 @@ class _GhostCheck extends StatelessWidget {
 class _GhostIconButton extends StatefulWidget {
   const _GhostIconButton({
     required this.icon,
-    required this.tooltip,
+    this.tooltip,
     required this.onTap,
   });
   final IconData icon;
-  final String tooltip;
+  final String? tooltip;
   final VoidCallback onTap;
   @override
   State<_GhostIconButton> createState() => _GhostIconButtonState();
@@ -1722,26 +2902,26 @@ class _GhostIconButtonState extends State<_GhostIconButton> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return Tooltip(
-      message: widget.tooltip,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: Listener(
-          behavior: HitTestBehavior.opaque,
-          onPointerUp: (_) => widget.onTap(),
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: Icon(
-              widget.icon,
-              size: 16,
-              color: _hover ? t.textNormal : t.textMuted,
-            ),
+    final core = MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerUp: (_) => widget.onTap(),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(
+            widget.icon,
+            size: 16,
+            color: _hover ? t.textNormal : t.textMuted,
           ),
         ),
       ),
     );
+    final tip = widget.tooltip;
+    if (tip == null || tip.isEmpty) return core;
+    return Tooltip(message: tip, child: core);
   }
 }
 

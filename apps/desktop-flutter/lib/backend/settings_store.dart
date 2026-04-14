@@ -45,6 +45,13 @@ class AppSettingsSnapshot {
   /// Default false; users opt in from settings once per install.
   final bool bondExperimentEnabled;
 
+  /// Has the user ever opened the bond dock? Drives the discovery
+  /// hint in the pen — until the first interaction the pen shows
+  /// the literal label "bond" so users know what they're looking
+  /// at. After first click, the label morphs away and the creature
+  /// takes over for good.
+  final bool bondDockOpenedOnce;
+
   const AppSettingsSnapshot({
     required this.guardrailValue,
     required this.aiReadOnlyDefault,
@@ -71,6 +78,7 @@ class AppSettingsSnapshot {
     required this.appShortName,
     required this.onboardingComplete,
     required this.bondExperimentEnabled,
+    required this.bondDockOpenedOnce,
   });
 
   Map<String, dynamic> toJson() => {
@@ -99,6 +107,7 @@ class AppSettingsSnapshot {
         'appShortName': appShortName,
         'onboardingComplete': onboardingComplete,
         'bondExperimentEnabled': bondExperimentEnabled,
+        'bondDockOpenedOnce': bondDockOpenedOnce,
       };
 
   factory AppSettingsSnapshot.defaults() => const AppSettingsSnapshot(
@@ -130,6 +139,7 @@ class AppSettingsSnapshot {
         // the whole point of the worktree is to exercise the
         // surface. Main keeps it false.
         bondExperimentEnabled: true,
+        bondDockOpenedOnce: false,
       );
 
   factory AppSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -240,6 +250,10 @@ class AppSettingsSnapshot {
         json['bondExperimentEnabled'],
         defaults.bondExperimentEnabled,
       ),
+      bondDockOpenedOnce: SettingsStore._boolOr(
+        json['bondDockOpenedOnce'],
+        defaults.bondDockOpenedOnce,
+      ),
     );
   }
 
@@ -269,6 +283,7 @@ class AppSettingsSnapshot {
     String? appShortName,
     bool? onboardingComplete,
     bool? bondExperimentEnabled,
+    bool? bondDockOpenedOnce,
   }) {
     return AppSettingsSnapshot(
       guardrailValue: guardrailValue ?? this.guardrailValue,
@@ -303,6 +318,8 @@ class AppSettingsSnapshot {
       onboardingComplete: onboardingComplete ?? this.onboardingComplete,
       bondExperimentEnabled:
           bondExperimentEnabled ?? this.bondExperimentEnabled,
+      bondDockOpenedOnce:
+          bondDockOpenedOnce ?? this.bondDockOpenedOnce,
     );
   }
 }

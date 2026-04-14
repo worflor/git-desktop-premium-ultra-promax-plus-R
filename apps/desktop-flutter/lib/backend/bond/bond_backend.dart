@@ -224,6 +224,7 @@ class BondUiSnapshot {
     required this.dropCounters,
     required this.attestationCounts,
     required this.proposals,
+    required this.selfCoordinate,
   });
 
   final BondId bondId;
@@ -236,6 +237,11 @@ class BondUiSnapshot {
 
   /// Received proposals, newest first.
   final List<BondProposalView> proposals;
+
+  /// Local user's lattice coordinate for this bond. Non-null once
+  /// the per-bond identity has been resolved at least once. Used by
+  /// the constellation widget to render "you" alongside peers.
+  final KizunaCoordinate? selfCoordinate;
 }
 
 /// View model for one proposal in the inbox. Pre-denormalises the
@@ -1192,6 +1198,14 @@ class BondBackend implements CollaborationBackend {
             ))
         .toList(growable: false)
       ..sort((a, b) => b.receivedMs.compareTo(a.receivedMs));
+    // Self coordinate, if we know our identity — placed once on the
+    // first _identity() resolve. Not always set on the very first
+    // build microtask after attach; the UI handles null gracefully.
+    KizunaCoordinate? selfCoord;
+    final selfId = _identityCache[r.bondId.hex];
+    if (selfId != null) {
+      selfCoord = r.peerCoordinates[_hex(selfId.publicKeyBytes)];
+    }
     return BondUiSnapshot(
       bondId: r.bondId,
       peers: peers,
@@ -1202,6 +1216,7 @@ class BondBackend implements CollaborationBackend {
           e.key: e.value.length,
       },
       proposals: proposals,
+      selfCoordinate: selfCoord,
     );
   }
 
