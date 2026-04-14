@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../backend/file_picker.dart';
 import '../backend/git.dart';
 import '../components/icons/app_icons.dart';
+import '../features/bond/bond_dock.dart';
 import '../ui/control_chrome.dart';
 import '../ui/form_controls.dart';
 import '../ui/hover_lift.dart';
@@ -347,6 +348,11 @@ class _SidebarRailState extends State<SidebarRail> {
                   );
             }(),
           ),
+          // Bond dock — bottom-of-sidebar p2p surface. Renders nothing
+          // when bondExperimentEnabled is false; otherwise shows the
+          // strip → lattice → drawer progression for the active repo's
+          // bond.
+          const BondDock(),
         ],
       ),
     );
