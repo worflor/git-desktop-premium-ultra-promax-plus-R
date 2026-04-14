@@ -96,6 +96,21 @@ class _RepoRuntime {
   /// Rules from this policy gate pull() when the target ref is listed.
   Policy? currentPolicy;
 
+  /// SHA-256 hash of [currentPolicy]'s envelope bytes — the value
+  /// future policies must reference via `supersedes` to take effect.
+  /// First-policy TOFU: the first well-formed policy we ever see is
+  /// pinned here; subsequent policies that don't chain to a known
+  /// ancestor are rejected with a `policy_unauthorized_supersede`
+  /// drop. Persisted across restarts via the policy log replay.
+  Uint8List? currentPolicyHash;
+
+  /// Set of every policy hash we've ever accepted for this bond.
+  /// A new policy is accepted iff its `supersedes` field references
+  /// one of these (or the bond has no policy yet — TOFU first
+  /// install). Bounded — we keep ancestors so a peer that missed a
+  /// policy in the middle can still link forward.
+  final Set<String> acceptedPolicyHashHex = {};
+
   /// Attestations grouped by proposalId hex → list of accepted
   /// attestations (with signer tagged from the outer envelope).
   /// Retained in memory for the life of the runtime; persistence is
@@ -378,20 +393,13 @@ class BondBackend implements CollaborationBackend {
       runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
       unawaited(_respondToWant(runtime, peer, body));
     }));
-    subs.add(peer.policies.listen((policy) {
+    subs.add(peer.policies.listen((envPair) {
       runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
-      if (!_policyWellFormed(policy)) {
-        runtime.dropCounters['policy_malformed'] =
-            (runtime.dropCounters['policy_malformed'] ?? 0) + 1;
-        runtime.peersNotifier.bump();
-        return;
-      }
-      final current = runtime.currentPolicy;
-      if (current != null && policy.effectiveAtMs <= current.effectiveAtMs) {
-        return;
-      }
-      runtime.currentPolicy = policy;
-      runtime.peersNotifier.bump();
+      _acceptPolicy(
+        runtime,
+        envPair.policy,
+        envelopeBytes: encodeEnvelope(envPair.envelope),
+      );
     }));
     subs.add(peer.attestations.listen((envPair) {
       runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
@@ -554,6 +562,60 @@ class BondBackend implements CollaborationBackend {
   /// same authority that would approve a merge is empowered to eject
   /// a key. With no policy set, only self-revocation is honored (v1
   /// cautious default).
+  /// Central policy-accept path. Enforces:
+  ///   1. Well-formed shape (rules non-empty, minApprovals >= 0,
+  ///      32-byte approver pubkeys).
+  ///   2. Monotonic effectiveAtMs vs the currently installed policy.
+  ///   3. Supersedes-chain integrity:
+  ///      - First policy ever (no incumbent) is pinned via TOFU.
+  ///      - Subsequent policies must `supersedes` a hash in
+  ///        [acceptedPolicyHashHex].
+  ///
+  /// `envelopeBytes` is required to compute the policy id; pass null
+  /// only from log replay when bytes are reconstructed elsewhere.
+  void _acceptPolicy(
+    _RepoRuntime runtime,
+    Policy policy, {
+    required Uint8List? envelopeBytes,
+  }) {
+    if (!_policyWellFormed(policy)) {
+      runtime.dropCounters['policy_malformed'] =
+          (runtime.dropCounters['policy_malformed'] ?? 0) + 1;
+      runtime.peersNotifier.bump();
+      return;
+    }
+    final current = runtime.currentPolicy;
+    if (current != null && policy.effectiveAtMs <= current.effectiveAtMs) {
+      return;
+    }
+    // Supersedes chain — TOFU on first install, then must reference
+    // an already-accepted hash. Without this, any signer could
+    // publish an unrelated "fresh" policy and override consensus
+    // just by setting effectiveAtMs higher than the incumbent.
+    if (runtime.acceptedPolicyHashHex.isNotEmpty) {
+      final supersedes = policy.supersedes;
+      if (supersedes == null) {
+        runtime.dropCounters['policy_unauthorized_supersede'] =
+            (runtime.dropCounters['policy_unauthorized_supersede'] ?? 0) + 1;
+        runtime.peersNotifier.bump();
+        return;
+      }
+      if (!runtime.acceptedPolicyHashHex.contains(_hex(supersedes))) {
+        runtime.dropCounters['policy_unauthorized_supersede'] =
+            (runtime.dropCounters['policy_unauthorized_supersede'] ?? 0) + 1;
+        runtime.peersNotifier.bump();
+        return;
+      }
+    }
+    runtime.currentPolicy = policy;
+    if (envelopeBytes != null) {
+      final id = _sha256(envelopeBytes);
+      runtime.currentPolicyHash = id;
+      runtime.acceptedPolicyHashHex.add(_hex(id));
+    }
+    runtime.peersNotifier.bump();
+  }
+
   /// Rejects policies with shapes that would silently weaken enforcement.
   /// Negative or zero `minApprovals` on a rule with a non-trivial ref
   /// pattern looks like an auto-pass; callers who really want that
@@ -974,12 +1036,10 @@ class BondBackend implements CollaborationBackend {
       bondId: runtime.bondId.bytes,
       effectiveAtMs: now,
       rules: rules,
-      // supersedes: hash of the prior policy envelope would go here.
-      // For v1 we don't track envelope hashes of incoming policies,
-      // so null; peers that missed the prior policy cannot detect a
-      // missed link. Hardening: persist policy envelope bytes and hash
-      // when accepting, pass that hash here.
-      supersedes: null,
+      // Chain to the currently-accepted policy so peers can verify
+      // the supersedes link. Null is only legal for the very first
+      // policy in a bond (TOFU pin).
+      supersedes: runtime.currentPolicyHash,
     );
     if (!_policyWellFormed(policy)) {
       return const GitResult.err('bond: policy rejected (malformed rules)');
@@ -992,11 +1052,9 @@ class BondBackend implements CollaborationBackend {
       policy.toCborBody(),
     );
     if (!result.ok) return result;
-    final current = runtime.currentPolicy;
-    if (current == null || policy.effectiveAtMs > current.effectiveAtMs) {
-      runtime.currentPolicy = policy;
-    }
-    runtime.peersNotifier.bump();
+    // Compute envelope bytes for the supersedes-chain bookkeeping.
+    final envBytes = await _signForHash(runtime, BondPacketType.policy, policy.toCborBody());
+    _acceptPolicy(runtime, policy, envelopeBytes: envBytes);
     return result;
   }
 
@@ -1298,15 +1356,13 @@ class BondBackend implements CollaborationBackend {
   /// kind, entries are processed in file order (monotonic append).
   Future<void> _rehydrateFromLogs(_RepoRuntime runtime) async {
     // Policies first — revocation-auth and attestation-revoke check
-    // against currentPolicy / revokedAt.
+    // against currentPolicy / revokedAt. Replay through _acceptPolicy
+    // so the supersedes-chain check rebuilds acceptedPolicyHashHex
+    // identically to live acceptance.
     for (final env in await _readLogEnvelopes(runtime.store.policiesLogFor(runtime.bondId))) {
       final body = Policy.tryDecode(env.body);
       if (body == null) continue;
-      if (!_policyWellFormed(body)) continue;
-      final current = runtime.currentPolicy;
-      if (current == null || body.effectiveAtMs > current.effectiveAtMs) {
-        runtime.currentPolicy = body;
-      }
+      _acceptPolicy(runtime, body, envelopeBytes: encodeEnvelope(env));
     }
     for (final env in await _readLogEnvelopes(runtime.store.revocationsLogFor(runtime.bondId))) {
       final body = Revocation.tryDecode(env.body);

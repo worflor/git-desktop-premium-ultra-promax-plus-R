@@ -77,8 +77,8 @@ class PeerSession {
       StreamController<Anchor>.broadcast();
   final StreamController<Target> _targets =
       StreamController<Target>.broadcast();
-  final StreamController<Policy> _policies =
-      StreamController<Policy>.broadcast();
+  final StreamController<PolicyEnvelope> _policies =
+      StreamController<PolicyEnvelope>.broadcast();
   final StreamController<ContinuityEnvelope> _continuities =
       StreamController<ContinuityEnvelope>.broadcast();
   final StreamController<RevocationEnvelope> _revocations =
@@ -118,8 +118,10 @@ class PeerSession {
   /// Verified Targets.
   Stream<Target> get targets => _targets.stream;
 
-  /// Verified Policies.
-  Stream<Policy> get policies => _policies.stream;
+  /// Verified Policies, paired with their envelope so consumers can
+  /// compute the policy id (SHA-256 over envelope bytes) for the
+  /// supersedes-chain check.
+  Stream<PolicyEnvelope> get policies => _policies.stream;
 
   /// Verified continuity attestations, with the enclosing envelope so
   /// subscribers can read the signer of the *new* key alongside the
@@ -340,7 +342,7 @@ class PeerSession {
           return;
         }
         if (!_bondIdMatches(obj.bondId)) return;
-        _safeAdd(_policies, obj);
+        _safeAdd(_policies, PolicyEnvelope(policy: obj, envelope: env));
       case BondPacketType.continuity:
         final obj = ContinuityAttestation.tryDecode(env.body);
         if (obj == null) {
@@ -530,6 +532,16 @@ int? _extractCreatedMs(Uint8List cborBody) {
 class AttestationEnvelope {
   const AttestationEnvelope({required this.attestation, required this.envelope});
   final Attestation attestation;
+  final SignedEnvelope envelope;
+}
+
+/// Pairing of a decoded policy with its envelope. The envelope hash
+/// (SHA-256 of encodeEnvelope) is the policy id used for supersedes
+/// chaining; consumers compute it on demand rather than carrying it
+/// here so the wire format stays minimal.
+class PolicyEnvelope {
+  const PolicyEnvelope({required this.policy, required this.envelope});
+  final Policy policy;
   final SignedEnvelope envelope;
 }
 
