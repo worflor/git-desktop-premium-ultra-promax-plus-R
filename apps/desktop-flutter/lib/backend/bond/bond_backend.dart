@@ -526,6 +526,10 @@ class BondBackend implements CollaborationBackend {
         receivedMs: DateTime.now().millisecondsSinceEpoch,
       );
       runtime.peersNotifier.bump();
+      // Auto-materialise a worktree for review. Cheap if the source
+      // commit is already local; spawns a fetch-then-worktree if not.
+      // Best-effort — failures only surface to drop counters.
+      unawaited(_maybeMaterialiseProposalWorktree(runtime, syntheticId, proposal));
     }));
     // Wire heartbeat: emit a ping every 15s, treat 45s of silence as
     // a drop and trigger reconnect. The ctrl channel carries
@@ -665,6 +669,62 @@ class BondBackend implements CollaborationBackend {
       out[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
     }
     return out;
+  }
+
+  /// Auto-materialises a git worktree for an incoming proposal so the
+  /// reviewer can `cd` into it and run tests / the app / a debugger
+  /// without polluting their main worktree. Path:
+  /// `.manifold/worktrees/proposal-<short>` rooted at the source
+  /// commit. No-op when:
+  ///   • the source commit isn't (yet) present locally — caller
+  ///     fetches via the normal pull path first
+  ///   • the worktree already exists (idempotent — same proposal id
+  ///     means same on-disk path)
+  ///   • git's `worktree add` fails (logged via dropCounter but never
+  ///     propagated; review still works via the diff view alone)
+  ///
+  /// The Bond design called for "worktree-as-review-surface" from the
+  /// start; this is the wiring that makes the promise concrete.
+  Future<void> _maybeMaterialiseProposalWorktree(
+    _RepoRuntime runtime,
+    String proposalId,
+    Proposal proposal,
+  ) async {
+    final commitHex = _hex(proposal.sourceCommit);
+    if (!await hasObject(runtime.repoPath, commitHex)) {
+      // We don't have the commit yet. The next fetch + replay will
+      // re-trigger this path; that's the right place to materialise.
+      return;
+    }
+    final shortId = proposalId.substring(0, 12);
+    final wtName = 'proposal-$shortId';
+    final wtPath =
+        '${runtime.repoPath}${Platform.pathSeparator}.manifold${Platform.pathSeparator}worktrees${Platform.pathSeparator}$wtName';
+    if (await Directory(wtPath).exists()) return;
+    try {
+      await Directory(
+        '${runtime.repoPath}${Platform.pathSeparator}.manifold${Platform.pathSeparator}worktrees',
+      ).create(recursive: true);
+      final result = await Process.run(
+        'git',
+        [
+          'worktree',
+          'add',
+          '--detach',
+          wtPath,
+          commitHex,
+        ],
+        workingDirectory: runtime.repoPath,
+        runInShell: false,
+      );
+      if (result.exitCode != 0) {
+        runtime.dropCounters['worktree_materialise_failed'] =
+            (runtime.dropCounters['worktree_materialise_failed'] ?? 0) + 1;
+      }
+    } catch (_) {
+      runtime.dropCounters['worktree_materialise_failed'] =
+          (runtime.dropCounters['worktree_materialise_failed'] ?? 0) + 1;
+    }
   }
 
   bool _isRevoked(
