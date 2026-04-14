@@ -23,6 +23,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cbor/cbor.dart';
 import 'package:cryptography/cryptography.dart' as cg;
 
 import 'bond_id.dart';
@@ -92,6 +93,8 @@ class PeerSession {
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<PeerSessionError> _errors =
       StreamController<PeerSessionError>.broadcast();
+  final StreamController<SignedEnvelope> _envelopes =
+      StreamController<SignedEnvelope>.broadcast();
 
   StreamSubscription<BondPacket>? _sub;
   bool _started = false;
@@ -150,6 +153,12 @@ class PeerSession {
   /// transport stays open so a single bad packet doesn't drop the
   /// session.
   Stream<PeerSessionError> get errors => _errors.stream;
+
+  /// Every verified [SignedEnvelope] — fires alongside the typed
+  /// streams for any subscriber that needs raw envelope bytes
+  /// (primarily the persistence layer, which writes JSONL logs for
+  /// rehydration on next app launch).
+  Stream<SignedEnvelope> get envelopes => _envelopes.stream;
 
   /// Start consuming the underlying session's packet stream. Must be
   /// called exactly once; subsequent calls no-op.
@@ -238,6 +247,23 @@ class PeerSession {
         ));
         return;
       }
+      // Clock-skew clamp: a signer can set createdMs arbitrarily large
+      // and defeat replay/dedup checks that use createdMs monotonicity.
+      // Reject envelopes whose body's `t` (createdMs) is more than an
+      // hour in the future. The check is done at dispatch so it
+      // applies uniformly across body types.
+      final createdMs = _extractCreatedMs(env.body);
+      if (createdMs != null) {
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        if (createdMs > nowMs + _clockSkewToleranceMs) {
+          _safeAdd(_errors, const PeerSessionError(
+            reason: 'clock_skew',
+            detail: 'createdMs more than 1h in the future',
+          ));
+          return;
+        }
+      }
+      _safeAdd(_envelopes, env);
       _dispatch(type, env);
     } catch (e) {
       _safeAdd(_errors, PeerSessionError(
@@ -470,6 +496,31 @@ class PeerSession {
     await _objectHaves.close();
     await _ctrl.close();
     await _errors.close();
+    await _envelopes.close();
+  }
+}
+
+/// Wall-clock skew budget: envelopes whose `createdMs` exceeds
+/// `now + this` at receipt are rejected. Protects the
+/// strictly-newer-wins dedup paths (attestations, policies,
+/// revocations) from a signer who sets `createdMs = now + 1e12`
+/// to permanently outrank honest traffic.
+const int _clockSkewToleranceMs = 60 * 60 * 1000; // 1 hour
+
+/// Pulls the `t` (createdMs) field from a CBOR body without the
+/// caller knowing which DTO it is. Every Bond body uses the short
+/// key `t` for this field (see [RefAdvert], [Proposal], etc.).
+/// Returns null when the body isn't CBOR-map-shaped (ctrl, raw pack
+/// bytes) or when `t` is absent.
+int? _extractCreatedMs(Uint8List cborBody) {
+  try {
+    final decoded = cbor.decode(cborBody);
+    if (decoded is! CborMap) return null;
+    final t = decoded[CborString('t')];
+    if (t is CborSmallInt) return t.value;
+    return null;
+  } catch (_) {
+    return null;
   }
 }
 

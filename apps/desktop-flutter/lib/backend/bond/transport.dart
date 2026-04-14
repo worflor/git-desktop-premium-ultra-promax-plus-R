@@ -9,6 +9,26 @@
 // each other's packets in-process — for tests and local integration.
 // The real WebRTC+Whisper transport lands as a separate file
 // implementing the same BondTransport contract.
+//
+// Reconnect contract (important for adapter implementers):
+//   A dropped peer does NOT flip its existing BondSession's isOpen
+//   back to true. Instead, a fresh BondSession is emitted on
+//   [BondTransport.listen] (or returned from a re-dial) with the
+//   SAME `remotePubkey`. The prior session's `incoming` stream
+//   closes and `isOpen` reads false thereafter. Backend callers
+//   replace the peer entry by pubkey; PeerSession teardown + re-
+//   attach is their responsibility, not the transport's.
+//
+// Chunking contract:
+//   One `send(packet)` produces exactly one `incoming` event on the
+//   remote. The transport may split the body across data-channel
+//   frames internally, but boundaries are preserved end-to-end.
+//
+// Backpressure:
+//   `send` resolves when the transport buffer has accepted the
+//   packet AND the underlying channel's buffered-amount is below
+//   the transport's chosen threshold — callers can treat successive
+//   awaits as flow-controlled.
 // ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
@@ -34,6 +54,12 @@ abstract interface class BondSession {
   /// transport implementation after handshake completion; flips back
   /// to false on disconnect.
   bool get isOpen;
+
+  /// Fine-grained handshake + liveness state — UIs subscribe to
+  /// render "connecting… handshaking… verifying peer… open". Emits
+  /// the current state immediately on subscription and on every
+  /// transition. [isOpen] is a convenience derived from this stream.
+  Stream<BondSessionState> get state;
 
   /// Broadcast stream of packets the peer sent us. Subscribing
   /// multiple listeners is allowed; packets dispatch to all of them.
@@ -65,6 +91,128 @@ class BondPacket {
   final Uint8List body;
 }
 
+/// Session lifecycle states. Coarse enough to render as UI chrome
+/// (one icon / color per state), fine enough that adapter authors
+/// don't have to invent private enums.
+enum BondSessionState {
+  /// Signaling / tracker announce / ICE gathering.
+  dialing,
+
+  /// Whisper handshake (ECDH + Kizuna + ratchet init) running.
+  handshaking,
+
+  /// Handshake succeeded; verifying the signed-envelope binding of
+  /// the remote Ed25519 swarm pubkey to the ephemeral ECDH key.
+  verifyingIdentity,
+
+  /// Session ready for application packets.
+  open,
+
+  /// Lost transport; adapter will emit a fresh session on success.
+  reconnecting,
+
+  /// Session is done. Stream-terminal.
+  closed,
+}
+
+/// Addressing sum — how to reach a peer. Each variant maps to a
+/// different Whisper-adapter code path. The `Object` escape hatch
+/// previously baked into `dial()` is replaced by this sealed type so
+/// the adapter can switch on it exhaustively.
+sealed class BondAddressing {
+  const BondAddressing();
+}
+
+/// Tracker-rendezvous addressing — the standard path. The adapter
+/// derives the tracker topic from the bond_id + swarm phrase, matches
+/// on the topic, then exchanges SDP via the tracker channel.
+class BondAddressViaTracker extends BondAddressing {
+  const BondAddressViaTracker({
+    required this.trackers,
+    this.iceServers = const [],
+    this.roleHint,
+  });
+
+  /// Tracker URLs — typically WSS. Concatenated with the network
+  /// settings' configured trackers; this is an override slot.
+  final List<String> trackers;
+
+  /// STUN/TURN servers. Empty = adapter defaults (public STUN).
+  final List<String> iceServers;
+
+  /// Optional: 'offerer' / 'answerer' hint when the caller wants to
+  /// force a role (e.g., in test harnesses). Null = auto-negotiate.
+  final String? roleHint;
+}
+
+/// Direct-SDP addressing — out-of-band SDP handoff (e.g. user
+/// pasted a peer's offer code from a QR). Skips tracker.
+class BondAddressDirect extends BondAddressing {
+  const BondAddressDirect({required this.sdpOffer});
+  final String sdpOffer;
+}
+
+/// Network-wide transport configuration. Built from user settings
+/// and passed to the adapter at construction, not at each dial.
+class BondNetworkSettings {
+  const BondNetworkSettings({
+    this.trackers = const <String>[
+      'wss://tracker.openwebtorrent.com',
+      'wss://tracker.btorrent.xyz',
+    ],
+    this.iceServers = const <String>[
+      'stun:stun.l.google.com:19302',
+    ],
+    this.allowPublicTrackers = true,
+    this.dcMaxBufferedBytes = 64 * 1024,
+  });
+
+  final List<String> trackers;
+  final List<String> iceServers;
+  final bool allowPublicTrackers;
+
+  /// Backpressure threshold. `send()` blocks when the underlying
+  /// data channel's bufferedAmount exceeds this.
+  final int dcMaxBufferedBytes;
+}
+
+/// Provider callback signature: given a bond_id, return the swarm
+/// phrase. The Whisper adapter uses the phrase to derive the tracker
+/// topic and handshake context. Kept as a callback (not a constant)
+/// so the phrase stays lifetime-scoped to the unlocked session
+/// instead of sitting in transport singletons.
+typedef BondPhraseProvider = Future<String> Function(Uint8List bondId);
+
+/// Persistence for per-peer Double Ratchet state. Whisper's ratchet
+/// must survive reconnect to avoid re-handshakes (and to preserve
+/// forward-secrecy against replay). The transport doesn't touch
+/// BondStore directly; it calls this interface so tests can stub
+/// with in-memory storage and storage layout can evolve
+/// independently of the wire.
+abstract interface class RatchetStateStore {
+  Future<Uint8List?> load(Uint8List bondId, Uint8List peerPubkey);
+  Future<void> save(
+    Uint8List bondId,
+    Uint8List peerPubkey,
+    Uint8List stateBytes,
+  );
+  Future<void> erase(Uint8List bondId, Uint8List peerPubkey);
+}
+
+/// Handle on an active swarm membership. Fires a [discovered]
+/// session each time a peer in the same bond matches us on the
+/// tracker and the handshake + identity-verification completes.
+abstract interface class BondSwarmHandle {
+  Uint8List get bondId;
+
+  /// New sessions in the order they appear.
+  Stream<BondSession> get discovered;
+
+  /// Leave the swarm — stop announcing, stop accepting new peers.
+  /// Existing sessions survive until their own [BondSession.close].
+  Future<void> leave();
+}
+
 /// Transport-level abstraction a Bond session manager asks to open
 /// or accept sessions. One instance per running Manifold process;
 /// sessions multiplex through it.
@@ -76,12 +224,21 @@ abstract interface class BondTransport {
   Future<BondSession> dial({
     required Uint8List remotePubkey,
     required Uint8List bondId,
-    required Object addressing,
+    required BondAddressing addressing,
   });
 
-  /// Stream of inbound sessions. Fires when a remote peer dials us
-  /// and the handshake completes. The consumer (session manager)
-  /// is responsible for retaining or closing each session.
+  /// Announce presence on the bond's rendezvous channel and accept
+  /// inbound peer matches. One call per bond (the backend dedups);
+  /// the returned handle's [BondSwarmHandle.discovered] stream is
+  /// how the backend learns about peers it didn't dial.
+  Future<BondSwarmHandle> joinSwarm({
+    required Uint8List bondId,
+    required BondAddressing addressing,
+  });
+
+  /// Stream of inbound sessions NOT scoped to a specific bond — the
+  /// direct-SDP / invite-code path lives here. Most sessions flow
+  /// through [joinSwarm] instead.
   Stream<BondSession> get listen;
 
   /// Shut down the transport. All active sessions are closed.
@@ -135,7 +292,7 @@ class NullBondTransport implements BondTransport {
   Future<BondSession> dial({
     required Uint8List remotePubkey,
     required Uint8List bondId,
-    required Object addressing,
+    required BondAddressing addressing,
   }) async {
     throw UnsupportedError(
       'NullBondTransport: no real transport wired. Integrate Whisper '
@@ -144,15 +301,31 @@ class NullBondTransport implements BondTransport {
   }
 
   @override
+  Future<BondSwarmHandle> joinSwarm({
+    required Uint8List bondId,
+    required BondAddressing addressing,
+  }) async {
+    return _NullSwarmHandle(bondId: bondId);
+  }
+
+  @override
   Stream<BondSession> get listen {
-    // Broadcast so multiple subscribers (UI + backend) can coexist
-    // even though no session will ever arrive. An empty single-
-    // subscription stream would fire StateError on a second listen.
     return const Stream<BondSession>.empty().asBroadcastStream();
   }
 
   @override
   Future<void> close() async {}
+}
+
+class _NullSwarmHandle implements BondSwarmHandle {
+  _NullSwarmHandle({required this.bondId});
+  @override
+  final Uint8List bondId;
+  @override
+  Stream<BondSession> get discovered =>
+      const Stream<BondSession>.empty().asBroadcastStream();
+  @override
+  Future<void> leave() async {}
 }
 
 class _LoopbackSession implements BondSession {
@@ -173,6 +346,8 @@ class _LoopbackSession implements BondSession {
 
   final StreamController<BondPacket> outbound;
   final Stream<BondPacket> _inbound;
+  final StreamController<BondSessionState> _state =
+      StreamController<BondSessionState>.broadcast();
 
   bool _open = true;
 
@@ -181,6 +356,19 @@ class _LoopbackSession implements BondSession {
 
   @override
   Stream<BondPacket> get incoming => _inbound;
+
+  @override
+  Stream<BondSessionState> get state {
+    // Loopback "handshake" completes instantly. Emit the terminal
+    // open state so subscribers see a value, and close() pushes
+    // [closed] before terminating the stream.
+    final ctrl = StreamController<BondSessionState>();
+    scheduleMicrotask(() {
+      ctrl.add(_open ? BondSessionState.open : BondSessionState.closed);
+      _state.stream.listen(ctrl.add, onDone: ctrl.close);
+    });
+    return ctrl.stream;
+  }
 
   @override
   Future<void> send(BondPacket packet) async {
@@ -194,6 +382,10 @@ class _LoopbackSession implements BondSession {
   Future<void> close() async {
     if (!_open) return;
     _open = false;
+    if (!_state.isClosed) {
+      _state.add(BondSessionState.closed);
+      await _state.close();
+    }
     await outbound.close();
   }
 }

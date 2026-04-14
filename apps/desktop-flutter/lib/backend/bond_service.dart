@@ -102,11 +102,15 @@ class BondService extends ChangeNotifier {
 
   /// Wipes the in-memory master and all derived subkeys. The UI
   /// should call this on app lock / screen lock / user logout.
+  /// Also tears down active peer sessions via the backend so we
+  /// don't keep signing with keys that no longer match the unlocked
+  /// identity.
   void lock() {
     _master?.wipe();
     _master = null;
     _keys.clear();
     notifyListeners();
+    unawaited(_backend.onIdentityChanged());
   }
 
   /// Registers a repo ↔ bond mapping. If the mapping is new it is
@@ -268,6 +272,31 @@ class BondService extends ChangeNotifier {
   }) async {
     final r = await backend.publishPolicy(repoPath: repoPath, rules: rules);
     return r.ok ? null : r.error;
+  }
+
+  /// Publishes a proposal. Returns the 32-byte proposalId on success
+  /// (call sites pin it to a local draft/inbox entry). Wraps the
+  /// backend's GitResult into a simpler success/error shape the UI
+  /// can throw on.
+  Future<({Uint8List? proposalId, String? error})> publishProposal({
+    required String repoPath,
+    required Uint8List recipientPubkey,
+    required String sourceRef,
+    required Uint8List sourceCommit,
+    required String targetRef,
+    required String title,
+    required String body,
+  }) async {
+    final r = await backend.publishProposal(
+      repoPath: repoPath,
+      recipientPubkey: recipientPubkey,
+      sourceRef: sourceRef,
+      sourceCommit: sourceCommit,
+      targetRef: targetRef,
+      title: title,
+      body: body,
+    );
+    return (proposalId: r.data, error: r.error);
   }
 
   /// Publishes an attestation on a proposal. The caller supplies the

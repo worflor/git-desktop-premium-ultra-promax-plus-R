@@ -102,6 +102,12 @@ class BondStore {
   String policiesLogFor(BondId bondId) =>
       p.join(logsDirFor(bondId), 'policies.jsonl');
 
+  String revocationsLogFor(BondId bondId) =>
+      p.join(logsDirFor(bondId), 'revocations.jsonl');
+
+  String continuitiesLogFor(BondId bondId) =>
+      p.join(logsDirFor(bondId), 'continuities.jsonl');
+
   String ratchetDirFor(BondId bondId) =>
       p.join(dirForBond(bondId), 'ratchet');
 

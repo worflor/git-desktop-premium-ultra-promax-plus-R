@@ -26,6 +26,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:pointycastle/digests/sha256.dart';
 
 import '../collaboration_backend.dart';
 import '../dtos.dart';
@@ -35,6 +36,7 @@ import 'identity.dart';
 import 'objects.dart';
 import 'packfile.dart';
 import 'peer_session.dart';
+import 'signed_envelope.dart';
 import 'storage.dart';
 import 'transport.dart';
 import 'wire.dart';
@@ -216,7 +218,7 @@ class BondBackend implements CollaborationBackend {
   Future<GitResult<PeerSession>> connect({
     required String repoPath,
     required Uint8List remotePubkey,
-    required Object addressing,
+    required BondAddressing addressing,
   }) async {
     final runtime = await _runtime(repoPath);
     if (runtime == null) return const GitResult.err('bond: repo not bonded');
@@ -368,6 +370,14 @@ class BondBackend implements CollaborationBackend {
       runtime.dropCounters[bucket] =
           (runtime.dropCounters[bucket] ?? 0) + 1;
       runtime.peersNotifier.bump();
+    }));
+    subs.add(peer.envelopes.listen((env) {
+      // Persistence: every *verified* envelope is written to the log
+      // for its kind. On next app launch, _runtime() replays these
+      // logs through the same accept path so in-memory state
+      // (currentPolicy, revokedAt, attestationsByProposal) is not a
+      // governance-amnesia reset.
+      unawaited(_persistEnvelope(runtime, env));
     }));
     runtime.peerSubs[hex] = subs;
     runtime.peersNotifier.bump();
@@ -817,6 +827,90 @@ class BondBackend implements CollaborationBackend {
     return result;
   }
 
+  /// Signs and broadcasts a Proposal. Returns the proposalId
+  /// (SHA-256 of the encoded envelope) so the caller can wire the
+  /// compose UI to the subsequent inbox / attestation roster views.
+  Future<GitResult<Uint8List>> publishProposal({
+    required String repoPath,
+    required Uint8List recipientPubkey,
+    required String sourceRef,
+    required Uint8List sourceCommit,
+    required String targetRef,
+    required String title,
+    required String body,
+    List<Uint8List> fulfills = const [],
+    String worktreeHint = '',
+  }) async {
+    final runtime = await _runtime(repoPath);
+    if (runtime == null) return const GitResult.err('bond: repo not bonded');
+    final SwarmKeyPair identity;
+    try {
+      identity = await _identity(runtime.bondId);
+    } catch (e) {
+      return GitResult.err('bond: identity not unlocked ($e)');
+    }
+    final proposal = Proposal(
+      bondId: runtime.bondId.bytes,
+      proposerPubkey: identity.publicKeyBytes,
+      recipientPubkey: recipientPubkey,
+      sourceRef: sourceRef,
+      sourceCommit: sourceCommit,
+      targetRef: targetRef,
+      title: title,
+      body: body,
+      createdMs: DateTime.now().millisecondsSinceEpoch,
+      fulfills: fulfills,
+      worktreeHint: worktreeHint,
+    );
+    final bodyCbor = proposal.toCborBody();
+    // Compute proposalId now so we can return it even if broadcast
+    // fails — the author can retry without re-signing.
+    final envBytes = await _signForHash(runtime, BondPacketType.proposal, bodyCbor);
+    if (envBytes == null) {
+      return const GitResult.err('bond: could not sign proposal envelope');
+    }
+    final proposalId = _sha256(envBytes);
+    final result = await _broadcastSigned(
+      runtime,
+      BondPacketType.proposal,
+      bodyCbor,
+    );
+    if (!result.ok) {
+      // Still return the id so the UI can offer "save draft / retry".
+      return GitResult.err(result.error ?? 'broadcast failed');
+    }
+    return GitResult.ok(proposalId);
+  }
+
+  /// Helper: sign an envelope purely to hash it. Used by proposalId
+  /// computation — we need the same bytes the network will see.
+  Future<Uint8List?> _signForHash(
+    _RepoRuntime runtime,
+    BondPacketType kind,
+    Uint8List bodyCbor,
+  ) async {
+    try {
+      final identity = await _identity(runtime.bondId);
+      final env = await signEnvelope(
+        keyPair: identity.keyPair,
+        signerPublicKey: identity.publicKeyBytes,
+        kind: kind,
+        bodyCbor: bodyCbor,
+      );
+      return encodeEnvelope(env);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Uint8List _sha256(Uint8List bytes) {
+    final digest = SHA256Digest();
+    digest.update(bytes, 0, bytes.length);
+    final out = Uint8List(32);
+    digest.doFinal(out, 0);
+    return out;
+  }
+
   /// Signs an attestation and broadcasts it. Also applies locally so
   /// the author's own approval counts toward policy immediately.
   Future<GitResult<void>> publishAttestation({
@@ -920,6 +1014,28 @@ class BondBackend implements CollaborationBackend {
     return const GitResult.ok(null);
   }
 
+  /// Called by the identity service when the master seed is wiped or
+  /// rotated. Closes every active peer session and clears derived-key
+  /// caches — existing sessions hold the old keys as finals on
+  /// PeerSession, so continuing to use them after a key change would
+  /// cause verify_failed storms at the counterparty.
+  Future<void> onIdentityChanged() async {
+    _identityCache.clear();
+    for (final runtime in _runtimes.values) {
+      for (final subs in runtime.peerSubs.values) {
+        for (final sub in subs) {
+          await sub.cancel();
+        }
+      }
+      runtime.peerSubs.clear();
+      for (final peer in runtime.peers.values) {
+        await peer.close();
+      }
+      runtime.peers.clear();
+      runtime.peersNotifier.bump();
+    }
+  }
+
   /// Close all active peer sessions and clear caches. The underlying
   /// [transport] is NOT closed — it may be shared with other backends
   /// or tests.
@@ -956,7 +1072,124 @@ class BondBackend implements CollaborationBackend {
     );
     runtime.lamportClock = await _loadLamport(runtime);
     _runtimes[repoPath] = runtime;
+    await _rehydrateFromLogs(runtime);
     return runtime;
+  }
+
+  /// Persist a verified envelope to the kind-specific JSONL log.
+  /// Stored shape: `{ "t": <ms>, "kind": <tag name>, "env_b64": <env> }`.
+  /// Storing the raw envelope bytes (not the decoded body) lets us
+  /// re-verify signatures on load — defense in depth against future
+  /// format evolution.
+  Future<void> _persistEnvelope(
+    _RepoRuntime runtime,
+    SignedEnvelope env,
+  ) async {
+    final path = _logPathForKind(runtime, env.kind);
+    if (path == null) return; // ctrl / transfer-metadata don't log
+    final record = <String, dynamic>{
+      't': DateTime.now().millisecondsSinceEpoch,
+      'kind': env.kind,
+      'env_b64': base64.encode(encodeEnvelope(env)),
+    };
+    await appendJsonl(path, record);
+  }
+
+  String? _logPathForKind(_RepoRuntime r, String kind) {
+    switch (kind) {
+      case 'policy':
+        return r.store.policiesLogFor(r.bondId);
+      case 'attestation':
+        return r.store.attestationsLogFor(r.bondId);
+      case 'target':
+        return r.store.targetsLogFor(r.bondId);
+      case 'proposal':
+        return r.store.proposalsLogFor(r.bondId);
+      case 'revoke':
+        return r.store.revocationsLogFor(r.bondId);
+      case 'continuity':
+        return r.store.continuitiesLogFor(r.bondId);
+      default:
+        return null;
+    }
+  }
+
+  /// Replays every envelope log through the same accept logic the
+  /// live listeners use. Result: after app restart the backend's
+  /// in-memory view of `currentPolicy`, `revokedAt`, and
+  /// `attestationsByProposal` is as of the last persisted event —
+  /// closes the "governance amnesia on restart" audit finding.
+  ///
+  /// Replay order matters: policies first (so revocation authorization
+  /// checks can run), then revocations, then attestations. Within each
+  /// kind, entries are processed in file order (monotonic append).
+  Future<void> _rehydrateFromLogs(_RepoRuntime runtime) async {
+    // Policies first — revocation-auth and attestation-revoke check
+    // against currentPolicy / revokedAt.
+    for (final env in await _readLogEnvelopes(runtime.store.policiesLogFor(runtime.bondId))) {
+      final body = Policy.tryDecode(env.body);
+      if (body == null) continue;
+      if (!_policyWellFormed(body)) continue;
+      final current = runtime.currentPolicy;
+      if (current == null || body.effectiveAtMs > current.effectiveAtMs) {
+        runtime.currentPolicy = body;
+      }
+    }
+    for (final env in await _readLogEnvelopes(runtime.store.revocationsLogFor(runtime.bondId))) {
+      final body = Revocation.tryDecode(env.body);
+      if (body == null) continue;
+      final pairEnv = RevocationEnvelope(revocation: body, envelope: env);
+      if (!_revocationAuthorized(runtime, pairEnv)) continue;
+      final revokedHex = _hex(body.revokedPubkey);
+      final prior = runtime.revokedAt[revokedHex];
+      // On replay trust the persisted effective time directly — no
+      // wallclock clamp; receipt-time clamping already happened at
+      // live acceptance.
+      if (prior == null || body.effectiveAtMs > prior) {
+        runtime.revokedAt[revokedHex] = body.effectiveAtMs;
+      }
+    }
+    for (final env in await _readLogEnvelopes(runtime.store.attestationsLogFor(runtime.bondId))) {
+      final body = Attestation.tryDecode(env.body);
+      if (body == null) continue;
+      final signerHex = _hex(env.signerPublicKey);
+      if (_isRevokedAt(runtime, signerHex, body.createdMs)) continue;
+      final pid = _hex(body.proposalId);
+      final list = runtime.attestationsByProposal
+          .putIfAbsent(pid, () => <_SignedAttestation>[]);
+      final existingIdx = list.indexWhere((a) => a.signerHex == signerHex);
+      if (existingIdx >= 0) {
+        if (body.createdMs <= list[existingIdx].att.createdMs) continue;
+        list[existingIdx] = _SignedAttestation(att: body, signerHex: signerHex);
+      } else {
+        list.add(_SignedAttestation(att: body, signerHex: signerHex));
+      }
+    }
+    runtime.peersNotifier.bump();
+  }
+
+  /// Reads a log file and returns verified envelopes in file order.
+  /// Lines that fail to parse or verify are skipped — never surfaces
+  /// to users because log corruption is best-effort operational.
+  Future<List<SignedEnvelope>> _readLogEnvelopes(String path) async {
+    final records = await readJsonl(path);
+    final out = <SignedEnvelope>[];
+    for (final rec in records) {
+      final b64 = rec['env_b64'];
+      if (b64 is! String) continue;
+      try {
+        final bytes = base64.decode(b64);
+        final parse = decodeEnvelope(Uint8List.fromList(bytes));
+        if (!parse.ok) continue;
+        final verified = await verifyEnvelope(parse.envelope!);
+        if (!verified.ok) continue;
+        out.add(verified.envelope!);
+      } catch (_) {
+        // Skip torn/garbled line; appendJsonl's crash-mid-write policy
+        // allows these to exist.
+      }
+    }
+    return out;
   }
 
   Future<SwarmKeyPair> _identity(BondId bondId) async {
