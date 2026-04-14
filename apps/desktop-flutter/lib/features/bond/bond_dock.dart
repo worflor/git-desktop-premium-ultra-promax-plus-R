@@ -74,7 +74,15 @@ class _BondDockState extends State<BondDock> {
             snap.peers.any((p) => p.coordinate != null);
         final showLattice = membership != null && hasPlacedPeers;
 
-        return _DockSurface(
+        // The parent rail uses CrossAxisAlignment.start, so without
+        // an explicit width override the dock would shrink to its
+        // text-row intrinsic width — the click area would only cover
+        // "○ bond" with the rest of the row inert. SizedBox.expand
+        // on the cross axis isn't quite right inside a Column;
+        // double.infinity width with mainAxisSize.min height does it.
+        return SizedBox(
+          width: double.infinity,
+          child: _DockSurface(
           child: AnimatedSize(
             duration: context.motion(const Duration(milliseconds: 220)),
             curve: Curves.easeOutCubic,
@@ -106,6 +114,7 @@ class _BondDockState extends State<BondDock> {
                 ),
               ],
             ),
+          ),
           ),
         );
         },
@@ -157,7 +166,7 @@ class _DockSurface extends StatelessWidget {
 // ═════════════════════════════════════════════════════════════════════════
 // Strip — always-visible single row at the very bottom
 
-class _DockStrip extends StatelessWidget {
+class _DockStrip extends StatefulWidget {
   const _DockStrip({
     required this.service,
     required this.membership,
@@ -175,18 +184,29 @@ class _DockStrip extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_DockStrip> createState() => _DockStripState();
+}
+
+class _DockStripState extends State<_DockStrip> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final state = _resolveState(service, membership, snapshot);
+    final state = _resolveState(widget.service, widget.membership, widget.snapshot);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Padding(
-          // Slightly taller than its raw children so the strip reads
-          // as a deliberate footer rather than collapsed chrome.
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: context.motion(const Duration(milliseconds: 120)),
           padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+          color: _hover
+              ? t.chromeBorderFaint
+              : Colors.transparent,
           child: Row(
             children: [
               _StateDot(state: state),
@@ -210,12 +230,19 @@ class _DockStrip extends StatelessWidget {
                   ),
                 ),
               ),
-              if (membership != null)
-                Icon(
-                  open ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
-                  size: 16,
-                  color: t.textMuted,
-                ),
+              // Chevron always present so the strip reads as
+              // actionable — up/down for "expand drawer", right for
+              // "open the bond setup page" when there's no
+              // membership yet.
+              Icon(
+                widget.membership == null
+                    ? Icons.chevron_right
+                    : (widget.open
+                        ? Icons.keyboard_arrow_down
+                        : Icons.keyboard_arrow_up),
+                size: 16,
+                color: _hover ? t.textNormal : t.textMuted,
+              ),
             ],
           ),
         ),
@@ -228,7 +255,7 @@ class _DockStrip extends StatelessWidget {
     BondMembership? m,
     BondUiSnapshot? snap,
   ) {
-    if (!online) return const _DockState('bond · offline', _DotKind.offline);
+    if (!widget.online) return const _DockState('bond · offline', _DotKind.offline);
     if (m == null) return const _DockState('bond', _DotKind.idle);
     if (!service.isUnlocked) {
       return const _DockState('bond · locked', _DotKind.locked);
