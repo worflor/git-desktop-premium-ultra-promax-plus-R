@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/material_surface.dart';
@@ -19,10 +20,15 @@ import '../../backend/logos_git.dart';
 import '../../app/file_coupling_state.dart';
 import '../../app/logos_git_state.dart';
 import '../../app/repository_state.dart';
+import '../../app/worktree_state.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import '../../backend/commit_fingerprint.dart';
+import '../../backend/file_lifecycle.dart';
 import '../diff/diff_shell.dart';
+import 'commit_lede.dart';
 import 'commit_seismograph.dart';
+import 'commit_sigil.dart';
 import 'commit_tag_pill.dart';
 import 'commit_tagger.dart';
 
@@ -32,6 +38,15 @@ const double _kNodeRadius = 3;
 const double _kVertInset = 8;
 const double _kHorizPad = 4;
 const double _kLeftPad = 6;
+
+/// Minimum number of lanes the timeline strip allocates vertical space
+/// for, regardless of the current layout's actual lane count. With
+/// previews disabled today's layouts only ever use lane 0; on hover
+/// we add lane 1. Reserving 2 lanes' worth always means the strip's
+/// height never changes when a preview appears, which was the
+/// original "shifts the whole UI" complaint. Cheap — empty lanes are
+/// just unused vertical space inside the same dark surface.
+const int _kReservedLaneCount = 2;
 const double _kMinLaneH = 42;
 const double _kScaleFocus = 0.45;
 const double _kScaleSelected = 1.25;
@@ -50,11 +65,19 @@ class _GNode {
   final CommitHistoryEntry entry;
   final int row, lane;
   final List<String> visibleParents;
+  /// True when this node represents a hovered-desk preview commit
+  /// rather than a real ancestor of HEAD. Drives the painter's accent
+  /// styling (halo + scaled core), the per-node stagger window, and
+  /// the lens-metric exemption (preview nodes don't shift real-node
+  /// positions). Real nodes default to false; nothing else needs to
+  /// branch on this flag.
+  final bool isPreview;
   const _GNode(
       {required this.entry,
       required this.row,
       required this.lane,
-      required this.visibleParents});
+      required this.visibleParents,
+      this.isPreview = false});
 }
 
 class _GEdge {
@@ -92,7 +115,31 @@ class _LensMetric {
 
 // ── Graph builder ─────────────────────────────────────────────────────────────
 
-_GLayout _buildLayout(List<CommitHistoryEntry> entries) {
+_GLayout _buildLayout(
+  List<CommitHistoryEntry> entries, {
+  /// When non-null, lane assignment becomes a pure set-membership:
+  /// commits reachable from the repo's trunk (default branch) go on
+  /// lane 0; everything else goes on lane 1. This gives the current
+  /// branch's diverged commits their own visually-offset lane, so a
+  /// worktree on `feat/foo` reads as "this is the branch, that's the
+  /// trunk" instead of one flat line identical to main.
+  ///
+  /// When null, falls back to classic git-log multi-parent lane
+  /// tracking (works but produces a flat line for any linear-parent
+  /// history — which is what this override is here to correct).
+  Set<String>? trunkHashes,
+
+  /// Hovered-desk preview commits, folded into the layout AS NODES
+  /// (not as a separate overlay). They're flagged `isPreview = true`
+  /// and assigned lane 1 so they sit on the diverged-branch rail
+  /// alongside the regular off-trunk nodes. They occupy the FIRST
+  /// rows of the output (rows 0..M-1) because they're temporally
+  /// newer than HEAD — leftmost positions in this newest-on-the-left
+  /// timeline. The caller is responsible for trimming the oldest
+  /// real commits from [entries] to keep the visible budget constant
+  /// (so adding previews doesn't widen the rail).
+  List<CommitHistoryEntry> previewCommits = const [],
+}) {
   final visibleHashes = entries.map((e) => e.commitHash).toSet();
   final activeLanes = <String?>[];
   final hashToNode = <String, _GNode>{};
@@ -117,20 +164,64 @@ _GLayout _buildLayout(List<CommitHistoryEntry> entries) {
   }
 
   final nodes = <_GNode>[];
-  for (int row = 0; row < entries.length; row++) {
-    final entry = entries[row];
-    int lane = activeLanes.indexWhere((h) => h == entry.commitHash);
-    if (lane < 0) lane = reserveLane(entry.commitHash);
-    activeLanes[lane] = null;
+
+  // Preview nodes occupy rows 0..M-1 — they're newer than HEAD, so
+  // newest-on-the-left places them first. Lane 1 puts them on the
+  // diverged-branch rail above the trunk. visibleHashes is the SET
+  // of every entry that will appear in the layout (preview + real),
+  // so a preview commit's parent edge can land on the merge-base
+  // (a lane-0 real node) — drawn through the same edge-paint loop
+  // as everything else, no special-casing.
+  for (int i = 0; i < previewCommits.length; i++) {
+    final entry = previewCommits[i];
+    final visibleParents = entry.parentHashes
+        .where((h) => visibleHashes.contains(h))
+        .toList();
+    final node = _GNode(
+      entry: entry,
+      row: i,
+      lane: 1,
+      visibleParents: visibleParents,
+      isPreview: true,
+    );
+    nodes.add(node);
+    hashToNode[entry.commitHash] = node;
+    laneCount = max(laneCount, 2);
+  }
+
+  final realRowOffset = previewCommits.length;
+  for (int i = 0; i < entries.length; i++) {
+    final row = realRowOffset + i;
+    final entry = entries[i];
+    int lane;
+    if (trunkHashes != null) {
+      // Trunk-aware path: every commit reachable from the trunk
+      // branch tip lives on lane 0 (the baseline rail); anything not
+      // reachable from trunk — i.e. the diverged tip of our current
+      // branch — sits on lane 1. The painter already offsets lane N
+      // by laneStep, so the visual fork appears for free at the
+      // merge-base where the first diverged commit's parent edge
+      // crosses from lane 1 back down to lane 0.
+      lane = trunkHashes.contains(entry.commitHash) ? 0 : 1;
+    } else {
+      lane = activeLanes.indexWhere((h) => h == entry.commitHash);
+      if (lane < 0) lane = reserveLane(entry.commitHash);
+      activeLanes[lane] = null;
+    }
 
     final parents =
         entry.parentHashes.where((h) => visibleHashes.contains(h)).toList();
-    if (parents.isNotEmpty) reserveLane(parents[0], preferred: lane);
-    for (int p = 1; p < parents.length; p++) reserveLane(parents[p]);
+    if (trunkHashes == null) {
+      if (parents.isNotEmpty) reserveLane(parents[0], preferred: lane);
+      for (int p = 1; p < parents.length; p++) reserveLane(parents[p]);
 
-    while (activeLanes.isNotEmpty && activeLanes.last == null)
-      activeLanes.removeLast();
-    laneCount = max(laneCount, max(lane + 1, activeLanes.length));
+      while (activeLanes.isNotEmpty && activeLanes.last == null) {
+        activeLanes.removeLast();
+      }
+      laneCount = max(laneCount, max(lane + 1, activeLanes.length));
+    } else {
+      laneCount = max(laneCount, lane + 1);
+    }
 
     final node =
         _GNode(entry: entry, row: row, lane: lane, visibleParents: parents);
@@ -291,6 +382,19 @@ class _TimelinePainter extends CustomPainter {
   /// the gray→colored transition feel like a fill instead of a flip.
   final Animation<double> churnIntro;
 
+  /// Hovered-desk preview commits. Painted as an ADDITIVE overlay on
+  /// lane 1, ABOVE the main rail's lane 0 — they never enter the
+  /// main layout pass so adding/removing them doesn't perturb the
+  /// existing nodes' x-positions. Empty list = no overlay.
+  final List<CommitHistoryEntry> previewCommits;
+
+  /// 0→1 controller for the preview overlay's populate-in. Each
+  /// preview node fades + scales in based on a per-index window
+  /// derived from this single value, so a chip hover triggers a
+  /// staggered cascade across the overlay without per-node
+  /// AnimationControllers.
+  final Animation<double> previewIntro;
+
   _TimelinePainter({
     required this.layout,
     required this.baseXs,
@@ -306,9 +410,15 @@ class _TimelinePainter extends CustomPainter {
     required this.netRatio,
     required this.targetColors,
     required this.churnIntro,
+    required this.previewCommits,
+    required this.previewIntro,
   }) : super(
-          repaint: Listenable.merge(
-              [hoveredHashListenable, hoverXListenable, churnIntro]),
+          repaint: Listenable.merge([
+            hoveredHashListenable,
+            hoverXListenable,
+            churnIntro,
+            previewIntro,
+          ]),
         );
 
   String? get hoveredHash => hoveredHashListenable.value;
@@ -369,12 +479,25 @@ class _TimelinePainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
     final edgePath = Path();
+    // Hoisted preview-stagger constants — used to fade in the edge
+    // that lands at a preview node alongside the node itself, so the
+    // edge geometry doesn't pop into existence before the node it
+    // points at has even started its entrance animation. Edges where
+    // both endpoints are real nodes don't pay anything for this —
+    // the alpha lerp is gated on `from.isPreview`.
+    final previewIntroT2 = previewIntro.value;
+    final previewStaggerN =
+        previewCommits.length <= 20 ? previewCommits.length : 20;
+    final previewSlide2 =
+        previewStaggerN > 0 ? 1.0 / previewStaggerN : 1.0;
+
     for (final edge in layout.edges) {
       final fromIdx = hashToIndex[edge.from];
       final toIdx = hashToIndex[edge.to];
       if (fromIdx == null || toIdx == null) continue;
       final from = metrics[fromIdx];
       final to = metrics[toIdx];
+      final fromNode = layout.nodes[fromIdx];
 
       final dx = to.x - from.x;
       final dy = to.y - from.y;
@@ -401,8 +524,37 @@ class _TimelinePainter extends CustomPainter {
         final ctrlX = startX + (endX - startX) * 0.48;
         edgePath.cubicTo(ctrlX, startY, ctrlX, endY, endX, endY);
       }
-      canvas.drawPath(
-          edgePath, isMainline ? mainlineEdgePaint : branchEdgePaint);
+      // Steady-state: just draw with the canonical paint. Preview
+      // edges allocate a per-frame Paint for the alpha lerp, but only
+      // during the populate-in window — once `previewIntroT2` rests
+      // at 1.0 the paint is identical to `branchEdgePaint` and we
+      // could skip the alloc; the cost is negligible at the rare
+      // hover-active rate so kept simple.
+      Paint paint = isMainline ? mainlineEdgePaint : branchEdgePaint;
+      if (fromNode.isPreview && previewIntroT2 < 1.0) {
+        final previewIdx = fromNode.row;
+        final clampedIdx = previewIdx < previewStaggerN
+            ? previewIdx
+            : previewStaggerN - 1;
+        // Match the node-stagger inversion: the OLDEST preview's
+        // edge lights up first, the TIP's last, so the chain reads
+        // as growing from the merge base outward to the tip.
+        final invertedIdx = previewStaggerN - 1 - clampedIdx;
+        final nodeStart = invertedIdx * previewSlide2;
+        var localT =
+            ((previewIntroT2 - nodeStart) / previewSlide2).clamp(0.0, 1.0);
+        localT = 1 - pow(1 - localT, 3).toDouble();
+        if (localT <= 0) continue;
+        paint = Paint()
+          ..color = (isMainline
+                  ? tokens.chromeAccent.withValues(alpha: 0.45)
+                  : tokens.textNormal.withValues(alpha: 0.28))
+              .withValues(alpha: (isMainline ? 0.45 : 0.28) * localT)
+          ..strokeWidth = paint.strokeWidth
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round;
+      }
+      canvas.drawPath(edgePath, paint);
     }
 
     // Selected/hovered get z-priority (drawn last → on top). Skip the
@@ -442,12 +594,125 @@ class _TimelinePainter extends CustomPainter {
     final introAtRest = introValue >= 1.0;
     final introAtStart = introValue <= 0.0;
 
+    // Preview-stagger setup. Single shared controller drives the
+    // populate-in across every preview node — each one carves out a
+    // window from `previewIntro` based on its preview-index. When no
+    // preview nodes exist (the steady state) the loop below pays
+    // nothing for this — the per-node check is `if (node.isPreview)`
+    // and the stagger math only runs inside that branch.
+    final previewIntroT = previewIntro.value;
+    final previewHaloPaint = Paint()..style = PaintingStyle.fill;
+    final previewCorePaint = Paint()..style = PaintingStyle.fill;
+    // Preview nodes occupy rows 0..M-1; their row IS the preview
+    // index. Capped at 20 to bound stagger length on deep dives; past
+    // that the windows overlap so the tail still lands within the
+    // controller's duration.
+    final previewStaggerCount =
+        previewCommits.length <= 20 ? previewCommits.length : 20;
+    final previewSlide = previewStaggerCount > 0
+        ? 1.0 / previewStaggerCount
+        : 1.0;
+    // Build a hash → node lookup so we can chase a preview's parent
+    // chain back to its first NON-preview ancestor (the real merge
+    // base on main). Every preview emerges from that single point
+    // instead of from its immediate preview-parent — otherwise a
+    // chain of N previews ripples in the wrong direction (each
+    // anchoring to the previous preview's *final* position rather
+    // than the merge base).
+    final hasAnyPreview = previewCommits.isNotEmpty;
+    final Map<String, _GNode>? nodeByHash = hasAnyPreview
+        ? {for (final n in layout.nodes) n.entry.commitHash: n}
+        : null;
+
     for (final node in drawOrder) {
       final hash = node.entry.commitHash;
       final idx = hashToIndex[hash];
       if (idx == null) continue;
       final m = metrics[idx];
       final isSelected = hash == selectedHash;
+
+      // Preview branch — same node-loop entry, distinct visual
+      // language. The node EMERGES from the parent commit it'll
+      // eventually attach to, sliding outward to its final lane along
+      // an ease-out cubic. No regular churn-color logic (preview
+      // commits aren't in the churn map yet — their detail isn't
+      // fetched at hover time).
+      if (node.isPreview) {
+        final previewIdx = node.row;
+        final clampedIdx = previewIdx < previewStaggerCount
+            ? previewIdx
+            : previewStaggerCount - 1;
+        // Invert the stagger so the OLDEST preview (the one whose
+        // parent is on main) emerges first, and the TIP last. With
+        // the natural order, row 0 = TIP fires first and slides the
+        // entire chain length out from main — reading as "the tip
+        // is what's being added," not "the chain is growing from
+        // main outward." Reversing makes each new preview appear
+        // immediately past the previous one's resting place, so the
+        // visual is a chain extruding from the merge base.
+        final invertedIdx = previewStaggerCount - 1 - clampedIdx;
+        final nodeStart = invertedIdx * previewSlide;
+        var localT =
+            ((previewIntroT - nodeStart) / previewSlide).clamp(0.0, 1.0);
+        // Ease-out cubic for the populate feel — fast start, soft
+        // landing.
+        localT = 1 - pow(1 - localT, 3).toDouble();
+        if (localT <= 0) continue;
+
+        // Anchor the emergence to the merge base — the FIRST non-
+        // preview ancestor reachable up the parent chain. A 5-commit
+        // desk has previews [tip, …, oldest], each whose parent is
+        // the next-older preview; only the oldest's parent is a real
+        // commit on main. By walking past sibling previews we make
+        // every preview animate out from main directly, instead of
+        // each one chaining off its sibling's final position (which
+        // looks like the chain growing toward main rather than away
+        // from it). Falls back to the final position when the chain
+        // dead-ends off-screen (the lens has it scrolled out).
+        Offset anchor = Offset(m.x, m.y);
+        var walk = node;
+        // Bound the walk by previewCommits.length — pathological
+        // cycles (which shouldn't exist in a DAG, but defence in
+        // depth) can't loop the loop forever.
+        for (var hop = 0; hop < previewCommits.length + 1; hop++) {
+          String? pHash;
+          for (final h in walk.visibleParents) {
+            pHash = h;
+            break;
+          }
+          if (pHash == null) break;
+          final pIdx = hashToIndex[pHash];
+          if (pIdx == null) break;
+          final pNode = nodeByHash?[pHash];
+          if (pNode == null || !pNode.isPreview) {
+            // Real ancestor reached — anchor here and stop.
+            final pm = metrics[pIdx];
+            anchor = Offset(pm.x, pm.y);
+            break;
+          }
+          // Sibling preview — keep walking.
+          walk = pNode;
+        }
+        final center = Offset(
+          anchor.dx + (m.x - anchor.dx) * localT,
+          anchor.dy + (m.y - anchor.dy) * localT,
+        );
+
+        // Slightly larger than regular nodes so previews POP visually.
+        final basePreviewR = _kNodeRadius * m.scale * 1.35;
+        // Halo: a soft accent disk that contracts as the node lands.
+        previewHaloPaint.color = tokens.accentBright
+            .withValues(alpha: 0.30 * localT * (1 - localT * 0.5));
+        canvas.drawCircle(
+            center, basePreviewR * (2.4 - 1.2 * localT), previewHaloPaint);
+        // Core: scales 0.6→1.0, opacity 0→1, accent-green to read
+        // as "incoming work".
+        previewCorePaint.color =
+            tokens.stateAdded.withValues(alpha: 0.95 * localT);
+        canvas.drawCircle(
+            center, basePreviewR * (0.6 + 0.4 * localT), previewCorePaint);
+        continue;
+      }
 
       final churn = churnNorm[hash] ?? 0.0;
       final r = _kNodeRadius * m.scale * (1.0 + churn * 0.5);
@@ -500,7 +765,8 @@ class _TimelinePainter extends CustomPainter {
       old.layout != layout ||
       old.baseXs != baseXs ||
       old.churnNorm != churnNorm ||
-      old.netRatio != netRatio;
+      old.netRatio != netRatio ||
+      old.previewCommits.length != previewCommits.length;
 }
 
 // ── Timeline strip ────────────────────────────────────────────────────────────
@@ -518,6 +784,21 @@ class _TimelineStrip extends StatefulWidget {
   /// "cache changed" signal at `didUpdateWidget` time.
   final int detailCacheVersion;
 
+  /// Hashes reachable from the repo's default branch. When non-empty,
+  /// the timeline splits into two lanes: commits in this set go on
+  /// lane 0 (the trunk rail), commits not in it go on lane 1 (the
+  /// diverged branch). Empty set = fall back to classic single-lane
+  /// layout (same as before this feature existed).
+  final Set<String> trunkHashes;
+
+  /// Hovered-desk preview commits, prepended to [commits] when
+  /// non-empty. These render with a short staggered crossfade so
+  /// the timeline reads as "populating in" the desk's contribution
+  /// while the chip is hovered. Off-trunk by construction (they're
+  /// not reachable from HEAD), so they land on lane 1 via the
+  /// existing trunk-aware assignment.
+  final List<CommitHistoryEntry> previewCommits;
+
   const _TimelineStrip({
     required this.commits,
     required this.selectedHash,
@@ -525,6 +806,8 @@ class _TimelineStrip extends StatefulWidget {
     required this.tokens,
     required this.detailCache,
     required this.detailCacheVersion,
+    this.trunkHashes = const {},
+    this.previewCommits = const [],
   });
 
   @override
@@ -532,7 +815,7 @@ class _TimelineStrip extends StatefulWidget {
 }
 
 class _TimelineStripState extends State<_TimelineStrip>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   // Pointer state held in ValueNotifiers — painter repaints via the
   // `repaint:` parameter on CustomPainter, bypassing widget rebuild
   // entirely. Was calling setState on every onPointerMove (60+/sec
@@ -569,6 +852,15 @@ class _TimelineStripState extends State<_TimelineStrip>
     duration: const Duration(milliseconds: 320),
   );
 
+  /// 0 → 1 controller driving the preview-overlay populate-in.
+  /// Slower than the churn intro because it's the centerpiece of the
+  /// hover gesture — the user is meant to *watch* it land. Stagger
+  /// per-node is computed inside the painter from this single value.
+  late final AnimationController _previewIntroCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+  );
+
   static String _signatureOf(List<CommitHistoryEntry> commits) {
     if (commits.isEmpty) return '';
     return '${commits.length}|${commits.first.commitHash}|${commits.last.commitHash}';
@@ -579,12 +871,36 @@ class _TimelineStripState extends State<_TimelineStrip>
     _hoverXNotifier.dispose();
     _hoveredHashNotifier.dispose();
     _churnIntroCtrl.dispose();
+    _previewIntroCtrl.dispose();
     super.dispose();
   }
 
   void _rebuildLayout() {
-    _layout = _buildLayout(widget.commits);
-    _percents = _computePercents(widget.commits);
+    // Real + preview commits go through ONE layout pass AND one
+    // percentile pipeline — unified node list, unified x-projection.
+    // To keep the visible budget constant (so adding previews doesn't
+    // widen the rail or shrink node spacing), we trim the oldest real
+    // commits off the end — the count of dropped reals matches the
+    // number of incoming previews. Vertical stability comes from
+    // `_kReservedLaneCount`, not from horizontal spacers.
+    final previewCount = widget.previewCommits.length;
+    final budget = widget.commits.length;
+    final trimmedReals = previewCount >= budget
+        ? const <CommitHistoryEntry>[]
+        : widget.commits.sublist(0, budget - previewCount);
+    _layout = _buildLayout(
+      trimmedReals,
+      // Only engage the trunk-aware lane path when we actually have
+      // trunk data AND at least one of our visible commits is off
+      // trunk. If every on-screen commit is an ancestor of main,
+      // there's no fork to show and lane 0 everywhere is correct —
+      // classic single-lane layout reads exactly the same.
+      trunkHashes: widget.trunkHashes.isEmpty ? null : widget.trunkHashes,
+      previewCommits: widget.previewCommits,
+    );
+    _percents = _computePercents(
+      [...widget.previewCommits, ...trimmedReals],
+    );
     _layoutSignature = _signatureOf(widget.commits);
     _rebuildChurnMaps();
   }
@@ -615,16 +931,36 @@ class _TimelineStripState extends State<_TimelineStrip>
   void didUpdateWidget(_TimelineStrip old) {
     super.didUpdateWidget(old);
     final newSig = _signatureOf(widget.commits);
-    if (_signatureOf(old.commits) != newSig) {
-      // Content changed (length OR first/last hash). Force full rebuild;
-      // _rebuildLayout also rebuilds churn maps so colors stay synced
-      // with the new commit set.
+    final trunkChanged = old.trunkHashes.length != widget.trunkHashes.length;
+    // Match the real-commit signature exactly: length + tip + tail. The
+    // tail check catches the case where a non-tip preview commit was
+    // amended (hash changed) but length and tip stayed the same — that
+    // mutation must invalidate `_layout` or the timeline renders stale.
+    final previewChanged =
+        _signatureOf(old.previewCommits) != _signatureOf(widget.previewCommits);
+    if (_signatureOf(old.commits) != newSig ||
+        trunkChanged ||
+        previewChanged) {
+      // Content changed: real commits, trunk set, or preview set.
+      // Previews ARE part of layout now (folded in as nodes with
+      // isPreview=true) so a swap or count change re-runs the layout
+      // pass — but only the preview-node tail of `nodes` and the
+      // appended `baseXs` change; real nodes' positions are stable.
       _layout = null;
     } else if (old.detailCacheVersion != widget.detailCacheVersion) {
       // Commits unchanged but cache mutated. The map is shared by
       // reference and mutated in place, so length/identity won't
       // change — only the parent-bumped version counter detects this.
       _rebuildChurnMaps();
+    }
+    // Preview set appeared, disappeared, or swapped → kick the
+    // populate-in animation. The single shared controller drives the
+    // per-node stagger window inside the painter.
+    if (previewChanged) {
+      _previewIntroCtrl.reset();
+      if (widget.previewCommits.isNotEmpty) {
+        _previewIntroCtrl.forward();
+      }
     }
   }
 
@@ -653,12 +989,21 @@ class _TimelineStripState extends State<_TimelineStrip>
 
     return LayoutBuilder(builder: (ctx, constraints) {
       final width = max(constraints.maxWidth, 64.0);
-      final laneCount = _layout!.laneCount;
+      // Always allocate for at least `_kReservedLaneCount` lanes of
+      // vertical space — this is what makes the strip's height stable
+      // when a preview hover adds lane 1. Empty lanes cost nothing;
+      // they just sit as dark surface.
+      final laneCount = max(_layout!.laneCount, _kReservedLaneCount);
       final height = max(_kMinLaneH, laneCount * 14.0 + 18.0);
       final laneStep =
           (height - _kVertInset * 2) / max(laneCount.toDouble(), 1);
       final totalHeight = height + _kVertInset * 2;
 
+      // Unified x-projection: preview + real nodes share one
+      // percentile pipeline (computed in `_rebuildLayout`). Horizontal
+      // budget stays constant because the caller trims the oldest
+      // real commits to match the incoming preview count — the rail's
+      // total node density is invariant under hover.
       final baseXs = _projectXs(
         _layout!.nodes.length,
         width,
@@ -722,6 +1067,8 @@ class _TimelineStripState extends State<_TimelineStrip>
                     netRatio: _netRatio,
                     targetColors: _churnTargetColors,
                     churnIntro: _churnIntroCtrl,
+                    previewCommits: widget.previewCommits,
+                    previewIntro: _previewIntroCtrl,
                   ),
                   size: Size(width, totalHeight),
                 ),
@@ -967,7 +1314,20 @@ class HistoryPage extends StatefulWidget {
   final String? initialCommitHash;
   final VoidCallback? onOpenXray;
 
-  const HistoryPage({super.key, this.initialCommitHash, this.onOpenXray});
+  /// Asks the workspace shell to navigate to the Changes page. Used by
+  /// the in-flight desk ghost rows at the top of the commit list — a
+  /// click there should land the user IN the work (the Changes panel of
+  /// the desk they jumped to), not just on its History view. Optional
+  /// — when null, the ghost rows just switch the active worktree and
+  /// leave the user wherever they were.
+  final VoidCallback? onOpenChanges;
+
+  const HistoryPage({
+    super.key,
+    this.initialCommitHash,
+    this.onOpenXray,
+    this.onOpenChanges,
+  });
 
   @override
   State<HistoryPage> createState() => _HistoryPageState();
@@ -1001,6 +1361,21 @@ class _HistoryPageState extends State<HistoryPage> {
   /// "cache changed" signal the timeline uses to refresh churn colors.
   int _detailCacheVersion = 0;
 
+  /// Sidecar of structural fingerprints, keyed identically to
+  /// `_detailCache`. Each entry is ~132 bytes (Float32List(25) +
+  /// Uint32List(8)). Computed lazily on first detail render and
+  /// retained as long as the detail itself; cleared with the cache
+  /// when the repo / window changes.
+  final Map<String, CommitSignature> _signatureCache = {};
+
+  /// Per-file lifecycle classification (promotion × decay) derived
+  /// from the active engine's stats. Recomputed when the engine
+  /// rebuilds (HEAD movement, new repo). Cheap — one O(N log N) pass
+  /// over the file universe; pinned on the engine's lifetime.
+  Map<String, FileLifecycle>? _fileLifecycles;
+  String? _fileLifecyclesForRepo;
+  int? _fileLifecyclesForCommitCount;
+
   /// Auto-derived tag profile for the currently-loaded history window.
   /// Rebuilt in a background isolate whenever the commit set or detail
   /// cache materially grows (debounced — see [_scheduleTagProfileRebuild]).
@@ -1029,6 +1404,32 @@ class _HistoryPageState extends State<HistoryPage> {
   bool get _isRebaseMode => _rebaseRangeEndIndex != null;
 
   String? _lastRepo;
+
+  /// Hashes reachable from the repo's default branch tip (main /
+  /// master / whatever origin/HEAD points at). Passed into the top
+  /// timeline's `_buildLayout` so commits that are shared with trunk
+  /// render on lane 0 and commits diverged on the current branch
+  /// render on lane 1 — the visual "we forked here" that's missing
+  /// when the painter sees only a linear parent chain.
+  ///
+  /// Empty when we couldn't determine the default branch (detached,
+  /// no origin, fresh repo) — the timeline falls back to classic
+  /// single-lane rendering. Re-populated whenever [_load] runs.
+  Set<String> _trunkHashes = const {};
+
+  /// Currently-hovered desk path from the IN FLIGHT strip, or null
+  /// when nothing's hovered. When set, the commit list and timeline
+  /// "populate in" that desk's diverged commits with a staggered
+  /// fade — live triage by geometry, the user sees what landing the
+  /// hovered desk would add without leaving their current view.
+  String? _previewDeskPath;
+  /// Cached preview commit lists keyed by desk path. The fetch is
+  /// `git log <desk-branch> ^HEAD` so we get exactly the diverged set.
+  /// Cleared on _load (repo switch invalidation).
+  final Map<String, List<CommitHistoryEntry>> _previewCommitsCache = {};
+  /// In-flight fetch guard so a quick mouse-trail across chips doesn't
+  /// fire duplicate `git log` for the same desk.
+  final Set<String> _previewLoadingDesks = <String>{};
 
   @override
   void initState() {
@@ -1127,16 +1528,43 @@ class _HistoryPageState extends State<HistoryPage> {
     });
   }
 
+  /// Best-effort trunk ancestor lookup. Resolves the repo's default
+  /// branch and grabs its reachable-commit set, matched to the same
+  /// history depth the timeline renders so membership checks are
+  /// honest (a smaller limit would drop some of the on-screen commits
+  /// out of "trunk" even when they are ancestors — just deeper ones).
+  /// Any failure is silent — returns an empty set and the timeline
+  /// falls back to classic single-lane layout, same as for repos
+  /// without a recognizable default branch.
+  Future<Set<String>> _resolveTrunkHashes(String repo) async {
+    final branch = await defaultBranchName(repo);
+    if (!branch.ok || branch.data == null || branch.data!.isEmpty) {
+      return const <String>{};
+    }
+    final r = await ancestorHashes(repo, branch.data!, limit: _historyLimit);
+    if (!r.ok || r.data == null) return const <String>{};
+    return r.data!;
+  }
+
   Future<void> _load(String repo) async {
     final stopwatch = Stopwatch()..start();
     setState(() {
       _loading = true;
       _error = null;
     });
-    final r = await listCommitHistory(repo, limit: _historyLimit);
+    // Fire the commit-history load and the trunk-ancestor lookup in
+    // parallel. Trunk is only needed by the top timeline for lane
+    // assignment — the commit list renders without it — so if the
+    // lookup fails we just fall through to single-lane rendering
+    // without blocking the main load.
+    final historyFuture = listCommitHistory(repo, limit: _historyLimit);
+    final trunkFuture = _resolveTrunkHashes(repo);
+    final r = await historyFuture;
+    final trunk = await trunkFuture;
     if (!mounted) return;
     setState(() {
       _loading = false;
+      _trunkHashes = trunk;
       if (r.ok) {
         _commits = r.data!;
       } else {
@@ -1204,6 +1632,39 @@ class _HistoryPageState extends State<HistoryPage> {
       _commitDiffError = null;
       _commitDiffLoading = false;
     });
+  }
+
+  /// Lazy structural fingerprint per commit. Computed once per
+  /// (repo + commit hash) and retained for the session — same diff
+  /// always produces the same signature, so a cache hit is the
+  /// common case once the user has scrolled the history.
+  CommitSignature _signatureFor(CommitDetailData d) {
+    final cached = _signatureCache[d.commitHash];
+    if (cached != null) return cached;
+    final fresh = computeCommitSignature(d);
+    _signatureCache[d.commitHash] = fresh;
+    return fresh;
+  }
+
+  /// Lazy per-file lifecycle map. Recomputed only when the engine
+  /// itself rebuilds (HEAD movement on the active repo, repo switch).
+  /// `engineFor(repoPath)` is the pre-warmed cache; the lifecycle
+  /// classifier is one O(N log N) sweep on top.
+  Map<String, FileLifecycle>? _lifecyclesFor(String repoPath) {
+    final engine =
+        context.read<LogosGitState>().engineFor(repoPath);
+    if (engine == null) return null;
+    final commitCount = engine.stats.totalCommits;
+    if (_fileLifecycles != null &&
+        _fileLifecyclesForRepo == repoPath &&
+        _fileLifecyclesForCommitCount == commitCount) {
+      return _fileLifecycles;
+    }
+    final fresh = classifyFileLifecycles(engine);
+    _fileLifecycles = fresh;
+    _fileLifecyclesForRepo = repoPath;
+    _fileLifecyclesForCommitCount = commitCount;
+    return fresh;
   }
 
   Future<void> _loadDetail(String repo, String hash) async {
@@ -1303,6 +1764,104 @@ class _HistoryPageState extends State<HistoryPage> {
     if (addedCount > 0) _scheduleTagProfileRebuild(repo);
   }
 
+  /// Right-click on a commit row → cherry-pick / revert. Both land as
+  /// uncommitted changes on the current branch so the user can review
+  /// before committing (git's default behaviour). Conflicts surface
+  /// via the stderr bubbled into a snackbar; the user resolves in
+  /// the Changes panel.
+  void _showCommitContextMenu(
+    BuildContext ctx,
+    Offset globalPos,
+    CommitHistoryEntry commit,
+    String repoPath,
+  ) {
+    // Template the active branch into both labels. Naming the
+    // destination (and using "changes" instead of "this") does the
+    // teaching work that a tooltip would otherwise have to: the user
+    // sees at a glance that ONLY the commit's diff moves, and WHERE
+    // it lands. Falls back to "current branch" when status hasn't
+    // loaded yet (e.g. on first paint) — still parseable.
+    final branch =
+        context.read<RepositoryState>().status?.branch ?? 'current branch';
+    final items = <AppContextMenuItem>[
+      AppContextMenuItem(
+        icon: Icons.content_paste_go,
+        label: "Apply commit's changes onto $branch",
+        onTap: () => _cherryPick(repoPath, commit.commitHash),
+      ),
+      AppContextMenuItem(
+        icon: Icons.undo,
+        label: "Revert commit's changes on $branch",
+        onTap: () => _revert(repoPath, commit.commitHash),
+      ),
+    ];
+    showAppContextMenu(ctx, globalPos, [items]);
+  }
+
+  Future<void> _cherryPick(String repoPath, String hash) async {
+    final r = await cherryPickCommit(repoPath, hash);
+    if (!mounted) return;
+    if (!r.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Cherry-pick failed: ${r.error}")),
+      );
+      return;
+    }
+    final short = hash.length >= 8 ? hash.substring(0, 8) : hash;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Cherry-picked $short")),
+    );
+    await context.read<RepositoryState>().refreshStatus();
+  }
+
+  Future<void> _revert(String repoPath, String hash) async {
+    final r = await revertCommit(repoPath, hash);
+    if (!mounted) return;
+    if (!r.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Revert failed: ${r.error}")),
+      );
+      return;
+    }
+    final short = hash.length >= 8 ? hash.substring(0, 8) : hash;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Reverted $short")),
+    );
+    await _load(repoPath);
+  }
+
+  /// Fired when the user hovers (or unhovers) an IN FLIGHT chip. Sets
+  /// the preview path so the list + timeline render the desk's
+  /// diverged commits with a staggered fade-in. Cache miss kicks an
+  /// async fetch — the preview just stays empty until results land,
+  /// then the populate animation runs as the data arrives.
+  void _onPreviewDeskHover(String repoPath, String? deskPath, String branch) {
+    if (deskPath == _previewDeskPath) return;
+    setState(() => _previewDeskPath = deskPath);
+    if (deskPath == null) return;
+    if (_previewCommitsCache.containsKey(deskPath)) return;
+    if (_previewLoadingDesks.contains(deskPath)) return;
+    _previewLoadingDesks.add(deskPath);
+    unawaited(() async {
+      // `git log <branch> ^HEAD` — diverged set in branch order
+      // (newest first). Same shape as our normal commit list so the
+      // existing _CommitRow + timeline layout consume it without
+      // special-casing.
+      final r = await listCommitsAhead(
+        repoPath,
+        branch: branch,
+        excluding: 'HEAD',
+        limit: _historyLimit,
+      );
+      if (!mounted) return;
+      _previewLoadingDesks.remove(deskPath);
+      if (!r.ok) return;
+      setState(() {
+        _previewCommitsCache[deskPath] = r.data!;
+      });
+    }());
+  }
+
   Future<void> _loadReflog(String repo) async {
     if (_reflogLoaded) return;
     final r = await listReflog(repo);
@@ -1382,6 +1941,21 @@ class _HistoryPageState extends State<HistoryPage> {
       _reflogLoaded = false;
       _detail = null;
       _selectedHash = null;
+      // Commit detail is keyed by (repo?, hash) internally — but the
+      // cache isn't qualified by repo, so without an explicit clear a
+      // hash that existed in the outgoing repo could briefly paint
+      // detail from THAT repo's commit into the incoming repo's view.
+      // Clear the cache alongside the selection so nothing stale can
+      // leak across the repo-switch boundary.
+      _detailCache.clear();
+      _detailCacheVersion++;
+      // Preview commits fetched against the OLD repo's HEAD have no
+      // meaning here — drop them so a chip hover after the switch
+      // re-fetches against the new repo's HEAD instead of replaying
+      // a stale list.
+      _previewCommitsCache.clear();
+      _previewLoadingDesks.clear();
+      _previewDeskPath = null;
       WidgetsBinding.instance.addPostFrameCallback((_) => _load(repoPath));
     }
 
@@ -1425,14 +1999,6 @@ class _HistoryPageState extends State<HistoryPage> {
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.05)),
-          if (widget.onOpenXray != null) ...[
-            const SizedBox(width: 10),
-            _HistoryMiniButton(
-              label: 'Repo X-Ray',
-              icon: 'search',
-              onTap: widget.onOpenXray!,
-            ),
-          ],
           const Spacer(),
           Row(children: [
             Text('Viewing last',
@@ -1472,6 +2038,10 @@ class _HistoryPageState extends State<HistoryPage> {
           tokens: t,
           detailCache: _detailCache,
           detailCacheVersion: _detailCacheVersion,
+          trunkHashes: _trunkHashes,
+          previewCommits: _previewDeskPath == null
+              ? const []
+              : (_previewCommitsCache[_previewDeskPath] ?? const []),
         ),
 
       // ── Main content ─────────────────────────────────────────────────
@@ -1486,17 +2056,71 @@ class _HistoryPageState extends State<HistoryPage> {
             ),
             elevated: false,
             width: 280,
-            child: NotificationListener<ScrollEndNotification>(
-              onNotification: (n) {
-                if (n.metrics.extentAfter < 200) _loadReflog(repoPath);
-                return false;
-              },
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                itemCount:
-                    _commits.length + (_reflogLoaded ? _reflog.length + 1 : 1),
-                itemBuilder: (ctx, i) {
-                  if (i < _commits.length) {
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── In-flight desks strip ──────────────────────────────
+                // Other desks with commits ahead of THEIR own upstream
+                // surface here as ghost rows. Click → switch to that
+                // desk + drop the user on its Changes panel (where the
+                // "in-flight work" lives). Mirrors the symmetric strip
+                // in the Changes page so the language is consistent
+                // across surfaces. Hidden when no other desk has
+                // unpushed work — no chrome with nothing to say.
+                _DesksInFlightStrip(
+                  tokens: t,
+                  activeRepoPath: repoPath,
+                  onJumpToDesk: (deskPath) async {
+                    await context
+                        .read<RepositoryState>()
+                        .setActivePath(deskPath, addToRecents: false);
+                    if (!mounted) return;
+                    widget.onOpenChanges?.call();
+                  },
+                  onPreviewHover: (deskPath, branch) =>
+                      _onPreviewDeskHover(repoPath, deskPath, branch),
+                ),
+                Expanded(
+                  child: NotificationListener<ScrollEndNotification>(
+                    onNotification: (n) {
+                      if (n.metrics.extentAfter < 200) _loadReflog(repoPath);
+                      return false;
+                    },
+                    child: Builder(builder: (ctx) {
+                      // Hovered-desk preview prefix. When the user is
+                      // hovering an IN FLIGHT chip and its commits
+                      // have resolved, prepend them — each row fades
+                      // in with a row-index-staggered delay so the
+                      // sequence reads as "landing one at a time"
+                      // rather than a single snap-in.
+                      final preview = _previewDeskPath == null
+                          ? const <CommitHistoryEntry>[]
+                          : (_previewCommitsCache[_previewDeskPath] ??
+                              const <CommitHistoryEntry>[]);
+                      final previewCount = preview.length;
+                      return ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: previewCount + _commits.length +
+                            (_reflogLoaded ? _reflog.length + 1 : 1),
+                        itemBuilder: (ctx, rawIndex) {
+                          // Preview rows at the top. Each gets its own
+                          // staggered animation so the list populates
+                          // in sequence. Stagger budget is bounded —
+                          // cap total animation to ~1.2s even when the
+                          // desk has many commits, so very wide dives
+                          // still complete promptly.
+                          if (rawIndex < previewCount) {
+                            return _PreviewCommitRow(
+                              key: ValueKey(
+                                  'prev:${_previewDeskPath}:${preview[rawIndex].commitHash}'),
+                              commit: preview[rawIndex],
+                              tokens: t,
+                              indexInPreview: rawIndex,
+                              totalPreview: previewCount,
+                            );
+                        }
+                        final i = rawIndex - previewCount;
+                        if (i < _commits.length) {
                     final commit = _commits[i];
                     final isSelected = commit.commitHash == _selectedHash;
                     final inRange =
@@ -1515,6 +2139,8 @@ class _HistoryPageState extends State<HistoryPage> {
                           .read<LogosGitState>()
                           .engineFor(repoPath),
                       onTap: (shift) => _onCommitTap(i, shift),
+                      onSecondaryTap: (pos) => _showCommitContextMenu(
+                          context, pos, _commits[i], repoPath),
                     );
                   }
                   if (i == _commits.length) {
@@ -1545,7 +2171,11 @@ class _HistoryPageState extends State<HistoryPage> {
                   }
                   return const SizedBox.shrink();
                 },
-              ),
+              );
+                    }),
+            ),
+                ),
+              ],
             ),
           ),
 
@@ -1626,6 +2256,8 @@ class _HistoryPageState extends State<HistoryPage> {
                                   repoPath, _detail!.commitHash, path),
                               onOpenAllFiles: () => _openCommitAllDiff(
                                   repoPath, _detail!.commitHash),
+                              signature: _signatureFor(_detail!),
+                              lifecycles: _lifecyclesFor(repoPath),
                             ),
                               ),
                             )
@@ -1668,6 +2300,7 @@ class _CommitRow extends StatefulWidget {
   /// in preference to the raw Jaccard fallback.
   final LogosGit? logosEngine;
   final void Function(bool shift) onTap;
+  final ValueChanged<Offset>? onSecondaryTap;
   const _CommitRow({
     required this.commit,
     required this.tokens,
@@ -1678,6 +2311,7 @@ class _CommitRow extends StatefulWidget {
     required this.couplingMatrix,
     required this.logosEngine,
     required this.onTap,
+    this.onSecondaryTap,
   });
   @override
   State<_CommitRow> createState() => _CommitRowState();
@@ -1739,6 +2373,9 @@ class _CommitRowState extends State<_CommitRow> {
                   .contains(LogicalKeyboardKey.shiftRight);
           widget.onTap(shift);
         },
+        onSecondaryTapDown: widget.onSecondaryTap == null
+            ? null
+            : (d) => widget.onSecondaryTap!(d.globalPosition),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
           padding: const EdgeInsets.fromLTRB(0, 10, 12, 10),
@@ -2045,6 +2682,8 @@ class _CommitDetail extends StatelessWidget {
   final VoidCallback onCreateTag;
   final ValueChanged<String> onOpenFile;
   final VoidCallback onOpenAllFiles;
+  final CommitSignature? signature;
+  final Map<String, FileLifecycle>? lifecycles;
 
   const _CommitDetail({
     super.key,
@@ -2060,6 +2699,8 @@ class _CommitDetail extends StatelessWidget {
     required this.onCreateTag,
     required this.onOpenFile,
     required this.onOpenAllFiles,
+    this.signature,
+    this.lifecycles,
   });
 
   static String _formatDate(String iso) {
@@ -2087,13 +2728,17 @@ class _CommitDetail extends StatelessWidget {
       // commit so the panel reads as a swap, not a teleport. Trades off
       // resonanceText's markdown styling since commit subjects are
       // overwhelmingly plain prose.
-      ThemeMorphText(
-        d.subject,
-        style: TextStyle(
-            color: t.textStrong,
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-            height: 1.35),
+      CommitLede(
+        detail: d,
+        repoPath: repoPath,
+        tokens: t,
+        signature: signature,
+        subjectStyle: TextStyle(
+          color: t.textStrong,
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+          height: 1.35,
+        ),
       ),
 
       const SizedBox(height: 14),
@@ -2241,6 +2886,18 @@ class _CommitDetail extends StatelessWidget {
 
       const SizedBox(height: 20),
       Row(children: [
+        // The structural sigil sits at the head of the stat row as a
+        // static glyph — purely decorative-informative, NOT an
+        // affordance. The chips beside it carry the click semantics.
+        if (signature != null) ...[
+          IgnorePointer(
+            child: CommitSigil(
+              fingerprint: signature!.fingerprint,
+              tokens: t,
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
         // Tapping any of these chips opens the entire commit's diff
         // (multi-file) in the existing DiffShell. The "39 files" chip
         // and the +/- chips all act as the same affordance — wherever
@@ -2269,6 +2926,7 @@ class _CommitDetail extends StatelessWidget {
         repoPath: repoPath,
         onOpenFile: onOpenFile,
         onOpenAllFiles: onOpenAllFiles,
+        lifecycles: lifecycles,
       ),
     ]);
   }
@@ -2288,6 +2946,8 @@ class _CommitDetailTransition extends StatelessWidget {
   final VoidCallback onCreateTag;
   final ValueChanged<String> onOpenFile;
   final VoidCallback onOpenAllFiles;
+  final CommitSignature? signature;
+  final Map<String, FileLifecycle>? lifecycles;
 
   const _CommitDetailTransition({
     required this.detail,
@@ -2303,6 +2963,8 @@ class _CommitDetailTransition extends StatelessWidget {
     required this.onCreateTag,
     required this.onOpenFile,
     required this.onOpenAllFiles,
+    this.signature,
+    this.lifecycles,
   });
 
   @override
@@ -2331,6 +2993,8 @@ class _CommitDetailTransition extends StatelessWidget {
             onCreateTag: onCreateTag,
             onOpenFile: onOpenFile,
             onOpenAllFiles: onOpenAllFiles,
+            signature: signature,
+            lifecycles: lifecycles,
           ),
         ),
         Positioned(
@@ -2796,6 +3460,329 @@ class _RebaseBtnState extends State<_RebaseBtn> {
                         fontWeight: FontWeight.w600)),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Sticky strip above the commit list surfacing other desks with
+/// commits ahead of their upstream — i.e. work-in-flight that isn't
+/// visible from the active worktree's history. Each ghost row is one
+/// click away from "drop me into that desk's Changes panel" so the
+/// strip closes the symmetric gap with the Changes-page strip that
+/// already lists the same set.
+///
+/// Watches WorktreeState so when a desk gains / loses ahead commits
+/// (commit, push, fetch) the strip re-renders without a manual
+/// refresh. Returns SizedBox.shrink when no other desk is ahead — no
+/// chrome with nothing to say.
+class _DesksInFlightStrip extends StatelessWidget {
+  final AppTokens tokens;
+  final String activeRepoPath;
+  final ValueChanged<String> onJumpToDesk;
+  /// Hover-preview signal. Fires `(deskPath, branch)` when the cursor
+  /// enters a chip; fires `(null, '')` when it leaves. The page uses
+  /// it to populate its commit list + timeline with the desk's
+  /// diverged commits in real time. Optional — when null the chips
+  /// are click-only and behave like the original IN FLIGHT strip.
+  final void Function(String? deskPath, String branch)? onPreviewHover;
+
+  const _DesksInFlightStrip({
+    required this.tokens,
+    required this.activeRepoPath,
+    required this.onJumpToDesk,
+    this.onPreviewHover,
+  });
+
+  String _normalize(String p) => p.replaceAll('\\', '/').toLowerCase();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final worktreeState = context.watch<WorktreeState>();
+    final activeNorm = _normalize(activeRepoPath);
+    // Other desks with at least one commit ahead of their upstream.
+    // Behind-only desks are excluded — "in flight" means there's
+    // outgoing work to surface, not just a stale local copy of remote
+    // history. Same convention the Changes-page strip uses.
+    final inFlight = <(WorktreeData, int)>[];
+    for (final d in worktreeState.desks) {
+      if (_normalize(d.path) == activeNorm) continue;
+      final activity = worktreeState.activityFor(d.path);
+      final ahead = activity?.ahead ?? 0;
+      if (ahead > 0) inFlight.add((d, ahead));
+    }
+    if (inFlight.isEmpty) return const SizedBox.shrink();
+    inFlight.sort((a, b) => b.$2.compareTo(a.$2));
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
+      decoration: BoxDecoration(
+        color: t.accentBright.withValues(alpha: 0.04),
+        border: Border(
+          bottom:
+              BorderSide(color: t.chromeBorder.withValues(alpha: 0.12)),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            'IN FLIGHT',
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.85),
+              fontSize: 8.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.4,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SizedBox(
+              height: 22,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: inFlight.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (ctx, i) {
+                  final (desk, ahead) = inFlight[i];
+                  final label = desk.branch ??
+                      (desk.isDetached
+                          ? desk.head.substring(
+                              0, desk.head.length < 7 ? desk.head.length : 7)
+                          : 'desk');
+                  return _InFlightDeskChip(
+                    tokens: t,
+                    label: label,
+                    ahead: ahead,
+                    onTap: () => onJumpToDesk(desk.path),
+                    onHoverChange: (hovering) =>
+                        onPreviewHover?.call(
+                            hovering ? desk.path : null,
+                            hovering ? (desk.branch ?? '') : ''),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Single ghost row in the IN FLIGHT strip. Compact pill, branch name
+/// + ahead count + a tiny up-arrow glyph. Hover lifts to accent so
+/// the click affordance is obvious.
+class _InFlightDeskChip extends StatefulWidget {
+  final AppTokens tokens;
+  final String label;
+  final int ahead;
+  final VoidCallback onTap;
+  final ValueChanged<bool>? onHoverChange;
+  const _InFlightDeskChip({
+    required this.tokens,
+    required this.label,
+    required this.ahead,
+    required this.onTap,
+    this.onHoverChange,
+  });
+  @override
+  State<_InFlightDeskChip> createState() => _InFlightDeskChipState();
+}
+
+class _InFlightDeskChipState extends State<_InFlightDeskChip> {
+  bool _hovered = false;
+
+  @override
+  void dispose() {
+    // If we're disposed mid-hover (chip removed because the desk
+    // pushed and is no longer in the in-flight set), tell the parent
+    // to drop the preview — otherwise the preview commits stay onscreen
+    // even though the chip that triggered them is gone.
+    if (_hovered) widget.onHoverChange?.call(false);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) {
+        setState(() => _hovered = true);
+        widget.onHoverChange?.call(true);
+      },
+      onExit: (_) {
+        setState(() => _hovered = false);
+        widget.onHoverChange?.call(false);
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 90),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? t.accentBright.withValues(alpha: 0.10)
+                : t.surface1,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+              color: _hovered
+                  ? t.accentBright.withValues(alpha: 0.5)
+                  : t.chromeBorder.withValues(alpha: 0.3),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                widget.label,
+                style: TextStyle(
+                  color: _hovered ? t.textStrong : t.textNormal,
+                  fontSize: 10.5,
+                  fontFamily: 'JetBrainsMono',
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '↑${widget.ahead}',
+                style: TextStyle(
+                  color: t.stateAdded,
+                  fontSize: 10,
+                  fontFamily: 'JetBrainsMono',
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Ghost-style row used when an IN FLIGHT chip is hovered. Mirrors a
+/// real _CommitRow's information density at a glance (short hash,
+/// subject) but renders with an accent-washed background + a leading
+/// "↑" glyph to read as "arriving from elsewhere" rather than
+/// "already on this branch". Each row's opacity + subtle translate-in
+/// is driven by a delay proportional to its preview index, so the
+/// sequence populates in rather than snap-appearing.
+///
+/// Not clickable in v1 — the preview is read-only. The IN FLIGHT
+/// chip above is the action surface; these rows just show what
+/// clicking would bring.
+class _PreviewCommitRow extends StatefulWidget {
+  final CommitHistoryEntry commit;
+  final AppTokens tokens;
+  final int indexInPreview;
+  final int totalPreview;
+  const _PreviewCommitRow({
+    super.key,
+    required this.commit,
+    required this.tokens,
+    required this.indexInPreview,
+    required this.totalPreview,
+  });
+  @override
+  State<_PreviewCommitRow> createState() => _PreviewCommitRowState();
+}
+
+class _PreviewCommitRowState extends State<_PreviewCommitRow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ac;
+  @override
+  void initState() {
+    super.initState();
+    // Per-row stagger: later rows start animating later so the
+    // sequence reads as populate-in. Total budget is capped at ~1.4s
+    // regardless of preview count — a desk with 80 commits would
+    // otherwise animate for over a minute. Beyond ~20 rows we collapse
+    // the stagger so the tail lands quickly while the head still
+    // reads visually.
+    const staggerBudget = Duration(milliseconds: 1400);
+    final staggerCount = widget.totalPreview <= 20
+        ? widget.totalPreview
+        : 20;
+    final perStep = staggerBudget ~/ staggerCount.clamp(1, 1 << 30);
+    final delay = perStep *
+        (widget.indexInPreview < staggerCount
+            ? widget.indexInPreview
+            : staggerCount);
+    _ac = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    );
+    Future<void>.delayed(delay, () {
+      if (!mounted) return;
+      _ac.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ac.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final c = widget.commit;
+    final shortHash = c.commitHash.length >= 8
+        ? c.commitHash.substring(0, 8)
+        : c.commitHash;
+    return FadeTransition(
+      opacity: _ac,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, -0.2),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(
+            parent: _ac, curve: Curves.easeOutCubic)),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+          decoration: BoxDecoration(
+            color: t.accentBright.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: t.accentBright.withValues(alpha: 0.25),
+              width: 0.8,
+            ),
+          ),
+          child: Row(
+            children: [
+              Text('↑',
+                  style: TextStyle(
+                      color: t.stateAdded,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      fontFamily: 'JetBrainsMono')),
+              const SizedBox(width: 6),
+              Text(shortHash,
+                  style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 10,
+                      fontFamily: 'JetBrainsMono')),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  c.subject,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: t.textNormal,
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic),
+                ),
+              ),
+            ],
           ),
         ),
       ),

@@ -29,6 +29,8 @@ class PreferencesState extends ChangeNotifier {
   CommitStructure _commitStructure = kDefaultCommitStructure;
   CommitVoice _commitVoice = kDefaultCommitVoice;
   CommitCoverage _commitCoverage = kDefaultCommitCoverage;
+  double _logosPadX = 0.5;
+  double _logosPadY = 0.5;
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
@@ -47,6 +49,8 @@ class PreferencesState extends ChangeNotifier {
   CommitStructure get commitStructure => _commitStructure;
   CommitVoice get commitVoice => _commitVoice;
   CommitCoverage get commitCoverage => _commitCoverage;
+  double get logosPadX => _logosPadX;
+  double get logosPadY => _logosPadY;
 
   Future<void> load() async {
     if (_loaded) {
@@ -68,6 +72,8 @@ class PreferencesState extends ChangeNotifier {
     _commitStructure = commitStructureFromKey(settings.commitStructure);
     _commitVoice = commitVoiceFromKey(settings.commitVoice);
     _commitCoverage = commitCoverageFromKey(settings.commitCoverage);
+    _logosPadX = settings.logosPadX;
+    _logosPadY = settings.logosPadY;
     _loaded = true;
     notifyListeners();
   }
@@ -90,6 +96,8 @@ class PreferencesState extends ChangeNotifier {
     String? commitStructure,
     String? commitVoice,
     String? commitCoverage,
+    double? logosPadX,
+    double? logosPadY,
   }) async {
     final s = await SettingsStore.load();
     await SettingsStore.persist(
@@ -108,8 +116,26 @@ class PreferencesState extends ChangeNotifier {
         commitStructure: commitStructure,
         commitVoice: commitVoice,
         commitCoverage: commitCoverage,
+        logosPadX: logosPadX,
+        logosPadY: logosPadY,
       ),
     );
+  }
+
+  /// Write the pad's XY position. Drag updates can fire many times per
+  /// second, so we coalesce writes: [notifyListeners] happens on every
+  /// call (the UI needs the re-render), but the persist is fire-and-
+  /// forget. The on-disk file is a small JSON blob so back-to-back
+  /// writes are cheap enough — a debouncer would add code without
+  /// visible benefit here.
+  Future<void> setLogosPad(double x, double y) async {
+    final cx = x.clamp(0.0, 1.0);
+    final cy = y.clamp(0.0, 1.0);
+    if (_logosPadX == cx && _logosPadY == cy) return;
+    _logosPadX = cx;
+    _logosPadY = cy;
+    notifyListeners();
+    await _persistWith(logosPadX: cx, logosPadY: cy);
   }
 
   Future<void> setReduceMotion(bool value) async {

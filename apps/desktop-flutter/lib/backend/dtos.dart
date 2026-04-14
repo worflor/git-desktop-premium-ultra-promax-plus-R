@@ -746,22 +746,21 @@ class AiMuseMove {
 
 /// Output of the three-phase muse pipeline.
 ///
-/// The muse posture differs from review: no score, no findings count.
-/// `intent` is the muse's read-back of what the change is reaching for.
-/// `drift` calls out hunks that don't serve the intent. `wiringBroken`
-/// surfaces deterministic call-site mismatches; `wiringMissing` surfaces
-/// coupled-but-untouched files. `ideaFlaws` challenges the conceptual
-/// premise. `trajectory` describes the cleanest landing.
+/// `intent` is the muse's read of what the change is reaching for.
+/// `resonances` names patterns elsewhere in the codebase the change
+/// rhymes with. `alternatives` proposes directions the change could
+/// take alongside or instead. `extensions` names places the codebase
+/// invites the work to grow into. `trajectory` sketches what the next
+/// 1–3 commits naturally look like.
 class AiMuseData {
   final String providerId;
   final String modelId;
   final String scopeLabel;
   final String intent;
   final String trajectory;
-  final List<AiMuseMove> drift;
-  final List<AiMuseMove> wiringBroken;
-  final List<AiMuseMove> wiringMissing;
-  final List<AiMuseMove> ideaFlaws;
+  final List<AiMuseMove> resonances;
+  final List<AiMuseMove> alternatives;
+  final List<AiMuseMove> extensions;
   final List<AiMuseIdea> brainstormIdeas;
   final int promptCharacters;
   final int diffCharacters;
@@ -776,10 +775,9 @@ class AiMuseData {
     required this.scopeLabel,
     required this.intent,
     required this.trajectory,
-    this.drift = const [],
-    this.wiringBroken = const [],
-    this.wiringMissing = const [],
-    this.ideaFlaws = const [],
+    this.resonances = const [],
+    this.alternatives = const [],
+    this.extensions = const [],
     this.brainstormIdeas = const [],
     required this.promptCharacters,
     required this.diffCharacters,

@@ -162,6 +162,49 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
   return result;
 }
 
+/// Slice a multi-file unified diff into per-file sections, keyed by the
+/// `b/`-side (post-change) path — the same convention [parseUnifiedDiff]
+/// uses for [ParsedLine.filePath], so slice keys match parsed-line
+/// `filePath` values exactly. Each value is the raw diff text belonging
+/// to that file, starting with its `diff --git ...` header and ending
+/// just before the next file's header (or the end of the input).
+///
+/// Mirrors [parseUnifiedDiff]'s header regex so the two stay in lockstep
+/// — any parser-side change to how paths are extracted must be mirrored
+/// here. Returns an empty map for empty input; files whose header can't
+/// be parsed are skipped (same degrade behaviour as the parser).
+///
+/// Used by surfaces that want to hand a RAW diff string to [DiffShell]
+/// for a single file out of a multi-file PR payload, without forcing
+/// the Shell to re-scan the full patch for every rebuild. Pair with
+/// [diffByFile] (parsed form) on the same detail object so callers can
+/// pick whichever representation they need.
+Map<String, String> sliceDiffByFile(String raw) {
+  if (raw.isEmpty) return const {};
+  final lines = raw.split('\n');
+  final result = <String, String>{};
+  final diffHeaderRe = RegExp(r'^diff --git a/(.+) b/(.+)$');
+  var sectionStart = -1;
+  String? currentPath;
+  void flush(int endExclusive) {
+    if (sectionStart < 0 || currentPath == null) return;
+    result[currentPath!] =
+        lines.sublist(sectionStart, endExclusive).join('\n');
+  }
+
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    if (line.startsWith('diff --git')) {
+      flush(i);
+      sectionStart = i;
+      final m = diffHeaderRe.firstMatch(line);
+      currentPath = m == null ? null : (m.group(2) ?? m.group(1));
+    }
+  }
+  flush(lines.length);
+  return result;
+}
+
 /// Returns the index of the paired add/delete line for an edit-in-place,
 /// or null if there is no pair. A pair is a deletion immediately followed
 /// by an addition (or vice-versa) within the same hunk — the standard

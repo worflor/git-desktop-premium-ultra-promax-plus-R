@@ -11,6 +11,8 @@ import 'app/repository_xray_state.dart';
 import 'app/file_coupling_state.dart';
 import 'app/logos_git_state.dart';
 import 'app/worktree_state.dart';
+import 'app/desk_pr_state.dart';
+import 'app/desk_issue_state.dart';
 import 'app/hyper_reactivity.dart';
 import 'app/brand_lockup.dart';
 import 'app/sidebar_rail.dart';
@@ -70,6 +72,8 @@ void main() async {
   final fileCouplingState = FileCouplingState();
   final logosGitState = LogosGitState();
   final worktreeState = WorktreeState(repoState);
+  final deskPrState = DeskPrState(repoState, appIdentityState);
+  final deskIssueState = DeskIssueState(repoState, appIdentityState);
 
   final preferencesState = PreferencesState();
   await preferencesState.load();
@@ -89,6 +93,8 @@ void main() async {
         ChangeNotifierProvider.value(value: fileCouplingState),
         ChangeNotifierProvider.value(value: logosGitState),
         ChangeNotifierProvider.value(value: worktreeState),
+        ChangeNotifierProvider.value(value: deskPrState),
+        ChangeNotifierProvider.value(value: deskIssueState),
         ChangeNotifierProvider.value(value: preferencesState),
         ChangeNotifierProvider.value(value: aiSettingsState),
         ChangeNotifierProvider.value(value: diagnosticsState),

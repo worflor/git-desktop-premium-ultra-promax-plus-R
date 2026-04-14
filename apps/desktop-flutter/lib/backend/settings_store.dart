@@ -34,6 +34,12 @@ class AppSettingsSnapshot {
   final String commitStructure; // 'title_body' | 'title_only' | 'freeform'
   final String commitVoice;     // 'verb_led' | 'descriptive' | 'narrative'
   final String commitCoverage;  // 'essentials' | 'balanced' | 'everything'
+  /// Logos XY pad — the 2D puck that describes how the user conceives
+  /// "related". X ∈ [0,1] is FOLDER (0) ↔ HISTORY (1); Y ∈ [0,1] is
+  /// FAR (0) ↔ NEAR (1). Defaults to 0.5/0.5 = balanced, matching the
+  /// information-theoretic default weights inside Logos itself.
+  final double logosPadX;
+  final double logosPadY;
   /// User-customizable short name for the app, set during onboarding.
   /// The full identity is reconstructed from this single field.
   final String appShortName;
@@ -64,6 +70,8 @@ class AppSettingsSnapshot {
     required this.commitStructure,
     required this.commitVoice,
     required this.commitCoverage,
+    required this.logosPadX,
+    required this.logosPadY,
     required this.appShortName,
     required this.onboardingComplete,
   });
@@ -91,6 +99,8 @@ class AppSettingsSnapshot {
         'commitStructure': commitStructure,
         'commitVoice': commitVoice,
         'commitCoverage': commitCoverage,
+        'logosPadX': logosPadX,
+        'logosPadY': logosPadY,
         'appShortName': appShortName,
         'onboardingComplete': onboardingComplete,
       };
@@ -118,6 +128,8 @@ class AppSettingsSnapshot {
         commitStructure: 'title_body',
         commitVoice: 'verb_led',
         commitCoverage: 'balanced',
+        logosPadX: 0.5,
+        logosPadY: 0.5,
         appShortName: 'Manifold',
         onboardingComplete: false,
       );
@@ -219,6 +231,14 @@ class AppSettingsSnapshot {
           defaults.commitCoverage,
         ),
       ),
+      logosPadX: SettingsStore._doubleOr(
+        json['logosPadX'],
+        defaults.logosPadX,
+      ).clamp(0.0, 1.0),
+      logosPadY: SettingsStore._doubleOr(
+        json['logosPadY'],
+        defaults.logosPadY,
+      ).clamp(0.0, 1.0),
       appShortName: SettingsStore._normalizeAppShortName(
         SettingsStore._stringOr(json['appShortName'], defaults.appShortName),
       ),
@@ -252,6 +272,8 @@ class AppSettingsSnapshot {
     String? commitStructure,
     String? commitVoice,
     String? commitCoverage,
+    double? logosPadX,
+    double? logosPadY,
     String? appShortName,
     bool? onboardingComplete,
   }) {
@@ -284,6 +306,8 @@ class AppSettingsSnapshot {
       commitStructure: commitStructure ?? this.commitStructure,
       commitVoice: commitVoice ?? this.commitVoice,
       commitCoverage: commitCoverage ?? this.commitCoverage,
+      logosPadX: logosPadX ?? this.logosPadX,
+      logosPadY: logosPadY ?? this.logosPadY,
       appShortName: appShortName ?? this.appShortName,
       onboardingComplete: onboardingComplete ?? this.onboardingComplete,
     );

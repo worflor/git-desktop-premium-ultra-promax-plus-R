@@ -994,33 +994,43 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
     picked.add(path);
   }
 
-  final hotspotFutures = <Future<RepositoryXrayHotspotData>>[
+  // Each `_enrichHotspot` spawns 2 `git log` subprocesses. With ~40
+  // file candidates + 16 directory candidates, an eager `Future.wait`
+  // would fire ~112 `git log` processes simultaneously — on Windows
+  // that's catastrophic (each ~20–50ms to spawn, plus .git disk
+  // contention), turning individual log calls from ~50ms into ~1.5s.
+  // Route through [_runBounded] so only [_xraySubprocessConcurrency]
+  // enrichments are in flight at a time. Result order is preserved.
+  final hotspotTasks = <Future<RepositoryXrayHotspotData> Function()>[
     for (final path in picked)
-      _enrichHotspot(
-        path,
-        'file',
-        pathTouches[path] ?? 0,
-        includeMachineHistory,
-        probe,
-        keystoneScores[path],
-        keystoneFlags.contains(path),
-        coupling[path] ?? const [],
-        pathAliveMass[path] ?? (pathTouches[path] ?? 0).toDouble(),
-      ),
+      () => _enrichHotspot(
+            path,
+            'file',
+            pathTouches[path] ?? 0,
+            includeMachineHistory,
+            probe,
+            keystoneScores[path],
+            keystoneFlags.contains(path),
+            coupling[path] ?? const [],
+            pathAliveMass[path] ?? (pathTouches[path] ?? 0).toDouble(),
+          ),
     for (final entry in dirs.take(_mapDirHotspotCandidateCap))
-      _enrichHotspot(
-        entry.key,
-        'directory',
-        entry.value,
-        includeMachineHistory,
-        probe,
-        null,
-        false,
-        const [],
-        pathAliveMass[entry.key] ?? entry.value.toDouble(),
-      ),
+      () => _enrichHotspot(
+            entry.key,
+            'directory',
+            entry.value,
+            includeMachineHistory,
+            probe,
+            null,
+            false,
+            const [],
+            pathAliveMass[entry.key] ?? entry.value.toDouble(),
+          ),
   ];
-  final hotspots = await Future.wait(hotspotFutures);
+  final hotspots = await _runBounded(
+    hotspotTasks,
+    maxConcurrent: _xraySubprocessConcurrency,
+  );
   // Sort: keystones group at the top (they're the noteworthy shape),
   // then remaining by raw touch count. Within each group, touch count
   // tie-breaks so the ordering stays stable and familiar.
@@ -1142,7 +1152,10 @@ Future<List<RepositoryXrayStratumData>> _buildStrata(
   Map<String, double> dirAliveMass,
 ) async {
   final entries = dirTouches.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-  return Future.wait(
+  // 12 strata × 2 `git log` each = 24 subprocess spawns. Funnel through
+  // the same concurrency cap as hotspots so strata + hotspots together
+  // stay under the shared subprocess budget.
+  return _runBounded<RepositoryXrayStratumData>(
     [
       for (final entry in entries.take(_mapStratumCandidateCap))
         () async {
@@ -1178,9 +1191,52 @@ Future<List<RepositoryXrayStratumData>> _buildStrata(
             summary: 'Touched ${entry.value} times in filtered history.',
             aliveMass: dirAliveMass[entry.key] ?? entry.value.toDouble(),
           );
-        }(),
+        },
     ],
+    maxConcurrent: _xraySubprocessConcurrency,
   );
+}
+
+/// Maximum number of in-flight subprocess enrichments during an xray
+/// snapshot. The xray fires 2 `git log` processes per enriched file
+/// or directory and can enrich ~56 total (40 files + 16 dirs), plus
+/// 12 strata — an eager Future.wait would spawn 136 processes at
+/// once. On Windows each spawn costs ~20–50ms and fights the .git
+/// object store for I/O, so an unbounded wave stalls individual logs
+/// from their native ~50ms into the 1.5s range observed in telemetry.
+/// 6 in-flight matches the branches-page PR prefetch budget
+/// (`_bounded` there uses 4–6) and keeps spawn + disk pressure within
+/// what a single git repo can absorb.
+const int _xraySubprocessConcurrency = 6;
+
+/// Run [tasks] with at most [maxConcurrent] in flight at a time,
+/// preserving input order in the returned list. Factory-closure input
+/// is essential — a pre-built `List<Future<T>>` would have *already*
+/// started every future by the time it reaches us. Errors propagate;
+/// the caller decides whether to swallow or surface them. Mirrors
+/// `_bounded<T>` in branches_page.dart but without the silent
+/// error-swallowing (xray reports failures upstream).
+Future<List<T>> _runBounded<T>(
+  List<Future<T> Function()> tasks, {
+  required int maxConcurrent,
+}) async {
+  if (tasks.isEmpty) return const [];
+  final results = List<T?>.filled(tasks.length, null);
+  var next = 0;
+  Future<void> worker() async {
+    while (true) {
+      final idx = next++;
+      if (idx >= tasks.length) return;
+      results[idx] = await tasks[idx]();
+    }
+  }
+
+  final workers = List.generate(
+    math.min(maxConcurrent, tasks.length),
+    (_) => worker(),
+  );
+  await Future.wait(workers);
+  return results.cast<T>();
 }
 
 List<RepositoryXrayPivotCommitData> _buildPivotCommits(List<_ShortstatRecord> records) {

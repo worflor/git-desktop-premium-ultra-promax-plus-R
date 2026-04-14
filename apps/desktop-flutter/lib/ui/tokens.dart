@@ -1220,8 +1220,21 @@ final _tokens = <AppThemeId, AppTokens>{
                   //                  aesthetic and matches every chromeBorder
                   //                  in the theme. Cyan/magenta chromatic
                   //                  edges now wrap a true inked silhouette.
-      0xFF6B9F3D, // 45 hypercubePositive — pulled green
-      0xFFE63946, // 46 hypercubeNegative — spot red
+      0xFFC9272E, // 45 hypercubePositive — Marvel newsprint hero red.
+                  //                       Eyedropped from the Spider-Man
+                  //                       chest on Amazing Fantasy #15
+                  //                       and Cap's stripes on Tales of
+                  //                       Suspense. Muted by absorbent
+                  //                       newsprint, NOT modern-screen
+                  //                       saturated — sits on the cream
+                  //                       paper bg without screaming.
+      0xFF2A4A98, // 46 hypercubeNegative — Marvel newsprint hero blue.
+                  //                       Spider-Man's web-suit blue,
+                  //                       Cap's field, Reed Richards'
+                  //                       uniform — same plate, same era.
+                  //                       Slightly purple-tinted from
+                  //                       the magenta bleed printers
+                  //                       got on absorbent stock.
       0xFF8A7E68, // 47 textFaint
       0xFF8A7E68, // 48 scrollbarHover
       0xFFF8F1D6, // 49 secondaryBtnBg
@@ -1306,8 +1319,13 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF00FF66, // 42 hyperChromatic1 — phosphor green
       0xFFFFB000, // 43 hyperChromatic2 — amber
       0xFF7CFF99, // 44 hyperCore       — light phosphor (logo glow)
-      0xFF77FF44, // 45 hypercubePositive — lime
-      0xFFFF3344, // 46 hypercubeNegative — red
+      0xFF77FF44, // 45 hypercubePositive — P1 lime phosphor
+                  //                       (primary CRT emission)
+      0xFFFFB000, // 46 hypercubeNegative — P3 amber phosphor
+                  //                       (the other commercial CRT
+                  //                       coating; same accent the
+                  //                       theme already uses across
+                  //                       focus rings + accentBright)
       0xFF005522, // 47 textFaint
       0xFF00DD55, // 48 scrollbarHover
       0xFF03100A, // 49 secondaryBtnBg

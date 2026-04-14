@@ -23,6 +23,7 @@
 // stitched without a redundant header so the output reads as code, not
 // confetti.
 
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -456,6 +457,36 @@ class TouchedLineRange {
 /// in. Adjacent admitted chunks are stitched without a redundant header
 /// so the output reads as a continuous excerpt.
 ///
+/// Async variant — runs the entire pack on a background isolate so a
+/// large file's chunk graph + 3-temperature recombination never hitches
+/// the UI on diff open. The function is pure data in / data out (no
+/// engine reference, no file IO), so the isolate hop is cheap.
+Future<ChunkPackResult> packRelevantChunksAsync({
+  required String filePath,
+  required String content,
+  required List<TouchedLineRange> touchedRanges,
+  required int budgetChars,
+}) async {
+  // Trivially small inputs — skip the isolate's serialisation cost.
+  if (budgetChars <= 0 || content.isEmpty || content.length < 4096) {
+    return packRelevantChunks(
+      filePath: filePath,
+      content: content,
+      touchedRanges: touchedRanges,
+      budgetChars: budgetChars,
+    );
+  }
+  return Isolate.run<ChunkPackResult>(
+    () => packRelevantChunks(
+      filePath: filePath,
+      content: content,
+      touchedRanges: touchedRanges,
+      budgetChars: budgetChars,
+    ),
+    debugName: 'packRelevantChunks',
+  );
+}
+
 /// Returns an empty body if budget is too small to fit any chunk.
 ChunkPackResult packRelevantChunks({
   required String filePath,

@@ -1010,6 +1010,16 @@ class _SettingsPageState extends State<SettingsPage> {
                       .setInstantBlameHover(value));
                 },
               ),
+              const SizedBox(height: 16),
+              _LogosDynamicsStage(
+                padX: preferences.logosPadX,
+                padY: preferences.logosPadY,
+                onChanged: (x, y) {
+                  unawaited(context
+                      .read<PreferencesState>()
+                      .setLogosPad(x, y));
+                },
+              ),
               const _SettingsGap(),
               Row(
                 children: [
@@ -3332,6 +3342,1032 @@ class _SettingsGap extends StatelessWidget {
             stops: const [0.0, 0.15, 0.85, 1.0],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ── Logos dynamics stage ────────────────────────────────────────────────────
+//
+// An instrument, not a form. The pad IS the preview: file-nodes live inside
+// the grid at their natural (attribute) positions; the puck is a gravity
+// source; relevance is spatial distance. As the user drags, nearby nodes
+// brighten, grow, and reveal their names; distant ones fade into the
+// field. Four corners carry pictograms (folder-stack / hub-and-spoke /
+// cluster / pulse) — the labels are the shapes themselves. Ambient halo
+// pulse + drag trail + quadrant whisper round out the tactile feel.
+
+class _LogosDynamicsStage extends StatelessWidget {
+  final double padX;
+  final double padY;
+  final void Function(double x, double y) onChanged;
+
+  const _LogosDynamicsStage({
+    required this.padX,
+    required this.padY,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (ctx, c) {
+      // Layout: pad takes available width minus the grip column.
+      // Grip is fixed ~128px so its content reads at the same size
+      // regardless of how wide the settings panel is.
+      const gripW = 128.0;
+      const gap = 12.0;
+      final totalW = c.maxWidth.clamp(420.0, 720.0).toDouble();
+      final padW = (totalW - gripW - gap).clamp(280.0, 600.0).toDouble();
+      final padH = (padW / 1.7).clamp(220.0, 360.0).toDouble();
+      // Row height = max(padH, gripIntrinsicH). IntrinsicHeight makes the
+      // row stretch to whichever child wants more vertical space, so the
+      // grip's fixed-typography column is never clipped at narrow widths
+      // (where the pad's aspect-ratio height would otherwise win and
+      // overflow the grip's content). The pad keeps its preferred height
+      // via the inner SizedBox; the grip reports its natural Column
+      // height as its intrinsic.
+      return SizedBox(
+        width: totalW,
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: padW,
+                height: padH,
+                child: _LogosPad(
+                  x: padX,
+                  y: padY,
+                  onChanged: onChanged,
+                ),
+              ),
+              const SizedBox(width: gap),
+              const SizedBox(
+                width: gripW,
+                child: _LogosGrip(),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+}
+
+class _LogosPad extends StatefulWidget {
+  final double x;
+  final double y;
+  final void Function(double x, double y) onChanged;
+
+  const _LogosPad({
+    required this.x,
+    required this.y,
+    required this.onChanged,
+  });
+
+  @override
+  State<_LogosPad> createState() => _LogosPadState();
+}
+
+/// A single waypoint on the puck's recent trail. Fade is computed from
+/// age at paint time rather than stored — avoids drifting over long
+/// idle periods.
+class _TrailDot {
+  final double x;
+  final double y;
+  final DateTime at;
+  _TrailDot(this.x, this.y, this.at);
+}
+
+class _LogosPadState extends State<_LogosPad>
+    with SingleTickerProviderStateMixin {
+  // Ambient pulse driving the puck halo and a faint field shimmer.
+  // 2.6s period — slow enough to feel like a living surface, fast
+  // enough that a glance catches the motion.
+  late final AnimationController _ambient;
+
+  // Recent puck positions. New entries append on every emit; old ones
+  // prune each paint. Capped so extreme drag storms don't blow memory.
+  final List<_TrailDot> _trail = [];
+  static const int _kTrailMax = 18;
+  static const Duration _kTrailFade = Duration(milliseconds: 520);
+
+  bool _hovered = false;
+
+  // Parallax — normalized -1..1 from pad center based on cursor
+  // position. _target is set by hover; _current eases toward it on
+  // every frame so a fast cursor exit settles back to neutral over
+  // ~6 ticks, and re-entry feels physically resisted (not snappy).
+  Offset _targetParallax = Offset.zero;
+  Offset _currentParallax = Offset.zero;
+
+  // Scroll parallax — additive Y offset based on where the pad sits
+  // inside its ancestor scrollable. Recomputed on every scroll
+  // notification; -1..1 normalized (pad above viewport center → +y;
+  // below → -y; combined this makes the deeper layers "lag behind"
+  // foreground as you scroll past, selling depth.
+  ScrollPosition? _scrollPos;
+  double _scrollParallaxY = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _ambient = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    )..repeat();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final found = Scrollable.maybeOf(context)?.position;
+    if (!identical(found, _scrollPos)) {
+      _scrollPos?.removeListener(_onScroll);
+      _scrollPos = found;
+      _scrollPos?.addListener(_onScroll);
+      // First sample after layout settles.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+    }
+  }
+
+  void _onScroll() {
+    if (!mounted) return;
+    final scroll = _scrollPos;
+    if (scroll == null) return;
+    final scrollableContext = Scrollable.maybeOf(context)?.context;
+    final scrollBox = scrollableContext?.findRenderObject() as RenderBox?;
+    final myBox = context.findRenderObject() as RenderBox?;
+    if (scrollBox == null || myBox == null) return;
+    final myCenter = myBox.localToGlobal(
+      Offset(myBox.size.width / 2, myBox.size.height / 2),
+      ancestor: scrollBox,
+    );
+    final viewportH = scrollBox.size.height;
+    // -1 when pad center sits at top edge, +1 at bottom edge of the
+    // viewport. Clamped so values past the visible window saturate
+    // rather than spiraling out.
+    final norm = ((myCenter.dy / viewportH) - 0.5) * 2;
+    final clamped = norm.clamp(-1.0, 1.0);
+    if ((clamped - _scrollParallaxY).abs() > 0.001) {
+      setState(() => _scrollParallaxY = clamped);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollPos?.removeListener(_onScroll);
+    _ambient.dispose();
+    super.dispose();
+  }
+
+  // Snap radius around dead-center. Inside: cursor input is attenuated
+  // by smoothstep so the puck gracefully docks at (0.5, 0.5). Outside:
+  // no effect — full precision for users who want a non-default value.
+  // 4.5% of pad width is roughly an 18px radius on a 400px pad: small
+  // enough to disappear during deliberate dragging, big enough to
+  // catch a "I just want defaults back" gesture.
+  static const double _kSnapRadius = 0.045;
+
+  void _emit(Offset pos, double w, double h) {
+    var nx = (pos.dx / w).clamp(0.0, 1.0);
+    var ny = (pos.dy / h).clamp(0.0, 1.0);
+    final dx = nx - 0.5;
+    final dy = ny - 0.5;
+    final dist = math.sqrt(dx * dx + dy * dy);
+    if (dist < _kSnapRadius) {
+      // Smoothstep gain: 0 at center → 1 at radius. Cursor still
+      // moves the puck inside the zone, just with shrinking gain so
+      // it converges on (0.5, 0.5) as you approach the middle.
+      final t = dist / _kSnapRadius;
+      final gain = t * t * (3 - 2 * t);
+      nx = 0.5 + dx * gain;
+      ny = 0.5 + dy * gain;
+    }
+    _trail.add(_TrailDot(nx, ny, DateTime.now()));
+    if (_trail.length > _kTrailMax) {
+      _trail.removeRange(0, _trail.length - _kTrailMax);
+    }
+    widget.onChanged(nx, ny);
+  }
+
+  void _onHover(Offset pos, double w, double h) {
+    _targetParallax = Offset(
+      ((pos.dx / w) - 0.5) * 2,
+      ((pos.dy / h) - 0.5) * 2,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return LayoutBuilder(builder: (ctx, c) {
+      final w = c.maxWidth;
+      final h = c.maxHeight;
+      return MouseRegion(
+        cursor: SystemMouseCursors.precise,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) {
+          _targetParallax = Offset.zero;
+          setState(() => _hovered = false);
+        },
+        onHover: (e) => _onHover(e.localPosition, w, h),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanUpdate: (d) {
+            _onHover(d.localPosition, w, h);
+            _emit(d.localPosition, w, h);
+          },
+          onPanStart: (d) {
+            _onHover(d.localPosition, w, h);
+            _emit(d.localPosition, w, h);
+          },
+          onTapDown: (d) {
+            _onHover(d.localPosition, w, h);
+            _emit(d.localPosition, w, h);
+          },
+          child: AnimatedBuilder(
+            animation: _ambient,
+            builder: (_, __) {
+              // Prune trail to live window. Done in build so it also
+              // tightens while idle (no emits → old dots still drop off).
+              final now = DateTime.now();
+              _trail.removeWhere(
+                (d) => now.difference(d.at) > _kTrailFade,
+              );
+              // Critically-damped exponential ease toward target. With
+              // an ambient frame rate of ~60fps this settles in ~150ms.
+              const easing = 0.18;
+              _currentParallax = Offset(
+                _currentParallax.dx +
+                    (_targetParallax.dx - _currentParallax.dx) * easing,
+                _currentParallax.dy +
+                    (_targetParallax.dy - _currentParallax.dy) * easing,
+              );
+              // Combine hover parallax (full strength) with scroll
+              // parallax (gentler — multiplied down so a fast scroll
+              // doesn't overwhelm the surface). Scroll only affects Y.
+              final combined = Offset(
+                _currentParallax.dx,
+                _currentParallax.dy + _scrollParallaxY * 0.55,
+              );
+              return CustomPaint(
+                painter: _LogosPadPainter(
+                  x: widget.x,
+                  y: widget.y,
+                  hovered: _hovered,
+                  ambient: _ambient.value,
+                  parallax: combined,
+                  trail: _trail,
+                  now: now,
+                  tokens: t,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    });
+  }
+}
+
+/// A point in the pad representing one conceptual file. Base (bx, by)
+/// is its natural address — derived offline from "how folder-dominant
+/// vs history-dominant is it" and "how local vs central." Puck
+/// distance to base IS the live relevance. Paths are illustrative —
+/// the pad is a teaching surface, not a live query against the repo.
+class _LogosNode {
+  final String path;
+  final double bx;
+  final double by;
+  const _LogosNode(this.path, this.bx, this.by);
+}
+
+// Real paths from this app, anchored on the recent Logos-pad work
+// session as the implicit "source." That makes every label honest —
+// these files actually exist; their position on the pad reflects the
+// kind of relatedness each archetype emphasises:
+//
+//   • folder×far: whole module trees we've been touching
+//   • history×far: files git sees move with almost everything (hubs)
+//   • folder×near: siblings of logos_git.dart inside backend/
+//   • history×near: this exact dev session's co-change cluster
+//
+// No stub paths, no "auth/" cosplay. The pad demonstrates the engine
+// using the engine's own neighborhood.
+const List<_LogosNode> _kLogosNodes = [
+  // Folder × Far — directory roots, the architecture-level view.
+  _LogosNode('backend/', 0.12, 0.16),
+  _LogosNode('features/', 0.26, 0.10),
+  _LogosNode('ui/', 0.08, 0.30),
+  _LogosNode('app/', 0.30, 0.26),
+  // History × Far — repo-wide hubs git keeps revisiting.
+  _LogosNode('app/main.dart', 0.84, 0.14),
+  _LogosNode('app/repository_state.dart', 0.74, 0.24),
+  _LogosNode('ui/tokens.dart', 0.92, 0.28),
+  // Folder × Near — siblings of logos_git.dart in backend/.
+  _LogosNode('backend/logos_core.dart', 0.10, 0.78),
+  _LogosNode('backend/logos_chunks.dart', 0.22, 0.86),
+  _LogosNode('backend/logos_hunks.dart', 0.30, 0.72),
+  _LogosNode('backend/logos_git_stats.dart', 0.06, 0.66),
+  // History × Near — what moved alongside the pad work itself.
+  _LogosNode('features/settings/settings_page.dart', 0.86, 0.84),
+  _LogosNode('app/preferences_state.dart', 0.72, 0.74),
+  _LogosNode('backend/settings_store.dart', 0.92, 0.68),
+];
+
+class _LogosPadPainter extends CustomPainter {
+  final double x;
+  final double y;
+  final bool hovered;
+  final double ambient; // 0..1, driven by AnimationController
+  final Offset parallax; // -1..1 normalized cursor offset from center
+  final List<_TrailDot> trail;
+  final DateTime now;
+  final AppTokens tokens;
+
+  _LogosPadPainter({
+    required this.x,
+    required this.y,
+    required this.hovered,
+    required this.ambient,
+    required this.parallax,
+    required this.trail,
+    required this.now,
+    required this.tokens,
+  });
+
+  // Per-layer parallax magnitudes in pixels at full deflection. Deeper
+  // layers shift OPPOSITE to the cursor (less, recessed feel); the
+  // foreground shifts WITH the cursor (more, popped feel). Combined,
+  // they create a tilt-card depth illusion centered on the puck.
+  static const double _depthFieldPx = -3.0;
+  static const double _depthGridPx = -2.0;
+  static const double _depthGlyphPx = 1.5;
+  static const double _depthNodePx = 4.0;
+  static const double _depthPuckPx = 7.5;
+
+  Offset _shift(double depthPx) =>
+      Offset(parallax.dx * depthPx, parallax.dy * depthPx);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final rect = Rect.fromLTWH(0, 0, w, h);
+    final rr = RRect.fromRectAndRadius(rect, const Radius.circular(10));
+    canvas.save();
+    canvas.clipRRect(rr);
+
+    // Each layer is wrapped in save/translate/restore so the parallax
+    // is purely visual — no math elsewhere needs to know about it.
+    void layer(double depthPx, void Function() draw) {
+      final s = _shift(depthPx);
+      canvas.save();
+      canvas.translate(s.dx, s.dy);
+      draw();
+      canvas.restore();
+    }
+
+    layer(_depthFieldPx, () => _paintField(canvas, w, h));
+    layer(_depthGridPx, () {
+      _paintGrid(canvas, w, h);
+      _paintAxisHints(canvas, w, h);
+    });
+    layer(_depthGlyphPx, () => _paintPictograms(canvas, w, h));
+    layer(_depthNodePx, () => _paintNodes(canvas, w, h));
+    layer(_depthNodePx, () => _paintTrail(canvas, w, h));
+    layer(_depthPuckPx, () {
+      _paintPuck(canvas, w, h);
+      _paintQuadrantWhisper(canvas, w, h);
+    });
+
+    canvas.restore();
+
+    // Border drawn outside the clip so it remains crisp.
+    final border = Paint()
+      ..color = tokens.chromeBorder.withValues(alpha: 0.28)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawRRect(rr, border);
+  }
+
+  // ── Field: a stippled, structural background ─────────────────────
+  //
+  // No glow, no atmosphere. Instead: a deterministic dot field — like
+  // graph paper or a Risograph stipple — that gives the surface
+  // texture without leaning on radial blur. Density is uniform; the
+  // PUCK creates emphasis through its own structure (rings, ticks),
+  // not through bleeding light into the field.
+  //
+  // Pattern is generated from a stable hash so it doesn't shimmer
+  // between frames; only the puck and nodes redraw meaningfully.
+  void _paintField(Canvas canvas, double w, double h) {
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()..color = tokens.surface0.withValues(alpha: 0.5),
+    );
+
+    // Stipple — small static dots on a coarse grid, each jittered
+    // pseudo-randomly so it reads as texture, not as a grid.
+    const step = 14.0;
+    final dotPaint = Paint()..style = PaintingStyle.fill;
+    int hash(int a, int b) {
+      // 32-bit Wang-style hash. Cheap, deterministic, no allocations.
+      var n = (a * 73856093) ^ (b * 19349663);
+      n = (n ^ (n >> 13)) * 1274126177;
+      return n & 0x7fffffff;
+    }
+
+    for (double gy = step / 2; gy < h; gy += step) {
+      for (double gx = step / 2; gx < w; gx += step) {
+        final ix = (gx / step).floor();
+        final iy = (gy / step).floor();
+        final hRaw = hash(ix, iy);
+        // Jitter +/- 3px from grid position.
+        final jx = ((hRaw & 0xff) / 255.0 - 0.5) * 6;
+        final jy = (((hRaw >> 8) & 0xff) / 255.0 - 0.5) * 6;
+        // Vary alpha so the field has subtle topography.
+        final a = 0.04 + ((hRaw >> 16) & 0x3f) / 0x3f * 0.06;
+        dotPaint.color = tokens.textMuted.withValues(alpha: a);
+        canvas.drawCircle(Offset(gx + jx, gy + jy), 0.7, dotPaint);
+      }
+    }
+  }
+
+  // ── Grid: quadrant crosshair at low opacity ───────────────────────
+  void _paintGrid(Canvas canvas, double w, double h) {
+    final g = Paint()
+      ..color = tokens.chromeBorder.withValues(alpha: 0.14)
+      ..strokeWidth = 1;
+    // Dashed crosshair — hand-rolled for control over dash size.
+    _drawDashedLine(canvas, Offset(w * 0.5, 16), Offset(w * 0.5, h - 16),
+        g, dashLen: 3, gapLen: 5);
+    _drawDashedLine(canvas, Offset(16, h * 0.5), Offset(w - 16, h * 0.5),
+        g, dashLen: 3, gapLen: 5);
+  }
+
+  void _drawDashedLine(Canvas canvas, Offset a, Offset b, Paint paint,
+      {required double dashLen, required double gapLen}) {
+    final dx = b.dx - a.dx;
+    final dy = b.dy - a.dy;
+    final len = math.sqrt(dx * dx + dy * dy);
+    final step = dashLen + gapLen;
+    final n = (len / step).floor();
+    final ux = dx / len;
+    final uy = dy / len;
+    for (int i = 0; i <= n; i++) {
+      final s = i * step;
+      final e = (s + dashLen).clamp(0.0, len);
+      canvas.drawLine(
+        Offset(a.dx + ux * s, a.dy + uy * s),
+        Offset(a.dx + ux * e, a.dy + uy * e),
+        paint,
+      );
+    }
+  }
+
+  // ── Corner pictograms: four geometric glyphs replacing corner text.
+  //
+  // Each glyph is a mini-diagram of the archetype. Active corner
+  // (nearest to puck) renders in textNormal; others in textFaint.
+  // Sizes tuned so the glyphs read as pictograms, not decoration.
+  void _paintPictograms(Canvas canvas, double w, double h) {
+    const inset = 20.0;
+    const glyphSize = 22.0;
+    final active = _LogosQuadrant.nearest(x, y);
+
+    _drawFolderStack(canvas, Offset(inset + glyphSize / 2, inset + glyphSize / 2),
+        glyphSize, active == _LogosQuadrant.moduleMap);
+    _drawHubSpoke(canvas,
+        Offset(w - inset - glyphSize / 2, inset + glyphSize / 2),
+        glyphSize, active == _LogosQuadrant.repoCenters);
+    _drawCluster(canvas,
+        Offset(inset + glyphSize / 2, h - inset - glyphSize / 2),
+        glyphSize, active == _LogosQuadrant.neighbors);
+    _drawPulseArrow(canvas,
+        Offset(w - inset - glyphSize / 2, h - inset - glyphSize / 2),
+        glyphSize, active == _LogosQuadrant.toTouch);
+  }
+
+  Color _glyphColor(bool active) => active
+      ? tokens.textNormal.withValues(alpha: 0.88)
+      : tokens.textMuted.withValues(alpha: 0.38);
+
+  /// Folder × Far — three nested squares (a tree collapsing inward).
+  void _drawFolderStack(Canvas canvas, Offset c, double size, bool active) {
+    final p = Paint()
+      ..color = _glyphColor(active)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    for (int i = 0; i < 3; i++) {
+      final s = size * (1 - i * 0.28);
+      final r = Rect.fromCenter(center: c, width: s, height: s);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(r, const Radius.circular(2)),
+        p,
+      );
+    }
+  }
+
+  /// History × Far — hub-and-spoke. Center node, 6 orbitals, soft lines.
+  void _drawHubSpoke(Canvas canvas, Offset c, double size, bool active) {
+    final col = _glyphColor(active);
+    final line = Paint()
+      ..color = col.withValues(alpha: col.a * 0.6)
+      ..strokeWidth = 1;
+    final dot = Paint()
+      ..color = col
+      ..style = PaintingStyle.fill;
+    const n = 6;
+    final r = size * 0.44;
+    for (int i = 0; i < n; i++) {
+      final a = (i / n) * 2 * math.pi;
+      final p = Offset(c.dx + math.cos(a) * r, c.dy + math.sin(a) * r);
+      canvas.drawLine(c, p, line);
+      canvas.drawCircle(p, 1.4, dot);
+    }
+    canvas.drawCircle(c, 2.2, dot);
+  }
+
+  /// Folder × Near — 3×3 dot grid. Adjacency as matter.
+  void _drawCluster(Canvas canvas, Offset c, double size, bool active) {
+    final dot = Paint()
+      ..color = _glyphColor(active)
+      ..style = PaintingStyle.fill;
+    final step = size * 0.32;
+    for (int i = -1; i <= 1; i++) {
+      for (int j = -1; j <= 1; j++) {
+        canvas.drawCircle(
+            c.translate(i * step, j * step), 1.5, dot);
+      }
+    }
+  }
+
+  /// History × Near — forward chevron wave. "What comes next."
+  void _drawPulseArrow(Canvas canvas, Offset c, double size, bool active) {
+    final col = _glyphColor(active);
+    final p = Paint()
+      ..color = col
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final r = size * 0.38;
+    // Three stacked chevrons → right-leaning motion signature.
+    for (int i = 0; i < 3; i++) {
+      final x0 = c.dx - r + i * (r * 0.45);
+      final path = Path()
+        ..moveTo(x0, c.dy - r * 0.55)
+        ..lineTo(x0 + r * 0.4, c.dy)
+        ..lineTo(x0, c.dy + r * 0.55);
+      final fade = p..color = col.withValues(alpha: col.a * (0.5 + i * 0.22));
+      canvas.drawPath(path, fade);
+    }
+  }
+
+  // ── Axis hints: ultra-faint directional words at edges ────────────
+  void _paintAxisHints(Canvas canvas, double w, double h) {
+    final col = tokens.textFaint.withValues(alpha: 0.35);
+    void word(String s, Offset c, {double rotate = 0}) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: s,
+          style: TextStyle(
+            color: col,
+            fontSize: 8,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      canvas.save();
+      canvas.translate(c.dx, c.dy);
+      if (rotate != 0) canvas.rotate(rotate);
+      tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+      canvas.restore();
+    }
+
+    word('FOLDER', Offset(w * 0.25, h - 10));
+    word('HISTORY', Offset(w * 0.75, h - 10));
+    word('FAR', Offset(12, h * 0.25), rotate: -math.pi / 2);
+    word('NEAR', Offset(12, h * 0.75), rotate: -math.pi / 2);
+  }
+
+  // ── Nodes: the constellation. Brightness + size track relevance. ──
+  //
+  // Relevance = 1 / (1 + k·d²) — a soft Lorentzian that gives nearby
+  // nodes a strong pull while letting far ones fade gracefully.
+  //
+  // Top-3 nodes get labels. Labels draw on the side of the node
+  // opposite the puck (so they never tuck INTO the puck halo).
+  void _paintNodes(Canvas canvas, double w, double h) {
+    final px = x * w;
+    final py = y * h;
+    final scored = <({_LogosNode n, double r, Offset pos})>[];
+    for (final n in _kLogosNodes) {
+      final nx = n.bx * w;
+      final ny = n.by * h;
+      final dx = (nx - px) / w;
+      final dy = (ny - py) / h;
+      final d2 = dx * dx + dy * dy;
+      // k=12 tuned by eye: a node 25% pad-units away lands ~0.25
+      // relevance, corner-to-opposite-corner ≈ 0.08. Top-3 at a
+      // corner read as > 0.6.
+      final rel = 1.0 / (1.0 + 12.0 * d2);
+      scored.add((n: n, r: rel, pos: Offset(nx, ny)));
+    }
+
+    // Draw low-relevance first so top-3 composite cleanly on top.
+    scored.sort((a, b) => a.r.compareTo(b.r));
+    final dot = Paint()..style = PaintingStyle.fill;
+    final ring = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    for (final s in scored) {
+      final r = 1.6 + 3.2 * s.r;
+      final alpha = (0.18 + 0.78 * s.r).clamp(0.0, 1.0);
+      final col = Color.lerp(
+        tokens.textMuted.withValues(alpha: alpha * 0.55),
+        tokens.accentBright.withValues(alpha: alpha),
+        s.r,
+      )!;
+      dot.color = col;
+      canvas.drawCircle(s.pos, r, dot);
+      // High-relevance nodes get a thin OUTLINE ring instead of a
+      // glow halo. Same "this one matters" affordance, structural.
+      if (s.r > 0.35) {
+        ring.color = tokens.accentBright
+            .withValues(alpha: ((s.r - 0.35) / 0.65 * 0.55).clamp(0.0, 1.0));
+        canvas.drawCircle(s.pos, r + 3, ring);
+      }
+    }
+
+    // Label the top 3 most-relevant. Already at tail of sorted list.
+    final topN = scored.sublist(scored.length - 3);
+    for (final s in topN) {
+      final labelAlpha = ((s.r - 0.18) / 0.5).clamp(0.0, 1.0);
+      if (labelAlpha <= 0) continue;
+      _drawNodeLabel(canvas, s.n.path, s.pos, Offset(px, py),
+          alpha: labelAlpha, w: w);
+    }
+  }
+
+  void _drawNodeLabel(
+    Canvas canvas,
+    String path,
+    Offset nodePos,
+    Offset puckPos, {
+    required double alpha,
+    required double w,
+  }) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: path,
+        style: TextStyle(
+          color: tokens.textStrong.withValues(alpha: alpha),
+          fontSize: 10.5,
+          height: 1,
+          letterSpacing: 0.1,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    // Place label OPPOSITE the puck side of the node so it doesn't
+    // collide with the puck's halo. Fall back to right if the node
+    // sits very close to the puck (direction is ill-defined there).
+    final dx = nodePos.dx - puckPos.dx;
+    final dy = nodePos.dy - puckPos.dy;
+    final len = math.sqrt(dx * dx + dy * dy);
+    final ux = len > 0.5 ? dx / len : 1.0;
+    final uy = len > 0.5 ? dy / len : 0.0;
+    const off = 9.0;
+    double lx = nodePos.dx + ux * off;
+    double ly = nodePos.dy + uy * off - tp.height / 2;
+    // If label runs off the right edge, flip to the left of the node.
+    if (lx + tp.width > w - 6) lx = nodePos.dx - off - tp.width;
+    if (lx < 4) lx = 4;
+
+    // Soft backer to keep the label readable against field glow.
+    const pad = 3.0;
+    final bgRect = Rect.fromLTWH(
+        lx - pad, ly - pad, tp.width + pad * 2, tp.height + pad * 2);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(bgRect, const Radius.circular(3)),
+      Paint()
+        ..color = tokens.surface0.withValues(alpha: alpha * 0.7),
+    );
+    tp.paint(canvas, Offset(lx, ly));
+  }
+
+  // ── Trail: a polyline brushstroke of the recent gesture ───────────
+  //
+  // Replaces the dot-fade trail with a single thin polyline whose
+  // alpha tapers per segment. Reads as "I remember where you came
+  // from" without adding any new glow surface.
+  void _paintTrail(Canvas canvas, double w, double h) {
+    if (trail.length < 2) return;
+    final fadeMs = _LogosPadState._kTrailFade.inMilliseconds;
+    final p = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round;
+    for (int i = 1; i < trail.length; i++) {
+      final a = trail[i - 1];
+      final b = trail[i];
+      final ageMs = now.difference(b.at).inMilliseconds.toDouble();
+      final t = (1.0 - ageMs / fadeMs).clamp(0.0, 1.0);
+      if (t <= 0) continue;
+      p.color = tokens.accentBright.withValues(alpha: 0.42 * t);
+      canvas.drawLine(
+        Offset(a.x * w, a.y * h),
+        Offset(b.x * w, b.y * h),
+        p,
+      );
+    }
+  }
+
+  // ── Puck: a precision instrument, not a light source ──────────────
+  //
+  // Concentric thin rings + 4 directional ticks + center dot. Reads
+  // as a sniper reticle / surveyor's mark. Breathing only modulates
+  // ring spacing by ~1px so it stays alive without glowing.
+  void _paintPuck(Canvas canvas, double w, double h) {
+    final px = x * w;
+    final py = y * h;
+    final c = Offset(px, py);
+    final breathe = 0.5 + 0.5 * math.sin(ambient * 2 * math.pi);
+    final scale = hovered ? 1.12 : 1.0;
+    final ringOuter = (15.0 + 1.5 * breathe) * scale;
+    final ringInner = 7.5 * scale;
+    final coreR = (2.4 + 0.4 * breathe) * scale;
+
+    final accent = tokens.accentBright;
+
+    // Filled disc backing — dense at the center, falling off via two
+    // concentric strokes. No alpha bleed; cleanly bounded.
+    canvas.drawCircle(
+      c,
+      ringInner - 0.5,
+      Paint()..color = accent.withValues(alpha: 0.16),
+    );
+
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    stroke
+      ..strokeWidth = 1.0
+      ..color = accent.withValues(alpha: 0.85);
+    canvas.drawCircle(c, ringInner, stroke);
+
+    stroke
+      ..strokeWidth = 0.8
+      ..color = accent.withValues(alpha: 0.45);
+    canvas.drawCircle(c, ringOuter, stroke);
+
+    // Cardinal ticks — short outward marks at N/E/S/W of the outer
+    // ring. Compass / surveyor cue.
+    final tickPaint = Paint()
+      ..color = accent.withValues(alpha: 0.7)
+      ..strokeWidth = 1.1
+      ..strokeCap = StrokeCap.round;
+    const tickLen = 3.5;
+    canvas.drawLine(
+        c.translate(0, -ringOuter), c.translate(0, -ringOuter - tickLen),
+        tickPaint);
+    canvas.drawLine(
+        c.translate(0, ringOuter), c.translate(0, ringOuter + tickLen),
+        tickPaint);
+    canvas.drawLine(
+        c.translate(-ringOuter, 0), c.translate(-ringOuter - tickLen, 0),
+        tickPaint);
+    canvas.drawLine(
+        c.translate(ringOuter, 0), c.translate(ringOuter + tickLen, 0),
+        tickPaint);
+
+    // Center dot — small and dense.
+    canvas.drawCircle(
+      c,
+      coreR,
+      Paint()..color = tokens.textStrong,
+    );
+  }
+
+  // ── Quadrant whisper: the current archetype's name, surfacing only
+  //    when the puck commits to a corner. Fades smoothly with distance
+  //    from center; disappears entirely at the exact midpoint so the
+  //    centre position "neutral balance" reads clean.
+  void _paintQuadrantWhisper(Canvas canvas, double w, double h) {
+    final dx = x - 0.5;
+    final dy = y - 0.5;
+    final distFromCenter = math.sqrt(dx * dx + dy * dy);
+    if (distFromCenter < 0.08) return;
+    // 0 at centre, 1 at corner (max dist = √0.5 ≈ 0.707).
+    final commitment = ((distFromCenter - 0.08) / 0.35).clamp(0.0, 1.0);
+    final q = _LogosQuadrant.nearest(x, y);
+    final tp = TextPainter(
+      text: TextSpan(
+        text: q.whisper,
+        style: TextStyle(
+          color: tokens.textStrong.withValues(alpha: 0.65 * commitment),
+          fontSize: 11,
+          letterSpacing: 0.8,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    // Place below the puck when puck is on upper half, above on lower.
+    final px = x * w;
+    final py = y * h;
+    final offY = y < 0.5 ? 28.0 : -28.0 - tp.height;
+    double tx = px - tp.width / 2;
+    final ty = py + offY;
+    if (tx < 10) tx = 10;
+    if (tx + tp.width > w - 10) tx = w - 10 - tp.width;
+    tp.paint(canvas, Offset(tx, ty));
+  }
+
+  @override
+  bool shouldRepaint(_LogosPadPainter old) =>
+      old.x != x ||
+      old.y != y ||
+      old.hovered != hovered ||
+      old.ambient != ambient ||
+      old.parallax != parallax ||
+      !identical(old.trail, trail) ||
+      old.trail.length != trail.length;
+}
+
+/// Four corners of the pad. The `whisper` is a short, intimate name
+/// the pad surfaces near the puck when it commits to a corner.
+enum _LogosQuadrant {
+  moduleMap,
+  repoCenters,
+  neighbors,
+  toTouch;
+
+  static _LogosQuadrant nearest(double x, double y) {
+    if (y < 0.5) {
+      return x < 0.5 ? _LogosQuadrant.moduleMap : _LogosQuadrant.repoCenters;
+    }
+    return x < 0.5 ? _LogosQuadrant.neighbors : _LogosQuadrant.toTouch;
+  }
+
+  String get whisper => switch (this) {
+        _LogosQuadrant.moduleMap => 'module map',
+        _LogosQuadrant.repoCenters => 'repo centers',
+        _LogosQuadrant.neighbors => 'neighbors',
+        _LogosQuadrant.toTouch => 'what to touch next',
+      };
+}
+
+/// Static info plate to the right of the pad. Reads as an instrument
+/// label — what's under the hood, presented as engraved text. Doesn't
+/// react to puck position; it's the constant that grounds the live
+/// surface next to it.
+class _LogosGrip extends StatelessWidget {
+  const _LogosGrip();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
+      decoration: BoxDecoration(
+        color: t.surface0.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: t.chromeBorder.withValues(alpha: 0.22),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Wordmark — small caps, wide tracking, stamped feel.
+          Text(
+            'LOGOS',
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 4.0,
+              height: 1,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'relevance engine',
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.7),
+              fontSize: 9,
+              letterSpacing: 1.6,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _GripDivider(t: t),
+          const SizedBox(height: 12),
+          // Spec rows — instrument-plate style. Two columns, the
+          // value column right-aligned so the eye can scan numerics.
+          _GripStat(label: 'method', value: 'heat-kernel', t: t),
+          _GripStat(label: 'graph', value: 'born-mix', t: t),
+          _GripStat(label: 'axes', value: '4', t: t),
+          const SizedBox(height: 10),
+          _GripDivider(t: t),
+          const SizedBox(height: 12),
+          _GripStat(label: 't', value: '1.0', t: t, mono: true),
+          _GripStat(label: 'k', value: '20', t: t, mono: true),
+          _GripStat(label: 'range', value: '0.3–3.0', t: t, mono: true),
+          const SizedBox(height: 14),
+          _GripDivider(t: t),
+          const SizedBox(height: 10),
+          // A faint serial-style id at the bottom — fictional, but
+          // sells the "this is a real piece of equipment" feel.
+          Text(
+            'self-tuned\nno manual\nweights',
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.55),
+              fontSize: 9.5,
+              letterSpacing: 0.4,
+              height: 1.55,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GripDivider extends StatelessWidget {
+  final AppTokens t;
+  const _GripDivider({required this.t});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 1,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            t.chromeBorder.withValues(alpha: 0),
+            t.chromeBorder.withValues(alpha: 0.35),
+            t.chromeBorder.withValues(alpha: 0),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GripStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final AppTokens t;
+  final bool mono;
+  const _GripStat({
+    required this.label,
+    required this.value,
+    required this.t,
+    this.mono = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Vertical stack: small-caps label on top, value below. Avoids
+    // any wrap risk from wide values inside the narrow grip column,
+    // and reads as a stamped spec entry — closer to an instrument
+    // plate than a settings row.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.55),
+              fontSize: 8.5,
+              letterSpacing: 1.4,
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              color: t.textNormal,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              fontFamily: mono ? 'monospace' : null,
+              letterSpacing: mono ? 0 : 0.2,
+              height: 1.0,
+            ),
+          ),
+        ],
       ),
     );
   }

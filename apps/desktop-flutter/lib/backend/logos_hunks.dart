@@ -29,6 +29,7 @@
 // the budget, hunks are emitted in φ-desc order at full content. Logos
 // picks which hunks matter most; peripheral mass-edit noise drops off.
 
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -176,6 +177,21 @@ final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
 final _camelBoundary =
     RegExp(r'(?<=[\p{Ll}\p{N}])(?=[\p{Lu}])', unicode: true);
 
+/// Horizon multiplier for H_prox: pairs with `d ≥ σ · ratio` contribute
+/// `exp(-ratio) ≈ 1e-6` — below the noise floor after D^{-1/2} Laplacian
+/// normalisation and Chebyshev basis truncation. Precomputed as `ln(1e6)`
+/// since `math.log` isn't a const expression in Dart; tightening the
+/// floor is a literal change.
+const double _proxHorizonLnRatio = 13.815510557964274;
+
+/// Maximum hunk-pair edges materialised per (file_a, file_b) cross-file
+/// coupling pass. Above this, the loop samples a deterministic stride
+/// of representative pairs that preserves the file pair's total mass
+/// without paying for the |A|·|B| explosion. Picked to stay within an
+/// order of magnitude of the per-node top-K fanout the symmetriser
+/// keeps anyway, so larger values would do redundant work.
+const int _kCrossFileFanoutCap = 32;
+
 Set<String> _tokensOf(String text) {
   if (text.isEmpty) return const {};
   final tokens = <String>{};
@@ -284,10 +300,19 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  // Precompute per-file statistics for H_prox (line-gap σ).
+  // Precompute per-file statistics for H_prox (line-gap σ). Sort each
+  // file's hunk-id list by newStart once here — downstream consumers
+  // (fileSigma gap statistics, H_prox horizon break) both require
+  // ordered line positions, and H_file / H_vol are order-independent
+  // pair iterations so the sort has no side effect on them.
   final fileToHunks = <String, List<int>>{};
   for (var i = 0; i < n; i++) {
     (fileToHunks[hunks[i].filePath] ??= <int>[]).add(i);
+  }
+  for (final ids in fileToHunks.values) {
+    if (ids.length > 1) {
+      ids.sort((x, y) => hunks[x].newStart.compareTo(hunks[y].newStart));
+    }
   }
   final fileSigma = <String, double>{};
   for (final entry in fileToHunks.entries) {
@@ -295,9 +320,8 @@ CsrGraph _buildHunkGraph({
     if (ids.length < 2) continue;
     final gaps = <int>[];
     for (var k = 1; k < ids.length; k++) {
-      final a = hunks[ids[k - 1]].newStart;
-      final b = hunks[ids[k]].newStart;
-      final g = (b - a).abs();
+      // ids is sorted by newStart, so b ≥ a and abs() is redundant.
+      final g = hunks[ids[k]].newStart - hunks[ids[k - 1]].newStart;
       if (g > 0) gaps.add(g);
     }
     if (gaps.isEmpty) continue;
@@ -373,6 +397,17 @@ CsrGraph _buildHunkGraph({
   // Cross-file hunk coupling via LogosGit file-φ. We treat the file
   // with the higher φ contribution as the "host" and multiply the pair
   // weight by the lesser of their φ values (conservative).
+  //
+  // Fanout cap: the original |A|·|B| double loop allocated up to
+  // ~|A|·|B| edge entries per file pair, then the top-K sparsifier
+  // discarded the bulk. On a 20-file × 10-hunk diff that was ~200k
+  // wasted addEdge calls. We now cap the per-pair fanout at
+  // [_kCrossFileFanoutCap]: once the product exceeds the cap, sample
+  // a deterministic subset of representative pairs that preserves the
+  // total mass (each kept edge carries the full weight share that the
+  // dropped edges would have summed to). The 1/sqrt normaliser is
+  // unchanged, so total injected mass per file pair still equals
+  // ~coupling regardless of the fanout path taken.
   if (fileCouplingFromParent.isNotEmpty) {
     final filePaths = fileToHunks.keys.toList(growable: false);
     for (var a = 0; a < filePaths.length; a++) {
@@ -387,14 +422,26 @@ CsrGraph _buildHunkGraph({
         if (coupling <= 0) continue;
         final listA = fileToHunks[fa]!;
         final listB = fileToHunks[fb]!;
-        // Cap the pair explosion: cross-file file pairs with a large
-        // hunk×hunk product would dominate edge count. Scale weight by
-        // 1/sqrt(|A|·|B|) so the total mass injected per file pair stays
-        // ~coupling, not coupling·|A|·|B|.
-        final norm = 1.0 / math.sqrt(listA.length * listB.length);
-        for (final ia in listA) {
-          for (final ib in listB) {
-            addEdge(ia, ib, wFile * coupling * norm);
+        final fanout = listA.length * listB.length;
+        final norm = 1.0 / math.sqrt(fanout);
+        if (fanout <= _kCrossFileFanoutCap) {
+          for (final ia in listA) {
+            for (final ib in listB) {
+              addEdge(ia, ib, wFile * coupling * norm);
+            }
+          }
+        } else {
+          // Sample _kCrossFileFanoutCap pairs deterministically along
+          // a stride that visits both lists' index spaces uniformly.
+          // Each kept edge carries `(fanout / cap)`× the per-pair
+          // weight so the summed mass over the file pair matches the
+          // full-fanout case.
+          final massScale = fanout / _kCrossFileFanoutCap;
+          final w = wFile * coupling * norm * massScale;
+          for (var k = 0; k < _kCrossFileFanoutCap; k++) {
+            final ia = listA[(k * 31) % listA.length];
+            final ib = listB[(k * 17) % listB.length];
+            addEdge(ia, ib, w);
           }
         }
       }
@@ -402,18 +449,25 @@ CsrGraph _buildHunkGraph({
   }
 
   // ── H_prox: within-file line distance ──────────────────────────────
+  // Edges land inside the σ-scaled horizon; beyond it `exp(-d/σ)` is
+  // below [_proxFloor] — numerically indistinguishable from zero after
+  // D^{-1/2} normalisation — so we break the inner loop. Because `ids`
+  // is sorted by newStart (monotone non-decreasing), the first `b` that
+  // exceeds the horizon proves all later `b` do too. The horizon is
+  // derived from the floor (not a magic constant): `exp(-d/σ) ≥ ε ⟺
+  // d ≤ σ·ln(1/ε)`. On a file with 50 scattered hunks this collapses
+  // exp() calls from 1225 to roughly `hunks × horizon / median-gap`.
   for (final entry in fileToHunks.entries) {
     final ids = entry.value;
     if (ids.length < 2) continue;
     final sigma = fileSigma[entry.key] ?? 1.0;
+    final horizon = sigma * _proxHorizonLnRatio;
     for (var a = 0; a < ids.length; a++) {
+      final la = hunks[ids[a]].newStart;
       for (var b = a + 1; b < ids.length; b++) {
-        final la = hunks[ids[a]].newStart;
-        final lb = hunks[ids[b]].newStart;
-        final d = (lb - la).abs().toDouble();
-        final k = math.exp(-d / sigma);
-        if (k <= 1e-6) continue;
-        addEdge(ids[a], ids[b], wProx * k);
+        final d = hunks[ids[b]].newStart - la; // sorted ⇒ ≥ 0
+        if (d >= horizon) break;
+        addEdge(ids[a], ids[b], wProx * math.exp(-d / sigma));
       }
     }
   }
@@ -544,6 +598,58 @@ HunkDiffusionResult rankHunksByPhi({
   required List<DiffHunk> hunks,
   LogosGit? logosEngine,
 }) {
+  // Resolve the engine-side coupling prior on the calling thread (it
+  // touches the engine, which we don't want to ship across an isolate).
+  // Then dispatch the heavy graph build + Chebyshev to the pure-data
+  // core path.
+  final fileCoupling = _resolveFileCoupling(hunks, logosEngine);
+  return _rankHunksByPhiCore(hunks: hunks, fileCoupling: fileCoupling);
+}
+
+/// Async variant — runs the graph build + 3-temperature recombination
+/// on a background isolate so a diff with hundreds of hunks doesn't
+/// hitch the UI on every diff-panel switch. Engine touches still
+/// happen on the calling thread (cheap diffuseWeighted), then the
+/// pure-data core hops to an isolate.
+Future<HunkDiffusionResult> rankHunksByPhiAsync({
+  required List<DiffHunk> hunks,
+  LogosGit? logosEngine,
+}) async {
+  final fileCoupling = _resolveFileCoupling(hunks, logosEngine);
+  // Trivial cases — skip the isolate hop's serialisation cost.
+  if (hunks.length <= 1) {
+    return _rankHunksByPhiCore(hunks: hunks, fileCoupling: fileCoupling);
+  }
+  return Isolate.run<HunkDiffusionResult>(
+    () => _rankHunksByPhiCore(hunks: hunks, fileCoupling: fileCoupling),
+    debugName: 'rankHunksByPhi',
+  );
+}
+
+Map<String, double> _resolveFileCoupling(
+    List<DiffHunk> hunks, LogosGit? engine) {
+  final coupling = <String, double>{};
+  if (engine == null) return coupling;
+  final touchedFiles = <String>{for (final h in hunks) h.filePath};
+  if (touchedFiles.isEmpty) return coupling;
+  try {
+    final weights = <String, double>{for (final p in touchedFiles) p: 1.0};
+    final scores = engine.diffuseWeighted(weights);
+    for (final s in scores) {
+      if (touchedFiles.contains(s.path) && s.phi > 0) {
+        coupling[s.path] = s.phi;
+      }
+    }
+  } catch (_) {
+    // Graceful: engine errors never block the diff packer.
+  }
+  return coupling;
+}
+
+HunkDiffusionResult _rankHunksByPhiCore({
+  required List<DiffHunk> hunks,
+  required Map<String, double> fileCoupling,
+}) {
   final n = hunks.length;
   if (n == 0) {
     return HunkDiffusionResult(rankings: const [], fellBackToChurn: false);
@@ -564,25 +670,6 @@ HunkDiffusionResult rankHunksByPhi({
   final tokens = stopSet.isEmpty
       ? rawTokens
       : [for (final ts in rawTokens) ts.difference(stopSet)];
-
-  // Cross-file coupling prior: ask logos how "hot" each touched file is
-  // when the source set is the whole touched-file set. Every touched file
-  // gets a φ; we use it as the weight-multiplier on cross-file hunk pairs.
-  final fileCoupling = <String, double>{};
-  final touchedFiles = <String>{for (final h in hunks) h.filePath};
-  if (logosEngine != null && touchedFiles.isNotEmpty) {
-    try {
-      final weights = <String, double>{for (final p in touchedFiles) p: 1.0};
-      final scores = logosEngine.diffuseWeighted(weights);
-      for (final s in scores) {
-        if (touchedFiles.contains(s.path) && s.phi > 0) {
-          fileCoupling[s.path] = s.phi;
-        }
-      }
-    } catch (_) {
-      // Graceful: engine errors never block the diff packer.
-    }
-  }
 
   // Top-K per node: sqrt(n) is the classical "enough-neighbours" heuristic
   // that keeps the graph sparse while preserving global connectivity.

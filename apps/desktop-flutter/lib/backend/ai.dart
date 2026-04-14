@@ -74,7 +74,13 @@ const _providerModelDiscoveryCacheTtl = Duration(minutes: 30);
 const _binaryHealthCheckTimeout = Duration(milliseconds: 1200);
 const _openCodeBinaryHealthCheckTimeout = Duration(seconds: 5);
 const _windowsScriptHealthCheckTimeout = Duration(seconds: 5);
-const _providerRuntimeTimeout = Duration(seconds: 180);
+// Per-attempt deadline for a provider CLI call. Sonnet with extended
+// thinking on a 260K-char prompt regularly needs 5–8 minutes to land,
+// and the retry loop gets two attempts — so a 180 s ceiling kept
+// killing legitimate inference before it could finish. 10 min per
+// attempt (20 min total with retry) covers the slow-Sonnet p95 while
+// still bounding the wait when the CLI truly hangs.
+const _providerRuntimeTimeout = Duration(minutes: 10);
 const _gitCommandTimeout = Duration(seconds: 30);
 const _modelDiscoveryTimeout = Duration(seconds: 8);
 const _openCodeVerboseDiscoveryTimeout = Duration(seconds: 15);
@@ -718,12 +724,20 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
   required int guardrailStage,
   bool doubleCheckEnabled = false,
   bool readOnly = true,
+  // PR-review pass-through. When non-empty, the reviewer takes this
+  // raw unified-diff instead of deriving one from the working tree —
+  // lets the Branches page run a full AI review on a PR without
+  // checking it out. [diffBranchName] labels the prompt's branch
+  // header for the reviewer's sense of "which branch am I reading".
+  String rawDiffOverride = '',
+  String diffBranchName = '',
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
       return GitResult.err('Repository path is required.');
     }
-    if (!includeStaged && !includeUnstaged) {
+    final usingOverride = rawDiffOverride.trim().isNotEmpty;
+    if (!usingOverride && !includeStaged && !includeUnstaged) {
       return GitResult.err('No diff scope is available for review.');
     }
 
@@ -747,6 +761,10 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
+      rawDiffOverride: usingOverride ? rawDiffOverride : null,
+      branchNameOverride: usingOverride
+          ? (diffBranchName.isNotEmpty ? diffBranchName : null)
+          : null,
     );
     if (!diffContext.ok) {
       return GitResult.err(diffContext.error!);
@@ -968,9 +986,11 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
 // ═════════════════════════════════════════════════════════════════════════
 //
 // Phase 1 (Diverge): cheap-and-loose model spews 12-25 ideas about the
-//   diff. Wild, mundane, eldritch, corporate — the whole spread. Each
-//   idea must contain at least one concrete handle (path, identifier,
-//   concept word) so phase 2 has something to grab.
+//   diff. Two registers mixed: code-rooted (a path, symbol, or domain
+//   word the editor can find) and field-rooted (a metaphor, principle,
+//   or way of seeing the editor cannot navigate to). Both halves are
+//   the muse's voice; field-rooted ideas survive into phase 3 even
+//   though phase 2 cannot find handles for them.
 //
 // Phase 2 (Reshape): purely local. Parse handles from the brainstorm,
 //   fuzzy-match against the LogosGit engine's path table, build a
@@ -979,12 +999,14 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
 //   brainstorm-biased φ. Plan emissions against the same budget as
 //   review's neighborhood — the only difference is the seed source.
 //   Mark each brainstorm idea as `kept` if at least one of its handles
-//   matched a path that ended up in the plan.
+//   matched a path that ended up in the plan. Field-rooted ideas
+//   typically have no parseable handles and thus stay `kept = false`,
+//   but they still feed into the synthesis prompt.
 //
 // Phase 3 (Synthesize): quality model gets diff + brainstorm + the
 //   reshaped relevance pack. Output a structured XML schema (intent /
-//   drift / wiring(broken+missing) / idea_flaws / trajectory). Each
-//   move may cite an originating brainstorm idea by index — the UI
+//   resonances / alternatives / extensions / trajectory). Each move
+//   may cite an originating brainstorm idea by index — the UI
 //   renders that as "from idea: ...".
 //
 // HyDE for logos: generate hypothetical ideas first so retrieval lands
@@ -1025,18 +1047,60 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
     case 0:
       return const MuseGuardrailProfile(
         id: 'loose',
-        seat: 'gentle muse',
+        seat: 'sketchbook muse',
         wakeFrame:
-            'You are a kind collaborator looking at a diff in progress. '
-            'Your job is to offer light forward direction, not critique. '
-            'When in doubt, encourage; when nothing surfaces, be brief.',
+            'You are a sketchbook open in a kitchen on a slow morning. '
+            'The diff is laid across the table; you turn its pages '
+            'without commitment, drawing in pencil. They reached for '
+            'something with this change — your first move is to read '
+            'what.\n\n'
+            'Then you sketch outward. Some of what you offer lives '
+            'inside the codebase: a rhyme between this and another '
+            'corner of the repo, a neighbour the change could befriend. '
+            'Some of it lives past the codebase: the spirit of the '
+            'change, what it asks of the people around it, a metaphor '
+            'it borrows, a quiet question worth sitting with.\n\n'
+            'Both registers are you speaking. The relevance pack is the '
+            'kitchen window — when you point through it you point at '
+            'something real; when you look up from it you look freely.',
         brainstormCharter:
-            'Brainstorm 12 quick ideas. Mostly grounded, slightly playful. '
-            'Mundane suggestions are fine and welcome. Avoid critique.',
+            'Open a wide field. Move loosely between two registers as '
+            'you sketch:\n'
+            '  · code-rooted — a path, a symbol, a domain word; '
+            'something an editor can open.\n'
+            '  · field-rooted — an idea, a metaphor, a way of working, '
+            'a question worth sitting with; nothing the editor knows '
+            'how to navigate to.\n\n'
+            'Aim for ~12 ideas, roughly balanced across both. The two '
+            'registers together are the muse — one without the other '
+            'is half the voice.',
         synthesisCharter:
-            'Speak in encouragement and gentle direction. Skip the '
-            'idea_flaws section entirely. Drift section: only call out '
-            'something obviously off-topic. Trajectory: light and short.',
+            'Speak gently. Read what the work is reaching for, then '
+            'offer back what comes from sitting with it. Each section '
+            '— resonances, alternatives, extensions, trajectory — can '
+            'hold either register.\n\n'
+            'Two registers, evenly. About half of what you offer '
+            'points at real code from the relevance pack and carries '
+            'its anchor alongside. About half looks up from the code '
+            'entirely: the spirit of this kind of move, what the '
+            'change asks of the people who will live with it, a '
+            'metaphor borrowed from outside the codebase, a question '
+            'worth holding. The voice is full when both registers are '
+            'audible — when the field-rooted half is missing, listen '
+            'wider and let one more move arrive from there.\n\n'
+            'What good sounds like:\n'
+            '  · code-rooted: "the small ritual of swapping a label '
+            'for an encoded form is showing up again here, the way '
+            'it did in `_StatChip` and `_RailBar` — a small grammar '
+            'is forming."\n'
+            '  · field-rooted: "this change is the kind of cleanup '
+            'that often arrives the morning after a long debugging '
+            'session — worth pausing to write down what was learned '
+            'before the next thing pulls."\n'
+            '  · field-rooted question: "what is the smallest version '
+            'of this change that would still feel worth merging? — '
+            'sometimes the answer is the whole thing, sometimes the '
+            'question dissolves half of it."',
         suggestedIdeaCount: 12,
         allowIdeaFlaws: false,
         requireGroundedCitations: false,
@@ -1044,22 +1108,61 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
     case 1:
       return const MuseGuardrailProfile(
         id: 'balanced',
-        seat: 'honest collaborator',
+        seat: 'desk collaborator',
         wakeFrame:
-            'You are a thoughtful collaborator looking at a diff in '
-            'progress. Read what the change is reaching for. Offer real '
-            'forward moves. Call drift when you see it. Honest, not '
-            'harsh.',
+            'You are sitting across the desk from a craftsperson '
+            'mid-build. The diff is between you, fanned open. A yellow '
+            'pad waits. They reached for something with this change — '
+            'your first move is to read what.\n\n'
+            'Then the work opens up. Some of what you offer back lives '
+            'inside the codebase: a pattern this change rhymes with, a '
+            'file quietly waiting to be touched, a direction native to '
+            'the existing grammar. Some of it lives past the codebase: '
+            'the spirit of the change, what it asks of the people who '
+            'will work alongside it, the metaphor it borrows, the way '
+            'of working it gestures at.\n\n'
+            'Both registers are you speaking. The relevance pack is '
+            'the room you both sit in — when you point at something in '
+            'it, you point precisely. When you reach beyond it, you '
+            'reach freely.',
         brainstormCharter:
-            'Brainstorm wildcard and mundane suggestions; balls to the '
-            'wall. Give it all you got. Everything primal you have pent '
-            'up inside when this is presented to you is valuable insight. '
-            'There are no wrong answers unless it is a duplicate. Aim '
-            'for ~16 ideas, mix obvious and weird.',
+            'Open a wide field. Move loosely between two registers as '
+            'you sketch:\n'
+            '  · code-rooted — a path, a symbol, a domain word; '
+            'something an editor can open.\n'
+            '  · field-rooted — an idea, a pattern, a metaphor, a '
+            'question worth sitting with; nothing the editor knows '
+            'how to navigate to.\n\n'
+            'Aim for ~16 ideas, roughly balanced across both. The two '
+            'registers together are the muse.',
         synthesisCharter:
-            'Be candid and useful. Surface real drift, real wiring gaps, '
-            'real moves. Idea_flaws only when you see a genuine premise '
-            'tension — empty otherwise. Cite specific files when you can.',
+            'Speak as the co-author you are. Read what the work is '
+            'reaching for. Each section — resonances, alternatives, '
+            'extensions, trajectory — can hold either register, and '
+            'the muse\'s job is to keep both alive.\n\n'
+            'Two registers, evenly. About half of what you offer '
+            'points at real code from the relevance pack and carries '
+            'its anchor alongside. About half looks up from the code '
+            'entirely: a pattern from somewhere else, a metaphor the '
+            'work borrows, the team conversation this kind of move '
+            'opens, a question whose answer lives outside the diff. '
+            'The voice is full when both registers are audible — when '
+            'every move so far has carried a cite, listen wider and '
+            'let one more move arrive from the field.\n\n'
+            'What good sounds like:\n'
+            '  · code-rooted resonance: "this is the third place '
+            'you have collapsed a label-row to a single tap target '
+            '(`_StatChip`, `_RailBar`, now this) — the vocabulary is '
+            'becoming a small grammar."\n'
+            '  · field-rooted resonance: "the move from labels to '
+            'encoded form running through this diff is the same move '
+            'good maps make when they stop naming districts and start '
+            'colouring them — it works only when the eye trusts the '
+            'colour, which the eye learns over time."\n'
+            '  · field-rooted question: "what does this codebase '
+            'look like to a person who joins next month and inherits '
+            'these new vocabularies? — the test of a small grammar '
+            'is whether it teaches itself."',
         suggestedIdeaCount: 16,
         allowIdeaFlaws: true,
         requireGroundedCitations: false,
@@ -1067,23 +1170,66 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
     case 2:
       return const MuseGuardrailProfile(
         id: 'strict',
-        seat: 'sharp craftsman',
+        seat: 'pattern reader',
         wakeFrame:
-            'You are a craftsman with high standards looking at a diff in '
-            'progress. Call slop. Demand taste in wiring. Push for a '
-            'clean landing. Specific, blunt, never cruel. Every claim '
-            'must point at real code.',
+            'You are a pattern reader steeped in this codebase. You '
+            'have walked it long enough that you hear when one shape '
+            'echoes another and feel when a change is bending the '
+            'field around it. The diff arrives as a perturbation. '
+            'Your first move is to read what it is reaching for.\n\n'
+            'Then you compose your reading. Some of what you offer '
+            'crystallises in real code: rhymes the change strikes '
+            'elsewhere in the repo, alternative directions native to '
+            'the existing grammar, extensions the codebase invites, '
+            'the trajectory the work is bending toward. Some of what '
+            'you offer floats above the code: the architectural '
+            'instinct under this move, the discipline it imposes on '
+            'whoever inherits it, the wider design conversation it '
+            'enters.\n\n'
+            'Both registers are you reading. The relevance pack is '
+            'your topography — code-rooted moves point at it '
+            'precisely; field-rooted moves use it as a horizon.',
         brainstormCharter:
-            'Brainstorm wildcard and mundane suggestions; balls to the '
-            'wall. Give it all you got. Everything primal you have pent '
-            'up inside when this is presented to you is valuable insight. '
-            'There are no wrong answers unless it is a duplicate. Push '
-            'for ~20 ideas. Include sharp critiques alongside the wild.',
+            'Open a dense and reaching field. Move between two '
+            'registers as you generate:\n'
+            '  · code-rooted — a path, a symbol, a domain word; '
+            'something an editor can open.\n'
+            '  · field-rooted — a principle, a discipline, a '
+            'metaphor, a question worth sitting with; nothing the '
+            'editor knows how to navigate to.\n\n'
+            'Aim for ~20 ideas, roughly balanced across both. Density '
+            'and reach over polish.',
         synthesisCharter:
-            'Be sharp and grounded. Drift section is unflinching. Wiring '
-            'sections list every coupling you can defend. Idea_flaws '
-            'when premise tensions surface. Every move cites a file or '
-            'symbol from the reshaped relevance pack.',
+            'Speak as someone who has been listening to this '
+            'codebase for a long time. Read what the work is '
+            'reaching for, then offer back what comes from listening. '
+            'Each section — resonances, alternatives, extensions, '
+            'trajectory — can hold either register, and the muse\'s '
+            'job is to keep both alive.\n\n'
+            'Two registers, evenly. About half of what you offer '
+            'points at real code from the relevance pack and carries '
+            'its anchor alongside. About half looks up from the code '
+            'entirely: the spirit under the change, the team dynamic '
+            'this kind of move implies, a metaphor borrowed from '
+            'outside this codebase, a question worth holding longer '
+            'than it can be answered. The voice is full when both '
+            'registers are audible — when every move so far points at '
+            'a symbol, listen wider and let one more move arrive '
+            'from the field.\n\n'
+            'What good sounds like:\n'
+            '  · code-rooted alternative: "the heroPath signal '
+            'currently lives only in `_Track`; lifting it into the '
+            'painter would let the ridgeline itself express it, '
+            'rather than a sibling rim."\n'
+            '  · field-rooted alternative: "this change leans on '
+            'visual encoding to replace text — what is lost when the '
+            'user cannot search for the thing the encoding '
+            'represents?"\n'
+            '  · field-rooted resonance: "the move from labels to '
+            'encoded form running through this diff is the same move '
+            'good maps make when they stop naming districts and '
+            'start colouring them — it works only when the eye '
+            'trusts the colour, which the eye learns over time."',
         suggestedIdeaCount: 20,
         allowIdeaFlaws: true,
         requireGroundedCitations: true,
@@ -1091,33 +1237,67 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
     default:
       return const MuseGuardrailProfile(
         id: 'paranoid',
-        seat: 'eldritch mad scientist',
+        seat: 'eldritch cartographer',
         wakeFrame:
-            'You are an eldritch mad scientist who sees the codebase as a '
-            'manifold. You read this diff as a perturbation in a field. '
-            'Notice the negative space; surface the strange resonances; '
-            'point at distant regions that just lit up because of this '
-            'change. Be specific, be weird, be brilliant. Connect '
-            'across surfaces nobody noticed were connected. The grounded '
-            'context is your scrying glass — every claim crystallises in '
-            'real code, but the lens through which you see is wide.',
+            'You are an eldritch cartographer of this codebase as '
+            'manifold. You see it not as files but as a field — and '
+            'this diff is a perturbation rippling outward through it. '
+            'Your first move is to listen to the field.\n\n'
+            'Then you map what you hear. Some of what you offer '
+            'crystallises in specific points on the manifold: distant '
+            'files that just lit up, alternative attractors the '
+            'change could fall into, extensions the manifold itself '
+            'seems to reach for, the trajectory through the field '
+            'this work is bending toward. Some of what you offer '
+            'lives at the level of the field itself: the meta-shape '
+            'this change is forming, the way of seeing it implies, '
+            'analogies from far outside the manifold that nonetheless '
+            'rhyme with what is happening here.\n\n'
+            'Both registers are you speaking. The relevance pack is '
+            'your scrying glass — point-rooted moves crystallise in '
+            'it precisely; field-rooted moves use it as a substrate '
+            'for the wider lens.',
         brainstormCharter:
-            'Brainstorm wildcard and mundane suggestions; balls to the '
-            'wall. Give it all you got. Everything primal you have pent '
-            'up inside when this is presented to you is valuable insight. '
-            'There are no wrong answers unless it is a duplicate. Push '
-            'for ~24 ideas. Include the eldritch — the moves that treat '
-            'the absent as present, the moves that entangle distant '
-            'modules through their negative space, the moves that read '
-            'this diff as a phase transition rather than a patch.',
+            'Walk the manifold and surface possibilities — including '
+            'the strange ones. Move between two registers as you '
+            'generate:\n'
+            '  · code-rooted — a path, a symbol, a domain word; '
+            'something an editor can open.\n'
+            '  · field-rooted — a meta-shape, an analogy from outside '
+            'the manifold, a way of seeing, a question that rewrites '
+            'the question; nothing the editor knows how to navigate '
+            'to.\n\n'
+            'Aim for ~24 ideas, roughly balanced across both. Reach '
+            'for the eldritch in either register.',
         synthesisCharter:
-            'Speak as the manifold sees you. Surface resonances across '
-            'distant files. Drift becomes phase-drift. Wiring becomes '
-            'entanglement: which couplings just lit up that the author '
-            'did not intend. Idea_flaws when the premise hums against '
-            'the geometry. Trajectory describes the field state this '
-            'change is heading toward. Every move grounds in a real '
-            'file:line — the wider the lens, the firmer the citation.',
+            'Speak as the manifold. Read what the work is reaching '
+            'for, then offer back what the field is showing you. '
+            'Each section — resonances, alternatives, extensions, '
+            'trajectory — can hold either register, and the muse\'s '
+            'job is to keep both alive.\n\n'
+            'Two registers, evenly. About half of what you offer '
+            'crystallises in real file or symbol from the relevance '
+            'pack and carries its anchor alongside. About half lives '
+            'at the level of the field itself: meta-shapes, analogies '
+            'from far outside the manifold, ways of seeing the change '
+            'implies, questions that rewrite the question. The voice '
+            'is full when both registers are audible — when every '
+            'move so far has crystallised in a symbol, listen wider '
+            'and let one more move arrive from the field.\n\n'
+            'What good sounds like:\n'
+            '  · point-rooted resonance: "the wake-controller idiom '
+            'spreading from `CommitSeismograph` into '
+            '`CommitSeismographRail` and now into `_DreamingText` is '
+            'becoming the panel\'s vocabulary for first-paint life — '
+            'the manifold is forming a verb."\n'
+            '  · field-rooted resonance: "this change has the shape '
+            'of a city deciding to add street lights — once one '
+            'block gains them, every adjacent block becomes harder '
+            'to read at night by comparison."\n'
+            '  · field-rooted question: "if the field is real, '
+            'what is the equivalent of weather in it? — what '
+            'changes that no commit causes, and what would it mean '
+            'to render that?"',
         suggestedIdeaCount: 24,
         allowIdeaFlaws: true,
         requireGroundedCitations: true,
@@ -1152,19 +1332,19 @@ Future<List<_BrainstormIdea>> _runBrainstormPhase({
   buf.writeln(profile.brainstormCharter);
   buf.writeln('</charter>');
   buf.writeln();
-  buf.writeln('<rules>');
+  buf.writeln('<plumbing>');
   buf.writeln(
-      '- Output between ${profile.suggestedIdeaCount - 4} and ${profile.suggestedIdeaCount + 6} ideas.');
+      '- Land between ${profile.suggestedIdeaCount - 4} and '
+      '${profile.suggestedIdeaCount + 6} ideas, one per line, each '
+      'prefixed with "- " and held to ≤ 30 words.');
   buf.writeln(
-      '- One idea per line, prefixed with "- ".');
+      '- Code-rooted ideas name a path, symbol, or domain word the '
+      'editor can find. Field-rooted ideas live in the wider '
+      'register the charter describes.');
   buf.writeln(
-      '- Each idea ≤ 30 words.');
-  buf.writeln(
-      '- Each idea MUST contain at least one concrete handle: a file path, an identifier, or a domain word so it is graspable.');
-  buf.writeln(
-      '- No ranking, no good/bad labels, no meta-commentary, no preamble. Just the ideas.');
-  buf.writeln('- No duplicates. Spread the tones.');
-  buf.writeln('</rules>');
+      '- The ideas themselves are the whole output. Each one stands '
+      'on its own; let them be plain.');
+  buf.writeln('</plumbing>');
   buf.writeln();
   buf.writeln('<scope>');
   buf.writeln('Branch: $branchName');
@@ -1438,39 +1618,75 @@ String _buildMuseSynthesisPrompt({
   buf.writeln(profile.synthesisCharter);
   buf.writeln('</charter>');
   buf.writeln();
-  buf.writeln('<output_schema>');
-  buf.writeln('Reply in this exact XML structure. Plain text inside tags.');
-  buf.writeln('<intent>One short paragraph: what this change is reaching for, '
-      'inferred from the diff shape. Honest read-back the user can verify or correct.</intent>');
-  buf.writeln('<drift>');
-  buf.writeln('  <move idea="N" cite="path[:line]"><body>One short paragraph naming a hunk that does not serve the intent.</body></move>');
-  buf.writeln('  <move ...>...</move>');
-  buf.writeln('  (Empty allowed if no drift.)');
-  buf.writeln('</drift>');
-  buf.writeln('<wiring_broken>');
-  buf.writeln('  <move idea="N" cite="path[:line]"><body>A deterministic wiring break — a caller that still references a renamed/removed symbol, an import that no longer resolves, etc.</body></move>');
-  buf.writeln('  (Empty if nothing broken.)');
-  buf.writeln('</wiring_broken>');
-  buf.writeln('<wiring_missing>');
-  buf.writeln('  <move idea="N" cite="path"><body>A coupled-but-untouched file that should plausibly be wired in. Be specific about the wiring.</body></move>');
-  buf.writeln('  (Empty if nothing missing.)');
-  buf.writeln('</wiring_missing>');
-  if (profile.allowIdeaFlaws) {
-    buf.writeln('<idea_flaws>');
-    buf.writeln('  <move idea="N" cite="path[:line]"><body>A premise tension you see in the change. Be specific.</body></move>');
-    buf.writeln('  (Empty if no flaws.)');
-    buf.writeln('</idea_flaws>');
-  }
-  buf.writeln('<trajectory>One short paragraph: what the cleanest landing looks like.</trajectory>');
-  buf.writeln('</output_schema>');
+  buf.writeln('<shape>');
+  buf.writeln('Each section holds one short paragraph or a sequence of '
+      '<move> elements. A section may be empty when you have nothing '
+      'in it — empty is a real answer.');
   buf.writeln();
-  buf.writeln('<rules>');
-  buf.writeln('- The "idea" attribute on a <move> is OPTIONAL and refers to the brainstorm idea index that prompted this move (the UI surfaces this as "from idea: ..."). Use it when an idea genuinely seeded the move; omit when the move came from your own reading of the diff.');
-  buf.writeln('- The "cite" attribute is a file path or path:line reference grounding the move. ${profile.requireGroundedCitations ? 'EVERY move MUST have a cite from the relevance_neighborhood OR file_context. Moves without citations are dropped.' : 'Strongly preferred but not required.'}');
-  buf.writeln('- No score, no findings count, no markdown.');
-  buf.writeln('- Brainstorm ideas with no grounding silently disappear — do not list them.');
-  buf.writeln('- Brainstorm ideas with strong grounding should be woven into the appropriate move with their idea index.');
-  buf.writeln('</rules>');
+  buf.writeln('<intent>...</intent>');
+  buf.writeln('  Read what the change is reaching for. One short paragraph '
+      'the user can verify or correct.');
+  buf.writeln();
+  buf.writeln('<resonances>');
+  buf.writeln('  <move ...><body>...</body></move>');
+  buf.writeln('</resonances>');
+  buf.writeln('  Patterns this change rhymes with.');
+  buf.writeln('    code-rooted: a specific file or symbol elsewhere in '
+      'the repo whose shape mirrors this change.');
+  buf.writeln('    field-rooted: a metaphor, a comparison to how shapes '
+      'like this tend to land, an observation about what kind of move '
+      'this is, a question about what it resembles.');
+  buf.writeln();
+  buf.writeln('<alternatives>');
+  buf.writeln('  <move ...><body>...</body></move>');
+  buf.writeln('</alternatives>');
+  buf.writeln('  Directions the change could take — alongside or instead.');
+  buf.writeln('    code-rooted: a different concrete approach native to '
+      'the existing grammar.');
+  buf.writeln('    field-rooted: a different way of framing the change '
+      'altogether, a question about the premise, a value-check, a path '
+      'the work could swerve onto that the diff does not yet name.');
+  buf.writeln();
+  buf.writeln('<extensions>');
+  buf.writeln('  <move ...><body>...</body></move>');
+  buf.writeln('</extensions>');
+  buf.writeln('  Places this work could grow into.');
+  buf.writeln('    code-rooted: a coupled file, an adjacent module, a '
+      'follow-up that would amplify what is here.');
+  buf.writeln('    field-rooted: a wider practice the change invites, a '
+      'conversation worth opening with a teammate, a way the work will '
+      'need to be defended over time, a promise this change is implicitly '
+      'making.');
+  buf.writeln();
+  buf.writeln('<trajectory>...</trajectory>');
+  buf.writeln('  One short paragraph sketching where this work is '
+      'bending — what the next 1-3 moves naturally look like, or what '
+      'larger arc this change is participating in.');
+  buf.writeln('</shape>');
+  buf.writeln();
+  buf.writeln('<move_attributes>');
+  buf.writeln('A <move> may carry these attributes when they belong.');
+  buf.writeln();
+  buf.writeln('  cite="path[:line]" — code-rooted moves carry their '
+      'cite alongside, pointing at a specific file or symbol from '
+      'the relevance_neighborhood or diff. Field-rooted moves carry '
+      'their reach instead — a metaphor, a question, a wider pattern '
+      '— and the cite simply rests.');
+  buf.writeln();
+  buf.writeln('  idea="N" — the brainstorm idea index this move grew '
+      'from. Use it when an idea genuinely sourced the move; leave '
+      'it off when the move came from your own reading of the diff. '
+      'The UI surfaces it as "from idea: ...".');
+  buf.writeln('</move_attributes>');
+  buf.writeln();
+  buf.writeln('<plumbing>');
+  buf.writeln('- Plain prose inside tags. The shape above is the '
+      'complete output — open with the first tag and close with the '
+      'last.');
+  buf.writeln('- The brainstorm ideas that found a home in your '
+      'moves carry their idea index; the rest rest quietly. Both '
+      'fates are part of the muse working.');
+  buf.writeln('</plumbing>');
   buf.writeln();
   if (customPrompt.trim().isNotEmpty) {
     buf.writeln('<user_instructions>');
@@ -1481,10 +1697,19 @@ String _buildMuseSynthesisPrompt({
   buf.writeln('<scope>');
   buf.writeln('Branch: $branchName');
   buf.writeln('Scope: $scopeLabel');
-  if (commitDraft.trim().isNotEmpty) {
-    buf.writeln('Current draft message: ${commitDraft.trim()}');
-  }
   buf.writeln('</scope>');
+  if (commitDraft.trim().isNotEmpty) {
+    buf.writeln();
+    buf.writeln('<author_message>');
+    buf.writeln('What the user has written about this change, in their '
+        'own words, while the work was in progress. This is the '
+        'human\'s framing — what they would say the change is for. '
+        'Read it as the strongest signal for what the work is '
+        'reaching for; the diff shows the how, this shows the why.');
+    buf.writeln();
+    buf.writeln(commitDraft.trim());
+    buf.writeln('</author_message>');
+  }
   buf.writeln();
   buf.writeln('<brainstorm>');
   for (final idea in ideas) {
@@ -1508,17 +1733,15 @@ class _ParsedMuseOutput {
   _ParsedMuseOutput({
     required this.intent,
     required this.trajectory,
-    required this.drift,
-    required this.wiringBroken,
-    required this.wiringMissing,
-    required this.ideaFlaws,
+    required this.resonances,
+    required this.alternatives,
+    required this.extensions,
   });
   final String intent;
   final String trajectory;
-  final List<AiMuseMove> drift;
-  final List<AiMuseMove> wiringBroken;
-  final List<AiMuseMove> wiringMissing;
-  final List<AiMuseMove> ideaFlaws;
+  final List<AiMuseMove> resonances;
+  final List<AiMuseMove> alternatives;
+  final List<AiMuseMove> extensions;
 }
 
 _ParsedMuseOutput _parseMuseOutput(String raw) {
@@ -1589,10 +1812,9 @@ _ParsedMuseOutput _parseMuseOutput(String raw) {
   return _ParsedMuseOutput(
     intent: extractText('intent'),
     trajectory: extractText('trajectory'),
-    drift: parseMoves(extractSection('drift')),
-    wiringBroken: parseMoves(extractSection('wiring_broken')),
-    wiringMissing: parseMoves(extractSection('wiring_missing')),
-    ideaFlaws: parseMoves(extractSection('idea_flaws')),
+    resonances: parseMoves(extractSection('resonances')),
+    alternatives: parseMoves(extractSection('alternatives')),
+    extensions: parseMoves(extractSection('extensions')),
   );
 }
 
@@ -1780,10 +2002,9 @@ Future<GitResult<AiMuseData>> runMuse({
     // failure is diagnosable after the fact.
     final noContent = parsed.intent.isEmpty &&
         parsed.trajectory.isEmpty &&
-        parsed.drift.isEmpty &&
-        parsed.wiringBroken.isEmpty &&
-        parsed.wiringMissing.isEmpty &&
-        parsed.ideaFlaws.isEmpty;
+        parsed.resonances.isEmpty &&
+        parsed.alternatives.isEmpty &&
+        parsed.extensions.isEmpty;
     if (noContent) {
       await _recordReviewAudit(
         event: 'muse_synthesis_parse_fail',
@@ -1811,10 +2032,9 @@ Future<GitResult<AiMuseData>> runMuse({
     // misbehaving model is visible in telemetry.
     final rawMoveOpens =
         '<move'.allMatches(providerOutput.output!).length;
-    final parsedMoveCount = parsed.drift.length +
-        parsed.wiringBroken.length +
-        parsed.wiringMissing.length +
-        parsed.ideaFlaws.length;
+    final parsedMoveCount = parsed.resonances.length +
+        parsed.alternatives.length +
+        parsed.extensions.length;
     final droppedMoves = math.max(0, rawMoveOpens - parsedMoveCount);
     if (droppedMoves > 0) {
       // Fire-and-forget — the parsed portion still reaches the UI.
@@ -1837,10 +2057,9 @@ Future<GitResult<AiMuseData>> runMuse({
       scopeLabel: scopeLabel,
       intent: parsed.intent,
       trajectory: parsed.trajectory,
-      drift: parsed.drift,
-      wiringBroken: parsed.wiringBroken,
-      wiringMissing: parsed.wiringMissing,
-      ideaFlaws: parsed.ideaFlaws,
+      resonances: parsed.resonances,
+      alternatives: parsed.alternatives,
+      extensions: parsed.extensions,
       brainstormIdeas: [
         for (final i in ideas)
           AiMuseIdea(index: i.index, text: i.text, kept: i.kept),
@@ -2455,98 +2674,127 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   required List<String> scopedPaths,
   required bool includeStaged,
   required bool includeUnstaged,
+  // Optional overrides used by PR-review flows (branches page) that
+  // already have a raw diff in hand and don't want the working-tree
+  // git-derivation. When [rawDiffOverride] is non-empty, the initial
+  // branch/status/stat/diff derivation is skipped and these overrides
+  // are routed directly into the downstream context-enrichment pipe.
+  // The logos-diffusion, project-sense, and prompt-builder phases are
+  // diff-source-agnostic so they run uniformly for either flow.
+  String? rawDiffOverride,
+  String? branchNameOverride,
+  String? statusSummaryOverride,
+  String? statSummaryOverride,
 }) async {
   final scopeArgs =
       scopedPaths.isEmpty ? const <String>[] : ['--', ...scopedPaths];
 
-  final branch = await _runGitCommand(
-    repositoryPath,
-    const ['rev-parse', '--abbrev-ref', 'HEAD'],
-  );
-  if (!branch.ok) {
-    return _CommitDiffContextResult.err(branch.error!);
-  }
+  final String branchName;
+  final String statusSummary;
+  final String statSummary;
+  final String fullDiff;
 
-  final status = await _runGitCommand(
-    repositoryPath,
-    ['status', '--porcelain=v1', ...scopeArgs],
-  );
-  if (!status.ok) {
-    return _CommitDiffContextResult.err(status.error!);
-  }
+  if (rawDiffOverride != null && rawDiffOverride.trim().isNotEmpty) {
+    branchName = branchNameOverride ?? '(pr)';
+    statusSummary = statusSummaryOverride ?? '';
+    statSummary = statSummaryOverride ?? '';
+    fullDiff = rawDiffOverride;
+  } else {
+    final branch = await _runGitCommand(
+      repositoryPath,
+      const ['rev-parse', '--abbrev-ref', 'HEAD'],
+    );
+    if (!branch.ok) {
+      return _CommitDiffContextResult.err(branch.error!);
+    }
 
-  final stagedStat = includeStaged
-      ? await _runGitCommand(
-          repositoryPath,
-          ['diff', '--cached', '--stat=$_diffStatWidth', ...scopeArgs],
-        )
-      : const GitResult.ok('');
-  if (!stagedStat.ok) {
-    return _CommitDiffContextResult.err(stagedStat.error!);
-  }
+    final status = await _runGitCommand(
+      repositoryPath,
+      ['status', '--porcelain=v1', ...scopeArgs],
+    );
+    if (!status.ok) {
+      return _CommitDiffContextResult.err(status.error!);
+    }
 
-  final unstagedStat = includeUnstaged
-      ? await _runGitCommand(
-          repositoryPath,
-          ['diff', '--stat=$_diffStatWidth', ...scopeArgs],
-        )
-      : const GitResult.ok('');
-  if (!unstagedStat.ok) {
-    return _CommitDiffContextResult.err(unstagedStat.error!);
-  }
+    final stagedStat = includeStaged
+        ? await _runGitCommand(
+            repositoryPath,
+            ['diff', '--cached', '--stat=$_diffStatWidth', ...scopeArgs],
+          )
+        : const GitResult.ok('');
+    if (!stagedStat.ok) {
+      return _CommitDiffContextResult.err(stagedStat.error!);
+    }
 
-  // Diff flags chosen for AI review quality.
-  // Context lines adapt to scope size: small changes get more surrounding
-  // code (the AI sees the full function), large changes get less (save
-  // token budget for actual changes).
-  final fileCount = scopeArgs.length > 1 ? scopeArgs.length - 1 : 10;
-  final contextLines = fileCount <= 3 ? 15 : (fileCount <= 10 ? 10 : 6);
-  final diffFlags = [
-    '--no-color',
-    '-U$contextLines',
-    '--patience',
-    '-M',
-    '--ignore-cr-at-eol',
-  ];
+    final unstagedStat = includeUnstaged
+        ? await _runGitCommand(
+            repositoryPath,
+            ['diff', '--stat=$_diffStatWidth', ...scopeArgs],
+          )
+        : const GitResult.ok('');
+    if (!unstagedStat.ok) {
+      return _CommitDiffContextResult.err(unstagedStat.error!);
+    }
 
-  final stagedDiff = includeStaged
-      ? await _runGitCommand(
-          repositoryPath,
-          ['diff', '--cached', ...diffFlags, ...scopeArgs],
-          timeout: const Duration(seconds: _diffTimeoutSeconds),
-        )
-      : const GitResult.ok('');
-  if (!stagedDiff.ok) {
-    return _CommitDiffContextResult.err(stagedDiff.error!);
-  }
+    // Diff flags chosen for AI review quality.
+    // Context lines adapt to scope size: small changes get more surrounding
+    // code (the AI sees the full function), large changes get less (save
+    // token budget for actual changes).
+    final fileCount = scopeArgs.length > 1 ? scopeArgs.length - 1 : 10;
+    final contextLines = fileCount <= 3 ? 15 : (fileCount <= 10 ? 10 : 6);
+    final diffFlags = [
+      '--no-color',
+      '-U$contextLines',
+      '--patience',
+      '-M',
+      '--ignore-cr-at-eol',
+    ];
 
-  final unstagedDiff = includeUnstaged
-      ? await _runGitCommand(
-          repositoryPath,
-          ['diff', ...diffFlags, ...scopeArgs],
-          timeout: const Duration(seconds: _diffTimeoutSeconds),
-        )
-      : const GitResult.ok('');
-  if (!unstagedDiff.ok) {
-    return _CommitDiffContextResult.err(unstagedDiff.error!);
-  }
+    final stagedDiff = includeStaged
+        ? await _runGitCommand(
+            repositoryPath,
+            ['diff', '--cached', ...diffFlags, ...scopeArgs],
+            timeout: const Duration(seconds: _diffTimeoutSeconds),
+          )
+        : const GitResult.ok('');
+    if (!stagedDiff.ok) {
+      return _CommitDiffContextResult.err(stagedDiff.error!);
+    }
 
-  // Untracked files are invisible to `git diff` and `git diff --cached` —
-  // they only appear in `git status` as '??'. For the AI reviewer, those
-  // are just new files with their full content as added lines. Synthesize
-  // proper unified-diff entries for each one so the reviewer can see them.
-  final untrackedDiff = includeUnstaged
-      ? await _collectUntrackedFilesDiff(repositoryPath, scopeArgs)
-      : '';
+    final unstagedDiff = includeUnstaged
+        ? await _runGitCommand(
+            repositoryPath,
+            ['diff', ...diffFlags, ...scopeArgs],
+            timeout: const Duration(seconds: _diffTimeoutSeconds),
+          )
+        : const GitResult.ok('');
+    if (!unstagedDiff.ok) {
+      return _CommitDiffContextResult.err(unstagedDiff.error!);
+    }
 
-  final fullDiff = _joinDiffSections(
-    stagedDiff: stagedDiff.data ?? '',
-    unstagedDiff: unstagedDiff.data ?? '',
-    untrackedDiff: untrackedDiff,
-  );
-  if (fullDiff.trim().isEmpty) {
-    return _CommitDiffContextResult.err(
-      'No diff content is available for $scopeLabel.',
+    // Untracked files are invisible to `git diff` and `git diff --cached` —
+    // they only appear in `git status` as '??'. For the AI reviewer, those
+    // are just new files with their full content as added lines. Synthesize
+    // proper unified-diff entries for each one so the reviewer can see them.
+    final untrackedDiff = includeUnstaged
+        ? await _collectUntrackedFilesDiff(repositoryPath, scopeArgs)
+        : '';
+
+    fullDiff = _joinDiffSections(
+      stagedDiff: stagedDiff.data ?? '',
+      unstagedDiff: unstagedDiff.data ?? '',
+      untrackedDiff: untrackedDiff,
+    );
+    if (fullDiff.trim().isEmpty) {
+      return _CommitDiffContextResult.err(
+        'No diff content is available for $scopeLabel.',
+      );
+    }
+    branchName = branch.data?.trim() ?? '';
+    statusSummary = status.data ?? '';
+    statSummary = _joinStatSections(
+      stagedStat: stagedStat.data ?? '',
+      unstagedStat: unstagedStat.data ?? '',
     );
   }
 
@@ -2665,11 +2913,6 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     originalDiffCharacters: diffBundle.originalDiffCharacters,
   );
 
-  final statSummary = _joinStatSections(
-    stagedStat: stagedStat.data ?? '',
-    unstagedStat: unstagedStat.data ?? '',
-  );
-
   // Telemetry was kicked off at the top of the function concurrently
   // with the CPU-heavy diffusion/assembly phases. Await now — the
   // six subprocess fetches likely completed while logos did its work.
@@ -2698,8 +2941,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
 
   return _CommitDiffContextResult.ok(
     _CommitDiffContext(
-      branchName: (branch.data ?? 'HEAD').trim(),
-      statusSummary: (status.data ?? '').trim(),
+      branchName: branchName.trim().isEmpty ? 'HEAD' : branchName.trim(),
+      statusSummary: statusSummary.trim(),
       statSummary: statSummary.trim(),
       diffBundle: enrichedBundle,
       totalCommits: totalCommits,
@@ -3385,7 +3628,7 @@ Future<String> _collectFileContext({
         filePath: filePath,
         diffText: diffText,
       );
-      final pack = chunks.packRelevantChunks(
+      final pack = await chunks.packRelevantChunksAsync(
         filePath: filePath,
         content: content,
         touchedRanges: touched,
@@ -3849,7 +4092,7 @@ Future<({String text, LogosEmissionRecord? record})>
           // diffusion. Neighborhood files have no diff-touched ranges,
           // so the chunk packer uses byte-mass ρ and surfaces the most
           // central chunks. Geometry, not an arbitrary line cap.
-          final pack = chunks.packRelevantChunks(
+          final pack = await chunks.packRelevantChunksAsync(
             filePath: item.path,
             content: content,
             touchedRanges: const [],
@@ -4436,7 +4679,8 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
     engine = null;
   }
 
-  final ranking = hunks.rankHunksByPhi(hunks: parsed, logosEngine: engine);
+  final ranking =
+      await hunks.rankHunksByPhiAsync(hunks: parsed, logosEngine: engine);
   final pack = hunks.packHunksUnderBudget(
     rankings: ranking.rankings,
     budgetChars: _kDiffBudgetChars,
@@ -4983,9 +5227,15 @@ String _buildCommitReviewPrompt({
   }
   if (spec.commitDraft.trim().isNotEmpty) {
     buffer.writeln();
-    buffer.writeln('<commit_intent>');
+    buffer.writeln('<author_message>');
+    buffer.writeln('What the user has written about this change, in '
+        'their own words, while the work was in progress. This is '
+        'the human\'s framing — what they would say the change is '
+        'for. Read it as the strongest signal for what the work is '
+        'reaching for; the diff shows the how, this shows the why.');
+    buffer.writeln();
     buffer.writeln(spec.commitDraft.trim());
-    buffer.writeln('</commit_intent>');
+    buffer.writeln('</author_message>');
   }
   buffer.writeln();
   buffer.writeln('<diff_context>');

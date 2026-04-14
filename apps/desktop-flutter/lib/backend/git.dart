@@ -244,6 +244,30 @@ Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(String repo,
   return GitResult.ok(_parseCommitLogLines(r.stdout.toString().split('\n')));
 }
 
+/// Commits reachable from [branch] that are NOT reachable from [excluding].
+/// Concretely: `git log <branch> ^<excluding>` — the diverged set, oldest
+/// at the end like every other history list. Used by the History page's
+/// hover-preview to show what commits would land if the user merged
+/// the hovered desk into the active worktree, without leaving the view.
+Future<GitResult<List<CommitHistoryEntry>>> listCommitsAhead(
+  String repo, {
+  required String branch,
+  required String excluding,
+  int limit = 200,
+}) async {
+  final args = [
+    'log',
+    _kCommitLogFormat,
+    '-n',
+    '$limit',
+    branch,
+    '^$excluding',
+  ];
+  final r = await _git(repo, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(_parseCommitLogLines(r.stdout.toString().split('\n')));
+}
+
 /// Bulk-fetches file stats for all commits in two parallel git log passes
 /// (--numstat and --name-status). Merges with already-loaded commit metadata
 /// to produce a full CommitDetailData per commit — body is left empty since
@@ -478,6 +502,126 @@ Future<GitResult<String>> getFileDiffAtRevision(
 }
 
 /// Full multi-file diff for a commit. Same fallback as the per-file
+/// Method picker for [applyBranchToBase]. Mirrors GitHub's three
+/// well-known PR-merge strategies; each maps to a different `git`
+/// command sequence inside the function.
+enum BranchMergeMethod {
+  /// `git merge --no-ff <branch>` — preserves both histories with an
+  /// explicit merge commit.
+  mergeCommit,
+
+  /// `git merge --squash <branch>` then `git commit -m <subject>` —
+  /// collapses every commit on the branch into one on the base.
+  squash,
+
+  /// `git rebase <base>` on the branch, then `git merge --ff-only` —
+  /// linear history, no merge commit.
+  rebase,
+}
+
+/// Apply [branch] onto [baseRef] inside [mainRepoPath], using the
+/// chosen [method]. Optionally deletes [branch] after a successful
+/// merge. The function performs only git operations (Process.run);
+/// callers handle UI feedback (snackbars) + state updates
+/// (DeskPrState, RepositoryState refresh) themselves.
+///
+/// On any step failure, leaves the working tree as `git` itself does
+/// (rebase failures auto-`--abort`; merge conflicts leave conflict
+/// markers in the tree as usual). The returned [GitResult.error]
+/// carries the trimmed stderr from the failing step.
+///
+/// Shared between the branches-page PR row, the desk context menu's
+/// "Apply to main", and any future caller — the engine that decides
+/// which `git` commands to run lives here, not in widget state.
+Future<GitResult<void>> applyBranchToBase({
+  required String mainRepoPath,
+  required String branch,
+  required String baseRef,
+  required BranchMergeMethod method,
+  bool deleteBranch = true,
+  String? squashSubject,
+}) async {
+  // Always start from the base. If we can't switch to it the rest of
+  // the pipeline is meaningless.
+  final checkoutBase = await _git(mainRepoPath, ['checkout', baseRef]);
+  if (checkoutBase.exitCode != 0) {
+    return GitResult.err(
+      'Could not switch to $baseRef: ${checkoutBase.stderr.toString().trim()}',
+    );
+  }
+
+  switch (method) {
+    case BranchMergeMethod.rebase:
+      // Step onto the branch, replay it on top of the base, step back,
+      // fast-forward the base. On rebase failure: abort + restore base.
+      final coBranch = await _git(mainRepoPath, ['checkout', branch]);
+      if (coBranch.exitCode != 0) {
+        return GitResult.err(
+          'Could not switch to $branch: ${coBranch.stderr.toString().trim()}',
+        );
+      }
+      final rebase = await _git(mainRepoPath, ['rebase', baseRef]);
+      if (rebase.exitCode != 0) {
+        await _git(mainRepoPath, ['rebase', '--abort']);
+        await _git(mainRepoPath, ['checkout', baseRef]);
+        return GitResult.err(
+          'Rebase failed: ${rebase.stderr.toString().trim()}',
+        );
+      }
+      await _git(mainRepoPath, ['checkout', baseRef]);
+      final ff = await _git(mainRepoPath, ['merge', '--ff-only', branch]);
+      if (ff.exitCode != 0) {
+        return GitResult.err(
+          'Fast-forward failed: ${ff.stderr.toString().trim()}',
+        );
+      }
+      break;
+
+    case BranchMergeMethod.squash:
+      final sq = await _git(mainRepoPath, ['merge', '--squash', branch]);
+      if (sq.exitCode != 0) {
+        return GitResult.err(
+          'Squash failed: ${sq.stderr.toString().trim()}',
+        );
+      }
+      // `--squash` stages the change but leaves it uncommitted; finalise
+      // with the supplied subject (or a sane default).
+      final subject = (squashSubject != null && squashSubject.trim().isNotEmpty)
+          ? squashSubject.trim()
+          : 'Merge local PR ($branch)';
+      final commit = await _git(mainRepoPath, ['commit', '-m', subject]);
+      if (commit.exitCode != 0) {
+        return GitResult.err(
+          'Squash commit failed: ${commit.stderr.toString().trim()}',
+        );
+      }
+      break;
+
+    case BranchMergeMethod.mergeCommit:
+      final mc = await _git(mainRepoPath, ['merge', '--no-ff', branch]);
+      if (mc.exitCode != 0) {
+        return GitResult.err(
+          'Merge failed: ${mc.stderr.toString().trim()}',
+        );
+      }
+      break;
+  }
+
+  if (deleteBranch) {
+    // Best-effort. `-d` (not `-D`) refuses if the branch isn't merged;
+    // after a successful merge it always succeeds. Surface the error
+    // string but don't fail the overall operation — the merge landed.
+    final del = await _git(mainRepoPath, ['branch', '-d', branch]);
+    if (del.exitCode != 0) {
+      return GitResult.err(
+        'Merged but could not delete $branch: '
+        '${del.stderr.toString().trim()}',
+      );
+    }
+  }
+  return GitResult.ok(null);
+}
+
 /// variant for root commits (`git diff <hash>~1..<hash>` fails when
 /// there's no parent → fall back to `git show`).
 Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
@@ -593,6 +737,31 @@ Future<GitResult<String>> getFileDiff(String repo, String path,
       ? ['diff', '--cached', '-U$contextLines', '--', path]
       : ['diff', '-U$contextLines', '--', path];
   final r = await _git(repo, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(r.stdout.toString());
+}
+
+/// Everything a desk contains beyond [targetRef] as a single unified
+/// diff. Run from inside the desk's worktree and compared against a
+/// ref that lives in its shared repo (typically the destination
+/// branch's tip), this folds:
+///
+///   • commits the desk has ahead of [targetRef] (if any), AND
+///   • uncommitted work in the desk's working tree
+///
+/// into one patch that, when applied to a clean [targetRef] tree,
+/// reproduces the desk's current state. Perfect for "drag-dump this
+/// desk onto the current Changes page." Returns an empty string when
+/// the desk is at parity with [targetRef] and has no WIP.
+Future<GitResult<String>> getDeskDumpDiff(
+  String deskPath,
+  String targetRef, {
+  int contextLines = 3,
+}) async {
+  final r = await _git(
+    deskPath,
+    ['diff', '-U$contextLines', targetRef],
+  );
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(r.stdout.toString());
 }
@@ -752,6 +921,115 @@ Future<GitResult<void>> deleteBranch(String repo, String name,
   final r = await _git(repo, ['branch', force ? '-D' : '-d', name]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
+}
+
+/// Rename a local branch. `-M` to force-replace if [newName] already
+/// exists (git rejects otherwise). Returns the git stderr on failure
+/// so callers can surface the actual reason (ref collision, dirty
+/// working tree, etc.).
+Future<GitResult<void>> renameBranch(
+    String repo, String oldName, String newName,
+    {bool force = false}) async {
+  final r = await _git(
+      repo, ['branch', force ? '-M' : '-m', oldName, newName]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+/// Cherry-pick a commit onto the current HEAD. Non-fast-forward; git
+/// leaves conflicts in the working tree on failure — caller should
+/// surface the stderr to the user so they can resolve or abort.
+Future<GitResult<void>> cherryPickCommit(String repo, String hash) async {
+  final r = await _git(repo, ['cherry-pick', hash]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+/// Revert a commit — creates a new commit that undoes [hash] against
+/// current HEAD. `--no-edit` skips the commit-message editor; the
+/// default "Revert '<subject>'" message is fine for UI-driven reverts.
+Future<GitResult<void>> revertCommit(String repo, String hash) async {
+  final r = await _git(repo, ['revert', '--no-edit', hash]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+/// The primary remote's name. `origin` is the convention and wins when
+/// present; otherwise we take the first remote `git remote` lists
+/// (single-remote repos with non-conventional names — e.g. `upstream`
+/// after a fork — are common enough to need this). Returns null only
+/// when the repo has no remotes at all (fresh local-only repo).
+///
+/// Cached at the call site, not here — callers in tight loops should
+/// resolve once and pass the result through, since this spawns a
+/// subprocess.
+Future<GitResult<String?>> primaryRemoteName(String repo) async {
+  final r = await _git(repo, ['remote']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  final names = <String>[
+    for (final line in r.stdout.toString().split('\n'))
+      if (line.trim().isNotEmpty) line.trim(),
+  ];
+  if (names.isEmpty) return const GitResult.ok(null);
+  if (names.contains('origin')) return const GitResult.ok('origin');
+  return GitResult.ok(names.first);
+}
+
+/// The repo's default branch name — what `git symbolic-ref
+/// refs/remotes/<primary>/HEAD` points to, with a fallback scan for
+/// `main` or `master` when no remote HEAD is set. Returns null when
+/// the repo has no recognizable default (new repo, detached, nothing
+/// configured). The History page uses this to compute trunk-vs-branch
+/// lane assignment on the top timeline.
+Future<GitResult<String?>> defaultBranchName(String repo) async {
+  final remoteRes = await primaryRemoteName(repo);
+  final remote = remoteRes.ok ? (remoteRes.data ?? 'origin') : 'origin';
+  final viaRemote = await _git(
+      repo, ['symbolic-ref', '--short', 'refs/remotes/$remote/HEAD']);
+  if (viaRemote.exitCode == 0) {
+    final raw = viaRemote.stdout.toString().trim();
+    // Output form: "<remote>/main" — strip the remote prefix.
+    final slash = raw.indexOf('/');
+    if (slash > 0 && slash + 1 < raw.length) {
+      return GitResult.ok(raw.substring(slash + 1));
+    }
+  }
+  // Fallback: probe local + remote for conventional names. `main` wins
+  // when both exist (modern convention); `master` used as legacy
+  // fallback. `verify` avoids spawning a full `for-each-ref` walk.
+  for (final candidate in const ['main', 'master']) {
+    final check = await _git(
+        repo, ['rev-parse', '--verify', '--quiet', 'refs/heads/$candidate']);
+    if (check.exitCode == 0) return GitResult.ok(candidate);
+    final remoteRef = await _git(repo, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      'refs/remotes/$remote/$candidate',
+    ]);
+    if (remoteRef.exitCode == 0) return GitResult.ok(candidate);
+  }
+  return const GitResult.ok(null);
+}
+
+/// Hashes reachable from [ref], capped at [limit]. Returned as a Set
+/// for O(1) membership checks in UI rendering paths. Caller matches
+/// the [limit] against whatever history depth the surface is showing;
+/// passing a smaller limit than the surface renders means some of the
+/// on-screen commits will look "off-trunk" even when they're actually
+/// deeper ancestors — so size the limit to the surface, not a default.
+Future<GitResult<Set<String>>> ancestorHashes(
+  String repo,
+  String ref, {
+  required int limit,
+}) async {
+  final r = await _git(repo, ['rev-list', '-n', '$limit', ref]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  final hashes = <String>{
+    for (final line in r.stdout.toString().split('\n'))
+      if (line.trim().isNotEmpty) line.trim(),
+  };
+  return GitResult.ok(hashes);
 }
 
 Future<GitResult<List<TagEntryData>>> listTags(String repo) async {

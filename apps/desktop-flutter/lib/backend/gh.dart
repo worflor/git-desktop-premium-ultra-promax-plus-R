@@ -175,18 +175,26 @@ class PullRequestDetail {
   /// if the diff is empty.
   ///
   /// Parsing once in the backend (when the future resolves) instead of
-  /// in `_DiffView.build` is the root-cause fix for the diff-view
-  /// freeze: AnimatedSize tweens, prefetch progress notifications, and
-  /// any sibling setState would otherwise trigger O(n) regex parsing
-  /// of the full patch on the main thread per rebuild — easily 50-200
-  /// ms each, cumulating to multi-second freezes.
+  /// per diff-render is the root-cause fix for the diff-view freeze:
+  /// AnimatedSize tweens, prefetch progress notifications, and any
+  /// sibling setState would otherwise trigger O(n) regex parsing of
+  /// the full patch on the main thread per rebuild — easily 50–200 ms
+  /// each, cumulating to multi-second freezes.
   final Map<String, List<ParsedLine>> diffByFile;
+  /// Raw unified-diff text sliced per file, keyed identically to
+  /// [diffByFile]. Lets the PR review surface hand a single file's diff
+  /// straight to [DiffShell] (which accepts raw text) without having
+  /// to re-slice or re-parse on every rebuild. Computed once at detail
+  /// fetch alongside [diffByFile] via [sliceDiffByFile]. Empty map if
+  /// [diff] is empty.
+  final Map<String, String> rawDiffByFile;
   const PullRequestDetail({
     required this.body,
     required this.files,
     required this.comments,
     required this.diff,
     required this.diffByFile,
+    required this.rawDiffByFile,
   });
 }
 
@@ -601,6 +609,7 @@ Future<GitResult<PullRequestDetail>> pullRequestDetail(
       comments: mergedComments,
       diff: rawDiff,
       diffByFile: byFile,
+      rawDiffByFile: sliceDiffByFile(rawDiff),
     ));
   } catch (e) {
     return GitResult.err('Failed to parse gh pr view: $e');

@@ -13,6 +13,7 @@
 
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'file_coupling.dart';
 import 'git_result.dart';
@@ -25,23 +26,23 @@ const int _statsCommitWindow = 1000;
 
 /// Gather the four Phase-1 statistics the engine needs from the repo.
 ///
-/// Reuses the existing [computeFileCoupling] path so we only walk the
-/// commit log twice in total — once here (for F0 + V), once there (for
-/// CC). Pass [coupling] in when a cached matrix is already on hand to
-/// skip the second git-log invocation.
+/// We walk the commit log via two independent `git log` invocations —
+/// one with `--numstat` (drives F0 + V), one with `--name-only` (drives
+/// CC via [computeFileCoupling]). They are kicked off **concurrently**
+/// via `Future.wait` so the wall-clock cost is one walk, not two.
+/// Both share the OS page cache for the repo's pack files, so the
+/// second process is materially faster than running serially. Pass
+/// [coupling] in when a cached matrix is already on hand to skip the
+/// CC walk entirely.
 Future<GitResult<LogosGitStats>> collectLogosGitStats(
   String repoPath, {
   FileCouplingMatrix? coupling,
   int commitWindow = _statsCommitWindow,
 }) async {
-  // Walk `git log --numstat` once. Each commit gives us a list of
-  // (file, additions, deletions); we derive both touches (F0) and
-  // per-file EWMA volatility (V).
-  //
   // --no-merges: merges dominate the pair counts spuriously.
   // --numstat:   per-file +/- counts; binaries show "-\t-" (handled).
   // --format=%H: commit-hash delimiters, easy to split on.
-  final log = await Process.run(
+  final logFuture = Process.run(
     'git',
     [
       'log',
@@ -54,9 +55,26 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     workingDirectory: repoPath,
     runInShell: false,
   );
+  // Coupling walk runs in parallel with the numstat walk above. Both
+  // git processes share the pack-file cache; the second one is fast.
+  final couplingFuture = coupling != null
+      ? Future.value(_CouplingResult.ok(coupling))
+      : computeFileCoupling(repoPath, commitLimit: commitWindow)
+          .then((r) => r.ok && r.data != null
+              ? _CouplingResult.ok(r.data!)
+              : _CouplingResult.err(
+                  r.error ?? 'file coupling computation failed'));
+
+  final results = await Future.wait([logFuture, couplingFuture]);
+  final log = results[0] as ProcessResult;
+  final ccResult = results[1] as _CouplingResult;
   if (log.exitCode != 0) {
     return GitResult.err('git log failed: ${log.stderr.toString().trim()}');
   }
+  if (ccResult.error != null) {
+    return GitResult.err(ccResult.error!);
+  }
+  final cc = ccResult.matrix!;
 
   final touches = <String, int>{};
   final volatility = <String, double>{};
@@ -122,22 +140,17 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     volStddev = math.sqrt(ss / (volatility.length - 1));
   }
 
-  // Resolve the coupling matrix. Use caller's cache when provided.
-  FileCouplingMatrix cc;
-  if (coupling != null) {
-    cc = coupling;
-  } else {
-    final ccResult = await computeFileCoupling(
-      repoPath,
-      commitLimit: commitWindow,
-    );
-    if (!ccResult.ok || ccResult.data == null) {
-      return GitResult.err(
-        ccResult.error ?? 'file coupling computation failed',
-      );
-    }
-    cc = ccResult.data!;
-  }
+  // Compact the per-file commit-index lists into Int32List once the
+  // shape is final — boxed `List<int>` averages 16+ bytes per element
+  // on the Dart VM heap; Int32List is exactly 4. On a 10k-file × ~10-
+  // touches-each repo this drops several MB of retained memory off
+  // every cached engine, with zero API change (Int32List IS a
+  // `List<int>`). The growable-then-typed pattern is the standard
+  // build-time → query-time compaction step.
+  final compactedIndices = <String, List<int>>{};
+  perFileCommitIndices.forEach((path, growable) {
+    compactedIndices[path] = Int32List.fromList(growable);
+  });
 
   return GitResult.ok(LogosGitStats(
     touches: touches,
@@ -146,8 +159,18 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     volMean: volMean,
     volStddev: volStddev,
     coupling: cc,
-    perFileCommitIndices: perFileCommitIndices,
+    perFileCommitIndices: compactedIndices,
   ));
+}
+
+/// Tagged-union surrogate for the parallel coupling-walk branch — lets
+/// `Future.wait` carry either the matrix or the failure reason without
+/// throwing across the Future boundary.
+class _CouplingResult {
+  final FileCouplingMatrix? matrix;
+  final String? error;
+  const _CouplingResult.ok(this.matrix) : error = null;
+  const _CouplingResult.err(this.error) : matrix = null;
 }
 
 // ─── parse ───────────────────────────────────────────────────────────────

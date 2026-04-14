@@ -40,6 +40,8 @@
 //   trust the predictor; when it's gas, let the prior take over."
 // ═════════════════════════════════════════════════════════════════════════
 
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -247,13 +249,30 @@ class LogosGitProbeBuilder {
     // its test counterpart (and vice versa) using common convention
     // patterns. Language-agnostic — the patterns cover Dart, JS/TS,
     // Python, Rust, Go with minimal per-language logic.
+    //
+    // Existence checks run in parallel via `Future.wait`. Each
+    // `_fileExists` is a real async `File.exists()` stat — serialising
+    // them under an outer `await` compounded single-digit-ms syscalls
+    // into hundreds of ms of blocked time on wide diffs. Candidates are
+    // deduped first so we don't stat the same mirror twice when two
+    // touched files point at the same counterpart (e.g. src/foo and
+    // its test/foo_test both nominating the other).
     var abMatches = 0;
+    final mirrors = <String>{};
     for (final touched in primaryPaths) {
-      final mirrors = _candidateMirrors(touched);
-      for (final mirror in mirrors) {
+      for (final mirror in _candidateMirrors(touched)) {
         if (weights.containsKey(mirror)) continue; // already in probe
-        if (await _fileExists(repoPath, mirror)) {
-          weights[mirror] = effectiveAbWeight;
+        mirrors.add(mirror);
+      }
+    }
+    if (mirrors.isNotEmpty) {
+      final paths = mirrors.toList(growable: false);
+      final exists = await Future.wait(
+        paths.map((m) => _fileExists(repoPath, m)),
+      );
+      for (var i = 0; i < paths.length; i++) {
+        if (exists[i]) {
+          weights[paths[i]] = effectiveAbWeight;
           abMatches++;
         }
       }
@@ -379,18 +398,37 @@ class LogosGitProbeBuilder {
     required String repoPath,
     required String symbol,
   }) async {
+    // Per-grep timeout. `git grep -l` is O(files containing the symbol);
+    // hub identifiers (`String`, `value`, `handle`) can take multiple
+    // seconds on large repos — telemetry observed p95 ≈ 4.5 s and a 6 s
+    // outlier. The specificity weight `1 / log(1 + matches)` already
+    // collapses hub-symbol contribution toward zero, so bailing after
+    // 3 s costs essentially no signal while bounding tail latency.
+    // Hard-killed processes return an empty set (identical to "no
+    // matches"), which downstream Ab-axis / diffusion handle naturally.
+    const grepTimeout = Duration(seconds: 3);
+    Process? process;
     try {
-      final result = await Process.run(
+      process = await Process.start(
         'git',
         ['grep', '-l', '-w', '-I', symbol],
         workingDirectory: repoPath,
         runInShell: false,
       );
-      if (result.exitCode != 0 && result.exitCode != 1) {
-        // exit 1 = no matches; anything else = error (e.g. not a git repo)
+      final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+      // Drain stderr so a slow `git grep` can't block on pipe backpressure.
+      final stderrFuture = process.stderr.drain<void>();
+      final int exitCode;
+      try {
+        exitCode = await process.exitCode.timeout(grepTimeout);
+      } on TimeoutException {
+        process.kill();
         return const {};
       }
-      final out = result.stdout.toString();
+      // exit 1 = no matches; anything else = error (e.g. not a git repo).
+      if (exitCode != 0 && exitCode != 1) return const {};
+      final out = await stdoutFuture;
+      await stderrFuture;
       return out
           .split('\n')
           .map((l) => l.trim())

@@ -1,14 +1,24 @@
 // ═════════════════════════════════════════════════════════════════════════
 // logos_git_resolver.dart — single source of truth for engine lifecycle
 //
-// BEFORE: two caches existed in parallel (LogosGitState + a static cache
-// in ai.dart). Race condition: the UI warmed one, the review path
-// warmed the other. Double work, stale copies.
+// One resolver. Any caller — UI state class, AI context builder, tests —
+// routes through here. Keyed by repo path; HEAD hash determines whether
+// the cached engine is fresh. Single in-flight build per repo (duplicate
+// requests await the same Future).
 //
-// NOW: one resolver. Any caller — UI state class, AI context builder,
-// tests — routes through here. Keyed by (repoPath, HEAD hash). Single
-// in-flight build per key (duplicate requests await the same Future).
+// CACHE POLICY: an LRU bounded at [_kMaxEngines]. Each engine is a
+// 5–50 MB object graph (CSR + per-file maps), so an unbounded cache
+// turns every repo the user has ever opened into a permanent memory
+// pin. The LRU keeps the working set hot and lets the rest go.
+//
+// COMPUTE POLICY: `LogosGit.buildFromStats` is hundreds of ms to
+// seconds of pure CPU on a real repo. It runs on a background isolate
+// via `Isolate.run` so the UI never freezes during a cold build.
 // ═════════════════════════════════════════════════════════════════════════
+
+import 'dart:async';
+import 'dart:collection';
+import 'dart:isolate';
 
 import 'file_coupling.dart';
 import 'git.dart';
@@ -22,7 +32,16 @@ class _ResolverEntry {
   const _ResolverEntry(this.headHash, this.engine);
 }
 
-final Map<String, _ResolverEntry> _engines = {};
+/// Hard cap on the number of engines the resolver retains. Each engine
+/// can be tens of MB; without a ceiling, every repo a user opens stays
+/// pinned in memory forever. 3 covers the typical "active repo plus
+/// one or two recently-visited" pattern; the rest get evicted LRU.
+const int _kMaxEngines = 3;
+
+/// LinkedHashMap iteration order is insertion order, so we can use it
+/// as an LRU by deleting + re-inserting on access. Cheap and sufficient
+/// for a 3-entry cache.
+final LinkedHashMap<String, _ResolverEntry> _engines = LinkedHashMap();
 final Map<String, Future<LogosGit?>> _inflight = {};
 
 /// Resolve the [LogosGit] engine for [repoPath]. Returns the cached
@@ -78,6 +97,10 @@ Future<LogosGit?> _resolveImpl(
 
     final cached = _engines[repoPath];
     if (cached != null && cached.headHash == hash) {
+      // LRU touch: re-insert moves to the most-recently-used end.
+      _engines
+        ..remove(repoPath)
+        ..[repoPath] = cached;
       log.recordCacheHit(repoPath, sw.elapsed);
       return cached.engine;
     }
@@ -93,8 +116,24 @@ Future<LogosGit?> _resolveImpl(
       return null;
     }
 
-    final engine = LogosGit.buildFromStats(statsResult.data!);
+    // Off-load the pure-CPU build to a background isolate so the UI
+    // never freezes during cold load. The stats object is sendable
+    // (Maps + typed lists + scalars), and so is the resulting engine —
+    // both cross the isolate port via copy serialisation. For a 10k-
+    // file engine the copy cost is a few ms versus hundreds-of-ms of
+    // build cost, so the trade is firmly net-positive.
+    final stats = statsResult.data!;
+    final engine = await Isolate.run<LogosGit>(
+      () => LogosGit.buildFromStats(stats),
+      debugName: 'LogosGit.buildFromStats',
+    );
+
+    // Insert + LRU-evict in one step. `entries.first` is the
+    // least-recently-used because LinkedHashMap is insertion-ordered.
     _engines[repoPath] = _ResolverEntry(hash, engine);
+    while (_engines.length > _kMaxEngines) {
+      _engines.remove(_engines.keys.first);
+    }
     log.recordBuild(
       repoPath: repoPath,
       nodes: engine.nodePaths.length,

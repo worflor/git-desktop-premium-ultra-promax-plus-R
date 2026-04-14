@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../ui/animated_icons.dart';
@@ -26,7 +27,10 @@ import '../../app/ai_settings_state.dart';
 import '../../app/file_coupling_state.dart';
 import '../../app/logos_git_state.dart';
 import '../../app/preferences_state.dart';
+import '../../app/desk_drop_payload.dart';
+import '../../app/desk_pr_state.dart';
 import '../../app/repository_state.dart';
+import '../../app/worktree_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../branches/branches_page.dart' show showPatchPreviewDialog;
 import '../diff/diff_shell.dart';
@@ -72,6 +76,13 @@ class _ChangesPageState extends State<ChangesPage> {
   final _commitMsgFocusNode = FocusNode();
 
   String? _draftKey;
+  // Per-context (branch|upstream) snapshot of the user's file-inclusion
+  // picks. Populated on context-switch departure and restored on
+  // arrival so that the round-trip main-stage → desk → main-stage
+  // preserves every uncheck the user made. Without this, every switch
+  // re-seeded from "all files" defaults — the primary driver of the
+  // "feels like a full page refresh" perception.
+  final Map<String, Set<String>> _includedByContextKey = {};
   String? _selectedDiffPath;
   String? _inspectionDiffPath;
   String? _visibleDiffPath;
@@ -131,6 +142,18 @@ class _ChangesPageState extends State<ChangesPage> {
   Timer? _commitDraftSaveDebounce;
   String? _lastDraftRepoPath;
   String? _lastDraftBranch;
+
+  // In-page undo for single-file discards. Replaces the OS-level
+  // SnackBar (which a) layered a full-width banner across the workspace
+  // and b) sometimes lingered when a follow-up snackbar got queued
+  // behind it). The pill is rendered as a Positioned overlay inside
+  // the page's own Stack so it's bounded by the page chrome and fades
+  // out cleanly. Bulk discards intentionally don't arm undo — the
+  // bytes-snapshot cost scales with file count and the affordance only
+  // ever recovered the single most recent operation anyway.
+  _DiscardUndo? _pendingUndo;
+  Timer? _undoTimer;
+  static const _undoWindow = Duration(seconds: 6);
 
   // Coupling rail — path under the mouse right now. Drives live peer
   // highlighting so moving the cursor along the rail visualizes which
@@ -281,6 +304,7 @@ class _ChangesPageState extends State<ChangesPage> {
 
   @override
   void dispose() {
+    _undoTimer?.cancel();
     _commitDraftSaveDebounce?.cancel();
     // Flush on dispose so closing the app doesn't lose the draft.
     final repo = _lastDraftRepoPath;
@@ -315,28 +339,71 @@ class _ChangesPageState extends State<ChangesPage> {
 
   bool _isDirty(String s) => s.trim().isNotEmpty;
 
-  String _buildDraftKey(RepositoryStatus status) {
-    final files = status.files
-        .map((file) => '${file.path}|${file.staged}|${file.unstaged}')
-        .join('||');
-    return '${status.branch}|${status.upstream}|$files';
-  }
+  /// Context-identity key. Previously this hashed the full file
+  /// manifest (path + staged/unstaged flags), which meant every file
+  /// save, every `git add`, every desk churn inside the same branch
+  /// caused [_syncDraftFromStatus] to wipe the user's selection and
+  /// blow away AI review state — the "feels like a full page refresh"
+  /// on every interaction. Narrow it to the things that actually
+  /// define a different working context: branch and upstream. Matches
+  /// the history page's `_lastRepo` gating pattern.
+  String _buildDraftKey(RepositoryStatus status) =>
+      '${status.branch}|${status.upstream}';
 
   void _syncDraftFromStatus(RepositoryStatus status) {
     final nextKey = _buildDraftKey(status);
     if (_draftKey == nextKey) {
+      // Same branch/upstream, manifest churned (user saved, staged,
+      // stashed something). Reconcile the selection rather than
+      // resetting it — preserve everything the user touched.
+      _reconcileIncludedPaths(status);
       return;
     }
+    // Stash the outgoing context's selection before switching so we
+    // can restore it on return. First entry into the page has no
+    // outgoing key — skip the stash.
+    if (_draftKey != null) {
+      _includedByContextKey[_draftKey!] = Set<String>.from(_includedPaths);
+    }
     _draftKey = nextKey;
-    final staged = status.files
-        .where((file) => _isDirty(file.staged))
-        .map((file) => file.path)
-        .toSet();
-    _includedPaths
-      ..clear()
-      ..addAll(
-          staged.isNotEmpty ? staged : status.files.map((file) => file.path));
+    final restored = _includedByContextKey[nextKey];
+    if (restored != null) {
+      // Return trip to a previously-visited context — restore the
+      // user's exact selection, then prune anything that's since been
+      // resolved (committed, reverted, deleted).
+      _includedPaths
+        ..clear()
+        ..addAll(restored);
+      _reconcileIncludedPaths(status);
+    } else {
+      // First arrival in this context: seed with the staged set if
+      // anything is staged, otherwise all dirty files. Matches the
+      // historical default — only kicks in on truly new contexts.
+      final staged = status.files
+          .where((file) => _isDirty(file.staged))
+          .map((file) => file.path)
+          .toSet();
+      _includedPaths
+        ..clear()
+        ..addAll(
+            staged.isNotEmpty ? staged : status.files.map((f) => f.path));
+    }
+    // AI review state is scoped to a specific (branch, diff) pair. It
+    // could in principle be cached per context too, but reviews are
+    // expensive state (full LLM output) and can grow stale if the diff
+    // changes while we were on another desk. Drop it — the user can
+    // re-run review if they return and want fresh analysis.
     _clearReviewState();
+  }
+
+  /// Prune [_includedPaths] entries that no longer exist in [status].
+  /// Purely subtractive — a brand-new file saved by the user does NOT
+  /// auto-opt into the selection; the seed happens exactly once per
+  /// context (see [_syncDraftFromStatus]).
+  void _reconcileIncludedPaths(RepositoryStatus status) {
+    if (_includedPaths.isEmpty) return;
+    final current = <String>{for (final f in status.files) f.path};
+    _includedPaths.removeWhere((p) => !current.contains(p));
   }
 
   void _clearReviewState() {
@@ -589,15 +656,45 @@ class _ChangesPageState extends State<ChangesPage> {
   ) {
     final isUntracked = file.staged.isEmpty && file.unstaged == '?';
     final ext = _fileExtension(file.path);
+    // Name the exact file in the label so the user can't misread
+    // "Discard changes…" as "discard everything". Basename only —
+    // deep paths would wrap/ellipsis ugly in a menu row; the full
+    // path is in the confirm dialog's body for disambiguation.
+    final basename = p.basename(file.path);
+    // Multi-select bridge: `_includedPaths` IS the user's selection
+    // (the checkboxes next to each file). If the right-clicked file is
+    // part of that selection AND more than one is selected, the menu
+    // acts on the full set — with a "+N selected" suffix so the user
+    // sees at a glance how much they're about to nuke. Right-clicking
+    // a file OUTSIDE the selection preserves the single-file path —
+    // matches the common OS convention (selection doesn't "capture"
+    // an unrelated right-click).
+    final inSelection = _includedPaths.contains(file.path);
+    final multi = inSelection && _includedPaths.length > 1;
+    final status = context.read<RepositoryState>().status;
+    final selectedFiles = multi && status != null
+        ? status.files
+            .where((f) => _includedPaths.contains(f.path))
+            .toList()
+        : const <RepositoryStatusFile>[];
+    final othersCount = multi ? selectedFiles.length - 1 : 0;
     final sections = <List<AppContextMenuItem>>[
       [
         AppContextMenuItem(
           icon: isUntracked
               ? Icons.delete_outline
               : Icons.history_outlined,
-          label: isUntracked ? 'Delete file…' : 'Discard changes…',
+          label: multi
+              ? (isUntracked
+                  ? 'Delete $basename  +$othersCount selected…'
+                  : 'Discard changes to $basename  +$othersCount selected…')
+              : (isUntracked
+                  ? 'Delete $basename…'
+                  : 'Discard changes to $basename…'),
           destructive: true,
-          onTap: () => _confirmDiscardFile(context, file, repoPath),
+          onTap: multi
+              ? () => _confirmDiscardFiles(context, selectedFiles, repoPath)
+              : () => _confirmDiscardFile(context, file, repoPath),
         ),
       ],
       [
@@ -705,6 +802,7 @@ class _ChangesPageState extends State<ChangesPage> {
     // checks below still gate the setState calls.
     final repoState = context.read<RepositoryState>();
     final isUntracked = file.staged.isEmpty && file.unstaged == '?';
+    final basename = p.basename(file.path);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -712,7 +810,7 @@ class _ChangesPageState extends State<ChangesPage> {
         return AlertDialog(
           backgroundColor: t.surface1,
           title: Text(
-            isUntracked ? 'Delete file?' : 'Discard changes?',
+            isUntracked ? 'Delete $basename?' : 'Discard changes to $basename?',
             style: TextStyle(color: t.textStrong, fontSize: 14),
           ),
           content: Text(
@@ -741,6 +839,20 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     if (confirmed != true) return;
     if (!mounted) return;
+    // Capture the file's bytes before the discard so a mistake is
+    // recoverable for a short window. Tracked-file discards `checkout
+    // HEAD -- path` — the live bytes go away and git has the HEAD
+    // version. Untracked deletions vanish entirely. Either way, if we
+    // grabbed the contents, we can re-write them on Undo. Failures to
+    // read (permission / binary / missing) fall back to the existing
+    // no-undo snackbar path.
+    List<int>? undoBytes;
+    try {
+      final onDisk = File(p.join(repoPath, file.path));
+      if (await onDisk.exists()) {
+        undoBytes = await onDisk.readAsBytes();
+      }
+    } catch (_) {/* swallow — undo becomes unavailable */}
     final result = await discardFile(repoPath, file);
     if (!mounted) return;
     if (!result.ok) {
@@ -756,6 +868,195 @@ class _ChangesPageState extends State<ChangesPage> {
       _actionMessage = null;
     });
     await repoState.refreshStatus();
+    if (undoBytes != null && mounted) {
+      _armUndo(_DiscardUndo(
+        path: file.path,
+        bytes: undoBytes,
+        repoPath: repoPath,
+        wasUntracked: isUntracked,
+      ));
+    }
+  }
+
+  void _armUndo(_DiscardUndo undo) {
+    _undoTimer?.cancel();
+    setState(() => _pendingUndo = undo);
+    _undoTimer = Timer(_undoWindow, () {
+      if (!mounted) return;
+      setState(() => _pendingUndo = null);
+    });
+  }
+
+  Future<void> _runPendingUndo() async {
+    final undo = _pendingUndo;
+    if (undo == null) return;
+    _undoTimer?.cancel();
+    setState(() => _pendingUndo = null);
+    try {
+      final f = File(p.join(undo.repoPath, undo.path));
+      await f.create(recursive: true);
+      await f.writeAsBytes(undo.bytes);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _actionError = 'Undo failed: $e');
+      return;
+    }
+    if (!mounted) return;
+    await context.read<RepositoryState>().refreshStatus();
+  }
+
+  /// Bulk-discard sibling of [_confirmDiscardFile]. Used when the user
+  /// right-clicks a file that's part of a multi-selection (via the
+  /// include-checkbox set). One confirm dialog lists every path; on
+  /// confirm we loop `discardFile` per entry. No per-file undo for the
+  /// multi path — a batch undo would need to snapshot every file's
+  /// bytes before the op, which is a lot of I/O to hold for a snackbar
+  /// window; single-file discards still get undo via their own helper.
+  Future<void> _confirmDiscardFiles(
+    BuildContext context,
+    List<RepositoryStatusFile> files,
+    String repoPath,
+  ) async {
+    if (files.isEmpty) return;
+    final repoState = context.read<RepositoryState>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final t = ctx.tokens;
+        return AlertDialog(
+          backgroundColor: t.surface1,
+          title: Text(
+            'Discard changes to ${files.length} files?',
+            style: TextStyle(color: t.textStrong, fontSize: 14),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Tracked files will be reverted to their state in '
+                  'HEAD; untracked files will be removed from disk. '
+                  'This cannot be undone.',
+                  style: TextStyle(color: t.textNormal, fontSize: 12),
+                ),
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 200),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final f in files)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Text(
+                              f.path,
+                              style:
+                                  TextStyle(color: t.textMuted, fontSize: 11),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(
+                'Discard ${files.length}',
+                style: TextStyle(color: t.stateDeleted),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+    int failed = 0;
+    String? firstErr;
+    final discarded = <String>[];
+    for (final f in files) {
+      final r = await discardFile(repoPath, f);
+      if (r.ok) {
+        discarded.add(f.path);
+      } else {
+        failed++;
+        firstErr ??= r.error;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _includedPaths.removeAll(discarded);
+      _actionError =
+          failed > 0 ? (firstErr ?? 'Some discards failed.') : null;
+      _actionMessage = null;
+    });
+    await repoState.refreshStatus();
+    // Intentionally no toast: the file rows vanishing IS the
+    // confirmation. The previous snackbar was redundant for the
+    // happy path and the failure case is already captured in
+    // _actionError above (rendered inline by the action strip).
+  }
+
+  /// Drop handler: a desk dragged from the topbar strip onto this
+  /// page wants to "dump" everything it has that the current branch
+  /// doesn't — both ahead-of-main commits and the desk's uncommitted
+  /// work — as a single patch applied to the active working tree.
+  ///
+  /// Routes through [showPatchPreviewDialog] so the user gets the same
+  /// conflict/reconciliation surface as PR-drop-apply. Nothing touches
+  /// disk until they hit Apply in the dialog.
+  Future<void> _handleDeskDump(
+    BuildContext ctx,
+    String deskPath,
+    String label,
+    String repoPath,
+  ) async {
+    // Dropping a desk onto its own changes page is a no-op — nothing
+    // to dump, and the UI would just spin. Soft-fail with a hint.
+    if (p.equals(deskPath, repoPath)) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('Same worktree — nothing to dump.')),
+      );
+      return;
+    }
+    final repoState = ctx.read<RepositoryState>();
+    final targetRef = repoState.status?.branch ?? 'HEAD';
+    final result = await getDeskDumpDiff(deskPath, targetRef);
+    if (!mounted) return;
+    if (!result.ok) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(content: Text('Diff failed: ${result.error}')),
+      );
+      return;
+    }
+    final diff = result.data ?? '';
+    if (diff.trim().isEmpty) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('Desk has nothing ahead of you — empty dump.')),
+      );
+      return;
+    }
+    await showPatchPreviewDialog(
+      ctx,
+      repoPath: repoPath,
+      rawPatch: diff,
+      sourceLabel: 'desk $label',
+      onApplied: () async {
+        if (!mounted) return;
+        await repoState.refreshStatus();
+      },
+    );
   }
 
   void _includeAll(RepositoryStatus status) {
@@ -1861,6 +2162,42 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
+  Future<void> _copyMuseReport(AiMuseData muse) async {
+    final buf = StringBuffer();
+    buf.writeln('Muse · ${muse.scopeLabel}');
+    buf.writeln('Model: ${muse.providerId} / ${muse.modelId}');
+    buf.writeln();
+    if (muse.intent.isNotEmpty) {
+      buf.writeln('Intent');
+      buf.writeln(muse.intent);
+      buf.writeln();
+    }
+    void section(String title, List<AiMuseMove> moves) {
+      if (moves.isEmpty) return;
+      buf.writeln(title);
+      for (final m in moves) {
+        buf.writeln('- ${m.body}');
+        if (m.citations.isNotEmpty) {
+          buf.writeln('  ↳ ${m.citations.join(", ")}');
+        }
+      }
+      buf.writeln();
+    }
+    section('Resonances', muse.resonances);
+    section('Alternatives', muse.alternatives);
+    section('Extensions', muse.extensions);
+    if (muse.trajectory.isNotEmpty) {
+      buf.writeln('Trajectory');
+      buf.writeln(muse.trajectory);
+    }
+    await Clipboard.setData(ClipboardData(text: buf.toString().trim()));
+    if (!mounted) return;
+    setState(() {
+      _actionError = null;
+      _actionMessage = 'Copied muse output.';
+    });
+  }
+
   Future<void> _commit(
     String repoPath,
     RepositoryStatus status, {
@@ -1965,6 +2302,18 @@ class _ChangesPageState extends State<ChangesPage> {
       _actionMessage = successMessage;
       _actionError = syncError;
     });
+    // Bridge to Branches: if the current branch has a desk PR, refresh
+    // its persisted diff stats so the row metrics (+N -M, K files) are
+    // accurate the moment the user switches to Branches. Without this
+    // the row stays at the last-expand's cached numbers until the user
+    // collapses and re-expands. No-op when there's no desk PR for this
+    // branch, so every commit pays the lookup but only desk-branch
+    // commits pay the diff fetch.
+    final branchAfterCommit = status.branch;
+    unawaited(context.read<DeskPrState>().recomputeDiffStats(
+          repoPath: repoPath,
+          branch: branchAfterCommit,
+        ));
   }
 
   // ── Filing cabinet (stash) operations ─────────────────────────────────────
@@ -2215,32 +2564,21 @@ class _ChangesPageState extends State<ChangesPage> {
       }
     }
 
-    // "By impact" weighting — cognitive weight, not raw line count:
-    //   * Binary files get a baseline so they don't sink to 0.
-    //   * Deletions count 1.2× additions (intentional removal is usually
-    //     more deliberate than piling on code).
-    //   * New files get a small bonus — adding a file is conceptually
-    //     heavy even when small.
-    //   * Untracked files with no numstat entry still get the new-file
-    //     bonus so they don't all bucket at 0.
-    const double binaryBaseline = 20.0;
-    const double newFileBonus = 10.0;
-    const double delWeight = 1.2;
-    final impactScores = <String, double>{};
+    // Impact signals for the "by impact" sort. Raw diff counts flow
+    // through untouched — no magic multipliers, no new-file bonuses,
+    // no binary baselines. The sort itself derives effective impact
+    // from these plus the coupling matrix (`raw × (1 − entanglement)`)
+    // so files whose change is "explained" by a co-changing peer in
+    // the same diff are attenuated on physics alone, not on
+    // language-specific filename patterns.
+    final impactSignals = <String, FileImpactSignal>{};
     for (final f in status.files) {
-      final isNew =
-          f.staged == 'A' || f.staged == '?' || f.unstaged == '?';
       final w = _changeWeights[f.path];
-      double score;
-      if (w == null) {
-        score = isNew ? newFileBonus : 0.0;
-      } else if (w.binary) {
-        score = binaryBaseline + (isNew ? newFileBonus : 0.0);
-      } else {
-        score = w.adds + w.dels * delWeight;
-        if (isNew) score += newFileBonus;
-      }
-      impactScores[f.path] = score;
+      impactSignals[f.path] = FileImpactSignal(
+        adds: w?.adds ?? 0,
+        dels: w?.dels ?? 0,
+        binary: w?.binary ?? false,
+      );
     }
 
     final clusters = couplingMatrix != null && _currentPaths.isNotEmpty
@@ -2248,7 +2586,7 @@ class _ChangesPageState extends State<ChangesPage> {
             _currentPaths,
             couplingMatrix,
             sortGuide: preferences.fileSortGuide,
-            impactScores: impactScores,
+            impactSignals: impactSignals,
             conflictedPaths: conflictedPaths,
             includedPaths: _includedPaths,
             inverted: preferences.fileSortInverted,
@@ -2265,9 +2603,14 @@ class _ChangesPageState extends State<ChangesPage> {
     // At t=0.5 the diffusion is tight (1-hop-ish), so "related" here
     // means "historically moves with what you just staged," not the
     // broader architectural orbit.
-    final logosEngine = preferences.fileSortGuide == 'related'
-        ? context.watch<LogosGitState>().engineFor(repoPath)
-        : null;
+    // `fileSortGuide` is an enum — comparing to a literal string here
+    // silently returned false on every build, so the Logos re-rank
+    // below never actually fired. Now routes through the real enum
+    // case (`relatedProximity`).
+    final logosEngine =
+        preferences.fileSortGuide == FileSortGuide.relatedProximity
+            ? context.watch<LogosGitState>().engineFor(repoPath)
+            : null;
     final orderedPaths = (logosEngine != null && _includedPaths.isNotEmpty)
         ? _logosRerankedOrder(
             clusters: clusters,
@@ -2315,22 +2658,42 @@ class _ChangesPageState extends State<ChangesPage> {
         includedCount > 0 &&
         (_reviewRunning || hasReviewAiSelection || hasPersistentReview);
 
-    return Stack(
-      children: [
-        Row(
+    return DragTarget<DeskDropPayload>(
+      onWillAcceptWithDetails: (d) =>
+          d.data.isDesk && !p.equals(d.data.deskPath!, repoPath),
+      onAcceptWithDetails: (d) {
+        _handleDeskDump(
+          context,
+          d.data.deskPath!,
+          d.data.label,
+          repoPath,
+        );
+      },
+      builder: (ctx, candidateData, rejectedData) {
+        final dragActive = candidateData.isNotEmpty;
+        return Stack(
           children: [
-            MaterialSurface(
-              tone: AppMaterialTone.surface1,
-              radius: 0,
-              border: Border(
-                right:
-                    BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
-              ),
-              elevated: false,
-              width: _leftPanelWidth,
+            Row(
+              children: [
+                MaterialSurface(
+                  tone: AppMaterialTone.surface1,
+                  radius: 0,
+                  border: Border(
+                    right: BorderSide(
+                        color: t.chromeBorder.withValues(alpha: 0.15)),
+                  ),
+                  elevated: false,
+                  width: _leftPanelWidth,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // (The IN FLIGHT strip used to live here as a
+                  // compact chip row above the file list. It has moved
+                  // to the History page where the broader "other
+                  // worktrees with outgoing work" surface lives —
+                  // hovering a chip there previews the desk's
+                  // diverged commits in-place. One canonical home for
+                  // the affordance instead of two parallel strips.)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(14, 10, 10, 4),
                     child: Row(
@@ -2849,6 +3212,9 @@ class _ChangesPageState extends State<ChangesPage> {
                           });
                           _runMuse(repoPath, status);
                         },
+                        onCopy: _museResult == null
+                            ? null
+                            : () => _copyMuseReport(_museResult!),
                       ),
                     );
                   }
@@ -3045,7 +3411,66 @@ class _ChangesPageState extends State<ChangesPage> {
             child: TopProgressLine(color: t.accentBright),
           ),
         ),
+        // In-page undo pill for the most recent single-file discard.
+        // Replaces the OS SnackBar — bounded by the page chrome,
+        // anchored low-right out of the diff scroll path, and tied to
+        // a state-driven timer so it can never get "stuck" the way a
+        // queued snackbar can. Tap to recover; ignore to let it fade.
+        if (_pendingUndo != null)
+          Positioned(
+            right: 16,
+            bottom: 16,
+            child: _DiscardUndoPill(
+              tokens: t,
+              undo: _pendingUndo!,
+              onUndo: _runPendingUndo,
+              onDismiss: () {
+                _undoTimer?.cancel();
+                setState(() => _pendingUndo = null);
+              },
+            ),
+          ),
+        // Drop-zone affordance: when a desk is actively being dragged
+        // over us, pulse an accent border + a centered label so the
+        // user knows "yes, I'll catch that." Positioned.fill with
+        // IgnorePointer so it never steals the drag's hit target.
+        if (dragActive)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: t.accentBright.withValues(alpha: 0.06),
+                  border: Border.all(
+                    color: t.accentBright.withValues(alpha: 0.6),
+                    width: 2,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: t.surface1,
+                    borderRadius: BorderRadius.circular(6),
+                    border:
+                        Border.all(color: t.accentBright, width: 1),
+                  ),
+                  child: Text(
+                    'drop to dump this desk here',
+                    style: TextStyle(
+                      color: t.textStrong,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
       ],
+    );
+      },
     );
   }
 }
@@ -3060,6 +3485,139 @@ bool _samePathSet(Set<String> a, Set<String> b) {
     }
   }
   return true;
+}
+
+class _DiscardUndo {
+  final String path;
+  final List<int> bytes;
+  final String repoPath;
+  final bool wasUntracked;
+
+  const _DiscardUndo({
+    required this.path,
+    required this.bytes,
+    required this.repoPath,
+    required this.wasUntracked,
+  });
+}
+
+/// Compact recovery pill for a recent discard. Renders as a single
+/// floating element anchored bottom-right of the changes page (NOT a
+/// snackbar) so it lives inside the page's visual frame. Fades in on
+/// mount; the parent removes it after the undo window expires or when
+/// the user taps Undo / dismisses.
+class _DiscardUndoPill extends StatefulWidget {
+  final AppTokens tokens;
+  final _DiscardUndo undo;
+  final Future<void> Function() onUndo;
+  final VoidCallback onDismiss;
+
+  const _DiscardUndoPill({
+    required this.tokens,
+    required this.undo,
+    required this.onUndo,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_DiscardUndoPill> createState() => _DiscardUndoPillState();
+}
+
+class _DiscardUndoPillState extends State<_DiscardUndoPill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _intro = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 140),
+  )..forward();
+
+  @override
+  void dispose() {
+    _intro.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final fileName = widget.undo.path.split('/').last;
+    return FadeTransition(
+      opacity: CurvedAnimation(parent: _intro, curve: Curves.easeOut),
+      child: Material(
+        color: Colors.transparent,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+          decoration: BoxDecoration(
+            color: t.surface1.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: t.chromeBorder.withValues(alpha: 0.35),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                widget.undo.wasUntracked
+                    ? Icons.delete_outline
+                    : Icons.history,
+                size: 14,
+                color: t.textMuted,
+              ),
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 240),
+                child: Text(
+                  fileName,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: t.textNormal,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              TextButton(
+                onPressed: () {
+                  unawaited(widget.onUndo());
+                },
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(0, 28),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  foregroundColor: t.accentBright,
+                ),
+                child: const Text(
+                  'Undo',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: widget.onDismiss,
+                icon: const Icon(Icons.close, size: 14),
+                color: t.textMuted,
+                splashRadius: 14,
+                padding: EdgeInsets.zero,
+                constraints:
+                    const BoxConstraints(minWidth: 24, minHeight: 24),
+                tooltip: 'Dismiss',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _CombinedDiffSection {
@@ -3440,6 +3998,7 @@ class _MusePane extends StatefulWidget {
   final String guardrailLabel;
   final VoidCallback onBack;
   final VoidCallback onRerun;
+  final VoidCallback? onCopy;
 
   const _MusePane({
     required this.tokens,
@@ -3449,6 +4008,7 @@ class _MusePane extends StatefulWidget {
     required this.guardrailLabel,
     required this.onBack,
     required this.onRerun,
+    this.onCopy,
   });
 
   @override
@@ -3507,11 +4067,17 @@ class _MusePaneState extends State<_MusePane> {
           ),
         ],
         const Spacer(),
-        _GhostActionChip(
-            tokens: t, label: 'rerun', onTap: widget.onRerun),
-        const SizedBox(width: 6),
+        // Mirror the review-pane order: back · copy · rerun.
         _GhostActionChip(
             tokens: t, label: 'back to diff', onTap: widget.onBack),
+        if (widget.onCopy != null) ...[
+          const SizedBox(width: 6),
+          _GhostActionChip(
+              tokens: t, label: 'copy', onTap: widget.onCopy!),
+        ],
+        const SizedBox(width: 6),
+        _GhostActionChip(
+            tokens: t, label: 'rerun', onTap: widget.onRerun),
       ],
     );
   }
@@ -3521,8 +4087,10 @@ class _MusePaneState extends State<_MusePane> {
       return Padding(
         padding: const EdgeInsets.only(top: 40),
         child: Center(
-          child: Text('the muse is dreaming...',
-              style: TextStyle(color: t.textFaint, fontSize: 12)),
+          child: _DreamingText(
+            text: 'the muse is dreaming...',
+            style: TextStyle(color: t.textFaint, fontSize: 12),
+          ),
         ),
       );
     }
@@ -3544,14 +4112,13 @@ class _MusePaneState extends State<_MusePane> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (r.intent.isNotEmpty) _section(t, 'intent', r.intent, prose: true),
-        if (r.drift.isNotEmpty)
-          _movesSection(t, 'drift', r.drift, r.brainstormIdeas),
-        if (r.wiringBroken.isNotEmpty)
-          _movesSection(t, 'wiring · broken', r.wiringBroken, r.brainstormIdeas),
-        if (r.wiringMissing.isNotEmpty)
-          _movesSection(t, 'wiring · missing', r.wiringMissing, r.brainstormIdeas),
-        if (r.ideaFlaws.isNotEmpty)
-          _movesSection(t, 'idea flaws', r.ideaFlaws, r.brainstormIdeas),
+        if (r.resonances.isNotEmpty)
+          _movesSection(t, 'resonances', r.resonances, r.brainstormIdeas),
+        if (r.alternatives.isNotEmpty)
+          _movesSection(
+              t, 'alternatives', r.alternatives, r.brainstormIdeas),
+        if (r.extensions.isNotEmpty)
+          _movesSection(t, 'extensions', r.extensions, r.brainstormIdeas),
         if (r.trajectory.isNotEmpty)
           _section(t, 'trajectory', r.trajectory, prose: true),
         if (r.brainstormIdeas.isNotEmpty) _brainstormReveal(t, r),
@@ -6727,7 +7294,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
         }
 
         return Container(
-          height: 118,
+          height: 90,
           decoration: BoxDecoration(
             color: tokens.inputBg,
             borderRadius: BorderRadius.circular(effectiveRadius),
@@ -7940,3 +8507,82 @@ class _ShapePopover extends StatelessWidget {
     );
   }
 }
+/// Ambient text animation for the muse loading state — each character
+/// drifts on its own y-axis as if breathing. Two phases blend over
+/// time: the first ~3s is a single soothing sine shared by every
+/// character, then the field crossfades into a layered, per-character
+/// pattern where each glyph carries its own seeded frequency, phase,
+/// and amplitude. The second phase still rhymes (everything is sines)
+/// but no two glyphs move in sync — the whole word feels like it's
+/// thinking.
+class _DreamingText extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+
+  const _DreamingText({required this.text, required this.style});
+
+  @override
+  State<_DreamingText> createState() => _DreamingTextState();
+}
+
+class _DreamingTextState extends State<_DreamingText>
+    with SingleTickerProviderStateMixin {
+  late final Ticker _ticker;
+  double _elapsedMs = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = createTicker((d) {
+      setState(() => _elapsedMs = d.inMicroseconds / 1000.0);
+    })..start();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chars = widget.text.split('');
+    final phaseMix =
+        ((_elapsedMs - 3000) / 2000).clamp(0.0, 1.0).toDouble();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < chars.length; i++)
+          _glyph(chars[i], i, phaseMix),
+      ],
+    );
+  }
+
+  Widget _glyph(String c, int i, double phaseMix) {
+    if (c == ' ') return Text(c, style: widget.style);
+    final p1 = math.sin(_elapsedMs / 580 + i * 0.32) * 2.4;
+    final seed = ((i * 73 + 19) % 100) / 100.0;
+    final freq = 0.0009 + seed * 0.0014;
+    final phase = seed * math.pi * 2;
+    final amp = 1.6 + seed * 4.2;
+    final p2 = math.sin(_elapsedMs * freq + phase) * amp;
+    final yOffset = p1 * (1 - phaseMix) + p2 * phaseMix;
+    final breath = 0.55 +
+        0.45 *
+            (math.sin(_elapsedMs / 950 + i * 0.27 + seed * 4) * 0.5 + 0.5);
+    final col = widget.style.color ?? const Color(0xFF888888);
+    return Transform.translate(
+      offset: Offset(0, yOffset),
+      child: Text(
+        c,
+        style: widget.style.copyWith(color: col.withValues(alpha: breath)),
+      ),
+    );
+  }
+}
+
+// (Was: _OtherDesksStrip + _OtherDeskChip — the "ALSO IN FLIGHT"
+// chip strip that surfaced parallel desks with uncommitted work.
+// Removed in favor of the History page's IN FLIGHT strip, which is
+// the single canonical "other desks at a glance" surface and adds
+// hover-to-preview of the diverged commits in-place.)
