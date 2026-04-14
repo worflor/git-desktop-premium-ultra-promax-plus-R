@@ -28,6 +28,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'bond/bond_backend.dart';
 import 'bond/bond_id.dart';
+import 'bond/contact_book.dart';
 import 'bond/identity.dart';
 import 'bond/invite.dart';
 import 'bond/objects.dart';
@@ -326,6 +327,49 @@ class BondService extends ChangeNotifier {
   /// Returns the bond membership for a given repo, or null if the
   /// repo has not been bonded.
   BondMembership? membershipFor(String repoPath) => _byRepo[repoPath];
+
+  /// Per-repo contact book, lazily loaded from disk. Returns null
+  /// when the repo isn't bonded.
+  final Map<String, ContactBook> _contactBooks = {};
+  Future<ContactBook?> contactBookFor(String repoPath) async {
+    final m = membershipFor(repoPath);
+    if (m == null) return null;
+    final cached = _contactBooks[repoPath];
+    if (cached != null) return cached;
+    final store = await BondStore.open(repoPath);
+    final book = await ContactBook.open(store, m.bondId);
+    _contactBooks[repoPath] = book;
+    return book;
+  }
+
+  /// Convenience: set / clear a peer's local label and persist via
+  /// the contact book. Notifies listeners so any peer-view widgets
+  /// rebuild with the new label.
+  Future<void> setPeerLabel({
+    required String repoPath,
+    required String pubkeyHex,
+    required String label,
+    bool? userVerified,
+  }) async {
+    final book = await contactBookFor(repoPath);
+    if (book == null) return;
+    await book.setLabel(
+      pubkeyHex,
+      label: label,
+      userVerified: userVerified,
+    );
+    notifyListeners();
+  }
+
+  /// Synchronous label lookup for UI hot paths. Returns null when the
+  /// book hasn't been loaded yet (caller should trigger
+  /// [contactBookFor] to warm the cache).
+  String? cachedLabelFor({
+    required String repoPath,
+    required String pubkeyHex,
+  }) {
+    return _contactBooks[repoPath]?.labelFor(pubkeyHex);
+  }
 
   /// Builds an invite blob the user can share with a peer. The invite
   /// carries only public inputs (bond id + bootstrap commit + label) —

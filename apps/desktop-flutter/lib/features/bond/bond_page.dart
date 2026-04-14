@@ -26,6 +26,7 @@ import '../../backend/bond/transport.dart';
 import '../../backend/bond_service.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/tokens.dart';
+import 'policy_editor.dart';
 import 'proposal_compose.dart';
 
 class BondPage extends StatefulWidget {
@@ -47,7 +48,12 @@ class _BondPageState extends State<BondPage> {
   void initState() {
     super.initState();
     final service = context.read<BondService>();
-    Future.microtask(() => service.loadFromDisk(widget.repoPath));
+    Future.microtask(() async {
+      await service.loadFromDisk(widget.repoPath);
+      // Warm the contact book so cachedLabelFor in peer rows isn't
+      // permanently null on first paint.
+      await service.contactBookFor(widget.repoPath);
+    });
   }
 
   @override
@@ -1152,23 +1158,34 @@ class _PeerTile extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  peer.shortHex,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    decoration:
-                        peer.isRevoked ? TextDecoration.lineThrough : null,
+            child: Builder(builder: (context) {
+              final label = context
+                  .watch<BondService>()
+                  .cachedLabelFor(repoPath: repoPath, pubkeyHex: peer.pubkeyHex);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label?.isNotEmpty == true ? label! : peer.shortHex,
+                    style: TextStyle(
+                      fontFamily: label?.isNotEmpty == true
+                          ? null
+                          : 'monospace',
+                      fontWeight: label?.isNotEmpty == true
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                      decoration: peer.isRevoked
+                          ? TextDecoration.lineThrough
+                          : null,
+                    ),
                   ),
-                ),
-                Text(
-                  _peerSubtitle(peer),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
+                  Text(
+                    _peerSubtitle(peer),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              );
+            }),
           ),
           TextButton(
             onPressed: () => _verify(context),
@@ -1177,6 +1194,10 @@ class _PeerTile extends StatelessWidget {
           PopupMenuButton<String>(
             onSelected: (v) => _handleMenu(context, v),
             itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'set_label',
+                child: Text('Set label…'),
+              ),
               if (!peer.isRevoked)
                 const PopupMenuItem(
                   value: 'revoke',
@@ -1288,6 +1309,46 @@ class _PeerTile extends StatelessWidget {
   Future<void> _handleMenu(BuildContext context, String value) async {
     final service = context.read<BondService>();
     switch (value) {
+      case 'set_label':
+        final current = service.cachedLabelFor(
+              repoPath: repoPath,
+              pubkeyHex: peer.pubkeyHex,
+            ) ??
+            '';
+        final controller = TextEditingController(text: current);
+        final newLabel = await showDialog<String?>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Set local label'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Label for ${peer.shortHex}',
+                helperText: 'Local only — never transmitted.',
+              ),
+              onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(null),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.of(ctx).pop(controller.text.trim()),
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+        );
+        if (newLabel != null) {
+          await service.setPeerLabel(
+            repoPath: repoPath,
+            pubkeyHex: peer.pubkeyHex,
+            label: newLabel,
+          );
+        }
       case 'copy_pubkey':
         await Clipboard.setData(ClipboardData(text: peer.pubkeyHex));
         if (context.mounted) {
@@ -1365,6 +1426,13 @@ class _PolicyCard extends StatelessWidget {
                     const SizedBox(width: 8),
                     Text('Policy',
                         style: Theme.of(context).textTheme.titleMedium),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: () =>
+                          showPolicyEditor(context, repoPath: repoPath),
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      label: Text(policy == null ? 'Create' : 'Edit'),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
