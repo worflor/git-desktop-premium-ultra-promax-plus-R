@@ -63,9 +63,11 @@ class _BondDockState extends State<BondDock> {
         ? service.backend.runtimeListenable(repoPath)
         : null;
 
-    return ListenableBuilder(
-      listenable: listenable ?? const _IdleListenable(),
-      builder: (context, _) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: service.online,
+      builder: (context, online, _) => ListenableBuilder(
+        listenable: listenable ?? const _IdleListenable(),
+        builder: (context, _) {
         final snap = (repoPath != null && membership != null)
             ? service.backend.snapshot(repoPath)
             : null;
@@ -98,6 +100,7 @@ class _BondDockState extends State<BondDock> {
                   membership: membership,
                   snapshot: snap,
                   open: _open,
+                  online: online,
                   onTap: membership == null
                       ? () => _openFullPage(context, repoPath)
                       : () => setState(() => _open = !_open),
@@ -106,7 +109,8 @@ class _BondDockState extends State<BondDock> {
             ),
           ),
         );
-      },
+        },
+      ),
     );
   }
 
@@ -157,6 +161,7 @@ class _DockStrip extends StatelessWidget {
     required this.membership,
     required this.snapshot,
     required this.open,
+    required this.online,
     required this.onTap,
   });
 
@@ -164,6 +169,7 @@ class _DockStrip extends StatelessWidget {
   final BondMembership? membership;
   final BondUiSnapshot? snapshot;
   final bool open;
+  final bool online;
   final VoidCallback onTap;
 
   @override
@@ -213,6 +219,7 @@ class _DockStrip extends StatelessWidget {
     BondMembership? m,
     BondUiSnapshot? snap,
   ) {
+    if (!online) return const _DockState('bond · offline', _DotKind.offline);
     if (m == null) return const _DockState('bond', _DotKind.idle);
     if (!service.isUnlocked) {
       return const _DockState('bond · locked', _DotKind.locked);

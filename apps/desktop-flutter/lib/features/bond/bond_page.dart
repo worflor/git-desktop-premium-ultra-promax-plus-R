@@ -443,6 +443,25 @@ class _StartFormState extends State<_StartForm> {
   bool _busy = false;
 
   @override
+  void initState() {
+    super.initState();
+    Future.microtask(() async {
+      // Pre-fill from .bond.yml if the project committed one. Fields
+      // the file provides become the defaults; user can override.
+      final cfg = await context
+          .read<BondService>()
+          .readBondRepoConfig(widget.repoPath);
+      if (!mounted) return;
+      if (cfg.bootstrapCommit != null && _bootstrap.text.isEmpty) {
+        _bootstrap.text = cfg.bootstrapCommit!;
+      }
+      if (cfg.displayName != null && _display.text.isEmpty) {
+        _display.text = cfg.displayName!;
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _display.dispose();
     _bootstrap.dispose();

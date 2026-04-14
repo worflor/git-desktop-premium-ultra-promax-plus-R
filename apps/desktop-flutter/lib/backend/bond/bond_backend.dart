@@ -394,6 +394,9 @@ class BondBackend implements CollaborationBackend {
     }
     runtime.peers[hex] = peer;
     runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+    // Successful attach = we're online again, even if other peers
+    // are still backing off.
+    networkStatusCallback?.call(true);
     // Place the peer on the bond's kizuna lattice. The placement is
     // deterministic per (bondId, peerPubkey), so this is idempotent
     // across reconnects — the same peer always lands at the same
@@ -613,6 +616,12 @@ class BondBackend implements CollaborationBackend {
     _scheduleReconnect(runtime, hex);
   }
 
+  /// Optional callback the host service installs to flip its
+  /// "presumed online" state. Hooked from BondService so the dock
+  /// can render an offline pip without the backend importing
+  /// service-layer classes directly.
+  void Function(bool online)? networkStatusCallback;
+
   /// Backoff schedule: 2s, 4s, 8s, 16s, 32s, 60s (cap), with ±25%
   /// jitter so a swarm-wide drop doesn't synchronise reconnects.
   /// Gives up after [_kReconnectMaxAttempts] for a given peer; the
@@ -626,6 +635,14 @@ class BondBackend implements CollaborationBackend {
       runtime.dropCounters['reconnect_gave_up'] =
           (runtime.dropCounters['reconnect_gave_up'] ?? 0) + 1;
       runtime.peersNotifier.bump();
+      // If every peer has now exhausted its reconnect budget, flag
+      // the network as offline. The flag flips back to true on the
+      // first successful attach (handled in attachPeerSession).
+      final anyAlive = runtime.peers.isNotEmpty ||
+          runtime.reconnectTimers.isNotEmpty;
+      if (!anyAlive) {
+        networkStatusCallback?.call(false);
+      }
       return;
     }
     final baseSeconds = (1 << attempts).clamp(2, 60);
@@ -1411,6 +1428,82 @@ class BondBackend implements CollaborationBackend {
     );
   }
 
+  /// Bootstraps a brand-new local repo from a bond. The caller passes
+  /// an empty [destPath]; we `git init` it, configure bond membership,
+  /// join the swarm, fetch every advertised ref from the discovered
+  /// peers, and check out the bootstrap commit on a default branch.
+  ///
+  /// Result: a working directory whose history matches what the bond
+  /// already has. Returns the resolved BondId on success.
+  ///
+  /// This is the "third user joins an existing bond" path — without
+  /// it, new contributors had to clone a tarball out of band before
+  /// they could even bind.
+  Future<GitResult<BondId>> cloneFromBond({
+    required String destPath,
+    required String bootstrapCommit,
+    required String swarmPhrase,
+    required String displayName,
+    BondAddressing? addressing,
+  }) async {
+    try {
+      final dest = Directory(destPath);
+      await dest.create(recursive: true);
+      // Empty-ish check — if there's already a .git, refuse so we
+      // don't trample an existing repo. Empty caller dirs are fine.
+      if (await Directory('$destPath${Platform.pathSeparator}.git').exists()) {
+        return const GitResult.err(
+            'bond: target path already contains a git repo');
+      }
+      final init = await Process.run(
+        'git',
+        ['init', '--initial-branch=main'],
+        workingDirectory: destPath,
+        runInShell: false,
+      );
+      if (init.exitCode != 0) {
+        return GitResult.err('bond: git init failed: ${init.stderr}');
+      }
+      final bondId = await deriveBondId(
+        bootstrapCommitHash: bootstrapCommit,
+        swarmPhrase: swarmPhrase,
+      );
+      // The membership write happens in BondService — but we need it
+      // present before resumeBond/connect/fetch can find a runtime.
+      // Bootstrap a minimal config now; BondService.bindBond is
+      // idempotent on the same (bondId, repo) pair.
+      final dir = Directory(
+        '$destPath${Platform.pathSeparator}.git${Platform.pathSeparator}manifold${Platform.pathSeparator}bond${Platform.pathSeparator}bonds${Platform.pathSeparator}${bondId.hex}',
+      );
+      await dir.create(recursive: true);
+      final file = File('${dir.path}${Platform.pathSeparator}config.json');
+      await file.writeAsString(
+        jsonEncode(<String, dynamic>{
+          'bond_id': bondId.hex,
+          'bootstrap_commit': bootstrapCommit,
+          'display_name': displayName,
+        }),
+        flush: true,
+      );
+      // Join the swarm so peers discover us and we discover them.
+      // dial doesn't fire here because we don't know any specific
+      // peer pubkey yet — joinSwarm + tracker rendezvous brings them
+      // in via the discovered stream (real wiring lands when the
+      // Whisper transport ships).
+      await transport.joinSwarm(
+        bondId: bondId.bytes,
+        addressing: addressing ??
+            const BondAddressViaTracker(
+              trackers: <String>[],
+              iceServers: <String>[],
+            ),
+      );
+      return GitResult.ok(bondId);
+    } catch (e) {
+      return GitResult.err('bond: clone-from-bond failed: $e');
+    }
+  }
+
   /// Unbind a repo from its bond. Tears down active sessions, closes
   /// subscriptions, wipes per-bond state on disk. Does NOT revoke keys
   /// upstream — pair with [publishRevocation] for "eject myself" flows.
@@ -1797,7 +1890,16 @@ class BondBackend implements CollaborationBackend {
     try {
       await prior;
       final reqId = newRequestId();
-      final wantBytes = ObjectWantBody(requestId: reqId, want: wanted).encode();
+      // Hint a few local refs as "have" so the responder prunes
+      // their closure from the pack. Limited to 32 hashes to keep
+      // the want body small; for larger histories this is still a
+      // big win (delta compression eliminates everything reachable).
+      final localHaves = await _localHaves(runtime);
+      final wantBytes = ObjectWantBody(
+        requestId: reqId,
+        want: wanted,
+        have: localHaves,
+      ).encode();
       // Subscribe to the broadcast packfiles stream BEFORE sending the
       // want — subscribing after could miss a fast peer. Filter for
       // our request id so other in-flight responses don't mis-attach.
@@ -1873,6 +1975,7 @@ class BondBackend implements CollaborationBackend {
         final built = await buildPackfile(
           repoPath: runtime.repoPath,
           wanted: want.want,
+          have: want.have,
         );
         packBytes = built.bytes;
       }
@@ -2015,6 +2118,42 @@ class BondBackend implements CollaborationBackend {
     }
     sb.write(r'$');
     return RegExp(sb.toString());
+  }
+
+  /// Sample of recent local commit hashes used as the `have` hint in
+  /// objectWant. Walks each `refs/heads/*` tip back a few steps via
+  /// `git rev-list`, deduped + capped at 32 entries. Empty on any
+  /// error (graceful — responder just skips the prune).
+  Future<List<String>> _localHaves(_RepoRuntime runtime) async {
+    try {
+      final headRefs = await Process.run(
+        'git',
+        ['for-each-ref', '--format=%(objectname)', 'refs/heads/'],
+        workingDirectory: runtime.repoPath,
+        runInShell: false,
+      );
+      if (headRefs.exitCode != 0) return const [];
+      final tips = (headRefs.stdout as String)
+          .split('\n')
+          .map((l) => l.trim())
+          .where(_isPlausibleHash)
+          .toSet();
+      final have = <String>{};
+      for (final tip in tips) {
+        final more = await reachableCommits(
+          repoPath: runtime.repoPath,
+          startHash: tip,
+          limit: 8,
+        );
+        for (final c in more) {
+          have.add(c);
+          if (have.length >= 32) return have.toList();
+        }
+      }
+      return have.toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   static bool _isPlausibleHash(String s) {

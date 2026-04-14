@@ -32,6 +32,7 @@ import 'bond/contact_book.dart';
 import 'bond/identity.dart';
 import 'bond/invite.dart';
 import 'bond/objects.dart';
+import 'bond/repo_config.dart';
 import 'bond/safety_number.dart';
 import 'bond/storage.dart';
 import 'bond/transport.dart';
@@ -61,11 +62,39 @@ class BondService extends ChangeNotifier {
       resolveIdentity: _resolveIdentity,
       resolveBondForRepo: _resolveBondForRepo,
     );
+    // Backend → service network-status edge: drives the dock's
+    // "bond · offline" strip when every peer's reconnect budget is
+    // exhausted; flips back true on first successful attach.
+    _backend.networkStatusCallback = (online) {
+      if (online) {
+        markOnline();
+      } else {
+        markOffline();
+      }
+    };
   }
 
   final BondTransport _transport;
   late final BondBackend _backend;
   final FlutterSecureStorage _secure = const FlutterSecureStorage();
+  final ValueNotifier<bool> _online = ValueNotifier<bool>(true);
+
+  /// Coarse "presumed online" state. Starts true; flipped to false
+  /// when the reconnect machinery exhausts retries against every
+  /// known peer at once, or by an external host (system network
+  /// listener wired in from the OS layer if/when desired). Flipped
+  /// back to true on first successful attach. The dock + topbar
+  /// indicator subscribe to this for an offline pip.
+  ValueListenable<bool> get online => _online;
+  void markOnline() {
+    if (_online.value) return;
+    _online.value = true;
+  }
+
+  void markOffline() {
+    if (!_online.value) return;
+    _online.value = false;
+  }
 
   /// Key under which the master-seed bytes are cached in OS keychain
   /// when the user opts into auto-unlock. Bond-namespaced so it
@@ -327,6 +356,12 @@ class BondService extends ChangeNotifier {
   /// Returns the bond membership for a given repo, or null if the
   /// repo has not been bonded.
   BondMembership? membershipFor(String repoPath) => _byRepo[repoPath];
+
+  /// Reads the repo-committed `.bond.yml` (if any). Empty config when
+  /// the file is missing — the form layer treats every field as a
+  /// hint and falls back to user input when not present.
+  Future<BondRepoConfig> readBondRepoConfig(String repoPath) =>
+      readRepoConfig(repoPath);
 
   /// Per-repo contact book, lazily loaded from disk. Returns null
   /// when the repo isn't bonded.

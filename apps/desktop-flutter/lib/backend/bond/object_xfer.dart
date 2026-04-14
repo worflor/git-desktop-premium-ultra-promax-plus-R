@@ -36,6 +36,7 @@ class ObjectWantBody {
   ObjectWantBody({
     required this.requestId,
     required this.want,
+    this.have = const [],
   });
 
   /// 16 random bytes the requester picked. Echoed in the matching
@@ -47,15 +48,26 @@ class ObjectWantBody {
   /// keepalive or capability ping; responder echoes empty pack).
   final List<String> want;
 
+  /// Optional hashes the requester already has. Responder uses these
+  /// as `^hash` exclusions in `git pack-objects --revs` so the pack
+  /// only carries the closure of (want \ have). Empty when the
+  /// requester hasn't computed a have-bitmap yet.
+  final List<String> have;
+
   Uint8List encode() {
-    final map = CborMap({
+    final map = <CborString, CborValue>{
       CborString('v'): CborSmallInt(kObjectXferVersion),
       CborString('id'): CborBytes(requestId),
       CborString('want'): CborList(
         want.map((s) => CborString(s)).toList(growable: false),
       ),
-    });
-    return Uint8List.fromList(cbor.encode(map));
+    };
+    if (have.isNotEmpty) {
+      map[CborString('have')] = CborList(
+        have.map((s) => CborString(s)).toList(growable: false),
+      );
+    }
+    return Uint8List.fromList(cbor.encode(CborMap(map)));
   }
 
   static ObjectWantBody? tryDecode(Uint8List body) {
@@ -75,9 +87,21 @@ class ObjectWantBody {
         if (!_isPlausibleHash(s)) return null;
         hashes.add(s);
       }
+      // Have list is optional and tolerant — entries that don't look
+      // like hashes are skipped rather than failing the whole decode.
+      final have = <String>[];
+      final h = decoded[CborString('have')];
+      if (h is CborList) {
+        for (final item in h) {
+          if (item is CborString && _isPlausibleHash(item.toString())) {
+            have.add(item.toString());
+          }
+        }
+      }
       return ObjectWantBody(
         requestId: Uint8List.fromList(id.bytes),
         want: hashes,
+        have: have,
       );
     } catch (_) {
       return null;
