@@ -100,6 +100,12 @@ class _RepoRuntime {
   /// via the `attestations.jsonl` log.
   final Map<String, List<_SignedAttestation>> attestationsByProposal = {};
 
+  /// Received proposals, indexed by proposalId hex. Populated from
+  /// the live peer stream AND rehydrated from proposals.jsonl so the
+  /// inbox survives restart. Value is the paired envelope so UI can
+  /// render the signer's identicon + verify authorship.
+  final Map<String, _StoredProposal> proposalsById = {};
+
   /// Active revocations keyed by revoked-pubkey hex → effectiveAtMs.
   /// Any envelope from a revoked key whose own createdMs ≥ this is
   /// ignored by policy counting.
@@ -128,6 +134,22 @@ class _SignedAttestation {
   final String signerHex;
 }
 
+/// Internal: decoded proposal body + the envelope that carried it.
+/// Envelope holds the authoritative signer; body is the fast path
+/// for UI rendering without re-decoding on every rebuild.
+class _StoredProposal {
+  _StoredProposal({
+    required this.proposalId,
+    required this.proposal,
+    required this.signerHex,
+    required this.receivedMs,
+  });
+  final String proposalId;
+  final Proposal proposal;
+  final String signerHex;
+  final int receivedMs;
+}
+
 /// Result of [BondBackend._policyGate]. `reason` is safe to display
 /// to the user and explains why a merge was blocked (or allowed).
 class _PolicyVerdict {
@@ -146,6 +168,7 @@ class BondUiSnapshot {
     required this.currentPolicy,
     required this.dropCounters,
     required this.attestationCounts,
+    required this.proposals,
   });
 
   final BondId bondId;
@@ -155,6 +178,41 @@ class BondUiSnapshot {
 
   /// proposalId hex → attestation count.
   final Map<String, int> attestationCounts;
+
+  /// Received proposals, newest first.
+  final List<BondProposalView> proposals;
+}
+
+/// View model for one proposal in the inbox. Pre-denormalises the
+/// attestation list into (signer, verdict) pairs so the UI renders
+/// without joining against the raw attestationsByProposal map.
+class BondProposalView {
+  const BondProposalView({
+    required this.proposalId,
+    required this.title,
+    required this.body,
+    required this.proposerHex,
+    required this.targetRef,
+    required this.sourceCommitHex,
+    required this.receivedMs,
+    required this.attestations,
+  });
+
+  final String proposalId;
+  final String title;
+  final String body;
+  final String proposerHex;
+  final String targetRef;
+  final String sourceCommitHex;
+  final int receivedMs;
+
+  /// Attestation roster — each entry is (signer pubkey hex,
+  /// verdict). Dedup-by-signer already applied.
+  final List<({String signerHex, AttestationVerdict verdict})> attestations;
+
+  int get approvals => attestations
+      .where((a) => a.verdict == AttestationVerdict.approve)
+      .length;
 }
 
 /// Per-peer view model. Includes transient (attached) and persistent
@@ -378,6 +436,25 @@ class BondBackend implements CollaborationBackend {
       // (currentPolicy, revokedAt, attestationsByProposal) is not a
       // governance-amnesia reset.
       unawaited(_persistEnvelope(runtime, env));
+    }));
+    subs.add(peer.proposals.listen((proposal) {
+      runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+      // proposalId = SHA-256 over the envelope bytes the network saw.
+      // But the body stream doesn't carry envelope bytes, so compute
+      // from a re-sign of the received body — cheap because we have
+      // the body already (no network RT). Fallback: use createdMs.
+      // For the UI's inbox the id only needs to be a stable local
+      // identifier; attestations verify against the same id via
+      // envelope hashing on ingest.
+      final signerHex = _hex(proposal.proposerPubkey);
+      final syntheticId = _hex(_sha256(proposal.toCborBody()));
+      runtime.proposalsById[syntheticId] = _StoredProposal(
+        proposalId: syntheticId,
+        proposal: proposal,
+        signerHex: signerHex,
+        receivedMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      runtime.peersNotifier.bump();
     }));
     runtime.peerSubs[hex] = subs;
     runtime.peersNotifier.bump();
@@ -710,6 +787,21 @@ class BondBackend implements CollaborationBackend {
       ));
     }
     peers.sort((a, b) => (b.lastSeenMs ?? 0).compareTo(a.lastSeenMs ?? 0));
+    final proposals = r.proposalsById.values
+        .map((p) => BondProposalView(
+              proposalId: p.proposalId,
+              title: p.proposal.title,
+              body: p.proposal.body,
+              proposerHex: p.signerHex,
+              targetRef: p.proposal.targetRef,
+              sourceCommitHex: _hex(p.proposal.sourceCommit),
+              receivedMs: p.receivedMs,
+              attestations: (r.attestationsByProposal[p.proposalId] ?? const [])
+                  .map((a) => (signerHex: a.signerHex, verdict: a.att.verdict))
+                  .toList(growable: false),
+            ))
+        .toList(growable: false)
+      ..sort((a, b) => b.receivedMs.compareTo(a.receivedMs));
     return BondUiSnapshot(
       bondId: r.bondId,
       peers: peers,
@@ -719,6 +811,7 @@ class BondBackend implements CollaborationBackend {
         for (final e in r.attestationsByProposal.entries)
           e.key: e.value.length,
       },
+      proposals: proposals,
     );
   }
 

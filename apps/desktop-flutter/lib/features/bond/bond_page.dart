@@ -141,6 +141,8 @@ class _BondPageState extends State<BondPage> {
                   ),
                 if (membership != null) ...[
                   const SizedBox(height: 16),
+                  _ProposalsCard(repoPath: widget.repoPath),
+                  const SizedBox(height: 16),
                   _PeersCard(repoPath: widget.repoPath, membership: membership),
                   const SizedBox(height: 16),
                   _PolicyCard(repoPath: widget.repoPath),
@@ -834,6 +836,200 @@ class _BondedCardState extends State<_BondedCard> {
             ),
           ],
         ),
+    );
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Proposals — the inbox + per-proposal attestation surface
+
+class _ProposalsCard extends StatelessWidget {
+  const _ProposalsCard({required this.repoPath});
+  final String repoPath;
+
+  @override
+  Widget build(BuildContext context) {
+    final backend = context.read<BondService>().backend;
+    final listenable = backend.runtimeListenable(repoPath);
+    return MaterialSurface(
+      tone: AppMaterialTone.panel,
+      padding: const EdgeInsets.all(16),
+      child: ListenableBuilder(
+        listenable: listenable ?? const _NullListenable(),
+        builder: (context, _) {
+          final snap = backend.snapshot(repoPath);
+          final proposals = snap?.proposals ?? const <BondProposalView>[];
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.forum_outlined, size: 18),
+                  const SizedBox(width: 8),
+                  Text('Proposals (${proposals.length})',
+                      style: Theme.of(context).textTheme.titleMedium),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (proposals.isEmpty)
+                Text(
+                  'No proposals yet. When a peer publishes one, it appears here with its attestation roster.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                )
+              else
+                for (final p in proposals)
+                  _ProposalTile(repoPath: repoPath, proposal: p),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ProposalTile extends StatelessWidget {
+  const _ProposalTile({required this.repoPath, required this.proposal});
+  final String repoPath;
+  final BondProposalView proposal;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // Count approvals vs the current policy's relevant rule (if any).
+    // Reads the same snapshot the tile is inside — cheap because
+    // backend.snapshot returns a fresh view each call.
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  proposal.title.isEmpty
+                      ? '(untitled)'
+                      : proposal.title,
+                  style: theme.textTheme.titleSmall,
+                ),
+              ),
+              Text(
+                _humanAgo(proposal.receivedMs),
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'from ${proposal.proposerHex.substring(0, 8)} · '
+            'target ${proposal.targetRef} · '
+            '${proposal.approvals}/${proposal.attestations.length} approve',
+            style: theme.textTheme.bodySmall,
+          ),
+          if (proposal.body.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              proposal.body,
+              style: theme.textTheme.bodySmall,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final a in proposal.attestations)
+                _VerdictChip(
+                  signerHex: a.signerHex,
+                  verdict: a.verdict,
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              const Spacer(),
+              TextButton(
+                onPressed: () => _attest(
+                  context,
+                  AttestationVerdict.changesRequested,
+                ),
+                child: const Text('Changes'),
+              ),
+              const SizedBox(width: 4),
+              FilledButton.tonal(
+                onPressed: () =>
+                    _attest(context, AttestationVerdict.approve),
+                child: const Text('Approve'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _attest(
+    BuildContext context,
+    AttestationVerdict verdict,
+  ) async {
+    final service = context.read<BondService>();
+    final err = await service.publishAttestation(
+      repoPath: repoPath,
+      proposalId: _unhex(proposal.proposalId),
+      verdict: verdict,
+      body: '',
+      targetCommit: _unhex(proposal.sourceCommitHex),
+    );
+    if (!context.mounted) return;
+    if (err != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(err)));
+    }
+  }
+}
+
+class _VerdictChip extends StatelessWidget {
+  const _VerdictChip({required this.signerHex, required this.verdict});
+  final String signerHex;
+  final AttestationVerdict verdict;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).colorScheme;
+    final (label, color) = switch (verdict) {
+      AttestationVerdict.approve => ('✓', c.primary),
+      AttestationVerdict.changesRequested => ('!', c.error),
+      AttestationVerdict.comment => ('…', c.outline),
+      AttestationVerdict.withdraw => ('×', c.outline),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.4)),
+        color: color.withOpacity(0.08),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 4),
+          Text(
+            signerHex.substring(0, 6),
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+          ),
+        ],
+      ),
     );
   }
 }
