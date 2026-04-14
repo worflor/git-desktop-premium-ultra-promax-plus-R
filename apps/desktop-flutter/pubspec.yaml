@@ -20,6 +20,16 @@ dependencies:
   # Without this the codex-style review comments show as raw text
   # (`### Codex Review`, `**Reviewed commit**`, etc).
   flutter_markdown: ^0.7.4
+  # Bond — decentralised P2P collaboration.
+  #   cryptography: Ed25519 signing, HKDF, AEADs. Pure Dart so the
+  #                 identity + transport layers have no native hazards.
+  #   pointycastle: Argon2id for phrase → master seed hardening.
+  #                 `cryptography` doesn't ship Argon2.
+  #   cbor:         deterministic serialisation for signed objects
+  #                 (proposals, attestations, anchors, policies).
+  cryptography: ^2.7.0
+  pointycastle: ^3.9.1
+  cbor: ^6.2.0
 
 dev_dependencies:
   flutter_test:
