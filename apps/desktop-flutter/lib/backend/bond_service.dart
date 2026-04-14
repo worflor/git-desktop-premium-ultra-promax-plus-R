@@ -24,8 +24,6 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
 import 'bond/bond_backend.dart';
 import 'bond/bond_id.dart';
 import 'bond/contact_book.dart';
@@ -76,7 +74,14 @@ class BondService extends ChangeNotifier {
 
   final BondTransport _transport;
   late final BondBackend _backend;
-  final FlutterSecureStorage _secure = const FlutterSecureStorage();
+  /// In-process stand-in for OS-keychain storage. The real
+  /// flutter_secure_storage Windows plugin currently has a broken
+  /// include path that blocks the desktop build; until that's
+  /// resolved the auto-unlock surface is a no-op (always returns
+  /// false from tryAutoUnlock) and users type the phrase each
+  /// launch. The keychain key constants below stay defined so the
+  /// flip is one-line when the plugin works.
+  final _NoopSecureStorage _secure = const _NoopSecureStorage();
   final ValueNotifier<bool> _online = ValueNotifier<bool>(true);
 
   /// Coarse "presumed online" state. Starts true; flipped to false
@@ -679,4 +684,14 @@ class BondService extends ChangeNotifier {
     }
     return out;
   }
+}
+
+/// API-shape match for FlutterSecureStorage so the rest of the file
+/// reads identically once the real plugin is restored. All methods
+/// no-op; reads return null so tryAutoUnlock fast-paths to false.
+class _NoopSecureStorage {
+  const _NoopSecureStorage();
+  Future<String?> read({required String key}) async => null;
+  Future<void> write({required String key, required String value}) async {}
+  Future<void> delete({required String key}) async {}
 }

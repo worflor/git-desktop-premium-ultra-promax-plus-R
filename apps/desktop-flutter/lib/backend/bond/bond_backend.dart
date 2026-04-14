@@ -550,7 +550,7 @@ class BondBackend implements CollaborationBackend {
         final echo = msg['echo'];
         if (echo is int) {
           final rtt = DateTime.now().millisecondsSinceEpoch - echo;
-          if (rtt >= 0 && rtt < 60_000) {
+          if (rtt >= 0 && rtt < 60000) {
             runtime.peerPingMs[hex] = rtt;
             runtime.pendingPingMs.remove(hex);
             runtime.peersNotifier.bump();
@@ -579,7 +579,7 @@ class BondBackend implements CollaborationBackend {
     }
     final now = DateTime.now().millisecondsSinceEpoch;
     final lastSeen = runtime.lastSeenMs[hex] ?? 0;
-    if (now - lastSeen > 45_000) {
+    if (now - lastSeen > 45000) {
       // Treat as dropped — close session, schedule reconnect.
       runtime.dropCounters['peer_timeout'] =
           (runtime.dropCounters['peer_timeout'] ?? 0) + 1;
@@ -653,7 +653,7 @@ class BondBackend implements CollaborationBackend {
     runtime.reconnectAttempts[hex] = attempts + 1;
     runtime.reconnectTimers.remove(hex)?.cancel();
     runtime.reconnectTimers[hex] = Timer(
-      Duration(milliseconds: delayMs.clamp(500, 120_000)),
+      Duration(milliseconds: delayMs.clamp(500, 120000)),
       () => _reconnectAttempt(runtime, hex, addressing),
     );
   }

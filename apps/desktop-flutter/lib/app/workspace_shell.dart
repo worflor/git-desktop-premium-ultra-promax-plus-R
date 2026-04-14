@@ -2046,7 +2046,7 @@ class _BondTopbarButton extends StatelessWidget {
                   // Safe-green accent; Signal-style tiny dot.
                   color: Theme.of(context).colorScheme.primary,
                   border: Border.all(
-                    color: context.tokens.chromeTone.base,
+                    color: context.tokens.chromeBorder,
                     width: 1.2,
                   ),
                 ),

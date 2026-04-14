@@ -176,6 +176,7 @@ class _BondPageState extends State<BondPage> {
               ),
           ],
         ),
+      ),
     );
   }
 }
@@ -208,6 +209,7 @@ class _TransportBanner extends StatelessWidget {
             ),
           ),
         ],
+      ),
     );
   }
 }
@@ -420,6 +422,7 @@ class _BigOptionTile extends StatelessWidget {
             const Icon(Icons.chevron_right),
           ],
         ),
+      ),
     );
   }
 }
@@ -643,7 +646,7 @@ class _JoinFormState extends State<_JoinForm> {
   }
 
   Future<void> _pasteInvite() async {
-    final data = await Clipboard.getData(Clipboard.kMimeText);
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text?.trim();
     if (text != null && text.isNotEmpty) {
       _invite.text = text;
@@ -787,6 +790,7 @@ class _InvitePreview extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
+      ),
     );
   }
 }
@@ -1576,6 +1580,7 @@ class _KV extends StatelessWidget {
             ),
           ),
         ],
+      ),
     );
   }
 }
@@ -1601,6 +1606,7 @@ class _ErrorStrip extends StatelessWidget {
             child: Text(message, style: TextStyle(color: c.onErrorContainer)),
           ),
         ],
+      ),
     );
   }
 }
