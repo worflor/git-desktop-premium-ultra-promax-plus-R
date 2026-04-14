@@ -1322,6 +1322,29 @@ class BondBackend implements CollaborationBackend {
         runtime.revokedAt[revokedHex] = body.effectiveAtMs;
       }
     }
+    // Proposals: replay before attestations so the inbox view has
+    // every known proposal already populated by the time attestation
+    // counts are computed against them.
+    for (final env in await _readLogEnvelopes(runtime.store.proposalsLogFor(runtime.bondId))) {
+      final body = Proposal.tryDecode(env.body);
+      if (body == null) continue;
+      final signerHex = _hex(env.signerPublicKey);
+      if (_isRevokedAt(runtime, signerHex, body.createdMs)) continue;
+      final pid = _hex(_sha256(body.toCborBody()));
+      runtime.proposalsById.putIfAbsent(
+        pid,
+        () => _StoredProposal(
+          proposalId: pid,
+          proposal: body,
+          signerHex: signerHex,
+          receivedMs: body.createdMs,
+        ),
+      );
+    }
+    // RefAdverts: replay last-known per signer from refs/<signer>.json.
+    // These are persisted as a single "last value" (not append-only)
+    // because only the latest matters for fetch/pull routing.
+    await _rehydrateAdvertsFromDisk(runtime);
     for (final env in await _readLogEnvelopes(runtime.store.attestationsLogFor(runtime.bondId))) {
       final body = Attestation.tryDecode(env.body);
       if (body == null) continue;
@@ -1339,6 +1362,64 @@ class BondBackend implements CollaborationBackend {
       }
     }
     runtime.peersNotifier.bump();
+  }
+
+  /// Reads each per-signer ref-advert JSON in `refs/<signer>.json`
+  /// (written by [_persistAdvert]) and seeds `lastAdverts` so the
+  /// replay-protection clock is correct on next inbound advert. The
+  /// JSON files are last-value-wins (not append-only logs) — only
+  /// the most-recent advert per signer matters for fetch/pull.
+  ///
+  /// We don't reverify signatures here: the `_persistAdvert` write
+  /// path only fires after [verifyEnvelope] succeeded, and the file
+  /// is in our own .git/manifold tree (not user-writeable in normal
+  /// flows). If signature reverification becomes a hard requirement
+  /// later, switch to persisting the full envelope alongside the
+  /// decoded refs and wire it through `_readLogEnvelopes`.
+  Future<void> _rehydrateAdvertsFromDisk(_RepoRuntime runtime) async {
+    final dir = Directory(runtime.store.refsDirFor(runtime.bondId));
+    if (!await dir.exists()) return;
+    await for (final entry in dir.list()) {
+      if (entry is! File) continue;
+      final name = entry.uri.pathSegments.last;
+      if (!name.endsWith('.json')) continue;
+      final base = name.substring(0, name.length - 5);
+      // Skip the local "self.json" — that's our outbound advert; it
+      // doesn't belong in lastAdverts (which tracks remote signers).
+      if (base == 'self') continue;
+      // Validate the basename is a 64-char lowercase hex pubkey.
+      if (base.length != 64 || !RegExp(r'^[0-9a-f]+$').hasMatch(base)) {
+        continue;
+      }
+      try {
+        final raw = await entry.readAsString();
+        final json = jsonDecode(raw);
+        if (json is! Map<String, dynamic>) continue;
+        final lamport = json['lamport'];
+        final createdMs = json['created_ms'];
+        final refsRaw = json['refs'];
+        if (lamport is! int || createdMs is! int || refsRaw is! Map) continue;
+        final refs = <String, Uint8List>{};
+        for (final e in refsRaw.entries) {
+          final k = e.key;
+          final v = e.value;
+          if (k is! String || v is! String) continue;
+          if (v.length != 40 && v.length != 64) continue;
+          if (!RegExp(r'^[0-9a-f]+$').hasMatch(v)) continue;
+          refs[k] = _unhex(v);
+        }
+        runtime.lastAdverts[base] = RefAdvert(
+          bondId: runtime.bondId.bytes,
+          lamportClock: lamport,
+          refs: refs,
+          createdMs: createdMs,
+        );
+      } catch (_) {
+        // Skip torn / hand-edited / format-evolved files; live
+        // gossip will re-establish state from the next inbound
+        // advert.
+      }
+    }
   }
 
   /// Reads a log file and returns verified envelopes in file order.
