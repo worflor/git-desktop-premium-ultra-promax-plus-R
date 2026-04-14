@@ -33,6 +33,7 @@ import '../dtos.dart';
 import '../git_result.dart';
 import 'bond_id.dart';
 import 'identity.dart';
+import 'kizuna_lattice.dart';
 import 'objects.dart';
 import 'packfile.dart';
 import 'peer_session.dart';
@@ -115,6 +116,19 @@ class _RepoRuntime {
   /// state the UI renders changes (attach/detach, advert, last-seen,
   /// policy update, revocation, attestation).
   final BondRuntimeNotifier peersNotifier = BondRuntimeNotifier();
+
+  /// 16D kizuna lattice for this bond. Built incrementally as peers
+  /// attach; consumed for gossip-routing decisions (fetch from
+  /// nearest first by Hamming distance) and to surface peer
+  /// coordinates in the UI. The lattice is purely topological —
+  /// it doesn't change which peers are reachable, just the order
+  /// in which we contact them.
+  late final KizunaLatticeBuilder lattice = KizunaLatticeBuilder(bondId: bondId.bytes);
+
+  /// Per-peer cached lattice coordinate. Computed once on attach
+  /// (HKDF is async + deterministic; once derived the value is
+  /// stable for the life of the runtime). Keyed by pubkey hex.
+  final Map<String, KizunaCoordinate> peerCoordinates = {};
 }
 
 /// Exposes a public bump method on top of [ChangeNotifier] so the
@@ -225,6 +239,7 @@ class BondPeerView {
     required this.advertLamport,
     required this.refCount,
     required this.revokedAt,
+    this.coordinate,
   });
 
   final String pubkeyHex;
@@ -236,6 +251,12 @@ class BondPeerView {
   /// Non-null when this peer's key has been revoked (in effect from
   /// this epoch-ms). Rendered as a strikethrough / warning badge.
   final int? revokedAt;
+
+  /// Position in the bond's 16D kizuna lattice. Non-null once the
+  /// async HKDF placement completes (microseconds after attach). The
+  /// UI renders the row/column hex; the gossip layer reads it for
+  /// nearest-first routing.
+  final KizunaCoordinate? coordinate;
 
   String get shortHex => pubkeyHex.substring(0, 8);
   bool get isRevoked => revokedAt != null;
@@ -323,6 +344,13 @@ class BondBackend implements CollaborationBackend {
     }
     runtime.peers[hex] = peer;
     runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+    // Place the peer on the bond's kizuna lattice. The placement is
+    // deterministic per (bondId, peerPubkey), so this is idempotent
+    // across reconnects — the same peer always lands at the same
+    // coordinate. Don't await: peer attachment shouldn't wait on the
+    // HKDF; the coordinate becomes available a microtask later and
+    // any reader handles "not yet placed" gracefully.
+    unawaited(_placePeerOnLattice(runtime, peer.session.remotePubkey, hex));
     peer.start();
     final subs = <StreamSubscription<dynamic>>[];
     subs.add(peer.refAdverts.listen((advert) {
@@ -469,6 +497,56 @@ class BondBackend implements CollaborationBackend {
     return effective != null && createdMs >= effective;
   }
 
+  /// Snapshots the currently-attached peers ordered by lattice
+  /// proximity — peers without a placed coordinate land at the tail
+  /// (we still try them, just last). The "self" coordinate used as
+  /// the centre is derived from the local identity pubkey for this
+  /// bond when it's been resolved; otherwise we use the lattice
+  /// origin and fall back to insertion order.
+  List<PeerSession> _peersInLatticeOrder(_RepoRuntime runtime) {
+    final attached = runtime.peers.entries.toList(growable: false);
+    if (attached.length <= 1) {
+      return attached.map((e) => e.value).toList(growable: false);
+    }
+    KizunaCoordinate? self;
+    final identity = _identityCache[runtime.bondId.hex];
+    if (identity != null) {
+      // Self coordinate is cached as a side-effect of the first
+      // _placePeerOnLattice for our own pubkey. If we haven't been
+      // through that path yet, computing it inline would be async; use
+      // origin as a stable fallback so the sort stays deterministic.
+      self = runtime.peerCoordinates[_hex(identity.publicKeyBytes)];
+    }
+    final centre = self ?? KizunaCoordinate.origin;
+    int distance(MapEntry<String, PeerSession> e) {
+      final c = runtime.peerCoordinates[e.key];
+      if (c == null) return KizunaCoordinate.dimensions + 1; // tail
+      return centre.hammingDistanceTo(c);
+    }
+    attached.sort((a, b) => distance(a).compareTo(distance(b)));
+    return attached.map((e) => e.value).toList(growable: false);
+  }
+
+  /// Async lattice placement. Done off the attach hot path because
+  /// HKDF is a few microseconds but we don't want to block peer
+  /// session bring-up for it. The notifier bumps once placed so the
+  /// UI gets the coordinate on the next rebuild.
+  Future<void> _placePeerOnLattice(
+    _RepoRuntime runtime,
+    Uint8List peerPubkey,
+    String hex,
+  ) async {
+    try {
+      final coord = await runtime.lattice.place(peerPubkey);
+      runtime.peerCoordinates[hex] = coord;
+      runtime.peersNotifier.bump();
+    } catch (_) {
+      // Lattice placement is best-effort — failure (e.g. HKDF init
+      // hiccup) just means we lose the topology hint for this peer;
+      // gossip falls back to the un-routed iteration order.
+    }
+  }
+
   /// Authorizes an inbound revocation against current bond rules.
   /// Self-revocation is always honored. Peer revocation requires the
   /// revoker to appear in any current-policy rule's approverSet — the
@@ -531,7 +609,7 @@ class BondBackend implements CollaborationBackend {
     var fetchedRefs = 0;
     // Snapshot peers at loop entry — attachPeerSession can mutate the
     // live map concurrently via an async dial completing.
-    final peers = runtime.peers.values.toList(growable: false);
+    final peers = _peersInLatticeOrder(runtime);
     for (final peer in peers) {
       final hex = _hex(peer.session.remotePubkey);
       final wanted = await _wantedFromAdvert(
@@ -784,6 +862,7 @@ class BondBackend implements CollaborationBackend {
         advertLamport: r.lastAdverts[hex]?.lamportClock,
         refCount: r.lastAdverts[hex]?.refs.length ?? 0,
         revokedAt: r.revokedAt[hex],
+        coordinate: r.peerCoordinates[hex],
       ));
     }
     peers.sort((a, b) => (b.lastSeenMs ?? 0).compareTo(a.lastSeenMs ?? 0));
@@ -1290,6 +1369,20 @@ class BondBackend implements CollaborationBackend {
     if (cached != null) return cached;
     final kp = await resolveIdentity(bondId);
     _identityCache[bondId.hex] = kp;
+    // Once we know our own pubkey for this bond, place ourselves on
+    // the lattice so distance-based fetch ordering can centre on us
+    // instead of the origin. Idempotent — placement is deterministic
+    // per (bondId, pubkey).
+    for (final runtime in _runtimes.values) {
+      if (identical(runtime.bondId.bytes, bondId.bytes) ||
+          _bytesEq(runtime.bondId.bytes, bondId.bytes)) {
+        unawaited(_placePeerOnLattice(
+          runtime,
+          kp.publicKeyBytes,
+          _hex(kp.publicKeyBytes),
+        ));
+      }
+    }
     return kp;
   }
 

@@ -1160,6 +1160,9 @@ class _PeerTile extends StatelessWidget {
   String _peerSubtitle(BondPeerView p) {
     final parts = <String>[];
     parts.add(p.attached ? 'connected' : 'offline');
+    if (p.coordinate != null) {
+      parts.add('lattice ${p.coordinate!.toHex()}');
+    }
     if (p.lastSeenMs != null) {
       parts.add('seen ${_humanAgo(p.lastSeenMs!)}');
     }
