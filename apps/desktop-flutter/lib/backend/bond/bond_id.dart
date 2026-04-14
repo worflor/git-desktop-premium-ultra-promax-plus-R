@@ -23,6 +23,18 @@ import 'package:cryptography/cryptography.dart' as cg;
 class BondId {
   BondId._(this.bytes);
 
+  /// Reconstructs a [BondId] from previously-computed raw bytes.
+  /// The only supported derivation path is [deriveBondId]; this
+  /// factory exists for storage-enumeration (rebuilding ids from
+  /// hex directory names) and round-tripping through persistence.
+  /// Callers that accept untrusted input must validate length first.
+  factory BondId.fromBytes(Uint8List bytes) {
+    if (bytes.length != 32) {
+      throw ArgumentError('BondId requires exactly 32 bytes');
+    }
+    return BondId._(Uint8List.fromList(bytes));
+  }
+
   /// The raw 32-byte identifier. Safe to treat as opaque; only
   /// byte-level comparisons are meaningful.
   final Uint8List bytes;
