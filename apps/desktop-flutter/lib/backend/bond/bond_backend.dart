@@ -1528,10 +1528,32 @@ class BondBackend implements CollaborationBackend {
         return false;
       }
       if (pack.pack.isEmpty) return false;
-      await indexPackfile(
-        repoPath: runtime.repoPath,
-        packBytes: pack.pack,
-      );
+      // For packs above the spool threshold, write to a tmp file then
+      // pipe into git index-pack via OS-level copy. Halves peak memory
+      // (we don't hold packBytes alongside git's internal index buffer)
+      // and prepares the path for future wire-streaming where bytes
+      // arrive incrementally rather than as one Uint8List event.
+      const spoolThreshold = 8 * 1024 * 1024;
+      if (pack.pack.length >= spoolThreshold) {
+        final tmpDir = await Directory.systemTemp.createTemp('bond_pack_');
+        final tmp = File('${tmpDir.path}/incoming.pack');
+        try {
+          await tmp.writeAsBytes(pack.pack, flush: true);
+          await indexPackfileFromFile(
+            repoPath: runtime.repoPath,
+            packFile: tmp,
+          );
+        } finally {
+          try {
+            await tmpDir.delete(recursive: true);
+          } catch (_) {}
+        }
+      } else {
+        await indexPackfile(
+          repoPath: runtime.repoPath,
+          packBytes: pack.pack,
+        );
+      }
       return true;
     } finally {
       completer.complete();

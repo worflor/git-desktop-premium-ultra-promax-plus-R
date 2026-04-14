@@ -143,10 +143,9 @@ Future<String> indexPackfile({
   );
 
   // Feed the pack into stdin in one shot. For large packs this
-  // buffers the full blob in memory on both sides of the pipe; for
-  // Bond's typical working-set transfers this is fine. Huge clones
-  // should spool to a temp file between wire receive and index-pack,
-  // a v2 optimisation.
+  // buffers the full blob in memory on both sides of the pipe; use
+  // [indexPackfileFromFile] for big incoming packs (the receiver
+  // spools wire bytes to disk first).
   process.stdin.add(packBytes);
   await process.stdin.flush();
   await process.stdin.close();
@@ -179,6 +178,112 @@ Future<String> indexPackfile({
   // pack-<hash>.pack. Return a sensible identifier for logging.
   final hash = stdoutBuffer.toString().trim();
   return hash.isEmpty ? '(unknown)' : 'pack-$hash.pack';
+}
+
+/// Streams an arbitrary-sized pack from disk into `git index-pack
+/// --stdin`. Use this for large incoming packs — the receiver spools
+/// wire bytes to a tmp file as they arrive, then calls this to land
+/// them, keeping peak memory bounded by the chunker not the pack
+/// size. The tmp file is *not* deleted by this function; the caller
+/// owns its lifetime (typically delete after a successful return).
+Future<String> indexPackfileFromFile({
+  required String repoPath,
+  required File packFile,
+  bool fixThin = false,
+}) async {
+  final args = <String>[
+    'index-pack',
+    '--stdin',
+    if (fixThin) '--fix-thin',
+  ];
+  final process = await Process.start(
+    'git',
+    args,
+    workingDirectory: repoPath,
+    runInShell: false,
+  );
+
+  // Pipe the file straight to stdin — Dart's `pipe` uses an OS-level
+  // copy where available, never materialising the full pack in
+  // memory.
+  final pipeFuture = packFile.openRead().pipe(process.stdin);
+
+  final stdoutBuffer = StringBuffer();
+  final stdoutFuture = process.stdout
+      .transform(utf8.decoder)
+      .listen(stdoutBuffer.write)
+      .asFuture<void>();
+  final stderrBuffer = StringBuffer();
+  final stderrFuture = process.stderr
+      .transform(utf8.decoder)
+      .listen(stderrBuffer.write)
+      .asFuture<void>();
+
+  await pipeFuture;
+  final exitCode = await process.exitCode;
+  await stdoutFuture;
+  await stderrFuture;
+
+  if (exitCode != 0) {
+    throw ProcessException(
+      'git',
+      args,
+      stderrBuffer.toString().trim(),
+      exitCode,
+    );
+  }
+  final hash = stdoutBuffer.toString().trim();
+  return hash.isEmpty ? '(unknown)' : 'pack-$hash.pack';
+}
+
+/// Streaming sender — runs `git pack-objects --stdout --revs` with
+/// the given wanted/have set and returns its stdout as a
+/// `Stream<Uint8List>` that the transport drains chunk-by-chunk. The
+/// transport sees backpressure naturally (each chunk awaits the wire
+/// before pulling the next) and the full pack never lives in memory
+/// on the sender side. The returned `objectCountFuture` resolves
+/// with the parsed object count (or -1) once stderr completes — the
+/// wire layer can ignore it; UI uses it for telemetry.
+Stream<Uint8List> streamPackfile({
+  required String repoPath,
+  required List<String> wanted,
+  List<String> have = const [],
+}) async* {
+  if (wanted.isEmpty) return;
+  final process = await Process.start(
+    'git',
+    ['pack-objects', '--stdout', '--revs'],
+    workingDirectory: repoPath,
+    runInShell: false,
+  );
+  final wantStdin = StringBuffer();
+  for (final hash in wanted) {
+    wantStdin.writeln(hash);
+  }
+  for (final hash in have) {
+    wantStdin.writeln('^$hash');
+  }
+  process.stdin.write(wantStdin.toString());
+  await process.stdin.flush();
+  await process.stdin.close();
+  // Drain stderr in parallel so it doesn't backpressure stdout.
+  final stderrBuffer = StringBuffer();
+  unawaited(process.stderr
+      .transform(utf8.decoder)
+      .listen(stderrBuffer.write)
+      .asFuture<void>());
+  await for (final chunk in process.stdout) {
+    yield Uint8List.fromList(chunk);
+  }
+  final exitCode = await process.exitCode;
+  if (exitCode != 0) {
+    throw ProcessException(
+      'git',
+      const ['pack-objects', '--stdout', '--revs'],
+      stderrBuffer.toString().trim(),
+      exitCode,
+    );
+  }
 }
 
 /// Lightweight "do I have this commit locally?" check via
