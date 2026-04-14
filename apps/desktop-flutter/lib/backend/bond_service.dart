@@ -89,7 +89,11 @@ class BondService extends ChangeNotifier {
     }
     _master?.wipe();
     _keys.clear();
-    _master = deriveMasterSeed(phrase);
+    // Argon2id at production parameters is ~1s. Run off the UI
+    // isolate so the unlock button + any concurrent animation don't
+    // jank for the duration.
+    final seed = await compute<String, MasterSeed>(_deriveMasterInIsolate, phrase);
+    _master = seed;
     notifyListeners();
   }
 
@@ -174,13 +178,20 @@ class BondService extends ChangeNotifier {
     return _byRepo[repoPath]?.bondId;
   }
 
+  /// Top-level isolate entry for Argon2id. Must be a top-level
+  /// function, not a method, because `compute` only accepts static
+  /// or top-level targets — instance methods carry closure state.
+  static MasterSeed _deriveMasterInIsolate(String phrase) =>
+      deriveMasterSeed(phrase);
+
   Future<void> _persistMembership(BondMembership m) async {
     final dir = Directory(
       p.join(m.repoPath, '.git', 'manifold', 'bond', 'bonds', m.bondId.hex),
     );
     await dir.create(recursive: true);
-    final file = File(p.join(dir.path, 'config.json'));
-    await file.writeAsString(
+    final finalPath = p.join(dir.path, 'config.json');
+    final tmp = File('$finalPath.tmp');
+    await tmp.writeAsString(
       jsonEncode(<String, dynamic>{
         'bond_id': m.bondId.hex,
         'bootstrap_commit': m.bootstrapCommit,
@@ -188,7 +199,13 @@ class BondService extends ChangeNotifier {
       }),
       flush: true,
     );
+    // tmp + rename = atomic replace across crash on both Unix and
+    // Windows. A torn write on the truncate-then-write path would have
+    // left zero-byte configs that silently broke rebind.
+    await tmp.rename(finalPath);
   }
+
+  static final RegExp _hexOnly = RegExp(r'^[0-9a-f]+$');
 
   Future<List<BondMembership>> _readRepoConfigs(String repoPath) async {
     final bondsDir = Directory(
@@ -206,7 +223,12 @@ class BondService extends ChangeNotifier {
         final hex = decoded['bond_id'] as String?;
         final bootstrap = decoded['bootstrap_commit'] as String?;
         final name = decoded['display_name'] as String? ?? '';
-        if (hex == null || hex.length != 64 || bootstrap == null) continue;
+        if (hex == null ||
+            hex.length != 64 ||
+            !_hexOnly.hasMatch(hex) ||
+            bootstrap == null) {
+          continue;
+        }
         final bytes = Uint8List(32);
         for (var i = 0; i < 32; i++) {
           bytes[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);

@@ -144,7 +144,12 @@ class NullBondTransport implements BondTransport {
   }
 
   @override
-  Stream<BondSession> get listen => const Stream<BondSession>.empty();
+  Stream<BondSession> get listen {
+    // Broadcast so multiple subscribers (UI + backend) can coexist
+    // even though no session will ever arrive. An empty single-
+    // subscription stream would fire StateError on a second listen.
+    return const Stream<BondSession>.empty().asBroadcastStream();
+  }
 
   @override
   Future<void> close() async {}

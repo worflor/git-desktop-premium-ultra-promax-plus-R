@@ -39,10 +39,11 @@ class _BondPageState extends State<BondPage> {
   @override
   void initState() {
     super.initState();
-    // Fire-and-forget disk load; notifyListeners updates the UI.
-    Future.microtask(() {
-      context.read<BondService>().loadFromDisk(widget.repoPath);
-    });
+    // Capture the service synchronously — `context.read` after unmount
+    // throws. `loadFromDisk` mutates service state, not widget state,
+    // so we don't need `mounted` on completion.
+    final service = context.read<BondService>();
+    Future.microtask(() => service.loadFromDisk(widget.repoPath));
   }
 
   @override
