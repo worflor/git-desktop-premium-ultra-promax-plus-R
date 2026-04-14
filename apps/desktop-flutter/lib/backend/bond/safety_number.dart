@@ -7,21 +7,29 @@
 // trusted side channel (phone, in person). Match = no MITM at
 // handshake time.
 //
-// Construction: SHA-256 over sorted(pubA, pubB), sliced into
-// 10 NON-OVERLAPPING 3-byte windows (bytes 0..29). Each window
-// encodes to 5 decimal digits via `value % 100000`, yielding a
-// 50-digit string rendered as ten space-separated 5-digit groups.
+// Two derivation paths:
 //
-// Sorting makes the number symmetric (Alice and Bob compute the
-// same string regardless of who initiated). Non-overlapping windows
-// preserve the construction's effective entropy — previously,
-// overlapping windows reused bytes across groups and weakened the
-// output.
+//   • [computeSafetyNumber] (fast, no kizuna): SHA-256 over
+//     sorted(pubA, pubB), sliced into 10 non-overlapping 3-byte
+//     windows. Used for the always-available verify dialog and as a
+//     fallback when no live kizuna witness is in scope.
+//
+//   • [computeKizunaSafetyNumber] (canonical): HKDF-expand the sorted
+//     pair to 65536 bytes, run [handshake16D], encode the residual.
+//     This is the witness Whisper's confirm-context hash uses; bit-
+//     identical to what the live session derives during handshake.
+//     Slower (one Möbius residual ≈ 65535 voxel reads) but it's the
+//     primitive the project is named after — when both ends report
+//     the same kizuna number, they share the same lattice position
+//     in addition to the pair-pubkey commitment.
 // ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart' as cg;
 import 'package:pointycastle/digests/sha256.dart';
+
+import 'kizuna.dart';
 
 /// Formats the safety number as 10 groups of 5 digits, space-
 /// separated — ~8 seconds to read aloud.
@@ -59,6 +67,57 @@ int _compare(Uint8List a, Uint8List b) {
   }
   return a.length - b.length;
 }
+
+/// Kizuna-witness safety number — the canonical pair-verify form.
+///
+/// Construction:
+///   1. Lex-sort the pubkey pair (symmetric output).
+///   2. HKDF-SHA256 with salt = sorted concatenation, info =
+///      "kizuna/safety/v1", out = 65536 bytes.
+///   3. Run [handshake16D] over the expanded block.
+///   4. Format the 32-bit residual as 10 decimal digits in two groups
+///      of 5 (matching the [computeSafetyNumber] groove so the UI can
+///      render either kind in the same widget).
+///
+/// Both ends compute bit-identically. Mismatch = MITM at handshake or
+/// at one party's pubkey — the same property the in-session kizuna
+/// witness gives, applied here to the long-term identity pair.
+Future<String> computeKizunaSafetyNumber(
+  Uint8List pubA,
+  Uint8List pubB,
+) async {
+  if (pubA.length != 32 || pubB.length != 32) {
+    throw ArgumentError('pubkeys must be 32 bytes each');
+  }
+  final ordered = _compare(pubA, pubB) <= 0
+      ? <Uint8List>[pubA, pubB]
+      : <Uint8List>[pubB, pubA];
+  final salt = Uint8List.fromList([...ordered[0], ...ordered[1]]);
+  // HKDF-expand to a full kizuna block. The IKM is a constant zero
+  // vector — entropy lives entirely in the salt (the pair). This is
+  // the canonical "expand a pair to a 65536-byte witness block" step
+  // mirroring `loopExpand` in live-handshake.ts.
+  final hkdf = cg.Hkdf(hmac: cg.Hmac.sha256(), outputLength: kKizunaBlockSize);
+  final ikm = cg.SecretKey(Uint8List(32));
+  final derived = await hkdf.deriveKey(
+    secretKey: ikm,
+    nonce: salt,
+    info: _kSafetyInfo,
+  );
+  final block = Uint8List.fromList(await derived.extractBytes());
+  final witness = handshake16D(block).residual;
+  // Two 5-digit groups from the residual: high 16 bits → group 1,
+  // low 16 bits → group 2. Mod 100000 keeps each group in 5 digits.
+  final wU = witness & 0xFFFFFFFF;
+  final hi = ((wU >> 16) & 0xFFFF) % 100000;
+  final lo = (wU & 0xFFFF) % 100000;
+  return '${hi.toString().padLeft(5, "0")} ${lo.toString().padLeft(5, "0")}';
+}
+
+const List<int> _kSafetyInfo = [
+  // ASCII "kizuna/safety/v1"
+  107, 105, 122, 117, 110, 97, 47, 115, 97, 102, 101, 116, 121, 47, 118, 49,
+];
 
 /// Short fingerprint for UI chrome — first 8 bytes of SHA-256(pubkey),
 /// hex-encoded, groups of 4. Not a security guarantee on its own; used

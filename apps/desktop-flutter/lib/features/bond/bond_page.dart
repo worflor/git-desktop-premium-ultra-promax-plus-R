@@ -1174,11 +1174,18 @@ class _PeerTile extends StatelessWidget {
   Future<void> _verify(BuildContext context) async {
     final service = context.read<BondService>();
     final pubBytes = _unhex(peer.pubkeyHex);
-    final sn = await service.safetyNumberWith(
+    // Fast path computes immediately; the kizuna witness expansion
+    // takes longer (one Möbius residual over 65 KiB) so it streams
+    // into the dialog when ready.
+    final fast = await service.safetyNumberWith(
       bondId: bondId,
       peerPubkey: pubBytes,
     );
     if (!context.mounted) return;
+    final kizunaFuture = service.kizunaSafetyNumberWith(
+      bondId: bondId,
+      peerPubkey: pubBytes,
+    );
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1188,18 +1195,41 @@ class _PeerTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Read this number to the peer over a trusted channel '
-              '(phone, in person). If their device shows the same 60 '
-              'digits, there\'s no one-in-the-middle between you.',
+              'Read both numbers to the peer over a trusted channel '
+              '(phone, in person). Equal numbers on both sides = no '
+              'one-in-the-middle.',
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
+            const Text('Pair-pubkey number',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+            const SizedBox(height: 4),
             SelectableText(
-              sn ?? '(identity locked — unlock to compute)',
+              fast ?? '(identity locked — unlock to compute)',
               style: const TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 15,
                 height: 1.4,
               ),
+            ),
+            const SizedBox(height: 14),
+            const Text('Kizuna witness',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+            const SizedBox(height: 4),
+            FutureBuilder<String?>(
+              future: kizunaFuture,
+              builder: (context, snap) {
+                final value = snap.connectionState == ConnectionState.done
+                    ? (snap.data ?? '(identity locked)')
+                    : 'computing 16D Möbius residual…';
+                return SelectableText(
+                  value,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 15,
+                    height: 1.4,
+                  ),
+                );
+              },
             ),
           ],
         ),

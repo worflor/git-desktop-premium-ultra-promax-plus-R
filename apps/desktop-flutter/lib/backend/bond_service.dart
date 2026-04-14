@@ -222,9 +222,8 @@ class BondService extends ChangeNotifier {
     }
   }
 
-  /// Computes the Signal-style 60-digit safety number for a peer.
-  /// Both endpoints compute the same string; reading it aloud verifies
-  /// no MITM between them. Returns null if locked or not bonded.
+  /// Computes the 50-digit pair-pubkey safety number for a peer
+  /// (SHA-256 over sorted pair, fast). Returns null if locked.
   Future<String?> safetyNumberWith({
     required BondId bondId,
     required Uint8List peerPubkey,
@@ -232,6 +231,23 @@ class BondService extends ChangeNotifier {
     try {
       final me = await _resolveIdentity(bondId);
       return computeSafetyNumber(me.publicKeyBytes, peerPubkey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Canonical kizuna-witness safety number for a peer. Bit-identical
+  /// on both ends; this is the number that matches what a live session
+  /// derives during handshake. Slower than [safetyNumberWith] (one
+  /// 16D Möbius residual over a 65 KiB block), so the UI surfaces it
+  /// async behind the verify dialog.
+  Future<String?> kizunaSafetyNumberWith({
+    required BondId bondId,
+    required Uint8List peerPubkey,
+  }) async {
+    try {
+      final me = await _resolveIdentity(bondId);
+      return await computeKizunaSafetyNumber(me.publicKeyBytes, peerPubkey);
     } catch (_) {
       return null;
     }
