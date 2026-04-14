@@ -394,16 +394,29 @@ class Anchor {
       if (k.value < 0 || k.value >= AnchorTargetKind.values.length) {
         return null;
       }
-      final rs = decoded[CborString('rs')];
-      final re = decoded[CborString('re')];
+      final rsRaw = decoded[CborString('rs')];
+      final reRaw = decoded[CborString('re')];
+      int? start;
+      int? end;
+      if (rsRaw is CborSmallInt) start = rsRaw.value;
+      if (reRaw is CborSmallInt) end = reRaw.value;
+      final hasStart = start != null;
+      final hasEnd = end != null;
+      // Both-or-neither: a one-sided range is a malformed anchor.
+      // Reject rather than silently leaving one side null.
+      if (hasStart != hasEnd) return null;
+      final kind = AnchorTargetKind.values[k.value];
+      // Range only makes sense for lineRange targets.
+      if (hasStart && kind != AnchorTargetKind.lineRange) return null;
+      if (hasStart && (start < 0 || end! < start)) return null;
       return Anchor(
         bondId: Uint8List.fromList(b.bytes),
-        targetKind: AnchorTargetKind.values[k.value],
+        targetKind: kind,
         targetHash: Uint8List.fromList(h.bytes),
         body: bd.toString(),
         createdMs: t.value,
-        byteRangeStart: rs is CborSmallInt ? rs.value : null,
-        byteRangeEnd: re is CborSmallInt ? re.value : null,
+        byteRangeStart: start,
+        byteRangeEnd: end,
       );
     } catch (_) {
       return null;
@@ -571,11 +584,18 @@ class Policy {
       if (b is! CborBytes || e is! CborSmallInt || r is! CborList) {
         return null;
       }
+      // Strict rule decoding: any malformed rule fails the whole
+      // policy. Silent-skip would let a crafted sender weaken the
+      // effective rule set by embedding an unparseable rule — peers
+      // would then operate under a looser policy than the signer
+      // ever authorised. Better to drop the policy entirely and
+      // surface the decode failure.
       final rules = <PolicyRule>[];
       for (final item in r) {
-        if (item is! CborMap) continue;
+        if (item is! CborMap) return null;
         final rule = PolicyRule.tryDecode(item);
-        if (rule != null) rules.add(rule);
+        if (rule == null) return null;
+        rules.add(rule);
       }
       final s = decoded[CborString('s')];
       return Policy(

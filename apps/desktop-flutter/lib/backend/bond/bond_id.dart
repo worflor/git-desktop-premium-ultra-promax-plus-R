@@ -91,11 +91,30 @@ Future<BondId> deriveBondId({
   if (swarmPhrase.isEmpty) {
     throw ArgumentError('swarmPhrase is required');
   }
+  // Length-prefixed concatenation: each input is encoded as
+  // (u32 big-endian byte-length)(utf8 bytes). Without the prefix a
+  // pair like ("abc","def") and ("ab","cdef") would produce the same
+  // hash input "abcdef" and therefore the same BondId — a trivial
+  // collision. Prefixing makes the encoding prefix-free regardless
+  // of field content.
   final hash = cg.Sha256();
-  final input = Uint8List.fromList([
-    ...utf8.encode(bootstrapCommitHash.trim().toLowerCase()),
-    ...utf8.encode(swarmPhrase),
-  ]);
-  final digest = await hash.hash(input);
+  final bootstrapBytes =
+      utf8.encode(bootstrapCommitHash.trim().toLowerCase());
+  final phraseBytes = utf8.encode(swarmPhrase);
+  final input = BytesBuilder(copy: false)
+    ..add(_u32be(bootstrapBytes.length))
+    ..add(bootstrapBytes)
+    ..add(_u32be(phraseBytes.length))
+    ..add(phraseBytes);
+  final digest = await hash.hash(input.toBytes());
   return BondId._(Uint8List.fromList(digest.bytes));
+}
+
+Uint8List _u32be(int v) {
+  final out = Uint8List(4);
+  out[0] = (v >> 24) & 0xff;
+  out[1] = (v >> 16) & 0xff;
+  out[2] = (v >> 8) & 0xff;
+  out[3] = v & 0xff;
+  return out;
 }

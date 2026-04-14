@@ -37,6 +37,7 @@
 // human-inspectable for debugging.
 // ═════════════════════════════════════════════════════════════════════════
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -145,19 +146,41 @@ class BondStore {
   }
 }
 
+/// Per-path write-chain lock. Dart is single-isolate but multiple
+/// async futures can race on the same file — `writeAsString` is not
+/// atomic with respect to other pending writes. Serialising per-path
+/// ensures lines never interleave. One `Future` chain per absolute
+/// path; garbage-collected implicitly once all pending writes resolve.
+final Map<String, Future<void>> _jsonlWriteChains = {};
+
 /// Utility: append a JSONL record atomically-ish. Each write opens
-/// the file in append mode with a flushed close. Not transactional
-/// across multiple records; callers append single lines and tolerate
-/// crash-mid-write by validating each line on read and skipping
-/// malformed ones.
+/// the file in append mode with a flushed close, serialised against
+/// any other concurrent append to the same path via the per-path
+/// write chain. Crash-mid-write safety still relies on [readJsonl]
+/// skipping malformed lines.
 Future<void> appendJsonl(String path, Map<String, dynamic> record) async {
-  final file = File(path);
-  await file.parent.create(recursive: true);
-  await file.writeAsString(
-    '${jsonEncode(record)}\n',
-    mode: FileMode.append,
-    flush: true,
-  );
+  final prior = _jsonlWriteChains[path] ?? Future<void>.value();
+  final completer = Completer<void>();
+  _jsonlWriteChains[path] = completer.future;
+  try {
+    await prior;
+    final file = File(path);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(
+      '${jsonEncode(record)}\n',
+      mode: FileMode.append,
+      flush: true,
+    );
+  } finally {
+    completer.complete();
+    // Clean up the chain entry once we're the tail of it so the map
+    // doesn't grow unboundedly across paths seen once and never
+    // again. Chain tails are identified by pointer-equality against
+    // our own future.
+    if (identical(_jsonlWriteChains[path], completer.future)) {
+      _jsonlWriteChains.remove(path);
+    }
+  }
 }
 
 /// Utility: read a JSONL file, skipping malformed lines. Returns an

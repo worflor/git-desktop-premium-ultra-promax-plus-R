@@ -197,6 +197,11 @@ EnvelopeVerification decodeEnvelope(Uint8List bytes) {
     }
     return EnvelopeVerification.ok(SignedEnvelope(
       version: v.value,
+      // `CborString.toString()` returns the raw string value without
+      // quoting (verified against cbor ^6.2.0). If the package ever
+      // changes that semantics, signature canonicalisation would
+      // silently diverge from encode/decode — guarded by the
+      // round-trip tests on the envelope layer.
       kind: k.toString(),
       body: Uint8List.fromList(b.bytes),
       signerPublicKey: Uint8List.fromList(p.bytes),
