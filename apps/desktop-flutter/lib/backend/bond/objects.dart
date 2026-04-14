@@ -609,3 +609,210 @@ class Policy {
     }
   }
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// ContinuityAttestation — identity rotation / device announcement
+// ═════════════════════════════════════════════════════════════════════════
+
+/// A signed statement "the key that signed this envelope is the same
+/// person as [previousPubkey]." Shipped inside a SignedEnvelope whose
+/// `signerPublicKey` is the NEW key; `previousPubkey` names the old.
+///
+/// Two flavors, distinguished by whether `previousSignature` is set:
+///   • Rotation (previousSignature present): old key also signed the
+///     same canonical bytes. Peers can verify both signatures and
+///     accept that the identity deliberately rotated.
+///   • Welcome-back announcement (previousSignature null): a new
+///     device re-entered the phrase and the resulting pubkey is
+///     bit-identical to the old one (determinism). Informational
+///     only — no cryptographic proof of deliberate rotation; the
+///     same pubkey signed both, and peers can verify that.
+class ContinuityAttestation {
+  ContinuityAttestation({
+    required this.bondId,
+    required this.previousPubkey,
+    required this.reason,
+    required this.createdMs,
+    this.previousSignature,
+  });
+
+  final Uint8List bondId;
+
+  /// 32-byte Ed25519 pubkey of the prior identity. MAY be equal to the
+  /// envelope's `signerPublicKey` when this is a welcome-back signal.
+  final Uint8List previousPubkey;
+
+  /// Human-readable reason, shown in the peer UI. Bounded to 280 chars
+  /// at decode. Free-form — "new laptop after theft", "phone install",
+  /// "key rotation per policy", etc.
+  final String reason;
+
+  /// Wallclock at sign time, epoch ms. Informational.
+  final int createdMs;
+
+  /// Optional 64-byte Ed25519 signature produced by [previousPubkey]
+  /// over the SAME canonical bytes the envelope's outer signature
+  /// covers. When present, peers have dual-signed proof of rotation.
+  final Uint8List? previousSignature;
+
+  Uint8List toCborBody() {
+    final map = <CborString, CborValue>{
+      CborString('b'): CborBytes(bondId),
+      CborString('p'): CborBytes(previousPubkey),
+      CborString('r'): CborString(reason),
+      CborString('t'): CborSmallInt(createdMs),
+    };
+    if (previousSignature != null) {
+      map[CborString('s')] = CborBytes(previousSignature!);
+    }
+    return Uint8List.fromList(cbor.encode(CborMap(map)));
+  }
+
+  static ContinuityAttestation? tryDecode(Uint8List body) {
+    try {
+      final decoded = cbor.decode(body);
+      if (decoded is! CborMap) return null;
+      final b = decoded[CborString('b')];
+      final p = decoded[CborString('p')];
+      final r = decoded[CborString('r')];
+      final t = decoded[CborString('t')];
+      if (b is! CborBytes ||
+          p is! CborBytes ||
+          r is! CborString ||
+          t is! CborSmallInt) {
+        return null;
+      }
+      if (p.bytes.length != 32) return null;
+      final reason = r.toString();
+      if (reason.length > 280) return null;
+      final s = decoded[CborString('s')];
+      Uint8List? sig;
+      if (s is CborBytes) {
+        if (s.bytes.length != 64) return null;
+        sig = Uint8List.fromList(s.bytes);
+      }
+      return ContinuityAttestation(
+        bondId: Uint8List.fromList(b.bytes),
+        previousPubkey: Uint8List.fromList(p.bytes),
+        reason: reason,
+        createdMs: t.value,
+        previousSignature: sig,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Revocation — "this key is no longer me / no longer trusted"
+// ═════════════════════════════════════════════════════════════════════════
+
+/// Reason codes for a [Revocation]. Open enum by convention; unknown
+/// values decode to [RevokeReason.other] so older clients stay
+/// forward-compatible when we add codes.
+enum RevokeReason {
+  compromise(0), // key or device believed stolen / leaked
+  rotation(1),   // planned key rotation
+  offboard(2),   // member leaving the bond
+  other(255);
+
+  const RevokeReason(this.code);
+  final int code;
+
+  static RevokeReason fromCode(int c) {
+    for (final v in values) {
+      if (v.code == c) return v;
+    }
+    return RevokeReason.other;
+  }
+}
+
+/// A signed statement revoking a pubkey from [effectiveAtMs] forward.
+///
+/// Semantics: the envelope's `signerPublicKey` is the revoker. The
+/// target pubkey named in [revokedPubkey] is no longer trusted for
+/// signing after [effectiveAtMs]. Peers applying this revocation
+/// should drop any signed object from the revoked key whose
+/// envelope was received after [effectiveAtMs], AND stop counting
+/// the revoked key toward policy approvals going forward.
+///
+/// Enforcement is gossip-boundary, not cryptographic impossibility.
+/// A peer that ignores revocations still sees the revoked key's
+/// signatures as valid — they just shouldn't count them.
+class Revocation {
+  Revocation({
+    required this.bondId,
+    required this.revokedPubkey,
+    required this.reason,
+    required this.reasonDetail,
+    required this.effectiveAtMs,
+    required this.createdMs,
+  });
+
+  final Uint8List bondId;
+
+  /// 32-byte Ed25519 pubkey being revoked. MAY equal the envelope's
+  /// signer (self-revocation — "I'm retiring this key") or differ
+  /// (peer revocation — "we're ejecting this key per policy").
+  final Uint8List revokedPubkey;
+
+  final RevokeReason reason;
+
+  /// Free-form detail (max 280 chars). Shown in peer UIs next to the
+  /// revocation event.
+  final String reasonDetail;
+
+  /// Wallclock at which the revocation takes effect. Envelopes from
+  /// the revoked key received after this stop being honored.
+  final int effectiveAtMs;
+
+  /// Wallclock at sign time.
+  final int createdMs;
+
+  Uint8List toCborBody() {
+    final map = CborMap({
+      CborString('b'): CborBytes(bondId),
+      CborString('k'): CborBytes(revokedPubkey),
+      CborString('r'): CborSmallInt(reason.code),
+      CborString('d'): CborString(reasonDetail),
+      CborString('e'): CborSmallInt(effectiveAtMs),
+      CborString('t'): CborSmallInt(createdMs),
+    });
+    return Uint8List.fromList(cbor.encode(map));
+  }
+
+  static Revocation? tryDecode(Uint8List body) {
+    try {
+      final decoded = cbor.decode(body);
+      if (decoded is! CborMap) return null;
+      final b = decoded[CborString('b')];
+      final k = decoded[CborString('k')];
+      final r = decoded[CborString('r')];
+      final d = decoded[CborString('d')];
+      final e = decoded[CborString('e')];
+      final t = decoded[CborString('t')];
+      if (b is! CborBytes ||
+          k is! CborBytes ||
+          r is! CborSmallInt ||
+          d is! CborString ||
+          e is! CborSmallInt ||
+          t is! CborSmallInt) {
+        return null;
+      }
+      if (k.bytes.length != 32) return null;
+      final detail = d.toString();
+      if (detail.length > 280) return null;
+      return Revocation(
+        bondId: Uint8List.fromList(b.bytes),
+        revokedPubkey: Uint8List.fromList(k.bytes),
+        reason: RevokeReason.fromCode(r.value),
+        reasonDetail: detail,
+        effectiveAtMs: e.value,
+        createdMs: t.value,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}

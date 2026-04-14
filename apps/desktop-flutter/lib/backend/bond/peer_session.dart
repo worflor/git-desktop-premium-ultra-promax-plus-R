@@ -70,14 +70,18 @@ class PeerSession {
       StreamController<RefAdvert>.broadcast();
   final StreamController<Proposal> _proposals =
       StreamController<Proposal>.broadcast();
-  final StreamController<Attestation> _attestations =
-      StreamController<Attestation>.broadcast();
+  final StreamController<AttestationEnvelope> _attestations =
+      StreamController<AttestationEnvelope>.broadcast();
   final StreamController<Anchor> _anchors =
       StreamController<Anchor>.broadcast();
   final StreamController<Target> _targets =
       StreamController<Target>.broadcast();
   final StreamController<Policy> _policies =
       StreamController<Policy>.broadcast();
+  final StreamController<ContinuityEnvelope> _continuities =
+      StreamController<ContinuityEnvelope>.broadcast();
+  final StreamController<RevocationEnvelope> _revocations =
+      StreamController<RevocationEnvelope>.broadcast();
   final StreamController<Uint8List> _packfiles =
       StreamController<Uint8List>.broadcast();
   final StreamController<Uint8List> _objectWants =
@@ -100,8 +104,9 @@ class PeerSession {
   /// Verified Proposals from the peer.
   Stream<Proposal> get proposals => _proposals.stream;
 
-  /// Verified Attestations from the peer.
-  Stream<Attestation> get attestations => _attestations.stream;
+  /// Verified Attestations from the peer, paired with the envelope
+  /// that carried them so subscribers can read the signer pubkey.
+  Stream<AttestationEnvelope> get attestations => _attestations.stream;
 
   /// Verified Anchors (live delivery path; note-ref storage is the
   /// durable path handled elsewhere).
@@ -112,6 +117,14 @@ class PeerSession {
 
   /// Verified Policies.
   Stream<Policy> get policies => _policies.stream;
+
+  /// Verified continuity attestations, with the enclosing envelope so
+  /// subscribers can read the signer of the *new* key alongside the
+  /// declared previous key.
+  Stream<ContinuityEnvelope> get continuities => _continuities.stream;
+
+  /// Verified revocations, with enclosing envelope (revoker = signer).
+  Stream<RevocationEnvelope> get revocations => _revocations.stream;
 
   /// Raw packfile-bytes chunks in the order delivered by the transport.
   /// Re-assembly into a whole packfile is the caller's responsibility
@@ -268,7 +281,7 @@ class PeerSession {
           return;
         }
         if (!_bondIdMatches(obj.bondId)) return;
-        _safeAdd(_attestations, obj);
+        _safeAdd(_attestations, AttestationEnvelope(attestation: obj, envelope: env));
       case BondPacketType.anchor:
         final obj = Anchor.tryDecode(env.body);
         if (obj == null) {
@@ -303,16 +316,27 @@ class PeerSession {
         if (!_bondIdMatches(obj.bondId)) return;
         _safeAdd(_policies, obj);
       case BondPacketType.continuity:
+        final obj = ContinuityAttestation.tryDecode(env.body);
+        if (obj == null) {
+          _safeAdd(_errors, const PeerSessionError(
+            reason: 'body_decode',
+            detail: 'continuity',
+          ));
+          return;
+        }
+        if (!_bondIdMatches(obj.bondId)) return;
+        _safeAdd(_continuities, ContinuityEnvelope(attestation: obj, envelope: env));
       case BondPacketType.revoke:
-        // Identity-management primitives — route to errors for now;
-        // full handling is wired at the identity-service layer which
-        // owns continuity lineage. Logging them preserves observability
-        // until that lands.
-        _safeAdd(_ctrl, <String, dynamic>{
-          't': type.name,
-          'signer':
-              env.signerPublicKey.map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
-        });
+        final obj = Revocation.tryDecode(env.body);
+        if (obj == null) {
+          _safeAdd(_errors, const PeerSessionError(
+            reason: 'body_decode',
+            detail: 'revoke',
+          ));
+          return;
+        }
+        if (!_bondIdMatches(obj.bondId)) return;
+        _safeAdd(_revocations, RevocationEnvelope(revocation: obj, envelope: env));
       case BondPacketType.ctrl:
       case BondPacketType.objectHave:
       case BondPacketType.objectWant:
@@ -439,12 +463,41 @@ class PeerSession {
     await _anchors.close();
     await _targets.close();
     await _policies.close();
+    await _continuities.close();
+    await _revocations.close();
     await _packfiles.close();
     await _objectWants.close();
     await _objectHaves.close();
     await _ctrl.close();
     await _errors.close();
   }
+}
+
+/// Pairing of a decoded attestation with the outer envelope that
+/// carried it. The envelope's signer is authoritative — don't trust
+/// anything else for "who approved this proposal."
+class AttestationEnvelope {
+  const AttestationEnvelope({required this.attestation, required this.envelope});
+  final Attestation attestation;
+  final SignedEnvelope envelope;
+}
+
+/// Pairing of a decoded continuity body with the outer envelope that
+/// carried it. Subscribers inspect the envelope to know which pubkey
+/// signed (the new key) while the body names the old one.
+class ContinuityEnvelope {
+  const ContinuityEnvelope({required this.attestation, required this.envelope});
+  final ContinuityAttestation attestation;
+  final SignedEnvelope envelope;
+}
+
+/// Pairing of a decoded revocation body with the outer envelope. The
+/// envelope's signer is the revoker; [revocation.revokedPubkey] is
+/// the target (may equal the signer for self-revocation).
+class RevocationEnvelope {
+  const RevocationEnvelope({required this.revocation, required this.envelope});
+  final Revocation revocation;
+  final SignedEnvelope envelope;
 }
 
 /// Non-fatal error surfaced on [PeerSession.errors]. Subscribers

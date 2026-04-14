@@ -27,6 +27,9 @@ import 'package:path/path.dart' as p;
 import 'bond/bond_backend.dart';
 import 'bond/bond_id.dart';
 import 'bond/identity.dart';
+import 'bond/invite.dart';
+import 'bond/objects.dart';
+import 'bond/safety_number.dart';
 import 'bond/transport.dart';
 
 /// One repo ↔ one bond mapping, persisted under
@@ -149,6 +152,143 @@ class BondService extends ChangeNotifier {
   /// Returns the bond membership for a given repo, or null if the
   /// repo has not been bonded.
   BondMembership? membershipFor(String repoPath) => _byRepo[repoPath];
+
+  /// Builds an invite blob the user can share with a peer. The invite
+  /// carries only public inputs (bond id + bootstrap commit + label) —
+  /// the swarm phrase is intentionally NOT included, so a leaked
+  /// invite is not on its own a credential. Peers still need the
+  /// phrase out-of-band.
+  String buildInvite(String repoPath) {
+    final m = membershipFor(repoPath);
+    if (m == null) {
+      throw StateError('buildInvite called for non-bonded repo');
+    }
+    return BondInvite(
+      bondId: m.bondId,
+      bootstrapCommit: m.bootstrapCommit,
+      displayName: m.displayName,
+    ).encode();
+  }
+
+  /// Pre-fills a bind from an invite blob. Returns the parsed invite
+  /// so the UI can show "joining {name}" state; the user still types
+  /// the swarm phrase before committing.
+  BondInvite parseInvite(String blob) => BondInvite.decode(blob);
+
+  /// Accept an invite + swarm phrase → full bind. Convenience wrapper
+  /// for the join flow so the UI doesn't have to chain parse + bind
+  /// itself.
+  Future<BondMembership> bindFromInvite({
+    required String repoPath,
+    required String inviteBlob,
+    required String swarmPhrase,
+    String? overrideDisplayName,
+  }) async {
+    final invite = BondInvite.decode(inviteBlob);
+    return bindBond(
+      repoPath: repoPath,
+      bootstrapCommit: invite.bootstrapCommit,
+      swarmPhrase: swarmPhrase,
+      displayName: overrideDisplayName?.trim().isNotEmpty == true
+          ? overrideDisplayName!.trim()
+          : (invite.displayName.isNotEmpty ? invite.displayName : 'Bond'),
+    );
+  }
+
+  /// Removes a repo's bond membership: tears down sessions, wipes
+  /// per-bond state on disk, drops the membership from memory.
+  ///
+  /// Does NOT publish a revocation (use [publishRevocation] for that —
+  /// call it BEFORE unbinding if you want remote peers to notice).
+  Future<void> unbind(String repoPath) async {
+    await backend.unbind(repoPath);
+    _byRepo.remove(repoPath);
+    notifyListeners();
+  }
+
+  /// Derives this device's pubkey for a given bond (cached) and
+  /// returns the fingerprint string that should appear in the UI.
+  /// Returns null if the user is locked.
+  Future<String?> fingerprintFor(BondId bondId) async {
+    try {
+      final kp = await _resolveIdentity(bondId);
+      return fingerprintHex(kp.publicKeyBytes);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Computes the Signal-style 60-digit safety number for a peer.
+  /// Both endpoints compute the same string; reading it aloud verifies
+  /// no MITM between them. Returns null if locked or not bonded.
+  Future<String?> safetyNumberWith({
+    required BondId bondId,
+    required Uint8List peerPubkey,
+  }) async {
+    try {
+      final me = await _resolveIdentity(bondId);
+      return computeSafetyNumber(me.publicKeyBytes, peerPubkey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Publishes a continuity attestation (welcome-back announcement or
+  /// deliberate rotation). Delegates to the backend; returns a
+  /// GitResult the UI can render.
+  Future<String?> publishContinuity({
+    required String repoPath,
+    required String reason,
+  }) async {
+    final r = await backend.publishContinuity(repoPath: repoPath, reason: reason);
+    return r.ok ? null : r.error;
+  }
+
+  /// Publishes a self or peer revocation. Returns null on success,
+  /// or an error message for the UI.
+  Future<String?> publishRevocation({
+    required String repoPath,
+    required Uint8List revokedPubkey,
+    required RevokeReason reason,
+    String detail = '',
+  }) async {
+    final r = await backend.publishRevocation(
+      repoPath: repoPath,
+      revokedPubkey: revokedPubkey,
+      reason: reason,
+      reasonDetail: detail,
+    );
+    return r.ok ? null : r.error;
+  }
+
+  /// Publishes a Policy, installs it locally as the current rules.
+  Future<String?> publishPolicy({
+    required String repoPath,
+    required List<PolicyRule> rules,
+  }) async {
+    final r = await backend.publishPolicy(repoPath: repoPath, rules: rules);
+    return r.ok ? null : r.error;
+  }
+
+  /// Publishes an attestation on a proposal. The caller supplies the
+  /// proposal hash + target commit; the UI component that renders a
+  /// proposal knows both.
+  Future<String?> publishAttestation({
+    required String repoPath,
+    required Uint8List proposalId,
+    required AttestationVerdict verdict,
+    required String body,
+    required Uint8List targetCommit,
+  }) async {
+    final r = await backend.publishAttestation(
+      repoPath: repoPath,
+      proposalId: proposalId,
+      verdict: verdict,
+      body: body,
+      targetCommit: targetCommit,
+    );
+    return r.ok ? null : r.error;
+  }
 
   /// Removes all state and closes active peer sessions. The transport
   /// is NOT closed (owned by the embedder). Safe during app shutdown.

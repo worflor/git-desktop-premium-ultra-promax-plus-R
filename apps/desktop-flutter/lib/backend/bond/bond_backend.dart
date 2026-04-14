@@ -25,6 +25,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
+
 import '../collaboration_backend.dart';
 import '../dtos.dart';
 import '../git_result.dart';
@@ -71,6 +73,112 @@ class _RepoRuntime {
   /// Our outbound Lamport clock for this bond. Monotonic across
   /// process restarts (loaded from `lamport.json`).
   int lamportClock = 0;
+
+  /// Timestamp of the last inbound activity from each peer (pubkey hex
+  /// → epoch ms). Feeds the UI's per-peer status indicators.
+  final Map<String, int> lastSeenMs = {};
+
+  /// Drop counters, surfaced in diagnostics. Incremented when we
+  /// silently skip an inbound primitive that was cryptographically
+  /// valid but rejected by policy / replay / refname guards.
+  final Map<String, int> dropCounters = {
+    'replay_advert': 0,
+    'refname_rejected': 0,
+    'revoked_signer': 0,
+    'policy_blocked_merge': 0,
+  };
+
+  /// Most-recent accepted policy for this bond (by effectiveAtMs).
+  /// Rules from this policy gate pull() when the target ref is listed.
+  Policy? currentPolicy;
+
+  /// Attestations grouped by proposalId hex → list of accepted
+  /// attestations (with signer tagged from the outer envelope).
+  /// Retained in memory for the life of the runtime; persistence is
+  /// via the `attestations.jsonl` log.
+  final Map<String, List<_SignedAttestation>> attestationsByProposal = {};
+
+  /// Active revocations keyed by revoked-pubkey hex → effectiveAtMs.
+  /// Any envelope from a revoked key whose own createdMs ≥ this is
+  /// ignored by policy counting.
+  final Map<String, int> revokedAt = {};
+
+  /// Change-notifier surface for the UI. Bumped whenever per-peer
+  /// state the UI renders changes (attach/detach, advert, last-seen,
+  /// policy update, revocation, attestation).
+  final BondRuntimeNotifier peersNotifier = BondRuntimeNotifier();
+}
+
+/// Exposes a public bump method on top of [ChangeNotifier] so the
+/// backend (a plain Dart object) can trigger UI rebuilds without
+/// subclassing per call-site. `notifyListeners` is @protected on
+/// ChangeNotifier, hence this thin wrapper.
+class BondRuntimeNotifier extends ChangeNotifier {
+  void bump() => notifyListeners();
+}
+
+/// Internal: Attestation plus the signer pubkey (hex) who produced the
+/// envelope. Storing signer alongside the body keeps policy counting
+/// in one lookup without re-joining against the envelope store.
+class _SignedAttestation {
+  _SignedAttestation({required this.att, required this.signerHex});
+  final Attestation att;
+  final String signerHex;
+}
+
+/// Result of [BondBackend._policyGate]. `reason` is safe to display
+/// to the user and explains why a merge was blocked (or allowed).
+class _PolicyVerdict {
+  const _PolicyVerdict({required this.allowed, required this.reason});
+  final bool allowed;
+  final String reason;
+}
+
+/// Read-only snapshot of one bonded repo's state for the UI. Produced
+/// by [BondBackend.snapshot]; consumers rebuild from `runtimeListenable`
+/// firing.
+class BondUiSnapshot {
+  const BondUiSnapshot({
+    required this.bondId,
+    required this.peers,
+    required this.currentPolicy,
+    required this.dropCounters,
+    required this.attestationCounts,
+  });
+
+  final BondId bondId;
+  final List<BondPeerView> peers;
+  final Policy? currentPolicy;
+  final Map<String, int> dropCounters;
+
+  /// proposalId hex → attestation count.
+  final Map<String, int> attestationCounts;
+}
+
+/// Per-peer view model. Includes transient (attached) and persistent
+/// (lastSeenMs, advertLamport) state so the UI can render either kind.
+class BondPeerView {
+  const BondPeerView({
+    required this.pubkeyHex,
+    required this.attached,
+    required this.lastSeenMs,
+    required this.advertLamport,
+    required this.refCount,
+    required this.revokedAt,
+  });
+
+  final String pubkeyHex;
+  final bool attached;
+  final int? lastSeenMs;
+  final int? advertLamport;
+  final int refCount;
+
+  /// Non-null when this peer's key has been revoked (in effect from
+  /// this epoch-ms). Rendered as a strikethrough / warning badge.
+  final int? revokedAt;
+
+  String get shortHex => pubkeyHex.substring(0, 8);
+  bool get isRevoked => revokedAt != null;
 }
 
 /// P2P collaboration backend. Construct one per process; methods are
@@ -154,23 +262,102 @@ class BondBackend implements CollaborationBackend {
       await existing.close();
     }
     runtime.peers[hex] = peer;
+    runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
     peer.start();
     final subs = <StreamSubscription<dynamic>>[];
     subs.add(peer.refAdverts.listen((advert) {
+      runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+      if (_isRevoked(runtime, peer.session.remotePubkey, advert.createdMs)) {
+        runtime.dropCounters['revoked_signer'] =
+            (runtime.dropCounters['revoked_signer'] ?? 0) + 1;
+        runtime.peersNotifier.bump();
+        return;
+      }
       final existingAdvert = runtime.lastAdverts[hex];
-      // Replay protection: never regress a signer's Lamport clock. A
-      // properly-signed but older advert is dropped.
       if (existingAdvert != null &&
           advert.lamportClock <= existingAdvert.lamportClock) {
+        runtime.dropCounters['replay_advert'] =
+            (runtime.dropCounters['replay_advert'] ?? 0) + 1;
+        runtime.peersNotifier.bump();
         return;
       }
       runtime.lastAdverts[hex] = advert;
       unawaited(_persistAdvert(runtime, peer.session.remotePubkey, advert));
+      runtime.peersNotifier.bump();
     }));
     subs.add(peer.objectWants.listen((body) {
+      runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
       unawaited(_respondToWant(runtime, peer, body));
     }));
+    subs.add(peer.policies.listen((policy) {
+      runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+      final current = runtime.currentPolicy;
+      // Monotonic: only accept a newer effectiveAtMs. Policies are
+      // totally ordered by their own timestamps; ties go to incumbent.
+      if (current != null && policy.effectiveAtMs <= current.effectiveAtMs) {
+        return;
+      }
+      runtime.currentPolicy = policy;
+      runtime.peersNotifier.bump();
+    }));
+    subs.add(peer.attestations.listen((envPair) {
+      runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+      final signerHex = _hex(envPair.envelope.signerPublicKey);
+      if (_isRevokedAt(runtime, signerHex, envPair.attestation.createdMs)) {
+        runtime.dropCounters['revoked_signer'] =
+            (runtime.dropCounters['revoked_signer'] ?? 0) + 1;
+        runtime.peersNotifier.bump();
+        return;
+      }
+      final pid = _hex(envPair.attestation.proposalId);
+      final list = runtime.attestationsByProposal.putIfAbsent(pid, () => []);
+      // Latest-per-signer semantics: a newer verdict from the same
+      // signer replaces the prior one. Stable order for UI.
+      list.removeWhere((a) => a.signerHex == signerHex);
+      list.add(_SignedAttestation(att: envPair.attestation, signerHex: signerHex));
+      runtime.peersNotifier.bump();
+    }));
+    subs.add(peer.revocations.listen((env) {
+      runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+      final revokedHex = _hex(env.revocation.revokedPubkey);
+      final prior = runtime.revokedAt[revokedHex];
+      if (prior == null || env.revocation.effectiveAtMs < prior) {
+        // Earlier effectiveAtMs is stricter (narrower trust window).
+        runtime.revokedAt[revokedHex] = env.revocation.effectiveAtMs;
+      }
+      runtime.peersNotifier.bump();
+    }));
+    subs.add(peer.continuities.listen((_) {
+      runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+      runtime.peersNotifier.bump();
+    }));
+    subs.add(peer.errors.listen((err) {
+      // Non-fatal. Counters surface it; full error log is best-effort.
+      final bucket = 'err_${err.reason}';
+      runtime.dropCounters[bucket] =
+          (runtime.dropCounters[bucket] ?? 0) + 1;
+      runtime.peersNotifier.bump();
+    }));
     runtime.peerSubs[hex] = subs;
+    runtime.peersNotifier.bump();
+  }
+
+  bool _isRevoked(
+    _RepoRuntime runtime,
+    Uint8List signerPubkey,
+    int createdMs,
+  ) {
+    final effective = runtime.revokedAt[_hex(signerPubkey)];
+    return effective != null && createdMs >= effective;
+  }
+
+  bool _sameSignerVerdict(Attestation a, Attestation b) {
+    if (a.verdict != b.verdict) return false;
+    if (a.targetCommit.length != b.targetCommit.length) return false;
+    for (var i = 0; i < a.targetCommit.length; i++) {
+      if (a.targetCommit[i] != b.targetCommit[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -284,6 +471,24 @@ class BondBackend implements CollaborationBackend {
             '${fetched.data!.output}\nbond: no peer advertises refs/heads/$branch',
       ));
     }
+    // Policy gate: before we integrate the source ref into the local
+    // branch, count valid attestations against current policy. This
+    // is the enforcement site for `Policy.rules[*].minApprovals` —
+    // without it, signed policies are just decoration.
+    final targetRef = 'refs/heads/$branch';
+    final gate = await _policyGate(
+      runtime!,
+      targetRef: targetRef,
+      sourceRef: sourceRef,
+    );
+    if (!gate.allowed) {
+      runtime.dropCounters['policy_blocked_merge'] =
+          (runtime.dropCounters['policy_blocked_merge'] ?? 0) + 1;
+      runtime.peersNotifier.bump();
+      return GitResult.err(
+        'bond: policy blocks merge into $targetRef — ${gate.reason}',
+      );
+    }
     final integrateCmd = rebase
         ? ['rebase', sourceRef]
         : ['merge', '--no-edit', sourceRef];
@@ -389,6 +594,228 @@ class BondBackend implements CollaborationBackend {
       remote: fetched.data!.remote,
       output: '${fetched.data!.output}\n${pushed.data!.output}',
     ));
+  }
+
+  // ───────────────────── UI-facing read surface ─────────────────────
+
+  /// ChangeNotifier the UI can `context.watch` to rebuild when peer
+  /// state for this repo changes. Null if the repo is not bonded.
+  Listenable? runtimeListenable(String repoPath) {
+    return _runtimes[repoPath]?.peersNotifier;
+  }
+
+  /// Snapshot of everything the peers UI needs for one repo. Cheap to
+  /// compute — no IO. Null if the repo is not bonded yet.
+  BondUiSnapshot? snapshot(String repoPath) {
+    final r = _runtimes[repoPath];
+    if (r == null) return null;
+    final peers = <BondPeerView>[];
+    // Include peers we've ever seen, whether or not currently attached —
+    // the UI cares about "does the session exist right now" and "when
+    // did we last hear from them."
+    final allKeys = <String>{...r.peers.keys, ...r.lastSeenMs.keys, ...r.lastAdverts.keys};
+    for (final hex in allKeys) {
+      peers.add(BondPeerView(
+        pubkeyHex: hex,
+        attached: r.peers.containsKey(hex),
+        lastSeenMs: r.lastSeenMs[hex],
+        advertLamport: r.lastAdverts[hex]?.lamportClock,
+        refCount: r.lastAdverts[hex]?.refs.length ?? 0,
+        revokedAt: r.revokedAt[hex],
+      ));
+    }
+    peers.sort((a, b) => (b.lastSeenMs ?? 0).compareTo(a.lastSeenMs ?? 0));
+    return BondUiSnapshot(
+      bondId: r.bondId,
+      peers: peers,
+      currentPolicy: r.currentPolicy,
+      dropCounters: Map.unmodifiable(r.dropCounters),
+      attestationCounts: {
+        for (final e in r.attestationsByProposal.entries)
+          e.key: e.value.length,
+      },
+    );
+  }
+
+  // ───────────────────── author-and-broadcast ─────────────────────
+
+  /// Signs a continuity attestation with the current identity and
+  /// broadcasts it to every attached peer. `previousPubkey` defaults
+  /// to the caller's own pubkey (welcome-back announcement); pass a
+  /// different prior pubkey for deliberate rotation.
+  Future<GitResult<void>> publishContinuity({
+    required String repoPath,
+    required String reason,
+    Uint8List? previousPubkey,
+  }) async {
+    final runtime = await _runtime(repoPath);
+    if (runtime == null) return const GitResult.err('bond: repo not bonded');
+    final SwarmKeyPair identity;
+    try {
+      identity = await _identity(runtime.bondId);
+    } catch (e) {
+      return GitResult.err('bond: identity not unlocked ($e)');
+    }
+    final body = ContinuityAttestation(
+      bondId: runtime.bondId.bytes,
+      previousPubkey: previousPubkey ?? identity.publicKeyBytes,
+      reason: reason,
+      createdMs: DateTime.now().millisecondsSinceEpoch,
+    ).toCborBody();
+    return _broadcastSigned(runtime, BondPacketType.continuity, body);
+  }
+
+  /// Signs a revocation and broadcasts it. When [revokedPubkey] equals
+  /// the caller's own pubkey this is self-revocation; otherwise it's a
+  /// peer revocation whose uptake depends on each receiving peer's
+  /// policy enforcement.
+  Future<GitResult<void>> publishRevocation({
+    required String repoPath,
+    required Uint8List revokedPubkey,
+    required RevokeReason reason,
+    String reasonDetail = '',
+    DateTime? effectiveAt,
+  }) async {
+    final runtime = await _runtime(repoPath);
+    if (runtime == null) return const GitResult.err('bond: repo not bonded');
+    final now = DateTime.now();
+    final body = Revocation(
+      bondId: runtime.bondId.bytes,
+      revokedPubkey: revokedPubkey,
+      reason: reason,
+      reasonDetail: reasonDetail,
+      effectiveAtMs: (effectiveAt ?? now).millisecondsSinceEpoch,
+      createdMs: now.millisecondsSinceEpoch,
+    ).toCborBody();
+    // Apply locally too — revoking yourself or a departed member
+    // shouldn't wait for a round-trip to take effect on THIS peer.
+    final revokedHex = _hex(revokedPubkey);
+    runtime.revokedAt[revokedHex] = (effectiveAt ?? now).millisecondsSinceEpoch;
+    runtime.peersNotifier.bump();
+    return _broadcastSigned(runtime, BondPacketType.revoke, body);
+  }
+
+  /// Signs a Policy and broadcasts it, also installing locally as the
+  /// current policy. The policy applies immediately; pending merges
+  /// evaluate against the new rules.
+  Future<GitResult<void>> publishPolicy({
+    required String repoPath,
+    required List<PolicyRule> rules,
+  }) async {
+    final runtime = await _runtime(repoPath);
+    if (runtime == null) return const GitResult.err('bond: repo not bonded');
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final policy = Policy(
+      bondId: runtime.bondId.bytes,
+      effectiveAtMs: now,
+      rules: rules,
+      supersedes: null,
+    );
+    runtime.currentPolicy = policy;
+    runtime.peersNotifier.bump();
+    return _broadcastSigned(
+      runtime,
+      BondPacketType.policy,
+      policy.toCborBody(),
+    );
+  }
+
+  /// Signs an attestation and broadcasts it. Also applies locally so
+  /// the author's own approval counts toward policy immediately.
+  Future<GitResult<void>> publishAttestation({
+    required String repoPath,
+    required Uint8List proposalId,
+    required AttestationVerdict verdict,
+    required String body,
+    required Uint8List targetCommit,
+  }) async {
+    final runtime = await _runtime(repoPath);
+    if (runtime == null) return const GitResult.err('bond: repo not bonded');
+    final SwarmKeyPair identity;
+    try {
+      identity = await _identity(runtime.bondId);
+    } catch (e) {
+      return GitResult.err('bond: identity not unlocked ($e)');
+    }
+    final att = Attestation(
+      bondId: runtime.bondId.bytes,
+      proposalId: proposalId,
+      verdict: verdict,
+      body: body,
+      createdMs: DateTime.now().millisecondsSinceEpoch,
+      targetCommit: targetCommit,
+    );
+    final signerHex = _hex(identity.publicKeyBytes);
+    final list = runtime.attestationsByProposal
+        .putIfAbsent(_hex(proposalId), () => []);
+    list.removeWhere((a) => a.signerHex == signerHex);
+    list.add(_SignedAttestation(att: att, signerHex: signerHex));
+    runtime.peersNotifier.bump();
+    return _broadcastSigned(
+      runtime,
+      BondPacketType.attestation,
+      att.toCborBody(),
+    );
+  }
+
+  /// Unbind a repo from its bond. Tears down active sessions, closes
+  /// subscriptions, wipes per-bond state on disk. Does NOT revoke keys
+  /// upstream — pair with [publishRevocation] for "eject myself" flows.
+  Future<GitResult<void>> unbind(String repoPath) async {
+    final runtime = _runtimes.remove(repoPath);
+    if (runtime == null) {
+      return const GitResult.err('bond: repo not bonded');
+    }
+    for (final subs in runtime.peerSubs.values) {
+      for (final sub in subs) {
+        await sub.cancel();
+      }
+    }
+    for (final peer in runtime.peers.values) {
+      await peer.close();
+    }
+    // Wipe per-bond directory under .git/manifold/bond/bonds/<hex>/
+    try {
+      final dir = Directory(runtime.store.dirForBond(runtime.bondId));
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    } catch (e) {
+      return GitResult.err('bond: unbind wiped state but disk cleanup failed: $e');
+    }
+    runtime.peersNotifier.dispose();
+    return const GitResult.ok(null);
+  }
+
+  Future<GitResult<void>> _broadcastSigned(
+    _RepoRuntime runtime,
+    BondPacketType kind,
+    Uint8List bodyCbor,
+  ) async {
+    // Resolve identity here (not at the caller) so lock-state errors
+    // surface uniformly as GitResult.err rather than uncaught throws.
+    try {
+      await _identity(runtime.bondId);
+    } catch (e) {
+      return GitResult.err('bond: identity not unlocked ($e)');
+    }
+    if (runtime.peers.isEmpty) {
+      return const GitResult.err('bond: no connected peers to broadcast to');
+    }
+    final errors = <String>[];
+    var sent = 0;
+    for (final peer in runtime.peers.values.toList(growable: false)) {
+      try {
+        await peer.sendSigned(kind, bodyCbor);
+        sent++;
+      } catch (e) {
+        errors.add('${_shortHex(peer.session.remotePubkey)}: $e');
+      }
+    }
+    if (sent == 0) {
+      return GitResult.err('bond: broadcast reached zero peers (${errors.join("; ")})');
+    }
+    return const GitResult.ok(null);
   }
 
   /// Close all active peer sessions and clear caches. The underlying
@@ -530,6 +957,124 @@ class BondBackend implements CollaborationBackend {
       // Swallow — responder is best-effort. A failing peer gets a
       // silent drop; requester sees timeout.
     }
+  }
+
+  /// Evaluates current policy for a pending merge. Returns `allowed=true`
+  /// when no rule matches the target ref or when every matching rule's
+  /// `minApprovals` is satisfied by attestations whose `targetCommit`
+  /// equals the head commit of [sourceRef], signed by non-revoked keys
+  /// in the rule's `approverSet` (or any non-revoked key when the
+  /// approverSet is empty).
+  Future<_PolicyVerdict> _policyGate(
+    _RepoRuntime runtime, {
+    required String targetRef,
+    required String sourceRef,
+  }) async {
+    final policy = runtime.currentPolicy;
+    if (policy == null) {
+      // No policy = no gate. First-launch bonds operate open until an
+      // initiator publishes one.
+      return const _PolicyVerdict(allowed: true, reason: 'no policy set');
+    }
+    final matching = policy.rules
+        .where((r) => _globMatch(r.refPattern, targetRef))
+        .toList(growable: false);
+    if (matching.isEmpty) {
+      return const _PolicyVerdict(allowed: true, reason: 'no matching rule');
+    }
+
+    final srcHead = await _resolveCommitHash(runtime.repoPath, sourceRef);
+    if (srcHead == null) {
+      return const _PolicyVerdict(
+        allowed: false,
+        reason: 'source ref resolves to no commit',
+      );
+    }
+    final srcBytes = _unhex(srcHead);
+
+    for (final rule in matching) {
+      if (rule.minApprovals <= 0) continue;
+      // Collect distinct-signer `approve` attestations that pin to
+      // this exact source commit and whose signer isn't revoked.
+      final approvers = <String>{};
+      for (final entry in runtime.attestationsByProposal.entries) {
+        for (final signed in entry.value) {
+          final att = signed.att;
+          if (att.verdict != AttestationVerdict.approve) continue;
+          if (!_bytesEq(att.targetCommit, srcBytes)) continue;
+          if (_isRevokedAt(runtime, signed.signerHex, att.createdMs)) continue;
+          if (rule.approverSet.isNotEmpty) {
+            final inSet = rule.approverSet.any(
+              (k) => _hex(k) == signed.signerHex,
+            );
+            if (!inSet) continue;
+          }
+          approvers.add(signed.signerHex);
+        }
+      }
+      if (approvers.length < rule.minApprovals) {
+        return _PolicyVerdict(
+          allowed: false,
+          reason:
+              'rule "${rule.refPattern}" needs ${rule.minApprovals} approvals, has ${approvers.length}',
+        );
+      }
+    }
+    return const _PolicyVerdict(allowed: true, reason: 'policy satisfied');
+  }
+
+  bool _isRevokedAt(_RepoRuntime runtime, String signerHex, int createdMs) {
+    final effective = runtime.revokedAt[signerHex];
+    return effective != null && createdMs >= effective;
+  }
+
+  bool _bytesEq(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  Future<String?> _resolveCommitHash(String repoPath, String ref) async {
+    final result = await Process.run(
+      'git',
+      ['rev-parse', '--verify', ref],
+      workingDirectory: repoPath,
+      runInShell: false,
+    );
+    if (result.exitCode != 0) return null;
+    final hex = (result.stdout as String).trim();
+    return _isPlausibleHash(hex) ? hex : null;
+  }
+
+  /// Minimal git-refspec glob match. Supports `*` (no slash) and `**`
+  /// (arbitrary path segments). `refs/heads/*` matches `refs/heads/main`
+  /// but not `refs/heads/feature/x`; `refs/heads/**` matches both.
+  static bool _globMatch(String pattern, String target) {
+    final regex = _compileGlob(pattern);
+    return regex.hasMatch(target);
+  }
+
+  static RegExp _compileGlob(String pattern) {
+    final sb = StringBuffer('^');
+    for (var i = 0; i < pattern.length; i++) {
+      final c = pattern[i];
+      if (c == '*') {
+        if (i + 1 < pattern.length && pattern[i + 1] == '*') {
+          sb.write('.*');
+          i++;
+        } else {
+          sb.write('[^/]*');
+        }
+      } else if ('.^\$+?()[]{}|\\'.contains(c)) {
+        sb.write('\\$c');
+      } else {
+        sb.write(c);
+      }
+    }
+    sb.write(r'$');
+    return RegExp(sb.toString());
   }
 
   static bool _isPlausibleHash(String s) {
