@@ -123,8 +123,19 @@ class _BondDockState extends State<BondDock> {
   }
 
   void _openFullPage(BuildContext context, String? repoPath) {
-    if (repoPath == null) return;
-    Navigator.of(context).push(
+    debugPrint('BondDock: _openFullPage tap, repoPath=$repoPath');
+    if (repoPath == null) {
+      // Surface why nothing happened — without this, "click does
+      // nothing" is indistinguishable from "tap not fired."
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text('Open a repository first to set up a bond.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
         builder: (_) => BondPage(repoPath: repoPath),
       ),
@@ -194,19 +205,22 @@ class _DockStripState extends State<_DockStrip> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final state = _resolveState(widget.service, widget.membership, widget.snapshot);
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
+    // Material+InkWell instead of GestureDetector — desktop hit-test
+    // is much more reliable through Material than through bare
+    // gesture detectors, especially when nested inside a
+    // ListenableBuilder + AnimatedSize tree where event-priority
+    // ordering can swallow taps.
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: context.motion(const Duration(milliseconds: 120)),
+        onHover: (h) => setState(() => _hover = h),
+        mouseCursor: SystemMouseCursors.click,
+        hoverColor: t.chromeBorderFaint,
+        splashColor: t.chromeBorderSubtle,
+        highlightColor: t.chromeBorderFaint,
+        child: Padding(
           padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
-          color: _hover
-              ? t.chromeBorderFaint
-              : Colors.transparent,
           child: Row(
             children: [
               _StateDot(state: state),
@@ -216,11 +230,6 @@ class _DockStripState extends State<_DockStrip> {
                   state.label,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    // Use the normal text colour for non-urgent
-                    // states so the strip is legible against the
-                    // sidebar's parchment surface — the prior muted
-                    // tone was almost the same value as the
-                    // background.
                     color: state.urgent ? t.accentBright : t.textNormal,
                     fontSize: 12,
                     fontWeight: state.urgent
@@ -230,10 +239,6 @@ class _DockStripState extends State<_DockStrip> {
                   ),
                 ),
               ),
-              // Chevron always present so the strip reads as
-              // actionable — up/down for "expand drawer", right for
-              // "open the bond setup page" when there's no
-              // membership yet.
               Icon(
                 widget.membership == null
                     ? Icons.chevron_right
