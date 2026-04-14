@@ -1010,6 +1010,18 @@ class _SettingsPageState extends State<SettingsPage> {
                       .setInstantBlameHover(value));
                 },
               ),
+              const SizedBox(height: 10),
+              _CheckboxRow(
+                label: 'Bond (experimental)',
+                description:
+                    'Enable the peer-to-peer collaboration surface. Requires a Whisper transport to actually connect; currently only test harnesses can attach sessions.',
+                value: preferences.bondExperimentEnabled,
+                onChanged: (value) {
+                  unawaited(context
+                      .read<PreferencesState>()
+                      .setBondExperimentEnabled(value));
+                },
+              ),
               const _SettingsGap(),
               Row(
                 children: [

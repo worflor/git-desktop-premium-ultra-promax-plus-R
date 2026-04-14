@@ -41,6 +41,10 @@ class AppSettingsSnapshot {
   /// Defaults to false — first launch with a missing key shows onboarding.
   final bool onboardingComplete;
 
+  /// Experimental: expose the Bond peer-to-peer collaboration surface.
+  /// Default false; users opt in from settings once per install.
+  final bool bondExperimentEnabled;
+
   const AppSettingsSnapshot({
     required this.guardrailValue,
     required this.aiReadOnlyDefault,
@@ -66,6 +70,7 @@ class AppSettingsSnapshot {
     required this.commitCoverage,
     required this.appShortName,
     required this.onboardingComplete,
+    required this.bondExperimentEnabled,
   });
 
   Map<String, dynamic> toJson() => {
@@ -93,6 +98,7 @@ class AppSettingsSnapshot {
         'commitCoverage': commitCoverage,
         'appShortName': appShortName,
         'onboardingComplete': onboardingComplete,
+        'bondExperimentEnabled': bondExperimentEnabled,
       };
 
   factory AppSettingsSnapshot.defaults() => const AppSettingsSnapshot(
@@ -120,6 +126,7 @@ class AppSettingsSnapshot {
         commitCoverage: 'balanced',
         appShortName: 'Manifold',
         onboardingComplete: false,
+        bondExperimentEnabled: false,
       );
 
   factory AppSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -226,6 +233,10 @@ class AppSettingsSnapshot {
         json['onboardingComplete'],
         defaults.onboardingComplete,
       ),
+      bondExperimentEnabled: SettingsStore._boolOr(
+        json['bondExperimentEnabled'],
+        defaults.bondExperimentEnabled,
+      ),
     );
   }
 
@@ -254,6 +265,7 @@ class AppSettingsSnapshot {
     String? commitCoverage,
     String? appShortName,
     bool? onboardingComplete,
+    bool? bondExperimentEnabled,
   }) {
     return AppSettingsSnapshot(
       guardrailValue: guardrailValue ?? this.guardrailValue,
@@ -286,6 +298,8 @@ class AppSettingsSnapshot {
       commitCoverage: commitCoverage ?? this.commitCoverage,
       appShortName: appShortName ?? this.appShortName,
       onboardingComplete: onboardingComplete ?? this.onboardingComplete,
+      bondExperimentEnabled:
+          bondExperimentEnabled ?? this.bondExperimentEnabled,
     );
   }
 }

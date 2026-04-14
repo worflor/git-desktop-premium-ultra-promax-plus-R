@@ -16,6 +16,8 @@ import 'app/brand_lockup.dart';
 import 'app/sidebar_rail.dart';
 import 'app/theme_state.dart';
 import 'app/workspace_shell.dart';
+import 'backend/bond/transport.dart';
+import 'backend/bond_service.dart';
 import 'backend/settings_store.dart';
 import 'diagnostics/diagnostics_state.dart';
 import 'features/onboarding/onboarding_flow.dart';
@@ -80,6 +82,11 @@ void main() async {
   final diagnosticsState = DiagnosticsState.instance;
   await diagnosticsState.load();
 
+  // Bond service runs process-wide with a NullBondTransport until the
+  // Whisper adapter lands. Feature-flag gated in settings; the UI only
+  // shows Bond surfaces when enabled.
+  final bondService = BondService(transport: const NullBondTransport());
+
   runApp(
     MultiProvider(
       providers: [
@@ -94,6 +101,7 @@ void main() async {
         ChangeNotifierProvider.value(value: diagnosticsState),
         ChangeNotifierProvider.value(value: appIdentityState),
         ChangeNotifierProvider.value(value: onboardingState),
+        ChangeNotifierProvider.value(value: bondService),
         ChangeNotifierProvider(create: (_) => HyperReactivity()),
       ],
       child: const GitDesktopApp(),

@@ -29,6 +29,7 @@ class PreferencesState extends ChangeNotifier {
   CommitStructure _commitStructure = kDefaultCommitStructure;
   CommitVoice _commitVoice = kDefaultCommitVoice;
   CommitCoverage _commitCoverage = kDefaultCommitCoverage;
+  bool _bondExperimentEnabled = false;
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
@@ -47,6 +48,7 @@ class PreferencesState extends ChangeNotifier {
   CommitStructure get commitStructure => _commitStructure;
   CommitVoice get commitVoice => _commitVoice;
   CommitCoverage get commitCoverage => _commitCoverage;
+  bool get bondExperimentEnabled => _bondExperimentEnabled;
 
   Future<void> load() async {
     if (_loaded) {
@@ -68,6 +70,7 @@ class PreferencesState extends ChangeNotifier {
     _commitStructure = commitStructureFromKey(settings.commitStructure);
     _commitVoice = commitVoiceFromKey(settings.commitVoice);
     _commitCoverage = commitCoverageFromKey(settings.commitCoverage);
+    _bondExperimentEnabled = settings.bondExperimentEnabled;
     _loaded = true;
     notifyListeners();
   }
@@ -90,6 +93,7 @@ class PreferencesState extends ChangeNotifier {
     String? commitStructure,
     String? commitVoice,
     String? commitCoverage,
+    bool? bondExperimentEnabled,
   }) async {
     final s = await SettingsStore.load();
     await SettingsStore.persist(
@@ -108,8 +112,16 @@ class PreferencesState extends ChangeNotifier {
         commitStructure: commitStructure,
         commitVoice: commitVoice,
         commitCoverage: commitCoverage,
+        bondExperimentEnabled: bondExperimentEnabled,
       ),
     );
+  }
+
+  Future<void> setBondExperimentEnabled(bool value) async {
+    if (_bondExperimentEnabled == value) return;
+    _bondExperimentEnabled = value;
+    await _persistWith(bondExperimentEnabled: value);
+    notifyListeners();
   }
 
   Future<void> setReduceMotion(bool value) async {

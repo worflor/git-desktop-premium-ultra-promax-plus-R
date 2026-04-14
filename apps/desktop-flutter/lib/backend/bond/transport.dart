@@ -124,6 +124,32 @@ class LoopbackSessionPair {
   }
 }
 
+/// Stand-in [BondTransport] used before the Whisper adapter is wired.
+/// Every method fails fast or stays quiet; exists so the rest of the
+/// stack (BondService, BondBackend) can be constructed at process
+/// start without crashing. Swap for the Whisper adapter once it lands.
+class NullBondTransport implements BondTransport {
+  const NullBondTransport();
+
+  @override
+  Future<BondSession> dial({
+    required Uint8List remotePubkey,
+    required Uint8List bondId,
+    required Object addressing,
+  }) async {
+    throw UnsupportedError(
+      'NullBondTransport: no real transport wired. Integrate Whisper '
+      'or inject a LoopbackSessionPair in tests.',
+    );
+  }
+
+  @override
+  Stream<BondSession> get listen => const Stream<BondSession>.empty();
+
+  @override
+  Future<void> close() async {}
+}
+
 class _LoopbackSession implements BondSession {
   _LoopbackSession({
     required this.sessionId,
