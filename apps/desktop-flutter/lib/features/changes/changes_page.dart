@@ -105,6 +105,13 @@ class _ChangesPageState extends State<ChangesPage> {
   String? _reviewScopeKey;
   AiCommitReviewData? _reviewResult;
   String? _reviewError;
+  // ── Muse (3-phase oracle) state — mirrors review's pattern.
+  bool _museRunning = false;
+  bool _museSuccess = false;
+  bool _museActive = false;
+  String? _museScopeKey;
+  AiMuseData? _museResult;
+  String? _museError;
   String? _actionMessage;
   String? _actionError;
   double _leftPanelWidth = 320.0;
@@ -341,6 +348,12 @@ class _ChangesPageState extends State<ChangesPage> {
     _reviewScopeKey = null;
     _reviewResult = null;
     _reviewError = null;
+    _museRunning = false;
+    _museSuccess = false;
+    _museActive = false;
+    _museScopeKey = null;
+    _museResult = null;
+    _museError = null;
   }
 
   void _hideReviewPane() {
@@ -821,6 +834,37 @@ class _ChangesPageState extends State<ChangesPage> {
       _commitAiCategories.length > 1 ? _commitAiCategories[1].label : 'fast',
     ).toLowerCase();
     return 'generate commit message with $commitLabel model';
+  }
+
+  String _museTooltip(AiSettingsState aiSettings, int includedCount) {
+    if (_museRunning) return _museActive ? 'consulting the muse...' : 'show muse';
+    if (includedCount == 0) return 'select at least one file for the muse.';
+    if (_museResult != null) return 'show muse';
+    if (_museError != null) return 'show muse error';
+    // Resolve the actual slots the pipeline will use and render their
+    // current display labels — if the user renamed "Fast" to "Cheapo
+    // Spew", the tooltip follows. Routing keys off the tag id under the
+    // hood; what we show here is the human-facing name. Fallbacks are
+    // positional, not name-based, so any custom categories scale in.
+    String? labelOf(String preferredId) {
+      final cat = _commitAiCategories
+              .where((c) => c.id == preferredId && c.models.isNotEmpty)
+              .firstOrNull ??
+          _commitAiCategories
+              .where((c) => c.models.isNotEmpty)
+              .firstOrNull;
+      if (cat == null) return null;
+      return aiSettings.labelForCategory(cat.id, cat.label).toLowerCase();
+    }
+
+    final brainstormLabel =
+        labelOf(aiSettings.museBrainstormModelCategoryId);
+    final synthesisLabel =
+        labelOf(aiSettings.museSynthesisModelCategoryId);
+    if (brainstormLabel == null || synthesisLabel == null) {
+      return 'ask the muse for direction';
+    }
+    return 'ask the muse for direction\n$brainstormLabel → $synthesisLabel';
   }
 
   String _reviewAiTooltip(AiSettingsState aiSettings, int includedCount, int guardrailStage) {
@@ -1607,6 +1651,136 @@ class _ChangesPageState extends State<ChangesPage> {
       } else {
         _reviewError = result.error;
         _reviewActive = true;
+      }
+    });
+  }
+
+  Future<void> _runMuse(
+    String repoPath,
+    RepositoryStatus status,
+  ) async {
+    final included = status.files
+        .where((file) => _includedPaths.contains(file.path))
+        .toList();
+    if (included.isEmpty) {
+      setState(() {
+        _actionError = 'Choose at least one file before invoking the muse.';
+        _actionMessage = null;
+      });
+      return;
+    }
+
+    final scopeKey = _buildMultiDiffScopeKey(included);
+    if (_museScopeKey == scopeKey &&
+        (_museRunning || _museResult != null || _museError != null)) {
+      setState(() => _museActive = true);
+      return;
+    }
+
+    setState(() {
+      _museRunning = true;
+      _museActive = true;
+      _museScopeKey = scopeKey;
+      _museError = null;
+      _museResult = null;
+      _actionError = null;
+      _actionMessage = null;
+    });
+
+    final categories = await _resolveCommitAiCategories();
+    if (!mounted) return;
+    if (categories == null) {
+      setState(() {
+        _museRunning = false;
+        _museError = _commitAiError ?? 'Muse AI is not available yet.';
+      });
+      return;
+    }
+
+    final aiSettings = context.read<AiSettingsState>();
+    final preferences = context.read<PreferencesState>();
+
+    // Resolve two distinct slots for the muse:
+    //   - brainstorm slot = "fast" if the user has a model assigned to
+    //     it (cheap, divergent, looses the wild ideas)
+    //   - synthesis slot = the review category (rigorous, grounding-aware)
+    // Either falls back to whichever non-empty category is available, so
+    // single-slot configurations still work — both phases just route to
+    // the same model.
+    AiModelCategoryData? pickCategory(String preferredId) {
+      return categories
+              .where((c) => c.id == preferredId && c.models.isNotEmpty)
+              .firstOrNull ??
+          categories.where((c) => c.models.isNotEmpty).firstOrNull;
+    }
+
+    AiModelOptionData? pickModel(AiModelCategoryData category) {
+      return category.models
+              .where((m) =>
+                  m.value == aiSettings.modelSelections[category.id])
+              .firstOrNull ??
+          category.models.firstOrNull;
+    }
+
+    final synthesisCategory =
+        pickCategory(aiSettings.museSynthesisModelCategoryId);
+    final brainstormCategory =
+        pickCategory(aiSettings.museBrainstormModelCategoryId) ??
+            synthesisCategory;
+
+    if (synthesisCategory == null || brainstormCategory == null) {
+      setState(() {
+        _museRunning = false;
+        _museError =
+            'No runtime-discovered models are available for the muse.';
+      });
+      return;
+    }
+    final synthesisModel = pickModel(synthesisCategory);
+    final brainstormModel = pickModel(brainstormCategory);
+    if (synthesisModel == null || brainstormModel == null) {
+      setState(() {
+        _museRunning = false;
+        _museError = 'Muse needs at least one configured model.';
+      });
+      return;
+    }
+
+    final includeStaged = included.any((file) => _isDirty(file.staged));
+    final includeUnstaged = included.any((file) => _isDirty(file.unstaged));
+    final scopeLabel = included.length == status.files.length
+        ? 'all included files'
+        : '${included.length} included file${included.length == 1 ? '' : 's'}';
+
+    final result = await runMuse(
+      repositoryPath: repoPath,
+      brainstormModelValue: brainstormModel.value,
+      synthesisModelValue: synthesisModel.value,
+      scopeLabel: scopeLabel,
+      includeStaged: includeStaged,
+      includeUnstaged: includeUnstaged,
+      scopedPaths: included.map((file) => file.path).toList(),
+      customPrompt: aiSettings.musePrompt,
+      commitDraft: _commitMsgCtrl.text.trim(),
+      guardrailStage: preferences.guardrailStage,
+      readOnly: preferences.aiReadOnlyDefault,
+    );
+    if (!mounted) return;
+    if (_museScopeKey != scopeKey) {
+      setState(() => _museRunning = false);
+      return;
+    }
+
+    setState(() {
+      _museRunning = false;
+      _museSuccess = result.ok;
+      if (result.ok) {
+        _museResult = result.data;
+        _museError = null;
+        _museActive = true;
+      } else {
+        _museError = result.error;
+        _museActive = true;
       }
     });
   }
@@ -2518,6 +2692,17 @@ class _ChangesPageState extends State<ChangesPage> {
                               }
                               _reviewCommit(repoPath, status);
                             },
+                            museEnabled: canReview,
+                            museLoading: _museRunning,
+                            museSuccess: _museSuccess,
+                            museTooltip: _museTooltip(aiSettings, includedCount),
+                            onMuse: () {
+                              if (_museResult != null || _museError != null) {
+                                setState(() => _museActive = true);
+                                return;
+                              }
+                              _runMuse(repoPath, status);
+                            },
                             // ◈ shape: now toggles inline shape-mode
                             // instead of opening a floating popover.
                             // The composer field morphs in place; the
@@ -2638,9 +2823,38 @@ class _ChangesPageState extends State<ChangesPage> {
                       repositoryPath: repoPath,
                     );
                   }
+                  if (_museActive) {
+                    return MaterialSurface(
+                      tone: AppMaterialTone.surface0,
+                      radius: 0,
+                      borderAlpha: 0,
+                      elevated: false,
+                      child: _MusePane(
+                        tokens: t,
+                        loading: _museRunning,
+                        error: _museError,
+                        result: _museResult,
+                        guardrailLabel:
+                            _guardrailLabelForStage(preferences.guardrailStage),
+                        onBack: () => setState(() {
+                          _museActive = false;
+                        }),
+                        onRerun: () {
+                          setState(() {
+                            _museRunning = false;
+                            _museSuccess = false;
+                            _museScopeKey = null;
+                            _museResult = null;
+                            _museError = null;
+                          });
+                          _runMuse(repoPath, status);
+                        },
+                      ),
+                    );
+                  }
                   if (_reviewActive) {
                     final contentForStats = showMultiDiff ? _multiDiffContent : _diffContent;
-                    final stats = contentForStats != null 
+                    final stats = contentForStats != null
                         ? DiffStats.fromRawDiff(contentForStats)
                         : const DiffStats();
 
@@ -3215,6 +3429,316 @@ class _MultiDiffProgressRailPainter extends CustomPainter {
     return oldDelegate.count != count ||
         oldDelegate.currentIndex != currentIndex ||
         oldDelegate.tokens != tokens;
+  }
+}
+
+class _MusePane extends StatefulWidget {
+  final AppTokens tokens;
+  final bool loading;
+  final String? error;
+  final AiMuseData? result;
+  final String guardrailLabel;
+  final VoidCallback onBack;
+  final VoidCallback onRerun;
+
+  const _MusePane({
+    required this.tokens,
+    required this.loading,
+    required this.error,
+    required this.result,
+    required this.guardrailLabel,
+    required this.onBack,
+    required this.onRerun,
+  });
+
+  @override
+  State<_MusePane> createState() => _MusePaneState();
+}
+
+class _MusePaneState extends State<_MusePane> {
+  bool _brainstormExpanded = false;
+  int? _highlightedIdeaIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _museHeader(t),
+          const SizedBox(height: 14),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: _museBody(t),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _museHeader(AppTokens t) {
+    final result = widget.result;
+    final keptLine = result != null && result.totalIdeaCount > 0
+        ? 'considered ${result.totalIdeaCount}, kept ${result.keptIdeaCount} with grounding'
+        : '';
+    return Row(
+      children: [
+        Icon(Icons.bubble_chart_outlined,
+            size: 16, color: t.textFaint),
+        const SizedBox(width: 8),
+        Text('Muse', style: TextStyle(
+          color: t.textStrong,
+          fontSize: 13.5,
+          fontWeight: FontWeight.w500,
+        )),
+        const SizedBox(width: 8),
+        Text('· ${widget.guardrailLabel.toLowerCase()}',
+            style: TextStyle(color: t.textFaint, fontSize: 11)),
+        if (keptLine.isNotEmpty) ...[
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text('· $keptLine',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: t.textFaint, fontSize: 11)),
+          ),
+        ],
+        const Spacer(),
+        _GhostActionChip(
+            tokens: t, label: 'rerun', onTap: widget.onRerun),
+        const SizedBox(width: 6),
+        _GhostActionChip(
+            tokens: t, label: 'back to diff', onTap: widget.onBack),
+      ],
+    );
+  }
+
+  Widget _museBody(AppTokens t) {
+    if (widget.loading) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 40),
+        child: Center(
+          child: Text('the muse is dreaming...',
+              style: TextStyle(color: t.textFaint, fontSize: 12)),
+        ),
+      );
+    }
+    final err = widget.error;
+    if (err != null) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 24),
+        child: Text(err,
+            style: TextStyle(
+              color: AppSeverityPalette.caution,
+              fontSize: 12,
+            )),
+      );
+    }
+    final r = widget.result;
+    if (r == null) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (r.intent.isNotEmpty) _section(t, 'intent', r.intent, prose: true),
+        if (r.drift.isNotEmpty)
+          _movesSection(t, 'drift', r.drift, r.brainstormIdeas),
+        if (r.wiringBroken.isNotEmpty)
+          _movesSection(t, 'wiring · broken', r.wiringBroken, r.brainstormIdeas),
+        if (r.wiringMissing.isNotEmpty)
+          _movesSection(t, 'wiring · missing', r.wiringMissing, r.brainstormIdeas),
+        if (r.ideaFlaws.isNotEmpty)
+          _movesSection(t, 'idea flaws', r.ideaFlaws, r.brainstormIdeas),
+        if (r.trajectory.isNotEmpty)
+          _section(t, 'trajectory', r.trajectory, prose: true),
+        if (r.brainstormIdeas.isNotEmpty) _brainstormReveal(t, r),
+        if (r.droppedMoves > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              '${r.droppedMoves} move${r.droppedMoves == 1 ? '' : 's'} '
+              'could not be parsed from model output.',
+              style: TextStyle(
+                color: t.textFaint.withValues(alpha: 0.6),
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _section(AppTokens t, String label, String body,
+      {bool prose = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label.toUpperCase(),
+              style: TextStyle(
+                color: t.textFaint,
+                fontSize: 10,
+                letterSpacing: 1.2,
+              )),
+          const SizedBox(height: 6),
+          SelectableText(body,
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: 12.5,
+                height: 1.5,
+              )),
+        ],
+      ),
+    );
+  }
+
+  Widget _movesSection(AppTokens t, String label, List<AiMuseMove> moves,
+      List<AiMuseIdea> ideas) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label.toUpperCase(),
+              style: TextStyle(
+                color: t.textFaint,
+                fontSize: 10,
+                letterSpacing: 1.2,
+              )),
+          const SizedBox(height: 6),
+          for (final m in moves) _moveCard(t, m, ideas),
+        ],
+      ),
+    );
+  }
+
+  Widget _moveCard(AppTokens t, AiMuseMove m, List<AiMuseIdea> ideas) {
+    // final so Dart 3 flow analysis promotes the null-check across closure
+    // boundaries — removes the need for idea! inside onTap.
+    final idea = m.originatingIdeaIndex == null
+        ? null
+        : ideas.where((i) => i.index == m.originatingIdeaIndex).firstOrNull;
+    final highlighted =
+        idea != null && _highlightedIdeaIndex == idea.index;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: highlighted
+              ? t.textStrong.withValues(alpha: 0.04)
+              : Colors.transparent,
+          border: Border(
+            left: BorderSide(
+              color: t.textFaint.withValues(alpha: 0.4),
+              width: 2,
+            ),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText(m.body,
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 12.5,
+                  height: 1.5,
+                )),
+            if (m.citations.isNotEmpty || idea != null) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  for (final c in m.citations)
+                    Text(c,
+                        style: TextStyle(
+                          color: t.textFaint,
+                          fontSize: 10.5,
+                          fontFamily: 'monospace',
+                        )),
+                  if (idea != null)
+                    GestureDetector(
+                      onTap: () => setState(() {
+                        _highlightedIdeaIndex =
+                            _highlightedIdeaIndex == idea.index
+                                ? null
+                                : idea.index;
+                        _brainstormExpanded = true;
+                      }),
+                      child: Text('from idea: "${idea.text}"',
+                          style: TextStyle(
+                            color: t.textFaint.withValues(alpha: 0.85),
+                            fontSize: 10.5,
+                            fontStyle: FontStyle.italic,
+                          )),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _brainstormReveal(AppTokens t, AiMuseData r) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () =>
+                setState(() => _brainstormExpanded = !_brainstormExpanded),
+            child: Row(
+              children: [
+                Icon(
+                  _brainstormExpanded
+                      ? Icons.expand_less
+                      : Icons.expand_more,
+                  size: 14,
+                  color: t.textFaint,
+                ),
+                const SizedBox(width: 4),
+                Text('brainstorm spew',
+                    style: TextStyle(
+                      color: t.textFaint,
+                      fontSize: 10,
+                      letterSpacing: 1.2,
+                    )),
+              ],
+            ),
+          ),
+          if (_brainstormExpanded) ...[
+            const SizedBox(height: 8),
+            for (final idea in r.brainstormIdeas)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '${idea.kept ? '◉' : '·'} ${idea.text}',
+                  style: TextStyle(
+                    color: idea.kept
+                        ? t.textStrong
+                        : t.textFaint.withValues(alpha: 0.6),
+                    fontSize: 11.5,
+                    height: 1.45,
+                    fontWeight: idea.index == _highlightedIdeaIndex
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                  ),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
   }
 }
 
@@ -5691,8 +6215,14 @@ class _FileRowState extends State<_FileRow> {
     final badges = _buildBadges(t, file);
 
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) {
+        setState(() => _hovered = true);
+        widget.onRailEnter?.call();
+      },
+      onExit: (_) {
+        setState(() => _hovered = false);
+        widget.onRailExit?.call();
+      },
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
@@ -5717,19 +6247,16 @@ class _FileRowState extends State<_FileRow> {
               // coupled files, transparent for isolated. Clustered rows in
               // sequence fuse edge-to-edge (no inset / no rounding) into a
               // continuous capsule spanning the group.
-              // Rail — its own MouseRegion so sliding the cursor along the
-              // stripe updates the hover subject without touching the card's
-              // click target. The stripe itself is the full visualization:
-              // width pulses by coupling strength, brightness fades by score.
-              // No inline labels — nothing that can push the card around.
+              // Rail — pure visual widget; hover is handled by the card's
+              // outer MouseRegion so hovering anywhere on the card drives
+              // the coupling visualization. Width pulses by coupling strength,
+              // brightness fades by peer score.
               _RailStripe(
                 tokens: t,
                 clusterColor: widget.clusterColor,
                 inRealCluster: widget.inRealCluster,
                 peerScore: widget.peerScore,
                 isRailSubject: widget.isRailSubject,
-                onEnter: widget.onRailEnter,
-                onExit: widget.onRailExit,
                 connectTop: widget.stripeConnectTop,
                 connectBottom: widget.stripeConnectBottom,
               ),
@@ -5848,8 +6375,6 @@ class _RailStripe extends StatelessWidget {
   final bool inRealCluster;
   final double? peerScore;
   final bool isRailSubject;
-  final VoidCallback? onEnter;
-  final VoidCallback? onExit;
   final bool connectTop;
   final bool connectBottom;
 
@@ -5859,8 +6384,6 @@ class _RailStripe extends StatelessWidget {
     required this.inRealCluster,
     required this.peerScore,
     required this.isRailSubject,
-    required this.onEnter,
-    required this.onExit,
     required this.connectTop,
     required this.connectBottom,
   });
@@ -5889,14 +6412,10 @@ class _RailStripe extends StatelessWidget {
       color = base.withValues(alpha: base.a * scale);
     }
 
-    return MouseRegion(
-      onEnter: onEnter == null ? null : (_) => onEnter!(),
-      onExit: onExit == null ? null : (_) => onExit!(),
-      cursor: inRealCluster ? SystemMouseCursors.basic : MouseCursor.defer,
-      // Reserve the max rail width (5) so adjacent rows don't jitter when
-      // one of them becomes the subject and widens. Stripe sizes inside
-      // this slot; nothing in the row re-lays out.
-      child: SizedBox(
+    // Reserve the max rail width (5) so adjacent rows don't jitter when
+    // one of them becomes the subject and widens. Stripe sizes inside
+    // this slot; nothing in the row re-lays out.
+    return SizedBox(
         width: 5,
         child: Padding(
           padding: EdgeInsets.only(
@@ -5929,7 +6448,6 @@ class _RailStripe extends StatelessWidget {
             ),
           ),
         ),
-      ),
     );
   }
 }
@@ -6030,6 +6548,11 @@ class _CommitComposerField extends StatefulWidget {
   final String reviewTooltip;
   final VoidCallback onGenerate;
   final VoidCallback onReview;
+  final bool museEnabled;
+  final bool museLoading;
+  final bool museSuccess;
+  final String museTooltip;
+  final VoidCallback onMuse;
   /// Inline shape-commit mode. When true, the field binds the shape
   /// controller (parent swaps which controller is passed in based on
   /// this flag) and the ◈ button reads as a "exit shape" toggle.
@@ -6060,6 +6583,11 @@ class _CommitComposerField extends StatefulWidget {
     required this.reviewTooltip,
     required this.onGenerate,
     required this.onReview,
+    this.museEnabled = false,
+    this.museLoading = false,
+    this.museSuccess = false,
+    this.museTooltip = '',
+    required this.onMuse,
     this.shapeMode = false,
     this.shapeEnabled = false,
     this.shapeLoading = false,
@@ -6293,6 +6821,18 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                       ],
                       _CommitAiToolbarBtn(
                         tokens: tokens,
+                        enabled: widget.museEnabled,
+                        loading: widget.museLoading,
+                        success: widget.museSuccess,
+                        tooltip: widget.museTooltip,
+                        hasText: hasText,
+                        fieldRadius: effectiveRadius,
+                        iconKind: _AiToolbarIconKind.oracle,
+                        onTap: widget.onMuse,
+                      ),
+                      const SizedBox(width: 4),
+                      _CommitAiToolbarBtn(
+                        tokens: tokens,
                         enabled: widget.reviewEnabled,
                         loading: widget.reviewLoading,
                         success: widget.reviewSuccess,
@@ -6329,7 +6869,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
 
 // ── AI toolbar button (lives inside the commit composer's bottom toolbar) ──────
 
-enum _AiToolbarIconKind { search, sparkle, shape }
+enum _AiToolbarIconKind { search, sparkle, shape, oracle }
 
 /// Shape glyph (`◈`) with state-aware motion. Idle is a still diamond.
 /// Hover gently scales it up. The "active" state — used while inline
@@ -6570,6 +7110,11 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
                     state: _iconState,
                     color: iconColor,
                     size: 13,
+                  ),
+                _AiToolbarIconKind.oracle => Icon(
+                    Icons.bubble_chart_outlined,
+                    color: iconColor,
+                    size: 14,
                   ),
               },
             ),

@@ -21,6 +21,8 @@ import '../../app/logos_git_state.dart';
 import '../../app/repository_state.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import '../diff/diff_shell.dart';
+import 'commit_seismograph.dart';
 import 'commit_tag_pill.dart';
 import 'commit_tagger.dart';
 
@@ -39,7 +41,7 @@ const double _kGapLog = 1.1;
 const double _kTemporalBlend = 0.32;
 const double _kLensMin = 32;
 const double _kLensMax = 64;
-const int _kHistoryDefault = 50;
+const int _kHistoryDefault = 100;
 const int _kHistoryMax = 500;
 
 // ── Graph types ───────────────────────────────────────────────────────────────
@@ -880,12 +882,71 @@ class _TagProfileInput {
   /// engine isn't warm, this is null and the isolate falls back to the
   /// matrix's single-axis Jaccard.
   final Map<String, double>? engineCoherences;
+  /// Per-commit expected-token distribution, computed on the main
+  /// thread via [LogosGit.projectTokenDistribution] and summed per
+  /// bucket inside the isolate.
+  final Map<String, Map<String, double>>? expectedTokensByHash;
   const _TagProfileInput({
     required this.commits,
     required this.details,
     required this.coupling,
     this.engineCoherences,
+    this.expectedTokensByHash,
   });
+}
+
+/// Returns commit-hash → expected-token distribution, computed by
+/// diffusing each commit's file churn through [engine] and projecting
+/// along the token axis. Main-thread because the engine isn't
+/// isolate-transferable; the tagger sums these per-bucket downstream.
+Map<String, Map<String, double>>? _projectPerCommitExpectedTokens(
+  LogosGit engine,
+  List<CommitHistoryEntry> commits,
+  Map<String, CommitDetailData> detailsByHash,
+) {
+  // Same tokenizer + same per-commit unit-mass as _SubjectCorpus.
+  // Both sides must match exactly or the projection math diverges.
+  final fileTokens = <String, Map<String, double>>{};
+  for (final c in commits) {
+    final detail = detailsByHash[c.commitHash];
+    if (detail == null) continue;
+    final body = detail.body;
+    final text = body.isEmpty ? c.subject : '${c.subject} $body';
+    final tokens = tagTokenize(text);
+    if (tokens.isEmpty) continue;
+    final weight = 1.0 / tokens.length;
+    for (final f in detail.files) {
+      final row =
+          fileTokens.putIfAbsent(f.path, () => <String, double>{});
+      for (final w in tokens) {
+        row.update(w, (v) => v + weight, ifAbsent: () => weight);
+      }
+    }
+  }
+  if (fileTokens.isEmpty) return null;
+
+  // One Chebyshev diffusion per commit, seeded by log-scaled churn.
+  final expectedByHash = <String, Map<String, double>>{};
+  for (final c in commits) {
+    final detail = detailsByHash[c.commitHash];
+    if (detail == null) continue;
+    final sourceWeights = <String, double>{};
+    for (final f in detail.files) {
+      final churn = (f.additions + f.deletions).toDouble();
+      // Floor at 0.5 so a single-line commit still registers.
+      final w = log(1.0 + churn);
+      sourceWeights[f.path] = w > 0.5 ? w : 0.5;
+    }
+    if (sourceWeights.isEmpty) continue;
+    final expected = engine.projectTokenDistribution(
+      sourceWeights: sourceWeights,
+      fileTokenCounts: fileTokens,
+    );
+    if (expected.isNotEmpty) {
+      expectedByHash[c.commitHash] = expected;
+    }
+  }
+  return expectedByHash.isEmpty ? null : expectedByHash;
 }
 
 /// Top-level so `compute()` can spawn it. Thin shim that just forwards
@@ -896,6 +957,7 @@ RepositoryTagProfile _tagProfileIsolate(_TagProfileInput input) {
     detailsByHash: input.details,
     coupling: input.coupling,
     engineCoherences: input.engineCoherences,
+    expectedTokensByHash: input.expectedTokensByHash,
   );
 }
 
@@ -922,6 +984,17 @@ class _HistoryPageState extends State<HistoryPage> {
   String? _detailLoadingHash;
   String? _detailError;
   final Map<String, CommitDetailData> _detailCache = {};
+
+  /// When set, the right pane shows the diff for this file from the
+  /// currently-selected commit instead of the seismograph. Existing
+  /// DiffShell engine handles the rendering. The sentinel
+  /// [_kAllFilesPath] means "the entire commit's diff".
+  String? _commitDiffFile;
+  String? _commitDiffContent;
+  bool _commitDiffLoading = false;
+  String? _commitDiffError;
+  int _commitDiffReqId = 0;
+  static const String _kAllFilesPath = '\u0000all\u0000';
   /// Bumped on every `_detailCache` mutation. The map is shared by
   /// reference with `_TimelineStrip`, so length/identity comparisons
   /// at `didUpdateWidget` can't see the mutation. This counter is the
@@ -1022,6 +1095,7 @@ class _HistoryPageState extends State<HistoryPage> {
       // instead of the raw Jaccard fallback — strictly more informative
       // percentile splits with no extra round-trip cost.
       Map<String, double>? engineCoherences;
+      Map<String, Map<String, double>>? expectedTokensByHash;
       try {
         final engine =
             context.read<LogosGitState>().engineFor(repoPath);
@@ -1031,6 +1105,10 @@ class _HistoryPageState extends State<HistoryPage> {
             final files = entry.value.files.map((f) => f.path);
             engineCoherences[entry.key] = engine.coherence(files);
           }
+          // Project per-commit expected-token distributions on the
+          // main thread so the isolate has them ready.
+          expectedTokensByHash =
+              _projectPerCommitExpectedTokens(engine, commitsCopy, detailsCopy);
         }
       } catch (_) {
         // No state provider, no engine — silently fall back.
@@ -1042,6 +1120,7 @@ class _HistoryPageState extends State<HistoryPage> {
         details: detailsCopy,
         coupling: coupling,
         engineCoherences: engineCoherences,
+        expectedTokensByHash: expectedTokensByHash,
       ));
       if (!mounted || myBuildId != _tagProfileBuildId) return;
       setState(() => _tagProfile = profile);
@@ -1087,6 +1166,44 @@ class _HistoryPageState extends State<HistoryPage> {
       ok: r.ok,
       errorCode: r.ok ? null : 'history.load_failed',
     );
+  }
+
+  Future<void> _openCommitFileDiff(String repo, String hash, String filePath) async {
+    // Clicking the same rail bar twice should be a no-op — no flicker,
+    // no refetch, no state churn. The diff is already showing.
+    if (filePath == _commitDiffFile && !_commitDiffLoading) return;
+    final reqId = ++_commitDiffReqId;
+    setState(() {
+      _commitDiffFile = filePath;
+      _commitDiffContent = null;
+      _commitDiffError = null;
+      _commitDiffLoading = true;
+    });
+    final isAll = filePath == _kAllFilesPath;
+    final r = isAll
+        ? await getCommitDiff(repo, hash)
+        : await getFileDiffAtRevision(repo, filePath, hash);
+    if (!mounted || reqId != _commitDiffReqId) return;
+    setState(() {
+      _commitDiffLoading = false;
+      if (r.ok) {
+        _commitDiffContent = r.data;
+      } else {
+        _commitDiffError = r.error ?? 'failed to load diff';
+      }
+    });
+  }
+
+  void _openCommitAllDiff(String repo, String hash) =>
+      _openCommitFileDiff(repo, hash, _kAllFilesPath);
+
+  void _closeCommitFileDiff() {
+    setState(() {
+      _commitDiffFile = null;
+      _commitDiffContent = null;
+      _commitDiffError = null;
+      _commitDiffLoading = false;
+    });
   }
 
   Future<void> _loadDetail(String repo, String hash) async {
@@ -1416,6 +1533,12 @@ class _HistoryPageState extends State<HistoryPage> {
                           setState(() {
                             _selectedHash = entry.commitHash;
                             _rebaseRangeEndIndex = null;
+                            // A new commit selection clears any
+                            // open per-file diff from the previous one.
+                            _commitDiffFile = null;
+                            _commitDiffContent = null;
+                            _commitDiffError = null;
+                            _commitDiffLoading = false;
                           });
                           _loadDetail(repoPath, entry.commitHash);
                         });
@@ -1448,7 +1571,40 @@ class _HistoryPageState extends State<HistoryPage> {
                           compact: true,
                         )
                       : _detail != null
-                          ? _CommitDetailTransition(
+                          // Cross-fade between overview and per-file
+                          // diff so the swap reads as a smooth depth
+                          // change inside the same panel.
+                          ? AnimatedSwitcher(
+                              duration: context.motion(
+                                  const Duration(milliseconds: 140)),
+                              switchInCurve: Curves.easeOut,
+                              switchOutCurve: Curves.easeIn,
+                              transitionBuilder: (child, anim) =>
+                                  FadeTransition(opacity: anim, child: child),
+                              child: KeyedSubtree(
+                                // Key is binary (overview vs diff), NOT
+                                // per-file. Switching files inside diff
+                                // mode keeps the pane mounted so the
+                                // rail's wake animation doesn't restart;
+                                // only the inner DiffShell swaps content.
+                                key: ValueKey(_commitDiffFile == null
+                                    ? 'overview'
+                                    : 'diff'),
+                                child: _commitDiffFile != null
+                                    ? _CommitFileDiffPane(
+                                        detail: _detail!,
+                                        filePath: _commitDiffFile!,
+                                        diffContent: _commitDiffContent,
+                                        loading: _commitDiffLoading,
+                                        error: _commitDiffError,
+                                        tokens: t,
+                                        repoPath: repoPath,
+                                        onOpenFile: (path) =>
+                                            _openCommitFileDiff(repoPath,
+                                                _detail!.commitHash, path),
+                                        onClose: _closeCommitFileDiff,
+                                      )
+                                    : _CommitDetailTransition(
                               detail: _detail!,
                               loading:
                                   _detailLoading && _detailLoadingHash != null,
@@ -1466,6 +1622,12 @@ class _HistoryPageState extends State<HistoryPage> {
                                   setState(() => _tagInputValue = v),
                               onCreateTag: () =>
                                   _createTag(repoPath, _detail!.commitHash),
+                              onOpenFile: (path) => _openCommitFileDiff(
+                                  repoPath, _detail!.commitHash, path),
+                              onOpenAllFiles: () => _openCommitAllDiff(
+                                  repoPath, _detail!.commitHash),
+                            ),
+                              ),
                             )
                           : _detailLoading
                               ? const AppStatusView.loading(
@@ -1633,28 +1795,26 @@ class _CommitRowState extends State<_CommitRow> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                // Auto-derived semantic tags (repo-learned vocabulary,
-                // zero hardcoded values). Computed here per-build; the
-                // work is microseconds once the profile is warm.
-                ..._autoTagsFor(c).map(
-                  (tg) => Padding(
-                    padding: const EdgeInsets.only(left: 4),
-                    child: CommitTagPill(tag: tg, tokens: t),
-                  ),
-                ),
-                // Git-native tag pills (annotated tags on the commit).
-                ...c.refNames.where((r) => r.startsWith('tag:')).take(2).map(
-                      (r) => Padding(
-                          padding: const EdgeInsets.only(left: 4),
-                          child: _TagPill(
-                              name: r.replaceFirst('tag: ', ''), tokens: t)),
-                    ),
               ]),
               const SizedBox(height: 3),
               Row(children: [
                 Text(c.authorName,
                     style: TextStyle(color: t.textMuted, fontSize: 11)),
-                const Spacer(),
+                const SizedBox(width: 8),
+                // Tag strip — fills the space between author and impact
+                // column. Longer usernames leave less room for tags.
+                Expanded(
+                  child: _FittingTagRow(
+                    autoTags: _autoTagsFor(c),
+                    // Greedy fit is the only gate; show what fits.
+                    gitTagNames: c.refNames
+                        .where((r) => r.startsWith('tag:'))
+                        .map((r) => r.replaceFirst('tag: ', ''))
+                        .toList(),
+                    tokens: t,
+                  ),
+                ),
+                const SizedBox(width: 8),
                 _CommitImpact(detail: widget.cachedDetail, tokens: t),
               ]),
             ]),
@@ -1708,6 +1868,79 @@ class _ReflogDivider extends StatelessWidget {
 }
 
 // ── Tag pill ──────────────────────────────────────────────────────────────────
+
+/// Greedy-fit tag strip: measures pills with a TextPainter and stops
+/// admitting once the cumulative width would exceed the parent's max.
+/// Auto-tags admit before git-native tags so the semantic pills win
+/// when space is tight.
+class _FittingTagRow extends StatelessWidget {
+  final List<CommitTag> autoTags;
+  final List<String> gitTagNames;
+  final AppTokens tokens;
+
+  const _FittingTagRow({
+    required this.autoTags,
+    required this.gitTagNames,
+    required this.tokens,
+  });
+
+  // Pill chrome: 6px horizontal padding each side (CommitTagPill) / 5px
+  // (git _TagPill, plus 9px icon + 3px gap). 2px border budget. Total
+  // constant cost per pill, added to the text width.
+  static const double _autoPillChrome = 12 + 2;
+  static const double _gitPillChrome = 10 + 2 + 9 + 3;
+  static const double _pillSpacing = 4;
+  static const TextStyle _pillTextStyle = TextStyle(
+    fontSize: 9,
+    fontFamily: 'JetBrainsMono',
+    letterSpacing: 0.2,
+  );
+
+  double _measureTextWidth(String label) {
+    final tp = TextPainter(
+      text: TextSpan(text: label.toLowerCase(), style: _pillTextStyle),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return tp.width;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final maxW = constraints.maxWidth;
+      if (maxW <= 0 || (autoTags.isEmpty && gitTagNames.isEmpty)) {
+        return const SizedBox.shrink();
+      }
+      final admitted = <Widget>[];
+      var used = 0.0;
+
+      bool tryAdd(Widget pill, double pillWidth) {
+        final sep = admitted.isEmpty ? 0.0 : _pillSpacing;
+        if (used + sep + pillWidth > maxW) return false;
+        if (sep > 0) admitted.add(const SizedBox(width: _pillSpacing));
+        admitted.add(pill);
+        used += sep + pillWidth;
+        return true;
+      }
+
+      for (final tag in autoTags) {
+        final w = _measureTextWidth(tag.label) + _autoPillChrome;
+        if (!tryAdd(CommitTagPill(tag: tag, tokens: tokens), w)) break;
+      }
+      for (final name in gitTagNames) {
+        final w = _measureTextWidth(name) + _gitPillChrome;
+        if (!tryAdd(_TagPill(name: name, tokens: tokens), w)) break;
+      }
+
+      // Right-aligned so tags sit against the impact column.
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Row(mainAxisSize: MainAxisSize.min, children: admitted),
+      );
+    });
+  }
+}
 
 class _TagPill extends StatelessWidget {
   final String name;
@@ -1810,6 +2043,8 @@ class _CommitDetail extends StatelessWidget {
   final VoidCallback onToggleTag;
   final ValueChanged<String> onTagChanged;
   final VoidCallback onCreateTag;
+  final ValueChanged<String> onOpenFile;
+  final VoidCallback onOpenAllFiles;
 
   const _CommitDetail({
     super.key,
@@ -1823,6 +2058,8 @@ class _CommitDetail extends StatelessWidget {
     required this.onToggleTag,
     required this.onTagChanged,
     required this.onCreateTag,
+    required this.onOpenFile,
+    required this.onOpenAllFiles,
   });
 
   static String _formatDate(String iso) {
@@ -1832,107 +2069,6 @@ class _CommitDetail extends StatelessWidget {
     } catch (_) {
       return iso.length > 10 ? iso.substring(0, 10) : iso;
     }
-  }
-
-  List<Widget> _buildGroupedFiles(List<CommitFileStatData> files,
-      AppTokens t, Set<String> dirtyPaths) {
-    // Group by module
-    final grouped = <String, List<CommitFileStatData>>{};
-    for (final f in files) {
-      grouped.putIfAbsent(_moduleFromPath(f.path), () => []).add(f);
-    }
-
-    final widgets = <Widget>[];
-    bool first = true;
-    for (final entry in grouped.entries) {
-      if (!first) widgets.add(const SizedBox(height: 10));
-      first = false;
-
-      // Module header
-      widgets.add(Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Row(children: [
-          Text(entry.key,
-              style: TextStyle(
-                  color: t.textFaint,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.5)),
-          const SizedBox(width: 3),
-          Text('/',
-              style: TextStyle(color: t.textFaint.withValues(alpha: 0.5), fontSize: 10)),
-        ]),
-      ));
-
-      // File rows
-      for (final f in entry.value) {
-        final normalizedPath = f.path.replaceAll('\\', '/');
-        // Both dirtyPaths (from git status) and normalizedPath (from
-        // git show) are repo-root-relative, so direct equality is correct.
-        final isDirty = dirtyPaths.contains(normalizedPath);
-        final displayName = _displayPath(f.path, entry.key);
-
-        widgets.add(Padding(
-          padding: const EdgeInsets.symmetric(vertical: 1.5),
-          child: Row(children: [
-            // Change type badge
-            _ChangeTypeBadge(type: f.changeType, tokens: t),
-            const SizedBox(width: 6),
-            // Dirty indicator dot
-            if (isDirty) ...[
-              Container(
-                width: 5,
-                height: 5,
-                margin: const EdgeInsets.only(right: 5),
-                decoration: BoxDecoration(
-                  color: t.accentBright,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ],
-            // File name
-            Expanded(
-              child: Text(displayName,
-                  style: TextStyle(
-                      color: isDirty ? t.textStrong : t.textNormal,
-                      fontSize: 11,
-                      fontFamily: 'JetBrainsMono'),
-                  overflow: TextOverflow.ellipsis),
-            ),
-            // Stats
-            Text('+${f.additions}',
-                style: TextStyle(color: t.stateAdded, fontSize: 10)),
-            const SizedBox(width: 4),
-            Text('-${f.deletions}',
-                style: TextStyle(color: t.stateDeleted, fontSize: 10)),
-          ]),
-        ));
-      }
-    }
-    return widgets;
-  }
-
-  static String _moduleFromPath(String path) {
-    final p = path.replaceAll('\\', '/');
-    final libIdx = p.indexOf('/lib/');
-    if (libIdx >= 0) {
-      final afterLib = p.substring(libIdx + 5);
-      final slash = afterLib.indexOf('/');
-      return slash >= 0 ? afterLib.substring(0, slash) : afterLib;
-    }
-    if (p.contains('/test/')) return 'test';
-    final parts = p.split('/').where((s) => s.isNotEmpty).toList();
-    return parts.length > 1 ? parts[parts.length - 2] : 'other';
-  }
-
-  static String _displayPath(String path, String module) {
-    final p = path.replaceAll('\\', '/');
-    final marker = '/lib/$module/';
-    final idx = p.indexOf(marker);
-    if (idx >= 0) return p.substring(idx + marker.length);
-    final testIdx = p.indexOf('/test/');
-    if (testIdx >= 0) return p.substring(testIdx + 6);
-    return p.split('/').last;
   }
 
   @override
@@ -2105,17 +2241,35 @@ class _CommitDetail extends StatelessWidget {
 
       const SizedBox(height: 20),
       Row(children: [
+        // Tapping any of these chips opens the entire commit's diff
+        // (multi-file) in the existing DiffShell. The "39 files" chip
+        // and the +/- chips all act as the same affordance — wherever
+        // the user's eye lands when they want "show me everything."
         _StatChip(
             label: '${d.filesChanged} file${d.filesChanged == 1 ? "" : "s"}',
-            color: t.textMuted),
+            color: t.textMuted,
+            onTap: onOpenAllFiles),
         const SizedBox(width: 6),
-        _StatChip(label: '+${d.additions}', color: t.stateAdded),
+        _StatChip(
+            label: '+${d.additions}',
+            color: t.stateAdded,
+            onTap: onOpenAllFiles),
         const SizedBox(width: 4),
-        _StatChip(label: '-${d.deletions}', color: t.stateDeleted),
+        _StatChip(
+            label: '-${d.deletions}',
+            color: t.stateDeleted,
+            onTap: onOpenAllFiles),
       ]),
 
-      const SizedBox(height: 16),
-      ..._buildGroupedFiles(d.files, t, dirtyPaths),
+      const SizedBox(height: 18),
+      CommitSeismograph(
+        detail: d,
+        tokens: t,
+        dirtyPaths: dirtyPaths,
+        repoPath: repoPath,
+        onOpenFile: onOpenFile,
+        onOpenAllFiles: onOpenAllFiles,
+      ),
     ]);
   }
 }
@@ -2132,6 +2286,8 @@ class _CommitDetailTransition extends StatelessWidget {
   final VoidCallback onToggleTag;
   final ValueChanged<String> onTagChanged;
   final VoidCallback onCreateTag;
+  final ValueChanged<String> onOpenFile;
+  final VoidCallback onOpenAllFiles;
 
   const _CommitDetailTransition({
     required this.detail,
@@ -2145,6 +2301,8 @@ class _CommitDetailTransition extends StatelessWidget {
     required this.onToggleTag,
     required this.onTagChanged,
     required this.onCreateTag,
+    required this.onOpenFile,
+    required this.onOpenAllFiles,
   });
 
   @override
@@ -2171,6 +2329,8 @@ class _CommitDetailTransition extends StatelessWidget {
             onToggleTag: onToggleTag,
             onTagChanged: onTagChanged,
             onCreateTag: onCreateTag,
+            onOpenFile: onOpenFile,
+            onOpenAllFiles: onOpenAllFiles,
           ),
         ),
         Positioned(
@@ -2188,6 +2348,142 @@ class _CommitDetailTransition extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Full-detail-pane wrapper around the existing [DiffShell]. The
+/// seismograph metaphor follows the user in: a compact rail above the
+/// diff lets you hop to any other file in the commit without going
+/// back to the overview. Esc / Backspace returns to the seismograph.
+class _CommitFileDiffPane extends StatefulWidget {
+  final CommitDetailData detail;
+  final String filePath;
+  final String? diffContent;
+  final bool loading;
+  final String? error;
+  final AppTokens tokens;
+  final String repoPath;
+  final ValueChanged<String> onOpenFile;
+  final VoidCallback onClose;
+
+  const _CommitFileDiffPane({
+    required this.detail,
+    required this.filePath,
+    required this.diffContent,
+    required this.loading,
+    required this.error,
+    required this.tokens,
+    required this.repoPath,
+    required this.onOpenFile,
+    required this.onClose,
+  });
+
+  @override
+  State<_CommitFileDiffPane> createState() => _CommitFileDiffPaneState();
+}
+
+class _CommitFileDiffPaneState extends State<_CommitFileDiffPane> {
+  late final FocusNode _focusNode =
+      FocusNode(debugLabel: 'CommitFileDiffPane');
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _onKey(FocusNode _, KeyEvent e) {
+    if (e is! KeyDownEvent) return KeyEventResult.ignored;
+    if (e.logicalKey == LogicalKeyboardKey.escape ||
+        e.logicalKey == LogicalKeyboardKey.backspace) {
+      widget.onClose();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final isAll = widget.filePath == _HistoryPageState._kAllFilesPath;
+    final headerPath = isAll
+        ? '${widget.detail.filesChanged} '
+            'file${widget.detail.filesChanged == 1 ? "" : "s"} · all changes'
+        : widget.filePath;
+    return Focus(
+      focusNode: _focusNode,
+      onKeyEvent: _onKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Row(children: [
+              MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: widget.onClose,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: AppIcon(
+                        name: 'arrow-left',
+                        size: 13,
+                        color: t.textMuted),
+                  ),
+                ),
+              ),
+              Flexible(
+                child: Text(
+                  headerPath,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 12,
+                    fontFamily: 'JetBrainsMono',
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: CommitSeismographRail(
+              detail: widget.detail,
+              // In all-files mode no specific bar is "live" — let the
+              // rail show every file equally so the user can scrub or
+              // tap straight into a single file's diff.
+              currentFile: isAll ? '' : widget.filePath,
+              tokens: t,
+              onOpenFile: widget.onOpenFile,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Expanded(
+            child: DiffShell(
+              // In all-files mode pass a synthetic label DiffShell can
+              // display as the file header — it natively renders
+              // multi-file diffs containing per-file `+++/---` markers.
+              filePath: isAll ? 'all changes' : widget.filePath,
+              tokens: t,
+              diffContent: widget.diffContent,
+              loading: widget.loading,
+              error: widget.error,
+              repositoryPath: widget.repoPath,
+              showFileHeader: isAll,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2259,58 +2555,24 @@ class _HistoryMiniButtonState extends State<_HistoryMiniButton> {
 class _StatChip extends StatelessWidget {
   final String label;
   final Color color;
-  const _StatChip({required this.label, required this.color});
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(4)),
-        child: Text(label,
-            style: TextStyle(
-                color: color, fontSize: 10, fontWeight: FontWeight.w600)),
-      );
-}
-
-class _ChangeTypeBadge extends StatelessWidget {
-  final String type;
-  final AppTokens tokens;
-  const _ChangeTypeBadge({required this.type, required this.tokens});
-
+  final VoidCallback? onTap;
+  const _StatChip({required this.label, required this.color, this.onTap});
   @override
   Widget build(BuildContext context) {
-    final t = tokens;
-    final Color color;
-    switch (type) {
-      case 'A':
-        color = t.stateAdded;
-        break;
-      case 'D':
-        color = t.stateDeleted;
-        break;
-      case 'R':
-        color = t.accentBright;
-        break;
-      case 'C':
-        color = t.accentBright.withValues(alpha: 0.8);
-        break;
-      default: // 'M' and others
-        color = t.textFaint;
-    }
-    return Container(
-      width: 14,
-      height: 14,
-      alignment: Alignment.center,
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(3),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
       ),
-      child: Text(type.substring(0, 1),
+      child: Text(label,
           style: TextStyle(
-              color: color,
-              fontSize: 9,
-              fontWeight: FontWeight.w700,
-              fontFamily: 'JetBrainsMono')),
+              color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+    );
+    if (onTap == null) return chip;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(onTap: onTap, child: chip),
     );
   }
 }

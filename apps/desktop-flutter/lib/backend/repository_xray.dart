@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:meta/meta.dart';
+
 import '../diagnostics/diagnostics_state.dart';
 import 'dtos.dart';
 import 'engram_fit.dart';
@@ -14,6 +16,15 @@ typedef XrayGitProbe = Future<ProcessResult> Function(
 typedef XrayStatusLoader = Future<GitResult<RepositoryStatus>> Function(
   String repo,
 );
+
+/// Sentinel token that git-log format strings in [buildRepositoryXraySnapshot]
+/// inject at the start of each commit-header line.  Every `--name-only` or
+/// `--shortstat` git-log call that feeds one of the parsers below MUST prefix
+/// its `--format=` or `--pretty=format:` value with this constant so parsers
+/// can locate commit boundaries.  Using the constant in both call sites and
+/// parser guards makes the coupling explicit and keeps substring offsets
+/// correct if the token is ever changed.
+const _kCommitMarker = '__C__';
 
 Future<GitResult<String>> computeRepositoryXrayFingerprint(
   String repo,
@@ -115,12 +126,24 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
           '--pretty=format:%H\t%h\t%ad\t%an\t%s',
         ],
       ),
-      cachedProbe.run(['log', '--all', '--name-only', '--format=']),
+      // Per-commit file lists with dates. The `__C__%ad` marker lets
+      // us slice the stream into dated commits without a second pass:
+      // each block starts with `__C__YYYY-MM-DD`, followed by the
+      // file paths touched in that commit. Drives both co-change
+      // (Jaccard pair walk) and the alive-mass age decay.
       cachedProbe.run(
-        ['log', '--all', '--grep=^t3 checkpoint', '--invert-grep', '--name-only', '--format='],
-      ),
+          ['log', '--all', '--name-only', '--date=short', '--format=${_kCommitMarker}%ad']),
+      cachedProbe.run([
+        'log',
+        '--all',
+        '--grep=^t3 checkpoint',
+        '--invert-grep',
+        '--name-only',
+        '--date=short',
+        '--format=${_kCommitMarker}%ad',
+      ]),
       cachedProbe.run(
-        ['log', '--all', '--shortstat', '--date=short', '--pretty=format:__C__%H\t%h\t%ad\t%an\t%s'],
+        ['log', '--all', '--shortstat', '--date=short', '--pretty=format:${_kCommitMarker}%H\t%h\t%ad\t%an\t%s'],
       ),
       cachedProbe.run(
         [
@@ -130,7 +153,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
           '--invert-grep',
           '--shortstat',
           '--date=short',
-          '--pretty=format:__C__%H\t%h\t%ad\t%an\t%s',
+          '--pretty=format:${_kCommitMarker}%H\t%h\t%ad\t%an\t%s',
         ],
       ),
       cachedProbe.run(['log', '--all', '--date=short', '--pretty=format:%ad']),
@@ -147,9 +170,14 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       cachedProbe.run(['worktree', 'list', '--porcelain']),
       cachedProbe.run(['log', '--all', '--merges', '--oneline']),
       cachedProbe.run(
-        ['log', '--all', '--diff-filter=R', '--summary', '--pretty=format:__C__%H'],
+        ['log', '--all', '--diff-filter=R', '--summary', '--pretty=format:${_kCommitMarker}%H'],
       ),
       cachedProbe.run(['remote', '-v']),
+      // Per-path size at HEAD. Single git call, gives us byte-size for
+      // every tracked file. Used as an existence filter (paths missing
+      // from HEAD or 0-byte get dropped from the Map view's input set
+      // — they're deleted/empty/binary stubs, not "alive code").
+      cachedProbe.run(['ls-tree', '-r', '-l', 'HEAD']),
     ]);
 
     final firstFailure = futures.cast<ProcessResult?>().firstWhere(
@@ -170,10 +198,35 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
     final rawAuthors = _parseShortlog(futures[10].stdout.toString());
     final filteredAuthors = _parseShortlog(futures[11].stdout.toString());
     final reflogDates = _countReflogSeries(futures[12].stdout.toString());
-    final rawPathTouches = _countPathTouches(futures[4].stdout.toString());
-    final filteredPathTouches = _countPathTouches(futures[5].stdout.toString());
-    final rawDirTouches = _countDirectoryTouches(futures[4].stdout.toString());
-    final filteredDirTouches = _countDirectoryTouches(futures[5].stdout.toString());
+    // ls-tree → Map<path, bytes>. When ls-tree comes back empty (e.g.,
+    // a freshly-init'd repo, or in tests without that fixture wired)
+    // we fall back to "unknown bytes" mode: no path is filtered, sizes
+    // are absent. Keeps both real-world and test paths working.
+    final pathBytes = _parseLsTreeBytes(futures[19].stdout.toString());
+
+    var rawPathTouches = _countPathTouches(futures[4].stdout.toString());
+    var filteredPathTouches = _countPathTouches(futures[5].stdout.toString());
+    if (pathBytes.isNotEmpty) {
+      // Edge filter: drop paths missing from HEAD or with 0 bytes.
+      // Cheap signal-floor cleanup — deleted files, empty stubs, and
+      // binary placeholders no longer pollute the Map's ranking.
+      bool keep(String path) {
+        final size = pathBytes[path];
+        return size != null && size > 0;
+      }
+      rawPathTouches = {
+        for (final e in rawPathTouches.entries)
+          if (keep(e.key)) e.key: e.value,
+      };
+      filteredPathTouches = {
+        for (final e in filteredPathTouches.entries)
+          if (keep(e.key)) e.key: e.value,
+      };
+    }
+    // Directory touches re-aggregate from the (now-filtered) per-path
+    // counts so a stratum's touchCount can't include deleted files.
+    final rawDirTouches = _aggregateDirTouchesFromPaths(rawPathTouches);
+    final filteredDirTouches = _aggregateDirTouchesFromPaths(filteredPathTouches);
 
     final localBranchCount = futures[1].stdout
         .toString()
@@ -200,31 +253,71 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         .toList()
       ..sort();
 
-    // Per-commit file sets for keystone-score derivation. Parsed from
-    // the same raw streams we already fetched — no extra git calls.
-    final rawCommitFiles = _parseCommitFileSets(futures[4].stdout.toString());
-    final filteredCommitFiles =
-        _parseCommitFileSets(futures[5].stdout.toString());
-    final rawKeystoneScores =
-        _computeKeystoneScores(rawCommitFiles, rawPathTouches);
-    final filteredKeystoneScores =
-        _computeKeystoneScores(filteredCommitFiles, filteredPathTouches);
+    // Dated per-commit file lists. Same parse drives co-change (Jaccard
+    // pair walk) and the alive-mass exponential decay (per-file last-
+    // touched date → age → exp(-age/halfLife)).
+    final rawDated = _parseDatedCommitFiles(futures[4].stdout.toString());
+    final filteredDated = _parseDatedCommitFiles(futures[5].stdout.toString());
+    final rawCommitFiles = [for (final c in rawDated) c.files];
+    final filteredCommitFiles = [for (final c in filteredDated) c.files];
+    final rawCoChange =
+        _computeCoChange(rawCommitFiles, rawPathTouches);
+    final filteredCoChange =
+        _computeCoChange(filteredCommitFiles, filteredPathTouches);
+
+    // Compute metabolism early so its halfLife seeds the alive-mass
+    // decay. Metabolism is cheap (single AR(2) fit on the date series)
+    // and was already computed downstream — just hoisted.
+    final metabolism = _computeMetabolism(filteredDates);
+
+    // Per-path last-touched + alive mass. Half-life self-derives from
+    // the AR(2) fit when available, else from the median commit age
+    // (also a half-life by definition). Reference date = newest commit
+    // in the snapshot to keep the decay stable across redraws of the
+    // same data (vs. wall-clock "now" which would tick).
+    final rawLastTouched = _pathLastTouchedAt(rawDated);
+    final filteredLastTouched = _pathLastTouchedAt(filteredDated);
+    final halfLifeDays =
+        _selectAliveHalfLife(metabolism.halfLifeDays, filteredDated);
+    final referenceDate = filteredLastTouched.values.isEmpty
+        ? DateTime.now()
+        : filteredLastTouched.values.reduce((a, b) => a.isAfter(b) ? a : b);
+    final rawPathAlive = _computeAliveMass(
+      touches: rawPathTouches,
+      lastTouched: rawLastTouched,
+      halfLifeDays: halfLifeDays,
+      referenceDate: referenceDate,
+    );
+    final filteredPathAlive = _computeAliveMass(
+      touches: filteredPathTouches,
+      lastTouched: filteredLastTouched,
+      halfLifeDays: halfLifeDays,
+      referenceDate: referenceDate,
+    );
+    final rawDirAlive = _aggregateAliveMassByDirectory(rawPathAlive);
+    final filteredDirAlive = _aggregateAliveMassByDirectory(filteredPathAlive);
 
     final rawHotspots = await _buildHotspots(
       rawPathTouches,
       rawDirTouches,
       true,
       cachedProbe.run,
-      rawKeystoneScores,
+      rawCoChange,
+      rawPathAlive,
     );
     final filteredHotspots = await _buildHotspots(
       filteredPathTouches,
       filteredDirTouches,
       false,
       cachedProbe.run,
-      filteredKeystoneScores,
+      filteredCoChange,
+      filteredPathAlive,
     );
-    final strata = await _buildStrata(filteredDirTouches, cachedProbe.run);
+    final strata = await _buildStrata(
+      filteredDirTouches,
+      cachedProbe.run,
+      filteredDirAlive,
+    );
     final rawPivots = _buildPivotCommits(rawShortstats);
     final filteredPivots = _buildPivotCommits(filteredShortstats);
     final migrationPair = _detectMigrationPair(strata);
@@ -295,11 +388,11 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       strata: strata,
       pivots: filteredPivots,
       rawPivots: rawPivots,
-      // Repo metabolism from the filtered (human) commit series.
-      // Machine-history dates would distort the oscillator — automated
-      // checkpoints produce a spurious steady rhythm that the AR(2)
-      // fit would happily report as "healthy."
-      metabolism: _computeMetabolism(filteredDates),
+      // Repo metabolism from the filtered (human) commit series — see
+      // hoisted computation above. Reused so the alive-mass decay and
+      // the metabolism card share the same AR(2) fit (one source of
+      // truth for repo time-constants).
+      metabolism: metabolism,
     );
 
     stopwatch.stop();
@@ -401,8 +494,8 @@ List<_ShortstatRecord> _parseShortstats(String output) {
   final records = <_ShortstatRecord>[];
   List<String>? current;
   for (final line in output.split('\n')) {
-    if (line.startsWith('__C__')) {
-      current = line.substring(5).split('\t');
+    if (line.startsWith(_kCommitMarker)) {
+      current = line.substring(_kCommitMarker.length).split('\t');
       continue;
     }
     if (current == null || !line.contains('changed') || current.length < 5) {
@@ -439,20 +532,127 @@ Map<String, int> _countDateSeries(String output) {
 /// Parse a `git log --name-only --format=` stream into per-commit file
 /// sets. With an empty format string git emits blank-metadata rows and
 /// name-per-line blocks separated by blank lines.
-List<Set<String>> _parseCommitFileSets(String raw) {
-  final out = <Set<String>>[];
-  Set<String>? current;
+/// One commit's file set with the commit date attached. The date is
+/// the source for both per-file "last touched" and the alive-mass
+/// exponential decay — same parse, no extra git work.
+class _DatedCommit {
+  _DatedCommit({required this.date, required this.files});
+  final DateTime? date;
+  final Set<String> files;
+}
+
+/// Parse `--name-only --format=__C__%ad` output into dated commit
+/// records. The `__C__YYYY-MM-DD` marker delimits commits; everything
+/// between markers is a path. Empty lines are tolerated.
+List<_DatedCommit> _parseDatedCommitFiles(String raw) {
+  final out = <_DatedCommit>[];
+  DateTime? curDate;
+  Set<String>? curFiles;
+  void flush() {
+    if (curFiles != null && curFiles!.isNotEmpty) {
+      out.add(_DatedCommit(date: curDate, files: curFiles!));
+    }
+    curFiles = null;
+  }
   for (final line in raw.split('\n')) {
     final trimmed = line.trim();
-    if (trimmed.isEmpty) {
-      if (current != null && current.isNotEmpty) out.add(current);
-      current = null;
+    if (trimmed.startsWith(_kCommitMarker)) {
+      flush();
+      curDate = DateTime.tryParse(trimmed.substring(_kCommitMarker.length));
+      curFiles = <String>{};
       continue;
     }
-    current ??= <String>{};
-    current.add(trimmed.replaceAll('\\', '/'));
+    if (trimmed.isEmpty) continue;
+    curFiles ??= <String>{};
+    curFiles!.add(trimmed.replaceAll('\\', '/'));
   }
-  if (current != null && current.isNotEmpty) out.add(current);
+  flush();
+  return out;
+}
+
+/// Project dated commits into per-path most-recent date. Used as the
+/// exponential-decay anchor in alive-mass.
+Map<String, DateTime> _pathLastTouchedAt(List<_DatedCommit> commits) {
+  final out = <String, DateTime>{};
+  for (final c in commits) {
+    final d = c.date;
+    if (d == null) continue;
+    for (final f in c.files) {
+      final prev = out[f];
+      if (prev == null || d.isAfter(prev)) out[f] = d;
+    }
+  }
+  return out;
+}
+
+/// Selects a decay half-life for alive-mass computation.
+///
+///   1. Use the AR(2) metabolism fit's `halfLifeDays` when finite —
+///      the decay constant the oscillator extracted from commit-rate
+///      eigenvalues.
+///   2. Otherwise fall back to the median commit age: by definition
+///      half the activity is older, half newer, so it's the same
+///      physical quantity derived from the cumulative distribution.
+double _selectAliveHalfLife(
+    double? metabolismHalfLifeDays, List<_DatedCommit> commits) {
+  if (metabolismHalfLifeDays != null &&
+      metabolismHalfLifeDays.isFinite &&
+      metabolismHalfLifeDays > 0) {
+    return metabolismHalfLifeDays;
+  }
+  final ages = <int>[];
+  DateTime? newest;
+  for (final c in commits) {
+    if (c.date == null) continue;
+    if (newest == null || c.date!.isAfter(newest)) newest = c.date;
+  }
+  if (newest == null) return double.infinity;
+  for (final c in commits) {
+    if (c.date == null) continue;
+    ages.add(newest.difference(c.date!).inDays.abs());
+  }
+  if (ages.isEmpty) return double.infinity;
+  ages.sort();
+  final median = ages[ages.length ~/ 2].toDouble();
+  return median > 0 ? median : 1.0;
+}
+
+/// Per-path alive mass = touchCount × exp(-ageDays / halfLife). The
+/// exponential is the canonical decay for memoryless decay processes;
+/// the half-life is repo-derived (see [_selectAliveHalfLife]). No
+/// floor — physically a 10-half-life-old file is ~0.1% of its prime
+/// mass, which is what we want it to read as.
+Map<String, double> _computeAliveMass({
+  required Map<String, int> touches,
+  required Map<String, DateTime> lastTouched,
+  required double halfLifeDays,
+  required DateTime referenceDate,
+}) {
+  if (!halfLifeDays.isFinite) {
+    return {for (final e in touches.entries) e.key: e.value.toDouble()};
+  }
+  final out = <String, double>{};
+  for (final entry in touches.entries) {
+    final last = lastTouched[entry.key];
+    final ageDays = last == null
+        ? halfLifeDays * 4 // unseen → ~6% of mass; treat as quite old
+        : referenceDate.difference(last).inDays.abs().toDouble();
+    final decay = math.exp(-ageDays / halfLifeDays);
+    out[entry.key] = entry.value.toDouble() * decay;
+  }
+  return out;
+}
+
+/// Aggregate per-file alive mass into per-directory-prefix mass using
+/// the same prefix scheme as [_countDirectoryTouches]. Strata sit on
+/// these directory prefixes, so this becomes the stratum size.
+Map<String, double> _aggregateAliveMassByDirectory(
+    Map<String, double> pathAliveMass) {
+  final out = <String, double>{};
+  for (final entry in pathAliveMass.entries) {
+    final prefix = _directoryPrefixForPath(entry.key.replaceAll('\\', '/'));
+    out.update(prefix, (v) => v + entry.value, ifAbsent: () => entry.value);
+  }
   return out;
 }
 
@@ -469,11 +669,36 @@ List<Set<String>> _parseCommitFileSets(String raw) {
 /// we want pull-per-touch to identify files whose *each touch* is
 /// structurally heavy. Top 10% (or ≥3 files for tiny repos) get
 /// `isKeystone = true`.
-Map<String, double> _computeKeystoneScores(
+/// Result of one co-change pass over the commit history. Carries both
+/// the per-file keystone score (pull-per-touch) and the per-file top-N
+/// co-changers, both derived from the same Jaccard-weighted pair walk
+/// — same loop, no extra git work.
+class _CoChangeAnalysis {
+  const _CoChangeAnalysis({
+    required this.scores,
+    required this.coupling,
+  });
+
+  /// Pull-per-touch keystone score, file → score.
+  final Map<String, double> scores;
+
+  /// File → top-N co-changed paths, ranked by Jaccard descending.
+  /// Drives the Map view's coupling overlay.
+  final Map<String, List<String>> coupling;
+}
+
+/// How many co-changed neighbours we keep per file. Five is enough to
+/// draw a useful "what moves with this" overlay without crowding the
+/// treemap with a hairball of lines.
+const int _couplingNeighborCap = 5;
+
+_CoChangeAnalysis _computeCoChange(
   List<Set<String>> commits,
   Map<String, int> touches,
 ) {
-  if (commits.isEmpty || touches.isEmpty) return const {};
+  if (commits.isEmpty || touches.isEmpty) {
+    return const _CoChangeAnalysis(scores: {}, coupling: {});
+  }
 
   // Per-file membership index — commitIndex → filesInCommit is given;
   // we need its transpose: file → set of commit indices.
@@ -507,25 +732,37 @@ Map<String, double> _computeKeystoneScores(
   }
 
   final scores = <String, double>{};
+  final coupling = <String, List<String>>{};
   for (final entry in pairWeights.entries) {
     final f = entry.key;
     final neighbours = entry.value;
     final nf = fileCommits[f]?.length ?? 0;
     if (nf == 0) continue;
     var pull = 0.0;
+    final perNeighbourJ = <MapEntry<String, double>>[];
     for (final n in neighbours.entries) {
       final ng = fileCommits[n.key]?.length ?? 0;
       if (ng == 0) continue;
       // Jaccard: co / (nf + ng - co).
       final co = n.value;
       final union = nf + ng - co;
-      if (union > 0) pull += co / union;
+      if (union <= 0) continue;
+      final j = co / union;
+      pull += j;
+      perNeighbourJ.add(MapEntry(n.key, j));
     }
     final touch = touches[f] ?? nf;
     final divisor = math.log(1 + touch);
     scores[f] = divisor > 0 ? pull / divisor : pull;
+    if (perNeighbourJ.isNotEmpty) {
+      perNeighbourJ.sort((a, b) => b.value.compareTo(a.value));
+      coupling[f] = perNeighbourJ
+          .take(_couplingNeighborCap)
+          .map((e) => e.key)
+          .toList(growable: false);
+    }
   }
-  return scores;
+  return _CoChangeAnalysis(scores: scores, coupling: coupling);
 }
 
 /// Derive the repo's metabolism from its daily commit-rate series.
@@ -648,15 +885,66 @@ Map<String, int> _parseShortlog(String output) {
 
 Map<String, int> _countPathTouches(String output) {
   final counts = <String, int>{};
-  for (final path in output.split('\n').map((line) => line.trim()).where((line) => line.isNotEmpty)) {
+  for (final line in output.split('\n')) {
+    final path = line.trim();
+    if (path.isEmpty) continue;
+    // Skip the per-commit date marker injected by the `__C__%ad` format
+    // — those lines tag the commit boundary, they are not file paths.
+    if (path.startsWith(_kCommitMarker)) continue;
     counts.update(path, (value) => value + 1, ifAbsent: () => 1);
   }
   return counts;
 }
 
+/// Re-aggregate per-directory touch counts from a (possibly filtered)
+/// per-path map. Same prefix scheme as [_countDirectoryTouches], just
+/// fed from already-counted data instead of the raw git-log stream.
+Map<String, int> _aggregateDirTouchesFromPaths(Map<String, int> pathTouches) {
+  final out = <String, int>{};
+  for (final entry in pathTouches.entries) {
+    final prefix = _directoryPrefixForPath(entry.key.replaceAll('\\', '/'));
+    out.update(prefix, (v) => v + entry.value, ifAbsent: () => entry.value);
+  }
+  return out;
+}
+
+/// Parse `git ls-tree -r -l HEAD` into Map<path, bytes>. Each line is:
+///
+///   <mode> SP <type> SP <object> <pad> <size> TAB <path>
+///
+/// Exactly one TAB separates the metadata block from the path. The
+/// metadata block ends in a space-padded size column, which may be
+/// `-` for non-blob entries (commits in submodules) — those we skip.
+@visibleForTesting
+Map<String, int> parseLsTreeBytesForTesting(String output) =>
+    _parseLsTreeBytes(output);
+
+Map<String, int> _parseLsTreeBytes(String output) {
+  final out = <String, int>{};
+  for (final line in output.split('\n')) {
+    if (line.isEmpty) continue;
+    final tabIdx = line.indexOf('\t');
+    if (tabIdx <= 0) continue;
+    // Left side: mode type object size (space-separated, size is the
+    // last whitespace-delimited token).
+    final left = line.substring(0, tabIdx);
+    final lastSpace = left.lastIndexOf(' ');
+    if (lastSpace < 0) continue;
+    final sizeStr = left.substring(lastSpace + 1).trim();
+    final path = line.substring(tabIdx + 1).replaceAll('\\', '/');
+    final size = int.tryParse(sizeStr);
+    if (size == null) continue; // submodule commit ('-') or malformed
+    out[path] = size;
+  }
+  return out;
+}
+
 Map<String, int> _countDirectoryTouches(String output) {
   final counts = <String, int>{};
-  for (final path in output.split('\n').map((line) => line.trim()).where((line) => line.isNotEmpty)) {
+  for (final line in output.split('\n')) {
+    final path = line.trim();
+    if (path.isEmpty) continue;
+    if (path.startsWith(_kCommitMarker)) continue;
     final prefix = _directoryPrefixForPath(path.replaceAll('\\', '/'));
     counts.update(prefix, (value) => value + 1, ifAbsent: () => 1);
   }
@@ -668,8 +956,11 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
   Map<String, int> dirTouches,
   bool includeMachineHistory,
   Future<ProcessResult> Function(List<String> args) probe,
-  Map<String, double> keystoneScores,
+  _CoChangeAnalysis coChange,
+  Map<String, double> pathAliveMass,
 ) async {
+  final keystoneScores = coChange.scores;
+  final coupling = coChange.coupling;
   final files = pathTouches.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
   final dirs = dirTouches.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
 
@@ -680,9 +971,13 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
   // frequency alone.
   final keystoneFlags = _flagKeystones(keystoneScores);
 
-  // Canonical hotspot selection: top-N by raw touch count.
+  // Hotspot candidate set: top-N files by raw touch count. The cap is
+  // a *data-volume* bound (each enrich = 2 git probes), not a UX gate.
+  // The Map view's render-time area filter decides how many actually
+  // appear on screen — readable tile area derives from font metrics +
+  // canvas size, not from this number.
   final picked = <String>{
-    for (final entry in files.take(4)) entry.key,
+    for (final entry in files.take(_mapHotspotCandidateCap)) entry.key,
   };
 
   // Keystone supplementation: any flagged keystone file not already
@@ -709,8 +1004,10 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
         probe,
         keystoneScores[path],
         keystoneFlags.contains(path),
+        coupling[path] ?? const [],
+        pathAliveMass[path] ?? (pathTouches[path] ?? 0).toDouble(),
       ),
-    for (final entry in dirs.take(4))
+    for (final entry in dirs.take(_mapDirHotspotCandidateCap))
       _enrichHotspot(
         entry.key,
         'directory',
@@ -719,6 +1016,8 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
         probe,
         null,
         false,
+        const [],
+        pathAliveMass[entry.key] ?? entry.value.toDouble(),
       ),
   ];
   final hotspots = await Future.wait(hotspotFutures);
@@ -731,6 +1030,24 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
   });
   return hotspots;
 }
+
+/// Map view candidate caps. These are *data-volume* bounds — the
+/// number of paths the backend surfaces to the renderer — not UX
+/// limits. The renderer culls by tile area (font-derived readability
+/// floor), so the visible count emerges from canvas size, not these.
+///
+/// Each cap is sized to the semantic shape it carries:
+///  • Strata are top-level directory partitions; even monorepos rarely
+///    have more than a handful of meaningful ones.
+///  • File hotspots want diversity — the renderer should be able to
+///    show many on a wide window, few on a narrow one.
+///  • Directory hotspots fill the gap between strata and files.
+///
+/// Each `_enrichHotspot` issues 2 git probes in parallel, so the sum
+/// also bounds subprocess fan-out per snapshot.
+const int _mapStratumCandidateCap = 12;
+const int _mapHotspotCandidateCap = 40;
+const int _mapDirHotspotCandidateCap = 16;
 
 /// Fraction of the distribution that counts as "keystone". Top 10%
 /// by construction — a file has to be in the best-tenth of the
@@ -779,6 +1096,8 @@ Future<RepositoryXrayHotspotData> _enrichHotspot(
   Future<ProcessResult> Function(List<String> args) probe,
   double? keystoneScore,
   bool isKeystone,
+  List<String> coupledTo,
+  double aliveMass,
 ) async {
   final authorArgs = ['log', '--format=%an'];
   final recentArgs = ['log', '-n', '1', '--date=short', '--format=%H\t%h\t%ad'];
@@ -812,17 +1131,20 @@ Future<RepositoryXrayHotspotData> _enrichHotspot(
     latestShortHash: recentParts.length > 1 && recentParts[1].isNotEmpty ? recentParts[1] : null,
     keystoneScore: keystoneScore,
     isKeystone: isKeystone,
+    coupledTo: coupledTo,
+    aliveMass: aliveMass,
   );
 }
 
 Future<List<RepositoryXrayStratumData>> _buildStrata(
   Map<String, int> dirTouches,
   Future<ProcessResult> Function(List<String> args) probe,
+  Map<String, double> dirAliveMass,
 ) async {
   final entries = dirTouches.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
   return Future.wait(
     [
-      for (final entry in entries.take(4))
+      for (final entry in entries.take(_mapStratumCandidateCap))
         () async {
           final results = await Future.wait([
             probe(['log', '--grep=^t3 checkpoint', '--invert-grep', '--format=%an', '--', entry.key]),
@@ -854,6 +1176,7 @@ Future<List<RepositoryXrayStratumData>> _buildStrata(
                 .length,
             lastTouchedAt: recentResult.stdout.toString().trim(),
             summary: 'Touched ${entry.value} times in filtered history.',
+            aliveMass: dirAliveMass[entry.key] ?? entry.value.toDouble(),
           );
         }(),
     ],
@@ -1293,8 +1616,8 @@ int _countRenameCommits(String output) {
   String? currentCommit;
   for (final rawLine in output.split('\n')) {
     final line = rawLine.trim();
-    if (line.startsWith('__C__')) {
-      currentCommit = line.substring(5).trim();
+    if (line.startsWith(_kCommitMarker)) {
+      currentCommit = line.substring(_kCommitMarker.length).trim();
       continue;
     }
     if (line.startsWith('rename ') && currentCommit != null) {

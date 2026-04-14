@@ -26,6 +26,8 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'logos_core.dart';
+
 // ─────────────────────────────────────────────────────────────────────────
 // Chunker — split a source file on signature-line boundaries.
 //
@@ -180,15 +182,9 @@ List<SourceChunk> chunkSourceFile(String content) {
 // stop-list). Duplicated by convention so this module stays self-contained.
 // ─────────────────────────────────────────────────────────────────────────
 
-final _nonWord = RegExp(r'[^A-Za-z0-9]+');
-final _camelBoundary = RegExp(r'(?<=[a-z0-9])(?=[A-Z])');
-
-const _commonWords = <String>{
-  'the', 'and', 'for', 'with', 'from', 'this', 'that', 'into', 'null',
-  'true', 'false', 'return', 'function', 'const', 'let', 'var', 'final',
-  'new', 'get', 'set', 'void', 'int', 'string', 'bool', 'double', 'list',
-  'map', 'else', 'then', 'import', 'export', 'class', 'async', 'await',
-};
+final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
+final _camelBoundary =
+    RegExp(r'(?<=[\p{Ll}\p{N}])(?=[\p{Lu}])', unicode: true);
 
 Set<String> _tokensOf(String text) {
   if (text.isEmpty) return const {};
@@ -197,52 +193,66 @@ Set<String> _tokensOf(String text) {
     if (raw.isEmpty) continue;
     for (final piece in raw.split(_camelBoundary)) {
       if (piece.length < 3) continue;
-      final lower = piece.toLowerCase();
-      if (_commonWords.contains(lower)) continue;
-      tokens.add(lower);
+      tokens.add(piece.toLowerCase());
     }
   }
   return tokens;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// CSR graph + Chebyshev kernel. Mirrors logos_hunks; kept private so the
-// chunk path can evolve independently of the hunk and file paths.
-// ─────────────────────────────────────────────────────────────────────────
-
-class _CsrChunkGraph {
-  _CsrChunkGraph({
-    required this.n,
-    required this.indptr,
-    required this.indices,
-    required this.values,
-  });
-  final int n;
-  final Int32List indptr;
-  final Int32List indices;
-  final Float64List values;
-
-  void applyLsym(Float64List v, Float64List out) {
-    for (var i = 0; i < n; i++) {
-      double s = 0;
-      final start = indptr[i];
-      final end = indptr[i + 1];
-      for (var k = start; k < end; k++) {
-        s += values[k] * v[indices[k]];
-      }
-      out[i] = v[i] - s;
+/// File-local stop-set: tokens above the kneedle cutoff on the
+/// descending per-chunk document-frequency curve. Empty when the
+/// curve has no shape (< 5 chunks, flat, or no clear head).
+Set<String> _deriveStopTokens(List<Set<String>> perChunkTokens) {
+  if (perChunkTokens.length < 5) return const {};
+  final docFreq = <String, int>{};
+  for (final ts in perChunkTokens) {
+    for (final t in ts) {
+      docFreq[t] = (docFreq[t] ?? 0) + 1;
     }
   }
+  if (docFreq.length < 3) return const {};
+  final sorted = docFreq.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  final n = sorted.length;
+  final maxV = sorted.first.value.toDouble();
+  final minV = sorted.last.value.toDouble();
+  final spread = maxV - minV;
+  if (spread <= 0) return const {};
+  var kneeIdx = 0;
+  var bestDist = -1.0;
+  for (var i = 0; i < n; i++) {
+    final x = i / (n - 1);
+    final y = (sorted[i].value - minV) / spread;
+    final d = (y + x - 1).abs();
+    if (d > bestDist) {
+      bestDist = d;
+      kneeIdx = i;
+    }
+  }
+  // Knee at the head means no clear split between high-freq and tail.
+  if (kneeIdx == 0) return const {};
+  final stop = <String>{};
+  for (var i = 0; i <= kneeIdx; i++) {
+    stop.add(sorted[i].key);
+  }
+  return stop;
 }
 
-_CsrChunkGraph _buildChunkGraph({
+// ─────────────────────────────────────────────────────────────────────────
+// Chunk-graph construction. Diffusion math lives in logos_core.dart —
+// this file only owns the chunk-specific axis blend (C_sym / C_prox /
+// C_struct) and the source-mass model. The graph itself is the shared
+// [CsrGraph] type.
+// ─────────────────────────────────────────────────────────────────────────
+
+CsrGraph _buildChunkGraph({
   required List<SourceChunk> chunks,
   required List<Set<String>> tokens,
   required int topK,
 }) {
   final n = chunks.length;
   if (n == 0) {
-    return _CsrChunkGraph(
+    return CsrGraph(
       n: 0,
       indptr: Int32List(1),
       indices: Int32List(0),
@@ -387,7 +397,7 @@ _CsrChunkGraph _buildChunkGraph({
     }
   }
 
-  return _CsrChunkGraph(
+  return CsrGraph(
     n: n,
     indptr: indptr,
     indices: indices,
@@ -401,90 +411,9 @@ class _Edge {
   final double w;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Chebyshev-Bessel coefficients + heat-kernel recombine. Same recurrence
-// as logos_git.dart and logos_hunks.dart; reproduced inline.
-// ─────────────────────────────────────────────────────────────────────────
-
-const int _kChebyshev = 24;
-
-List<double> _besselCoeffs(double t, int K) {
-  final coeffs = List<double>.filled(K + 1, 0.0);
-  final eNegT = math.exp(-t);
-  final half = t / 2.0;
-  for (var k = 0; k <= K; k++) {
-    var term = 1.0;
-    for (var i = 1; i <= k; i++) {
-      term *= half / i;
-    }
-    var sum = term;
-    var m = 0;
-    while (true) {
-      m++;
-      term *= (half * half) / (m * (m + k));
-      sum += term;
-      if (term.abs() < 1e-18) break;
-      if (m > 400) break;
-    }
-    final ikT = sum;
-    final ikMinusT = (k.isEven ? 1.0 : -1.0) * ikT;
-    final c = (k == 0 ? 1.0 : 2.0) * eNegT * ikMinusT;
-    coeffs[k] = c;
-  }
-  return coeffs;
-}
-
-Float64List _buildBasis({
-  required _CsrChunkGraph graph,
-  required Float64List rho,
-  required int K,
-}) {
-  final n = graph.n;
-  final basis = Float64List((K + 1) * n);
-  for (var i = 0; i < n; i++) {
-    basis[i] = rho[i];
-  }
-  final scratch = Float64List(n);
-  final t0 = Float64List.fromList(rho);
-  final t1 = Float64List(n);
-  graph.applyLsym(t0, scratch);
-  for (var i = 0; i < n; i++) {
-    t1[i] = scratch[i] - t0[i];
-    basis[n + i] = t1[i];
-  }
-  final t2 = Float64List(n);
-  for (var k = 2; k <= K; k++) {
-    graph.applyLsym(t1, scratch);
-    final base = k * n;
-    for (var i = 0; i < n; i++) {
-      t2[i] = 2 * (scratch[i] - t1[i]) - t0[i];
-      basis[base + i] = t2[i];
-    }
-    t0.setAll(0, t1);
-    t1.setAll(0, t2);
-  }
-  return basis;
-}
-
-Float64List _recombinePhi({
-  required _CsrChunkGraph graph,
-  required Float64List basis,
-  required double t,
-  required int K,
-}) {
-  final n = graph.n;
-  final coeffs = _besselCoeffs(t, K);
-  final phi = Float64List(n);
-  for (var k = 0; k <= K; k++) {
-    final c = coeffs[k];
-    if (c.abs() < 1e-12) continue;
-    final base = k * n;
-    for (var i = 0; i < n; i++) {
-      phi[i] += c * basis[base + i];
-    }
-  }
-  return phi;
-}
+// Chebyshev/Bessel math + heat-kernel diffusion live in logos_core.dart
+// — see [chebyshevBasis], [recombineHeatPhi], and [kChebyshevSmallGraph]
+// for the polynomial-order policy this engine shares with logos_hunks.
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public API — pack the most relevant chunks of one source file under a
@@ -606,18 +535,26 @@ ChunkPackResult packRelevantChunks({
     rho[i] /= totalMass;
   }
 
-  final tokens = List<Set<String>>.generate(n, (i) => _tokensOf(chunks[i].body));
+  // Tokenize, then filter tokens the kneedle identifies as file-local
+  // noise (tokens appearing in most chunks).
+  final rawTokens =
+      List<Set<String>>.generate(n, (i) => _tokensOf(chunks[i].body));
+  final stopSet = _deriveStopTokens(rawTokens);
+  final tokens = stopSet.isEmpty
+      ? rawTokens
+      : [for (final ts in rawTokens) ts.difference(stopSet)];
   final topK = math.max(4, math.sqrt(n).ceil());
   final graph = _buildChunkGraph(chunks: chunks, tokens: tokens, topK: topK);
 
   // Three-temperature blend (geometric mean) — same trick as logos_hunks.
-  final basis = _buildBasis(graph: graph, rho: rho, K: _kChebyshev);
+  // Basis built once via the shared core, then recombined at three t's.
+  final basis = chebyshevBasis(graph: graph, rho: rho, K: kChebyshevSmallGraph);
   final phi05 =
-      _recombinePhi(graph: graph, basis: basis, t: 0.5, K: _kChebyshev);
+      recombineHeatPhi(graph: graph, basis: basis, t: 0.5, K: kChebyshevSmallGraph);
   final phi10 =
-      _recombinePhi(graph: graph, basis: basis, t: 1.0, K: _kChebyshev);
+      recombineHeatPhi(graph: graph, basis: basis, t: 1.0, K: kChebyshevSmallGraph);
   final phi20 =
-      _recombinePhi(graph: graph, basis: basis, t: 2.0, K: _kChebyshev);
+      recombineHeatPhi(graph: graph, basis: basis, t: 2.0, K: kChebyshevSmallGraph);
   const eps = 1e-12;
   final blended = Float64List(n);
   for (var i = 0; i < n; i++) {

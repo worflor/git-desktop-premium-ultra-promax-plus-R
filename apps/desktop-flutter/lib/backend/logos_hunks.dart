@@ -32,6 +32,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'logos_core.dart';
 import 'logos_git.dart' show LogosGit;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -171,8 +172,9 @@ String _pathFromDiffHeader(String line) {
 // coupling here are the same kind logos treats as meaningful elsewhere.
 // ─────────────────────────────────────────────────────────────────────────
 
-final _nonWord = RegExp(r'[^A-Za-z0-9]+');
-final _camelBoundary = RegExp(r'(?<=[a-z0-9])(?=[A-Z])');
+final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
+final _camelBoundary =
+    RegExp(r'(?<=[\p{Ll}\p{N}])(?=[\p{Lu}])', unicode: true);
 
 Set<String> _tokensOf(String text) {
   if (text.isEmpty) return const {};
@@ -181,24 +183,52 @@ Set<String> _tokensOf(String text) {
     if (raw.isEmpty) continue;
     for (final piece in raw.split(_camelBoundary)) {
       if (piece.length < 3) continue; // drop noise like 'i', 'id', 'fn'
-      final lower = piece.toLowerCase();
-      if (_isCommonWord(lower)) continue;
-      tokens.add(lower);
+      tokens.add(piece.toLowerCase());
     }
   }
   return tokens;
 }
 
-// Tiny stop-list — universal programming filler; not language-specific
-// enough to cause trouble, just trims noise that would saturate the
-// inverted index.
-const _commonWords = <String>{
-  'the', 'and', 'for', 'with', 'from', 'this', 'that', 'into', 'null',
-  'true', 'false', 'return', 'function', 'const', 'let', 'var', 'final',
-  'new', 'get', 'set', 'void', 'int', 'string', 'bool', 'double', 'list',
-  'map', 'else', 'then', 'import', 'export', 'class', 'async', 'await',
-};
-bool _isCommonWord(String s) => _commonWords.contains(s);
+/// Returns the diff-local stop-set: tokens above the kneedle cutoff on
+/// the descending per-hunk document-frequency curve. Empty on diffs
+/// too small for the curve to have shape (< 5 hunks), or when the
+/// distribution is flat or the top token doesn't stand out.
+Set<String> _deriveStopTokens(List<Set<String>> perHunkTokens) {
+  if (perHunkTokens.length < 5) return const {};
+  final docFreq = <String, int>{};
+  for (final ts in perHunkTokens) {
+    for (final t in ts) {
+      docFreq[t] = (docFreq[t] ?? 0) + 1;
+    }
+  }
+  if (docFreq.length < 3) return const {};
+  final sorted = docFreq.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  final n = sorted.length;
+  final maxV = sorted.first.value.toDouble();
+  final minV = sorted.last.value.toDouble();
+  final spread = maxV - minV;
+  if (spread <= 0) return const {};
+  // Kneedle — bend of the descending curve (0,1)→(1,0).
+  var kneeIdx = 0;
+  var bestDist = -1.0;
+  for (var i = 0; i < n; i++) {
+    final x = i / (n - 1);
+    final y = (sorted[i].value - minV) / spread;
+    final d = (y + x - 1).abs();
+    if (d > bestDist) {
+      bestDist = d;
+      kneeIdx = i;
+    }
+  }
+  // Knee at the head means no clear split between high-freq and tail.
+  if (kneeIdx == 0) return const {};
+  final stop = <String>{};
+  for (var i = 0; i <= kneeIdx; i++) {
+    stop.add(sorted[i].key);
+  }
+  return stop;
+}
 
 /// Only the +/- payload contributes to hunk identifier tokens — that's
 /// the *change*, not the unchanged context.
@@ -217,36 +247,10 @@ Set<String> _hunkChangeTokens(DiffHunk hunk) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// CSR graph + Chebyshev heat-kernel — mirrors logos_git.dart but private
-// to this module. Kept inline so the hunk path is self-contained and the
-// file graph (logos_git) can evolve independently.
+// Hunk-graph construction. Diffusion math lives in logos_core.dart —
+// this file only owns the hunk-specific axis blend (H_sym / H_file /
+// H_prox / H_vol) and the source-mass model.
 // ─────────────────────────────────────────────────────────────────────────
-
-class _CsrHunkGraph {
-  _CsrHunkGraph({
-    required this.n,
-    required this.indptr,
-    required this.indices,
-    required this.values,
-  });
-  final int n;
-  final Int32List indptr;
-  final Int32List indices;
-  /// Already fused with D^{-1/2} on both sides — applyLsym is v - W_norm·v.
-  final Float64List values;
-
-  void applyLsym(Float64List v, Float64List out) {
-    for (var i = 0; i < n; i++) {
-      double s = 0;
-      final start = indptr[i];
-      final end = indptr[i + 1];
-      for (var k = start; k < end; k++) {
-        s += values[k] * v[indices[k]];
-      }
-      out[i] = v[i] - s;
-    }
-  }
-}
 
 /// Build the hunk graph.
 ///
@@ -254,7 +258,7 @@ class _CsrHunkGraph {
 /// the file-φ score from LogosGit. When building cross-file hunk edges we
 /// multiply by this to get hunk-level cross-file weight for free — the
 /// factorisation trick.
-_CsrHunkGraph _buildHunkGraph({
+CsrGraph _buildHunkGraph({
   required List<DiffHunk> hunks,
   required List<Set<String>> tokens,
   required Map<String, double> fileCouplingFromParent,
@@ -262,7 +266,7 @@ _CsrHunkGraph _buildHunkGraph({
 }) {
   final n = hunks.length;
   if (n == 0) {
-    return _CsrHunkGraph(
+    return CsrGraph(
       n: 0,
       indptr: Int32List(1),
       indices: Int32List(0),
@@ -492,7 +496,7 @@ _CsrHunkGraph _buildHunkGraph({
     }
   }
 
-  return _CsrHunkGraph(
+  return CsrGraph(
     n: n,
     indptr: indptr,
     indices: indices,
@@ -506,100 +510,9 @@ class _Edge {
   final double w;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Chebyshev-Bessel coefficients and heat-kernel recombine.
-//
-// Same recurrence as logos_git.dart's _buildDiffusionBasis; reproduced
-// here to keep this module independent of that file's private symbols.
-// ─────────────────────────────────────────────────────────────────────────
-
-const int _kChebyshev = 24;
-
-List<double> _besselCoeffs(double t, int K) {
-  // c_k(t) = 2·e^{-t}·I_k(-t) for k≥1, c_0 = e^{-t}·I_0(-t).
-  // I_k(-t) = (-1)^k · I_k(t).
-  // Compute I_k(t) via the ascending power series:
-  //   I_k(t) = Σ_{m=0..∞} (t/2)^{2m+k} / (m! · (m+k)!)
-  // Converges fast for our t ∈ [0.5, 2.0].
-  final coeffs = List<double>.filled(K + 1, 0.0);
-  final eNegT = math.exp(-t);
-  final half = t / 2.0;
-  for (var k = 0; k <= K; k++) {
-    // Compute I_k(t) by series; stop when terms fall below 1e-18.
-    var term = 1.0;
-    // (t/2)^k / k!
-    for (var i = 1; i <= k; i++) {
-      term *= half / i;
-    }
-    var sum = term;
-    var m = 0;
-    while (true) {
-      m++;
-      // term *= (t/2)^2 / (m · (m+k))
-      term *= (half * half) / (m * (m + k));
-      sum += term;
-      if (term.abs() < 1e-18) break;
-      if (m > 400) break;
-    }
-    final ikT = sum;
-    final ikMinusT = (k.isEven ? 1.0 : -1.0) * ikT;
-    final c = (k == 0 ? 1.0 : 2.0) * eNegT * ikMinusT;
-    coeffs[k] = c;
-  }
-  return coeffs;
-}
-
-Float64List _recombinePhi({
-  required _CsrHunkGraph graph,
-  required Float64List basis, // (K+1) · n row-major
-  required double t,
-  required int K,
-}) {
-  final n = graph.n;
-  final coeffs = _besselCoeffs(t, K);
-  final phi = Float64List(n);
-  for (var k = 0; k <= K; k++) {
-    final c = coeffs[k];
-    if (c.abs() < 1e-12) continue;
-    final base = k * n;
-    for (var i = 0; i < n; i++) {
-      phi[i] += c * basis[base + i];
-    }
-  }
-  return phi;
-}
-
-Float64List _buildBasis({
-  required _CsrHunkGraph graph,
-  required Float64List rho,
-  required int K,
-}) {
-  final n = graph.n;
-  final basis = Float64List((K + 1) * n);
-  for (var i = 0; i < n; i++) {
-    basis[i] = rho[i];
-  }
-  final scratch = Float64List(n);
-  final t0 = Float64List.fromList(rho);
-  final t1 = Float64List(n);
-  graph.applyLsym(t0, scratch);
-  for (var i = 0; i < n; i++) {
-    t1[i] = scratch[i] - t0[i];
-    basis[n + i] = t1[i];
-  }
-  final t2 = Float64List(n);
-  for (var k = 2; k <= K; k++) {
-    graph.applyLsym(t1, scratch);
-    final base = k * n;
-    for (var i = 0; i < n; i++) {
-      t2[i] = 2 * (scratch[i] - t1[i]) - t0[i];
-      basis[base + i] = t2[i];
-    }
-    t0.setAll(0, t1);
-    t1.setAll(0, t2);
-  }
-  return basis;
-}
+// Chebyshev/Bessel math + heat-kernel diffusion live in logos_core.dart
+// — see [chebyshevBasis], [recombineHeatPhi], and [kChebyshevSmallGraph]
+// for the polynomial-order policy this engine shares with logos_chunks.
 
 // ─────────────────────────────────────────────────────────────────────────
 // Public API — rank hunks by semantic centrality φ in this diff.
@@ -643,7 +556,14 @@ HunkDiffusionResult rankHunksByPhi({
   }
 
   // Token sets per hunk (change lines only).
-  final tokens = List<Set<String>>.generate(n, (i) => _hunkChangeTokens(hunks[i]));
+  // Tokenize, then filter tokens the kneedle identifies as diff-local
+  // noise (tokens that appear in most hunks).
+  final rawTokens =
+      List<Set<String>>.generate(n, (i) => _hunkChangeTokens(hunks[i]));
+  final stopSet = _deriveStopTokens(rawTokens);
+  final tokens = stopSet.isEmpty
+      ? rawTokens
+      : [for (final ts in rawTokens) ts.difference(stopSet)];
 
   // Cross-file coupling prior: ask logos how "hot" each touched file is
   // when the source set is the whole touched-file set. Every touched file
@@ -700,11 +620,13 @@ HunkDiffusionResult rankHunksByPhi({
   }
 
   // Build the Chebyshev basis once, recombine at three temperatures.
-  final basis = _buildBasis(graph: graph, rho: rho, K: _kChebyshev);
+  // Build the Chebyshev basis once via the shared core, then recombine
+  // at three temperatures for the geometric-mean blend.
+  final basis = chebyshevBasis(graph: graph, rho: rho, K: kChebyshevSmallGraph);
 
-  final phi05 = _recombinePhi(graph: graph, basis: basis, t: 0.5, K: _kChebyshev);
-  final phi10 = _recombinePhi(graph: graph, basis: basis, t: 1.0, K: _kChebyshev);
-  final phi20 = _recombinePhi(graph: graph, basis: basis, t: 2.0, K: _kChebyshev);
+  final phi05 = recombineHeatPhi(graph: graph, basis: basis, t: 0.5, K: kChebyshevSmallGraph);
+  final phi10 = recombineHeatPhi(graph: graph, basis: basis, t: 1.0, K: kChebyshevSmallGraph);
+  final phi20 = recombineHeatPhi(graph: graph, basis: basis, t: 2.0, K: kChebyshevSmallGraph);
 
   const eps = 1e-12;
   final blended = Float64List(n);

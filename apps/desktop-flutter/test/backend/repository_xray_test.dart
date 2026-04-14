@@ -3,7 +3,11 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/dtos.dart';
 import 'package:git_desktop/backend/git_result.dart';
-import 'package:git_desktop/backend/repository_xray.dart';
+import 'package:git_desktop/backend/repository_xray.dart'
+    show
+        buildRepositoryXraySnapshot,
+        computeRepositoryXrayFingerprint,
+        parseLsTreeBytesForTesting;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -120,6 +124,26 @@ void main() {
       expect(statusCalls, 1);
       expect(commandCounts['rev-parse HEAD'], 1);
     });
+
+    test('ls-tree parser handles the real git format (single-tab, padded size)', () {
+      // Real `git ls-tree -r -l HEAD` output: one TAB between the
+      // right-padded size column and the path. Submodule entries use
+      // `-` for size (no fixed byte count) and must be skipped.
+      const sample =
+          '100644 blob 2971eee6b7a810f1b9c7ae48d83a97657df4130b      92\t.claude/scheduled_tasks.lock\n'
+          '100644 blob dfe0770424b2a19faf507a501ebfc23be8f54e7b      66\t.gitattributes\n'
+          '100644 blob 8a140d78e49e02fd1aa63707a66f5e836bdd12a6    2013\t.github/workflows/desktop-ci.yml\n'
+          '160000 commit abcdef1234567890abcdef1234567890abcdef12       -\tvendor/sub\n';
+
+      final parsed = parseLsTreeBytesForTesting(sample);
+
+      expect(parsed['.claude/scheduled_tasks.lock'], 92);
+      expect(parsed['.gitattributes'], 66);
+      expect(parsed['.github/workflows/desktop-ci.yml'], 2013);
+      // Submodule commit ('-' size) is skipped — not a blob, has no
+      // byte count to feed the alive-mass filter.
+      expect(parsed.containsKey('vendor/sub'), isFalse);
+    });
   });
 }
 
@@ -140,8 +164,9 @@ Future<ProcessResult> _fakeProbe(String workingDir, List<String> args) async {
     'log --all --date=short --pretty=format:%H\t%h\t%ad\t%an\t%s': _rawCommitLog(),
     'log --all --grep=^t3 checkpoint --invert-grep --date=short --pretty=format:%H\t%h\t%ad\t%an\t%s':
         _filteredCommitLog(),
-    'log --all --name-only --format=': _rawPathLog(),
-    'log --all --grep=^t3 checkpoint --invert-grep --name-only --format=': _filteredPathLog(),
+    'log --all --name-only --date=short --format=__C__%ad': _rawPathLog(),
+    'log --all --grep=^t3 checkpoint --invert-grep --name-only --date=short --format=__C__%ad':
+        _filteredPathLog(),
     'log --all --shortstat --date=short --pretty=format:__C__%H\t%h\t%ad\t%an\t%s':
         _rawShortstatLog(),
     'log --all --grep=^t3 checkpoint --invert-grep --shortstat --date=short --pretty=format:__C__%H\t%h\t%ad\t%an\t%s':
@@ -245,17 +270,35 @@ String _filteredCommitLog() => [
       'cccc111122223333\tcccc1111\t2026-04-01\tAlice\tseed desktop flutter migration',
     ].join('\n');
 
+/// Build a per-commit log: each `__C__date` marker delimits one
+/// commit, followed by its file paths. We collapse same-file repeats
+/// into per-commit blocks so touch counts stay equal to the previous
+/// flat-list version, while letting the new dated-commit parser also
+/// extract per-file last-touched dates.
+String _commitBlock(String date, List<String> files) =>
+    ['__C__$date', ...files].join('\n');
+
 String _rawPathLog() => [
-      ...List.filled(18, 'generated/session.lock'),
-      ...List.filled(22, 'apps/desktop/src/legacy_shell.ts'),
-      ...List.filled(24, 'apps/desktop-flutter/lib/features/changes/changes_page.dart'),
-      ...List.filled(12, 'apps/desktop-flutter/lib/app/workspace_shell.dart'),
+      _commitBlock('2026-04-11', [
+        ...List.filled(18, 'generated/session.lock'),
+      ]),
+      _commitBlock('2026-04-11', [
+        ...List.filled(24, 'apps/desktop-flutter/lib/features/changes/changes_page.dart'),
+        ...List.filled(12, 'apps/desktop-flutter/lib/app/workspace_shell.dart'),
+      ]),
+      _commitBlock('2026-04-02', [
+        ...List.filled(22, 'apps/desktop/src/legacy_shell.ts'),
+      ]),
     ].join('\n');
 
 String _filteredPathLog() => [
-      ...List.filled(22, 'apps/desktop/src/legacy_shell.ts'),
-      ...List.filled(24, 'apps/desktop-flutter/lib/features/changes/changes_page.dart'),
-      ...List.filled(12, 'apps/desktop-flutter/lib/app/workspace_shell.dart'),
+      _commitBlock('2026-04-11', [
+        ...List.filled(24, 'apps/desktop-flutter/lib/features/changes/changes_page.dart'),
+        ...List.filled(12, 'apps/desktop-flutter/lib/app/workspace_shell.dart'),
+      ]),
+      _commitBlock('2026-04-02', [
+        ...List.filled(22, 'apps/desktop/src/legacy_shell.ts'),
+      ]),
     ].join('\n');
 
 String _rawShortstatLog() => [

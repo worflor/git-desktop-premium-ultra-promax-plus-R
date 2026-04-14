@@ -269,7 +269,6 @@ export function DiffShell(props: DiffShellProps) {
   const [loadingChunk, setLoadingChunk] = createSignal(false);
   const [chunkError, setChunkError] = createSignal<string | null>(null);
   const [copyMessage, setCopyMessage] = createSignal<string | null>(null);
-  const [selectedHunkIndex, setSelectedHunkIndex] = createSignal<number>(-1);
   const [layoutWidthPx, setLayoutWidthPx] = createSignal(1080);
   const [pretextFontProfile, setPretextFontProfile] = createSignal(PRETEXT_FONT_PROFILE_FALLBACK);
   const [viewportScrollTop, setViewportScrollTop] = createSignal(0);
@@ -781,7 +780,6 @@ export function DiffShell(props: DiffShellProps) {
     setSearchTerm("");
     setChunkError(null);
     setCopyMessage(null);
-    setSelectedHunkIndex(-1);
     setBlameData(null);
     setBlameFetchState("idle");
     blameCacheKey = "";

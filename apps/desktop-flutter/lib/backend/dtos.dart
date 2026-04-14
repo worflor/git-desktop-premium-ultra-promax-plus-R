@@ -388,6 +388,19 @@ class RepositoryXrayHotspotData {
   /// both surface their top keystones without sharing thresholds.
   final bool isKeystone;
 
+  /// Top co-changed files for this hotspot, ranked by Jaccard. Capped
+  /// to a small N for prompt-size + render-time. Drives the Map view's
+  /// coupling overlay (lines from the selected tile to its strongest
+  /// co-changers). Empty when the file has no co-change neighbours.
+  final List<String> coupledTo;
+
+  /// Currently-alive mass = touchCount × exp(-ageDays / repoHalfLife).
+  /// Half-life is the AR(2) metabolism fit when available, else the
+  /// median commit age. Drives the Map view's tile sizing so legacy
+  /// paths shrink in proportion to how dormant they are. Defaults to
+  /// raw touchCount when alive-mass data isn't available.
+  final double aliveMass;
+
   const RepositoryXrayHotspotData({
     required this.kind,
     required this.path,
@@ -398,6 +411,8 @@ class RepositoryXrayHotspotData {
     this.latestShortHash,
     this.keystoneScore,
     this.isKeystone = false,
+    this.coupledTo = const [],
+    this.aliveMass = 0.0,
   });
 }
 
@@ -448,6 +463,14 @@ class RepositoryXrayStratumData {
   final String lastTouchedAt;
   final String summary;
 
+  /// Sum of per-file [RepositoryXrayHotspotData.aliveMass] across every
+  /// file under this directory prefix — not just visible hotspots.
+  /// Drives the Map view's stratum tile size, replacing raw
+  /// [touchCount]. Same physics as the per-file alive mass, just
+  /// aggregated. Defaults to 0 so callers without alive-mass data
+  /// fall back to legacy sizing via the panel.
+  final double aliveMass;
+
   const RepositoryXrayStratumData({
     required this.id,
     required this.label,
@@ -455,6 +478,7 @@ class RepositoryXrayStratumData {
     required this.touchCount,
     required this.ownerCount,
     required this.lastTouchedAt,
+    this.aliveMass = 0.0,
     required this.summary,
   });
 }
@@ -686,6 +710,85 @@ class AiModelOptionListData {
             .map((category) => AiModelCategoryData.fromJson(category))
             .toList(),
       );
+}
+
+/// One brainstorm idea from the muse's phase-1 spew. `kept` indicates
+/// the idea found grounding in the diffused logos context and was woven
+/// into a phase-3 move. UI surfaces all ideas; the kept ones are
+/// highlighted and tappable.
+class AiMuseIdea {
+  final int index;
+  final String text;
+  final bool kept;
+
+  const AiMuseIdea({
+    required this.index,
+    required this.text,
+    required this.kept,
+  });
+}
+
+/// One concrete suggestion in the muse output. `originatingIdeaIndex`
+/// links back to a brainstorm idea (so the UI can show "from idea: …").
+/// `citations` are file paths or `path:line` references the muse grounded
+/// the move in.
+class AiMuseMove {
+  final String body;
+  final int? originatingIdeaIndex;
+  final List<String> citations;
+
+  const AiMuseMove({
+    required this.body,
+    this.originatingIdeaIndex,
+    this.citations = const [],
+  });
+}
+
+/// Output of the three-phase muse pipeline.
+///
+/// The muse posture differs from review: no score, no findings count.
+/// `intent` is the muse's read-back of what the change is reaching for.
+/// `drift` calls out hunks that don't serve the intent. `wiringBroken`
+/// surfaces deterministic call-site mismatches; `wiringMissing` surfaces
+/// coupled-but-untouched files. `ideaFlaws` challenges the conceptual
+/// premise. `trajectory` describes the cleanest landing.
+class AiMuseData {
+  final String providerId;
+  final String modelId;
+  final String scopeLabel;
+  final String intent;
+  final String trajectory;
+  final List<AiMuseMove> drift;
+  final List<AiMuseMove> wiringBroken;
+  final List<AiMuseMove> wiringMissing;
+  final List<AiMuseMove> ideaFlaws;
+  final List<AiMuseIdea> brainstormIdeas;
+  final int promptCharacters;
+  final int diffCharacters;
+  /// Number of `<move>` tags the model emitted that the parser could not
+  /// fully extract.  Zero when parse was clean; non-zero means the user
+  /// is seeing a partial result — rendered as a warning note in the UI.
+  final int droppedMoves;
+
+  const AiMuseData({
+    required this.providerId,
+    required this.modelId,
+    required this.scopeLabel,
+    required this.intent,
+    required this.trajectory,
+    this.drift = const [],
+    this.wiringBroken = const [],
+    this.wiringMissing = const [],
+    this.ideaFlaws = const [],
+    this.brainstormIdeas = const [],
+    required this.promptCharacters,
+    required this.diffCharacters,
+    this.droppedMoves = 0,
+  });
+
+  int get keptIdeaCount =>
+      brainstormIdeas.where((idea) => idea.kept).length;
+  int get totalIdeaCount => brainstormIdeas.length;
 }
 
 class AiCommitMessageData {

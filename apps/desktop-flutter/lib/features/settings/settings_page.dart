@@ -43,6 +43,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final Map<String, TextEditingController> _categoryLabelControllers = {};
   final TextEditingController _commitPromptController = TextEditingController();
   final TextEditingController _reviewPromptController = TextEditingController();
+  final TextEditingController _musePromptController = TextEditingController();
   String _diagnosticsFocus = 'command';
   String? _actionMessage;
   String? _actionError;
@@ -55,8 +56,10 @@ class _SettingsPageState extends State<SettingsPage> {
   List<AiModelCategoryData> _aiModelCategories = const [];
   Timer? _commitPromptSaveDebounce;
   Timer? _reviewPromptSaveDebounce;
+  Timer? _musePromptSaveDebounce;
   _PromptSaveState _commitPromptSaveState = _PromptSaveState.idle;
   _PromptSaveState _reviewPromptSaveState = _PromptSaveState.idle;
+  _PromptSaveState _musePromptSaveState = _PromptSaveState.idle;
 
   @override
   void initState() {
@@ -78,6 +81,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final aiSettings = context.read<AiSettingsState>();
       _commitPromptController.text = aiSettings.commitMessagePrompt;
       _reviewPromptController.text = aiSettings.reviewCommitPrompt;
+      _musePromptController.text = aiSettings.musePrompt;
       _refreshAiDiagnostics();
     });
   }
@@ -86,8 +90,10 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     _commitPromptSaveDebounce?.cancel();
     _reviewPromptSaveDebounce?.cancel();
+    _musePromptSaveDebounce?.cancel();
     _commitPromptController.dispose();
     _reviewPromptController.dispose();
+    _musePromptController.dispose();
     for (final controller in _categoryLabelControllers.values) {
       controller.dispose();
     }
@@ -395,6 +401,43 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  void _scheduleMusePromptSave(String value) {
+    _musePromptSaveDebounce?.cancel();
+    if (mounted) {
+      setState(() {
+        _musePromptSaveState = _PromptSaveState.typing;
+      });
+    }
+    _musePromptSaveDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) {
+        setState(() {
+          _musePromptSaveState = _PromptSaveState.saving;
+        });
+      }
+      unawaited(_saveMusePrompt(value));
+    });
+  }
+
+  Future<void> _saveMusePrompt(String value) async {
+    try {
+      await context.read<AiSettingsState>().setMusePrompt(value);
+      if (!mounted) return;
+      setState(() {
+        _actionError = null;
+        _actionMessage = value.trim().isEmpty
+            ? 'Cleared muse notes.'
+            : 'Saved muse notes.';
+        _musePromptSaveState = _PromptSaveState.saved;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _actionError = 'Failed to save muse notes.';
+        _musePromptSaveState = _PromptSaveState.error;
+      });
+    }
+  }
+
   Future<void> _saveReviewDoubleCheck(bool value) async {
     try {
       await context
@@ -433,6 +476,21 @@ class _SettingsPageState extends State<SettingsPage> {
 
   String? _reviewPromptStatusLabel() {
     switch (_reviewPromptSaveState) {
+      case _PromptSaveState.typing:
+        return 'Editing';
+      case _PromptSaveState.saving:
+        return 'Saving';
+      case _PromptSaveState.saved:
+        return null;
+      case _PromptSaveState.error:
+        return 'Save failed';
+      case _PromptSaveState.idle:
+        return null;
+    }
+  }
+
+  String? _musePromptStatusLabel() {
+    switch (_musePromptSaveState) {
       case _PromptSaveState.typing:
         return 'Editing';
       case _PromptSaveState.saving:
@@ -1121,6 +1179,36 @@ class _SettingsPageState extends State<SettingsPage> {
                   'Model-slot settings will appear here once provider models are available.',
                   style: TextStyle(color: t.textMuted, fontSize: 12),
                 ),
+              const _SettingsGap(),
+              const _SettingsSubtitle('Muse'),
+              const SizedBox(height: 8),
+              Text(
+                'Three-phase oracle that brainstorms then synthesizes a forward direction for the diff.',
+                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              if (_aiModelCategories.isNotEmpty) ...[
+                _MuseStage(
+                  categories: _aiModelCategories,
+                  aiSettings: aiSettings,
+                  guardrailStage: preferences.guardrailStage,
+                  onBrainstormCategoryChanged: (id) {
+                    if (id == null || id.isEmpty) return;
+                    unawaited(aiSettings.setMuseBrainstormModelCategoryId(id));
+                  },
+                  onSynthesisCategoryChanged: (id) {
+                    if (id == null || id.isEmpty) return;
+                    unawaited(aiSettings.setMuseSynthesisModelCategoryId(id));
+                  },
+                ),
+                const SizedBox(height: 14),
+              ],
+              _AiMuseIntegrationEditor(
+                promptController: _musePromptController,
+                promptStatusLabel: _musePromptStatusLabel(),
+                guardrailStage: preferences.guardrailStage,
+                onPromptChanged: _scheduleMusePromptSave,
+              ),
             ],
           ),
         ),
@@ -2771,14 +2859,6 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
           maxHeight: 200,
           onChanged: onPromptChanged,
         ),
-        const SizedBox(height: 6),
-        Text(
-          'Optional. Appended to the built-in review guide as extra guidance.',
-          style: TextStyle(
-            color: t.textMuted.withValues(alpha: 0.65),
-            fontSize: 10.5,
-          ),
-        ),
         const SizedBox(height: 12),
         _CheckboxRow(
           label: 'Double-check review',
@@ -2787,6 +2867,332 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
           onChanged: onDoubleCheckChanged,
         ),
       ],
+    );
+  }
+}
+
+class _AiMuseIntegrationEditor extends StatelessWidget {
+  final TextEditingController promptController;
+  final String? promptStatusLabel;
+  final int guardrailStage;
+  final ValueChanged<String> onPromptChanged;
+
+  const _AiMuseIntegrationEditor({
+    required this.promptController,
+    required this.promptStatusLabel,
+    required this.guardrailStage,
+    required this.onPromptChanged,
+  });
+
+  // Placeholder echoes the muse profile at the active guardrail level.
+  // Lowercase to match the composer's tooltip vocabulary; short so it
+  // doesn't read as instruction noise.
+  static String _hintForGuardrail(int stage) {
+    switch (stage.clamp(0, 3)) {
+      case 0:
+        return 'anything to gently steer toward? mood is kind today.';
+      case 1:
+        return 'what to dwell on, what to skip. honest, not harsh.';
+      case 2:
+        return 'the standards. the bans. what the muse won\'t let slide.';
+      default:
+        return 'tune the lens. what frequencies should the manifold hum at?';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const _SettingsSubtitle('Additional notes for the muse'),
+            if (promptStatusLabel != null) ...[
+              const SizedBox(width: 8),
+              Text(
+                promptStatusLabel!.toLowerCase(),
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.7),
+                  fontSize: 10,
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 8),
+        AppMultilineTextField(
+          controller: promptController,
+          hintText: _hintForGuardrail(guardrailStage),
+          minHeight: 100,
+          maxHeight: 200,
+          onChanged: onPromptChanged,
+        ),
+      ],
+    );
+  }
+}
+
+/// The muse stage — a [1] → [2] visual that lets the user assign which
+/// AI category (slot) drives each phase of the oracle pipeline.
+///
+/// Phase 1 (brainstorm) is cheap and divergent — defaults to "fast".
+/// Phase 2 (synthesis) is rigorous and grounding-aware — defaults to
+/// the same category review uses, typically "quality". Either may be
+/// remapped here. The down-arrow between stations is annotated with
+/// the guardrail-derived idea count, surfacing what the macro setting
+/// is actually doing without taking control away from it.
+class _MuseStage extends StatelessWidget {
+  final List<AiModelCategoryData> categories;
+  final AiSettingsState aiSettings;
+  final int guardrailStage;
+  final ValueChanged<String?> onBrainstormCategoryChanged;
+  final ValueChanged<String?> onSynthesisCategoryChanged;
+
+  const _MuseStage({
+    required this.categories,
+    required this.aiSettings,
+    required this.guardrailStage,
+    required this.onBrainstormCategoryChanged,
+    required this.onSynthesisCategoryChanged,
+  });
+
+  // Same axis as MuseGuardrailProfile.suggestedIdeaCount in ai.dart —
+  // duplicated here for the inline annotation. Kept terse on purpose.
+  String _guardrailIdeaCountHint(int stage) {
+    switch (stage.clamp(0, 3)) {
+      case 0:
+        return '~12 ideas';
+      case 1:
+        return '~16 ideas';
+      case 2:
+        return '~20 ideas';
+      default:
+        return '~24 ideas';
+    }
+  }
+
+  String _guardrailMacroLabel(int stage) {
+    switch (stage.clamp(0, 3)) {
+      case 0:
+        return 'loose';
+      case 1:
+        return 'balanced';
+      case 2:
+        return 'strict';
+      default:
+        return 'paranoid';
+    }
+  }
+
+  AiModelCategoryData _resolveCategory(String preferredId) {
+    return categories
+            .where((c) => c.id == preferredId && c.models.isNotEmpty)
+            .firstOrNull ??
+        categories.firstWhere((c) => c.models.isNotEmpty,
+            orElse: () => categories.first);
+  }
+
+  AiModelOptionData? _resolveModel(AiModelCategoryData category) {
+    return category.models
+            .where((m) =>
+                m.value == aiSettings.modelSelections[category.id])
+            .firstOrNull ??
+        category.models.firstOrNull;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final brain = _resolveCategory(aiSettings.museBrainstormModelCategoryId);
+    final synth = _resolveCategory(aiSettings.museSynthesisModelCategoryId);
+    final brainModel = _resolveModel(brain);
+    final synthModel = _resolveModel(synth);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _MuseStation(
+          tokens: t,
+          number: '1',
+          title: 'BRAINSTORM',
+          slotLabel: 'slot',
+          categories: categories,
+          aiSettings: aiSettings,
+          selectedCategoryId: brain.id,
+          selectedModel: brainModel,
+          onCategoryChanged: onBrainstormCategoryChanged,
+        ),
+        // Connector — a continuous vertical thread from the bottom of
+        // station 1 to the top of station 2, aligned with the [N] tag
+        // column so the flow reads as one diagram. Arrow + annotation
+        // float on the right of the thread at its midpoint.
+        SizedBox(
+          height: 28,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // x-offset matches the station padding (12) + half the
+              // [N] tag width (~7) so the line emerges out of the
+              // numbered tag column above and re-enters it below.
+              const SizedBox(width: 18),
+              Container(
+                width: 1,
+                color: t.textMuted.withValues(alpha: 0.35),
+              ),
+              const SizedBox(width: 12),
+              Icon(Icons.south, size: 12,
+                  color: t.textMuted.withValues(alpha: 0.6)),
+              const SizedBox(width: 8),
+              Text(
+                '${_guardrailIdeaCountHint(guardrailStage)}  ·  guardrail: ${_guardrailMacroLabel(guardrailStage)}',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.7),
+                  fontSize: 10.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+        _MuseStation(
+          tokens: t,
+          number: '2',
+          title: 'SYNTHESIZE',
+          slotLabel: 'slot',
+          categories: categories,
+          aiSettings: aiSettings,
+          selectedCategoryId: synth.id,
+          selectedModel: synthModel,
+          onCategoryChanged: onSynthesisCategoryChanged,
+        ),
+      ],
+    );
+  }
+}
+
+/// One numbered station inside the muse stage. Header row carries the
+/// [1]/[2] tag + phase title; body row is the slot dropdown + resolved
+/// model pill. Sharp borders, no rounding — matches the brutalist
+/// terminal vibe of the rest of the settings page.
+class _MuseStation extends StatelessWidget {
+  final AppTokens tokens;
+  final String number;
+  final String title;
+  final String slotLabel;
+  final List<AiModelCategoryData> categories;
+  final AiSettingsState aiSettings;
+  final String selectedCategoryId;
+  final AiModelOptionData? selectedModel;
+  final ValueChanged<String?> onCategoryChanged;
+
+  const _MuseStation({
+    required this.tokens,
+    required this.number,
+    required this.title,
+    required this.slotLabel,
+    required this.categories,
+    required this.aiSettings,
+    required this.selectedCategoryId,
+    required this.selectedModel,
+    required this.onCategoryChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: t.textMuted.withValues(alpha: 0.25),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header: [N]  TITLE
+          Row(
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: t.accentBright.withValues(alpha: 0.55),
+                    width: 1,
+                  ),
+                ),
+                child: Text(
+                  number,
+                  style: TextStyle(
+                    color: t.accentBright,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                title,
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          // Body: slot dropdown + provider pill on one row.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                slotLabel,
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.75),
+                  fontSize: 11,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: AppDropdownField<String>(
+                  value: selectedCategoryId,
+                  items: categories
+                      .map((category) => DropdownMenuItem<String>(
+                            value: category.id,
+                            child: Text(aiSettings.labelForCategory(
+                                category.id, category.label)),
+                          ))
+                      .toList(),
+                  onChanged: onCategoryChanged,
+                ),
+              ),
+              if (selectedModel != null) ...[
+                const SizedBox(width: 8),
+                _ProviderPill(label: selectedModel!.providerLabel),
+              ],
+            ],
+          ),
+          if (selectedModel != null) ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(left: 32),
+              child: Text(
+                selectedModel!.label,
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.75),
+                  fontSize: 10.5,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

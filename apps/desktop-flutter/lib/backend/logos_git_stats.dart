@@ -60,6 +60,10 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
 
   final touches = <String, int>{};
   final volatility = <String, double>{};
+  // Per-file commit-index series — for each file, the list of commit
+  // indices (oldest=0 .. newest=totalCommits-1) where the file
+  // appeared. Drives [LogosGit]'s per-file curved AR(2) metric.
+  final perFileCommitIndices = <String, List<int>>{};
   var totalCommits = 0;
 
   // EWMA half-life: 90 commits. λ = 1 - 2^(-1/90) ≈ 0.00767.
@@ -71,7 +75,11 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   final blocks = _splitCommitBlocks(lines);
 
   // Process oldest → newest so the EWMA's "most recent" commits carry
-  // the most weight. Git log emits newest-first, so reverse.
+  // the most weight. Git log emits newest-first, so reverse. We track
+  // a monotonic `commitIndex` (incremented per non-empty block) so
+  // each file's commit-index series stays in oldest→newest order
+  // ready for AR(2) gap-fitting downstream.
+  var commitIndex = 0;
   for (var i = blocks.length - 1; i >= 0; i--) {
     final b = blocks[i];
     if (b.numstatLines.isEmpty) continue;
@@ -86,11 +94,13 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
       // Binary files ("-\t-\tpath") still count as a touch but can't
       // contribute a churn number.
       touches[path] = (touches[path] ?? 0) + 1;
+      (perFileCommitIndices[path] ??= <int>[]).add(commitIndex);
       if (added == null || deleted == null) continue;
       final churn = (added + deleted).toDouble();
       final prev = volatility[path] ?? 0.0;
       volatility[path] = (1 - lambda) * prev + lambda * churn;
     }
+    commitIndex++;
   }
 
   // Mean + stddev of volatility for the V-axis z-score.
@@ -136,6 +146,7 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     volMean: volMean,
     volStddev: volStddev,
     coupling: cc,
+    perFileCommitIndices: perFileCommitIndices,
   ));
 }
 

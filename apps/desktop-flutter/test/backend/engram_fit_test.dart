@@ -177,5 +177,35 @@ void main() {
       final hl = deriveEngramHalfLife(commits);
       expect(hl, inInclusiveRange(50.0, 500.0));
     });
+
+    test('oscillationPeriodSamples recovers a known cosine period', () {
+      // Sustained cosine z[n] = cos(2π·n / 10) — period 10 samples.
+      // The AR(2) fit should recover ω₀ = 2π/10, giving period ≈ 10.
+      final period = 10.0;
+      final z = [
+        for (var n = 0; n < 64; n++) math.cos(2 * math.pi * n / period),
+      ];
+      final fit = engramFit(z);
+      final p = fit.oscillationPeriodSamples;
+      expect(p, isNotNull);
+      // Tolerance: AR(2) fit on a noisy/finite cosine isn't exact;
+      // ±5% is a tight-but-realistic envelope for n=64.
+      expect(p!, closeTo(period, period * 0.05));
+    });
+
+    test('oscillationPeriodSamples is null for over-damped (real-root) fits',
+        () {
+      // Pure exponential decay z[n] = 0.5^n — over-damped, no
+      // oscillation, real roots only. Period must be null.
+      final z = [for (var n = 0; n < 32; n++) math.pow(0.5, n).toDouble()];
+      final fit = engramFit(z);
+      expect(fit.oscillationPeriodSamples, isNull);
+    });
+
+    test('oscillationPeriodSamples is null for the linear fallback', () {
+      final fit = engramFit(const [1.0, 2.0]); // too short → fallback
+      expect(fit.isLinearFallback, isTrue);
+      expect(fit.oscillationPeriodSamples, isNull);
+    });
   });
 }

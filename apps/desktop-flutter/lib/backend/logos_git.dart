@@ -78,37 +78,39 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
+import 'engram_fit.dart';
 import 'file_coupling.dart';
+import 'logos_core.dart';
 
 /// Internals re-exported for tests. Not stable API — the `@visibleForTesting`
 /// annotation makes accidental production use lint.
 @visibleForTesting
 // ignore: library_private_types_in_public_api
-typedef LogosCsrGraphForTesting = _CsrGraph;
+typedef LogosCsrGraphForTesting = CsrGraph;
 
 @visibleForTesting
 List<double> chebyshevBesselCoeffsForTesting(double t, int K) =>
-    _chebyshevBesselCoeffs(t, K);
+    besselCoeffs(t, K);
 
 @visibleForTesting
 void diffuseChebyshevForTesting({
-  required _CsrGraph graph,
+  required CsrGraph graph,
   required Float64List rho,
   required Float64List phi,
   required double t,
-  int K = _defaultChebyshevK,
+  int K = kDefaultChebyshevK,
 }) =>
-    _diffuseChebyshev(graph: graph, rho: rho, phi: phi, t: t, K: K);
+    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
 
 @visibleForTesting
 // ignore: library_private_types_in_public_api
-_CsrGraph buildCsrForTesting({
+CsrGraph buildCsrForTesting({
   required int n,
   required List<int> indptr,
   required List<int> indices,
   required List<double> values,
 }) =>
-    _CsrGraph(
+    CsrGraph(
       n: n,
       indptr: Int32List.fromList(indptr),
       indices: Int32List.fromList(indices),
@@ -118,7 +120,7 @@ _CsrGraph buildCsrForTesting({
 @visibleForTesting
 extension LogosGitTestAccess on LogosGit {
   // ignore: library_private_types_in_public_api
-  _CsrGraph get graphForTesting => graph;
+  CsrGraph get graphForTesting => graph;
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -356,144 +358,20 @@ class _VAxis {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// SPARSE GRAPH (CSR) — same layout a `.wat` port would use
+// SPARSE GRAPH (CSR) + Chebyshev heat-kernel — moved to logos_core.dart
 // ═════════════════════════════════════════════════════════════════════════
 //
-// Node IDs are dense integers 0..N-1. Path-to-id mapping is owned by the
-// engine. Edges stored in CSR (Compressed Sparse Row) format:
+// The graph data structure ([CsrGraph]) and all heat-kernel diffusion
+// primitives ([besselCoeffs], [adaptiveK], [chebyshevDiffuse],
+// [chebyshevBasis], [recombineHeatPhi]) live in `logos_core.dart`. The
+// file/chunk/hunk engines all share that one implementation. What
+// remains in this file is the file-graph-specific axis blend
+// (BornMixer + F0/CC/SP/V) and the LogosGit engine itself.
 //
-//   indptr[i] = offset into (indices, values) of row i
-//   indices[indptr[i]..indptr[i+1]] = neighbours of node i
-//   values [indptr[i]..indptr[i+1]] = weights W_ij = exp(-d(i,j)) = p_mix
-//
-// For the symmetric normalised Laplacian L_sym = I - D^(-1/2) W D^(-1/2)
-// we precompute D^(-1/2) once and fold it into the values so that each
-// matvec step only does a single multiply per edge.
-class _CsrGraph {
-  final int n;
-  final Int32List indptr;
-  final Int32List indices;
-  final Float64List values; // normalised weights — already fused with D^(-1/2)
+// (CsrGraph + applyLsym + estimateSpectralRadius live in logos_core.dart.)
 
-  _CsrGraph({
-    required this.n,
-    required this.indptr,
-    required this.indices,
-    required this.values,
-  });
-
-  /// Apply L_sym = I - D^(-1/2) W D^(-1/2) to vector v. Since values
-  /// are pre-fused with D^(-1/2), this is: y = v - (W_norm · v).
-  /// `out` is overwritten; must have length `n`.
-  void applyLsym(Float64List v, Float64List out) {
-    for (var i = 0; i < n; i++) {
-      double s = 0;
-      final start = indptr[i];
-      final end = indptr[i + 1];
-      for (var k = start; k < end; k++) {
-        s += values[k] * v[indices[k]];
-      }
-      out[i] = v[i] - s;
-    }
-  }
-
-  /// Estimate the spectral radius (largest eigenvalue magnitude) of
-  /// `L_sym` via power iteration. The normalised Laplacian has a proven
-  /// spectrum in [0, 2]; this method exists as a diagnostic — to verify
-  /// the bound holds for a given graph and to detect numerical-error
-  /// drift on pathological inputs.
-  ///
-  /// Cost: O(iterations · |E|). 24 iterations is plenty for the 2-3
-  /// significant figures we need to decide "is the Chebyshev domain
-  /// safe?" on graphs with thousands of nodes.
-  double estimateSpectralRadius({int iterations = _defaultPowerIterations, int? seed}) {
-    if (n == 0) return 0;
-    // Deterministic seed-based init so tests/diagnostics are reproducible.
-    final rng = math.Random(seed ?? 0xC0DE5EED);
-    final a = Float64List(n);
-    final b = Float64List(n);
-    for (var i = 0; i < n; i++) {
-      a[i] = rng.nextDouble() - 0.5;
-    }
-    var lambda = 0.0;
-    var src = a;
-    var dst = b;
-    for (var it = 0; it < iterations; it++) {
-      // Renormalise src to unit length to keep numerics in scale.
-      var norm = 0.0;
-      for (var i = 0; i < n; i++) {
-        norm += src[i] * src[i];
-      }
-      norm = math.sqrt(norm);
-      if (norm == 0 || !norm.isFinite) return 0;
-      for (var i = 0; i < n; i++) {
-        src[i] /= norm;
-      }
-      applyLsym(src, dst);
-      // Rayleigh quotient: λ ≈ src · L·src (src is unit-norm).
-      lambda = 0;
-      for (var i = 0; i < n; i++) {
-        lambda += src[i] * dst[i];
-      }
-      // Next iteration's input is L·src; ping-pong the buffers.
-      final tmp = src;
-      src = dst;
-      dst = tmp;
-    }
-    return lambda.abs();
-  }
-}
-
-// ═════════════════════════════════════════════════════════════════════════
-// CHEBYSHEV HEAT-KERNEL DIFFUSION
-// ═════════════════════════════════════════════════════════════════════════
-//
-// Approximates exp(-t·L_sym) · ρ by a truncated Chebyshev series over
-// the spectrum [0, 2] of L_sym (proven bound for normalised Laplacian).
-// After rescaling x = (L - I), domain [-1, 1] — standard Chebyshev.
-//
-//   exp(-t·L)·ρ ≈ Σ_{k=0..K} c_k(t) · T_k(x)·ρ
-//
-// with the recurrence T_0 = I, T_1 = x, T_{k+1} = 2x·T_k - T_{k-1}.
-//
-// Coefficients c_k(t) = 2·exp(-t)·I_k(-t) for k ≥ 1, c_0(t) = exp(-t)·I_0(-t).
-// We precompute the Bessel coefficients via an explicit series — no
-// external math lib needed.
-//
-// For K = 20, relative error < 1e-8 on [0, 2] for t ∈ [0, 10]. Plenty.
-
-/// Maximum diffusion temperature this engine accepts. Beyond ~30 the
-/// heat-kernel field is indistinguishable from the graph's stationary
-/// distribution; capping silently here prevents Bessel-series overflow
-/// (factorial blow-up in the naive expansion) without changing outputs
-/// for any sane query.
-const double _maxSafeT = 30.0;
-
-/// Cap on the Bessel-series inner loop. The series converges
-/// super-exponentially past the k-th term (each term is multiplied by
-/// `(t/2)² / ((m+1)(k+m+1))`, a ratio that drops below 1 once m > t/2);
-/// 200 is a generous ceiling that the early-exit ratio-test tightens
-/// long before hitting. Not tunable — purely a safety bound.
-const int _besselSeriesTermCap = 200;
-
-/// Convergence floor for Bessel series summation, measured as a fraction
-/// of the running sum magnitude. Tied to f64 machine epsilon: terms
-/// below ~1e-20·|sum| can't affect the result within double precision.
-const double _besselConvergenceEps = 1e-20;
-
-/// Default Chebyshev truncation order. K = 20 gives relative error
-/// < 1e-8 on the normalised-Laplacian spectrum [0, 2] for diffusion
-/// times t ∈ [0, 10]. Derivation: Bessel coefficient |c_k(t)| decays
-/// past k ≈ e·t/2 (Abramowitz–Stegun asymptotic); for t up to 10 the
-/// useful band is k ≤ 14, so K = 20 leaves comfortable headroom.
-/// `_adaptiveK` prunes unused tail terms at runtime.
-const int _defaultChebyshevK = 20;
-
-/// Default power-iteration depth for spectral-radius diagnostics.
-/// Rayleigh-quotient convergence is geometric at rate |λ₂/λ₁|, where
-/// λ₂ < λ₁ ≤ 2 on a normalised Laplacian. 24 iterations gets us 2-3
-/// significant figures on any realistic git coupling graph.
-const int _defaultPowerIterations = 24;
+// (kDefaultChebyshevK + kDefaultPowerIterations + Bessel constants
+// live in logos_core.dart and are re-exported via the import above.)
 
 /// Default top-K window for the stability primitive and single-source
 /// `relatedTo` queries. Scaled to a typical commit-review budget:
@@ -528,132 +406,7 @@ const int _defaultStabilitySeed = 0xABDE;
 /// polynomial order.
 const int _defaultEdgeDensity = 24;
 
-List<double> _chebyshevBesselCoeffs(double t, int k) {
-  // Modified Bessel I_k(-t) via numerically stable forward recurrence on
-  // the series term:
-  //   I_k(t) = Σ_{m=0..∞} (t/2)^(k+2m) / (m! · (k+m)!)
-  // term0 = (t/2)^k / k!  (computed in log-space to avoid pow overflow)
-  // term(m+1) / term(m) = (t/2)^2 / ((m+1)(k+m+1))
-  // I_k(-t) = (-1)^k I_k(t).
-  final result = Float64List(k + 1);
-  final tSafe = t.isNaN ? 0.0 : t.clamp(0.0, _maxSafeT);
-  if (tSafe == 0) {
-    // c_0 = e^0 · I_0(0) = 1; c_k = 0 for k≥1.
-    result[0] = 1.0;
-    return result;
-  }
-  final expNegT = math.exp(-tSafe);
-  final half = tSafe / 2.0;
-  final halfSq = half * half;
-  final logHalf = math.log(half);
-  for (var kk = 0; kk <= k; kk++) {
-    // log of first term in log-space — overflow-safe for any reasonable t.
-    var logTerm0 = kk * logHalf;
-    for (var i = 1; i <= kk; i++) {
-      logTerm0 -= math.log(i);
-    }
-    var term = math.exp(logTerm0);
-    var sum = term;
-    for (var m = 0; m < _besselSeriesTermCap; m++) {
-      term *= halfSq / ((m + 1) * (kk + m + 1));
-      sum += term;
-      if (term.abs() < _besselConvergenceEps * sum.abs()) break;
-    }
-    final ik = (kk & 1) == 0 ? sum : -sum;
-    final c = kk == 0 ? expNegT * ik : 2 * expNegT * ik;
-    // Last-line defence — never propagate non-finite values into the
-    // recurrence. A zeroed coefficient just truncates the series early.
-    result[kk] = c.isFinite ? c : 0.0;
-  }
-  return result;
-}
-
-/// Adaptive Chebyshev truncation: pick the smallest K* ≤ maxK where
-/// |c_{K*}(t)| < eps · ||c||_∞. Bessel coefficients decay super-
-/// exponentially past k ≈ t·e/2, so for small t the tail is already
-/// negligible at K = 8–10 while for large t we need more. Hardcoding
-/// K = 20 wastes matvecs at low t and starves accuracy at high t.
-///
-/// Physics note: this is a property of the heat-kernel Chebyshev
-/// expansion specifically — `c_k(t) = 2·e^(-t)·I_k(-t)` where `I_k`
-/// is the modified Bessel of first kind. Its tail decays by the
-/// Abramowitz–Stegun bound; we just compute it eagerly and stop when
-/// it's below the noise floor. Pure perf win, no accuracy loss.
-int _adaptiveK(List<double> coeffs, double eps) {
-  var maxAbs = 0.0;
-  for (final c in coeffs) {
-    final a = c.abs();
-    if (a > maxAbs) maxAbs = a;
-  }
-  if (maxAbs == 0) return coeffs.length - 1;
-  final threshold = eps * maxAbs;
-  for (var k = coeffs.length - 1; k >= 2; k--) {
-    if (coeffs[k].abs() >= threshold) return k;
-  }
-  return 2;
-}
-
-/// Apply the heat-kernel to source ρ using Chebyshev expansion. Writes
-/// result into `phi`. Allocates two scratch vectors internally. Pure —
-/// no hidden state. Given a graph, source, t, and K, produces φ.
-void _diffuseChebyshev({
-  required _CsrGraph graph,
-  required Float64List rho,
-  required Float64List phi,
-  required double t,
-  int K = _defaultChebyshevK,
-}) {
-  final n = graph.n;
-  assert(rho.length == n);
-  assert(phi.length == n);
-  final fullCoeffs = _chebyshevBesselCoeffs(t, K);
-  // Shrink K to whatever the Bessel coefficients actually need at this
-  // t. For t=0.25, adaptive K ≈ 8 (vs fixed 20) → 60% fewer matvecs.
-  // For t=4, adaptive K ≈ 18 — close to the fixed budget.
-  final effectiveK = _adaptiveK(fullCoeffs, 1e-8);
-  final coeffs = effectiveK == K ? fullCoeffs : fullCoeffs.sublist(0, effectiveK + 1);
-  // Rebind local K to the effective value for the loop below.
-  // (Can't use `K` directly — it's the param name.)
-  final kEff = effectiveK;
-
-  // We want to expand in the shifted spectrum [-1, 1]. The normalised
-  // Laplacian L_sym has spectrum [0, 2]; the shift x = L - I moves it
-  // to [-1, 1]. For the matrix-vector step we compute y = L_sym·v - v.
-  //
-  // T_0(x)·ρ = ρ
-  // T_1(x)·ρ = x·ρ = L_sym·ρ - ρ
-  // T_{k+1}(x)·ρ = 2·x·(T_k·ρ) - T_{k-1}·ρ
-
-  final t0 = Float64List.fromList(rho);
-  final t1 = Float64List(n);
-  final t2 = Float64List(n);
-  final scratch = Float64List(n);
-
-  // T_1·ρ = L_sym·ρ - ρ
-  graph.applyLsym(t0, scratch);
-  for (var i = 0; i < n; i++) {
-    t1[i] = scratch[i] - t0[i];
-  }
-
-  // Initialise φ with c0·T0 + c1·T1
-  for (var i = 0; i < n; i++) {
-    phi[i] = coeffs[0] * t0[i] + coeffs[1] * t1[i];
-  }
-
-  // Recurrence for k = 2..effectiveK (adaptive — skips tail whose
-  // coefficients are below the noise floor).
-  for (var k = 2; k <= kEff; k++) {
-    // 2·x·T_{k-1} = 2·(L_sym·T_{k-1} - T_{k-1})
-    graph.applyLsym(t1, scratch);
-    for (var i = 0; i < n; i++) {
-      t2[i] = 2 * (scratch[i] - t1[i]) - t0[i];
-      phi[i] += coeffs[k] * t2[i];
-    }
-    // Shift: T_{k-1} ← T_k ; T_{k-2} ← T_{k-1}.
-    t0.setAll(0, t1);
-    t1.setAll(0, t2);
-  }
-}
+// (besselCoeffs / adaptiveK / chebyshevDiffuse live in logos_core.dart.)
 
 // ═════════════════════════════════════════════════════════════════════════
 // THE ENGINE
@@ -668,6 +421,22 @@ class LogosGitStats {
   final double volStddev;
   final FileCouplingMatrix coupling;
 
+  /// Per-file commit-index series: for each file, the sorted list of
+  /// commit indices (in oldest→newest order, range [0, totalCommits))
+  /// where the file appeared. Drives the per-file AR(2) curvature
+  /// metric in [LogosGit.buildFromStats] — each file gets its own
+  /// `K, G` from the inter-touch-gap dynamics, and edge weights are
+  /// multiplied by the geometric mean of the two endpoints' spectral
+  /// radii so heat flows respect each file's own time-scale (Whisper
+  /// Harmonic's curved-Christoffel pattern, applied per-file).
+  ///
+  /// Required: pass `const {}` to explicitly opt out (flat-metric
+  /// graph, curvature factor 1.0 for every edge). Tests + light-
+  /// weight engines that don't have per-commit data should be
+  /// explicit about it rather than silently falling through a
+  /// default.
+  final Map<String, List<int>> perFileCommitIndices;
+
   const LogosGitStats({
     required this.touches,
     required this.totalCommits,
@@ -675,6 +444,7 @@ class LogosGitStats {
     required this.volMean,
     required this.volStddev,
     required this.coupling,
+    required this.perFileCommitIndices,
   });
 }
 
@@ -731,16 +501,29 @@ final _defaultCaps = <double>[
 /// commits, rebuild.
 class LogosGit {
   // ignore: library_private_types_in_public_api
-  final _CsrGraph graph;
+  final CsrGraph graph;
   final List<String> nodePaths; // id → path
   final Map<String, int> pathToId;
   final BornMixer mixer;
+
+  /// Per-file AR(2) fit on the file's inter-touch-gap series. Computed
+  /// in [buildFromStats] when [LogosGitStats.perFileCommitIndices] is
+  /// available and the file has enough touches for the fit. Empty for
+  /// files with insufficient history (curvature factor = 1.0 for them).
+  ///
+  /// Drives the curved-metric edge weighting: each file's spectral
+  /// radius `r_f = √G_f` measures how regular its touch pattern is
+  /// (1.0 = perfectly periodic, 0 = chaotic). Edge weight `W'[a,b] =
+  /// W[a,b] · √(r_a · r_b)` so heat flows faster through regularly-
+  /// touched files and attenuates through chaotic ones.
+  final Map<String, EngramFit> perFileMetrics;
 
   LogosGit._({
     required this.graph,
     required this.nodePaths,
     required this.pathToId,
     required this.mixer,
+    required this.perFileMetrics,
   });
 
   /// Construct the engine from per-file statistics. Nodes are all files
@@ -768,13 +551,14 @@ class LogosGit {
     if (n == 0) {
       // Empty graph — engine does nothing useful but doesn't throw.
       return LogosGit._(
-        graph: _CsrGraph(
+        graph: CsrGraph(
           n: 0,
           indptr: Int32List(1),
           indices: Int32List(0),
           values: Float64List(0),
         ),
         nodePaths: nodePaths,
+        perFileMetrics: const {},
         pathToId: pathToId,
         mixer: BornMixer(_defaultCaps),
       );
@@ -789,6 +573,47 @@ class LogosGit {
       mean: stats.volMean,
       stddev: stats.volStddev,
     );
+
+    // ── Per-file curved metric (Whisper Harmonic, applied per-file).
+    // For each file with sufficient touch history, fit AR(2) on the
+    // inter-touch-gap series. The spectral radius `r_f = √G_f` of the
+    // fit measures how regular the file's touch pattern is — high
+    // when periodic, low when chaotic. Edge weight `W'[a,b] = W[a,b] ·
+    // √(r_a · r_b)` so heat flows preferentially through files whose
+    // own time-scale is well-defined. Files without enough history
+    // fall through to the linear AR(2) fallback (spectral radius 0)
+    // which would attenuate edges to zero — we coerce those to 1.0
+    // so they're indistinguishable from the previous flat-metric
+    // behaviour, not silently muted.
+    final perFileMetrics = <String, EngramFit>{};
+    for (final entry in stats.perFileCommitIndices.entries) {
+      final indices = entry.value;
+      if (indices.length < 3) continue; // need ≥2 gaps for any signal
+      final gaps = <double>[];
+      for (var k = 1; k < indices.length; k++) {
+        gaps.add((indices[k] - indices[k - 1]).toDouble());
+      }
+      final fit = engramFit(gaps);
+      // Skip non-orbital fits — their spectral radius is meaningless
+      // for the curvature interpretation. Files left out of the map
+      // get curvature 1.0 (no attenuation, no boost).
+      if (fit.isLinearFallback) continue;
+      perFileMetrics[entry.key] = fit;
+    }
+
+    /// Per-file curvature factor — the engine's per-node "metric
+    /// coefficient." 1.0 when the file has no AR(2) fit (legacy /
+    /// short-history). Otherwise the spectral radius of the file's
+    /// inter-touch-gap dynamics, clamped to [0.5, 1.0] so the
+    /// attenuation never drops an edge weight by more than half
+    /// (avoids zeroing the graph for low-evidence repos).
+    double curvature(String path) {
+      final fit = perFileMetrics[path];
+      if (fit == null) return 1.0;
+      final r = fit.spectralRadius;
+      if (!r.isFinite || r <= 0) return 1.0;
+      return r.clamp(0.5, 1.0);
+    }
 
     // For each node, score all candidate neighbours and keep the top
     // `edgeDensity` by mixed probability. This is the critical step —
@@ -834,7 +659,13 @@ class LogosGit {
         continue;
       }
 
-      // Score each candidate via Born mix.
+      // Score each candidate via Born mix, then apply the curved
+      // per-file metric: edge weight is attenuated by the geometric
+      // mean of the two endpoints' AR(2) spectral radii. When both
+      // endpoints have regular touch patterns (high r), no
+      // attenuation. When either is chaotic / new, the edge weight
+      // shrinks proportionally — heat flows more weakly through it.
+      final curvA = curvature(a);
       final scored = <_EdgeCandidate>[];
       for (final b in candidates) {
         final j = pathToId[b];
@@ -845,7 +676,13 @@ class LogosGit {
           sp.observe(a, b),
           v.observe(a, b),
         ];
-        final p = mixer.mix(obs);
+        var p = mixer.mix(obs);
+        // Curved metric: multiply by √(r_a · r_b). Both factors
+        // already in [0.5, 1.0] via the clamp in `curvature`, so the
+        // scaling stays in [0.5, 1.0] — edges never get boosted past
+        // their Born value, only proportionally attenuated.
+        final curvB = curvature(b);
+        p *= math.sqrt(curvA * curvB);
         if (p <= 0.5) continue; // only keep edges with positive lift
         scored.add(_EdgeCandidate(j, p));
       }
@@ -899,7 +736,7 @@ class LogosGit {
       indptrList.add(indicesList.length);
     }
 
-    final graph = _CsrGraph(
+    final graph = CsrGraph(
       n: n,
       indptr: Int32List.fromList(indptrList),
       indices: Int32List.fromList(indicesList),
@@ -911,6 +748,7 @@ class LogosGit {
       nodePaths: nodePaths,
       pathToId: pathToId,
       mixer: mixer,
+      perFileMetrics: perFileMetrics,
     );
   }
 
@@ -925,7 +763,7 @@ class LogosGit {
   ///
   /// Returns null on empty graph / empty source set — callers should
   /// degrade gracefully (no rail, no temperature interaction).
-  DiffusionBasis? buildBasis(Set<String> sourceFiles, {int K = _defaultChebyshevK}) {
+  DiffusionBasis? buildBasis(Set<String> sourceFiles, {int K = kDefaultChebyshevK}) {
     if (graph.n == 0) return null;
     final rho = Float64List(graph.n);
     var sourceWeight = 0.0;
@@ -959,7 +797,7 @@ class LogosGit {
   /// roughly 2/3 of the per-query work.
   DiffusionBasis? buildBasisWeighted(
     Map<String, double> weights, {
-    int K = _defaultChebyshevK,
+    int K = kDefaultChebyshevK,
   }) {
     if (graph.n == 0 || weights.isEmpty) return null;
     final rho = Float64List(graph.n);
@@ -997,7 +835,7 @@ class LogosGit {
   List<RelevanceScore> diffuse(
     Set<String> sourceFiles, {
     double t = 1.0,
-    int K = _defaultChebyshevK,
+    int K = kDefaultChebyshevK,
   }) {
     if (graph.n == 0) return const [];
     // Build source vector ρ. Files outside the graph are ignored.
@@ -1016,7 +854,7 @@ class LogosGit {
     }
 
     final phi = Float64List(graph.n);
-    _diffuseChebyshev(graph: graph, rho: rho, phi: phi, t: t, K: K);
+    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
 
     // Pack into sorted list, excluding exact source files (they're the
     // diff itself — not context). Callers that want them can add them
@@ -1050,7 +888,7 @@ class LogosGit {
   List<RelevanceScore> diffuseWeighted(
     Map<String, double> weights, {
     double t = 1.0,
-    int K = _defaultChebyshevK,
+    int K = kDefaultChebyshevK,
     Set<String> excludePaths = const {},
   }) {
     if (graph.n == 0 || weights.isEmpty) return const [];
@@ -1072,7 +910,7 @@ class LogosGit {
     }
 
     final phi = Float64List(graph.n);
-    _diffuseChebyshev(graph: graph, rho: rho, phi: phi, t: t, K: K);
+    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
 
     final results = <RelevanceScore>[];
     for (var i = 0; i < graph.n; i++) {
@@ -1084,6 +922,67 @@ class LogosGit {
     }
     results.sort((a, b) => b.phi.compareTo(a.phi));
     return results;
+  }
+
+  /// Diffuses [sourceWeights] through the file graph and projects the
+  /// resulting φ through [fileTokenCounts] (file → token → count) to
+  /// produce an expected-token distribution:
+  ///
+  ///     expected(t) = Σ_f φ(f) · P(t | f)
+  ///     P(t | f)    = fileTokenCounts[f][t] / Σ_{t'} fileTokenCounts[f][t']
+  ///
+  /// Callers typically compare this against an observed distribution
+  /// with `log((observed + ε) / (expected + ε))` to score surprise.
+  /// Returned values aren't normalised; divide by sum for probabilities.
+  Map<String, double> projectTokenDistribution({
+    required Map<String, double> sourceWeights,
+    required Map<String, Map<String, double>> fileTokenCounts,
+    double t = 1.0,
+    int K = kDefaultChebyshevK,
+  }) {
+    if (graph.n == 0 || sourceWeights.isEmpty || fileTokenCounts.isEmpty) {
+      return const {};
+    }
+    final rho = Float64List(graph.n);
+    var total = 0.0;
+    for (final entry in sourceWeights.entries) {
+      if (entry.value <= 0) continue;
+      final id = pathToId[entry.key];
+      if (id == null) continue;
+      rho[id] = entry.value;
+      total += entry.value;
+    }
+    if (total <= 0) return const {};
+    for (var i = 0; i < graph.n; i++) {
+      rho[i] /= total;
+    }
+
+    final phi = Float64List(graph.n);
+    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
+
+    final expected = <String, double>{};
+    for (var i = 0; i < graph.n; i++) {
+      final fi = phi[i];
+      if (fi <= 0) continue;
+      final path = nodePaths[i];
+      final tokenCounts = fileTokenCounts[path];
+      if (tokenCounts == null || tokenCounts.isEmpty) continue;
+      var fileTotal = 0.0;
+      for (final c in tokenCounts.values) {
+        fileTotal += c;
+      }
+      if (fileTotal <= 0) continue;
+      final inv = 1.0 / fileTotal;
+      for (final entry in tokenCounts.entries) {
+        final contribution = fi * entry.value * inv;
+        expected.update(
+          entry.key,
+          (v) => v + contribution,
+          ifAbsent: () => contribution,
+        );
+      }
+    }
+    return expected;
   }
 
   /// **Born overlap** — the Logos-native inner product between two
@@ -1108,7 +1007,7 @@ class LogosGit {
     Map<String, double> weightsA,
     Map<String, double> weightsB, {
     double t = 1.5,
-    int K = _defaultChebyshevK,
+    int K = kDefaultChebyshevK,
   }) {
     if (graph.n == 0) return null;
     final phiA = _phiFromWeights(weightsA, t, K);
@@ -1152,7 +1051,7 @@ class LogosGit {
       rho[i] /= total;
     }
     final phi = Float64List(graph.n);
-    _diffuseChebyshev(graph: graph, rho: rho, phi: phi, t: t, K: K);
+    chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
     return phi;
   }
 
@@ -1224,7 +1123,7 @@ class LogosGit {
   /// Estimated spectral radius of the engine's normalised Laplacian.
   /// Diagnostic — should always be ≤ 2 by construction. A larger value
   /// signals numerical drift or an asymmetric weight bug worth chasing.
-  double estimateSpectralRadius({int iterations = _defaultPowerIterations}) =>
+  double estimateSpectralRadius({int iterations = kDefaultPowerIterations}) =>
       graph.estimateSpectralRadius(iterations: iterations);
 
   /// **Per-source attribution diffusion** — runs Chebyshev expansion
@@ -1242,7 +1141,7 @@ class LogosGit {
     required Map<String, double> weightsByPath,
     required Map<String, String> axisLabelByPath,
     double t = 1.0,
-    int K = _defaultChebyshevK,
+    int K = kDefaultChebyshevK,
     Set<String> excludePaths = const {},
   }) {
     if (graph.n == 0 || weightsByPath.isEmpty) return null;
@@ -1269,12 +1168,47 @@ class LogosGit {
       rho[id] += w / totalMass;
     }
 
-    // Diffuse each axis bucket through the same engine.
+    // Batch all axes into one Chebyshev pass. AoSoA-pack the per-axis
+    // rho vectors so the graph traversal services every axis
+    // simultaneously — graph memory bandwidth (the SpMV bottleneck)
+    // scales O(K·|E|) instead of O(B·K·|E|). Split back into per-axis
+    // φ after.
+    final axisOrder = perAxisRaw.keys.toList(growable: false);
+    final B = axisOrder.length;
     final perAxisPhi = <String, Float64List>{};
-    for (final entry in perAxisRaw.entries) {
+    if (B == 1) {
+      // Single axis — skip the packing overhead, run the scalar path.
       final phi = Float64List(graph.n);
-      _diffuseChebyshev(graph: graph, rho: entry.value, phi: phi, t: t, K: K);
-      perAxisPhi[entry.key] = phi;
+      chebyshevDiffuse(
+        graph: graph,
+        rho: perAxisRaw[axisOrder[0]]!,
+        phi: phi,
+        t: t,
+        K: K,
+      );
+      perAxisPhi[axisOrder[0]] = phi;
+    } else {
+      final rhoBatch = Float64List(graph.n * B);
+      for (var b = 0; b < B; b++) {
+        final axisRho = perAxisRaw[axisOrder[b]]!;
+        for (var i = 0; i < graph.n; i++) {
+          rhoBatch[i * B + b] = axisRho[i];
+        }
+      }
+      final phiBatch = chebyshevDiffuseBatch(
+        graph: graph,
+        rhoBatch: rhoBatch,
+        B: B,
+        t: t,
+        K: K,
+      );
+      for (var b = 0; b < B; b++) {
+        final phi = Float64List(graph.n);
+        for (var i = 0; i < graph.n; i++) {
+          phi[i] = phiBatch[i * B + b];
+        }
+        perAxisPhi[axisOrder[b]] = phi;
+      }
     }
 
     // Combined = elementwise sum (heat kernel linearity).
@@ -1550,8 +1484,8 @@ class DiffusionBasis {
   /// Adaptive truncation: at low t the Bessel tail is already below
   /// 1e-8; we skip those terms. At high t we use the full K.
   Float64List recombine(double t) {
-    final coeffs = _chebyshevBesselCoeffs(t, K);
-    final kEff = _adaptiveK(coeffs, 1e-8);
+    final coeffs = besselCoeffs(t, K);
+    final kEff = adaptiveK(coeffs, 1e-8);
     final phi = Float64List(n);
     for (var k = 0; k <= kEff; k++) {
       final c = coeffs[k];
@@ -1585,41 +1519,19 @@ class DiffusionBasis {
 }
 
 DiffusionBasis _buildDiffusionBasis({
-  required _CsrGraph graph,
+  required CsrGraph graph,
   required Float64List rho,
   required int K,
   required Set<String> sources,
 }) {
-  final n = graph.n;
-  final basis = Float64List((K + 1) * n);
-
-  // T_0·ρ = ρ
-  for (var i = 0; i < n; i++) {
-    basis[i] = rho[i];
-  }
-
-  // T_1·ρ = x·ρ = L_sym·ρ - ρ
-  final scratch = Float64List(n);
-  final t0 = Float64List.fromList(rho);
-  final t1 = Float64List(n);
-  graph.applyLsym(t0, scratch);
-  for (var i = 0; i < n; i++) {
-    t1[i] = scratch[i] - t0[i];
-    basis[n + i] = t1[i];
-  }
-
-  // Recurrence: T_{k+1} = 2·x·T_k - T_{k-1}
-  final t2 = Float64List(n);
-  for (var k = 2; k <= K; k++) {
-    graph.applyLsym(t1, scratch);
-    final base = k * n;
-    for (var i = 0; i < n; i++) {
-      t2[i] = 2 * (scratch[i] - t1[i]) - t0[i];
-      basis[base + i] = t2[i];
-    }
-    t0.setAll(0, t1);
-    t1.setAll(0, t2);
-  }
-
-  return DiffusionBasis._(n: n, K: K, basis: basis, sources: sources);
+  // Delegate to logos_core.dart — single implementation shared by the
+  // file-, chunk-, and hunk-graph engines.  Previously this duplicated
+  // the Chebyshev recurrence inline; the wrapper only adds the `sources`
+  // set that DiffusionBasis.recombineAndRank uses for UI labelling.
+  return DiffusionBasis._(
+    n: graph.n,
+    K: K,
+    basis: chebyshevBasis(graph: graph, rho: rho, K: K),
+    sources: sources,
+  );
 }

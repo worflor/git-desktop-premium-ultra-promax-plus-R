@@ -42,14 +42,9 @@ class CommitTagPill extends StatelessWidget {
         .toColor();
 
     final isBorrowed = tag.kind == CommitTagKind.borrowed;
-    // Confidence multiplier: the pill's visual weight scales with how
-    // much the network actually agrees on this label. For non-borrowed
-    // tags, confidence defaults to 1.0 and this is a no-op. For
-    // borrowed tags, sqrt(confidence) compresses the dynamic range so
-    // weak signals (NPMI ≈ 0.1) still read as faint context rather
-    // than vanishing, while strong signals (≈ 0.6+) reach full weight.
-    // Square-root is a universal information-theoretic transform
-    // (variance-stabilizing for proportions); no tuning constants.
+    // Borrowed pills scale their visual weight by sqrt(confidence) so
+    // weak signals stay visible as faint context and strong ones
+    // reach full weight. Non-borrowed pills always use confidence=1.
     final cMul = isBorrowed
         ? math.sqrt(tag.confidence.clamp(0.0, 1.0))
         : 1.0;
@@ -64,9 +59,8 @@ class CommitTagPill extends StatelessWidget {
         ),
       ),
       child: Text(
-        // Borrowed labels read as italic + lower-saturation so the
-        // eldritch origin (label came from the commit's neighborhood,
-        // not its subject) is visible without a literal marker.
+        // Italic + lower-saturation marks borrowed labels as
+        // neighborhood-inferred rather than subject-derived.
         tag.label.toLowerCase(),
         style: TextStyle(
           color: pillColor.withValues(alpha: emphasis.textAlpha * cMul),
@@ -180,6 +174,9 @@ _PillEmphasis _kindEmphasis(CommitTagKind kind) {
         weight: FontWeight.w500,
       );
     case CommitTagKind.merge:
+    case CommitTagKind.rename:
+      // Both are topology-level observations; share emphasis so they
+      // read at the same weight when a commit does both.
       return const _PillEmphasis(
         saturation: 0.6,
         bgAlpha: 0.08,
@@ -200,10 +197,8 @@ _PillEmphasis _kindEmphasis(CommitTagKind kind) {
         textAlpha: 0.88,
         weight: FontWeight.w600,
       );
-    // Borrowed (eldritch) — quietly there. Lowest saturation + alpha
-    // of any kind so it reads as "the network's whisper" rather than
-    // "the commit's claim." Italic + `≈` prefix in the renderer
-    // reinforce the inferred origin.
+    // Borrowed — lowest saturation + alpha of any kind so the pill
+    // reads as inference rather than claim.
     case CommitTagKind.borrowed:
       return const _PillEmphasis(
         saturation: 0.55,

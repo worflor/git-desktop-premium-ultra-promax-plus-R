@@ -30,9 +30,12 @@
 // re-read on every review and write on every feedback.
 // ═════════════════════════════════════════════════════════════════════════
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+
+import 'package:meta/meta.dart';
 
 import 'package:path/path.dart' as p;
 
@@ -98,10 +101,43 @@ class LogosSseCell {
   /// rather than disappearing entirely — soft migration.
   int lastUpdateMs;
 
+  /// Snapshot of [utility] at the previous citation-write boundary,
+  /// or null when no snapshot has been taken yet (cell never updated
+  /// or cell is fresh). Drives [utilityVelocityPerDay] — the rate at
+  /// which the (regime, axis) cell's per-citation utility is changing
+  /// over wall-clock time. Self-tuning calibration: when the velocity
+  /// is positive the axis is becoming MORE predictive in this regime,
+  /// so the probe builder can project forward and weight the axis
+  /// up *before* the next round of evidence accumulates.
+  double? prevUtility;
+
+  /// Epoch millis when [prevUtility] was captured. Combined with the
+  /// current read time to compute Δt for the velocity. When
+  /// [prevUtility] is null this field is unused.
+  int? prevUtilityMs;
+
+  /// Welford running-variance state. Each [_snapshotUtility] call
+  /// updates these so [utilityVariance] tracks the spread of the
+  /// cell's per-citation-round utility ratio over time. Drives the
+  /// variance-modulated decay in [_decayInPlace]: when the cell's
+  /// utility is bouncing (high variance) the effective half-life
+  /// shortens so unstable signals melt faster; when utility is
+  /// converged (low variance) the half-life stays full so the
+  /// crystallised value is preserved. Whisper's "thermodynamic
+  /// evaporation" applied to citation feedback.
+  int utilitySampleCount;
+  double utilitySampleMean;
+  double utilitySampleSumSq;
+
   LogosSseCell({
     this.emitted = 0,
     this.cited = 0,
     int? lastUpdateMs,
+    this.prevUtility,
+    this.prevUtilityMs,
+    this.utilitySampleCount = 0,
+    this.utilitySampleMean = 0.0,
+    this.utilitySampleSumSq = 0.0,
   }) : lastUpdateMs = lastUpdateMs ?? DateTime.now().millisecondsSinceEpoch;
 
   /// Wall-clock half-life for cell counts. 30 days matches the SSE
@@ -114,14 +150,31 @@ class LogosSseCell {
   /// update. Pure; called lazily on read (`utility`) and on increment
   /// so both paths see correctly-aged values. Invariant: after decay,
   /// `cited ≤ emitted` remains true (both shrink by the same factor).
+  ///
+  /// **Variance-modulated half-life.** The base [halfLife] is the
+  /// "neutral" decay; we accelerate it when [utilityVariance] is high.
+  /// Whisper's thermodynamic-evaporation idea applied here: a cell
+  /// whose per-round utility is bouncing in this regime carries less
+  /// signal per sample, so its history should decay faster. A cell
+  /// whose utility is converged is informative — let it freeze.
+  ///
+  ///   accelerationFactor = 1 + (variance / kBernoulliMaxVariance)
+  ///   effectiveHalfLife  = halfLife / accelerationFactor
+  ///
+  /// `kBernoulliMaxVariance = 0.25` (the maximum possible variance of
+  /// a [0,1]-bounded ratio at p=0.5) — a physical bound, not a
+  /// tuning knob. So acceleration is in [1.0, 2.0]: at zero variance
+  /// the half-life is unchanged; at maximum variance it halves.
   void _decayInPlace([DateTime? now]) {
     final nowMs = (now ?? DateTime.now()).millisecondsSinceEpoch;
     final deltaMs = nowMs - lastUpdateMs;
     if (deltaMs <= 0) return;
     final hl = halfLife.inMilliseconds;
     if (hl <= 0) return;
+    final accelFactor = 1.0 + (utilityVariance / _bernoulliMaxVariance);
+    final effectiveHl = hl / accelFactor;
     // exp(-Δt · ln(2) / T_½) = 2^(-Δt / T_½)
-    final factor = math.pow(0.5, deltaMs / hl).toDouble();
+    final factor = math.pow(0.5, deltaMs / effectiveHl).toDouble();
     if (factor >= 0.9999) return; // nothing worth doing
     emitted *= factor;
     cited *= factor;
@@ -131,6 +184,11 @@ class LogosSseCell {
     if (cited < 0.01) cited = 0;
     lastUpdateMs = nowMs;
   }
+
+  /// Maximum variance of a Bernoulli-distributed [0,1] ratio (achieved
+  /// at p=0.5). Used as the natural denominator for the variance-
+  /// modulated decay acceleration — physical bound, no tuning.
+  static const double _bernoulliMaxVariance = 0.25;
 
   /// Minimum evidence before a cell reports a non-prior utility. Below
   /// this the Beta-distribution confidence interval around `cited /
@@ -164,6 +222,72 @@ class LogosSseCell {
     return cited / emitted;
   }
 
+  /// Per-day rate of change in [utility] since the last
+  /// [_snapshotUtility] capture. Returns 0 when:
+  ///   • no snapshot has been taken yet ([prevUtility] null)
+  ///   • current evidence below [_minEvidenceForUtility] (utility
+  ///     would just be the KT prior — no real signal to differentiate)
+  ///   • Δt ≤ 0 or non-finite (clock-skew safety)
+  ///
+  /// Positive = axis becoming more predictive in this regime.
+  /// Negative = axis becoming less predictive (its citations not
+  /// keeping up with its emissions). Drives the probe builder's
+  /// projection lookahead so weight scales adapt one half-life early
+  /// instead of waiting for evidence to fully catch up.
+  double get utilityVelocityPerDay {
+    final prev = prevUtility;
+    final prevMs = prevUtilityMs;
+    if (prev == null || prevMs == null) return 0.0;
+    if (emitted < _minEvidenceForUtility) return 0.0;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final deltaMs = nowMs - prevMs;
+    if (deltaMs <= 0) return 0.0;
+    final deltaDays = deltaMs / Duration.millisecondsPerDay;
+    if (deltaDays <= 0 || !deltaDays.isFinite) return 0.0;
+    final delta = utility - prev;
+    if (!delta.isFinite) return 0.0;
+    return delta / deltaDays;
+  }
+
+  /// Variance of the cell's utility ratio over time, computed via
+  /// Welford's online algorithm against [_snapshotUtility] samples.
+  /// Bounded above by [_bernoulliMaxVariance] = 0.25. Returns 0 until
+  /// at least two samples have been taken (no spread to measure).
+  ///
+  /// Drives the variance-modulated decay in [_decayInPlace] — high
+  /// variance ⇒ axis is bouncing in this regime ⇒ shorter effective
+  /// half-life ⇒ faster forget. Whisper's evaporation primitive on
+  /// the citation-feedback signal.
+  double get utilityVariance {
+    if (utilitySampleCount < 2) return 0.0;
+    return utilitySampleSumSq / (utilitySampleCount - 1);
+  }
+
+  /// Test-only access to [_snapshotUtility]. Production callers go
+  /// through [LogosSseStore.recordCitations] which calls the private
+  /// version; tests need to drive the snapshot loop directly.
+  @visibleForTesting
+  void snapshotUtilityForTesting() => _snapshotUtility();
+
+  /// Capture the current utility into [prevUtility] / [prevUtilityMs]
+  /// so subsequent reads can compute velocity vs this point. Also
+  /// updates the Welford running-variance state. Called after each
+  /// citation-write by [LogosSseStore.recordCitations] so the
+  /// velocity AND variance reflect per-feedback-round learning, not
+  /// per-read.
+  void _snapshotUtility() {
+    final newSample = utility;
+    // Welford's online variance update.
+    utilitySampleCount += 1;
+    final delta = newSample - utilitySampleMean;
+    utilitySampleMean += delta / utilitySampleCount;
+    final delta2 = newSample - utilitySampleMean;
+    utilitySampleSumSq += delta * delta2;
+
+    prevUtility = newSample;
+    prevUtilityMs = DateTime.now().millisecondsSinceEpoch;
+  }
+
   /// Saturation cap (Logos `evaporate()`-style). At the soft trigger
   /// ([_saturationSoft]) we halve both counts — this preserves the
   /// `cited / emitted` ratio exactly and matches the discrete behaviour
@@ -190,6 +314,19 @@ class LogosSseCell {
         'e': double.parse(emitted.toStringAsFixed(3)),
         'c': double.parse(cited.toStringAsFixed(3)),
         't': lastUpdateMs,
+        // Velocity-tracking snapshot. Omitted when no snapshot has
+        // been taken yet — keeps the JSON small for fresh cells.
+        if (prevUtility != null) 'pu': double.parse(prevUtility!.toStringAsFixed(3)),
+        if (prevUtilityMs != null) 'pt': prevUtilityMs!,
+        // Welford running-variance state — only serialised after the
+        // first snapshot so legacy cells stay compact. The four-tuple
+        // is kept as Welford requires (count + mean + sum-sq) to
+        // continue updating after a load.
+        if (utilitySampleCount > 0) ...{
+          'vn': utilitySampleCount,
+          'vm': double.parse(utilitySampleMean.toStringAsFixed(4)),
+          'vs': double.parse(utilitySampleSumSq.toStringAsFixed(6)),
+        },
       };
 
   factory LogosSseCell.fromJson(Map<String, dynamic> j) {
@@ -204,6 +341,11 @@ class LogosSseCell {
       emitted: (j['e'] as num?)?.toDouble() ?? 0,
       cited: (j['c'] as num?)?.toDouble() ?? 0,
       lastUpdateMs: ts,
+      prevUtility: (j['pu'] as num?)?.toDouble(),
+      prevUtilityMs: (j['pt'] as num?)?.toInt(),
+      utilitySampleCount: (j['vn'] as num?)?.toInt() ?? 0,
+      utilitySampleMean: (j['vm'] as num?)?.toDouble() ?? 0.0,
+      utilitySampleSumSq: (j['vs'] as num?)?.toDouble() ?? 0.0,
     );
   }
 }
@@ -226,13 +368,80 @@ class LogosEmissionRecord {
 /// The per-repo calibration store. Read-through + write-through JSON.
 /// Cheap: a 3-second cache keeps repeated reads near-free without a
 /// long-lived lock.
+///
+/// Concurrent-write safety: each `recordEmissions` / `recordCitations`
+/// runs inside [_withRepoWriteLock], which serialises read-modify-write
+/// cycles per `repoPath` *across all [LogosSseStore] instances* (the
+/// lock map is static). Without this, two parallel reviews on the same
+/// repo would each load → mutate locally → save, with the later writer
+/// silently overwriting the earlier one's increments. The lock also
+/// invalidates the per-instance cache before each locked read so a
+/// store whose cache predates a sibling instance's write doesn't act
+/// on stale data.
 class LogosSseStore {
   final String repoPath;
   Map<LogosRegime, Map<LogosAxis, LogosSseCell>>? _cache;
   DateTime? _cacheAt;
   static const _cacheTtl = Duration(seconds: 3);
 
+  /// Per-repoPath write-chain. Each new locked operation awaits the
+  /// previous one's completion before running, then chains its own
+  /// completer for the next caller. Static so it spans all
+  /// [LogosSseStore] instances that target the same repo.
+  static final Map<String, Future<void>> _writeChains = {};
+
+  /// Timestamp of the most recent successful write per normalised repo key.
+  /// Read by [_load] to invalidate per-instance caches in sibling stores —
+  /// the lock serialises writers but each instance manages its own cache,
+  /// so without this a sibling can return pre-write data for up to [_cacheTtl].
+  static final Map<String, DateTime> _lastWriteAt = {};
+
+  /// Normalise a repo path to a canonical lock key.  Converts backslashes
+  /// to forward slashes and strips trailing slashes.  Lowercasing is
+  /// applied only on Windows where the filesystem is case-insensitive —
+  /// on macOS and Linux `/Repo` and `/repo` are distinct directories and
+  /// must not share a lock entry.  [repoPath] itself is left unchanged
+  /// — it is used for actual file I/O and must remain in its original form.
+  static String _lockKey(String path) {
+    var key = path.replaceAll('\\', '/').replaceAll(RegExp(r'/+$'), '');
+    if (Platform.isWindows) key = key.toLowerCase();
+    return key;
+  }
+
   LogosSseStore(this.repoPath);
+
+  /// Run [body] under the per-repo write lock. Forces a fresh disk
+  /// read inside the critical section by invalidating the cache, so
+  /// the body sees any sibling writes that landed before it acquired
+  /// the lock.
+  Future<T> _withRepoWriteLock<T>(Future<T> Function() body) async {
+    final key = _lockKey(repoPath);
+    final pending = _writeChains[key];
+    final completer = Completer<void>();
+    _writeChains[key] = completer.future;
+    try {
+      if (pending != null) {
+        await pending;
+      }
+      // Drop our own cache so [_load] re-reads disk inside the lock.
+      // Sibling writers may have updated the file while we were
+      // waiting on `pending`.
+      _cache = null;
+      _cacheAt = null;
+      final result = await body();
+      // Stamp the write time BEFORE completing the completer so any
+      // waiting sibling instances see it immediately on wake-up.
+      _lastWriteAt[key] = DateTime.now();
+      return result;
+    } finally {
+      completer.complete();
+      // Only remove the chain entry if no later caller has chained
+      // onto our completer. Otherwise leave it for the next waiter.
+      if (identical(_writeChains[key], completer.future)) {
+        _writeChains.remove(key);
+      }
+    }
+  }
 
   Future<LogosSseCell> cellFor(LogosRegime regime, LogosAxis axis) async {
     final data = await _load();
@@ -244,22 +453,24 @@ class LogosSseStore {
   /// via [recordCitations].
   Future<void> recordEmissions(LogosEmissionRecord record) async {
     if (record.isEmpty) return;
-    final data = await _load();
-    final tally = <LogosAxis, int>{};
-    for (final a in record.axisByPath.values) {
-      tally.update(a, (v) => v + 1, ifAbsent: () => 1);
-    }
-    for (final entry in tally.entries) {
-      final cell = data
-          .putIfAbsent(record.regime, () => {})
-          .putIfAbsent(entry.key, () => LogosSseCell());
-      // Age the cell before incrementing so recent activity is
-      // weighted fairly against stale history.
-      cell._decayInPlace();
-      cell.emitted += entry.value;
-      cell.evaporateIfSaturated();
-    }
-    await _save(data);
+    await _withRepoWriteLock(() async {
+      final data = await _load();
+      final tally = <LogosAxis, int>{};
+      for (final a in record.axisByPath.values) {
+        tally.update(a, (v) => v + 1, ifAbsent: () => 1);
+      }
+      for (final entry in tally.entries) {
+        final cell = data
+            .putIfAbsent(record.regime, () => {})
+            .putIfAbsent(entry.key, () => LogosSseCell());
+        // Age the cell before incrementing so recent activity is
+        // weighted fairly against stale history.
+        cell._decayInPlace();
+        cell.emitted += entry.value;
+        cell.evaporateIfSaturated();
+      }
+      await _save(data);
+    });
   }
 
   /// Record which emitted paths the AI actually cited. Paths not in
@@ -269,32 +480,46 @@ class LogosSseStore {
     required Set<String> citedPaths,
   }) async {
     if (record.isEmpty) return;
-    final data = await _load();
-    final tally = <LogosAxis, int>{};
-    for (final entry in record.axisByPath.entries) {
-      if (!citedPaths.contains(entry.key)) continue;
-      tally.update(entry.value, (v) => v + 1, ifAbsent: () => 1);
-    }
-    if (tally.isEmpty) {
-      // No citations hit our emissions — nothing to record. Skip the
-      // write entirely (no `_cacheAt` refresh, no disk touch); the
-      // emission counters were already incremented at recordEmission
-      // time, so the SSE state for this record is already coherent.
-      return;
-    }
-    for (final entry in tally.entries) {
-      final cell = data
-          .putIfAbsent(record.regime, () => {})
-          .putIfAbsent(entry.key, () => LogosSseCell());
-      cell._decayInPlace();
-      cell.cited += entry.value;
-    }
-    await _save(data);
+    await _withRepoWriteLock(() async {
+      final data = await _load();
+      final tally = <LogosAxis, int>{};
+      for (final entry in record.axisByPath.entries) {
+        if (!citedPaths.contains(entry.key)) continue;
+        tally.update(entry.value, (v) => v + 1, ifAbsent: () => 1);
+      }
+      if (tally.isEmpty) {
+        // No citations hit our emissions — nothing to record. Skip
+        // the write entirely (no `_cacheAt` refresh, no disk touch);
+        // the emission counters were already incremented at
+        // recordEmission time, so the SSE state for this record is
+        // already coherent.
+        return;
+      }
+      for (final entry in tally.entries) {
+        final cell = data
+            .putIfAbsent(record.regime, () => {})
+            .putIfAbsent(entry.key, () => LogosSseCell());
+        cell._decayInPlace();
+        cell.cited += entry.value;
+        // Snapshot the post-update utility so the NEXT recordCitations
+        // round can compute velocity = (newer_utility − this_utility) /
+        // Δt. This is what closes the self-tuning feedback loop:
+        // probe weights project forward by velocity × half-life so an
+        // axis that's becoming more predictive gets weighted up
+        // *before* it fully accumulates evidence.
+        cell._snapshotUtility();
+      }
+      await _save(data);
+    });
   }
 
   /// Returns utility ratios suitable for scaling probe-axis weights.
   /// `1.0` is the neutral prior; above means the axis is pulling its
   /// weight in this regime; below means it's overfiring.
+  ///
+  /// This is the "spot value" — current utility only. For
+  /// trend-aware weighting that anticipates an axis becoming more
+  /// (or less) predictive, use [projectedUtilitiesFor].
   Future<Map<LogosAxis, double>> utilitiesFor(LogosRegime regime) async {
     final data = await _load();
     final row = data[regime];
@@ -306,9 +531,61 @@ class LogosSseStore {
     };
   }
 
+  /// Returns trend-aware multipliers: `(utility + velocity ×
+  /// lookaheadDays) × 2`. Drives the probe builder's self-tuning so
+  /// axes whose utility is climbing in this regime get weighted up
+  /// *before* their evidence fully accumulates, and axes whose utility
+  /// is falling get downweighted before they do real damage.
+  ///
+  /// [lookaheadDays] is the projection horizon in days. The natural
+  /// choice is the SSE store's own half-life: project as far as the
+  /// store keeps memory; beyond that, decay erases the trend anyway.
+  /// Defaults to `LogosSseCell.halfLife.inDays` for that reason.
+  ///
+  /// Cells without a velocity snapshot (fresh cells, low evidence)
+  /// degrade gracefully to the spot utility — same as
+  /// [utilitiesFor] would return. No NaN, no surprise.
+  Future<Map<LogosAxis, double>> projectedUtilitiesFor(
+    LogosRegime regime, {
+    double? lookaheadDays,
+  }) async {
+    final data = await _load();
+    final row = data[regime];
+    if (row == null) return const {};
+    final lookahead =
+        lookaheadDays ?? LogosSseCell.halfLife.inDays.toDouble();
+    return {
+      for (final entry in row.entries)
+        entry.key:
+            (entry.value.utility + entry.value.utilityVelocityPerDay * lookahead)
+                .clamp(0.0, 1.0) *
+                2,
+      // Clamp inside [0, 1] before the ×2 centering so the result
+      // can't exceed [0, 2]. The probe still applies its own
+      // _sseUtilityScaleMin/Max bound on top.
+    };
+  }
+
   // ─── persistence ─────────────────────────────────────────────────────
 
   Future<Map<LogosRegime, Map<LogosAxis, LogosSseCell>>> _load() async {
+    // Invalidate own cache if a sibling store wrote more recently.
+    // The static lock serialises writers but each instance holds its own
+    // cache; without this check a sibling's write would be invisible here
+    // until the 3s TTL expires.
+    final key = _lockKey(repoPath);
+    final lastWrite = _lastWriteAt[key];
+    if (lastWrite != null) {
+      if (DateTime.now().difference(lastWrite) > _cacheTtl) {
+        // Entry is older than the TTL — no live cache can predate this
+        // write any more.  Prune it to prevent unbounded map growth over
+        // a long process lifetime.
+        _lastWriteAt.remove(key);
+      } else if (_cacheAt == null || lastWrite.isAfter(_cacheAt!)) {
+        _cache = null;
+        _cacheAt = null;
+      }
+    }
     if (_cache != null &&
         _cacheAt != null &&
         DateTime.now().difference(_cacheAt!) < _cacheTtl) {

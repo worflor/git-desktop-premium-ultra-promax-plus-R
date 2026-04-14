@@ -18,6 +18,10 @@ class AiSettingsState extends ChangeNotifier {
   String _reviewCommitPrompt = '';
   String _reviewCommitPromptPath = '';
   bool _reviewCommitDoubleCheckEnabled = false;
+  String _musePrompt = '';
+  String _musePromptPath = '';
+  String _museBrainstormModelCategoryId = 'fast';
+  String _museSynthesisModelCategoryId = 'quality';
   List<AiProviderStatus> _runtimeProviders = const [];
   String? _runtimeProvidersError;
   bool _runtimeProvidersLoading = false;
@@ -38,6 +42,10 @@ class AiSettingsState extends ChangeNotifier {
   String get reviewCommitPrompt => _reviewCommitPrompt;
   String get reviewCommitPromptPath => _reviewCommitPromptPath;
   bool get reviewCommitDoubleCheckEnabled => _reviewCommitDoubleCheckEnabled;
+  String get musePrompt => _musePrompt;
+  String get musePromptPath => _musePromptPath;
+  String get museBrainstormModelCategoryId => _museBrainstormModelCategoryId;
+  String get museSynthesisModelCategoryId => _museSynthesisModelCategoryId;
   List<AiProviderStatus> get runtimeProviders =>
       List.unmodifiable(_runtimeProviders);
   String? get runtimeProvidersError => _runtimeProvidersError;
@@ -66,6 +74,10 @@ class AiSettingsState extends ChangeNotifier {
     _reviewCommitPrompt = await AiSettingsStore.loadReviewCommitPrompt();
     _reviewCommitPromptPath = await AiSettingsStore.reviewCommitPromptPath();
     _reviewCommitDoubleCheckEnabled = snapshot.reviewCommitDoubleCheckEnabled;
+    _musePrompt = await AiSettingsStore.loadMusePrompt();
+    _musePromptPath = await AiSettingsStore.musePromptPath();
+    _museBrainstormModelCategoryId = snapshot.museBrainstormModelCategoryId;
+    _museSynthesisModelCategoryId = snapshot.museSynthesisModelCategoryId;
     _loaded = true;
     notifyListeners();
   }
@@ -109,6 +121,18 @@ class AiSettingsState extends ChangeNotifier {
     }
     if (!activeCategoryIds.contains(_reviewCommitModelCategoryId)) {
       _reviewCommitModelCategoryId = categories.first.id;
+      changed = true;
+    }
+    // Positional heuristic — scales with however many categories exist.
+    // Synthesis takes the FIRST category (convention: primary / strongest);
+    // brainstorm takes the LAST (convention: cheapest / fastest if there
+    // are multiple, falls back to the same as synthesis if only one).
+    if (!activeCategoryIds.contains(_museSynthesisModelCategoryId)) {
+      _museSynthesisModelCategoryId = categories.first.id;
+      changed = true;
+    }
+    if (!activeCategoryIds.contains(_museBrainstormModelCategoryId)) {
+      _museBrainstormModelCategoryId = categories.last.id;
       changed = true;
     }
 
@@ -199,6 +223,27 @@ class AiSettingsState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setMusePrompt(String value) async {
+    if (_musePrompt == value) return;
+    _musePrompt = value;
+    await AiSettingsStore.persistMusePrompt(value);
+    notifyListeners();
+  }
+
+  Future<void> setMuseBrainstormModelCategoryId(String categoryId) async {
+    if (_museBrainstormModelCategoryId == categoryId) return;
+    _museBrainstormModelCategoryId = categoryId;
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> setMuseSynthesisModelCategoryId(String categoryId) async {
+    if (_museSynthesisModelCategoryId == categoryId) return;
+    _museSynthesisModelCategoryId = categoryId;
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
   Future<bool> refreshProviders({bool forceRefresh = false}) {
     if (!forceRefresh && _runtimeProviders.isNotEmpty) {
       return SynchronousFuture(true);
@@ -282,6 +327,8 @@ class AiSettingsState extends ChangeNotifier {
         commitMessageModelCategoryId: _commitMessageModelCategoryId,
         reviewCommitModelCategoryId: _reviewCommitModelCategoryId,
         reviewCommitDoubleCheckEnabled: _reviewCommitDoubleCheckEnabled,
+        museBrainstormModelCategoryId: _museBrainstormModelCategoryId,
+        museSynthesisModelCategoryId: _museSynthesisModelCategoryId,
       ),
     );
   }

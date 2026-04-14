@@ -592,7 +592,13 @@ class _DiffShellState extends State<DiffShell> {
 
   @override
   void dispose() {
-    _flushRenderMetrics();
+    // Defer the metrics flush to a microtask: notifyListeners() inside
+    // dispose() runs while the framework is in lockState, which throws
+    // "widget tree was locked" on the downstream provider. The flush is
+    // pure observation — DiagnosticsState only reads internal counters
+    // and pushes them to listeners — so post-frame scheduling is safe
+    // and preserves the metric.
+    scheduleMicrotask(_flushRenderMetrics);
     _blameHoverTimer?.cancel();
     _sessionFlushTimer?.cancel();
     _applyDebounce?.cancel();
@@ -1612,9 +1618,9 @@ class DiffLineView extends StatefulWidget {
 }
 
 class _DiffLineState extends State<DiffLineView> {
-  /// Hover anywhere across the left click zone (ribbon + sigil + gutter).
-  /// Drives the sigil's hover-border affordance so the whole margin reads
-  /// as clickable.
+  /// Hover specifically over the stage sigil cell. Drives the sigil's
+  /// hover-border affordance. Hover state is intentionally narrow so the
+  /// whole left margin doesn't look clickable when only the sigil is.
   bool _lineHover = false;
 
   @override
@@ -1742,23 +1748,50 @@ class _DiffLineState extends State<DiffLineView> {
           );
 
     // ── Stage sigil column ────────────────────────────────────────────
-    // The sigil itself is drag-only (paint mode). Click is handled by the
-    // outer zone below so the whole left margin is one generous hit target.
+    // The sigil cell owns BOTH tap and drag — the interactive zone is the
+    // sigil itself, not the wider margin. Clicking the line-number cell or
+    // the line-state ribbon does nothing, by design.
+    final bool sigilInteractive =
+        widget.stagingEnabled && isStageable && widget.onSigilTap != null;
+    final Widget rawSigil = widget.stagingEnabled && isStageable
+        ? _StageSigil(
+            tokens: t,
+            kind: l.kind,
+            staged: l.isStaged,
+            hovered: _lineHover,
+            color: sigilColor,
+            onPaintStart: () => widget.onPaintStart?.call(),
+            onPaintMove: (g) => widget.onPaintMove?.call(g),
+            onPaintEnd: () => widget.onPaintEnd?.call(),
+          )
+        : const SizedBox.shrink();
     final Widget stageCell = widget.stagingEnabled
         ? SizedBox(
             width: widget.stageCellWidth,
-            child: isStageable
-                ? _StageSigil(
-                    tokens: t,
-                    kind: l.kind,
-                    staged: l.isStaged,
-                    hovered: _lineHover,
-                    color: sigilColor,
-                    onPaintStart: () => widget.onPaintStart?.call(),
-                    onPaintMove: (g) => widget.onPaintMove?.call(g),
-                    onPaintEnd: () => widget.onPaintEnd?.call(),
+            child: sigilInteractive
+                ? MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    onEnter: (_) => setState(() => _lineHover = true),
+                    onExit: (_) => setState(() => _lineHover = false),
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapUp: (_) {
+                        final isShift = HardwareKeyboard.instance
+                                .isLogicalKeyPressed(
+                                    LogicalKeyboardKey.shiftLeft) ||
+                            HardwareKeyboard.instance.isLogicalKeyPressed(
+                                LogicalKeyboardKey.shiftRight);
+                        final isAlt = HardwareKeyboard.instance
+                                .isLogicalKeyPressed(
+                                    LogicalKeyboardKey.altLeft) ||
+                            HardwareKeyboard.instance.isLogicalKeyPressed(
+                                LogicalKeyboardKey.altRight);
+                        widget.onSigilTap!(isShift, isAlt);
+                      },
+                      child: rawSigil,
+                    ),
                   )
-                : const SizedBox.shrink(),
+                : rawSigil,
           )
         : const SizedBox.shrink();
 
@@ -1794,47 +1827,17 @@ class _DiffLineState extends State<DiffLineView> {
             : Container(width: 2, color: ribbonColor))
         : const SizedBox.shrink();
 
-    // Left margin — ribbon + sigil + line number — is one generous click
-    // zone for stageable lines. Clicking anywhere toggles stage with
-    // shift/alt modifier awareness. Paint-drag is still owned by the
-    // sigil cell itself so vertical scroll keeps working when you grab
-    // the gutter on non-stageable lines.
-    final leftCells = [
-      SizedBox(height: 18, child: ribbon),
-      stageCell,
-      gutterContent,
-    ];
-    final bool leftInteractive =
-        widget.stagingEnabled && isStageable && widget.onSigilTap != null;
-    final Widget leftZone = leftInteractive
-        ? MouseRegion(
-            cursor: SystemMouseCursors.click,
-            onEnter: (_) => setState(() => _lineHover = true),
-            onExit: (_) => setState(() => _lineHover = false),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapUp: (_) {
-                final isShift = HardwareKeyboard.instance
-                        .isLogicalKeyPressed(
-                            LogicalKeyboardKey.shiftLeft) ||
-                    HardwareKeyboard.instance.isLogicalKeyPressed(
-                        LogicalKeyboardKey.shiftRight);
-                final isAlt = HardwareKeyboard.instance
-                        .isLogicalKeyPressed(LogicalKeyboardKey.altLeft) ||
-                    HardwareKeyboard.instance
-                        .isLogicalKeyPressed(LogicalKeyboardKey.altRight);
-                widget.onSigilTap!(isShift, isAlt);
-              },
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: leftCells,
-              ),
-            ),
-          )
-        : Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: leftCells,
-          );
+    // Left margin: ribbon + sigil + line number. Layout only — taps are
+    // owned by the sigil cell above so the line-number rectangle isn't a
+    // hidden click target.
+    final leftZone = Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(height: 18, child: ribbon),
+        stageCell,
+        gutterContent,
+      ],
+    );
 
     final baseRow = Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1851,16 +1854,31 @@ class _DiffLineState extends State<DiffLineView> {
         : baseRow;
 
     // Blame annotation overlay — shown inline left of gutter on hover.
-    final showBlame = widget.hovered && widget.blameEntry != null;
-    if (!showBlame) return interactiveRow;
+    // Reengineered: replaces the deterministic-rainbow author hue (decoration)
+    // with a metabolism bar derived from per-file wear intensity (signal).
+    // The strip now answers "when, in this file's own rhythm" — not just
+    // "when on the calendar".
+    if (widget.blameEntry == null) return interactiveRow;
 
     final b = widget.blameEntry!;
     final initial =
         b.authorName.isNotEmpty ? b.authorName[0].toUpperCase() : '?';
     final timeStr = _formatBlameTime(b.authoredAt);
-    final hue = (b.authorName.codeUnits.fold(0, (a, c) => a + c) * 37) % 360;
-    final authorColor =
-        HSLColor.fromAHSL(1.0, hue.toDouble(), 0.55, 0.55).toColor();
+
+    // wearIntensity: 0 = newest in file, 1 = oldest in file. Bucketed into
+    // hot / warm / settled so the bar reads at a glance without forcing the
+    // eye to interpolate fine alpha differences.
+    final wear = widget.wearIntensity;
+    final Color metaColor;
+    if (wear == null) {
+      metaColor = t.textFaint.withValues(alpha: 0.4);
+    } else if (wear < 0.34) {
+      metaColor = t.accentBright;
+    } else if (wear < 0.67) {
+      metaColor = t.textNormal;
+    } else {
+      metaColor = t.textFaint;
+    }
 
     return Stack(clipBehavior: Clip.none, children: [
       interactiveRow,
@@ -1869,47 +1887,57 @@ class _DiffLineState extends State<DiffLineView> {
         top: 0,
         bottom: 0,
         child: IgnorePointer(
-          child: AnimatedOpacity(
-            opacity: 1.0,
-            duration: const Duration(milliseconds: 150),
-            child: Container(
-              width: 140,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: t.surface1,
-                border: Border(
-                  right: BorderSide(
-                      color: t.hyperChromatic1.withValues(alpha: 0.4),
-                      width: 2),
+          child: AnimatedSlide(
+            offset: widget.hovered ? Offset.zero : const Offset(-0.06, 0),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
+            child: AnimatedOpacity(
+              opacity: widget.hovered ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 100),
+              curve: Curves.easeOutCubic,
+              child: IntrinsicWidth(
+                child: Container(
+                  constraints: const BoxConstraints(minWidth: 96),
+                  // Tab-cut-from-the-gutter silhouette: hairline border on
+                  // top/right/bottom only, no left border — the chip shares
+                  // its left edge with the gutter it slid out of. Contrast
+                  // is structural (defined silhouette + theme-calibrated
+                  // hairline), not luminance- or glow-based.
+                  decoration: BoxDecoration(
+                    color: t.surface2,
+                    border: Border(
+                      top: BorderSide(color: t.chromeBorder, width: 1),
+                      right: BorderSide(color: t.chromeBorder, width: 1),
+                      bottom: BorderSide(color: t.chromeBorder, width: 1),
+                    ),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    // Metabolism stripe IS the chip's leading edge — a
+                    // semantic seam between gutter and chip, not a
+                    // floating dot inside it.
+                    Container(width: 2, color: metaColor),
+                    const SizedBox(width: 8),
+                    Text(initial,
+                        style: TextStyle(
+                            color: t.textNormal,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '${b.shortHash}  $timeStr',
+                        style: TextStyle(
+                          color: t.hyperChromatic1,
+                          fontSize: 9,
+                          fontFamily: 'JetBrainsMono',
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ]),
                 ),
               ),
-              child: Row(children: [
-                Container(
-                  width: 18,
-                  height: 18,
-                  decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: authorColor.withValues(alpha: 0.2)),
-                  child: Center(
-                    child: Text(initial,
-                        style: TextStyle(
-                            color: authorColor,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700)),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                    child: Text(
-                  '${b.shortHash} · $timeStr',
-                  style: TextStyle(
-                    color: t.hyperChromatic1,
-                    fontSize: 9,
-                    fontFamily: 'JetBrainsMono',
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                )),
-              ]),
             ),
           ),
         ),

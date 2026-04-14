@@ -147,6 +147,36 @@ class EngramFit {
     if (logR >= 0 || !logR.isFinite) return null;
     return -math.ln2 / logR;
   }
+
+  /// Natural oscillation period of the orbit, in samples. The
+  /// AR(2) characteristic polynomial λ² − K·λ + G = 0 has, for the
+  /// under-damped case, a complex-conjugate pair λ = r·e^{±iω₀} with
+  /// |λ| = r = √G and angular frequency ω₀ = arccos(K / 2r). The
+  /// period in samples is 2π/ω₀ — the "natural rhythm" of the
+  /// underlying signal.
+  ///
+  /// Returns null when:
+  ///   • the fit degenerated to linear fallback
+  ///   • the roots are real (over-damped — no oscillation)
+  ///   • |K / 2r| ≥ 1 (numerical edge: would be acos out-of-domain)
+  ///   • the period is degenerate (ω₀ ≈ 0 → infinite period)
+  ///
+  /// Used by callers that want to reason about the *cadence* of a
+  /// signal, not just its decay. Example: commit-rate AR(2) fits
+  /// expose this as the repo's "natural commit rhythm" in samples
+  /// (days, given how the series is constructed).
+  double? get oscillationPeriodSamples {
+    if (isLinearFallback) return null;
+    final disc = k * k - 4 * g;
+    if (disc >= 0) return null; // over-damped → no oscillation
+    final r = spectralRadius;
+    if (r <= 0) return null;
+    final ratio = k / (2 * r);
+    if (ratio.abs() >= 1.0) return null; // acos domain guard
+    final omega = math.acos(ratio);
+    if (omega <= 1e-9 || !omega.isFinite) return null;
+    return 2 * math.pi / omega;
+  }
 }
 
 /// Fit an AR(2) oscillator to a real-valued 1D time series.

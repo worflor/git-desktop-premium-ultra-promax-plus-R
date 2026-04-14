@@ -7,8 +7,7 @@ import 'tokens.dart';
 /// Parses markdown formatting (`**bold**`, `*italic*`, `` `code` ``),
 /// detects technical terms (PascalCase, CONSTANTS, file paths), and
 /// applies theme-aware accent styling. Drop-in replacement for [Text].
-///
-/// All colors derive from [AppTokens] — zero hardcoded values.
+/// Colors come from [AppTokens].
 Widget resonanceText(
   String text,
   AppTokens tokens, {

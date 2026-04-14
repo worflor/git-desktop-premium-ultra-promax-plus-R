@@ -218,6 +218,94 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
               );
 
               if (showSideInspector) {
+                // Map view gets a floating inspector — territory tiles
+                // flow around it in an L-shape via the obstacle param,
+                // so the empty space below the (short) metadata card
+                // becomes more room for tiles.
+                if (_view == _XrayView.map) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                    child: LayoutBuilder(builder: (ctx, c) {
+                      // Match the previous flex 5/13 inspector width with a
+                      // 12px gap; clamp to a comfortable range so tiny or
+                      // huge windows still look right.
+                      final rawInspectorW = (c.maxWidth - 12) * 5 / 13;
+                      final inspectorW = rawInspectorW.clamp(280.0, 460.0);
+                      // The metadata card is naturally short. A capped fixed
+                      // height keeps geometry deterministic for the
+                      // territory's L-shape carve-out (no two-pass measure).
+                      final inspectorH = math.min(c.maxHeight * 0.55, 380.0);
+
+                      // Convert the inspector's panel-local rect into the
+                      // territory's *treemap-interior* coords. The territory
+                      // sits inside two surfaces, each contributing chrome:
+                      //   _PanelBlock — Padding(12) + MaterialSurface
+                      //                 1px border ≈ 13px inset.
+                      //   _TerritoryBoard — MaterialSurface 1px border +
+                      //                     Padding(12, 10, 12, 12) +
+                      //                     header row (~18px) +
+                      //                     8px gap = 13/29 + content.
+                      // Combined origin: (26, 42 + headerH). The previous
+                      // value was 6px short on the bottom side, which is
+                      // exactly the overflow the docs/* tiles reported.
+                      const treemapOriginX = 13.0 + 13.0; // 26
+                      const treemapOriginY =
+                          13.0 + 13.0 + 18.0 + 8.0; // 52
+                      final inspectorPanelLeft = c.maxWidth - inspectorW;
+                      // 12px breathing gap between inspector bottom and
+                      // the tiles that flow underneath.
+                      final inspectorPanelBottom = inspectorH + 12.0;
+                      final obstacle = Rect.fromLTRB(
+                        math.max(0, inspectorPanelLeft - treemapOriginX),
+                        0, // inspector top extends above the treemap origin
+                        c.maxWidth - treemapOriginX,
+                        math.max(0, inspectorPanelBottom - treemapOriginY),
+                      );
+
+                      return Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Positioned.fill(
+                            child: _MainViewport(
+                              view: _view,
+                              snapshot: snapshot,
+                              cards: cards,
+                              hotspots: hotspots,
+                              cadence: cadence,
+                              pivots: pivots,
+                              selectedSignalId: _selectedSignalId,
+                              selectedHotspotPath: _selectedHotspotPath,
+                              selectedPivotHash: _selectedPivotHash,
+                              selectedStratumId: _selectedStratumId,
+                              onSignalSelected: (id) => setState(() =>
+                                  _selectedSignalId =
+                                      _selectedSignalId == id ? null : id),
+                              onHotspotSelected: (path) => setState(() =>
+                                  _selectedHotspotPath =
+                                      _selectedHotspotPath == path
+                                          ? null
+                                          : path),
+                              onPivotSelected: (hash) => setState(() =>
+                                  _selectedPivotHash =
+                                      _selectedPivotHash == hash ? null : hash),
+                              onStratumSelected: (id) => setState(() =>
+                                  _selectedStratumId =
+                                      _selectedStratumId == id ? null : id),
+                              mapObstacle: obstacle,
+                            ),
+                          ),
+                          Positioned(
+                            top: 0,
+                            right: 0,
+                            width: inspectorW,
+                            height: inspectorH,
+                            child: inspector,
+                          ),
+                        ],
+                      );
+                    }),
+                  );
+                }
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                   child: Row(
@@ -553,6 +641,10 @@ class _MainViewport extends StatelessWidget {
   final ValueChanged<String> onPivotSelected;
   final ValueChanged<String> onStratumSelected;
 
+  /// Optional carve-out for the map view's L-shape territory layout
+  /// (treemap-interior coords). Ignored for non-map views.
+  final Rect? mapObstacle;
+
   const _MainViewport({
     required this.view,
     required this.snapshot,
@@ -568,6 +660,7 @@ class _MainViewport extends StatelessWidget {
     required this.onHotspotSelected,
     required this.onPivotSelected,
     required this.onStratumSelected,
+    this.mapObstacle,
   });
 
   @override
@@ -581,6 +674,7 @@ class _MainViewport extends StatelessWidget {
             selectedStratumId: selectedStratumId,
             onHotspotSelected: onHotspotSelected,
             onStratumSelected: onStratumSelected,
+            obstacle: mapObstacle,
           ),
         _XrayView.time => _TimeView(
             cadence: cadence,
@@ -606,6 +700,12 @@ class _MapView extends StatelessWidget {
   final ValueChanged<String> onHotspotSelected;
   final ValueChanged<String> onStratumSelected;
 
+  /// Optional rect (in the territory board's *treemap interior* coord
+  /// space) that the treemap should avoid placing tiles in. Used by the
+  /// L-shape layout where the inspector floats top-right and territory
+  /// tiles flow underneath it.
+  final Rect? obstacle;
+
   const _MapView({
     required this.snapshot,
     required this.hotspots,
@@ -613,6 +713,7 @@ class _MapView extends StatelessWidget {
     required this.selectedStratumId,
     required this.onHotspotSelected,
     required this.onStratumSelected,
+    this.obstacle,
   });
 
   @override
@@ -624,6 +725,7 @@ class _MapView extends StatelessWidget {
       selectedHotspotPath: selectedHotspotPath,
       onStratumSelected: onStratumSelected,
       onHotspotSelected: onHotspotSelected,
+      obstacle: obstacle,
     );
   }
 }
@@ -1703,6 +1805,20 @@ class _Parcel {
   /// neutral.
   final bool isKeystone;
 
+  /// Bus-factor signal — true when only one author has touched this
+  /// path in the snapshot's window. Renders as a faint left-edge
+  /// hatch so single-owner risk is visible at a glance.
+  final bool soloOwner;
+
+  /// Compact human label for the parcel's last-touched age, or null
+  /// when none is available. Shown inline on big tiles only.
+  final String? recencyLabel;
+
+  /// Top co-changed paths for this parcel (file parcels only). Drives
+  /// the coupling overlay that draws lines from the selected tile to
+  /// its strongest co-changers.
+  final List<String> coupledTo;
+
   const _Parcel({
     required this.key,
     required this.label,
@@ -1715,6 +1831,9 @@ class _Parcel {
     required this.onTap,
     required this.children,
     this.isKeystone = false,
+    this.soloOwner = false,
+    this.recencyLabel,
+    this.coupledTo = const [],
   });
 }
 
@@ -1725,16 +1844,96 @@ class _TreemapLayout {
   const _TreemapLayout(this.rect, this.parcel, this.children);
 }
 
+/// Decompose [fullArea] into 1–2 non-overlapping rects that avoid
+/// [obstacle] (anchored to the top-right corner). Used by the L-shape
+/// treemap layout: returns `[leftStrip, bottomStrip]` when an obstacle
+/// is present and both strips are non-degenerate; otherwise returns
+/// the largest rect that fits.
+List<Rect> _regionsAroundObstacle(Rect fullArea, Rect? obstacle) {
+  if (obstacle == null) return [fullArea];
+  // Clamp obstacle to the area.
+  final ox = obstacle.left.clamp(0.0, fullArea.width);
+  final oy = obstacle.top.clamp(0.0, fullArea.height);
+  final or = obstacle.right.clamp(0.0, fullArea.width);
+  final ob = obstacle.bottom.clamp(0.0, fullArea.height);
+  if (or - ox <= 0 || ob - oy <= 0) return [fullArea];
+
+  // L-shape decomposition: full-height left strip + bottom-right block.
+  // We assume the obstacle is anchored top-right (the inspector card).
+  // Left strip: from x=0 to x=obstacleLeft, full height.
+  // Bottom block: from x=obstacleLeft to right, from obstacleBottom to bottom.
+  final regions = <Rect>[];
+  if (ox > 0) {
+    regions.add(Rect.fromLTWH(0, 0, ox, fullArea.height));
+  }
+  if (ob < fullArea.height) {
+    regions.add(
+      Rect.fromLTWH(ox, ob, fullArea.width - ox, fullArea.height - ob),
+    );
+  }
+  if (regions.isEmpty) return [fullArea];
+  return regions;
+}
+
 /// Squarified-treemap layout (Bruls, Huijbregts & van Wijk).
 /// Recurses for children so strata cells contain their hotspots.
-List<_TreemapLayout> _layoutTreemap(List<_Parcel> parcels, Rect bounds) {
-  if (parcels.isEmpty || bounds.width <= 0 || bounds.height <= 0) {
-    return const [];
-  }
+///
+/// Multi-region: when [bounds] has more than one rect, parcels are
+/// distributed across the regions by greedy area-share allocation
+/// (largest parcel first → region with the most remaining capacity),
+/// then each region is squarified independently. This is what makes the
+/// L-shape layout possible — territory tiles flow around the floating
+/// inspector card.
+List<_TreemapLayout> _layoutTreemap(List<_Parcel> parcels, List<Rect> bounds) {
+  if (parcels.isEmpty) return const [];
+  final regions =
+      bounds.where((r) => r.width > 0 && r.height > 0).toList(growable: false);
+  if (regions.isEmpty) return const [];
   final filtered = parcels.where((p) => p.value > 0).toList()
     ..sort((a, b) => b.value.compareTo(a.value));
   if (filtered.isEmpty) return const [];
 
+  if (regions.length == 1) {
+    return _layoutTreemapSingle(filtered, regions.first);
+  }
+
+  // Distribute parcels across regions by area share. We compute each
+  // region's target share = its area / total area, then walk the parcels
+  // (largest first) placing each in the region with the most remaining
+  // capacity. This gives squarified fidelity per region while keeping
+  // overall area-proportionality across the whole layout.
+  final totalArea =
+      regions.fold<double>(0, (s, r) => s + r.width * r.height);
+  final remainingArea =
+      regions.map((r) => r.width * r.height).toList(growable: false);
+  final totalValue = filtered.fold<double>(0, (s, p) => s + p.value);
+  final perRegion =
+      List<List<_Parcel>>.generate(regions.length, (_) => <_Parcel>[]);
+  for (final p in filtered) {
+    var bestI = 0;
+    var bestRem = remainingArea[0];
+    for (var i = 1; i < remainingArea.length; i++) {
+      if (remainingArea[i] > bestRem) {
+        bestRem = remainingArea[i];
+        bestI = i;
+      }
+    }
+    perRegion[bestI].add(p);
+    remainingArea[bestI] -= (p.value / totalValue) * totalArea;
+  }
+
+  final out = <_TreemapLayout>[];
+  for (var i = 0; i < regions.length; i++) {
+    out.addAll(_layoutTreemapSingle(perRegion[i], regions[i]));
+  }
+  return out;
+}
+
+List<_TreemapLayout> _layoutTreemapSingle(
+    List<_Parcel> filtered, Rect bounds) {
+  if (filtered.isEmpty || bounds.width <= 0 || bounds.height <= 0) {
+    return const [];
+  }
   final total = filtered.fold<double>(0, (s, p) => s + p.value);
   final area = bounds.width * bounds.height;
   final scaled = filtered.map((p) => p.value * area / total).toList();
@@ -1757,7 +1956,7 @@ List<_TreemapLayout> _layoutTreemap(List<_Parcel> parcels, Rect bounds) {
     return _TreemapLayout(
       layout.rect,
       layout.parcel,
-      _layoutTreemap(layout.parcel.children, childBounds),
+      _layoutTreemap(layout.parcel.children, [childBounds]),
     );
   }).toList();
 }
@@ -1838,6 +2037,13 @@ class _TerritoryBoard extends StatelessWidget {
   final ValueChanged<String> onStratumSelected;
   final ValueChanged<String> onHotspotSelected;
 
+  /// Treemap-interior rect (i.e. relative to the LayoutBuilder area below
+  /// the header) to avoid placing tiles in. When set, the treemap renders
+  /// into an L-shape: full-height left strip + full-width bottom strip.
+  /// Use cases: the floating inspector card in map view occupies the
+  /// top-right corner, so the territory snakes around it.
+  final Rect? obstacle;
+
   const _TerritoryBoard({
     required this.strata,
     required this.hotspots,
@@ -1845,11 +2051,41 @@ class _TerritoryBoard extends StatelessWidget {
     required this.selectedHotspotPath,
     required this.onStratumSelected,
     required this.onHotspotSelected,
+    this.obstacle,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+
+    // Snapshot reference date = most-recent lastTouchedAt across the
+    // hotspots+strata we're about to render. Anchors the human-
+    // readable age label only; sizing itself is driven by the
+    // backend-computed aliveMass (touchCount × exp(-ageDays/halfLife)
+    // with a repo-derived half-life — see `_selectAliveHalfLife`).
+    DateTime? newest;
+    for (final h in hotspots) {
+      final d = DateTime.tryParse(h.lastTouchedAt);
+      if (d != null && (newest == null || d.isAfter(newest))) newest = d;
+    }
+    for (final s in strata) {
+      final d = DateTime.tryParse(s.lastTouchedAt);
+      if (d != null && (newest == null || d.isAfter(newest))) newest = d;
+    }
+
+    double ageDaysFor(String iso) {
+      final d = DateTime.tryParse(iso);
+      if (d == null || newest == null) return 0.0;
+      return newest!.difference(d).inDays.toDouble().abs();
+    }
+    String? recencyLabelOf(String iso) {
+      final age = ageDaysFor(iso);
+      if (age < 1.5) return 'today';
+      if (age < 7) return '${age.round()}d';
+      if (age < 60) return '${(age / 7).round()}w';
+      if (age < 730) return '${(age / 30).round()}mo';
+      return '${(age / 365).round()}y';
+    }
 
     // Map every hotspot to a parent stratum (or null = orphan)
     String norm(String p) => p.replaceAll('\\', '/');
@@ -1876,11 +2112,15 @@ class _TerritoryBoard extends StatelessWidget {
 
     _Parcel hotspotParcel(RepositoryXrayHotspotData h, {required bool isChild}) {
       final accent = _hotspotAccent(t, h.kind);
+      // Size = backend-computed aliveMass. No floor, no clamp — the
+      // exponential decay is the entire physics of "this code is
+      // dormant." A 5-half-life-old file gets ~0.7% of its prime mass
+      // and renders as a tiny tile, which is exactly correct.
       return _Parcel(
         key: 'h:${h.path}',
         label: _shortPath(h.path),
         accent: accent,
-        value: h.touchCount.toDouble(),
+        value: h.aliveMass > 0 ? h.aliveMass : h.touchCount.toDouble(),
         count: h.touchCount,
         // Keystone files get a compact `keystone` tag on their tile so
         // they're visible in the overview, not just the inspector pane.
@@ -1890,6 +2130,9 @@ class _TerritoryBoard extends StatelessWidget {
         onTap: () => onHotspotSelected(h.path),
         children: const [],
         isKeystone: h.isKeystone,
+        soloOwner: h.ownerCount == 1,
+        recencyLabel: recencyLabelOf(h.lastTouchedAt),
+        coupledTo: h.coupledTo,
       );
     }
 
@@ -1899,17 +2142,25 @@ class _TerritoryBoard extends StatelessWidget {
       final children = (childMap[s.id] ?? const <RepositoryXrayHotspotData>[])
           .map((h) => hotspotParcel(h, isChild: true))
           .toList();
+      // Stratum size = sum of every member file's aliveMass (computed
+      // backend-side). This makes legacy directories shrink in
+      // proportion to how dormant their actual contents are — a
+      // one-file-touched-today bugfix in an otherwise-frozen legacy
+      // tree no longer makes the whole tree read as "current." Pure
+      // physics, no labels, no constants.
       topLevel.add(_Parcel(
         key: 's:${s.id}',
         label: s.pathPrefix,
         accent: accent,
-        value: s.touchCount.toDouble(),
+        value: s.aliveMass > 0 ? s.aliveMass : s.touchCount.toDouble(),
         count: s.touchCount,
         tagText: _compactStratumLabel(s.label),
         selected: selectedStratumId == s.id,
         isChild: false,
         onTap: () => onStratumSelected(s.id),
         children: children,
+        soloOwner: s.ownerCount == 1,
+        recencyLabel: recencyLabelOf(s.lastTouchedAt),
       ));
     }
     for (final h in childMap[null] ?? const <RepositoryXrayHotspotData>[]) {
@@ -1943,13 +2194,55 @@ class _TerritoryBoard extends StatelessWidget {
             const SizedBox(height: 8),
             Expanded(
               child: LayoutBuilder(builder: (context, c) {
-                final cells = _layoutTreemap(
-                  topLevel,
-                  Rect.fromLTWH(0, 0, c.maxWidth, c.maxHeight),
-                );
+                final fullArea = Rect.fromLTWH(0, 0, c.maxWidth, c.maxHeight);
+                final regions = _regionsAroundObstacle(fullArea, obstacle);
+                final cells = _layoutTreemap(topLevel, regions);
+                final children = _renderCells(cells);
+                // Coupling overlay: when a hotspot is selected, collect
+                // the rects of its top co-changers that happen to be on
+                // the visible board, then draw curved lines to them.
+                // Lines render *above* the cells but ignore pointer events
+                // so tile interaction stays unaffected. Snappy: no fade,
+                // appears the frame the selection changes.
+                final selPath = selectedHotspotPath;
+                if (selPath != null) {
+                  final pathToRect = <String, Rect>{};
+                  _collectHotspotRects(cells, pathToRect);
+                  final selRect = pathToRect[selPath];
+                  final selectedHotspot = hotspots.firstWhere(
+                    (h) => h.path == selPath,
+                    orElse: () => const RepositoryXrayHotspotData(
+                      kind: '',
+                      path: '',
+                      touchCount: 0,
+                      ownerCount: 0,
+                      lastTouchedAt: '',
+                    ),
+                  );
+                  if (selRect != null && selectedHotspot.coupledTo.isNotEmpty) {
+                    final targets = <Rect>[];
+                    for (final tgt in selectedHotspot.coupledTo) {
+                      final r = pathToRect[tgt];
+                      if (r != null && r != selRect) targets.add(r);
+                    }
+                    if (targets.isNotEmpty) {
+                      children.add(Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: _CouplingOverlayPainter(
+                              source: selRect,
+                              targets: targets,
+                              color: t.accentBright,
+                            ),
+                          ),
+                        ),
+                      ));
+                    }
+                  }
+                }
                 return Stack(
                   clipBehavior: Clip.hardEdge,
-                  children: _renderCells(cells),
+                  children: children,
                 );
               }),
             ),
@@ -1962,6 +2255,17 @@ class _TerritoryBoard extends StatelessWidget {
   List<Widget> _renderCells(List<_TreemapLayout> cells) {
     final out = <Widget>[];
     for (final cell in cells) {
+      // Render-time area cull. Tiles below the readability floor (one
+      // line of label text + ~6 chars of width at the smallest font
+      // tier ≈ 14 × 70 px) carry no information — the label is
+      // unreadable, the count is invisible — so we skip them entirely.
+      // Their squarified area still belongs to them in the layout
+      // (proportions stay correct for everything else); we just don't
+      // paint them. This is what makes the top-N caps redundant at
+      // the panel level — the screen self-gates the visible count.
+      if (cell.rect.width * cell.rect.height < _kMinReadableTileArea) {
+        continue;
+      }
       out.add(Positioned(
         left: cell.rect.left,
         top: cell.rect.top,
@@ -1983,6 +2287,14 @@ class _TerritoryBoard extends StatelessWidget {
   }
 }
 
+/// Minimum tile area, in pixels², for a tile to be rendered. Derived
+/// from font metrics: the smallest label tier is ~9.5pt → ~14px line
+/// height, and a tile narrower than ~70px can't fit even a 6-char
+/// label without ellipsing into uselessness. 14 × 70 = 980; rounded
+/// up to 1000 for clean arithmetic. This is the readability floor —
+/// it *is* a constant, but it's a typography constant, not a UX cap.
+const double _kMinReadableTileArea = 1000.0;
+
 class _TerritoryCell extends StatelessWidget {
   final _Parcel parcel;
   final bool hasChildren;
@@ -1996,14 +2308,21 @@ class _TerritoryCell extends StatelessWidget {
     final t = context.tokens;
     final selected = parcel.selected;
     final isChild = parcel.isChild;
+    // Tile chrome stays at full accent — aliveness is encoded by tile
+    // SIZE (backend aliveMass). Re-tinting by recency would be
+    // redundant double-encoding and would risk muddying the petrichor
+    // accent palette.
     final accent = parcel.accent;
     return LayoutBuilder(builder: (context, c) {
       final big = c.maxWidth > 140 && c.maxHeight > 60;
       final medium = c.maxWidth > 80 && c.maxHeight > 30;
       final tiny = c.maxWidth < 40 || c.maxHeight < 18;
       // Region = cell that contains nested child cells. Label goes into a
-      // compact top band so children don't overlap the text.
-      final isRegion = hasChildren && !tiny;
+      // compact top band (26px) so children don't overlap the text. If the
+      // cell is too short for that band we collapse to a single-row header
+      // — important for the L-shape layout's bottom strip, which can
+      // distribute very wide-but-short region tiles.
+      final isRegion = hasChildren && !tiny && c.maxHeight >= 34;
       final radius = isChild ? 4.0 : 7.0;
       final bgAlpha = selected
           ? 0.14
@@ -2066,8 +2385,9 @@ class _TerritoryCell extends StatelessWidget {
                 child: tiny
                     ? Container(color: accent.withValues(alpha: 0.22))
                     : isRegion
-                        ? _regionLayout(t, big: big, medium: medium)
-                        : _headerRow(t,
+                        ? _regionLayout(t, accent,
+                            big: big, medium: medium)
+                        : _headerRow(t, accent,
                             big: big, medium: medium, compact: false),
               ),
             ),
@@ -2077,7 +2397,7 @@ class _TerritoryCell extends StatelessWidget {
     });
   }
 
-  Widget _regionLayout(AppTokens t,
+  Widget _regionLayout(AppTokens t, Color accent,
       {required bool big, required bool medium}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2087,12 +2407,13 @@ class _TerritoryCell extends StatelessWidget {
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: parcel.accent.withValues(alpha: 0.2),
+                color: accent.withValues(alpha: 0.2),
                 width: 0.5,
               ),
             ),
           ),
-          child: _headerRow(t, big: big, medium: medium, compact: true),
+          child: _headerRow(t, accent,
+              big: big, medium: medium, compact: true),
         ),
         const Expanded(child: SizedBox.shrink()),
       ],
@@ -2100,18 +2421,31 @@ class _TerritoryCell extends StatelessWidget {
   }
 
   Widget _headerRow(
-    AppTokens t, {
+    AppTokens t,
+    Color accent, {
     required bool big,
     required bool medium,
     required bool compact,
   }) {
     final selected = parcel.selected;
     final isChild = parcel.isChild;
-    final accent = parcel.accent;
+    final stripeW = isChild ? 2.0 : 3.0;
     return Row(children: [
-      Container(
-        width: isChild ? 2 : 3,
-        color: accent.withValues(alpha: selected ? 0.95 : 0.7),
+      // Left edge: solid accent normally; dashed when this is a
+      // bus-factor-of-one file. The hatch reads as "single-owner risk"
+      // at a glance — same width and color family as the regular
+      // stripe, just broken so it's distinguishable without a legend.
+      SizedBox(
+        width: stripeW,
+        child: parcel.soloOwner
+            ? CustomPaint(
+                painter: _SoloOwnerStripePainter(
+                  color: accent.withValues(alpha: selected ? 0.95 : 0.7),
+                ),
+              )
+            : Container(
+                color: accent.withValues(alpha: selected ? 0.95 : 0.7),
+              ),
       ),
       const SizedBox(width: 7),
       Expanded(
@@ -2134,13 +2468,31 @@ class _TerritoryCell extends StatelessWidget {
             ),
             if (!compact && medium) ...[
               const SizedBox(height: 1),
-              Text(
-                '${parcel.count}×',
-                style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: 9,
-                  fontFamily: 'JetBrainsMono',
-                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    '${parcel.count}×',
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 9,
+                      fontFamily: 'JetBrainsMono',
+                    ),
+                  ),
+                  if (big && parcel.recencyLabel != null) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      '· ${parcel.recencyLabel}',
+                      style: TextStyle(
+                        color: t.textFaint,
+                        fontSize: 9,
+                        fontFamily: 'JetBrainsMono',
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ],
           ],
@@ -2168,6 +2520,127 @@ class _TerritoryCell extends StatelessWidget {
         const SizedBox(width: 4),
     ]);
   }
+}
+
+/// Walk the laid-out cell tree and collect the rect of every hotspot
+/// (non-stratum) cell, keyed by its hotspot path. Used by the coupling
+/// overlay to look up where a co-changer's tile lives on the board.
+void _collectHotspotRects(
+    List<_TreemapLayout> cells, Map<String, Rect> out) {
+  for (final cell in cells) {
+    final key = cell.parcel.key;
+    if (key.startsWith('h:')) {
+      out[key.substring(2)] = cell.rect;
+    }
+    if (cell.children.isNotEmpty) {
+      _collectHotspotRects(cell.children, out);
+    }
+  }
+}
+
+/// Coupling overlay: draws a faint curved line from the selected
+/// hotspot's tile to each visible co-change neighbour. Renders above
+/// all cells, ignores pointer events. The curve is a single cubic with
+/// vertical-pull control points so lines arc cleanly between tiles
+/// instead of cutting across them in straight gashes.
+class _CouplingOverlayPainter extends CustomPainter {
+  _CouplingOverlayPainter({
+    required this.source,
+    required this.targets,
+    required this.color,
+  });
+
+  final Rect source;
+  final List<Rect> targets;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (targets.isEmpty) return;
+    final src = source.center;
+    // Two-tone stroke: a wider faint glow underneath + a crisp thin
+    // line on top. Gives the lines presence without resorting to pure
+    // saturation (would clash with the petrichor accent palette).
+    final glow = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4.0
+      ..strokeCap = StrokeCap.round
+      ..color = color.withValues(alpha: 0.10);
+    final line = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round
+      ..color = color.withValues(alpha: 0.60);
+
+    // Source anchor dot — small filled circle on the selected tile to
+    // tell the user where the lines emanate from.
+    canvas.drawCircle(src, 3.0, Paint()..color = color.withValues(alpha: 0.85));
+
+    for (final t in targets) {
+      final dst = t.center;
+      // Cubic with vertical pull-in: control points sit halfway between
+      // the endpoints horizontally, but their y is biased toward each
+      // endpoint's y. Produces a soft S-curve that hugs neither tile.
+      final dx = (dst.dx - src.dx);
+      final pull = dx.abs() * 0.45;
+      final c1 = Offset(src.dx + dx.sign * pull, src.dy);
+      final c2 = Offset(dst.dx - dx.sign * pull, dst.dy);
+      final path = Path()
+        ..moveTo(src.dx, src.dy)
+        ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, dst.dx, dst.dy);
+      canvas.drawPath(path, glow);
+      canvas.drawPath(path, line);
+      // Target dot — slightly smaller than the source to imply
+      // direction (this co-changes WITH the source).
+      canvas.drawCircle(
+          dst, 2.2, Paint()..color = color.withValues(alpha: 0.70));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CouplingOverlayPainter old) =>
+      old.source != source ||
+      old.color != color ||
+      old.targets.length != targets.length ||
+      !_listEq(old.targets, targets);
+
+  static bool _listEq(List<Rect> a, List<Rect> b) {
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+}
+
+/// Bus-factor stripe: vertical dashes along the left edge of a tile,
+/// signalling that only one author has touched this path. Same width
+/// and color family as the regular accent stripe — the broken pattern
+/// is the entire signal, no extra hue or chrome.
+class _SoloOwnerStripePainter extends CustomPainter {
+  _SoloOwnerStripePainter({required this.color});
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    // Dash: 4px on, 3px off. Renders 4–10 dashes depending on tile
+    // height, which is always enough to read as "broken stripe" without
+    // tipping into morse-code noise.
+    const dashOn = 4.0;
+    const dashOff = 3.0;
+    var y = 0.0;
+    while (y < size.height) {
+      final h = math.min(dashOn, size.height - y);
+      canvas.drawRect(Rect.fromLTWH(0, y, size.width, h), paint);
+      y += dashOn + dashOff;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SoloOwnerStripePainter old) =>
+      old.color != color;
 }
 
 class _BoardHeader extends StatelessWidget {

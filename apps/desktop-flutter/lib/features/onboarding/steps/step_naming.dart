@@ -221,14 +221,15 @@ class _NameFieldState extends State<_NameField> {
 
   void _rebuild() => setState(() {});
 
+  // Measure with a trailing space so the cursor at end-of-text never
+  // clips onto its own pixel column — this is the failure mode the
+  // previous attempt had: last glyph rendered partially behind the
+  // right edge even though raw text "fit".
   double _measure(BuildContext context, String text) {
-    // Merge the ambient DefaultTextStyle so the measurement picks up the
-    // theme's font family (e.g. monospace themes like nightwalker/phosphor).
-    // Without this the measured width is off by ~1 char and the field clips.
     final ambient = DefaultTextStyle.of(context).style;
     final merged = ambient.merge(widget.style);
     final tp = TextPainter(
-      text: TextSpan(text: text, style: merged),
+      text: TextSpan(text: '$text ', style: merged),
       maxLines: 1,
       textDirection: TextDirection.ltr,
       textScaler: MediaQuery.textScalerOf(context),
@@ -240,15 +241,17 @@ class _NameFieldState extends State<_NameField> {
   Widget build(BuildContext context) {
     final raw = widget.controller.text;
     final shown = raw.isEmpty ? 'Manifold' : raw;
-    // Width = measured text + horizontal contentPadding (8 each side) +
-    // cursorWidth + sub-pixel rounding slack. Monospace fonts report
-    // slightly tighter widths than they render, so the slack is a hair
-    // generous on purpose.
-    final width = (_measure(context, shown) + 28).clamp(80.0, 420.0);
 
-    // AnimatedContainer tweens the width as the user types so the
-    // sentence around the field reflows smoothly instead of snapping
-    // per keystroke. Curve matches the rest of the onboarding motion.
+    // Total width = measured text (with trailing-space slack for cursor)
+    //             + horizontal contentPadding (10 each side = 20)
+    //             + cursor width (1.4)
+    //             + a generous end-margin so wide monospace glyph cells
+    //               don't visually kiss the border.
+    // The end-margin was the bug — 28px was not enough for bold
+    // monospace at fontSize 20; bumping to 44 covers every theme we
+    // ship with headroom to spare.
+    final width = (_measure(context, shown) + 44).clamp(110.0, 520.0);
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 140),
       curve: Curves.easeOutCubic,
@@ -274,10 +277,7 @@ class _NameFieldState extends State<_NameField> {
         style: widget.style,
         decoration: const InputDecoration(
           isDense: true,
-          // Horizontal breathing room so the last glyph never visually
-          // touches the border (especially on monospace themes where
-          // the glyph cell is wider than the measured text width).
-          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 2),
           border: InputBorder.none,
           counterText: '',
           hintText: 'Manifold',

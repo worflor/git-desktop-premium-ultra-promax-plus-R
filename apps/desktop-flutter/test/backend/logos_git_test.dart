@@ -317,6 +317,7 @@ void main() {
           headHash: 'disconnect',
           commitsAnalyzed: 40,
         ),
+        perFileCommitIndices: const {},
       );
       final engine = LogosGit.buildFromStats(stats);
       final scores = engine.diffuse({'alpha/a1.dart'}, t: 4.0);
@@ -468,6 +469,7 @@ void main() {
         volMean: 0,
         volStddev: 0,
         coupling: FileCouplingMatrix.empty,
+        perFileCommitIndices: const {},
       ));
       expect(engine.nodePaths, isEmpty);
       expect(engine.diffuse({'anything.dart'}), isEmpty);
@@ -526,6 +528,7 @@ void main() {
           headHash: 'abc',
           commitsAnalyzed: 5,
         ),
+        perFileCommitIndices: const {},
       ));
       expect(engine.nodePaths, contains('lib/solo.dart'));
       expect(engine.diffuse({'lib/solo.dart'}), isEmpty);
@@ -688,6 +691,7 @@ void main() {
           headHash: 'o',
           commitsAnalyzed: 100,
         ),
+        perFileCommitIndices: const {},
       );
       final engine = LogosGit.buildFromStats(stats);
       final probeA = {'x1/a.dart': 1.0};
@@ -795,6 +799,7 @@ void main() {
           headHash: 'sp',
           commitsAnalyzed: 20,
         ),
+        perFileCommitIndices: const {},
       );
       final engine = LogosGit.buildFromStats(stats);
       final siblingCoh =
@@ -852,5 +857,6 @@ LogosGitStats _canonicalCoChangeStats() {
       headHash: 'abc',
       commitsAnalyzed: 50,
     ),
+    perFileCommitIndices: const {},
   );
 }

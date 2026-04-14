@@ -234,6 +234,36 @@ void main() {
       expect(util[LogosAxis.ab]!, lessThan(0.5),
           reason: 'Ab axis never cited → utility should be ~0');
     });
+
+    test('concurrent emissions from sibling stores do not lose counts',
+        () async {
+      // Race scenario: 20 separate LogosSseStore instances on the
+      // same repo concurrently call recordEmissions. Without the
+      // per-repo write lock each instance loads → mutates locally →
+      // saves, with the latest writer overwriting earlier increments.
+      // With the lock, the read-modify-write cycles serialise and the
+      // total emitted count must equal the number of concurrent
+      // operations, exactly.
+      final futures = <Future<void>>[];
+      for (var i = 0; i < 20; i++) {
+        final sibling = LogosSseStore(repo.path);
+        futures.add(sibling.recordEmissions(LogosEmissionRecord(
+          regime: LogosRegime.scoped,
+          axisByPath: const {'lib/contended.dart': LogosAxis.primary},
+        )));
+      }
+      await Future.wait(futures);
+      // Fresh reader (cache cold) sees the on-disk truth.
+      final fresh = LogosSseStore(repo.path);
+      final cell =
+          await fresh.cellFor(LogosRegime.scoped, LogosAxis.primary);
+      expect(
+        cell.emitted,
+        20,
+        reason: '20 concurrent +1 increments must sum to exactly 20 '
+            '(no race, no lost writes)',
+      );
+    });
   });
 
   group('extractCitedPathsFromReviewOutput', () {
@@ -269,6 +299,162 @@ The change in src/auth/login.ts suggests updating src/auth/session.ts too.
 
     test('empty output returns empty set', () {
       expect(extractCitedPathsFromReviewOutput(''), isEmpty);
+    });
+  });
+
+  group('LogosSseCell utility velocity', () {
+    test('no snapshot yet → velocity is 0', () {
+      final cell = LogosSseCell(emitted: 100, cited: 50);
+      expect(cell.utilityVelocityPerDay, 0.0);
+    });
+
+    test('low evidence (KT-prior land) → velocity is 0', () {
+      // Below _minEvidenceForUtility (4): cell.utility returns the
+      // KT prior 0.5 regardless of cited/emitted, so any "velocity"
+      // would be measuring noise from the prior, not signal.
+      final cell = LogosSseCell(
+        emitted: 2,
+        cited: 1,
+        prevUtility: 0.3,
+        prevUtilityMs:
+            DateTime.now().millisecondsSinceEpoch - Duration.millisecondsPerDay,
+      );
+      expect(cell.utilityVelocityPerDay, 0.0);
+    });
+
+    test('positive trend: utility climbed over time → positive velocity',
+        () {
+      // emitted=100, cited=70 → utility=0.70; previous snapshot was
+      // 0.50 from 10 days ago. Velocity = (0.70 - 0.50) / 10 = +0.02/day.
+      final tenDaysAgoMs = DateTime.now().millisecondsSinceEpoch -
+          10 * Duration.millisecondsPerDay;
+      final cell = LogosSseCell(
+        emitted: 100,
+        cited: 70,
+        prevUtility: 0.5,
+        prevUtilityMs: tenDaysAgoMs,
+      );
+      expect(cell.utilityVelocityPerDay, closeTo(0.02, 1e-3));
+    });
+
+    test('negative trend: utility fell → negative velocity', () {
+      final fiveDaysAgoMs = DateTime.now().millisecondsSinceEpoch -
+          5 * Duration.millisecondsPerDay;
+      final cell = LogosSseCell(
+        emitted: 100,
+        cited: 30,
+        prevUtility: 0.5,
+        prevUtilityMs: fiveDaysAgoMs,
+      );
+      // (0.30 - 0.50) / 5 = -0.04/day
+      expect(cell.utilityVelocityPerDay, closeTo(-0.04, 1e-3));
+    });
+
+    test('zero or negative Δt → velocity 0 (clock-skew safety)', () {
+      final cell = LogosSseCell(
+        emitted: 100,
+        cited: 70,
+        prevUtility: 0.5,
+        prevUtilityMs: DateTime.now().millisecondsSinceEpoch + 100000,
+      );
+      expect(cell.utilityVelocityPerDay, 0.0);
+    });
+
+    test('JSON round-trip preserves velocity snapshot', () {
+      final cell = LogosSseCell(
+        emitted: 100,
+        cited: 60,
+        prevUtility: 0.42,
+        prevUtilityMs: 1700000000000,
+      );
+      final restored = LogosSseCell.fromJson(cell.toJson());
+      expect(restored.prevUtility, closeTo(0.42, 1e-3));
+      expect(restored.prevUtilityMs, 1700000000000);
+    });
+
+    test('JSON without snapshot keys round-trips to null (legacy migration)',
+        () {
+      // Legacy cells written before T6 won't have 'pu' / 'pt' keys.
+      final restored = LogosSseCell.fromJson(const {
+        'e': 100.0,
+        'c': 50.0,
+        't': 1700000000000,
+      });
+      expect(restored.prevUtility, isNull);
+      expect(restored.prevUtilityMs, isNull);
+      expect(restored.utilityVelocityPerDay, 0.0);
+      expect(restored.utilityVariance, 0.0);
+    });
+  });
+
+  group('LogosSseCell variance-modulated decay', () {
+    test('zero samples → variance 0 → decay unchanged', () {
+      // No samples taken → variance 0 → accelerationFactor = 1
+      // → effective half-life = base half-life. Legacy behaviour.
+      final cell = LogosSseCell(
+        emitted: 100,
+        cited: 50,
+        lastUpdateMs: DateTime.now().millisecondsSinceEpoch -
+            LogosSseCell.halfLife.inMilliseconds,
+      );
+      cell.utility; // triggers _decayInPlace
+      // After exactly one half-life of decay at the standard rate,
+      // counts should be at ~50% of their starting values.
+      expect(cell.emitted, closeTo(50, 1));
+      expect(cell.cited, closeTo(25, 1));
+    });
+
+    test('high variance accelerates decay (max ~2× faster)', () {
+      // Construct a cell whose Welford state shows max variance
+      // (samples at 0 and 1 alternating → variance ≈ 0.25).
+      // After one half-life, variance-modulated decay should leave
+      // counts at ~25% (not 50%) because effective half-life halved.
+      final cell = LogosSseCell(
+        emitted: 100,
+        cited: 50,
+        lastUpdateMs: DateTime.now().millisecondsSinceEpoch -
+            LogosSseCell.halfLife.inMilliseconds,
+        utilitySampleCount: 4,
+        utilitySampleMean: 0.5,
+        // For samples [0, 1, 0, 1] with mean 0.5: sumSq = 4·0.25 = 1.0
+        // variance = 1.0 / (4-1) = 0.333... but capped at 0.25 by the
+        // bound. Use a value just under to avoid overshoot.
+        utilitySampleSumSq: 0.75, // variance = 0.25 (max)
+      );
+      cell.utility;
+      // accelerationFactor = 1 + 0.25/0.25 = 2
+      // effective half-life = halfLife / 2
+      // After one full halfLife of wall-clock time, decayed by 2^2 = 4×
+      // → counts at ~25%
+      expect(cell.emitted, closeTo(25, 2));
+      expect(cell.cited, closeTo(12.5, 2));
+    });
+
+    test('Welford updates on snapshot — variance grows with spread', () {
+      final cell = LogosSseCell(emitted: 10, cited: 5);
+      // Sample 1: utility = 0.5
+      cell.snapshotUtilityForTesting();
+      expect(cell.utilityVariance, 0.0);
+      // Add evidence with shifted ratio — utility moves up.
+      cell.cited += 5; // now 10/10 → utility = 1.0
+      cell.snapshotUtilityForTesting();
+      // 2 samples: 0.5 and 1.0; variance = ((0.5-0.75)² + (1.0-0.75)²) / 1 = 0.125
+      expect(cell.utilityVariance, closeTo(0.125, 1e-3));
+    });
+
+    test('JSON round-trip preserves Welford state', () {
+      final cell = LogosSseCell(
+        emitted: 50,
+        cited: 30,
+        utilitySampleCount: 7,
+        utilitySampleMean: 0.6,
+        utilitySampleSumSq: 0.42,
+      );
+      final restored = LogosSseCell.fromJson(cell.toJson());
+      expect(restored.utilitySampleCount, 7);
+      expect(restored.utilitySampleMean, closeTo(0.6, 1e-3));
+      expect(restored.utilitySampleSumSq, closeTo(0.42, 1e-3));
+      expect(restored.utilityVariance, closeTo(0.42 / 6, 1e-3));
     });
   });
 }

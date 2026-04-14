@@ -45,6 +45,7 @@ import 'dart:math' as math;
 
 import 'package:path/path.dart' as p;
 
+import 'git.dart' show extractDiffTouchedPaths;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart';
 
@@ -179,9 +180,14 @@ class LogosGitProbeBuilder {
       fileCount: primaryPaths.length,
       coherence: 0.5, // neutral prior
     );
+    // Use the trend-aware projection so an axis whose utility is
+    // climbing in this regime gets weighted up one half-life early
+    // (the SSE store's natural memory horizon). Fresh / low-evidence
+    // cells degrade gracefully to the spot utility — see
+    // [LogosSseStore.projectedUtilitiesFor] for the math.
     final utilities = sseStore == null
         ? const <LogosAxis, double>{}
-        : await sseStore!.utilitiesFor(provisionalRegime);
+        : await sseStore!.projectedUtilitiesFor(provisionalRegime);
     final learnedMScale =
         (utilities[LogosAxis.m] ?? 1.0).clamp(_sseUtilityScaleMin, _sseUtilityScaleMax);
     final learnedAbScale =
@@ -302,10 +308,8 @@ class LogosGitProbeBuilder {
 
   // ─── internals ─────────────────────────────────────────────────────────
 
-  Set<String> _extractTouchedPaths(String diffText) {
-    final re = RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
-    return re.allMatches(diffText).map((m) => m.group(1)!).toSet();
-  }
+  Set<String> _extractTouchedPaths(String diffText) =>
+      extractDiffTouchedPaths(diffText);
 
   /// Scan + and − lines for identifier tokens. Picks the N most
   /// distinctive by a simple heuristic: longer tokens first (longer =
@@ -485,11 +489,10 @@ bool looksLikeTestPath(String path) {
       norm.contains('/test_');
 }
 
-/// A convenience function kept out of the class so callers can pipe
-/// probe-building into a single `await` without instantiating the
-/// builder with default weights. Resolves the per-repo SSE calibration
-/// store automatically so learned per-regime utilities feed back into
-/// the next build — this is the closed self-learning loop.
+/// Convenience wrapper so callers can build a probe in a single
+/// `await` without instantiating the builder. Resolves the per-repo
+/// SSE calibration store so learned per-regime utilities feed back
+/// into the next build.
 Future<DiffProbe> buildDiffProbe({
   required String repoPath,
   required String diffText,

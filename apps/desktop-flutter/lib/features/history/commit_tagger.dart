@@ -64,6 +64,10 @@ enum CommitTagKind {
   /// history to baseline.
   unusualCadence,
   merge,
+
+  /// Commit with one or more renames (git change-type 'R'). Label is
+  /// harvested from the bucket's subjects like any other kind.
+  rename,
 }
 
 /// A single tag rendered on a commit row. Label is the visible text;
@@ -232,12 +236,6 @@ const double _kSigmaCutoff = 1.96;
 /// a meaningful reference.
 const int _kAuthorCadenceMinChains = 3;
 
-/// Universal fallback label for the self-comparison cadence tag. Only
-/// used when the corpus didn't surface a distinctive team word for
-/// this bucket. Short enough for a pill; reads as a truth-teller, not
-/// a judgement — matches the `drift` / `diverging` voice.
-const String _kUnusualCadenceLabel = 'off-cadence';
-
 /// Deviation threshold in MAD-units. 2·MAD corresponds to roughly
 /// 2·σ for a near-Gaussian distribution (MAD ≈ 0.6745·σ on Gaussians
 /// — Hampel identifier convention) — the classic outlier gate,
@@ -323,128 +321,276 @@ String? commonPrefixLabel(Iterable<String> paths) {
 // ──────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────
-// Subject corpus — tokenizes every commit subject into a global word
-// frequency table, then harvests the most-distinctive word for any
-// commit subset via log-odds vs the corpus. The harvested word IS the
-// label for that bucket. Zero seed vocabulary; zero hardcoded English.
+// Subject corpus — tokenizes commit subjects into a global word
+// frequency table and harvests the most-distinctive word for any
+// commit subset via log-odds against the corpus. The harvested word
+// becomes the bucket label; no seed vocabulary.
 // ──────────────────────────────────────────────────────────────────────
 
+/// Matches a "Key: Value" trailer line (Unicode letters + digits).
+final RegExp _kTrailerShapeRe = RegExp(
+  r'^[\p{L}][\p{L}\p{N}-]*:\s+\S.*$',
+  multiLine: true,
+  unicode: true,
+);
+
+final RegExp _kTagWordRe = RegExp(
+  r'[\p{L}][\p{L}\p{N}]+',
+  unicode: true,
+);
+
+/// Drops git-style trailers: a contiguous tail block of `Key: Value`
+/// lines at the end of the body. Only the last paragraph is checked,
+/// so mid-body `Key:` patterns (tables, notes sections) are preserved.
+String _stripGitTrailersEmergent(String body) {
+  if (body.isEmpty) return body;
+  final paragraphs = body.split(RegExp(r'\n\s*\n'));
+  if (paragraphs.length < 2) {
+    // Single paragraph — only strip if the entire body is trailers.
+    final lines = body
+        .split('\n')
+        .map((l) => l.trimRight())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    if (lines.isEmpty) return body;
+    final allTrailers =
+        lines.every((l) => _kTrailerShapeRe.hasMatch(l));
+    return allTrailers ? '' : body;
+  }
+  final last = paragraphs.last;
+  final lines = last
+      .split('\n')
+      .map((l) => l.trimRight())
+      .where((l) => l.isNotEmpty)
+      .toList();
+  if (lines.isEmpty) return body;
+  final allTrailers =
+      lines.every((l) => _kTrailerShapeRe.hasMatch(l));
+  if (!allTrailers) return body;
+  return paragraphs.sublist(0, paragraphs.length - 1).join('\n\n');
+}
+
+/// Shared tokeniser used by both the isolate-side [_SubjectCorpus]
+/// and the main-thread projection helper. Keeping them in lockstep
+/// matters — the file-token matrices are compared directly downstream.
+List<String> tagTokenize(String text) {
+  if (text.isEmpty) return const [];
+  final scrubbed = _stripGitTrailersEmergent(text);
+  final out = <String>[];
+  for (final m in _kTagWordRe.allMatches(scrubbed.toLowerCase())) {
+    final w = m.group(0)!;
+    if (w.length >= 3) out.add(w);
+  }
+  return out;
+}
+
 class _SubjectCorpus {
-  /// Per-commit token list, indexed parallel to the input commit list.
+  /// Tokens per commit, parallel to the input list. Subject always,
+  /// body when a [CommitDetailData] is cached for the commit.
   final List<List<String>> subjectTokens;
-  /// Global token frequency across all subjects.
-  final Map<String, int> globalFreq;
-  /// Sum over [globalFreq] values.
-  final int totalTokens;
+  /// Token → mass across the corpus. Each commit contributes 1.0 total
+  /// regardless of length, so entries are fractional (`Σ 1/|tokens|`).
+  final Map<String, double> globalFreq;
+  /// Sum over [globalFreq]. Equals the count of non-empty commits.
+  final double totalTokens;
+  /// File → (token → mass). Each commit deposits 1.0 unit across the
+  /// files it touches. P(token | file) reads off this matrix directly.
+  final Map<String, Map<String, double>> fileTokenCounts;
 
   const _SubjectCorpus({
     required this.subjectTokens,
     required this.globalFreq,
     required this.totalTokens,
+    required this.fileTokenCounts,
   });
 
-  static final RegExp _wordRe = RegExp(r'[a-z][a-z0-9]+');
+  static List<String> _tokenize(String text) => tagTokenize(text);
 
-  static List<String> _tokenize(String text) {
-    final out = <String>[];
-    for (final m in _wordRe.allMatches(text.toLowerCase())) {
-      final w = m.group(0)!;
-      if (w.length >= 3) out.add(w);
-    }
-    return out;
-  }
-
-  /// Build the corpus, stripping the type/scope prefix from each
-  /// subject so the harvested labels for axis buckets don't overlap
-  /// with the type/scope tags (which are surfaced separately).
-  static _SubjectCorpus build(List<CommitHistoryEntry> commits) {
+  /// Builds the corpus from [commits]. Prefix-matched type/scope words
+  /// are stripped from each subject so they don't leak into bucket
+  /// labels. Each commit contributes one unit of mass, split across
+  /// its tokens, so a 100-token body doesn't outvote 100 terse commits.
+  /// Commits without a cached [detailsByHash] entry contribute
+  /// subject-only tokens and are skipped from the file-token matrix.
+  static _SubjectCorpus build(
+    List<CommitHistoryEntry> commits,
+    Map<String, CommitDetailData> detailsByHash,
+  ) {
     final tokens = <List<String>>[];
-    final freq = <String, int>{};
-    var total = 0;
+    final freq = <String, double>{};
+    final fileTokens = <String, Map<String, double>>{};
+    var total = 0.0;
     for (final c in commits) {
-      var subject = c.subject;
-      // Strip the matched prefix shape (conventional or bracket) so
-      // type/scope tokens don't leak into the bucket vocabulary.
-      final convM = _convPattern.firstMatch(subject);
-      final brkM = _bracketPattern.firstMatch(subject);
-      final m = convM ?? brkM;
-      if (m != null) subject = subject.substring(m.end);
-      final t = _tokenize(subject);
+      final detail = detailsByHash[c.commitHash];
+      // Merge-commit subjects are usually auto-generated templates;
+      // skip them to keep bucket vocabularies clean. Body tokens from
+      // merge PRs still flow through when a detail is cached.
+      final isMerge = c.parentHashes.length > 1;
+      var subject = isMerge ? '' : c.subject;
+      if (!isMerge) {
+        final convM = _convPattern.firstMatch(subject);
+        final brkM = _bracketPattern.firstMatch(subject);
+        final m = convM ?? brkM;
+        if (m != null) subject = subject.substring(m.end);
+      }
+      final body = detail?.body ?? '';
+      final text = body.isEmpty ? subject : '$subject $body';
+      final t = _tokenize(text);
       tokens.add(t);
+      if (t.isEmpty) continue;
+      final weight = 1.0 / t.length;
       for (final w in t) {
-        freq.update(w, (v) => v + 1, ifAbsent: () => 1);
-        total++;
+        freq.update(w, (v) => v + weight, ifAbsent: () => weight);
+        total += weight;
+      }
+
+      if (detail != null) {
+        for (final f in detail.files) {
+          final row =
+              fileTokens.putIfAbsent(f.path, () => <String, double>{});
+          for (final w in t) {
+            row.update(w, (v) => v + weight, ifAbsent: () => weight);
+          }
+        }
       }
     }
     return _SubjectCorpus(
       subjectTokens: tokens,
       globalFreq: freq,
       totalTokens: total,
+      fileTokenCounts: fileTokens,
     );
   }
 
-  /// Harvests the most distinctive word in a subset of commits via
-  /// log-odds against the corpus. Returns null when no word is
-  /// significantly more frequent in the subset than overall — this
-  /// is the right behavior: if the team doesn't have a word for the
-  /// phenomenon, we don't fabricate one.
+  /// Returns the most distinctive token for a set of bucket commits,
+  /// or null when nothing stands above the long tail.
   ///
-  /// "Significantly" = score above (mean + sigma) of the subset's
-  /// own log-odds distribution. This is engram's outlier-by-sigma
-  /// pattern applied to word distinctiveness.
-  String? harvestLabel(Iterable<int> commitIndices) {
+  /// Two axes:
+  ///   NPMI vs. the corpus marginal (always on).
+  ///   Log-surprise vs. [expectedTokens] when provided — a distribution
+  ///     from [LogosGit.projectTokenDistribution] over the bucket's
+  ///     file-neighborhood. "Distinctive" then means the file graph
+  ///     didn't predict this token here but it showed up anyway.
+  ///
+  /// The two axes compose via the Born-amplitude pattern [BornMixer]
+  /// uses elsewhere. A kneedle gate filters the winner when the
+  /// top-to-tail split isn't sharp.
+  String? harvestLabel(
+    Iterable<int> commitIndices, {
+    Map<String, double>? expectedTokens,
+  }) {
     final indices = commitIndices.toSet();
     if (indices.isEmpty) return null;
-    final bucketFreq = <String, int>{};
-    var bucketTotal = 0;
+    // Mass is the NPMI input; commitFreq is the "seen in how many
+    // distinct commits" count used for the singleton gate and the
+    // evidence cap in the Born mix.
+    final bucketMass = <String, double>{};
+    final bucketCommitFreq = <String, int>{};
+    var bucketTotal = 0.0;
     for (final idx in indices) {
       if (idx < 0 || idx >= subjectTokens.length) continue;
-      for (final w in subjectTokens[idx]) {
-        bucketFreq.update(w, (v) => v + 1, ifAbsent: () => 1);
-        bucketTotal++;
+      final tokens = subjectTokens[idx];
+      if (tokens.isEmpty) continue;
+      final weight = 1.0 / tokens.length;
+      final seenInCommit = <String>{};
+      for (final w in tokens) {
+        bucketMass.update(w, (v) => v + weight, ifAbsent: () => weight);
+        bucketTotal += weight;
+        if (seenInCommit.add(w)) {
+          bucketCommitFreq.update(w, (v) => v + 1, ifAbsent: () => 1);
+        }
       }
     }
-    if (bucketTotal < 2 || bucketFreq.isEmpty) return null;
+    if (bucketMass.isEmpty || bucketTotal <= 0) return null;
 
-    // Compute NPMI (normalized pointwise mutual information) for each
-    // candidate. NPMI = log(p_joint / (p_word · p_bucket)) /
-    //                   −log(p_joint), bounded in [−1, 1], symmetric,
-    // scale-free. Replaces the previous additive log-odds + later
-    // baseline-subtraction stack — they were both crude estimators of
-    // this same quantity. Smoothing uses a proper Dirichlet-Multinomial
-    // posterior: numerator `+0.5` (Jeffreys), denominator `+0.5·V`
-    // where V is the vocabulary size (so pBucket/pCorpus integrate to
-    // 1). Singletons (count<2 in bucket) skipped as noise.
     final vocabSize = globalFreq.length.toDouble();
     final priorMass = 0.5 * vocabSize;
+
+    // Total expected mass for normalising the 8d distribution into a
+    // probability. When expectedTokens is null or all-zero the 8d axis
+    // contributes nothing and we fall through to pure NPMI.
+    double expectedTotal = 0;
+    if (expectedTokens != null) {
+      for (final v in expectedTokens.values) {
+        if (v > 0) expectedTotal += v;
+      }
+    }
+    final has8d = expectedTokens != null && expectedTotal > 0;
+
+    // Evidence-weight denominator — maximum plausible commit-frequency
+    // any token in this bucket can reach. Used below to normalise the
+    // 8d axis's per-token evidence weight onto [0, 1], which scale-
+    // matches it against w0's [0, 0.5] range in the Born mix. Computed
+    // once per bucket.
+    final logMaxCommitFreq = math.log(1 + indices.length);
+
     final scored = <_LabelCandidate>[];
-    for (final entry in bucketFreq.entries) {
-      if (entry.value < 2) continue;
-      final pBucket =
-          (entry.value + 0.5) / (bucketTotal + priorMass);
-      final corpusCount = globalFreq[entry.key] ?? 0;
+    for (final entry in bucketMass.entries) {
+      // Drop tokens that appear in only one bucket commit — typo-like.
+      if ((bucketCommitFreq[entry.key] ?? 0) < 2) continue;
+      final pBucket = (entry.value + 0.5) / (bucketTotal + priorMass);
+      final corpusCount = globalFreq[entry.key] ?? 0.0;
       final pCorpus =
           (corpusCount + 0.5) / (totalTokens + priorMass);
-      // Joint probability = co-occurrence of "word w" and "in bucket".
-      // p_joint ≈ pBucket · (bucketTotal / totalTokens) — proportion
-      // of all corpus tokens that are this word AND in this bucket.
       final pBucketShare = bucketTotal / (totalTokens + priorMass);
       final pJoint = pBucket * pBucketShare;
       if (pJoint <= 0 || pCorpus <= 0) continue;
       final pmi = math.log(pJoint / (pCorpus * pBucketShare));
-      // NPMI normalization. -log(pJoint) is always ≥ 0.
       final negLogJoint = -math.log(pJoint);
+      // NPMI ∈ [-1, 1].
       final npmi = negLogJoint > 0 ? pmi / negLogJoint : 0.0;
-      scored.add(_LabelCandidate(entry.key, npmi));
+
+      var score = npmi;
+
+      if (has8d) {
+        // Symmetric Jeffreys smoothing on both sides keeps pObserved
+        // and pExpected on the same probability scale.
+        final pObserved = pBucket;
+        final expRaw = expectedTokens[entry.key] ?? 0.0;
+        final pExpected =
+            (expRaw + 0.5) / (expectedTotal + priorMass);
+        final surpriseRaw = math.log(pObserved / pExpected);
+        // Scale 0.5 keeps typical log-ratios in tanh's linear range.
+        final surprise8d = _tanh(0.5 * surpriseRaw);
+
+        // Born-rule amplitude mix: each axis's score in [-1, 1] maps
+        // to a probability via (s + 1) / 2; √-amplitudes combine like
+        // a two-outcome event and the mixed p collapses back to the
+        // original range. Same shape as [BornMixer.mix].
+        final p0 = (npmi + 1.0) * 0.5;
+        final p8 = (surprise8d + 1.0) * 0.5;
+        final w0 = (p0 - 0.5).abs();
+        // Evidence weight scales monotonically with commit-frequency,
+        // normalised by the bucket's maximum possible commit-frequency
+        // so w8 ∈ [0, 0.5] — same range as w0 so the Born mix isn't
+        // scale-biased. The previous form `min(log(1+commitFreq), ln2)`
+        // collapsed to the constant ln2 for every candidate because the
+        // singleton gate already guarantees commitFreq ≥ 2 and
+        // log(3) > ln2; the cap never varied with evidence.
+        final commitFreq = bucketCommitFreq[entry.key] ?? 0;
+        final evidenceFrac = logMaxCommitFreq > 0
+            ? math.log(1 + commitFreq) / logMaxCommitFreq
+            : 0.0;
+        final w8 = (p8 - 0.5).abs() * evidenceFrac;
+        final aSum = w0 * math.sqrt(p0) + w8 * math.sqrt(p8);
+        final bSum =
+            w0 * math.sqrt(1 - p0) + w8 * math.sqrt(1 - p8);
+        final a2 = aSum * aSum;
+        final b2 = bSum * bSum;
+        final denom = a2 + b2;
+        if (denom > 0) {
+          score = (a2 / denom) * 2.0 - 1.0;
+        }
+      }
+
+      scored.add(_LabelCandidate(entry.key, score));
     }
     if (scored.isEmpty) return null;
 
-    // Kneedle distinctiveness gate (self-derived from score curve
-    // shape). Same algorithm used for the prefix vocab and the
-    // borrowed-tag selector. The leader must sit at the head of the
-    // sorted-descending curve such that the bend (knee) is at index
-    // 0 — meaning the leader genuinely stands above the long tail,
-    // not just sits at the top of a flat distribution.
+    // Kneedle gate — same algorithm as the prefix and borrowed-tag
+    // selectors. Requires the knee of the descending-score curve to
+    // sit at index 0, so the leader stands above the tail rather than
+    // sitting at the top of a flat distribution.
     scored.sort((a, b) => b.score.compareTo(a.score));
     final top = scored.first;
     if (top.score <= 0) return null;
@@ -474,6 +620,14 @@ class _LabelCandidate {
   final String label;
   final double score;
   const _LabelCandidate(this.label, this.score);
+}
+
+/// dart:math has no tanh; this is the standard stable form.
+double _tanh(double x) {
+  if (x > 20) return 1.0;
+  if (x < -20) return -1.0;
+  final e2x = math.exp(2 * x);
+  return (e2x - 1) / (e2x + 1);
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -581,6 +735,12 @@ RepositoryTagProfile buildTagProfile({
   /// uses to inject Born-mixed multi-axis coherence (F0+CC+SP+V), giving
   /// strictly more informative percentile splits.
   Map<String, double>? engineCoherences,
+  /// Per-commit expected-token distribution from
+  /// [LogosGit.projectTokenDistribution], pre-computed on the main
+  /// thread (engine isn't isolate-transferable). Summed per bucket
+  /// inside this function. Null when the engine is cold — the tagger
+  /// falls back to the NPMI-only path.
+  Map<String, Map<String, double>>? expectedTokensByHash,
 }) {
   if (commits.isEmpty) return RepositoryTagProfile.empty;
 
@@ -602,7 +762,7 @@ RepositoryTagProfile buildTagProfile({
   // word frequency table. Per-bucket label discovery uses log-odds
   // against this corpus — the team's actual vocabulary becomes the
   // tag labels.
-  final corpus = _SubjectCorpus.build(commits);
+  final corpus = _SubjectCorpus.build(commits, detailsByHash);
 
   // ── 2. Per-file centrality from the coupling graph ────────────────
   // Centrality = sum of jaccard scores to neighbors. Files in dense
@@ -817,12 +977,10 @@ RepositoryTagProfile buildTagProfile({
     }
   }
 
-  // ── 5. Echo detection — neighbor-grounded, fully self-derived ────
-  // (a) Lookback window = autocorrelation length of the inter-commit
-  //     file-overlap signal. The "memory" of the file-touch process
-  //     IS this number; engram-style.
-  // (b) Threshold = sigma-cutoff above the mean inter-commit overlap.
-  //     "Significantly more overlap than usual" — not a fixed 0.5.
+  // ── 5. Echo detection ──────────────────────────────────────────
+  // Lookback = autocorrelation length of the inter-commit file-
+  // overlap signal (the series' own memory). Threshold = sigma-cutoff
+  // above the mean overlap.
   final overlapSignal = <double>[];
   for (var i = 1; i < chronological.length; i++) {
     final a = commitFiles[chronological[i - 1].commitHash];
@@ -890,14 +1048,22 @@ RepositoryTagProfile buildTagProfile({
   final bucketHubIdx = <int>[];
   final bucketEchoIdx = <int>[];
   final bucketMergeIdx = <int>[];
-  // Drift requires that a commit have BOTH a scope (from prefix) AND
-  // a chain/cluster identity that disagrees. We collect those here.
+  // Drift requires both a scope (from prefix) and a chain/cluster
+  // identity that disagrees.
   final bucketDriftIdx = <int>[];
+  // Rename: any file with git's 'R' change-type (similarity-scored
+  // as R100, R85, etc.).
+  final bucketRenameIdx = <int>[];
 
   for (var i = 0; i < commits.length; i++) {
     final c = commits[i];
     final d = detailsByHash[c.commitHash];
     if (c.parentHashes.length > 1) bucketMergeIdx.add(i);
+    if (d != null &&
+        d.files.any((f) =>
+            f.changeType == 'R' || f.changeType.startsWith('R'))) {
+      bucketRenameIdx.add(i);
+    }
     if (echoCommits.contains(c.commitHash)) bucketEchoIdx.add(i);
     if (hubCommits.contains(c.commitHash)) bucketHubIdx.add(i);
     if (d != null) {
@@ -939,7 +1105,27 @@ RepositoryTagProfile buildTagProfile({
 
   final bucketLabels = <CommitTagKind, String>{};
   void tryHarvest(CommitTagKind kind, List<int> idx) {
-    final label = corpus.harvestLabel(idx);
+    // projectTokenDistribution returns unnormalised mass, so summing
+    // across the bucket's commits is the right aggregation —
+    // harvestLabel normalises before comparing.
+    Map<String, double>? bucketExpected;
+    if (expectedTokensByHash != null && expectedTokensByHash.isNotEmpty) {
+      bucketExpected = <String, double>{};
+      for (final i in idx) {
+        if (i < 0 || i >= commits.length) continue;
+        final perCommit = expectedTokensByHash[commits[i].commitHash];
+        if (perCommit == null) continue;
+        for (final e in perCommit.entries) {
+          bucketExpected.update(
+            e.key,
+            (v) => v + e.value,
+            ifAbsent: () => e.value,
+          );
+        }
+      }
+      if (bucketExpected.isEmpty) bucketExpected = null;
+    }
+    final label = corpus.harvestLabel(idx, expectedTokens: bucketExpected);
     if (label != null) bucketLabels[kind] = label;
   }
   tryHarvest(CommitTagKind.axisHuge, bucketHugeIdx);
@@ -949,6 +1135,7 @@ RepositoryTagProfile buildTagProfile({
   tryHarvest(CommitTagKind.axisFocused, bucketFocusedIdx);
   tryHarvest(CommitTagKind.axisSprawl, bucketSprawlIdx);
   tryHarvest(CommitTagKind.hub, bucketHubIdx);
+  tryHarvest(CommitTagKind.rename, bucketRenameIdx);
   // Converging/diverging are universal phenomena without a harvested
   // repo-specific word — their semantics are invariant across teams.
   // Try a harvest anyway; if no distinctive word shows, fall back to
@@ -968,21 +1155,8 @@ RepositoryTagProfile buildTagProfile({
       if (unusualCadenceCommits.contains(commits[i].commitHash)) i,
   ];
   tryHarvest(CommitTagKind.unusualCadence, unusualCadenceIdx);
-  // Universal fallback when no distinctive team vocabulary surfaced.
-  // Labels sourced from engram_fit so every site comparing against them
-  // agrees on the canonical spelling.
-  if (convergingCommits.isNotEmpty &&
-      bucketLabels[CommitTagKind.converging] == null) {
-    bucketLabels[CommitTagKind.converging] = branchLabelConverging;
-  }
-  if (divergingCommits.isNotEmpty &&
-      bucketLabels[CommitTagKind.diverging] == null) {
-    bucketLabels[CommitTagKind.diverging] = branchLabelDiverging;
-  }
-  if (unusualCadenceCommits.isNotEmpty &&
-      bucketLabels[CommitTagKind.unusualCadence] == null) {
-    bucketLabels[CommitTagKind.unusualCadence] = _kUnusualCadenceLabel;
-  }
+  // No fallback labels: if the corpus didn't surface a word for
+  // converging / diverging / unusualCadence, the tag stays silent.
   tryHarvest(CommitTagKind.echo, bucketEchoIdx);
   tryHarvest(CommitTagKind.merge, bucketMergeIdx);
   tryHarvest(CommitTagKind.drift, bucketDriftIdx);
@@ -1002,16 +1176,11 @@ RepositoryTagProfile buildTagProfile({
   // from its semantic neighborhood.
   final borrowedLabels =
       _computeBorrowedLabels(commits, detailsByHash, coupling, provisionalKinds: () {
-    // Per-commit own-labels for affinity seeding. ONLY structural
-    // labels — the commit's prefix vocab, chain label, and bucket
-    // labels. These have all already passed their own distinctiveness
-    // gates (kneedle for prefix, NPMI-harvest for buckets) so they're
-    // genuinely informative. Subject-vocab seeding was tried and
-    // turned out noisy — every word ≥ 2 occurrences became a label,
-    // including filler verbs ("tweak", "fix", "update") that diffused
-    // everywhere and produced spurious borrows. Removing it; the
-    // path-segment seeding done separately in phase 1 supplies
-    // domain-grounded vocabulary instead.
+    // Per-commit own-labels for affinity seeding. Structural labels
+    // only — prefix, chain, bucket — all gated by kneedle/NPMI. We
+    // tried raw subject-vocab seeding; it diffused filler verbs
+    // ("tweak", "fix", "update") everywhere and polluted borrows.
+    // Path-segment seeding from phase 1 carries the domain vocabulary.
     final ownTokens = <String, Set<String>>{};
     for (final c in commits) {
       final tokens = <String>{};
@@ -1119,6 +1288,10 @@ bool _belongsToBucket(
   switch (kind) {
     case CommitTagKind.merge:
       return c.parentHashes.length > 1;
+    case CommitTagKind.rename:
+      if (d == null) return false;
+      return d.files
+          .any((f) => f.changeType == 'R' || f.changeType.startsWith('R'));
     case CommitTagKind.echo:
       return echoCommits.contains(c.commitHash);
     case CommitTagKind.hub:
@@ -1171,19 +1344,14 @@ bool _belongsToBucket(
   }
 }
 
-/// The eldritch diffusion. Walks all commits to build a per-file
-/// label-affinity table from each commit's own labels (provided via
-/// [provisionalKinds]). Then propagates affinity through the
-/// file-coupling graph one step (each file inherits a Jaccard-weighted
-/// fraction of its neighbors' affinity). Finally per-commit borrowing:
-/// average diffused affinity across the commit's files, subtract the
-/// corpus baseline, and pick the strongest label that ISN'T already
-/// in the commit's own labels — gated by sigma-distinctiveness so
-/// only confident borrows surface.
+/// Builds a per-file label-affinity table from each commit's own
+/// labels (via [provisionalKinds]), propagates affinity one step
+/// through the file-coupling graph (Jaccard-weighted), then per
+/// commit averages the diffused affinity across its files, subtracts
+/// the corpus baseline, and picks the strongest label not already in
+/// the commit's own labels — sigma-gated.
 ///
-/// Returns a sparse map: only commits with a strong borrowed signal
-/// appear. Silent for the rest — never fabricates a label that the
-/// neighborhood doesn't strongly suggest.
+/// Returns a sparse map: only commits with a confident borrow appear.
 Map<String, ({String label, double score})> _computeBorrowedLabels(
   List<CommitHistoryEntry> commits,
   Map<String, CommitDetailData> detailsByHash,
@@ -1432,33 +1600,33 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
   // everywhere" — banal. Keep the structural diffusion clean.
   for (final _ in epochs) { /* intentionally inert */ }
 
-  // ── Phase 2: full LogosGit attention codec ──────────────────────
-  // Replaces the hand-rolled symmetric-jaccard diffusion with the
-  // multi-axis Logos engine. Born-mixes four axes (F0 touch frequency,
-  // CC jaccard coupling, SP path proximity, V volatility) into a
-  // single edge probability per file pair, builds a sparse top-K
-  // adjacency, and runs proper heat-kernel diffusion via Chebyshev
-  // polynomial expansion. Multi-hop, multi-axis, properly normalized.
-  //
-  // Per-commit relevance is then computed via `engine.diffuse(source)`
-  // returning φ scores for every file in the graph — heat that
-  // propagates from the commit's source files outward through the
-  // attention manifold. We use φ as the WEIGHT for aggregating
-  // fileAffinity across the whole graph, so the borrowed-label score
-  // reflects "where this commit's heat lands" via all four axes
-  // simultaneously, not just direct jaccard neighbors.
+  // ── Phase 2: LogosGit attention ─────────────────────────────────
+  // Born-mixes F0/CC/SP/V into per-pair edge probabilities, builds a
+  // top-K adjacency, and runs Chebyshev heat-kernel diffusion.
+  // engine.diffuse(source) returns φ for every file; we use φ as the
+  // weight when aggregating fileAffinity so the borrowed score
+  // reflects where the commit's heat lands across all four axes,
+  // not just direct Jaccard neighbours.
 
   // Build LogosGitStats from the commit data we've already iterated.
+  // Track per-file commit-index series alongside touches/churn so the
+  // engine's per-file curved AR(2) metric has the data it needs to
+  // fit each file's inter-touch-gap dynamics. Index is monotonic-by-
+  // iteration; gap regularity is direction-invariant so iteration
+  // order doesn't affect the AR(2) fit.
   final touches = <String, int>{};
   final fileChurn = <String, double>{};
+  final perFileCommitIndices = <String, List<int>>{};
   // EWMA smoothing for volatility — ½ is the canonical "balanced
   // memory" value; no taste, just exponential decay symmetry.
   const double ewmaAlpha = 0.5;
+  var commitIndex = 0;
   for (final c in commits) {
     final d = detailsByHash[c.commitHash];
     if (d == null) continue;
     for (final f in d.files) {
       touches.update(f.path, (v) => v + 1, ifAbsent: () => 1);
+      (perFileCommitIndices[f.path] ??= <int>[]).add(commitIndex);
       final churn = (f.additions + f.deletions).toDouble();
       fileChurn.update(
         f.path,
@@ -1466,6 +1634,7 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
         ifAbsent: () => churn,
       );
     }
+    commitIndex++;
   }
   var volMean = 0.0;
   var volStddev = 0.0;
@@ -1485,6 +1654,7 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
     volMean: volMean,
     volStddev: volStddev,
     coupling: coupling ?? FileCouplingMatrix.empty,
+    perFileCommitIndices: perFileCommitIndices,
   );
   final engine = LogosGit.buildFromStats(logosStats);
 
@@ -1647,22 +1817,16 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
       // concentrated AND co-occurs 2× more with own labels combines
       // to ~10× total — log(10) ≈ 2.3, mapping to confidence ≈ 0.90.
       // Retention modulator (sqrt of source-heat fraction) damps
-      // borrows from sprawl commits where heat dissipated everywhere
-      // — those commits genuinely have a less-coherent neighborhood
-      // and their borrows should read as less confident.
+      // Dampens borrows from sprawl commits where heat dissipated
+      // widely — less-coherent neighborhoods produce less-confident
+      // borrows.
       final finalScore = (pmi + coBonus) * retentionModulator;
       scores.add(_LabelCandidate(label, finalScore));
     });
     if (scores.isEmpty) continue;
-    // North-star gate: emit when the top candidate has strictly
-    // positive mutual information (NPMI > 0 already enforced inside
-    // the score loop). No kneedle, no sigma cutoff, no FDR — those
-    // were shape heuristics inventing a binary "yes/no" out of a
-    // continuous truth. The actual quantity (NPMI, plus co-PMI lift)
-    // IS the signal strength; we surface it and let the renderer
-    // modulate visual weight accordingly. A weak borrow renders
-    // faint; a strong one renders bold. Continuous, universal, no
-    // arbitrary thresholds.
+    // Emit whenever NPMI > 0 (already enforced per-score). The
+    // renderer modulates visual weight by score — weak borrows read
+    // faint, strong ones read bold — so we don't need a binary gate.
     scores.sort((a, b) => b.score.compareTo(a.score));
     final top = scores.first;
     if (top.score <= 0) continue;
@@ -1835,6 +1999,12 @@ List<CommitTag> tagCommit({
   if (commit.parentHashes.length > 1) {
     emitIfLabeled(CommitTagKind.merge);
   }
+  // ── Structural: rename (any file with git's 'R' changeType) ───────
+  if (detail != null &&
+      detail.files
+          .any((f) => f.changeType == 'R' || f.changeType.startsWith('R'))) {
+    emitIfLabeled(CommitTagKind.rename);
+  }
 
   // ── Detail-dependent: direction, hub, distribution ───────────────
   if (detail != null) {
@@ -1897,12 +2067,10 @@ List<CommitTag> tagCommit({
     }
   }
 
-  // ── Borrowed (eldritch) — label diffused from semantic neighbors ─
-  // Score (NPMI × exp(co-PMI)) becomes the pill's confidence: opacity
-  // and weight scale with how strong the network's whisper actually
-  // is. No threshold beyond NPMI > 0 (strict positive MI — the north-
-  // star definition). Renderer maps confidence → visual weight, so
-  // weak borrows show as faint context and strong ones read clearly.
+  // ── Borrowed — label diffused from the commit's file neighbors ──
+  // Score (NPMI × exp(co-PMI)) maps to pill confidence: opacity and
+  // weight scale with signal strength. The only gate is NPMI > 0;
+  // the renderer handles the rest visually.
   final borrowed = profile.borrowedLabels[commit.commitHash];
   if (borrowed != null && !_dedupe(out, borrowed.label)) {
     // Score is raw PMI (log of concentration ratio). Map to confidence

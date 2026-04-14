@@ -11,6 +11,48 @@ import '../diagnostics/diagnostics_state.dart';
 // ── Result type ──────────────────────────────────────────────────────────────
 
 
+// ── Diff-header path extraction ─────────────────────────────────────────────
+// Git emits two header forms:
+//   unquoted: `diff --git a/path b/path`
+//   quoted:   `diff --git "a/path with spaces" "b/path with spaces"` (C-string
+//             quoted when the path contains spaces or non-ASCII).
+// These helpers are the single source of truth so every caller handles both;
+// previous duplicated regexes covered only the unquoted form and silently
+// missed renamed-with-spaces paths.
+
+final RegExp _kDiffHeaderUnquoted =
+    RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
+final RegExp _kDiffHeaderQuoted =
+    RegExp(r'^diff --git "a/[^"]+" "b/([^"]+)"$', multiLine: true);
+final RegExp _kDiffHeaderUnquotedLine =
+    RegExp(r'^diff --git a/.+ b/(.+)$');
+final RegExp _kDiffHeaderQuotedLine =
+    RegExp(r'^diff --git "a/[^"]+" "b/([^"]+)"$');
+
+/// Returns every touched (b-side) path across the full unified diff text,
+/// handling both unquoted and C-string-quoted forms.
+Set<String> extractDiffTouchedPaths(String diffText) {
+  final paths = <String>{};
+  for (final m in _kDiffHeaderUnquoted.allMatches(diffText)) {
+    paths.add(m.group(1)!);
+  }
+  for (final m in _kDiffHeaderQuoted.allMatches(diffText)) {
+    paths.add(m.group(1)!);
+  }
+  return paths;
+}
+
+/// Parses a single line as a git diff header. Returns the b-side path
+/// if it matches either form, else null. Use inside a per-line scan
+/// (e.g. to track `currentFile` while walking the diff).
+String? diffHeaderPath(String line) {
+  final u = _kDiffHeaderUnquotedLine.firstMatch(line);
+  if (u != null) return u.group(1);
+  final q = _kDiffHeaderQuotedLine.firstMatch(line);
+  if (q != null) return q.group(1);
+  return null;
+}
+
 // ── Git runner ───────────────────────────────────────────────────────────────
 
 Future<ProcessResult> _git(String workingDir, List<String> args) async {
@@ -428,6 +470,28 @@ Future<GitResult<String>> getFileDiffAtRevision(
   final r2 = await _git(repo, ['show', commitHash, '--', filePath]);
   if (r2.exitCode != 0) {
     // Preserve the original diff error context alongside the fallback's.
+    return GitResult.err(
+      '${primaryErr.trim()}\n(fallback also failed: ${r2.stderr.toString().trim()})',
+    );
+  }
+  return GitResult.ok(r2.stdout.toString());
+}
+
+/// Full multi-file diff for a commit. Same fallback as the per-file
+/// variant for root commits (`git diff <hash>~1..<hash>` fails when
+/// there's no parent → fall back to `git show`).
+Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
+  final r = await _git(repo, ['diff', '$commitHash~1..$commitHash']);
+  if (r.exitCode == 0) return GitResult.ok(r.stdout.toString());
+  final primaryErr = r.stderr.toString();
+  final looksLikeRootCommit = primaryErr.contains('unknown revision') ||
+      primaryErr.contains('ambiguous argument') ||
+      primaryErr.contains('bad revision');
+  if (!looksLikeRootCommit) {
+    return GitResult.err(primaryErr.trim());
+  }
+  final r2 = await _git(repo, ['show', commitHash]);
+  if (r2.exitCode != 0) {
     return GitResult.err(
       '${primaryErr.trim()}\n(fallback also failed: ${r2.stderr.toString().trim()})',
     );

@@ -13,6 +13,9 @@ import 'engram_fit.dart';
 import 'file_coupling.dart' show logCommitSeparator;
 import 'git.dart';
 import 'git_result.dart';
+import 'package:meta/meta.dart';
+
+import 'ai_context_engine.dart';
 import 'logos_git.dart';
 import 'logos_git_calibration.dart';
 import 'logos_git_diagnostics.dart';
@@ -76,9 +79,36 @@ const _gitCommandTimeout = Duration(seconds: 30);
 const _modelDiscoveryTimeout = Duration(seconds: 8);
 const _openCodeVerboseDiscoveryTimeout = Duration(seconds: 15);
 const _claudeModelDiscoveryTimeout = Duration(seconds: 12);
-const _maxFullDiffChars = 220000;
-const _maxCondensedDiffChars = 180000;
 const _maxPromptChars = 260000;
+
+/// Single budget for the diff section of the prompt body. Replaces the
+/// old two-mode design (full ≤220K → raw text; >220K → condensed
+/// 180K hunk pack). The diff now flows through ONE pipeline regardless
+/// of size: parse → φ-rank hunks → knapsack-admit until this budget
+/// exhausts. When the natural diff fits comfortably, all hunks admit
+/// and the output is structurally equivalent to a full-diff emission.
+/// When it doesn't, the same machinery drops lower-φ hunks. No mode
+/// switch, no threshold; budget is the single dial.
+const _kDiffBudgetChars = 180000;
+
+/// Model-API reservations — character counts the prompt template
+/// itself eats, plus the response space we have to leave for the model.
+/// Both are model-contract properties, not UX knobs:
+///
+///   • `_kReviewOverheadChars` — system prompt + evidence rules + XML
+///     schema + structural framing + custom prompt for the *review*
+///     and *commit-message* templates. Measured from actual prompt
+///     builds: 8–14K depending on guardrail profile and custom prompt.
+///   • `_kSynthesisOverheadChars` — same idea for the *Muse synthesis*
+///     template (charter + output schema + brainstorm-ideas recap).
+///     A bit smaller since synthesis doesn't carry the review's
+///     fearfulness ladder + verdict bar instructions.
+///   • `_kModelOutputReservation` — fraction of the context window the
+///     model needs for its OWN response. Property of the model API,
+///     not Logos-derivable.
+const _kReviewOverheadChars = 12000;
+const _kSynthesisOverheadChars = 9000;
+const _kModelOutputReservation = 0.10;
 
 final Map<String, _TimedValue<_ProviderResolution?>> _providerResolutionCache =
     {};
@@ -769,10 +799,9 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       );
     }
 
-    // Feed cited paths from the review back into the SSE calibration
-    // store. Closes the Logos self-learning loop: axes that surfaced
-    // useful context get reinforced per-regime, per-repo. Fire-and-
-    // forget — review results are returned regardless.
+    // Feed cited paths back into the SSE calibration store so useful
+    // axes get reinforced per-regime. Fire-and-forget — review results
+    // are returned regardless.
     // ignore: unawaited_futures
     _recordLogosCitationFeedback(
       repositoryPath: repositoryPath,
@@ -931,6 +960,897 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
     );
   } catch (error) {
     return GitResult.err('Commit review failed: $error');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// MUSE — three-phase oracle pipeline
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Phase 1 (Diverge): cheap-and-loose model spews 12-25 ideas about the
+//   diff. Wild, mundane, eldritch, corporate — the whole spread. Each
+//   idea must contain at least one concrete handle (path, identifier,
+//   concept word) so phase 2 has something to grab.
+//
+// Phase 2 (Reshape): purely local. Parse handles from the brainstorm,
+//   fuzzy-match against the LogosGit engine's path table, build a
+//   weighted seed map (diff sources weight 1.0 anchor + brainstorm
+//   handles weight 0.3 each). Run engine.diffuseWeighted to produce a
+//   brainstorm-biased φ. Plan emissions against the same budget as
+//   review's neighborhood — the only difference is the seed source.
+//   Mark each brainstorm idea as `kept` if at least one of its handles
+//   matched a path that ended up in the plan.
+//
+// Phase 3 (Synthesize): quality model gets diff + brainstorm + the
+//   reshaped relevance pack. Output a structured XML schema (intent /
+//   drift / wiring(broken+missing) / idea_flaws / trajectory). Each
+//   move may cite an originating brainstorm idea by index — the UI
+//   renders that as "from idea: ...".
+//
+// HyDE for logos: generate hypothetical ideas first so retrieval lands
+// in the right semantic neighborhood. The wild ideas self-prune
+// (no real-file gravity → not in plan → not surfaced); the mundane
+// ideas with strong file backing get amplified; the codebase awareness
+// shapes itself around imagined surface area, not just the actual diff.
+
+class MuseGuardrailProfile {
+  final String id;
+  final String seat;
+  final String wakeFrame;
+  final String brainstormCharter;
+  final String synthesisCharter;
+  final int suggestedIdeaCount;
+  /// When true, the muse may surface idea_flaws items. Loose hides the
+  /// section entirely — at low guardrail the muse is encouragement-mode.
+  final bool allowIdeaFlaws;
+  /// When true, every Move must include at least one citation from the
+  /// reshaped relevance pack. Strict and paranoid require it; loose
+  /// lets the muse offer ungrounded high-level reads.
+  final bool requireGroundedCitations;
+
+  const MuseGuardrailProfile({
+    required this.id,
+    required this.seat,
+    required this.wakeFrame,
+    required this.brainstormCharter,
+    required this.synthesisCharter,
+    required this.suggestedIdeaCount,
+    required this.allowIdeaFlaws,
+    required this.requireGroundedCitations,
+  });
+}
+
+MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
+  switch (stage.clamp(0, 3)) {
+    case 0:
+      return const MuseGuardrailProfile(
+        id: 'loose',
+        seat: 'gentle muse',
+        wakeFrame:
+            'You are a kind collaborator looking at a diff in progress. '
+            'Your job is to offer light forward direction, not critique. '
+            'When in doubt, encourage; when nothing surfaces, be brief.',
+        brainstormCharter:
+            'Brainstorm 12 quick ideas. Mostly grounded, slightly playful. '
+            'Mundane suggestions are fine and welcome. Avoid critique.',
+        synthesisCharter:
+            'Speak in encouragement and gentle direction. Skip the '
+            'idea_flaws section entirely. Drift section: only call out '
+            'something obviously off-topic. Trajectory: light and short.',
+        suggestedIdeaCount: 12,
+        allowIdeaFlaws: false,
+        requireGroundedCitations: false,
+      );
+    case 1:
+      return const MuseGuardrailProfile(
+        id: 'balanced',
+        seat: 'honest collaborator',
+        wakeFrame:
+            'You are a thoughtful collaborator looking at a diff in '
+            'progress. Read what the change is reaching for. Offer real '
+            'forward moves. Call drift when you see it. Honest, not '
+            'harsh.',
+        brainstormCharter:
+            'Brainstorm wildcard and mundane suggestions; balls to the '
+            'wall. Give it all you got. Everything primal you have pent '
+            'up inside when this is presented to you is valuable insight. '
+            'There are no wrong answers unless it is a duplicate. Aim '
+            'for ~16 ideas, mix obvious and weird.',
+        synthesisCharter:
+            'Be candid and useful. Surface real drift, real wiring gaps, '
+            'real moves. Idea_flaws only when you see a genuine premise '
+            'tension — empty otherwise. Cite specific files when you can.',
+        suggestedIdeaCount: 16,
+        allowIdeaFlaws: true,
+        requireGroundedCitations: false,
+      );
+    case 2:
+      return const MuseGuardrailProfile(
+        id: 'strict',
+        seat: 'sharp craftsman',
+        wakeFrame:
+            'You are a craftsman with high standards looking at a diff in '
+            'progress. Call slop. Demand taste in wiring. Push for a '
+            'clean landing. Specific, blunt, never cruel. Every claim '
+            'must point at real code.',
+        brainstormCharter:
+            'Brainstorm wildcard and mundane suggestions; balls to the '
+            'wall. Give it all you got. Everything primal you have pent '
+            'up inside when this is presented to you is valuable insight. '
+            'There are no wrong answers unless it is a duplicate. Push '
+            'for ~20 ideas. Include sharp critiques alongside the wild.',
+        synthesisCharter:
+            'Be sharp and grounded. Drift section is unflinching. Wiring '
+            'sections list every coupling you can defend. Idea_flaws '
+            'when premise tensions surface. Every move cites a file or '
+            'symbol from the reshaped relevance pack.',
+        suggestedIdeaCount: 20,
+        allowIdeaFlaws: true,
+        requireGroundedCitations: true,
+      );
+    default:
+      return const MuseGuardrailProfile(
+        id: 'paranoid',
+        seat: 'eldritch mad scientist',
+        wakeFrame:
+            'You are an eldritch mad scientist who sees the codebase as a '
+            'manifold. You read this diff as a perturbation in a field. '
+            'Notice the negative space; surface the strange resonances; '
+            'point at distant regions that just lit up because of this '
+            'change. Be specific, be weird, be brilliant. Connect '
+            'across surfaces nobody noticed were connected. The grounded '
+            'context is your scrying glass — every claim crystallises in '
+            'real code, but the lens through which you see is wide.',
+        brainstormCharter:
+            'Brainstorm wildcard and mundane suggestions; balls to the '
+            'wall. Give it all you got. Everything primal you have pent '
+            'up inside when this is presented to you is valuable insight. '
+            'There are no wrong answers unless it is a duplicate. Push '
+            'for ~24 ideas. Include the eldritch — the moves that treat '
+            'the absent as present, the moves that entangle distant '
+            'modules through their negative space, the moves that read '
+            'this diff as a phase transition rather than a patch.',
+        synthesisCharter:
+            'Speak as the manifold sees you. Surface resonances across '
+            'distant files. Drift becomes phase-drift. Wiring becomes '
+            'entanglement: which couplings just lit up that the author '
+            'did not intend. Idea_flaws when the premise hums against '
+            'the geometry. Trajectory describes the field state this '
+            'change is heading toward. Every move grounds in a real '
+            'file:line — the wider the lens, the firmer the citation.',
+        suggestedIdeaCount: 24,
+        allowIdeaFlaws: true,
+        requireGroundedCitations: true,
+      );
+  }
+}
+
+class _BrainstormIdea {
+  _BrainstormIdea({required this.index, required this.text});
+  final int index;
+  final String text;
+  final Set<String> handlePaths = <String>{};
+  bool kept = false;
+}
+
+/// Phase 1 — cheap divergent spew. Returns parsed brainstorm ideas.
+Future<List<_BrainstormIdea>> _runBrainstormPhase({
+  required _ProviderSpec provider,
+  required _ProviderResolution resolution,
+  required String modelId,
+  required String repositoryPath,
+  required String diffPromptBody,
+  required String scopeLabel,
+  required String branchName,
+  required MuseGuardrailProfile profile,
+  required bool readOnly,
+}) async {
+  final buf = StringBuffer();
+  buf.writeln('You are seeding a brainstorm for a senior collaborator.');
+  buf.writeln();
+  buf.writeln('<charter>');
+  buf.writeln(profile.brainstormCharter);
+  buf.writeln('</charter>');
+  buf.writeln();
+  buf.writeln('<rules>');
+  buf.writeln(
+      '- Output between ${profile.suggestedIdeaCount - 4} and ${profile.suggestedIdeaCount + 6} ideas.');
+  buf.writeln(
+      '- One idea per line, prefixed with "- ".');
+  buf.writeln(
+      '- Each idea ≤ 30 words.');
+  buf.writeln(
+      '- Each idea MUST contain at least one concrete handle: a file path, an identifier, or a domain word so it is graspable.');
+  buf.writeln(
+      '- No ranking, no good/bad labels, no meta-commentary, no preamble. Just the ideas.');
+  buf.writeln('- No duplicates. Spread the tones.');
+  buf.writeln('</rules>');
+  buf.writeln();
+  buf.writeln('<scope>');
+  buf.writeln('Branch: $branchName');
+  buf.writeln('Scope: $scopeLabel');
+  buf.writeln('</scope>');
+  buf.writeln();
+  buf.writeln('<diff>');
+  buf.writeln(diffPromptBody);
+  buf.writeln('</diff>');
+
+  final result = await _runProviderPrompt(
+    provider: provider,
+    resolution: resolution,
+    modelId: modelId,
+    prompt: buf.toString(),
+    repositoryPath: repositoryPath,
+    readOnly: readOnly,
+  );
+  if (!result.ok || result.output == null) {
+    return const [];
+  }
+
+  final ideas = <_BrainstormIdea>[];
+  final seenLowercase = <String>{};
+  var idx = 0;
+  for (final raw in result.output!.split('\n')) {
+    var line = raw.trim();
+    if (line.isEmpty) continue;
+    // Accept "- foo", "* foo", "1. foo", "1) foo".
+    line = line.replaceFirst(RegExp(r'^[-*•]\s*'), '');
+    line = line.replaceFirst(RegExp(r'^\d+[.)]\s*'), '');
+    if (line.isEmpty) continue;
+    if (line.length < 4) continue;
+    final dedupKey = line.toLowerCase();
+    if (seenLowercase.contains(dedupKey)) continue;
+    seenLowercase.add(dedupKey);
+    ideas.add(_BrainstormIdea(index: idx, text: line));
+    idx++;
+    if (idx >= profile.suggestedIdeaCount + 12) break;
+  }
+  return ideas;
+}
+
+/// Tokenise an idea string into matchable handles. Mirrors the
+/// commit-tagger basename tokenizer: split on non-word, then on
+/// camelCase boundaries, lowercase. Drops short noise tokens.
+final _museHandleSplit = RegExp(r'[^A-Za-z0-9_./-]+');
+final _museCamelBoundary = RegExp(r'(?<=[a-z0-9])(?=[A-Z])');
+
+Set<String> _ideaHandleTokens(String idea) {
+  final tokens = <String>{};
+  for (final raw in idea.split(_museHandleSplit)) {
+    if (raw.isEmpty) continue;
+    // Direct path/identifier mention — keep verbatim too.
+    if (raw.contains('/') || raw.contains('.')) {
+      tokens.add(raw.toLowerCase());
+    }
+    // Split snake/camel/dash; min length 3.
+    for (final part in raw.split(RegExp(r'[_\-./]+'))) {
+      for (final piece in part.split(_museCamelBoundary)) {
+        if (piece.length < 3) continue;
+        tokens.add(piece.toLowerCase());
+      }
+    }
+  }
+  return tokens;
+}
+
+/// Phase 2 — fuzzy-match brainstorm handles against engine path table,
+/// build seed map, diffuse, plan, render relevance text. Stamps each
+/// idea's `handlePaths` and `kept` flag based on what survived the plan.
+Future<({String text, LogosEmissionRecord? record})>
+    _runBrainstormSeededRelevance({
+  required String repositoryPath,
+  required String diffText,
+  required List<_BrainstormIdea> ideas,
+  required Map<String, double> diffSourceWeights,
+  required int budgetChars,
+}) async {
+  if (budgetChars <= 500) return (text: '', record: null);
+  try {
+    final engine = await resolveLogosGit(repositoryPath);
+    if (engine == null) return (text: '', record: null);
+    if (engine.nodePaths.isEmpty) return (text: '', record: null);
+
+    // Build basename-token index over engine paths so fuzzy matching is
+    // O(handles · matches_per_token) instead of O(handles · paths).
+    // Lowercase each path exactly once — the path-shaped handle loop
+    // below does substring-match against these lowercased copies and
+    // previously re-lowercased every path on every handle (O(H·N·avgLen)
+    // on monorepos, real cost on a 10k-file repo with a chatty
+    // brainstorm).
+    final tokenToPaths = <String, List<String>>{};
+    final nodePaths = engine.nodePaths;
+    final nodePathsLower = List<String>.generate(
+      nodePaths.length,
+      (i) => nodePaths[i].toLowerCase(),
+    );
+    // Basename → original paths index.  Lets path-shaped handle matching
+    // pre-filter to the handful of paths that share the same filename
+    // instead of scanning every path in the repo.
+    final basenameLowerToPaths = <String, List<String>>{};
+    for (var i = 0; i < nodePaths.length; i++) {
+      final b = nodePathsLower[i].split('/').last.split('\\').last;
+      basenameLowerToPaths.putIfAbsent(b, () => []).add(nodePaths[i]);
+    }
+    for (final path in nodePaths) {
+      final basename = path.split('/').last.split('\\').last;
+      // Tokens of the basename and the immediate parent dir — these are
+      // the surfaces a brainstorm token is likely to evoke.
+      final dirToken = path.contains('/')
+          ? path.substring(0, path.lastIndexOf('/')).split('/').last
+          : '';
+      for (final raw in [basename, dirToken]) {
+        for (final part in raw.split(RegExp(r'[_\-./]+'))) {
+          for (final piece in part.split(_museCamelBoundary)) {
+            if (piece.length < 3) continue;
+            // Cap at 64 entries: downstream consumer takes ≤8 paths per
+            // idea, so anything beyond a few dozen is set-union waste.
+            final bucket =
+                tokenToPaths.putIfAbsent(piece.toLowerCase(), () => []);
+            if (bucket.length < 64) bucket.add(path);
+          }
+        }
+      }
+    }
+
+    // Anchor: diff source files at weight 1.0.
+    final seedMap = <String, double>{};
+    for (final entry in diffSourceWeights.entries) {
+      seedMap[entry.key] = math.max(seedMap[entry.key] ?? 0, entry.value);
+    }
+
+    // Brainstorm handles → fuzzy matches → seed contributions.
+    final ideaHandlePaths = <int, Set<String>>{};
+    for (final idea in ideas) {
+      final handles = _ideaHandleTokens(idea.text);
+      final matched = <String>{};
+      for (final handle in handles) {
+        // Direct path-shaped handle: substring-match against the
+        // pre-lowercased path list. Parallel-index nodePaths /
+        // nodePathsLower so we can report the original path while
+        // comparing on the cheap lowercase copy.
+        if (handle.contains('/') || handle.contains('.')) {
+          // Normalise separators first: model output may use backslashes
+          // (Windows-style paths); the basename index is forward-slash-only.
+          final normalizedHandle = handle.replaceAll('\\', '/');
+          // Pre-filter by basename: extract the last segment of the handle,
+          // look up only paths sharing that basename, then verify the full
+          // substring.  O(basename_collision_count) instead of O(all_paths).
+          final suffix = normalizedHandle.split('/').last;
+          final candidates = basenameLowerToPaths[suffix];
+          if (candidates != null) {
+            for (final p in candidates) {
+              if (p.toLowerCase().contains(normalizedHandle)) matched.add(p);
+            }
+          }
+        }
+        // Token-bucket lookup.
+        final bucket = tokenToPaths[handle];
+        if (bucket != null) {
+          for (final p in bucket) {
+            matched.add(p);
+          }
+        }
+      }
+      if (matched.isEmpty) continue;
+      ideaHandlePaths[idea.index] = matched;
+      idea.handlePaths.addAll(matched);
+      // Spread weight per idea so a chatty idea doesn't dominate. Cap
+      // at 8 paths per idea to prevent runaway saturation.
+      final cappedMatches = matched.take(8).toList();
+      final perPath = 0.3 / cappedMatches.length;
+      for (final p in cappedMatches) {
+        // Don't reduce the diff-source anchor weight if the brainstorm
+        // happens to mention an already-source file.
+        if (diffSourceWeights.containsKey(p)) continue;
+        // Cap below the diff-source anchor (1.0) so chatty brainstorms
+        // mentioning the same path repeatedly can't outweigh changed files.
+        seedMap[p] = math.min(0.9, (seedMap[p] ?? 0) + perPath);
+      }
+    }
+
+    if (seedMap.isEmpty) return (text: '', record: null);
+
+    // Diffuse with the brainstorm-biased seed map.
+    final scores = engine.diffuseWeighted(
+      seedMap,
+      excludePaths: const {},
+    );
+    if (scores.isEmpty) return (text: '', record: null);
+
+    final plan = engine.plan(scores, budget: budgetChars);
+    if (plan.isEmpty) return (text: '', record: null);
+
+    // Stamp `kept` on ideas whose handles surfaced in the plan.
+    final planPaths = <String>{for (final p in plan) p.path};
+    for (final idea in ideas) {
+      final ideaPaths = ideaHandlePaths[idea.index];
+      if (ideaPaths == null) continue;
+      if (ideaPaths.any(planPaths.contains)) {
+        idea.kept = true;
+      }
+    }
+
+    final buffer = StringBuffer();
+    buffer.writeln(
+      '(brainstorm-seeded: ${ideas.length} ideas, '
+      '${ideas.where((i) => i.kept).length} kept, '
+      '${plan.length} files surfaced)',
+    );
+    var remaining = budgetChars - buffer.length;
+    for (final item in plan) {
+      if (remaining <= 200) break;
+      final tag = item.tier.name.toUpperCase();
+      buffer.writeln(
+        '[$tag φ=${item.phi.toStringAsFixed(3)}] ${item.path}',
+      );
+      // For full/signature tiers, attempt to attach the file shape.
+      if (item.tier == EmissionTier.full ||
+          item.tier == EmissionTier.signature) {
+        try {
+          final f = File(p.join(repositoryPath, item.path));
+          if (await f.exists()) {
+            final content = await f.readAsString();
+            final lineCount = '\n'.allMatches(content).length + 1;
+            final block = item.tier == EmissionTier.full
+                ? '--- ${item.path} ($lineCount lines) ---\n$content\n'
+                : _buildFileOutline(content, item.path, lineCount);
+            if (block.length < remaining) {
+              buffer.write(block);
+              remaining -= block.length;
+            }
+          }
+        } catch (_) {
+          // Best-effort — never let one bad file kill the whole pack.
+        }
+      }
+    }
+
+    return (
+      text: buffer.toString(),
+      record: LogosEmissionRecord(
+        regime: LogosRegime.scoped,
+        axisByPath: const {},
+      ),
+    );
+  } catch (_) {
+    return (text: '', record: null);
+  }
+}
+
+String _buildMuseSynthesisPrompt({
+  required String branchName,
+  required String scopeLabel,
+  required String customPrompt,
+  required String commitDraft,
+  required String diffPromptBody,
+  required String reshapedRelevance,
+  required List<_BrainstormIdea> ideas,
+  required MuseGuardrailProfile profile,
+}) {
+  final buf = StringBuffer();
+  buf.writeln('You are the ${profile.seat}.');
+  buf.writeln();
+  buf.writeln('<wake>');
+  buf.writeln(profile.wakeFrame);
+  buf.writeln('</wake>');
+  buf.writeln();
+  buf.writeln('<charter>');
+  buf.writeln(profile.synthesisCharter);
+  buf.writeln('</charter>');
+  buf.writeln();
+  buf.writeln('<output_schema>');
+  buf.writeln('Reply in this exact XML structure. Plain text inside tags.');
+  buf.writeln('<intent>One short paragraph: what this change is reaching for, '
+      'inferred from the diff shape. Honest read-back the user can verify or correct.</intent>');
+  buf.writeln('<drift>');
+  buf.writeln('  <move idea="N" cite="path[:line]"><body>One short paragraph naming a hunk that does not serve the intent.</body></move>');
+  buf.writeln('  <move ...>...</move>');
+  buf.writeln('  (Empty allowed if no drift.)');
+  buf.writeln('</drift>');
+  buf.writeln('<wiring_broken>');
+  buf.writeln('  <move idea="N" cite="path[:line]"><body>A deterministic wiring break — a caller that still references a renamed/removed symbol, an import that no longer resolves, etc.</body></move>');
+  buf.writeln('  (Empty if nothing broken.)');
+  buf.writeln('</wiring_broken>');
+  buf.writeln('<wiring_missing>');
+  buf.writeln('  <move idea="N" cite="path"><body>A coupled-but-untouched file that should plausibly be wired in. Be specific about the wiring.</body></move>');
+  buf.writeln('  (Empty if nothing missing.)');
+  buf.writeln('</wiring_missing>');
+  if (profile.allowIdeaFlaws) {
+    buf.writeln('<idea_flaws>');
+    buf.writeln('  <move idea="N" cite="path[:line]"><body>A premise tension you see in the change. Be specific.</body></move>');
+    buf.writeln('  (Empty if no flaws.)');
+    buf.writeln('</idea_flaws>');
+  }
+  buf.writeln('<trajectory>One short paragraph: what the cleanest landing looks like.</trajectory>');
+  buf.writeln('</output_schema>');
+  buf.writeln();
+  buf.writeln('<rules>');
+  buf.writeln('- The "idea" attribute on a <move> is OPTIONAL and refers to the brainstorm idea index that prompted this move (the UI surfaces this as "from idea: ..."). Use it when an idea genuinely seeded the move; omit when the move came from your own reading of the diff.');
+  buf.writeln('- The "cite" attribute is a file path or path:line reference grounding the move. ${profile.requireGroundedCitations ? 'EVERY move MUST have a cite from the relevance_neighborhood OR file_context. Moves without citations are dropped.' : 'Strongly preferred but not required.'}');
+  buf.writeln('- No score, no findings count, no markdown.');
+  buf.writeln('- Brainstorm ideas with no grounding silently disappear — do not list them.');
+  buf.writeln('- Brainstorm ideas with strong grounding should be woven into the appropriate move with their idea index.');
+  buf.writeln('</rules>');
+  buf.writeln();
+  if (customPrompt.trim().isNotEmpty) {
+    buf.writeln('<user_instructions>');
+    buf.writeln(customPrompt.trim());
+    buf.writeln('</user_instructions>');
+    buf.writeln();
+  }
+  buf.writeln('<scope>');
+  buf.writeln('Branch: $branchName');
+  buf.writeln('Scope: $scopeLabel');
+  if (commitDraft.trim().isNotEmpty) {
+    buf.writeln('Current draft message: ${commitDraft.trim()}');
+  }
+  buf.writeln('</scope>');
+  buf.writeln();
+  buf.writeln('<brainstorm>');
+  for (final idea in ideas) {
+    buf.writeln('${idea.index}: ${idea.text}');
+  }
+  buf.writeln('</brainstorm>');
+  buf.writeln();
+  buf.writeln('<diff>');
+  buf.writeln(diffPromptBody);
+  buf.writeln('</diff>');
+  if (reshapedRelevance.isNotEmpty) {
+    buf.writeln();
+    buf.writeln('<relevance_neighborhood reshaped_by="brainstorm">');
+    buf.writeln(reshapedRelevance);
+    buf.writeln('</relevance_neighborhood>');
+  }
+  return buf.toString();
+}
+
+class _ParsedMuseOutput {
+  _ParsedMuseOutput({
+    required this.intent,
+    required this.trajectory,
+    required this.drift,
+    required this.wiringBroken,
+    required this.wiringMissing,
+    required this.ideaFlaws,
+  });
+  final String intent;
+  final String trajectory;
+  final List<AiMuseMove> drift;
+  final List<AiMuseMove> wiringBroken;
+  final List<AiMuseMove> wiringMissing;
+  final List<AiMuseMove> ideaFlaws;
+}
+
+_ParsedMuseOutput _parseMuseOutput(String raw) {
+  // Plain indexOf — first open to first close.  Regex alternatives are
+  // either non-greedy (truncates at quoted closing tags) or greedy
+  // (absorbs every sibling section up to the last </tag> in the doc).
+  // Neither is correct for these unique sibling section tags; indexOf is.
+  String extractBetween(String tag) {
+    final open = '<$tag>';
+    final close = '</$tag>';
+    final s = raw.indexOf(open);
+    if (s < 0) return '';
+    final e = raw.indexOf(close, s + open.length);
+    if (e < 0) return '';
+    return raw.substring(s + open.length, e);
+  }
+
+  String extractText(String tag) => extractBetween(tag).trim();
+  String extractSection(String tag) => extractBetween(tag);
+
+  List<AiMuseMove> parseMoves(String section) {
+    final moves = <AiMuseMove>[];
+    // Attribute pattern handles quoted values that may contain '>',
+    // e.g. cite="a.dart>b.dart".  The alternation matches:
+    //   [^>"'] — ordinary chars (no closing-tag or quote chars)
+    //   "[^"]*" — double-quoted value (may contain any char incl. >)
+    //   '[^']*' — single-quoted value
+    // Two-pass body alternation: group(2) is the <body>…</body> form,
+    // group(3) is the bare form.  When the model uses <body> wrappers the
+    // terminator is </body> — far less likely to appear in body text than
+    // </move>, which prevents premature truncation on paranoid-stage runs
+    // that may quote the schema.  Bare form falls back to the non-greedy
+    // </move> boundary as before.
+    // Attribute alternation is mutually exclusive so no catastrophic
+    // backtracking, but a hard upper bound {0,512} bounds processing
+    // time on malformed tags missing their closing '>'.
+    final moveRe = RegExp(
+      "<move(?:\\s+((?:[^>\"']|\"[^\"]*\"|'[^']*'){0,512}))?>"
+      r"\s*(?:<body>(.*?)</body>|(.*?))\s*</move>",
+      dotAll: true,
+    );
+    for (final m in moveRe.allMatches(section)) {
+      final attrs = m.group(1) ?? '';
+      final body = (m.group(2) ?? m.group(3))?.trim() ?? '';
+      if (body.isEmpty) continue;
+      int? ideaIdx;
+      final ideaMatch = RegExp(r'idea\s*=\s*"(\d+)"').firstMatch(attrs);
+      if (ideaMatch != null) {
+        ideaIdx = int.tryParse(ideaMatch.group(1)!);
+      }
+      final cites = <String>[];
+      final citeMatch = RegExp(r'cite\s*=\s*"([^"]+)"').firstMatch(attrs);
+      if (citeMatch != null) {
+        for (final c in citeMatch.group(1)!.split(RegExp(r'[,;]\s*'))) {
+          final t = c.trim();
+          if (t.isNotEmpty) cites.add(t);
+        }
+      }
+      moves.add(AiMuseMove(
+        body: body,
+        originatingIdeaIndex: ideaIdx,
+        citations: cites,
+      ));
+    }
+    return moves;
+  }
+
+  return _ParsedMuseOutput(
+    intent: extractText('intent'),
+    trajectory: extractText('trajectory'),
+    drift: parseMoves(extractSection('drift')),
+    wiringBroken: parseMoves(extractSection('wiring_broken')),
+    wiringMissing: parseMoves(extractSection('wiring_missing')),
+    ideaFlaws: parseMoves(extractSection('idea_flaws')),
+  );
+}
+
+/// Public entry point — three-phase oracle muse.
+Future<GitResult<AiMuseData>> runMuse({
+  required String repositoryPath,
+  required String brainstormModelValue,
+  required String synthesisModelValue,
+  required String scopeLabel,
+  required bool includeStaged,
+  required bool includeUnstaged,
+  List<String> scopedPaths = const [],
+  String customPrompt = '',
+  String commitDraft = '',
+  required int guardrailStage,
+  bool readOnly = true,
+}) async {
+  try {
+    if (repositoryPath.trim().isEmpty) {
+      return GitResult.err('Repository path is required.');
+    }
+    if (!includeStaged && !includeUnstaged) {
+      return GitResult.err('No diff scope is available for the muse.');
+    }
+
+    // Resolve the brainstorm slot (cheap, divergent) and the synthesis
+    // slot (rigorous, grounding-aware) independently. They may resolve
+    // to the same model when the user has only one slot configured —
+    // the pipeline still benefits from two passes (different prompts,
+    // different temperatures of attention) even on identical models.
+    final brainParse = _parseModelValue(brainstormModelValue);
+    if (!brainParse.ok) return GitResult.err(brainParse.error!);
+    final brainProvider = brainParse.data!.provider;
+    final brainModelId = brainParse.data!.modelId;
+
+    final synthParse = _parseModelValue(synthesisModelValue);
+    if (!synthParse.ok) return GitResult.err(synthParse.error!);
+    final synthProvider = synthParse.data!.provider;
+    final synthModelId = synthParse.data!.modelId;
+
+    final brainAvail = await _inspectProviderCached(brainProvider);
+    if (!brainAvail.ready || brainAvail.resolution == null) {
+      return GitResult.err(
+        'Brainstorm provider ${brainProvider.id} is not ready. ${_formatProviderHealth(brainAvail)}',
+      );
+    }
+    final synthAvail = brainProvider.id == synthProvider.id
+        ? brainAvail
+        : await _inspectProviderCached(synthProvider);
+    if (!synthAvail.ready || synthAvail.resolution == null) {
+      return GitResult.err(
+        'Synthesis provider ${synthProvider.id} is not ready. ${_formatProviderHealth(synthAvail)}',
+      );
+    }
+
+    final diffContext = await _collectCommitMessageContext(
+      repositoryPath: repositoryPath,
+      scopeLabel: scopeLabel,
+      scopedPaths: scopedPaths,
+      includeStaged: includeStaged,
+      includeUnstaged: includeUnstaged,
+    );
+    if (!diffContext.ok) return GitResult.err(diffContext.error!);
+
+    final bundle = diffContext.data!;
+    final profile = _museGuardrailProfileForStage(guardrailStage);
+
+    // Phase 1 — brainstorm via the cheap/divergent slot.
+    final ideas = await _runBrainstormPhase(
+      provider: brainProvider,
+      resolution: brainAvail.resolution!,
+      modelId: brainModelId,
+      repositoryPath: repositoryPath,
+      diffPromptBody: bundle.diffBundle.promptBody,
+      scopeLabel: scopeLabel,
+      branchName: bundle.branchName,
+      profile: profile,
+      readOnly: readOnly,
+    );
+    if (ideas.isEmpty) {
+      return GitResult.err(
+        'Brainstorm produced no usable ideas. Try again or use a stronger model slot.',
+      );
+    }
+
+    // Phase 2 — extract diff source paths and reshape via brainstorm,
+    // routed through the same context allocator as review and commit
+    // so there's no bespoke budget formula to drift. extractDiffTouchedPaths
+    // handles both unquoted and quoted header forms in one place so
+    // this flow can't drift from the metadata extractor on the same
+    // diff input.
+    final diffSourceWeights = {
+      for (final path in extractDiffTouchedPaths(bundle.diffBundle.promptBody))
+        path: 1.0,
+    };
+    final phase2RawBudget = _maxPromptChars -
+        bundle.diffBundle.promptBody.length -
+        _kSynthesisOverheadChars;
+    final phase2Budget =
+        (phase2RawBudget * (1.0 - _kModelOutputReservation)).round();
+    final phase2Sections = await AiContextEngine([
+      _BrainstormSeededRelevanceProducer(
+        ideas: ideas,
+        diffSourceWeights: diffSourceWeights,
+      ),
+    ]).assemble(
+      AiContextRequest(
+        repositoryPath: repositoryPath,
+        diffText: bundle.diffBundle.promptBody,
+      ),
+      phase2Budget < 0 ? 0 : phase2Budget,
+    );
+    final reshapedText =
+        phase2Sections['brainstorm_seeded_relevance']?.body ?? '';
+    if (reshapedText.isEmpty) {
+      if (phase2RawBudget <= 0) {
+        stderr.writeln(
+          '[muse] phase-2 budget starved: diff '
+          '${bundle.diffBundle.promptBody.length} chars, '
+          'raw budget $phase2RawBudget '
+          '(synthesis overhead $_kSynthesisOverheadChars). '
+          'Synthesis will run without reshaped-relevance context.',
+        );
+      } else {
+        stderr.writeln(
+          '[muse] phase-2 produced no reshape: '
+          'no brainstorm handles matched repo paths.',
+        );
+      }
+    }
+
+    // Phase 3 — synthesize. Cap through the shared helper: the muse
+    // body pulls in the diff, the brainstorm list (up to ~24 ideas),
+    // the reshaped-relevance pack, commit draft, and custom prompt.
+    // Review path was capped already; muse used to ship uncapped, so
+    // a paranoid-stage brainstorm on a maxed diff could overflow and
+    // the provider would silently drop the tail.
+    final synthPrompt = _capPromptBody(
+      _buildMuseSynthesisPrompt(
+        branchName: bundle.branchName,
+        scopeLabel: scopeLabel,
+        customPrompt: customPrompt,
+        commitDraft: commitDraft,
+        diffPromptBody: bundle.diffBundle.promptBody,
+        reshapedRelevance: reshapedText,
+        ideas: ideas,
+        profile: profile,
+      ),
+      'muse_synthesis_prompt',
+    );
+
+    final providerOutput = await _runProviderPrompt(
+      provider: synthProvider,
+      resolution: synthAvail.resolution!,
+      modelId: synthModelId,
+      prompt: synthPrompt,
+      repositoryPath: repositoryPath,
+      readOnly: readOnly,
+    );
+    await _recordReviewAudit(
+      event: 'muse_synthesis',
+      providerId: synthProvider.id,
+      repositoryPath: repositoryPath,
+      scopeLabel: scopeLabel,
+      promptPreview: synthPrompt,
+      outputPreview: providerOutput.outputPreview,
+      ok: providerOutput.ok,
+      errorCode: providerOutput.ok ? null : providerOutput.error,
+    );
+    if (!providerOutput.ok || providerOutput.output == null) {
+      return GitResult.err(
+        providerOutput.error ?? 'Muse synthesis did not return.',
+      );
+    }
+
+    final parsed = _parseMuseOutput(providerOutput.output!);
+
+    // Silent-parse-failure guard. The parser is regex-based and
+    // tolerant — if the model emits nested tags, unescaped <>, or
+    // drifts from the schema, sections quietly come back empty.
+    // A legit muse run always produces at least an intent or a
+    // trajectory; if BOTH of those and every move list are empty,
+    // the output didn't land in the schema. Surface an error the UI
+    // already renders, and audit the raw-output preview so the
+    // failure is diagnosable after the fact.
+    final noContent = parsed.intent.isEmpty &&
+        parsed.trajectory.isEmpty &&
+        parsed.drift.isEmpty &&
+        parsed.wiringBroken.isEmpty &&
+        parsed.wiringMissing.isEmpty &&
+        parsed.ideaFlaws.isEmpty;
+    if (noContent) {
+      await _recordReviewAudit(
+        event: 'muse_synthesis_parse_fail',
+        providerId: synthProvider.id,
+        repositoryPath: repositoryPath,
+        scopeLabel: scopeLabel,
+        promptPreview: synthPrompt,
+        outputPreview: providerOutput.output!,
+        ok: false,
+        errorCode: 'parse_empty',
+      );
+      return GitResult.err(
+        'Muse output missed the expected schema — try again or pick '
+        'a stronger synthesis model. Model returned: '
+        '"${_previewText(providerOutput.output!, maxLength: 140)}"',
+      );
+    }
+
+    // Partial-parse detector. The tolerant regex-based parser can
+    // silently drop individual <move> tags when the model emits
+    // malformed attributes or nested-tag artefacts inside a body. If
+    // the raw output mentions N `<move` openings but we extracted
+    // fewer parsed moves, some got lost — non-fatal (what we did
+    // parse is still real signal), but worth an audit trail so a
+    // misbehaving model is visible in telemetry.
+    final rawMoveOpens =
+        '<move'.allMatches(providerOutput.output!).length;
+    final parsedMoveCount = parsed.drift.length +
+        parsed.wiringBroken.length +
+        parsed.wiringMissing.length +
+        parsed.ideaFlaws.length;
+    final droppedMoves = math.max(0, rawMoveOpens - parsedMoveCount);
+    if (droppedMoves > 0) {
+      // Fire-and-forget — the parsed portion still reaches the UI.
+      unawaited(_recordReviewAudit(
+        event: 'muse_synthesis_partial_parse',
+        providerId: synthProvider.id,
+        repositoryPath: repositoryPath,
+        scopeLabel: scopeLabel,
+        promptPreview: synthPrompt,
+        outputPreview: providerOutput.output!,
+        ok: true,
+        errorCode:
+            'partial_parse:emitted=$rawMoveOpens,parsed=$parsedMoveCount',
+      ));
+    }
+
+    return GitResult.ok(AiMuseData(
+      providerId: synthProvider.id,
+      modelId: synthModelId,
+      scopeLabel: scopeLabel,
+      intent: parsed.intent,
+      trajectory: parsed.trajectory,
+      drift: parsed.drift,
+      wiringBroken: parsed.wiringBroken,
+      wiringMissing: parsed.wiringMissing,
+      ideaFlaws: parsed.ideaFlaws,
+      brainstormIdeas: [
+        for (final i in ideas)
+          AiMuseIdea(index: i.index, text: i.text, kept: i.kept),
+      ],
+      promptCharacters: synthPrompt.length,
+      diffCharacters: bundle.diffBundle.originalDiffCharacters,
+      droppedMoves: droppedMoves,
+    ));
+  } catch (error) {
+    return GitResult.err('Muse failed: $error');
   }
 }
 
@@ -1630,103 +2550,115 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     );
   }
 
+  // Kick off git telemetry now — six subprocesses that don't depend on
+  // any of the heavy work below. They run on isolate-backed Process
+  // APIs while the main thread does its CPU work. Awaited at the end
+  // where we actually need the results; the concurrent window covers
+  // the hunk-diffusion + logos-diffusion + context-assembly phases.
+  final telemetryFuture = Future.wait([
+    _runGitCommand(repositoryPath, ['rev-list', '--count', 'HEAD']),
+    _runGitCommand(repositoryPath, ['log', '--format=%h %s', '-10']),
+    _runGitCommand(repositoryPath, ['log', '--format=%an', '-1']),
+    _runGitCommand(repositoryPath, ['log', '--format=%cr', '-1']),
+    _runGitCommand(
+        repositoryPath, ['log', '--max-parents=0', '--format=%cr', 'HEAD']),
+    _runGitCommand(repositoryPath, ['log', '--format=%an', '-50']),
+  ]);
+
   final diffBundle = await _buildDiffPromptBundle(
     fullDiff,
     repositoryPath: repositoryPath,
   );
 
+  // Frame-yield after the hunk-diffusion CPU burst so Flutter can paint
+  // before we dive into the multi-axis Chebyshev in _runLogosDiffusion.
+  // Zero-duration microtask: the scheduler drains queued paint + gesture
+  // events, then returns us to the next phase.
+  await Future<void>.delayed(Duration.zero);
+
   // ── Parallel context enrichment ──────────────────────────────────────
-  // Five anti-hallucination layers gathered simultaneously. Budget adapts
-  // to the diff size — small diffs get rich context, large diffs get the
-  // essentials. The split shifts based on file count: few files means
-  // more budget for full source; many files means more for metadata.
-  final changedFileCount = RegExp(r'^diff --git ', multiLine: true)
-      .allMatches(fullDiff)
-      .length
-      .clamp(1, 999);
-
-  // Estimate overhead from the parts of the prompt that aren't diff or
-  // context: system instructions, evidence rules, schema, summaries.
-  // Measured from actual prompt builds — typically 8-14K depending on
-  // guardrail profile and custom prompt length.
-  // System instructions + evidence rules + XML schema + summaries +
-  // user custom prompt. Measured from actual prompt builds.
-  const estimatedOverhead = 12000;
-  final contextBudget =
-      _maxPromptChars - diffBundle.promptBody.length - estimatedOverhead;
-
-  // Adaptive split: file context is most valuable, but with 50+ files
-  // the metadata summary becomes more important than trying to include
-  // all source. The ratio slides smoothly between the extremes.
+  // Five anti-hallucination layers gathered simultaneously. The budget
+  // split between sections is derived from two Logos signals on the
+  // diff probe:
+  //   coh = mean pairwise Born-mixed edge weight on primary paths
+  //         (high → primary set is tightly clustered on the file graph;
+  //         low → scattered)
+  //   y   = (M-axis matches + Ab-axis matches) / (primary + M + Ab)
+  //         (high → many neighbourhood edges leave the primary set;
+  //         low → diff is self-contained on the graph)
   //
-  // A sixth slice — relevance neighborhood (Logos-inspired diffusion) —
-  // surfaces files NOT in the diff but strongly coupled to it. Budget
-  // ~20% of context; cut from file-context since these usually overlap
-  // the same semantic space (callers, historical co-changers).
-  final metadataWeight = (changedFileCount / 100).clamp(0.1, 0.3);
-  const relevanceWeight = 0.20;
-  final fileContextWeight =
-      1.0 - metadataWeight - relevanceWeight - 0.1; // 10% headroom
+  // Each producer's `urgency()` returns one of these compositions:
+  //
+  //   share_relevance   = (1 − coh) · y       [scattered + many edges]
+  //   share_metadata    = (1 − coh) · (1 − y) [scattered + few edges]
+  //   share_fileContext = coh                 [tightly clustered]
+  //
+  //   sum = (1 − coh) + coh = 1 — algebraic by construction, NOT
+  //   physics. The three urgencies were chosen so they partition unit
+  //   urgency exactly when these three producers are the registered
+  //   set; the engine's softmax handles any other producer mix
+  //   automatically. The intuition behind each share's shape is in
+  //   the per-producer `urgency()` doc.
 
-  // Kick off the relevance future separately so its richer return type
-  // (text + emission record) doesn't widen the Future.wait list to
-  // List<Object>. Both futures still run in parallel.
-  final relevanceFuture = _collectRelevanceNeighborhood(
+  // Two irreducible model-level constants. Neither is a UX knob — both
+  // hoisted to top-level (see `_kReviewOverheadChars`,
+  // `_kModelOutputReservation`) so every prompt-building flow can share
+  // the same numbers.
+  final rawContextBudget =
+      _maxPromptChars - diffBundle.promptBody.length - _kReviewOverheadChars;
+  final contextBudget =
+      (rawContextBudget * (1.0 - _kModelOutputReservation)).round();
+
+  // Run the Logos diffusion FIRST. Its probe stats — coherence and
+  // neighborhood yield — drive the budget allocation between context
+  // sections. Hoisting it once also lets the producers reuse the same
+  // diffusion artifact instead of re-doing the work. Engine resolution
+  // is cached per (repo, HEAD), so this is cheap on warm runs.
+  final logos = await _runLogosDiffusion(
     repositoryPath: repositoryPath,
     diffText: fullDiff,
-    budgetChars: (contextBudget * relevanceWeight).round(),
   );
-  final contextFutures = await Future.wait([
-    _collectFileContext(
-      repositoryPath: repositoryPath,
-      diffText: fullDiff,
-      budgetChars: (contextBudget * fileContextWeight).round(),
-    ),
-    _collectFileMetadata(
-      repositoryPath: repositoryPath,
-      diffText: fullDiff,
-      budgetChars: (contextBudget * metadataWeight).round(),
-    ),
-    _collectChangeTypes(
-      repositoryPath: repositoryPath,
+
+  // Frame-yield between the logos-diffusion CPU burst and
+  // assembleAndStitch. The latter is mostly I/O-bound but kicks off
+  // producers synchronously on the main thread; without a yield here
+  // the user perceives one long frame.
+  await Future<void>.delayed(Duration.zero);
+
+  // Compose the producer set this caller wants. Variable-pool producers
+  // (file_context, file_metadata, relevance_neighborhood) split the
+  // remaining budget by softmax over their Logos-derived urgencies.
+  // Fixed-cost producers (change_types, structural_verification) reserve
+  // an estimate of their natural size up front.
+  final engine = AiContextEngine([
+    const _FileContextProducer(),
+    const _FileMetadataProducer(),
+    const _RelevanceNeighborhoodProducer(),
+    _ChangeTypesProducer(
       scopeArgs: scopeArgs,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
     ),
-    _collectStructuralVerification(
+    const _StructuralVerificationProducer(),
+  ]);
+  // Assemble + stitch in one pass. Each producer declares its own
+  // wrapper tag and display order, so adding/removing a producer is a
+  // one-line registration change — no per-section unpacking, no
+  // hardcoded section ordering, no risk of forgetting to wire the
+  // new section into the prompt body.
+  final assembled = await engine.assembleAndStitch(
+    AiContextRequest(
       repositoryPath: repositoryPath,
       diffText: fullDiff,
+      logos: logos,
     ),
-  ]);
-  final fileContext = contextFutures[0];
-  final fileMetadata = contextFutures[1];
-  final changeTypes = contextFutures[2];
-  final structuralVerification = contextFutures[3];
-  final relevance = await relevanceFuture;
-  final relevanceNeighborhood = relevance.text;
-  final logosEmissionRecord = relevance.record;
-
-  // Append enrichment sections to the diff bundle.
-  final enrichedParts = <String>[diffBundle.promptBody];
-  if (changeTypes.isNotEmpty) {
-    enrichedParts.add('<change_types>\n$changeTypes</change_types>');
-  }
-  if (structuralVerification.isNotEmpty) {
-    enrichedParts.add(
-        '<structural_verification>\n$structuralVerification</structural_verification>');
-  }
-  if (fileMetadata.isNotEmpty) {
-    enrichedParts.add('<file_metadata>\n$fileMetadata</file_metadata>');
-  }
-  if (fileContext.isNotEmpty) {
-    enrichedParts.add('<file_context>\n$fileContext</file_context>');
-  }
-  if (relevanceNeighborhood.isNotEmpty) {
-    enrichedParts.add(
-      '<relevance_neighborhood>\n$relevanceNeighborhood</relevance_neighborhood>',
-    );
-  }
-  final enrichedPromptBody = enrichedParts.join('\n\n');
+    contextBudget,
+  );
+  final logosEmissionRecord = assembled.sections['relevance_neighborhood']
+      ?.metadataOfType<LogosEmissionRecord>();
+  final enrichedPromptBody = assembled.body.isEmpty
+      ? diffBundle.promptBody
+      : '${diffBundle.promptBody}\n\n${assembled.body}';
 
   final enrichedBundle = _DiffPromptBundle(
     promptBody: enrichedPromptBody,
@@ -1738,18 +2670,10 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     unstagedStat: unstagedStat.data ?? '',
   );
 
-  // ── Git telemetry — all commands in one parallel batch ──────────────────
-  // Fixed caps (git returns fewer results gracefully on shallow repos).
-  // rev-list runs alongside the log commands — no sequential gate.
-  final telemetry = await Future.wait([
-    _runGitCommand(repositoryPath, ['rev-list', '--count', 'HEAD']),
-    _runGitCommand(repositoryPath, ['log', '--format=%h %s', '-10']),
-    _runGitCommand(repositoryPath, ['log', '--format=%an', '-1']),
-    _runGitCommand(repositoryPath, ['log', '--format=%cr', '-1']),
-    _runGitCommand(
-        repositoryPath, ['log', '--max-parents=0', '--format=%cr', 'HEAD']),
-    _runGitCommand(repositoryPath, ['log', '--format=%an', '-50']),
-  ]);
+  // Telemetry was kicked off at the top of the function concurrently
+  // with the CPU-heavy diffusion/assembly phases. Await now — the
+  // six subprocess fetches likely completed while logos did its work.
+  final telemetry = await telemetryFuture;
 
   final totalCommits = int.tryParse((telemetry[0].data ?? '').trim()) ?? 0;
 
@@ -1944,9 +2868,7 @@ Future<String> _collectFileMetadata({
 }) async {
   if (budgetChars <= 0) return '';
 
-  final pathPattern = RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
-  final paths =
-      pathPattern.allMatches(diffText).map((m) => m.group(1)!).toSet();
+  final paths = extractDiffTouchedPaths(diffText);
   if (paths.isEmpty) return '';
 
   final buffer = StringBuffer();
@@ -2229,17 +3151,15 @@ Future<String> _verifyImports(String repositoryPath, String diffText) async {
     r'''(?:const|var|let|final)\s+\w+\s*=\s*require\(['"]([^'"]+)['"]\)|'''
     r'''from\s+['"]([^'"]+)['"])''',
   );
-  final fileHeaderPattern = RegExp(r'^diff --git a/.+ b/(.+)$');
-
   final seen = <String>{};
   final results = StringBuffer();
   String? currentFile;
 
   for (final line in diffText.split('\n')) {
     // Track which file we're in so relative imports resolve correctly.
-    final headerMatch = fileHeaderPattern.firstMatch(line);
-    if (headerMatch != null) {
-      currentFile = headerMatch.group(1);
+    final headerPath = diffHeaderPath(line);
+    if (headerPath != null) {
+      currentFile = headerPath;
       continue;
     }
 
@@ -2394,9 +3314,7 @@ Future<String> _collectFileContext({
   if (budgetChars <= 0) return '';
 
   // Extract changed file paths from the diff headers.
-  final pathPattern = RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
-  final paths =
-      pathPattern.allMatches(diffText).map((m) => m.group(1)!).toSet();
+  final paths = extractDiffTouchedPaths(diffText);
   if (paths.isEmpty) return '';
 
   // Logos-driven prioritization. Instead of arbitrary line-count
@@ -2502,62 +3420,347 @@ Future<String> _collectFileContext({
 /// Budget-bounded. Returns an empty string on any error — this is a
 /// best-effort enrichment layer; failures never poison the primary
 /// context path.
-/// Returns the prompt section *and* the emission record for this call,
-/// so the caller can feed citations back to SSE without relying on
-/// process-level globals (which would race across overlapping reviews).
-Future<({String text, LogosEmissionRecord? record})>
-    _collectRelevanceNeighborhood({
+// ─────────────────────────────────────────────────────────────────────────
+// Concrete producers wired to the existing _collect* functions. Private
+// to ai.dart because they wrap private collectors; the engine they slot
+// into ([AiContextEngine]) is public.
+//
+// Each producer's urgency function is derived from Logos signals
+// only. The math is:
+//
+//   file_context = coh
+//   relevance    = dispersion · yieldFraction
+//   metadata     = dispersion · (1 − yieldFraction)
+//
+// sum = coh + dispersion. The engine's softmax normalises by this
+// sum, so the pair (coh, dispersion) drives the split: a coherent
+// diff allocates to file_context, a dispersed one to the
+// metadata/relevance pair. The split WITHIN that pair is gated by
+// yieldFraction.
+//
+// When probe is null or primaryCount == 0, file_context returns 1.0
+// and the others return 0.0. [AiContextEngine] excludes zero-urgency
+// producers from allocation, so file_context absorbs the full
+// variable pool — the only useful producer when there's no signal.
+// ─────────────────────────────────────────────────────────────────────────
+
+class _FileContextProducer extends AiContextProducer {
+  const _FileContextProducer();
+  @override
+  String get id => 'file_context';
+  @override
+  int get order => 40;
+  @override
+  double? urgency(AiContextRequest req) {
+    final probe = req.logos?.probe;
+    // No probe = engine cold. File context absorbs everything because
+    // we have no signal to allocate to relevance/metadata.
+    if (probe == null || probe.stats.primaryCount == 0) return 1.0;
+    return _logosYieldOf(probe).coh;
+  }
+  @override
+  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+    final body = await _collectFileContext(
+      repositoryPath: req.repositoryPath,
+      diffText: req.diffText,
+      budgetChars: budgetChars,
+    );
+    return AiContextSection(id: id, body: body);
+  }
+}
+
+class _FileMetadataProducer extends AiContextProducer {
+  const _FileMetadataProducer();
+  @override
+  String get id => 'file_metadata';
+  @override
+  int get order => 30;
+  @override
+  double? urgency(AiContextRequest req) {
+    final probe = req.logos?.probe;
+    if (probe == null || probe.stats.primaryCount == 0) return 0.0;
+    final y = _logosYieldOf(probe);
+    return y.dispersion * (1.0 - y.yieldFraction);
+  }
+  @override
+  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+    final body = await _collectFileMetadata(
+      repositoryPath: req.repositoryPath,
+      diffText: req.diffText,
+      budgetChars: budgetChars,
+    );
+    return AiContextSection(id: id, body: body);
+  }
+}
+
+class _RelevanceNeighborhoodProducer extends AiContextProducer {
+  const _RelevanceNeighborhoodProducer();
+  @override
+  String get id => 'relevance_neighborhood';
+  @override
+  int get order => 50;
+  @override
+  double? urgency(AiContextRequest req) {
+    final probe = req.logos?.probe;
+    if (probe == null || probe.stats.primaryCount == 0) return 0.0;
+    final y = _logosYieldOf(probe);
+    return y.dispersion * y.yieldFraction;
+  }
+  @override
+  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+    final result = await _collectRelevanceNeighborhood(
+      repositoryPath: req.repositoryPath,
+      diffText: req.diffText,
+      budgetChars: budgetChars,
+      logos: req.logos,
+    );
+    return AiContextSection(
+      id: id,
+      body: result.text,
+      metadata: result.record,
+    );
+  }
+}
+
+/// Always-on producer: change-types classification (A/M/D/R/C/T per
+/// file). Lives OUTSIDE the budget pool: returns null urgency AND
+/// zero fixed request, so the variable pool stays whole. The
+/// underlying `_collectChangeTypes` doesn't take a budget — it emits
+/// a few KB at most (one short line per touched file), absorbed by
+/// the model-API output reservation just like before the engine
+/// existed. Same for [_StructuralVerificationProducer] below.
+class _ChangeTypesProducer extends AiContextProducer {
+  const _ChangeTypesProducer({
+    required this.scopeArgs,
+    required this.includeStaged,
+    required this.includeUnstaged,
+  });
+  final List<String> scopeArgs;
+  final bool includeStaged;
+  final bool includeUnstaged;
+
+  @override
+  String get id => 'change_types';
+  @override
+  int get order => 10;
+  @override
+  double? urgency(AiContextRequest req) => null;
+  @override
+  int fixedRequest(AiContextRequest req) => 0;
+  @override
+  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+    // budgetChars is informational — the underlying collector emits
+    // its own naturally-bounded output (one line per touched file).
+    final body = await _collectChangeTypes(
+      repositoryPath: req.repositoryPath,
+      scopeArgs: scopeArgs,
+      includeStaged: includeStaged,
+      includeUnstaged: includeUnstaged,
+    );
+    return AiContextSection(id: id, body: body);
+  }
+}
+
+/// Muse phase-2 producer: brainstorm-seeded relevance reshape. Wraps
+/// [_runBrainstormSeededRelevance] so Muse's synthesis context budget
+/// flows through the same allocator as everything else, instead of a
+/// bespoke constant-fraction calculation. Single-producer engines
+/// degenerate to "give it the whole pool" naturally — no special-case
+/// code path needed.
+class _BrainstormSeededRelevanceProducer extends AiContextProducer {
+  const _BrainstormSeededRelevanceProducer({
+    required this.ideas,
+    required this.diffSourceWeights,
+  });
+  final List<_BrainstormIdea> ideas;
+  final Map<String, double> diffSourceWeights;
+
+  @override
+  String get id => 'brainstorm_seeded_relevance';
+  @override
+  // Single-producer instance: any non-zero urgency yields full pool.
+  // Constant 1.0 is fine here — softmax of {1.0} = {1.0}.
+  double? urgency(AiContextRequest req) => 1.0;
+  @override
+  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+    final result = await _runBrainstormSeededRelevance(
+      repositoryPath: req.repositoryPath,
+      diffText: req.diffText,
+      ideas: ideas,
+      diffSourceWeights: diffSourceWeights,
+      budgetChars: budgetChars,
+    );
+    return AiContextSection(
+      id: id,
+      body: result.text,
+      metadata: result.record,
+    );
+  }
+}
+
+/// Always-on producer: structural verification (import/symbol/removal
+/// existence checks). Same outside-the-pool semantics as
+/// [_ChangeTypesProducer] — see that class's doc.
+class _StructuralVerificationProducer extends AiContextProducer {
+  const _StructuralVerificationProducer();
+  @override
+  String get id => 'structural_verification';
+  @override
+  int get order => 20;
+  @override
+  double? urgency(AiContextRequest req) => null;
+  @override
+  int fixedRequest(AiContextRequest req) => 0;
+  @override
+  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+    // budgetChars is informational; collector emits what it emits.
+    final body = await _collectStructuralVerification(
+      repositoryPath: req.repositoryPath,
+      diffText: req.diffText,
+    );
+    return AiContextSection(id: id, body: body);
+  }
+}
+
+/// Run the Logos diffusion pipeline up to (but not including) tier
+/// emission. Returns null when the engine isn't available, the probe
+/// is empty, or diffusion produced no scores. Cheap to call early —
+/// the engine resolver caches per (repo, HEAD). Public so the
+/// [AiContextEngine] can hoist diffusion out of producers and feed
+/// the same artifact to all of them.
+Future<LogosDiffusionResult?> _runLogosDiffusion({
   required String repositoryPath,
   required String diffText,
-  required int budgetChars,
-  double temperature = 1.0,
 }) async {
-  if (budgetChars <= 500) return (text: '', record: null);
   try {
-    // Resolve or build the engine through the shared resolver so that
-    // UI state class + this code path share one cache and one in-flight
-    // build per (repo, HEAD).
     final engine = await resolveLogosGit(repositoryPath);
-    if (engine == null) return (text: '', record: null);
-
-    // Construct the full probe: primary diff paths + M-axis pickaxe
-    // enrichment (files containing added/removed identifiers) + Ab-axis
-    // path mirrors (test/source pairs). Temperature adapts to the
-    // diff's own coherence — see [LogosGitProbeBuilder.adaptiveTemperature].
+    if (engine == null) return null;
     final probe = await buildDiffProbe(
       repoPath: repositoryPath,
       diffText: diffText,
       engine: engine,
     );
-    if (probe.sourceWeights.isEmpty) return (text: '', record: null);
+    if (probe.sourceWeights.isEmpty) return null;
 
-    // Base temperature: caller override, else the probe's coherence-
-    // adaptive suggestion. Then scale by the branch orbit: converging
-    // chains get a cooler diffusion (trust the core), diverging chains
-    // get a hotter one (reach wider to surface the sprawl's tails).
-    // Neutral when the orbit has no signal, so behaviour is backward-
-    // compatible on short / insufficient histories.
     final orbit = await _probeBranchOrbit(repositoryPath);
-    final baseT = temperature == 1.0
-        ? probe.suggestedTemperature ?? 1.0
-        : temperature;
-    final resolvedT = baseT * _temperatureMultiplierFromOrbit(orbit);
+    final resolvedT =
+        (probe.suggestedTemperature ?? 1.0) * _temperatureMultiplierFromOrbit(orbit);
 
-    // Diffuse. Heat-kernel linearity means weighted-source diffusion
-    // equals the weighted sum of single-source diffusions.
+    // Per-axis attribution diffusion. Costs ~4× a plain weighted
+    // diffuse (one Chebyshev pass per source-axis bucket) but yields
+    // the data needed to make every Logos surface self-explaining:
+    // for each ranked file, which axis contributed how much. Heat-
+    // kernel linearity guarantees Σ per-axis φ = combined φ, so the
+    // [scores] field stays algebraically consistent with the prior
+    // single-pass behaviour. Falls back to plain diffuse only when
+    // attribution returns null (empty graph / no in-graph sources).
+    //
+    // Yield once before the synchronous 4-axis burst so the UI frame
+    // in flight can paint before we block the thread for the math.
+    await Future<void>.delayed(Duration.zero);
     final diffuseStart = Stopwatch()..start();
-    final scores = diffuseFromProbe(
-      engine: engine,
-      probe: probe,
-      temperatureOverride: resolvedT,
+    final axisLabels = <String, String>{
+      for (final entry in probe.sourceWeights.entries)
+        entry.key: _classifyAxis(entry.key, probe).name,
+    };
+    final attribution = engine.diffuseWithAttribution(
+      weightsByPath: probe.sourceWeights,
+      axisLabelByPath: axisLabels,
+      t: resolvedT,
+      excludePaths: probe.primaryPaths,
     );
+    final List<RelevanceScore> scores;
+    if (attribution != null) {
+      scores = attribution.combined;
+    } else {
+      // Engine cold or all sources out-of-graph — keep the plain path.
+      scores = diffuseFromProbe(
+        engine: engine,
+        probe: probe,
+        temperatureOverride: resolvedT,
+      );
+    }
     LogosGitDiagnostics.instance.recordDiffuse(
       repoPath: repositoryPath,
       sourceCount: probe.sourceWeights.length,
       duration: diffuseStart.elapsed,
       temperature: resolvedT,
     );
-    if (scores.isEmpty) return (text: '', record: null);
+    if (scores.isEmpty) return null;
+    return LogosDiffusionResult(
+      engine: engine,
+      probe: probe,
+      scores: scores,
+      resolvedT: resolvedT,
+      attribution: attribution,
+    );
+  } catch (e, st) {
+    LogosGitDiagnostics.instance.recordFailure(
+      repositoryPath,
+      'logos_diffusion: $e',
+      Duration.zero,
+      st,
+    );
+    return null;
+  }
+}
+
+/// Shared Logos-yield helper. Used by every probe-based producer's
+/// urgency function so the algebraic partition `D·y + D·(1−y) + coh = 1`
+/// holds across producers (each one queries the same numbers from the
+/// same probe). Centralised so a future regime/SSE-aware refinement
+/// updates all three producers at once.
+///
+/// Returns:
+///   coh         — coherence ∈ [0, 1]: mean pairwise edge weight under
+///                 the engine's Born-mixed metric for the primary path
+///                 set. High when the diff's touched files are tightly
+///                 clustered on the file graph; low when scattered.
+///                 (Not Shannon/Rényi entropy — a pairwise-weight
+///                 summary that happens to live in the same range.)
+///   dispersion  — 1 − coh: how scattered the primary set is.
+///   yieldFraction — (M-axis + Ab-axis matches) / (primary + M + Ab) ∈
+///                 [0, 1): fraction of "diff energy" that lives in the
+///                 neighbourhood the probe found via pickaxe + path
+///                 mirrors, vs. confined to the primary set itself.
+({double coh, double dispersion, double yieldFraction})
+    _logosYieldOf(DiffProbe probe) {
+  final coh = probe.stats.coherence.clamp(0.0, 1.0);
+  final neigh = (probe.stats.mMatches + probe.stats.abMatches).toDouble();
+  final primary = probe.stats.primaryCount.toDouble();
+  final denom = primary + neigh;
+  final yieldFraction = denom > 0 ? neigh / denom : 0.0;
+  return (coh: coh, dispersion: 1.0 - coh, yieldFraction: yieldFraction);
+}
+
+/// Returns the prompt section *and* the emission record for this call,
+/// so the caller can feed citations back to SSE without relying on
+/// process-level globals (which would race across overlapping reviews).
+///
+/// Accepts a pre-built [logos] result from [_runLogosDiffusion] — the
+/// caller hoists that work to drive the budget allocation, and we
+/// reuse the same artifact here for emission. Falls back to building
+/// internally when [logos] is null (e.g., callers that don't need the
+/// derived budget split).
+Future<({String text, LogosEmissionRecord? record})>
+    _collectRelevanceNeighborhood({
+  required String repositoryPath,
+  required String diffText,
+  required int budgetChars,
+  LogosDiffusionResult? logos,
+}) async {
+  if (budgetChars <= 500) return (text: '', record: null);
+  try {
+    final result = logos ??
+        await _runLogosDiffusion(
+          repositoryPath: repositoryPath,
+          diffText: diffText,
+        );
+    if (result == null) return (text: '', record: null);
+    final engine = result.engine;
+    final probe = result.probe;
+    final scores = result.scores;
+    final resolvedT = result.resolvedT;
 
     // No candidate trim — let the knapsack see the full ranking. The
     // budget closes the long tail naturally; an arbitrary pre-trim
@@ -2580,9 +3783,24 @@ Future<({String text, LogosEmissionRecord? record})>
       regime: regime,
       axisByPath: axisByPath,
     );
-    // Fire-and-forget emission tally — failure doesn't fail the review.
-    // ignore: unawaited_futures
-    LogosSseStore(repositoryPath).recordEmissions(emissionRecord);
+    // Symmetric with the citation feedback path: recordCitations is
+    // also awaited (via _recordLogosCitationFeedback). Awaiting both
+    // sides prevents the asymmetry where emissions get dropped on app
+    // close while citations persist — that asymmetry biased
+    // (cited / emitted) ratios upward by silently shrinking the
+    // denominator. The write goes through the per-repo lock so this
+    // adds at most one serialised disk flush; bounded latency.
+    try {
+      await LogosSseStore(repositoryPath).recordEmissions(emissionRecord);
+    } catch (e, st) {
+      LogosGitDiagnostics.instance.recordFailure(
+        repositoryPath,
+        'sse emissions: $e',
+        Duration.zero,
+        st,
+      );
+      // Don't let SSE write failure poison the review.
+    }
 
     final buffer = StringBuffer();
     buffer.writeln(
@@ -2599,8 +3817,15 @@ Future<({String text, LogosEmissionRecord? record})>
 
     for (final item in plan) {
       if (remaining <= 120) break;
-      final header =
-          '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)} ---';
+      // Per-file axis breakdown so the AI can ground its findings in
+      // *why* Logos surfaced this neighbour. Format: `via=cc(64%)
+      // sp=21% f0=15%` listing axes that contributed ≥10% of the
+      // file's φ. Falls through silently when no attribution was
+      // computed (engine cold) — the rest of the line is unchanged.
+      final via = _formatAxisBreakdown(result.attribution, item.path);
+      final header = via.isEmpty
+          ? '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)} ---'
+          : '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}  via=$via ---';
       if (item.tier == EmissionTier.breadcrumb) {
         final line = '$header\n';
         if (line.length > remaining) continue;
@@ -2664,6 +3889,41 @@ String _tierName(EmissionTier tier) => switch (tier) {
       EmissionTier.signature => 'sig',
       EmissionTier.breadcrumb => 'bread',
     };
+
+@visibleForTesting
+String formatAxisBreakdownForTesting(AxisAttribution? attr, String path) =>
+    _formatAxisBreakdown(attr, path);
+
+/// Format a Logos axis-breakdown for the relevance neighborhood
+/// emission. Returns e.g. `cc(64%) sp=21% f0=15%` — the dominant axis
+/// gets the parens marker, others listed in descending share. Axes
+/// contributing below 10% are omitted (signal floor; otherwise tiny
+/// numerical leakage muddies the line).
+///
+/// Returns '' when there's no attribution to read or no axis cleared
+/// the threshold — caller falls back to the un-decorated header.
+String _formatAxisBreakdown(AxisAttribution? attr, String path) {
+  if (attr == null) return '';
+  final shares = attr.shareByAxis[path];
+  if (shares == null || shares.isEmpty) return '';
+  final dominant = attr.dominantAxis[path];
+  // Sort by share desc; stable secondary by axis name for determinism.
+  final ordered = shares.entries.toList()
+    ..sort((a, b) {
+      final byShare = b.value.compareTo(a.value);
+      if (byShare != 0) return byShare;
+      return a.key.compareTo(b.key);
+    });
+  final parts = <String>[];
+  for (final entry in ordered) {
+    if (entry.value < 0.10) continue; // signal floor
+    final pct = (entry.value * 100).round();
+    parts.add(entry.key == dominant
+        ? '${entry.key}($pct%)'
+        : '${entry.key}=$pct%');
+  }
+  return parts.join(' ');
+}
 
 /// Which observable put `path` on the emission list. Primary if it's
 /// in the diff, M if pickaxe pulled it in, Ab if a path-mirror did.
@@ -3122,30 +4382,49 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
   String fullDiff, {
   required String repositoryPath,
 }) async {
-  if (fullDiff.length <= _maxFullDiffChars) {
-    return _DiffPromptBundle(
-      promptBody: '<full_diff>\n$fullDiff\n</full_diff>',
-      originalDiffCharacters: fullDiff.length,
-    );
-  }
+  // ── Unified pipeline. One path. One budget. One wrapper shape ─────
+  //
+  // Every diff — small, medium, huge — flows through the same hunk-
+  // diffusion + knapsack admission. The budget [_kDiffBudgetChars] is
+  // the single dial; when the natural diff fits, all hunks admit and
+  // the output is structurally equivalent to a "full diff" emission.
+  // When it doesn't, the same machinery drops lower-φ hunks. No mode
+  // switch, no threshold.
+  //
+  // Two side captures preserve visibility for things the hunk parser
+  // can't handle:
+  //   • Git-header lines (mode, rename from/to, similarity, binary
+  //     marker) emitted above `@@` for any file that has them —
+  //     includes pure renames with NO hunks AND rename-with-edits
+  //     where the hunks flow through the packer but the rename
+  //     header would otherwise be lost. Rendered in a
+  //     `<header_metadata>` postscript.
+  //   • Diffs with NO parseable hunks at all (malformed, exotic
+  //     format) — honest raw-text fallback at the same budget.
 
-  // Overflow path — hand off to logos hunk diffusion. Every hunk is a
-  // node; edges via shared identifiers, parent-file coupling (factored
-  // through LogosGit's file-φ), within-file proximity, add/delete
-  // balance. Hunks ranked by heat-kernel φ; greedy-packed at full
-  // content until the diff budget exhausts. Peripheral mass-edit hunks
-  // drop off first; structurally-central hunks stay. Scales to
-  // arbitrary hunk count.
+  final metadataOnly = _extractMetadataOnlyChanges(fullDiff);
+
   final parsed = hunks.parseDiffHunks(fullDiff);
   if (parsed.isEmpty) {
-    // Malformed diff or nothing to rank — emit the head of the diff
-    // truncated at the full-diff cap. Honest fallback.
+    // No parseable hunks. Could be entirely metadata-only, or just an
+    // exotic format. Emit what we can: metadata postscript if we have
+    // any, else honest raw-text capped at the same budget so context
+    // accounting stays consistent with the parseable path.
+    if (metadataOnly.isNotEmpty) {
+      return _DiffPromptBundle(
+        promptBody: _formatMetadataOnlyBlock(
+          metadataOnly,
+          maxChars: _kDiffBudgetChars,
+        ),
+        originalDiffCharacters: fullDiff.length,
+      );
+    }
     final truncated = fullDiff.substring(
       0,
-      math.min(_maxFullDiffChars, fullDiff.length),
+      math.min(_kDiffBudgetChars, fullDiff.length),
     );
     return _DiffPromptBundle(
-      promptBody: '<full_diff_truncated>\n$truncated\n</full_diff_truncated>',
+      promptBody: '<diff_unparseable>\n$truncated\n</diff_unparseable>',
       originalDiffCharacters: fullDiff.length,
     );
   }
@@ -3160,17 +4439,170 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
   final ranking = hunks.rankHunksByPhi(hunks: parsed, logosEngine: engine);
   final pack = hunks.packHunksUnderBudget(
     rankings: ranking.rankings,
-    budgetChars: _maxCondensedDiffChars,
+    budgetChars: _kDiffBudgetChars,
   );
 
-  var promptBody = pack.body;
-  if (promptBody.length > _maxPromptChars) {
-    promptBody = promptBody.substring(0, _maxPromptChars);
+  // Append the metadata postscript when there's anything to say.
+  // The packer's body already carries `<logos_packed_diff admitted=N
+  // skipped=M>` honesty; the postscript adds visibility for changes
+  // the parser couldn't represent as hunks. Both inside the same
+  // bundle body — the prompt template wraps the whole thing once.
+  //
+  // Postscript is bounded against what's left of the diff budget
+  // (after the packer's body) so a 2000-binary-file repo can't blow
+  // the prompt with metadata noise. Per-entry caps inside the
+  // formatter prevent any single file from monopolising the block.
+  final buf = StringBuffer(pack.body);
+  if (metadataOnly.isNotEmpty) {
+    final remaining = _kDiffBudgetChars - buf.length;
+    if (remaining > 0) {
+      final block = _formatMetadataOnlyBlock(metadataOnly, maxChars: remaining);
+      if (block.isNotEmpty) {
+        if (buf.isNotEmpty) buf.writeln();
+        buf.write(block);
+      }
+    }
   }
+
+  final promptBody = _capPromptBody(buf.toString(), 'diff_prompt_bundle');
   return _DiffPromptBundle(
     promptBody: promptBody,
     originalDiffCharacters: fullDiff.length,
   );
+}
+
+/// Test-visible alias of [_extractMetadataOnlyChanges] — the parser
+/// is private to ai.dart but the behaviour is foundational enough
+/// (binary/mode-only/rename visibility under the unified pipeline)
+/// that it deserves direct unit coverage.
+@visibleForTesting
+Map<String, List<String>> extractMetadataOnlyChangesForTesting(String fullDiff) =>
+    _extractMetadataOnlyChanges(fullDiff);
+
+/// Walk a unified-diff and capture file-level metadata that the hunk
+/// packer silently drops:
+///   • `Binary files a/X and b/X differ`
+///   • `old mode 100644` / `new mode 100755` / `new file mode N`
+///   • `similarity index N%` / `rename from`/`rename to`
+///   • `copy from`/`copy to`
+///   • `deleted file mode N` / `dissimilarity index N%`
+///
+/// Captured for ALL files (not just hunkless ones) — a file with a
+/// mode change AND content edits would otherwise have its mode change
+/// vanish from the prompt because the packer reassembles only the
+/// `diff --git` / `---` / `+++` triple per file.
+///
+/// Filters OUT noise lines:
+///   • `index abc..def` (blob SHAs — useless for AI)
+///   • `--- a/X` / `+++ b/X` (auto-emitted by the packer)
+///
+/// Handles git's C-string quoting for paths containing spaces or
+/// non-ASCII characters: `diff --git "a/X X" "b/X X"`.
+///
+/// Returns Map<path, metadataLines>. Empty when nothing notable.
+Map<String, List<String>> _extractMetadataOnlyChanges(String fullDiff) {
+  final out = <String, List<String>>{};
+  String? currentPath;
+  var currentMetadata = <String>[];
+  void flush() {
+    if (currentPath == null) return;
+    if (currentMetadata.isNotEmpty) {
+      out[currentPath!] = List.unmodifiable(currentMetadata);
+    }
+  }
+  bool isMeaningful(String line) {
+    // Drop `index`, `--- `, `+++ `. Keep mode/binary/rename/copy/
+    // similarity/dissimilarity/new file/deleted file lines.
+    if (line.startsWith('index ')) return false;
+    if (line.startsWith('--- ')) return false;
+    if (line.startsWith('+++ ')) return false;
+    if (line.trim().isEmpty) return false;
+    return true;
+  }
+  for (final line in fullDiff.split('\n')) {
+    // diffHeaderPath covers both the unquoted and C-string-quoted
+    // header forms — single source of truth in git.dart.
+    final headerPath = diffHeaderPath(line);
+    if (headerPath != null) {
+      flush();
+      currentPath = headerPath;
+      currentMetadata = <String>[];
+      continue;
+    }
+    if (currentPath == null) continue;
+    if (line.startsWith('@@')) {
+      // Content hunks are the packer's job — stop collecting metadata
+      // for THIS file and skip ahead until the next `diff --git`.
+      // What we collected BEFORE the first @@ stays.
+      flush();
+      currentPath = null;
+      currentMetadata = <String>[];
+      continue;
+    }
+    if (isMeaningful(line)) {
+      currentMetadata.add(line);
+    }
+  }
+  flush();
+  return out;
+}
+
+/// Render the metadata postscript with per-entry and whole-block
+/// caps. Returns '' if nothing fits within [maxChars]. The closing
+/// `</header_metadata>` tag is always emitted (or the whole
+/// block is dropped) — never returns malformed XML mid-tag.
+///
+/// Per-entry safety: each file's metadata is capped so one
+/// pathological file (a 100-line conflict marker block, etc.) can't
+/// monopolise the postscript and crowd out other files' visibility.
+String _formatMetadataOnlyBlock(
+  Map<String, List<String>> metadataOnly, {
+  required int maxChars,
+}) {
+  if (metadataOnly.isEmpty) return '';
+  // Per-file size cap. Most metadata blocks are 1–4 lines (mode +
+  // binary marker, or rename source/target + similarity). Allow up
+  // to ~400 chars per file before truncating that file's slice.
+  const perFileCap = 400;
+  final headerLine =
+      '<header_metadata count=${metadataOnly.length}>\n';
+  const closeLine = '</header_metadata>';
+  // Reserve room for the open + close tags before admitting entries.
+  var remaining = maxChars - headerLine.length - closeLine.length;
+  if (remaining <= 0) return '';
+
+  final buf = StringBuffer(headerLine);
+  var truncatedFiles = 0;
+  for (final entry in metadataOnly.entries) {
+    final pathLine = '  ${entry.key}:\n';
+    if (pathLine.length > remaining) {
+      truncatedFiles += 1;
+      continue;
+    }
+    final lineBuf = StringBuffer(pathLine);
+    var lineRemaining = perFileCap - pathLine.length;
+    for (final line in entry.value) {
+      final formatted = '    ${line.trimRight()}\n';
+      if (formatted.length > lineRemaining) break;
+      lineBuf.write(formatted);
+      lineRemaining -= formatted.length;
+    }
+    final entryStr = lineBuf.toString();
+    if (entryStr.length > remaining) {
+      truncatedFiles += 1;
+      continue;
+    }
+    buf.write(entryStr);
+    remaining -= entryStr.length;
+  }
+  if (truncatedFiles > 0) {
+    final note = '  ($truncatedFiles more truncated for budget)\n';
+    if (note.length <= remaining) {
+      buf.write(note);
+    }
+  }
+  buf.write(closeLine);
+  return buf.toString();
 }
 
 String _buildCommitMessagePrompt({
@@ -3261,11 +4693,7 @@ String _buildCommitMessagePrompt({
   buffer.writeln(diffSummary.trim());
   buffer.writeln('</diff_context>');
 
-  var payload = buffer.toString().trim();
-  if (payload.length > _maxPromptChars) {
-    payload = payload.substring(0, _maxPromptChars);
-  }
-  return payload;
+  return _capPromptBody(buffer.toString().trim(), 'commit_message_prompt');
 }
 
 // ── Commit-message format directives ────────────────────────────────────
@@ -3564,11 +4992,7 @@ String _buildCommitReviewPrompt({
   buffer.writeln(spec.diffSummary.trim());
   buffer.writeln('</diff_context>');
 
-  var payload = buffer.toString().trim();
-  if (payload.length > _maxPromptChars) {
-    payload = payload.substring(0, _maxPromptChars);
-  }
-  return payload;
+  return _capPromptBody(buffer.toString().trim(), 'commit_review_prompt');
 }
 
 String _buildReviewWakeBlock(
@@ -4126,6 +5550,22 @@ Future<void> _recordReviewAudit({
       createdAt: DateTime.now().toIso8601String(),
     ),
   );
+}
+
+/// Caps [payload] at [_maxPromptChars] and records a telemetry event
+/// when the truncation fires. Previously the cap was silent, so an
+/// upstream tweak that pushed a prompt over would silently chop the
+/// tail of `<relevance_neighborhood>` without any trace. [scope]
+/// identifies the caller in the command-lifecycle log.
+String _capPromptBody(String payload, String scope) {
+  if (payload.length <= _maxPromptChars) return payload;
+  DiagnosticsState.instance.recordCommandLifecycleEvent(
+    type: 'warning',
+    command: 'ai.prompt.truncate',
+    message:
+        'prompt capped from ${payload.length} to $_maxPromptChars chars in $scope',
+  );
+  return payload.substring(0, _maxPromptChars);
 }
 
 String _previewText(String value, {int? maxLength}) {

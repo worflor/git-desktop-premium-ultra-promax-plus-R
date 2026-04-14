@@ -30,6 +30,12 @@ class PatchEngine {
     }
 
     int cumulativeDelta = 0;
+    // If no hunk body is written, the patch reduces to its three header
+    // lines — which `git apply` rejects as "patch with only garbage at line
+    // 4". Caller short-circuits on empty input, leaving the file fully
+    // unstaged (which is the correct outcome when the user has deselected
+    // every actionable line).
+    bool wroteAnyHunk = false;
 
     // Process each hunk mathematically in isolation.
     final sortedHunkIndices = hunks.keys.toList()..sort();
@@ -93,6 +99,7 @@ class PatchEngine {
       }
 
       builder.writeln('@@ -$oldStartLine,$oldLineCount +$newStartLine,$newLineCount @@');
+      wroteAnyHunk = true;
 
       cumulativeDelta += (newLineCount - originalNewCount);
 
@@ -117,6 +124,7 @@ class PatchEngine {
       }
     }
 
+    if (!wroteAnyHunk) return '';
     return builder.toString();
   }
 }

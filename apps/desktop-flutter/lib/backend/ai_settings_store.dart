@@ -9,6 +9,8 @@ class AiSettingsSnapshot {
   final String commitMessageModelCategoryId;
   final String reviewCommitModelCategoryId;
   final bool reviewCommitDoubleCheckEnabled;
+  final String museBrainstormModelCategoryId;
+  final String museSynthesisModelCategoryId;
 
   const AiSettingsSnapshot({
     required this.modelSelections,
@@ -16,6 +18,8 @@ class AiSettingsSnapshot {
     required this.commitMessageModelCategoryId,
     required this.reviewCommitModelCategoryId,
     required this.reviewCommitDoubleCheckEnabled,
+    required this.museBrainstormModelCategoryId,
+    required this.museSynthesisModelCategoryId,
   });
 
   factory AiSettingsSnapshot.defaults() => const AiSettingsSnapshot(
@@ -27,6 +31,8 @@ class AiSettingsSnapshot {
         commitMessageModelCategoryId: 'quality',
         reviewCommitModelCategoryId: 'quality',
         reviewCommitDoubleCheckEnabled: false,
+        museBrainstormModelCategoryId: 'fast',
+        museSynthesisModelCategoryId: 'quality',
       );
 
   Map<String, dynamic> toJson() => {
@@ -35,6 +41,8 @@ class AiSettingsSnapshot {
         'commitMessageModelCategoryId': commitMessageModelCategoryId,
         'reviewCommitModelCategoryId': reviewCommitModelCategoryId,
         'reviewCommitDoubleCheckEnabled': reviewCommitDoubleCheckEnabled,
+        'museBrainstormModelCategoryId': museBrainstormModelCategoryId,
+        'museSynthesisModelCategoryId': museSynthesisModelCategoryId,
       };
 
   factory AiSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -56,6 +64,14 @@ class AiSettingsSnapshot {
       reviewCommitDoubleCheckEnabled: _boolOr(
         json['reviewCommitDoubleCheckEnabled'],
         defaults.reviewCommitDoubleCheckEnabled,
+      ),
+      museBrainstormModelCategoryId: _stringOr(
+        json['museBrainstormModelCategoryId'],
+        defaults.museBrainstormModelCategoryId,
+      ),
+      museSynthesisModelCategoryId: _stringOr(
+        json['museSynthesisModelCategoryId'],
+        defaults.museSynthesisModelCategoryId,
       ),
     );
   }
@@ -96,6 +112,7 @@ class AiSettingsStore {
   static const String _promptDirectoryName = 'prompts';
   static const String _commitPromptFileName = 'commit-message.md';
   static const String _reviewPromptFileName = 'review-commit.md';
+  static const String _musePromptFileName = 'muse.md';
 
   static Future<AiSettingsSnapshot> load() async {
     final file = await _settingsFile();
@@ -204,6 +221,41 @@ class AiSettingsStore {
     final root = await _aiRootDir();
     return File(
       '${root.path}${Platform.pathSeparator}$_promptDirectoryName${Platform.pathSeparator}$_reviewPromptFileName',
+    );
+  }
+
+  static Future<String> loadMusePrompt() async {
+    final file = await musePromptFile();
+    if (!await file.exists()) return '';
+    try {
+      return await file.readAsString();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static Future<void> persistMusePrompt(String value) async {
+    final file = await musePromptFile();
+    final normalized = value.trimRight();
+    if (normalized.trim().isEmpty) {
+      if (await file.exists()) {
+        await file.delete();
+      }
+      return;
+    }
+    await file.parent.create(recursive: true);
+    await file.writeAsString('$normalized\n', flush: true);
+  }
+
+  static Future<String> musePromptPath() async {
+    final file = await musePromptFile();
+    return file.path;
+  }
+
+  static Future<File> musePromptFile() async {
+    final root = await _aiRootDir();
+    return File(
+      '${root.path}${Platform.pathSeparator}$_promptDirectoryName${Platform.pathSeparator}$_musePromptFileName',
     );
   }
 

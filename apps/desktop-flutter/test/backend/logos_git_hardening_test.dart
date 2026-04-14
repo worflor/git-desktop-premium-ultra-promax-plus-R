@@ -90,6 +90,7 @@ void main() {
         volMean: 1.0,
         volStddev: 0.5,
         coupling: matrix,
+        perFileCommitIndices: const {},
       );
       return LogosGit.buildFromStats(stats);
     }
@@ -135,6 +136,7 @@ void main() {
         volMean: 1.18,
         volStddev: 0.3,
         coupling: matrix,
+        perFileCommitIndices: const {},
       );
       return LogosGit.buildFromStats(stats);
     }
@@ -265,6 +267,7 @@ void main() {
         volMean: 1.0,
         volStddev: 0.1,
         coupling: matrix,
+        perFileCommitIndices: const {},
       );
       return LogosGit.buildFromStats(stats);
     }
@@ -300,6 +303,7 @@ void main() {
         volMean: 0,
         volStddev: 0,
         coupling: FileCouplingMatrix.empty,
+        perFileCommitIndices: const {},
       );
       final engine = LogosGit.buildFromStats(emptyStats);
       final s = engine.diffuseStability(
