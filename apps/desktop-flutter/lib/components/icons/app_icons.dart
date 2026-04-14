@@ -16,6 +16,8 @@ const _icons = <String, String>{
       '<svg viewBox="0 0 16 16" fill="none"><path d="M1.7 8Q8 4.6 14.3 8Q8 11.4 1.7 8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.3" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="0.7" fill="currentColor"/><path d="M4 6.15h8M4 9.85h8" stroke="currentColor" stroke-width="0.9" stroke-linecap="round" stroke-opacity="0.35"/></svg>',
   'settings':
       '<svg viewBox="0 0 16 16" fill="none"><path d="M8 3.8L8 2.2M11.64 5.9L13.02 5.1M11.64 10.1L13.02 10.9M8 12.2L8 13.8M4.36 10.1L2.98 10.9M4.36 5.9L2.98 5.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="8" r="4.2" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.3"/></svg>',
+  'bond':
+      '<svg viewBox="0 0 16 16" fill="none"><circle cx="4" cy="4" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="4" r="1.8" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="12" r="1.8" stroke="currentColor" stroke-width="1.5"/><path d="M5.4 5.4L6.9 10.5M10.6 5.4L9.1 10.5M5.8 4h4.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   'plus':
       '<svg viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   'x':

@@ -24,6 +24,8 @@ import '../../backend/bond/invite.dart';
 import '../../backend/bond/objects.dart';
 import '../../backend/bond/transport.dart';
 import '../../backend/bond_service.dart';
+import '../../ui/material_surface.dart';
+import '../../ui/tokens.dart';
 
 class BondPage extends StatefulWidget {
   const BondPage({super.key, required this.repoPath});
@@ -159,7 +161,6 @@ class _BondPageState extends State<BondPage> {
               ),
           ],
         ),
-      ),
     );
   }
 }
@@ -192,7 +193,6 @@ class _TransportBanner extends StatelessWidget {
             ),
           ),
         ],
-      ),
     );
   }
 }
@@ -212,9 +212,9 @@ class _IdentityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return MaterialSurface(
+      tone: AppMaterialTone.panel,
+      padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -271,7 +271,6 @@ class _IdentityCard extends StatelessWidget {
               ),
           ],
         ),
-      ),
     );
   }
 }
@@ -294,9 +293,9 @@ class _StartOrJoinCardState extends State<_StartOrJoinCard> {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return MaterialSurface(
+      tone: AppMaterialTone.panel,
+      padding: const EdgeInsets.all(16),
         child: switch (_mode) {
           _Mode.picker => _picker(),
           _Mode.start => _StartForm(
@@ -308,7 +307,6 @@ class _StartOrJoinCardState extends State<_StartOrJoinCard> {
               onBack: () => setState(() => _mode = _Mode.picker),
             ),
         },
-      ),
     );
   }
 
@@ -387,7 +385,6 @@ class _BigOptionTile extends StatelessWidget {
             const Icon(Icons.chevron_right),
           ],
         ),
-      ),
     );
   }
 }
@@ -736,7 +733,6 @@ class _InvitePreview extends StatelessWidget {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
-      ),
     );
   }
 }
@@ -794,9 +790,9 @@ class _BondedCardState extends State<_BondedCard> {
     if (service.isUnlocked && _fingerprint == null) {
       Future.microtask(_refreshFingerprint);
     }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return MaterialSurface(
+      tone: AppMaterialTone.panel,
+      padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -838,7 +834,6 @@ class _BondedCardState extends State<_BondedCard> {
             ),
           ],
         ),
-      ),
     );
   }
 }
@@ -855,9 +850,9 @@ class _PeersCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final backend = context.read<BondService>().backend;
     final listenable = backend.runtimeListenable(repoPath);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return MaterialSurface(
+      tone: AppMaterialTone.panel,
+      padding: const EdgeInsets.all(16),
         child: ListenableBuilder(
           listenable: listenable ?? const _NullListenable(),
           builder: (context, _) {
@@ -890,7 +885,6 @@ class _PeersCard extends StatelessWidget {
             );
           },
         ),
-      ),
     );
   }
 }
@@ -1086,9 +1080,9 @@ class _PolicyCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final backend = context.read<BondService>().backend;
     final listenable = backend.runtimeListenable(repoPath);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return MaterialSurface(
+      tone: AppMaterialTone.panel,
+      padding: const EdgeInsets.all(16),
         child: ListenableBuilder(
           listenable: listenable ?? const _NullListenable(),
           builder: (context, _) {
@@ -1131,7 +1125,6 @@ class _PolicyCard extends StatelessWidget {
             );
           },
         ),
-      ),
     );
   }
 }
@@ -1154,7 +1147,8 @@ class _DiagnosticsCardState extends State<_DiagnosticsCard> {
   Widget build(BuildContext context) {
     final backend = context.read<BondService>().backend;
     final listenable = backend.runtimeListenable(widget.repoPath);
-    return Card(
+    return MaterialSurface(
+      tone: AppMaterialTone.panel,
       child: ListenableBuilder(
         listenable: listenable ?? const _NullListenable(),
         builder: (context, _) {
@@ -1227,7 +1221,6 @@ class _KV extends StatelessWidget {
             ),
           ),
         ],
-      ),
     );
   }
 }
@@ -1253,7 +1246,6 @@ class _ErrorStrip extends StatelessWidget {
             child: Text(message, style: TextStyle(color: c.onErrorContainer)),
           ),
         ],
-      ),
     );
   }
 }
