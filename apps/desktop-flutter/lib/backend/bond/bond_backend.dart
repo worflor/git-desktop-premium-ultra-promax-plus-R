@@ -34,6 +34,7 @@ import '../git_result.dart';
 import 'bond_id.dart';
 import 'identity.dart';
 import 'kizuna_lattice.dart';
+import 'object_xfer.dart';
 import 'objects.dart';
 import 'packfile.dart';
 import 'peer_session.dart';
@@ -1410,11 +1411,12 @@ class BondBackend implements CollaborationBackend {
   }
 
   /// Sends an objectWant with the requested hashes and waits for the
-  /// matching objectPack response. Serialised per peer via
-  /// [_RepoRuntime.fetchLocks] — the wire has no correlation ID, so
-  /// two concurrent waits against the same broadcast stream could
-  /// attach a pack to the wrong request. Returns `false` when the
-  /// peer responded with an empty pack or no pack within the timeout.
+  /// matching objectPack response. Each request carries a 16-byte
+  /// random id; the responder echoes it in the pack body so we filter
+  /// the broadcast `peer.packfiles` stream for our specific reply.
+  /// The per-peer fetch lock still serialises gossip turns (so we
+  /// don't pile on a slow peer) but correlation no longer depends on
+  /// it.
   Future<bool> _requestPack({
     required _RepoRuntime runtime,
     required PeerSession peer,
@@ -1426,20 +1428,28 @@ class BondBackend implements CollaborationBackend {
     runtime.fetchLocks[hex] = completer.future;
     try {
       await prior;
-      final wantBody = utf8.encode(wanted.join('\n'));
+      final reqId = newRequestId();
+      final wantBytes = ObjectWantBody(requestId: reqId, want: wanted).encode();
       // Subscribe to the broadcast packfiles stream BEFORE sending the
-      // want — subscribing after could miss a very fast peer.
-      final packFuture = peer.packfiles.first
+      // want — subscribing after could miss a fast peer. Filter for
+      // our request id so other in-flight responses don't mis-attach.
+      final packFuture = peer.packfiles
+          .map(ObjectPackBody.tryDecode)
+          .where((p) => p != null && requestIdEquals(p.requestId, reqId))
+          .cast<ObjectPackBody>()
+          .first
           .timeout(const Duration(seconds: 30));
-      await peer.sendRaw(
-        BondPacketType.objectWant,
-        Uint8List.fromList(wantBody),
-      );
+      await peer.sendRaw(BondPacketType.objectWant, wantBytes);
       final pack = await packFuture;
-      if (pack.isEmpty) return false;
+      if (pack.error != null) {
+        runtime.dropCounters['pack_remote_error'] =
+            (runtime.dropCounters['pack_remote_error'] ?? 0) + 1;
+        return false;
+      }
+      if (pack.pack.isEmpty) return false;
       await indexPackfile(
         repoPath: runtime.repoPath,
-        packBytes: pack,
+        packBytes: pack.pack,
       );
       return true;
     } finally {
@@ -1450,33 +1460,52 @@ class BondBackend implements CollaborationBackend {
     }
   }
 
-  /// Responder half: peer asked for a pack containing [body] commit
-  /// hashes (newline-separated hex). Build a pack locally and send it
-  /// back over the same session.
+  /// Responder half: peer sent a CBOR-framed objectWant. Decode, build
+  /// the pack, echo the request id back so the requester correlates.
   Future<void> _respondToWant(
     _RepoRuntime runtime,
     PeerSession peer,
     Uint8List body,
   ) async {
+    final want = ObjectWantBody.tryDecode(body);
+    if (want == null) {
+      runtime.dropCounters['malformed_want'] =
+          (runtime.dropCounters['malformed_want'] ?? 0) + 1;
+      runtime.peersNotifier.bump();
+      return;
+    }
+    Uint8List packBytes;
+    String? errMsg;
     try {
-      final wanted = utf8
-          .decode(body)
-          .split('\n')
-          .map((l) => l.trim())
-          .where(_isPlausibleHash)
-          .toList(growable: false);
-      if (wanted.isEmpty) {
-        await peer.sendRaw(BondPacketType.objectPack, Uint8List(0));
-        return;
+      if (want.want.isEmpty) {
+        packBytes = Uint8List(0);
+      } else {
+        final built = await buildPackfile(
+          repoPath: runtime.repoPath,
+          wanted: want.want,
+        );
+        packBytes = built.bytes;
       }
-      final pack = await buildPackfile(
-        repoPath: runtime.repoPath,
-        wanted: wanted,
+    } catch (e) {
+      packBytes = Uint8List(0);
+      // Surface the error to the requester so they don't sit on a
+      // 30-second timeout for a build failure we already know about.
+      errMsg = 'pack build failed';
+      runtime.dropCounters['pack_build_failed'] =
+          (runtime.dropCounters['pack_build_failed'] ?? 0) + 1;
+      runtime.peersNotifier.bump();
+    }
+    try {
+      await peer.sendRaw(
+        BondPacketType.objectPack,
+        ObjectPackBody(
+          requestId: want.requestId,
+          pack: packBytes,
+          error: errMsg,
+        ).encode(),
       );
-      await peer.sendRaw(BondPacketType.objectPack, pack.bytes);
     } catch (_) {
-      // Swallow — responder is best-effort. A failing peer gets a
-      // silent drop; requester sees timeout.
+      // Best-effort send; peer may have closed mid-build.
     }
   }
 
