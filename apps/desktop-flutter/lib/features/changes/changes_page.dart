@@ -3506,6 +3506,16 @@ class _MusePaneState extends State<_MusePane> {
                 style: TextStyle(color: t.textFaint, fontSize: 11)),
           ),
         ],
+        if (result != null && result.droppedMoves > 0) ...[
+          const SizedBox(width: 6),
+          Text(
+            '· ${result.droppedMoves} dropped',
+            style: TextStyle(
+              color: AppSeverityPalette.caution.withValues(alpha: 0.85),
+              fontSize: 11,
+            ),
+          ),
+        ],
         const Spacer(),
         _GhostActionChip(
             tokens: t, label: 'rerun', onTap: widget.onRerun),
