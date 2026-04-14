@@ -80,6 +80,10 @@ class PeerSession {
       StreamController<Policy>.broadcast();
   final StreamController<Uint8List> _packfiles =
       StreamController<Uint8List>.broadcast();
+  final StreamController<Uint8List> _objectWants =
+      StreamController<Uint8List>.broadcast();
+  final StreamController<Uint8List> _objectHaves =
+      StreamController<Uint8List>.broadcast();
   final StreamController<Map<String, dynamic>> _ctrl =
       StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<PeerSessionError> _errors =
@@ -116,6 +120,16 @@ class PeerSession {
   /// payload per event).
   Stream<Uint8List> get packfiles => _packfiles.stream;
 
+  /// Inbound `objectWant` bodies (newline-separated hex commit hashes
+  /// the peer wants us to produce a pack for). The [BondBackend]'s
+  /// responder side listens here and replies with an `objectPack`.
+  Stream<Uint8List> get objectWants => _objectWants.stream;
+
+  /// Inbound `objectHave` bodies — for now a newline-separated list
+  /// of hex hashes the peer already has (bitmap form is a v2
+  /// optimisation). Used to prune redundant sends.
+  Stream<Uint8List> get objectHaves => _objectHaves.stream;
+
   /// JSON control-channel messages. The only non-CBOR packet type.
   Stream<Map<String, dynamic>> get ctrl => _ctrl.stream;
 
@@ -131,8 +145,8 @@ class PeerSession {
     _started = true;
     _sub = session.incoming.listen(
       _onPacket,
-      onError: (Object err, StackTrace st) {
-        _errors.add(PeerSessionError(
+      onError: (Object err, StackTrace _) {
+        _safeAdd(_errors, PeerSessionError(
           reason: 'transport_error',
           detail: err.toString(),
         ));
@@ -145,7 +159,15 @@ class PeerSession {
     unawaited(_recordSeen());
   }
 
+  /// Adds to a controller only if it is not yet closed. Late packets
+  /// (arriving after [close]) must not throw on a closed controller.
+  void _safeAdd<T>(StreamController<T> c, T event) {
+    if (c.isClosed) return;
+    c.add(event);
+  }
+
   Future<void> _onPacket(BondPacket packet) async {
+    if (_closed) return;
     final type = packet.type;
     if (type == null) {
       // Forward-compatible skip: unknown tags are legal.
@@ -156,22 +178,17 @@ class PeerSession {
         case BondPacketType.ctrl:
           final decoded = jsonDecode(utf8.decode(packet.body));
           if (decoded is Map<String, dynamic>) {
-            _ctrl.add(decoded);
+            _safeAdd(_ctrl, decoded);
           }
           return;
         case BondPacketType.objectPack:
-          _packfiles.add(packet.body);
+          _safeAdd(_packfiles, packet.body);
           return;
         case BondPacketType.objectHave:
+          _safeAdd(_objectHaves, packet.body);
+          return;
         case BondPacketType.objectWant:
-          // Transfer-negotiation primitives — not envelope-wrapped.
-          // The BondBackend handles these via dedicated streams on
-          // the backend layer; for now just surface as ctrl-like
-          // records for logging.
-          _ctrl.add(<String, dynamic>{
-            't': type.name,
-            'len': packet.body.length,
-          });
+          _safeAdd(_objectWants, packet.body);
           return;
         case BondPacketType.refAdvert:
         case BondPacketType.proposal:
@@ -186,7 +203,7 @@ class PeerSession {
 
       final parse = decodeEnvelope(packet.body);
       if (!parse.ok) {
-        _errors.add(PeerSessionError(
+        _safeAdd(_errors, PeerSessionError(
           reason: 'envelope_parse',
           detail: parse.error ?? 'unknown',
         ));
@@ -194,7 +211,7 @@ class PeerSession {
       }
       final env = parse.envelope!;
       if (env.kind != type.name) {
-        _errors.add(const PeerSessionError(
+        _safeAdd(_errors, const PeerSessionError(
           reason: 'kind_tag_mismatch',
           detail: 'envelope kind != packet tag',
         ));
@@ -202,7 +219,7 @@ class PeerSession {
       }
       final verdict = await verifyEnvelope(env);
       if (!verdict.ok) {
-        _errors.add(PeerSessionError(
+        _safeAdd(_errors, PeerSessionError(
           reason: 'verify_failed',
           detail: verdict.error ?? 'unknown',
         ));
@@ -210,7 +227,7 @@ class PeerSession {
       }
       _dispatch(type, env);
     } catch (e) {
-      _errors.add(PeerSessionError(
+      _safeAdd(_errors, PeerSessionError(
         reason: 'dispatch_exception',
         detail: e.toString(),
       ));
@@ -222,76 +239,76 @@ class PeerSession {
       case BondPacketType.refAdvert:
         final obj = RefAdvert.tryDecode(env.body);
         if (obj == null) {
-          _errors.add(const PeerSessionError(
+          _safeAdd(_errors, const PeerSessionError(
             reason: 'body_decode',
             detail: 'refAdvert',
           ));
           return;
         }
         if (!_bondIdMatches(obj.bondId)) return;
-        _refAdverts.add(obj);
+        _safeAdd(_refAdverts, obj);
       case BondPacketType.proposal:
         final obj = Proposal.tryDecode(env.body);
         if (obj == null) {
-          _errors.add(const PeerSessionError(
+          _safeAdd(_errors, const PeerSessionError(
             reason: 'body_decode',
             detail: 'proposal',
           ));
           return;
         }
         if (!_bondIdMatches(obj.bondId)) return;
-        _proposals.add(obj);
+        _safeAdd(_proposals, obj);
       case BondPacketType.attestation:
         final obj = Attestation.tryDecode(env.body);
         if (obj == null) {
-          _errors.add(const PeerSessionError(
+          _safeAdd(_errors, const PeerSessionError(
             reason: 'body_decode',
             detail: 'attestation',
           ));
           return;
         }
         if (!_bondIdMatches(obj.bondId)) return;
-        _attestations.add(obj);
+        _safeAdd(_attestations, obj);
       case BondPacketType.anchor:
         final obj = Anchor.tryDecode(env.body);
         if (obj == null) {
-          _errors.add(const PeerSessionError(
+          _safeAdd(_errors, const PeerSessionError(
             reason: 'body_decode',
             detail: 'anchor',
           ));
           return;
         }
         if (!_bondIdMatches(obj.bondId)) return;
-        _anchors.add(obj);
+        _safeAdd(_anchors, obj);
       case BondPacketType.target:
         final obj = Target.tryDecode(env.body);
         if (obj == null) {
-          _errors.add(const PeerSessionError(
+          _safeAdd(_errors, const PeerSessionError(
             reason: 'body_decode',
             detail: 'target',
           ));
           return;
         }
         if (!_bondIdMatches(obj.bondId)) return;
-        _targets.add(obj);
+        _safeAdd(_targets, obj);
       case BondPacketType.policy:
         final obj = Policy.tryDecode(env.body);
         if (obj == null) {
-          _errors.add(const PeerSessionError(
+          _safeAdd(_errors, const PeerSessionError(
             reason: 'body_decode',
             detail: 'policy',
           ));
           return;
         }
         if (!_bondIdMatches(obj.bondId)) return;
-        _policies.add(obj);
+        _safeAdd(_policies, obj);
       case BondPacketType.continuity:
       case BondPacketType.revoke:
         // Identity-management primitives — route to errors for now;
         // full handling is wired at the identity-service layer which
         // owns continuity lineage. Logging them preserves observability
         // until that lands.
-        _ctrl.add(<String, dynamic>{
+        _safeAdd(_ctrl, <String, dynamic>{
           't': type.name,
           'signer':
               env.signerPublicKey.map((b) => b.toRadixString(16).padLeft(2, '0')).join(),
@@ -330,6 +347,7 @@ class PeerSession {
       kind: kind,
       bodyCbor: bodyCbor,
     );
+    if (_closed) return; // closed during the signEnvelope await.
     final bytes = encodeEnvelope(env);
     if (bytes.length > kMaxBondPayloadBytes) {
       throw StateError(
@@ -401,7 +419,7 @@ class PeerSession {
         'session': session.sessionId,
       });
     } catch (e) {
-      _errors.add(PeerSessionError(
+      _safeAdd(_errors, PeerSessionError(
         reason: 'store_write',
         detail: e.toString(),
       ));
@@ -422,6 +440,8 @@ class PeerSession {
     await _targets.close();
     await _policies.close();
     await _packfiles.close();
+    await _objectWants.close();
+    await _objectHaves.close();
     await _ctrl.close();
     await _errors.close();
   }
