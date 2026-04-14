@@ -145,6 +145,31 @@ class _RepoRuntime {
   /// (HKDF is async + deterministic; once derived the value is
   /// stable for the life of the runtime). Keyed by pubkey hex.
   final Map<String, KizunaCoordinate> peerCoordinates = {};
+
+  /// Round-trip ping observed for each peer (ms). Updated on each
+  /// pong receipt; null until first pong arrives. Surfaced in the
+  /// peer view so the UI can show "150ms" alongside the lattice
+  /// coordinate.
+  final Map<String, int> peerPingMs = {};
+
+  /// Outstanding ping timestamps awaiting their pong. Echoed back in
+  /// the pong's `at` field so we can compute RTT from receipt.
+  final Map<String, int> pendingPingMs = {};
+
+  /// Per-peer heartbeat timer. Cancelled on detach.
+  final Map<String, Timer> heartbeatTimers = {};
+
+  /// Per-peer reconnect attempt count — used to compute exponential
+  /// backoff and to give up after the budget is exhausted.
+  final Map<String, int> reconnectAttempts = {};
+
+  /// Per-peer pending reconnect timer. Cancelled if the peer comes
+  /// back via direct attach (e.g. they dialed us instead).
+  final Map<String, Timer> reconnectTimers = {};
+
+  /// Last addressing tuple used to dial each peer — needed to
+  /// reconstruct the dial parameters on reconnect.
+  final Map<String, BondAddressing> peerAddressing = {};
 }
 
 /// Exposes a public bump method on top of [ChangeNotifier] so the
@@ -256,6 +281,7 @@ class BondPeerView {
     required this.refCount,
     required this.revokedAt,
     this.coordinate,
+    this.pingMs,
   });
 
   final String pubkeyHex;
@@ -273,6 +299,11 @@ class BondPeerView {
   /// UI renders the row/column hex; the gossip layer reads it for
   /// nearest-first routing.
   final KizunaCoordinate? coordinate;
+
+  /// Round-trip ping observed on the ctrl heartbeat. Null until the
+  /// first pong arrives. UI shows e.g. "150ms" next to the lattice
+  /// chip so users get a feel for swarm health at a glance.
+  final int? pingMs;
 
   String get shortHex => pubkeyHex.substring(0, 8);
   bool get isRevoked => revokedAt != null;
@@ -331,6 +362,9 @@ class BondBackend implements CollaborationBackend {
         signingKeyPair: identity.keyPair,
         signerPublicKey: identity.publicKeyBytes,
       );
+      // Cache addressing so the reconnect scheduler can re-dial with
+      // identical parameters.
+      runtime.peerAddressing[_hex(remotePubkey)] = addressing;
       await attachPeerSession(repoPath: repoPath, peer: peer);
       return GitResult.ok(peer);
     } catch (e) {
@@ -493,8 +527,144 @@ class BondBackend implements CollaborationBackend {
       );
       runtime.peersNotifier.bump();
     }));
+    // Wire heartbeat: emit a ping every 15s, treat 45s of silence as
+    // a drop and trigger reconnect. The ctrl channel carries
+    // {kind: "ping"|"pong", at: <epochMs>}; pong echoes the ping's
+    // `at` so we measure RTT cleanly.
+    subs.add(peer.ctrl.listen((msg) {
+      runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+      final kind = msg['kind'];
+      if (kind == 'ping') {
+        final at = msg['at'];
+        if (at is int) {
+          unawaited(peer.sendCtrl({'kind': 'pong', 'echo': at}));
+        }
+      } else if (kind == 'pong') {
+        final echo = msg['echo'];
+        if (echo is int) {
+          final rtt = DateTime.now().millisecondsSinceEpoch - echo;
+          if (rtt >= 0 && rtt < 60_000) {
+            runtime.peerPingMs[hex] = rtt;
+            runtime.pendingPingMs.remove(hex);
+            runtime.peersNotifier.bump();
+          }
+        }
+      }
+    }));
     runtime.peerSubs[hex] = subs;
+    // Cancel any pending reconnect — we're attached now.
+    runtime.reconnectTimers.remove(hex)?.cancel();
+    runtime.reconnectAttempts[hex] = 0;
+    // Start the heartbeat ticker.
+    runtime.heartbeatTimers.remove(hex)?.cancel();
+    runtime.heartbeatTimers[hex] = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _heartbeatTick(runtime, hex, peer),
+    );
     runtime.peersNotifier.bump();
+  }
+
+  void _heartbeatTick(_RepoRuntime runtime, String hex, PeerSession peer) {
+    if (!runtime.peers.containsKey(hex) ||
+        !identical(runtime.peers[hex], peer)) {
+      runtime.heartbeatTimers.remove(hex)?.cancel();
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final lastSeen = runtime.lastSeenMs[hex] ?? 0;
+    if (now - lastSeen > 45_000) {
+      // Treat as dropped — close session, schedule reconnect.
+      runtime.dropCounters['peer_timeout'] =
+          (runtime.dropCounters['peer_timeout'] ?? 0) + 1;
+      unawaited(_dropAndScheduleReconnect(runtime, hex));
+      return;
+    }
+    // Otherwise emit a ping. Track the timestamp so a follow-up pong
+    // can be matched (multiple pings outstanding is fine — the latest
+    // RTT wins via the pongs's echo lookup).
+    runtime.pendingPingMs[hex] = now;
+    unawaited(peer.sendCtrl({'kind': 'ping', 'at': now}).catchError((_) {
+      // Send failed — likely the session is mid-close. Let the
+      // timeout branch handle retry next tick.
+    }));
+  }
+
+  /// Tear down a peer entry and schedule a backoff-driven redial.
+  Future<void> _dropAndScheduleReconnect(
+    _RepoRuntime runtime,
+    String hex,
+  ) async {
+    runtime.heartbeatTimers.remove(hex)?.cancel();
+    for (final sub in runtime.peerSubs[hex] ?? const []) {
+      await sub.cancel();
+    }
+    runtime.peerSubs.remove(hex);
+    final session = runtime.peers.remove(hex);
+    if (session != null) {
+      try {
+        await session.close();
+      } catch (_) {}
+    }
+    runtime.peersNotifier.bump();
+    _scheduleReconnect(runtime, hex);
+  }
+
+  /// Backoff schedule: 2s, 4s, 8s, 16s, 32s, 60s (cap), with ±25%
+  /// jitter so a swarm-wide drop doesn't synchronise reconnects.
+  /// Gives up after [_kReconnectMaxAttempts] for a given peer; the
+  /// counter resets on successful attach.
+  static const int _kReconnectMaxAttempts = 8;
+  void _scheduleReconnect(_RepoRuntime runtime, String hex) {
+    final addressing = runtime.peerAddressing[hex];
+    if (addressing == null) return;
+    final attempts = runtime.reconnectAttempts[hex] ?? 0;
+    if (attempts >= _kReconnectMaxAttempts) {
+      runtime.dropCounters['reconnect_gave_up'] =
+          (runtime.dropCounters['reconnect_gave_up'] ?? 0) + 1;
+      runtime.peersNotifier.bump();
+      return;
+    }
+    final baseSeconds = (1 << attempts).clamp(2, 60);
+    final jitterMs = ((baseSeconds * 250).toInt());
+    final delayMs = baseSeconds * 1000 +
+        (DateTime.now().millisecondsSinceEpoch % (jitterMs * 2)) -
+        jitterMs;
+    runtime.reconnectAttempts[hex] = attempts + 1;
+    runtime.reconnectTimers.remove(hex)?.cancel();
+    runtime.reconnectTimers[hex] = Timer(
+      Duration(milliseconds: delayMs.clamp(500, 120_000)),
+      () => _reconnectAttempt(runtime, hex, addressing),
+    );
+  }
+
+  Future<void> _reconnectAttempt(
+    _RepoRuntime runtime,
+    String hex,
+    BondAddressing addressing,
+  ) async {
+    runtime.reconnectTimers.remove(hex);
+    if (runtime.peers.containsKey(hex)) return; // attached via another path
+    try {
+      final pubkey = _unhexB(hex);
+      final result = await connect(
+        repoPath: runtime.repoPath,
+        remotePubkey: pubkey,
+        addressing: addressing,
+      );
+      if (!result.ok) {
+        _scheduleReconnect(runtime, hex);
+      }
+    } catch (_) {
+      _scheduleReconnect(runtime, hex);
+    }
+  }
+
+  Uint8List _unhexB(String hex) {
+    final out = Uint8List(hex.length ~/ 2);
+    for (var i = 0; i < out.length; i++) {
+      out[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
+    }
+    return out;
   }
 
   bool _isRevoked(
@@ -926,6 +1096,7 @@ class BondBackend implements CollaborationBackend {
         refCount: r.lastAdverts[hex]?.refs.length ?? 0,
         revokedAt: r.revokedAt[hex],
         coordinate: r.peerCoordinates[hex],
+        pingMs: r.peerPingMs[hex],
       ));
     }
     peers.sort((a, b) => (b.lastSeenMs ?? 0).compareTo(a.lastSeenMs ?? 0));

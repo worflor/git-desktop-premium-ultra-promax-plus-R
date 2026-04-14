@@ -1189,6 +1189,9 @@ class _PeerTile extends StatelessWidget {
     if (p.coordinate != null) {
       parts.add('lattice ${p.coordinate!.toHex()}');
     }
+    if (p.pingMs != null) {
+      parts.add('${p.pingMs}ms');
+    }
     if (p.lastSeenMs != null) {
       parts.add('seen ${_humanAgo(p.lastSeenMs!)}');
     }
