@@ -6,8 +6,6 @@ import 'package:provider/provider.dart';
 import '../backend/dtos.dart';
 import '../backend/git.dart';
 import '../components/icons/app_icons.dart';
-import '../backend/bond_service.dart';
-import '../features/bond/bond_page.dart';
 import '../features/branches/branches_page.dart';
 import '../features/changes/changes_page.dart';
 import '../features/history/history_page.dart';
@@ -23,7 +21,6 @@ import '../ui/motion.dart';
 import '../ui/tokens.dart';
 import '../diagnostics/diagnostics_state.dart';
 import 'hyper_reactivity.dart';
-import 'preferences_state.dart';
 import 'repository_state.dart';
 import 'repository_xray_state.dart';
 import 'theme_state.dart';
@@ -31,7 +28,7 @@ import 'worktree_state.dart';
 
 enum _WorkspaceMode { changes, history, branches }
 
-enum _Panel { none, xray, settings, search, bond }
+enum _Panel { none, xray, settings, search }
 
 class WorkspaceShell extends StatefulWidget {
   const WorkspaceShell({super.key});
@@ -163,9 +160,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
           // frame.
           Positioned.fill(
             child: IgnorePointer(
-              ignoring: _panel != _Panel.settings &&
-                  _panel != _Panel.search &&
-                  _panel != _Panel.bond,
+              ignoring: _panel != _Panel.settings && _panel != _Panel.search,
               child: Stack(
                 children: [
                   // ── Dim backdrop: opacity-only, static position ──────
@@ -174,8 +169,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                       duration: context.surfaceShader.duration,
                       curve: context.surfaceShader.safeCurve,
                       opacity: (_panel == _Panel.settings ||
-                              _panel == _Panel.search ||
-                              _panel == _Panel.bond)
+                              _panel == _Panel.search)
                           ? 1.0
                           : 0.0,
                       child: GestureDetector(
@@ -235,19 +229,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                                 });
                               },
                             ),
-                          ),
-                        _Panel.bond => _SlidePanel(
-                            key: const ValueKey('bond'),
-                            title: 'Bond',
-                            onClose: () =>
-                                setState(() => _panel = _Panel.none),
-                            child: Builder(builder: (ctx) {
-                              final path = ctx.watch<RepositoryState>().activePath;
-                              if (path == null) {
-                                return const _BondEmptyState();
-                              }
-                              return BondPage(repoPath: path);
-                            }),
                           ),
                         _ => const SizedBox.shrink(key: ValueKey('none')),
                       },
@@ -340,15 +321,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
       if (key == LogicalKeyboardKey.comma) {
         _togglePanel(_Panel.settings);
         return KeyEventResult.handled;
-      }
-      if (key == LogicalKeyboardKey.keyN) {
-        // `g n` — network / bond panel (only useful with the flag
-        // enabled; if not, the toggle is harmless — panel opens
-        // empty-state text and nothing else renders).
-        if (context.read<PreferencesState>().bondExperimentEnabled) {
-          _togglePanel(_Panel.bond);
-          return KeyEventResult.handled;
-        }
       }
       if (key == LogicalKeyboardKey.keyG) {
         setState(() => _awaitingGPrefix = true);
@@ -502,13 +474,6 @@ class _Topbar extends StatelessWidget {
                 onTap: () => onTogglePanel(_Panel.xray),
               ),
               const SizedBox(width: 8),
-              if (context.watch<PreferencesState>().bondExperimentEnabled) ...[
-                _BondTopbarButton(
-                  active: panel == _Panel.bond,
-                  onTap: () => onTogglePanel(_Panel.bond),
-                ),
-                const SizedBox(width: 4),
-              ],
               _ModeBtn(
                 icon: 'settings',
                 active: panel == _Panel.settings,
@@ -2005,97 +1970,3 @@ class _PanelCloseButtonState extends State<_PanelCloseButton> {
   }
 }
 
-/// Topbar entry for Bond. Wraps [_ModeBtn] and overlays a small dot
-/// when any bonded repo has live peers — matches Signal-style
-/// presence: no number, just "there's activity in there." Only
-/// rendered when the user has opted into `bondExperimentEnabled`.
-class _BondTopbarButton extends StatelessWidget {
-  final bool active;
-  final VoidCallback onTap;
-
-  const _BondTopbarButton({required this.active, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final repoPath = context.watch<RepositoryState>().activePath;
-    final service = context.watch<BondService>();
-    final listenable = repoPath == null
-        ? null
-        : service.backend.runtimeListenable(repoPath);
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        _ModeBtn(icon: 'bond', active: active, onTap: onTap),
-        Positioned(
-          right: 4,
-          top: 4,
-          child: ListenableBuilder(
-            listenable: listenable ?? _AlwaysIdleListenable.instance,
-            builder: (context, _) {
-              if (repoPath == null) return const SizedBox.shrink();
-              final snap = service.backend.snapshot(repoPath);
-              final live = (snap?.peers ?? const [])
-                  .where((p) => p.attached)
-                  .length;
-              if (live == 0) return const SizedBox.shrink();
-              return Container(
-                width: 7,
-                height: 7,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  // Safe-green accent; Signal-style tiny dot.
-                  color: Theme.of(context).colorScheme.primary,
-                  border: Border.all(
-                    color: context.tokens.chromeBorder,
-                    width: 1.2,
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// No-op listenable used when there's no bonded repo open. Keeps the
-/// ListenableBuilder happy without forcing repo-agnostic bond state.
-class _AlwaysIdleListenable implements Listenable {
-  const _AlwaysIdleListenable._();
-  static const instance = _AlwaysIdleListenable._();
-  @override
-  void addListener(VoidCallback listener) {}
-  @override
-  void removeListener(VoidCallback listener) {}
-}
-
-/// Empty-state filler for the Bond panel when no repo is open. The
-/// user opened Bond before picking a repo; nudge them there.
-class _BondEmptyState extends StatelessWidget {
-  const _BondEmptyState();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Open a repository first',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Bond is per-repo — pick one in the sidebar, then come back.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
