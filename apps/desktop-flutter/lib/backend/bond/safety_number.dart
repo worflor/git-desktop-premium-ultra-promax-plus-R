@@ -1,27 +1,33 @@
 // ═════════════════════════════════════════════════════════════════════════
-// bond/safety_number.dart — Signal-style pair verification
+// bond/safety_number.dart — pair-verification numeric
 //
 // When Alice and Bob want to confirm they're really talking to each
-// other, each device computes the same 60-digit number over the
-// unordered pair of their pubkeys. They read the digits to each
-// other over a trusted side channel (phone, in person). Match = no
-// MITM at handshake time.
+// other, each device computes the same number over the unordered
+// pair of their pubkeys. They read the digits to each other over a
+// trusted side channel (phone, in person). Match = no MITM at
+// handshake time.
 //
-// Construction mirrors Signal's: SHA-256 over sorted(pubkeyA,
-// pubkeyB), take first 30 bytes, decimal-encode in 5-digit chunks.
+// Construction: SHA-256 over sorted(pubA, pubB), sliced into
+// 10 NON-OVERLAPPING 3-byte windows (bytes 0..29). Each window
+// encodes to 5 decimal digits via `value % 100000`, yielding a
+// 50-digit string rendered as ten space-separated 5-digit groups.
+//
 // Sorting makes the number symmetric (Alice and Bob compute the
-// same string regardless of who initiated).
+// same string regardless of who initiated). Non-overlapping windows
+// preserve the construction's effective entropy — previously,
+// overlapping windows reused bytes across groups and weakened the
+// output.
 // ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:typed_data';
 
 import 'package:pointycastle/digests/sha256.dart';
 
-/// Formats a 60-digit safety number as twelve groups of 5 digits,
-/// space-separated — readable in ~10 seconds over a phone call.
+/// Formats the safety number as 10 groups of 5 digits, space-
+/// separated — ~8 seconds to read aloud.
 ///
 /// Example output:
-///   "03421 88519 41207 62088 94513 00277 11840 96551 23874 09983 55162 70014"
+///   "03421 88519 41207 62088 94513 00277 11840 96551 23874 09983"
 String computeSafetyNumber(Uint8List pubA, Uint8List pubB) {
   if (pubA.length != 32 || pubB.length != 32) {
     throw ArgumentError('pubkeys must be 32 bytes each');
@@ -36,14 +42,11 @@ String computeSafetyNumber(Uint8List pubA, Uint8List pubB) {
   digest.update(ordered[1], 0, ordered[1].length);
   final hash = Uint8List(32);
   digest.doFinal(hash, 0);
-  // Take 30 bytes → 12 groups of 5 decimal digits.
+  // 10 non-overlapping 3-byte windows covering bytes 0..29.
   final groups = <String>[];
-  for (var i = 0; i < 12; i++) {
-    final off = i * 2 + (i > 0 ? 1 : 0); // pick 30 bytes out of 32
-    var v = 0;
-    for (var j = 0; j < 3 && off + j < 30; j++) {
-      v = (v << 8) | hash[off + j];
-    }
+  for (var i = 0; i < 10; i++) {
+    final off = i * 3;
+    final v = (hash[off] << 16) | (hash[off + 1] << 8) | hash[off + 2];
     groups.add((v % 100000).toString().padLeft(5, '0'));
   }
   return groups.join(' ');

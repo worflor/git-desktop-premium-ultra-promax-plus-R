@@ -15,8 +15,10 @@ import '../../backend/commit_format.dart';
 import '../../backend/file_coupling.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/preferences_state.dart';
+import '../../app/repository_state.dart';
 import '../../app/theme_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import '../bond/bond_page.dart';
 import '../onboarding/onboarding_state.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/design_primitives.dart';
@@ -1022,6 +1024,32 @@ class _SettingsPageState extends State<SettingsPage> {
                       .setBondExperimentEnabled(value));
                 },
               ),
+              if (preferences.bondExperimentEnabled) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: _GhostMiniButton(
+                    label: 'Open Bond →',
+                    onTap: () {
+                      final repoPath =
+                          context.read<RepositoryState>().activePath;
+                      if (repoPath == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Open a repository first.'),
+                          ),
+                        );
+                        return;
+                      }
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => BondPage(repoPath: repoPath),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
               const _SettingsGap(),
               Row(
                 children: [

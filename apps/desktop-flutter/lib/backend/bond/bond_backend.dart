@@ -291,9 +291,13 @@ class BondBackend implements CollaborationBackend {
     }));
     subs.add(peer.policies.listen((policy) {
       runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+      if (!_policyWellFormed(policy)) {
+        runtime.dropCounters['policy_malformed'] =
+            (runtime.dropCounters['policy_malformed'] ?? 0) + 1;
+        runtime.peersNotifier.bump();
+        return;
+      }
       final current = runtime.currentPolicy;
-      // Monotonic: only accept a newer effectiveAtMs. Policies are
-      // totally ordered by their own timestamps; ties go to incumbent.
       if (current != null && policy.effectiveAtMs <= current.effectiveAtMs) {
         return;
       }
@@ -303,27 +307,54 @@ class BondBackend implements CollaborationBackend {
     subs.add(peer.attestations.listen((envPair) {
       runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
       final signerHex = _hex(envPair.envelope.signerPublicKey);
-      if (_isRevokedAt(runtime, signerHex, envPair.attestation.createdMs)) {
+      final att = envPair.attestation;
+      if (_isRevokedAt(runtime, signerHex, att.createdMs)) {
         runtime.dropCounters['revoked_signer'] =
             (runtime.dropCounters['revoked_signer'] ?? 0) + 1;
         runtime.peersNotifier.bump();
         return;
       }
-      final pid = _hex(envPair.attestation.proposalId);
+      final pid = _hex(att.proposalId);
       final list = runtime.attestationsByProposal.putIfAbsent(pid, () => []);
-      // Latest-per-signer semantics: a newer verdict from the same
-      // signer replaces the prior one. Stable order for UI.
-      list.removeWhere((a) => a.signerHex == signerHex);
-      list.add(_SignedAttestation(att: envPair.attestation, signerHex: signerHex));
+      // Strictly-newer-replaces-older: an older attestation arriving
+      // after a newer one from the same signer (reordered transport,
+      // replay) must not overwrite the newer verdict. Identical
+      // createdMs = keep incumbent (stable tiebreak).
+      final existingIdx = list.indexWhere((a) => a.signerHex == signerHex);
+      if (existingIdx >= 0) {
+        final existing = list[existingIdx];
+        if (att.createdMs <= existing.att.createdMs) {
+          runtime.dropCounters['stale_attestation'] =
+              (runtime.dropCounters['stale_attestation'] ?? 0) + 1;
+          runtime.peersNotifier.bump();
+          return;
+        }
+        list[existingIdx] = _SignedAttestation(att: att, signerHex: signerHex);
+      } else {
+        list.add(_SignedAttestation(att: att, signerHex: signerHex));
+      }
       runtime.peersNotifier.bump();
     }));
     subs.add(peer.revocations.listen((env) {
       runtime.lastSeenMs[hex] = DateTime.now().millisecondsSinceEpoch;
+      if (!_revocationAuthorized(runtime, env)) {
+        runtime.dropCounters['revoke_unauthorized'] =
+            (runtime.dropCounters['revoke_unauthorized'] ?? 0) + 1;
+        runtime.peersNotifier.bump();
+        return;
+      }
       final revokedHex = _hex(env.revocation.revokedPubkey);
       final prior = runtime.revokedAt[revokedHex];
-      if (prior == null || env.revocation.effectiveAtMs < prior) {
-        // Earlier effectiveAtMs is stricter (narrower trust window).
-        runtime.revokedAt[revokedHex] = env.revocation.effectiveAtMs;
+      // Monotonic forward: keep the *latest* effectiveAtMs. A
+      // revocation whose effective time is in the past cannot
+      // retroactively erase legitimately-signed work (back-dated
+      // revocations are clamped to max(received_wallclock, prior)).
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final clamped = env.revocation.effectiveAtMs > nowMs
+          ? env.revocation.effectiveAtMs
+          : nowMs;
+      if (prior == null || clamped > prior) {
+        runtime.revokedAt[revokedHex] = clamped;
       }
       runtime.peersNotifier.bump();
     }));
@@ -349,6 +380,43 @@ class BondBackend implements CollaborationBackend {
   ) {
     final effective = runtime.revokedAt[_hex(signerPubkey)];
     return effective != null && createdMs >= effective;
+  }
+
+  /// Authorizes an inbound revocation against current bond rules.
+  /// Self-revocation is always honored. Peer revocation requires the
+  /// revoker to appear in any current-policy rule's approverSet — the
+  /// same authority that would approve a merge is empowered to eject
+  /// a key. With no policy set, only self-revocation is honored (v1
+  /// cautious default).
+  /// Rejects policies with shapes that would silently weaken enforcement.
+  /// Negative or zero `minApprovals` on a rule with a non-trivial ref
+  /// pattern looks like an auto-pass; callers who really want that
+  /// should just omit the rule.
+  bool _policyWellFormed(Policy p) {
+    if (p.rules.isEmpty) return false;
+    for (final r in p.rules) {
+      if (r.minApprovals < 0) return false;
+      if (r.refPattern.trim().isEmpty) return false;
+      // Approvers must be 32-byte Ed25519 pubkeys if present.
+      for (final k in r.approverSet) {
+        if (k.length != 32) return false;
+      }
+    }
+    return true;
+  }
+
+  bool _revocationAuthorized(_RepoRuntime runtime, RevocationEnvelope env) {
+    final signerHex = _hex(env.envelope.signerPublicKey);
+    final revokedHex = _hex(env.revocation.revokedPubkey);
+    if (signerHex == revokedHex) return true; // self-revoke
+    final policy = runtime.currentPolicy;
+    if (policy == null) return false;
+    for (final rule in policy.rules) {
+      for (final k in rule.approverSet) {
+        if (_hex(k) == signerHex) return true;
+      }
+    }
+    return false;
   }
 
   bool _sameSignerVerdict(Attestation a, Attestation b) {
@@ -613,7 +681,14 @@ class BondBackend implements CollaborationBackend {
     // Include peers we've ever seen, whether or not currently attached —
     // the UI cares about "does the session exist right now" and "when
     // did we last hear from them."
-    final allKeys = <String>{...r.peers.keys, ...r.lastSeenMs.keys, ...r.lastAdverts.keys};
+    final allKeys = <String>{
+      ...r.peers.keys,
+      ...r.lastSeenMs.keys,
+      ...r.lastAdverts.keys,
+      // Revoked keys must surface even if we've never directly seen
+      // that peer — the UI should still show their revoked badge.
+      ...r.revokedAt.keys,
+    };
     for (final hex in allKeys) {
       peers.add(BondPeerView(
         pubkeyHex: hex,
@@ -679,20 +754,27 @@ class BondBackend implements CollaborationBackend {
     final runtime = await _runtime(repoPath);
     if (runtime == null) return const GitResult.err('bond: repo not bonded');
     final now = DateTime.now();
+    final effectiveMs = (effectiveAt ?? now).millisecondsSinceEpoch;
     final body = Revocation(
       bondId: runtime.bondId.bytes,
       revokedPubkey: revokedPubkey,
       reason: reason,
       reasonDetail: reasonDetail,
-      effectiveAtMs: (effectiveAt ?? now).millisecondsSinceEpoch,
+      effectiveAtMs: effectiveMs,
       createdMs: now.millisecondsSinceEpoch,
     ).toCborBody();
-    // Apply locally too — revoking yourself or a departed member
-    // shouldn't wait for a round-trip to take effect on THIS peer.
+    final result = await _broadcastSigned(runtime, BondPacketType.revoke, body);
+    if (!result.ok) return result;
+    // Apply locally only AFTER broadcast succeeded. Otherwise a local
+    // error state (no peers, locked identity) would leave us enforcing
+    // a revocation no other peer will ever honor.
     final revokedHex = _hex(revokedPubkey);
-    runtime.revokedAt[revokedHex] = (effectiveAt ?? now).millisecondsSinceEpoch;
+    final prior = runtime.revokedAt[revokedHex];
+    if (prior == null || effectiveMs > prior) {
+      runtime.revokedAt[revokedHex] = effectiveMs;
+    }
     runtime.peersNotifier.bump();
-    return _broadcastSigned(runtime, BondPacketType.revoke, body);
+    return result;
   }
 
   /// Signs a Policy and broadcasts it, also installing locally as the
@@ -709,15 +791,30 @@ class BondBackend implements CollaborationBackend {
       bondId: runtime.bondId.bytes,
       effectiveAtMs: now,
       rules: rules,
+      // supersedes: hash of the prior policy envelope would go here.
+      // For v1 we don't track envelope hashes of incoming policies,
+      // so null; peers that missed the prior policy cannot detect a
+      // missed link. Hardening: persist policy envelope bytes and hash
+      // when accepting, pass that hash here.
       supersedes: null,
     );
-    runtime.currentPolicy = policy;
-    runtime.peersNotifier.bump();
-    return _broadcastSigned(
+    if (!_policyWellFormed(policy)) {
+      return const GitResult.err('bond: policy rejected (malformed rules)');
+    }
+    // Broadcast first; install locally only on success. Prevents the
+    // "I enforce, no one else does" asymmetry.
+    final result = await _broadcastSigned(
       runtime,
       BondPacketType.policy,
       policy.toCborBody(),
     );
+    if (!result.ok) return result;
+    final current = runtime.currentPolicy;
+    if (current == null || policy.effectiveAtMs > current.effectiveAtMs) {
+      runtime.currentPolicy = policy;
+    }
+    runtime.peersNotifier.bump();
+    return result;
   }
 
   /// Signs an attestation and broadcasts it. Also applies locally so
@@ -783,7 +880,12 @@ class BondBackend implements CollaborationBackend {
     } catch (e) {
       return GitResult.err('bond: unbind wiped state but disk cleanup failed: $e');
     }
-    runtime.peersNotifier.dispose();
+    // Don't dispose peersNotifier: a UI widget might still be holding
+    // a reference mid-rebuild (ListenableBuilder captured the value
+    // before BondService.notifyListeners dropped membership). We drop
+    // the runtime and let GC collect the notifier once the widget
+    // tree rebuilds. A later .bump() on a dropped runtime is a no-op
+    // because nothing references it.
     return const GitResult.ok(null);
   }
 
