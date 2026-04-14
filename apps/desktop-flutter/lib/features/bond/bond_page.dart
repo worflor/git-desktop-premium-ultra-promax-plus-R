@@ -26,6 +26,7 @@ import '../../backend/bond/transport.dart';
 import '../../backend/bond_service.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/tokens.dart';
+import 'proposal_compose.dart';
 
 class BondPage extends StatefulWidget {
   const BondPage({super.key, required this.repoPath});
@@ -894,6 +895,15 @@ class _ProposalsCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Text('Proposals (${proposals.length})',
                       style: Theme.of(context).textTheme.titleMedium),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () => showProposalCompose(
+                      context,
+                      repoPath: repoPath,
+                    ),
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Propose'),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
