@@ -78,6 +78,7 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
+import 'engram_file_ktable.dart';
 import 'engram_fit.dart';
 import 'engram_hunk_encoder.dart';
 import 'file_coupling.dart';
@@ -362,33 +363,70 @@ class _VAxis {
 /// Probability is the cosine clamped to [0, 1] then re-anchored against
 /// the 0.5 mid-line (the silent default) — cosine ≥ 0.5 reads as a
 /// positive predictor; below pulls the mixer toward "unrelated".
+///
+/// Built atop [EngramFileKTable] so observations read from contiguous
+/// flat arrays — no per-pair object dereference. The build loop
+/// pre-resolves each nodePath to its table row id once, then
+/// `observeIds(rowA, rowB)` is pointer-bumping linear access for the
+/// pairwise cosine.
 class _EnAxis {
-  final Map<String, HunkKVector> perFileKVectors;
+  /// Pre-resolved row ids per node. `_rowIds[nodeId] == -1` for nodes
+  /// without a K-vector (silent for those pairs). Resolved once at
+  /// build start to avoid a hashmap lookup per edge candidate.
+  final Int32List rowIds;
+  final EngramFileKTable table;
 
-  const _EnAxis(this.perFileKVectors);
+  const _EnAxis({required this.rowIds, required this.table});
 
-  AxisObs observe(String a, String b) {
-    final ka = perFileKVectors[a];
-    if (ka == null) return AxisObs.silent;
-    final kb = perFileKVectors[b];
-    if (kb == null) return AxisObs.silent;
-    final cos = EngramHunkEncoder.cosine(ka, kb);
+  AxisObs observeIds(int aNodeId, int bNodeId) {
+    final ra = rowIds[aNodeId];
+    if (ra < 0) return AxisObs.silent;
+    final rb = rowIds[bNodeId];
+    if (rb < 0) return AxisObs.silent;
+    final cos = _cosineRows(table, ra, rb);
     if (cos <= 0) return AxisObs.silent;
     // Map cosine ∈ [0,1] to p ∈ [0.5, 1] — the axis is a "boost only"
-    // signal: high cosine pulls the mix toward "related"; low cosine
-    // contributes nothing (we have no calibration for what *low*
-    // cosine should mean as a NEGATIVE predictor — it might just be
-    // "different domains" not "should not co-occur"). The 0.5 anchor
-    // makes the confidence gate `|p - 0.5|` proportional to the cosine
-    // itself, which is what we want.
+    // signal. The 0.5 anchor makes the confidence gate `|p - 0.5|`
+    // proportional to the cosine itself, which is what we want.
     final p = 0.5 + 0.5 * cos;
     // Evidence: the K-vector quality reflects how many GloVe-hittable
     // sub-tokens fed the AR(2). Use the smaller of the pair so a
     // sparsely-tokenised file can't claim more confidence than its
     // signal supports.
-    final n = ka.vocabHits < kb.vocabHits ? ka.vocabHits : kb.vocabHits;
+    final hitsA = table.vocabHits[ra];
+    final hitsB = table.vocabHits[rb];
+    final n = hitsA < hitsB ? hitsA : hitsB;
     return AxisObs(p, n);
   }
+}
+
+/// Cosine between two rows of an [EngramFileKTable], reading directly
+/// from the flat columns. Treats ℂ^P as ℝ^(2P) — same metric as
+/// [EngramHunkEncoder.cosine] but with no object dereference.
+double _cosineRows(EngramFileKTable t, int rowA, int rowB) {
+  final p = t.pairs;
+  final aBase = rowA * p;
+  final bBase = rowB * p;
+  final re = t.kRe;
+  final im = t.kIm;
+  double dot = 0.0;
+  double aMagSq = 0.0;
+  double bMagSq = 0.0;
+  for (var i = 0; i < p; i++) {
+    final ar = re[aBase + i];
+    final ai = im[aBase + i];
+    final br = re[bBase + i];
+    final bi = im[bBase + i];
+    dot += ar * br + ai * bi;
+    aMagSq += ar * ar + ai * ai;
+    bMagSq += br * br + bi * bi;
+  }
+  if (aMagSq <= 0 || bMagSq <= 0) return 0.0;
+  final cos = dot / math.sqrt(aMagSq * bMagSq);
+  if (!cos.isFinite) return 0.0;
+  if (cos <= 0) return 0.0;
+  if (cos >= 1) return 1.0;
+  return cos;
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -583,9 +621,10 @@ class LogosGit {
   ///     appear in diffusion output even though they aren't graph nodes.
   final Map<String, Map<String, double>> symbolEdges;
 
-  /// Per-file K-vector signatures from Alexandria. Empty when the
-  /// engine was built without engram assets (the fallback path that
-  /// keeps the engine working in cold-asset / test scenarios).
+  /// Per-file K-vector signatures from Alexandria, as a dense column
+  /// store. Empty (`isEmpty == true`) when the engine was built
+  /// without engram assets — the fallback path that keeps the engine
+  /// working in cold-asset / test scenarios.
   ///
   /// When non-empty:
   ///   • Drives the EN axis in the Born mixer (semantic content
@@ -593,9 +632,9 @@ class LogosGit {
   ///   • Surfaced via [wellOf] for tagging and prompt annotations:
   ///     callers can ask "what semantic basin does file X live in?".
   ///
-  /// Built once per HEAD inside the resolver isolate; ~5–15s on a
-  /// thousand-file repo, then memoised with the engine.
-  final Map<String, HunkKVector> perFileKVectors;
+  /// Built once per HEAD inside the resolver; persisted to disk across
+  /// app launches so repo reopens hit the cache.
+  final EngramFileKTable perFileKVectors;
 
   LogosGit._({
     required this.graph,
@@ -605,13 +644,18 @@ class LogosGit {
     required this.perFileMetrics,
     required this.stats,
     this.symbolEdges = const {},
-    this.perFileKVectors = const {},
-  });
+    EngramFileKTable? perFileKVectors,
+  })  : perFileKVectors = perFileKVectors ?? _emptyTable;
+
+  /// Singleton empty K-table used when no engram assets are loaded.
+  /// Avoids per-engine empty allocations and ensures the field is
+  /// non-nullable on all code paths.
+  static final EngramFileKTable _emptyTable = EngramFileKTable.empty(0);
 
   /// Nearest Alexandria well for [path], or null if the engine wasn't
   /// built with engram K-vectors / the file failed to encode. The
   /// returned name is the well's label (e.g. "computing", "well_43").
-  String? wellOf(String path) => perFileKVectors[path]?.well?.name;
+  String? wellOf(String path) => perFileKVectors.wellOf(path);
 
   /// Return a copy of this engine aware of symbol-overlap edges for the
   /// current change set. Cheap — shares the immutable graph; only the
@@ -650,20 +694,23 @@ class LogosGit {
   static LogosGit buildFromStats(
     LogosGitStats stats, {
     int edgeDensity = _defaultEdgeDensity,
-    Map<String, HunkKVector>? perFileKVectors,
+    EngramFileKTable? perFileKVectors,
   }) {
     // Whether the EN axis is active for this build. Determined once
     // here so the build loop can branch cleanly without per-edge
     // null checks inside the hot path.
-    final useEngram = perFileKVectors != null && perFileKVectors.isNotEmpty;
+    final useEngram = perFileKVectors != null && !perFileKVectors.isEmpty;
     final caps = useEngram ? _defaultCapsWithEngram : _defaultCaps;
     final obsBufSize = caps.length;
 
     // Materialise the node set: union of files seen by any axis.
+    // `coupling.paths` is the CSR's interned path list — using it
+    // directly avoids triggering the lazy nested-map materialisation
+    // just to read the key set.
     final pathSet = <String>{};
     pathSet.addAll(stats.touches.keys);
     pathSet.addAll(stats.volatility.keys);
-    pathSet.addAll(stats.coupling.jaccard.keys);
+    pathSet.addAll(stats.coupling.paths);
 
     // Stable ordering — sort for determinism (helps debugging + caching).
     final nodePaths = pathSet.toList()..sort();
@@ -687,7 +734,7 @@ class LogosGit {
         pathToId: pathToId,
         mixer: BornMixer(caps),
         stats: stats,
-        perFileKVectors: useEngram ? perFileKVectors : const {},
+        perFileKVectors: useEngram ? perFileKVectors : null,
       );
     }
 
@@ -703,10 +750,25 @@ class LogosGit {
       mean: stats.volMean,
       stddev: stats.volStddev,
     );
+
+    // Pre-resolve every node's K-table row id once so the EN axis's
+    // hot loop reads it from a flat Int32List instead of doing a
+    // hashmap lookup per edge candidate. Rows that don't exist in the
+    // table get -1 — silent for those pairs.
+    final enRowIds = useEngram ? Int32List(n) : null;
+    if (useEngram && enRowIds != null) {
+      enRowIds.fillRange(0, n, -1);
+      for (var i = 0; i < n; i++) {
+        final row = perFileKVectors.rowOf(nodePaths[i]);
+        if (row != null) enRowIds[i] = row;
+      }
+    }
     // EN axis — only constructed when we have K-vectors. When silent
     // we keep the variable null and the build loop simply skips the
     // 5th observation (mixer caps stay 4-element).
-    final en = useEngram ? _EnAxis(perFileKVectors) : null;
+    final en = useEngram
+        ? _EnAxis(rowIds: enRowIds!, table: perFileKVectors)
+        : null;
 
     // ── Per-file curved metric (Whisper Harmonic, applied per-file).
     // For each file with sufficient touch history, fit AR(2) on the
@@ -778,17 +840,49 @@ class LogosGit {
     // cross-directory, cross-history feature clusters that CC
     // (co-change) and SP (directory) structurally can't see.
     //
+    // Indexed by the brain's ORIGINAL well index (an int from the
+    // table's wellIdx column), so the inner-loop lookup is an
+    // Int32List read instead of a string hash.
+    //
     // Empty when `useEngram=false`; the downstream candidate loop
     // just skips the well-siblings contribution in that case.
-    final wellIndex = <String, List<int>>{};
+    final List<List<int>>? wellIdToNodes;
+    final Int32List? nodeWellIds;
     if (useEngram) {
+      // First pass: read each node's wellIdx (or -1) directly from
+      // the K-table column — pointer-bumping linear access.
+      nodeWellIds = Int32List(n)..fillRange(0, n, -1);
+      var maxWell = -1;
       for (var i = 0; i < n; i++) {
-        final kv = perFileKVectors![nodePaths[i]];
-        final wellName = kv?.well?.name;
-        if (wellName != null) {
-          (wellIndex[wellName] ??= <int>[]).add(i);
-        }
+        final row = enRowIds![i];
+        if (row < 0) continue;
+        final wid = perFileKVectors!.wellIdx[row];
+        if (wid < 0) continue;
+        nodeWellIds[i] = wid;
+        if (wid > maxWell) maxWell = wid;
       }
+      // Second pass: bucket nodes by their well id. List indexed by
+      // original well id ∈ [0, maxWell], so lookup is `wellIdToNodes![wid]`
+      // — no hashmap. Empty bucket lists are null to skip allocation
+      // for unused well ids.
+      if (maxWell >= 0) {
+        wellIdToNodes = List<List<int>>.filled(maxWell + 1, const []);
+        for (var i = 0; i < n; i++) {
+          final wid = nodeWellIds[i];
+          if (wid < 0) continue;
+          var bucket = wellIdToNodes[wid];
+          if (bucket.isEmpty) {
+            bucket = <int>[];
+            wellIdToNodes[wid] = bucket;
+          }
+          bucket.add(i);
+        }
+      } else {
+        wellIdToNodes = null;
+      }
+    } else {
+      wellIdToNodes = null;
+      nodeWellIds = null;
     }
     for (var i = 0; i < n; i++) {
       final p = nodePaths[i];
@@ -823,12 +917,14 @@ class LogosGit {
       // we'd have done if we collected strings first. Set semantics
       // dedupe between the CC neighbours and the directory siblings.
       final candidates = <int>{};
-      final ccRow = stats.coupling.jaccard[a];
-      if (ccRow != null) {
-        for (final neighbour in ccRow.keys) {
-          final id = pathToId[neighbour];
-          if (id != null && id != i) candidates.add(id);
-        }
+      // CSR-native row iteration: walks the `a` row's contiguous
+      // colIdx slice and yields neighbour paths without materialising
+      // a Map. ~10× faster than the old `coupling.jaccard[a]?.keys`
+      // access on warm builds because there's no lazy-map population
+      // and no per-edge map-entry allocation.
+      for (final neighbour in stats.coupling.jaccardKeysOf(a)) {
+        final id = pathToId[neighbour];
+        if (id != null && id != i) candidates.add(id);
       }
       final segA = pathSegments[i];
       if (segA.length > 1) {
@@ -856,19 +952,19 @@ class LogosGit {
       // co-changed with `i` yet, now has a chance to be considered.
       // The Born mixer then decides whether the evidence across F0 /
       // CC / SP / V / EN actually justifies an edge.
-      if (useEngram) {
-        final myKv = perFileKVectors![nodePaths[i]];
-        final myWell = myKv?.well?.name;
-        if (myWell != null) {
-          final wellSiblings = wellIndex[myWell];
-          if (wellSiblings != null) {
-            final cap = edgeDensity < wellSiblings.length
-                ? edgeDensity
-                : wellSiblings.length;
-            for (var k = 0; k < cap; k++) {
-              final id = wellSiblings[k];
-              if (id != i) candidates.add(id);
-            }
+      //
+      // Lookup is now an Int32List + List<List<int>> indexing pair —
+      // no hashmap, no string comparisons.
+      if (wellIdToNodes != null) {
+        final myWid = nodeWellIds![i];
+        if (myWid >= 0 && myWid < wellIdToNodes.length) {
+          final wellSiblings = wellIdToNodes[myWid];
+          final cap = edgeDensity < wellSiblings.length
+              ? edgeDensity
+              : wellSiblings.length;
+          for (var k = 0; k < cap; k++) {
+            final id = wellSiblings[k];
+            if (id != i) candidates.add(id);
           }
         }
       }
@@ -911,7 +1007,7 @@ class LogosGit {
         obsBuf[2] = spObs;
         obsBuf[3] = v.observe(a, b);
         if (en != null) {
-          obsBuf[4] = en.observe(a, b);
+          obsBuf[4] = en.observeIds(i, j);
         }
         var p = mixer.mix(obsBuf);
         p *= math.sqrt(curvA * curvatures[j]);
@@ -1011,7 +1107,7 @@ class LogosGit {
       mixer: mixer,
       perFileMetrics: perFileMetrics,
       stats: stats,
-      perFileKVectors: useEngram ? perFileKVectors : const {},
+      perFileKVectors: useEngram ? perFileKVectors : null,
     );
   }
 

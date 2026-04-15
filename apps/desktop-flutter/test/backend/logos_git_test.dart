@@ -790,7 +790,7 @@ void main() {
         },
         volMean: 5.0,
         volStddev: 0.0,
-        coupling: const FileCouplingMatrix(
+        coupling: FileCouplingMatrix(
           jaccard: {
             'same/dir/x.dart': <String, double>{},
             'same/dir/y.dart': <String, double>{},

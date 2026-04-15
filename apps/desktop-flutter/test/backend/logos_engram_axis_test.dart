@@ -7,10 +7,49 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/engram_brain.dart';
+import 'package:git_desktop/backend/engram_file_ktable.dart';
 import 'package:git_desktop/backend/engram_hunk_encoder.dart';
 import 'package:git_desktop/backend/file_coupling.dart';
 import 'package:git_desktop/backend/logos_git.dart';
 import 'package:git_desktop/backend/logos_git_stats.dart';
+
+EngramFileKTable _kTable(Map<String, HunkKVector> m, {int pairs = 2}) {
+  // Build a small wellNamesByOriginalIndex from observed wells (each
+  // unique well name in the test gets index 0/1/... — order doesn't
+  // matter for the EN axis behaviour, only well-id identity does).
+  final names = <String>[];
+  final byName = <String, int>{};
+  final reIdxed = <String, HunkKVector>{};
+  for (final e in m.entries) {
+    final orig = e.value;
+    final w = orig.well;
+    if (w == null) {
+      reIdxed[e.key] = orig;
+      continue;
+    }
+    final idx = byName.putIfAbsent(w.name, () {
+      names.add(w.name);
+      return names.length - 1;
+    });
+    reIdxed[e.key] = HunkKVector(
+      kRe: orig.kRe,
+      kIm: orig.kIm,
+      meanRms: orig.meanRms,
+      vocabHits: orig.vocabHits,
+      well: EngramWellMatch(
+        name: w.name,
+        index: idx,
+        rawDistance: w.rawDistance,
+        weightedDistance: w.weightedDistance,
+      ),
+    );
+  }
+  return EngramFileKTable.fromMap(
+    pairs: pairs,
+    encodings: reIdxed,
+    wellNamesByOriginalIndex: names,
+  );
+}
 
 LogosGitStats _bareStats(List<String> paths) {
   return LogosGitStats(
@@ -56,7 +95,7 @@ void main() {
       // No perFileKVectors → uses 4-axis mixer, no regression.
       final engine = LogosGit.buildFromStats(stats);
       expect(engine.nodePaths, hasLength(2));
-      expect(engine.perFileKVectors, isEmpty);
+      expect(engine.perFileKVectors.isEmpty, isTrue);
       expect(engine.wellOf('lib/a.dart'), isNull);
     });
 
@@ -67,8 +106,8 @@ void main() {
         'lib/b.dart': _kVec(re: [0.99, 0.05], im: [0.0, 0.0], hits: 8, wellName: 'computing'),
         'lib/c.dart': _kVec(re: [0.0, 1.0], im: [0.0, 0.0], hits: 8, wellName: 'biology'),
       };
-      final engine = LogosGit.buildFromStats(stats, perFileKVectors: kvecs);
-      expect(engine.perFileKVectors, hasLength(3));
+      final engine = LogosGit.buildFromStats(stats, perFileKVectors: _kTable(kvecs));
+      expect(engine.perFileKVectors.n, 3);
       expect(engine.wellOf('lib/a.dart'), 'computing');
       expect(engine.wellOf('lib/b.dart'), 'computing');
       expect(engine.wellOf('lib/c.dart'), 'biology');
@@ -101,7 +140,10 @@ void main() {
           hits: 12,
         ),
       };
-      final engine = LogosGit.buildFromStats(stats, perFileKVectors: aligned);
+      final engine = LogosGit.buildFromStats(
+        stats,
+        perFileKVectors: _kTable(aligned, pairs: 4),
+      );
 
       // Diffuse from auth — login should rank higher than render.
       final scores = engine.diffuse({'svc/auth.dart'});
@@ -131,9 +173,9 @@ void main() {
         'b.dart': _kVec(re: [1.0, 0.0], im: [0.0, 0.0], hits: 8),
       };
       final engine =
-          LogosGit.buildFromStats(stats, perFileKVectors: partial);
+          LogosGit.buildFromStats(stats, perFileKVectors: _kTable(partial));
       // No throw; engine builds and contains the 2 encoded files.
-      expect(engine.perFileKVectors, hasLength(2));
+      expect(engine.perFileKVectors.n, 2);
       expect(engine.wellOf('c.dart'), isNull);
     });
   });

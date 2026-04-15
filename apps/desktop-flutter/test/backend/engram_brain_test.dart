@@ -118,15 +118,16 @@ void main() {
       final brain = EngramBrain.loadBytes(bytes);
       expect(brain.dim, 4);
       expect(brain.pairs, 2);
-      expect(brain.wells, hasLength(1));
-      final w = brain.wells[0];
-      expect(w.name, 'test');
-      expect(w.count, 10);
-      // Centroid = sum_K / count
-      expect(w.centroidRe[0], closeTo(0.5, 1e-12));
-      expect(w.centroidRe[1], closeTo(1.0, 1e-12));
-      expect(w.centroidIm[0], closeTo(0.1, 1e-12));
-      expect(w.centroidIm[1], closeTo(-0.1, 1e-12));
+      expect(brain.wellCount, 1);
+      expect(brain.wellName(0), 'test');
+      expect(brain.wellObservationCount(0), 10);
+      // Centroid = sum_K / count (accessible via zero-copy view).
+      final re = brain.wellCentroidReView(0);
+      final im = brain.wellCentroidImView(0);
+      expect(re[0], closeTo(0.5, 1e-12));
+      expect(re[1], closeTo(1.0, 1e-12));
+      expect(im[0], closeTo(0.1, 1e-12));
+      expect(im[1], closeTo(-0.1, 1e-12));
     });
 
     test('bad magic throws FormatException', () {

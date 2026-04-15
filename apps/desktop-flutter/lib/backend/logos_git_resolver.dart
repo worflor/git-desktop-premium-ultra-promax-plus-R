@@ -26,6 +26,7 @@ import 'engram_bootstrap.dart';
 import 'engram_brain.dart';
 import 'engram_file_index.dart';
 import 'engram_file_index_cache.dart';
+import 'engram_file_ktable.dart';
 import 'engram_hunk_encoder.dart';
 import 'file_coupling.dart';
 import 'git.dart';
@@ -58,32 +59,39 @@ final Map<String, Future<LogosGit?>> _inflight = {};
 /// shape.
 ///
 /// Steps:
-///   1. Peek the brain's `pairs` count (cheap — just the header).
+///   1. Load the brain (cheap, ~5ms — needed for pairs + well names).
 ///   2. Load the disk cache for this repo path.
 ///   3. stat() every node-path and classify as (hit, miss).
 ///   4. Fan out misses across up to [_kMaxEncodeIsolates] isolates.
 ///   5. Merge + persist cache.
-Future<Map<String, HunkKVector>> _buildEngramFileIndexFast({
+///   6. Wrap the merged map into a dense [EngramFileKTable] for the
+///      engine — kills the Map<String, HunkKVector> shape on the
+///      hot path; LogosGit then reads K-vectors as flat-array slices.
+Future<EngramFileKTable?> _buildEngramFileIndexFast({
   required String repoPath,
   required LogosGitStats stats,
   required EngramAssets assets,
 }) async {
-  // Peek pairs by loading just the header locally. The full brain
-  // parse is cheap too (~5ms) so we just load it outright.
-  int pairs;
+  // Load the brain to get pairs + the well name table. The well
+  // names get baked into the EngramFileKTable so downstream callers
+  // (`wellOf(path)`) don't need a brain reference.
+  late EngramBrain brain;
   try {
-    pairs = EngramBrain.loadBytes(assets.brainBytes).pairs;
+    brain = EngramBrain.loadBytes(assets.brainBytes);
   } on Object {
-    return const {};
+    return null;
   }
+  final pairs = brain.pairs;
 
-  // Union of all node paths (same set buildFromStats uses).
+  // Union of all node paths (same set buildFromStats uses). Reads
+  // from the CSR's interned path list directly, no lazy-map
+  // materialisation triggered.
   final repoRelPaths = <String>{
     ...stats.touches.keys,
     ...stats.volatility.keys,
-    ...stats.coupling.jaccard.keys,
+    ...stats.coupling.paths,
   };
-  if (repoRelPaths.isEmpty) return const {};
+  if (repoRelPaths.isEmpty) return null;
 
   // Disk cache keyed by absolute path (what buildEngramFileIndex
   // passes to stat). We also read the cache's entries once and reuse
@@ -167,7 +175,12 @@ Future<Map<String, HunkKVector>> _buildEngramFileIndexFast({
     freshMeta: freshMeta,
   ));
 
-  return merged;
+  if (merged.isEmpty) return null;
+  return EngramFileKTable.fromMap(
+    pairs: pairs,
+    encodings: merged,
+    wellNamesByOriginalIndex: brain.wellNamesByOriginalIndex,
+  );
 }
 
 /// Hard cap on encoding isolates. Beyond 8 the coordination + spawn
@@ -339,7 +352,7 @@ Future<LogosGit?> _resolveImpl(
     // the K-vectors as a pre-computed Map (cheap to cross the isolate
     // boundary — typed lists sendable as bulk bytes).
     final engramAssets = await EngramRuntime.instance.assets();
-    Map<String, HunkKVector> perFileKVectors = const {};
+    EngramFileKTable? perFileKVectors;
     if (engramAssets != null) {
       try {
         perFileKVectors = await _buildEngramFileIndexFast(
@@ -350,7 +363,7 @@ Future<LogosGit?> _resolveImpl(
       } catch (_) {
         // Engram is best-effort — any failure falls through to the
         // legacy 4-axis engine.
-        perFileKVectors = const {};
+        perFileKVectors = null;
       }
     }
 

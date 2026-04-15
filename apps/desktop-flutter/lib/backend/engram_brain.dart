@@ -6,11 +6,35 @@
 // pairing (permutation over dim dims into complex pairs) and every
 // well's sum_K + count so centroids can be computed on demand.
 //
+// ─── Storage geometry ──────────────────────────────────────────────────
+//
+// The brain's hot path is `nearestWell`, called once per file during
+// index builds (typically 10k+ calls per repo switch). It needs:
+//   • Contiguous sweep over all wells' centroid pairs
+//   • Per-well precomputed `log(1 + count)` for mass-weighted distance
+//   • Per-well precomputed `||c||` for the Cauchy-Schwarz gate
+//
+// Every one of those wants a flat typed array indexed by integer, not
+// an object graph with one heap allocation per well. We store
+// accordingly — this file owns the Hilbert-space-native layout.
+//
+// All per-well state lives in flat Float64List/Int32List/List<String>
+// arrays indexed by `sortPos`, the well's position in descending
+// logMass order. `_flatOrder[sortPos] → originalIdx` preserves the
+// stable on-disk identity so `EngramWellMatch.index` survives cache
+// reloads.
+//
+// Callers that want to walk wells externally (tests, diagnostics) use
+// the `wellCount` + `wellName(i)` + `wellObservationCount(i)` +
+// `wellCentroidReView(i)` / `wellCentroidImView(i)` accessors, which
+// take an ORIGINAL index and read through the `_originalToSortPos`
+// inverse permutation.
+//
 // The public surface is intentionally thin:
 //
 //   EngramBrain.loadBytes(bytes) → parsed brain
 //   brain.nearestWell(K_vector) → (well name, raw distance, index)
-//   brain.wellCentroid(index)   → (Float64List re, Float64List im)
+//   brain.wellCount / brain.wellName(i) / brain.wellCentroidReView(i)
 //
 // The brain is stateless after load: no absorption, no dream buffer, no
 // training. It's a semantic lookup table for the hunk encoder.
@@ -29,39 +53,13 @@ const _kEndbMagic = [0x45, 0x4E, 0x44, 0x42];
 const int _kEndbVersion = 1;
 
 @immutable
-class EngramBrainWell {
-  /// Well name as written (e.g. "computing", "well_42").
-  final String name;
-
-  /// Observation count. Used for log1p mass weighting in nearest-well.
-  final int count;
-
-  /// Precomputed log(1 + count). The nearest-well search divides the raw
-  /// RMS distance by this — bigger wells pull harder. Computed once at
-  /// load so the query path is pure arithmetic.
-  final double logMass;
-
-  /// Centroid K-vector in ℂ^P, stored SoA for fast cosine/RMS.
-  /// Already divided by count (so these are means, not sums). Length P.
-  final Float64List centroidRe;
-  final Float64List centroidIm;
-
-  const EngramBrainWell({
-    required this.name,
-    required this.count,
-    required this.logMass,
-    required this.centroidRe,
-    required this.centroidIm,
-  });
-}
-
-@immutable
 class EngramWellMatch {
   /// Name of the nearest well.
   final String name;
 
-  /// Index into [EngramBrain.wells]. Useful when callers want to walk
-  /// back to the well object without a second map lookup.
+  /// Index into the brain's wells list in ORIGINAL (on-disk) order.
+  /// Stable across cache reloads; does not shift when the internal
+  /// nearest-well search reorders by mass.
   final int index;
 
   /// Raw RMS distance (not mass-weighted) — matches Engram's Python
@@ -82,98 +80,34 @@ class EngramWellMatch {
 
 /// Snapshot of Alexandria's learned structure: reference pairing + every
 /// well's centroid + count. Immutable. Safe to share across isolates.
+///
+/// All per-well data is stored in flat typed arrays (no per-well object).
+/// Construct via [EngramBrain.loadBytes]; access via the public
+/// `wellCount` / `wellName(i)` / `wellCentroidReView(i)` accessors.
 class EngramBrain {
-  EngramBrain._raw({
+  EngramBrain._({
     required this.dim,
     required this.pairs,
     required this.pairing,
-    required this.wells,
+    required this.wellCount,
     required Int32List flatOrder,
+    required Int32List originalToSortPos,
     required Float64List flatCentroidRe,
     required Float64List flatCentroidIm,
+    required Int32List wellCounts,
     required Float64List invLogMass,
     required Float64List wellNorm,
-    required List<String> wellNames,
+    required List<String> wellNamesSorted,
+    required List<String> wellNamesOriginal,
   })  : _flatOrder = flatOrder,
+        _originalToSortPos = originalToSortPos,
         _flatCentroidRe = flatCentroidRe,
         _flatCentroidIm = flatCentroidIm,
+        _wellCountsSorted = wellCounts,
         _invLogMass = invLogMass,
         _wellNorm = wellNorm,
-        _wellNames = wellNames;
-
-  /// Build the full set of nearest-well lookup tables once and hand
-  /// them to the private constructor. Does the descending-logMass
-  /// sort only once; every derived table threads through the same
-  /// `flatOrder` permutation so they stay aligned.
-  factory EngramBrain._build({
-    required int dim,
-    required int pairs,
-    required Int32List pairing,
-    required List<EngramBrainWell> wells,
-  }) {
-    final order = _buildFlatOrder(wells);
-    final flatRe = _flatten(wells, pairs, order, realPart: true);
-    final flatIm = _flatten(wells, pairs, order, realPart: false);
-    return EngramBrain._raw(
-      dim: dim,
-      pairs: pairs,
-      pairing: pairing,
-      wells: wells,
-      flatOrder: order,
-      flatCentroidRe: flatRe,
-      flatCentroidIm: flatIm,
-      invLogMass: _invLogMasses(wells, order),
-      wellNorm: _wellNorms(flatRe, flatIm, wells.length, pairs),
-      wellNames: List<String>.unmodifiable([
-        for (var i = 0; i < order.length; i++) wells[order[i]].name,
-      ]),
-    );
-  }
-
-  /// All well centroids' real parts in a single contiguous Float64List,
-  /// row-major as `[well0.re, well1.re, ..., wellN.re]` each of length
-  /// [pairs]. **Stored in DESCENDING logMass order** — the heaviest
-  /// wells (most observation count, most likely to contain an
-  /// arbitrary query's nearest match) come first. Combined with the
-  /// triangle-inequality break in [nearestWell], the hot loop
-  /// establishes a tight `bestWeighted` threshold within the first
-  /// few wells and then prunes the remaining (mostly-tiny) wells on
-  /// the first 16-pair partial-distance check.
-  ///
-  /// A wrapped-well's centroid lives at offset `sortPos * pairs`.
-  /// [_flatOrder] maps `sortPos → original index` so we can hand
-  /// callers back the original-index (stable across reloads) while
-  /// visiting wells in mass-descending order.
-  final Float64List _flatCentroidRe;
-  final Float64List _flatCentroidIm;
-
-  /// Permutation: `_flatOrder[sortPos]` is the well's index in the
-  /// original [wells] list. Used at the end of [nearestWell] to
-  /// translate the winner's sorted position back to its stable
-  /// original index so serialised `EngramWellMatch.index` values
-  /// survive cache reloads.
-  final Int32List _flatOrder;
-
-  /// Precomputed `1.0 / log1p(count)` per well, aligned with
-  /// [_flatCentroidRe] (sorted order). The hot loop multiplies
-  /// instead of dividing — saves ~5 cycles per well per query.
-  /// Wells with zero count get a sentinel zero that rejects them
-  /// naturally via the min tracker.
-  final Float64List _invLogMass;
-
-  /// Precomputed `||c_w||` (euclidean norm, not squared) for every
-  /// well centroid. Enables a Cauchy-Schwarz lower bound on the
-  /// distance from any query: `||c-k||² ≥ (||c|| − ||k||)²`. Wells
-  /// whose norm differs from the query's norm by more than the
-  /// current best distance threshold get eliminated with O(1) math —
-  /// no pair loop, no cache touches beyond one f64 load.
-  final Float64List _wellNorm;
-
-  /// Unmodifiable list of well names aligned with [_flatCentroidRe]
-  /// indexing (sorted order). Kept separately so the hot path doesn't
-  /// read through the wells List<Object> (one dereference per well
-  /// → cache stall).
-  final List<String> _wellNames;
+        _wellNamesSorted = wellNamesSorted,
+        _wellNamesOriginal = wellNamesOriginal;
 
   /// Embedding dimension (e.g. 300 for GloVe).
   final int dim;
@@ -188,8 +122,88 @@ class EngramBrain {
   /// load is trivial.
   final Int32List pairing;
 
-  /// All wells in declaration order (sorted alphabetically by the encoder).
-  final List<EngramBrainWell> wells;
+  /// Total number of wells the brain holds.
+  final int wellCount;
+
+  // ── Hot-path (nearest-well) flat arrays in DESCENDING logMass order ──
+
+  /// Permutation: `_flatOrder[sortPos]` is the well's ORIGINAL index.
+  /// Used at the end of [nearestWell] to translate the winner's sorted
+  /// position back to its stable original index so serialised
+  /// EngramWellMatch values survive across cache reloads.
+  final Int32List _flatOrder;
+
+  /// Inverse permutation: `_originalToSortPos[originalIdx]` is the
+  /// well's position in the sorted flat arrays. Used by the public
+  /// accessors (wellName, wellCentroidReView, etc.) when callers
+  /// address wells by their on-disk (original) index.
+  final Int32List _originalToSortPos;
+
+  /// All well centroids' real parts in a single contiguous Float64List,
+  /// row-major as `[sortPos0.re, sortPos1.re, ..., sortPosN.re]` each
+  /// of length [pairs]. **Stored in DESCENDING logMass order** — the
+  /// heaviest wells come first. Combined with the triangle-inequality
+  /// break in [nearestWell], the hot loop establishes a tight
+  /// `bestWeighted` threshold within the first few wells and then
+  /// prunes the remaining wells on the first 16-pair partial-distance
+  /// check.
+  final Float64List _flatCentroidRe;
+  final Float64List _flatCentroidIm;
+
+  /// Per-well observation count, in sorted order.
+  final Int32List _wellCountsSorted;
+
+  /// Precomputed `1.0 / log1p(count)` per well, aligned with
+  /// [_flatCentroidRe] (sorted order). The hot loop multiplies
+  /// instead of dividing — saves ~5 cycles per well per query.
+  /// Wells with zero count get a sentinel zero; [nearestWell] skips
+  /// any well with `invLogMass == 0.0` before evaluating distances.
+  final Float64List _invLogMass;
+
+  /// Precomputed `||c_w||` (euclidean norm, not squared) for every
+  /// well centroid. Enables a Cauchy-Schwarz lower bound on the
+  /// distance from any query.
+  final Float64List _wellNorm;
+
+  /// Sorted-order well names, aligned with the flat centroid arrays.
+  /// Nearest-well returns from here via its sortPos.
+  final List<String> _wellNamesSorted;
+
+  /// Original-order well names. Public accessors like [wellName] read
+  /// from here so callers addressing wells by on-disk index get stable
+  /// identities.
+  final List<String> _wellNamesOriginal;
+
+  // ── Public accessors for external callers (tests, diagnostics) ──
+
+  /// Well name at its ORIGINAL (on-disk) index.
+  String wellName(int originalIdx) => _wellNamesOriginal[originalIdx];
+
+  /// Observation count at the well's ORIGINAL index.
+  int wellObservationCount(int originalIdx) =>
+      _wellCountsSorted[_originalToSortPos[originalIdx]];
+
+  /// Zero-copy view into the sorted centroid array for the well at
+  /// [originalIdx]. Read-only — mutating the returned view would
+  /// corrupt every future nearest-well query. Length == [pairs].
+  Float64List wellCentroidReView(int originalIdx) {
+    final sortPos = _originalToSortPos[originalIdx];
+    final base = sortPos * pairs;
+    return Float64List.sublistView(_flatCentroidRe, base, base + pairs);
+  }
+
+  /// Zero-copy view into the sorted centroid array (imaginary part).
+  Float64List wellCentroidImView(int originalIdx) {
+    final sortPos = _originalToSortPos[originalIdx];
+    final base = sortPos * pairs;
+    return Float64List.sublistView(_flatCentroidIm, base, base + pairs);
+  }
+
+  /// All well names in original order. Exposed as a fixed-length list
+  /// view so downstream column-stores (like `EngramFileKTable`) can
+  /// retain a reference without depending on the brain itself.
+  List<String> get wellNamesByOriginalIndex =>
+      List<String>.unmodifiable(_wellNamesOriginal);
 
   /// Deserialize a brain from its compact ENDB binary form. Throws
   /// [FormatException] on magic / version / bounds mismatches — callers
@@ -236,8 +250,21 @@ class EngramBrain {
       }
     }
 
-    // Wells
-    final wells = <EngramBrainWell>[];
+    // Parse wells directly into per-original-index arrays to avoid the
+    // intermediate object list that used to live here. We still need
+    // to sort by descending logMass for the hot path, so we track
+    // per-well metadata in original order here and permute into
+    // flat-sorted storage below.
+    final namesOriginal = List<String>.filled(nWells, '', growable: false);
+    final countsOriginal = Int32List(nWells);
+    final logMassOriginal = Float64List(nWells);
+    // Per-well centroids in original-order flat storage. We could
+    // build the sorted version directly in a single pass if we
+    // pre-computed the sort order, but we don't know logMass until
+    // we've read every well's count — so two passes here.
+    final centroidReOriginal = Float64List(nWells * pairs);
+    final centroidImOriginal = Float64List(nWells * pairs);
+
     for (var w = 0; w < nWells; w++) {
       if (off + 2 > bytes.length) {
         throw const FormatException('engram: truncated at well header');
@@ -250,31 +277,89 @@ class EngramBrain {
       off += nameLen;
       final count = bd.getUint32(off, Endian.little); off += 4;
 
-      // sum_K: complex128[pairs]  (re f64 + im f64 interleaved)
-      final centroidRe = Float64List(pairs);
-      final centroidIm = Float64List(pairs);
-      final invCount = count > 0 ? 1.0 / count : 1.0;
-      for (var p = 0; p < pairs; p++) {
-        final re = bd.getFloat64(off, Endian.little); off += 8;
-        final im = bd.getFloat64(off, Endian.little); off += 8;
-        centroidRe[p] = re * invCount;
-        centroidIm[p] = im * invCount;
-      }
+      namesOriginal[w] = name;
+      countsOriginal[w] = count;
+      logMassOriginal[w] = math.log(1.0 + count);
 
-      wells.add(EngramBrainWell(
-        name: name,
-        count: count,
-        logMass: math.log(1.0 + count),
-        centroidRe: centroidRe,
-        centroidIm: centroidIm,
-      ));
+      // sum_K: complex128[pairs]  (re f64 + im f64 interleaved).
+      // Divide by count on read to store centroids, not sums.
+      final invCount = count > 0 ? 1.0 / count : 1.0;
+      final base = w * pairs;
+      for (var p = 0; p < pairs; p++) {
+        centroidReOriginal[base + p] =
+            bd.getFloat64(off, Endian.little) * invCount;
+        off += 8;
+        centroidImOriginal[base + p] =
+            bd.getFloat64(off, Endian.little) * invCount;
+        off += 8;
+      }
     }
 
-    return EngramBrain._build(
+    // Derive sort order: descending by logMass, tiebreak by original
+    // index so ordering is deterministic across builds.
+    final order = Int32List(nWells);
+    for (var i = 0; i < nWells; i++) {
+      order[i] = i;
+    }
+    final orderList = order.toList()
+      ..sort((a, b) {
+        final cmp = logMassOriginal[b].compareTo(logMassOriginal[a]);
+        if (cmp != 0) return cmp;
+        return a.compareTo(b);
+      });
+    for (var i = 0; i < nWells; i++) {
+      order[i] = orderList[i];
+    }
+
+    final originalToSortPos = Int32List(nWells);
+    for (var sortPos = 0; sortPos < nWells; sortPos++) {
+      originalToSortPos[order[sortPos]] = sortPos;
+    }
+
+    // Permute into sorted-order flat arrays.
+    final flatCentroidRe = Float64List(nWells * pairs);
+    final flatCentroidIm = Float64List(nWells * pairs);
+    final wellCountsSorted = Int32List(nWells);
+    final invLogMass = Float64List(nWells);
+    final wellNorm = Float64List(nWells);
+    final wellNamesSorted = List<String>.filled(nWells, '', growable: false);
+    for (var sortPos = 0; sortPos < nWells; sortPos++) {
+      final orig = order[sortPos];
+      final srcBase = orig * pairs;
+      final dstBase = sortPos * pairs;
+      flatCentroidRe.setRange(dstBase, dstBase + pairs, centroidReOriginal,
+          srcBase);
+      flatCentroidIm.setRange(dstBase, dstBase + pairs, centroidImOriginal,
+          srcBase);
+      wellCountsSorted[sortPos] = countsOriginal[orig];
+      final lm = logMassOriginal[orig];
+      invLogMass[sortPos] = lm > 0 ? 1.0 / lm : 0.0;
+      wellNamesSorted[sortPos] = namesOriginal[orig];
+
+      // Norm: sqrt(Σ re² + im²). One pass, no intermediate.
+      double accSq = 0.0;
+      for (var p = 0; p < pairs; p++) {
+        final re = flatCentroidRe[dstBase + p];
+        final im = flatCentroidIm[dstBase + p];
+        accSq += re * re + im * im;
+      }
+      wellNorm[sortPos] = math.sqrt(accSq);
+    }
+
+    return EngramBrain._(
       dim: dim,
       pairs: pairs,
       pairing: pairing,
-      wells: wells,
+      wellCount: nWells,
+      flatOrder: order,
+      originalToSortPos: originalToSortPos,
+      flatCentroidRe: flatCentroidRe,
+      flatCentroidIm: flatCentroidIm,
+      wellCounts: wellCountsSorted,
+      invLogMass: invLogMass,
+      wellNorm: wellNorm,
+      wellNamesSorted: List<String>.unmodifiable(wellNamesSorted),
+      wellNamesOriginal: List<String>.unmodifiable(namesOriginal),
     );
   }
 
@@ -289,46 +374,34 @@ class EngramBrain {
   /// the engram file index so tens of thousands of times per repo
   /// build):
   ///
-  ///   • Sweeps every well's centroid via the flattened
-  ///     [_flatCentroidRe] / [_flatCentroidIm] arrays — one linear
-  ///     scan, no per-well dereference, cache-friendly.
-  ///   • Runs a squared-distance accumulator (no sqrt in the hot
-  ///     loop) with the argmin tracked in squared weighted units,
-  ///     then takes the single sqrt on the winner.
-  ///   • Early-exits the inner pair loop as soon as the partial
-  ///     accumulator already exceeds the best seen — the "triangle
-  ///     inequality break" that collapses the average work to
-  ///     roughly O(√pairs) once a plausible winner is found.
+  ///   • One-time query norm compute for the Cauchy-Schwarz gate
+  ///   • Sweep every well's centroid via flat arrays
+  ///   • Three-layer pruning: sort-by-mass + CS gate (O(1) per well)
+  ///     + triangle-inequality break inside the pair loop
+  ///   • Squared-distance accumulator (no sqrt in the hot loop);
+  ///     one sqrt at the end on the winner
   ///
   /// `kRe` / `kIm` must have length == [pairs].
   EngramWellMatch? nearestWell(Float64List kRe, Float64List kIm) {
-    final n = wells.length;
+    final n = wellCount;
     if (n == 0) return null;
     final p = pairs;
     if (kRe.length != p || kIm.length != p) return null;
 
-    // Track the argmin in squared-weighted-distance space so the hot
-    // loop never calls sqrt. Final conversion happens once at the end.
-    //   weighted_squared = (acc / pairs) / logMass²  (we multiply by invLogMass²)
-    // Holds the best seen so the inner triangle-break can compare
-    // against this threshold.
     final cRe = _flatCentroidRe;
     final cIm = _flatCentroidIm;
     final invLM = _invLogMass;
     final wNorm = _wellNorm;
     final invPairs = 1.0 / p;
 
-    // One-time query norm. Cauchy-Schwarz lower-bounds the distance
-    // to any well by `||c_w|| − ||k||`, so this is the only piece
-    // that depends on the observation — compute once, reuse for
-    // every well's gate test.
+    // One-time query norm for the CS gate.
     double kNormSq = 0.0;
     for (var j = 0; j < p; j++) {
       kNormSq += kRe[j] * kRe[j] + kIm[j] * kIm[j];
     }
     final kNorm = math.sqrt(kNormSq);
 
-    var bestIdx = -1;
+    var bestSortPos = -1;
     var bestWeightedSq = double.infinity;
     double bestRawSq = double.infinity;
 
@@ -347,11 +420,6 @@ class EngramBrain {
       // If that lower bound already exceeds the best weighted-square
       // we've seen, this well can't win — skip the pair loop
       // entirely. O(1) per well, gated by two floats plus a compare.
-      //
-      // First iteration skips the gate (bestWeightedSq = ∞ passes
-      // everything). By the time we reach well N, the mass-sorted
-      // heavy wells have already established a tight threshold that
-      // CS applies to kill the remaining light wells.
       if (bestWeightedSq.isFinite) {
         final normGap = wNorm[w] - kNorm;
         final lowerBoundWSq =
@@ -360,17 +428,11 @@ class EngramBrain {
       }
 
       final base = w * p;
-      // Corresponding threshold on the raw accumulator that would
-      // already lose to the best seen. Once `acc * invPairs *
-      // invLogMass² > bestWeightedSq`, this well cannot win — break.
+      // Triangle-inequality break threshold on the raw accumulator.
       final accBreak = bestWeightedSq.isFinite
           ? bestWeightedSq / (invPairs * invLogMass * invLogMass)
           : double.infinity;
       double acc = 0.0;
-      // Triangle-break pair loop. We check every 16 pairs to keep the
-      // inner arithmetic at unit stride — more granular checks would
-      // churn branch prediction; less granular would waste work after
-      // the accumulator passes the threshold.
       for (var j = 0; j < p; j++) {
         final dre = cRe[base + j] - kRe[j];
         final dim_ = cIm[base + j] - kIm[j];
@@ -385,104 +447,18 @@ class EngramBrain {
       if (weightedSq < bestWeightedSq) {
         bestWeightedSq = weightedSq;
         bestRawSq = acc * invPairs;
-        bestIdx = w;
+        bestSortPos = w;
       }
     }
 
-    if (bestIdx < 0) return null;
-    // Translate the sorted-position winner back to its stable index
-    // in the original `wells` list so serialised EngramWellMatch
-    // values survive across cache reloads (a re-sort with the same
-    // data gives the same ordering, but being explicit here keeps
-    // the contract simple for callers).
-    final originalIdx = _flatOrder[bestIdx];
+    if (bestSortPos < 0) return null;
+    final originalIdx = _flatOrder[bestSortPos];
     return EngramWellMatch(
-      name: _wellNames[bestIdx],
+      name: _wellNamesSorted[bestSortPos],
       index: originalIdx,
       rawDistance: math.sqrt(bestRawSq),
       weightedDistance: math.sqrt(bestWeightedSq),
     );
-  }
-
-  // ── flattening helpers, called once at construction ────────────
-
-  /// Derive a `sortPos → originalIndex` permutation that orders wells
-  /// by DESCENDING `logMass` (equivalently, descending count). Visiting
-  /// the heaviest wells first in [nearestWell] tightens `bestWeighted`
-  /// fast, maximising the triangle-inequality break's pruning on the
-  /// remaining wells.
-  static Int32List _buildFlatOrder(List<EngramBrainWell> wells) {
-    final n = wells.length;
-    final order = Int32List(n);
-    for (var i = 0; i < n; i++) {
-      order[i] = i;
-    }
-    // Stable-ish sort: descending by logMass, tiebreak by original
-    // index so ordering is deterministic across builds.
-    final orderList = order.toList()
-      ..sort((a, b) {
-        final cmp = wells[b].logMass.compareTo(wells[a].logMass);
-        if (cmp != 0) return cmp;
-        return a.compareTo(b);
-      });
-    for (var i = 0; i < n; i++) {
-      order[i] = orderList[i];
-    }
-    return order;
-  }
-
-  /// Pack every well's centroid Real OR Imaginary component into one
-  /// contiguous row-major Float64List of length `wells.length * pairs`,
-  /// visited in the `order` permutation (descending-logMass from
-  /// [_buildFlatOrder]). Uses [Float64List.setRange] which the Dart
-  /// VM lowers to a typed block copy — no per-element scalar loop.
-  static Float64List _flatten(
-      List<EngramBrainWell> wells, int pairs, Int32List order,
-      {required bool realPart}) {
-    final out = Float64List(wells.length * pairs);
-    for (var sortPos = 0; sortPos < wells.length; sortPos++) {
-      final w = order[sortPos];
-      final src = realPart ? wells[w].centroidRe : wells[w].centroidIm;
-      out.setRange(sortPos * pairs, (sortPos + 1) * pairs, src);
-    }
-    return out;
-  }
-
-  /// Precompute `1.0 / log1p(count)` per well, in sorted order so the
-  /// value at index `sortPos` aligns with the centroid at the same
-  /// slot. Zero-count wells get a sentinel zero; [nearestWell] skips
-  /// any well with `invLogMass == 0.0` before evaluating distances.
-  static Float64List _invLogMasses(
-      List<EngramBrainWell> wells, Int32List order) {
-    final out = Float64List(wells.length);
-    for (var sortPos = 0; sortPos < wells.length; sortPos++) {
-      final lm = wells[order[sortPos]].logMass;
-      out[sortPos] = lm > 0 ? 1.0 / lm : 0.0;
-    }
-    return out;
-  }
-
-  /// Compute `||c_w||` (non-squared euclidean norm) per well, over
-  /// the already-flattened real + imaginary arrays. One pass over the
-  /// centroid data — cheap since we touched those bytes anyway to
-  /// build the flat centroids. The Cauchy-Schwarz gate in
-  /// [nearestWell] uses these to reject wells in O(1) when their
-  /// norm is so far from the query's that the lower-bound distance
-  /// can't beat the current argmin.
-  static Float64List _wellNorms(
-      Float64List flatRe, Float64List flatIm, int nWells, int pairs) {
-    final out = Float64List(nWells);
-    for (var w = 0; w < nWells; w++) {
-      final base = w * pairs;
-      double accSq = 0.0;
-      for (var j = 0; j < pairs; j++) {
-        final re = flatRe[base + j];
-        final im = flatIm[base + j];
-        accSq += re * re + im * im;
-      }
-      out[w] = math.sqrt(accSq);
-    }
-    return out;
   }
 
   /// Profile: raw distance to every well, keyed by name. Cheap but
@@ -491,17 +467,17 @@ class EngramBrain {
   Map<String, double> wellProfile(Float64List kRe, Float64List kIm) {
     if (kRe.length != pairs || kIm.length != pairs) return const {};
     final result = <String, double>{};
-    for (final well in wells) {
+    final n = wellCount;
+    for (var w = 0; w < n; w++) {
+      final base = w * pairs;
       double acc = 0.0;
-      final cRe = well.centroidRe;
-      final cIm = well.centroidIm;
       for (var p = 0; p < pairs; p++) {
-        final dre = cRe[p] - kRe[p];
-        final dim_ = cIm[p] - kIm[p];
+        final dre = _flatCentroidRe[base + p] - kRe[p];
+        final dim_ = _flatCentroidIm[base + p] - kIm[p];
         acc += dre * dre + dim_ * dim_;
       }
       final d = math.sqrt(acc / pairs);
-      if (d.isFinite) result[well.name] = d;
+      if (d.isFinite) result[_wellNamesSorted[w]] = d;
     }
     return result;
   }

@@ -21,49 +21,234 @@ const String logCommitSeparator = '__C__';
 /// to read it out and cluster the current change set by it.
 ///
 /// Built once per repo (keyed by HEAD hash) and reused across every render.
-/// The [symbol] axis is layered on top per change-set — same shape as
-/// [jaccard] but computed from identifier overlap in the current working
-/// tree rather than from git history. See [computeSymbolCoupling].
+/// The symbol axis is layered on top per change-set — same shape as the
+/// jaccard storage but computed from identifier overlap in the current
+/// working tree rather than from git history. See [computeSymbolCoupling].
+///
+/// ─── Storage geometry ──────────────────────────────────────────────────
+///
+/// The matrix is a sparse symmetric `nFiles × nFiles` floating-point
+/// table. Two of them — historical jaccard and current symbol overlap.
+/// The hot accessors are `score(a, b)` (called per edge in graph
+/// builds), `coherenceFor(paths)` (called per commit during tag
+/// profile builds), and row iteration (called per node in graph
+/// candidate discovery).
+///
+/// **Internal storage is CSR (compressed sparse row).** Path strings
+/// are interned to integer ids once at construction. Each row's
+/// non-zero entries live in a contiguous `(colIdx, value)` slice
+/// sorted by column id. Lookups are binary search over a small slice
+/// — typically O(log 50). Memory is roughly 12 bytes per non-zero
+/// (int32 colIdx + f64 value), versus ~64+ bytes per nested-map
+/// entry. For a 1000-file repo with avg degree 50, the matrix
+/// shrinks from ~6MB of map overhead to ~600KB of typed-array data.
+///
+/// **The public API is preserved.** `jaccard` and `symbol` are
+/// available as Map getters that lazily materialise from the CSR
+/// — for callers that haven't migrated to the new accessors, they
+/// see the old shape unchanged. New callers should prefer
+/// [containsPath], [jaccardKeysOf], and the existing
+/// [score]/[coherenceFor] methods, all of which talk to the CSR
+/// directly without materialising any maps.
 class FileCouplingMatrix {
-  /// Jaccard coefficient keyed by (path → other path → score in 0..1).
-  /// Symmetric: jaccard[A][B] == jaccard[B][A].
-  final Map<String, Map<String, double>> jaccard;
+  // ── Path interning ────────────────────────────────────────────────
+  /// Path at row id. Sorted alphabetically for determinism + so the
+  /// CSR colIdx slices are stably ordered for binary search.
+  final List<String> paths;
+  final Map<String, int> _pathToId;
 
-  /// Symbol-overlap scores for the current change set. Upper-triangle,
-  /// same convention as [jaccard]. Empty until enriched via [withSymbol].
-  final Map<String, Map<String, double>> symbol;
+  // ── Jaccard CSR (symmetric storage) ───────────────────────────────
+  /// `_jRowPtr[i+1] - _jRowPtr[i]` is the non-zero count for row i.
+  final Int32List _jRowPtr;
+
+  /// Column ids for each row's non-zero entries, sorted ascending so
+  /// the per-row slice supports binary search.
+  final Int32List _jColIdx;
+
+  /// Jaccard coefficient values, parallel to [_jColIdx].
+  final Float64List _jValues;
+
+  // ── Symbol CSR (symmetric storage) ────────────────────────────────
+  final Int32List _sRowPtr;
+  final Int32List _sColIdx;
+  final Float64List _sValues;
 
   final String headHash;
   final int commitsAnalyzed;
 
-  const FileCouplingMatrix({
-    required this.jaccard,
+  // ── Lazily-materialised legacy nested-map views ──────────────────
+  Map<String, Map<String, double>>? _jaccardMapView;
+  Map<String, Map<String, double>>? _symbolMapView;
+
+  FileCouplingMatrix._({
+    required this.paths,
+    required Map<String, int> pathToId,
     required this.headHash,
     required this.commitsAnalyzed,
-    this.symbol = const {},
-  });
+    required Int32List jRowPtr,
+    required Int32List jColIdx,
+    required Float64List jValues,
+    required Int32List sRowPtr,
+    required Int32List sColIdx,
+    required Float64List sValues,
+  })  : _pathToId = pathToId,
+        _jRowPtr = jRowPtr,
+        _jColIdx = jColIdx,
+        _jValues = jValues,
+        _sRowPtr = sRowPtr,
+        _sColIdx = sColIdx,
+        _sValues = sValues;
+
+  /// Public constructor — accepts the legacy nested-map shape and
+  /// converts to CSR internally. Builders that already produce the
+  /// nested map (`computeFileCoupling`) don't need to change. Tests
+  /// that hand-built matrices via map literals continue to work after
+  /// dropping the `const` keyword (CSR storage can't be const).
+  factory FileCouplingMatrix({
+    required Map<String, Map<String, double>> jaccard,
+    required String headHash,
+    required int commitsAnalyzed,
+    Map<String, Map<String, double>> symbol = const {},
+  }) {
+    // Union of every path that appears in either jaccard or symbol.
+    // Sorted for determinism so colIdx ordering is reproducible.
+    final pathSet = <String>{};
+    for (final entry in jaccard.entries) {
+      pathSet.add(entry.key);
+      pathSet.addAll(entry.value.keys);
+    }
+    for (final entry in symbol.entries) {
+      pathSet.add(entry.key);
+      pathSet.addAll(entry.value.keys);
+    }
+    final paths = pathSet.toList()..sort();
+    final pathToId = <String, int>{};
+    for (var i = 0; i < paths.length; i++) {
+      pathToId[paths[i]] = i;
+    }
+
+    final j = _buildSymmetricCsr(jaccard, pathToId, paths.length);
+    final s = _buildSymmetricCsr(symbol, pathToId, paths.length);
+
+    return FileCouplingMatrix._(
+      paths: List<String>.unmodifiable(paths),
+      pathToId: pathToId,
+      headHash: headHash,
+      commitsAnalyzed: commitsAnalyzed,
+      jRowPtr: j.rowPtr,
+      jColIdx: j.colIdx,
+      jValues: j.values,
+      sRowPtr: s.rowPtr,
+      sColIdx: s.colIdx,
+      sValues: s.values,
+    );
+  }
 
   /// Coupling score for a pair — maximum of historical co-change and
   /// structural symbol overlap. The two axes are independent evidence;
   /// neither suppresses the other. New files have zero history, so symbol
   /// carries them. Old files use whichever axis is stronger.
+  ///
+  /// Implementation is two binary searches over the CSR row slices:
+  /// O(log k) where k is the source row's degree. For typical k≈50 in
+  /// real repos this is ~6 comparisons per lookup — comfortably faster
+  /// than two nested-map hashmap accesses.
+  ///
+  /// CSR storage is upper-triangle (only `(min(i,j), max(i,j))` edges
+  /// are materialised). The lookup canonicalises the pair before the
+  /// binary search.
   double score(String a, String b) {
     if (a == b) return 1.0;
-    final hist = jaccard[a]?[b] ?? jaccard[b]?[a] ?? 0.0;
-    final sym = symbol[a]?[b] ?? symbol[b]?[a] ?? 0.0;
-    return math.max(hist, sym);
+    final i = _pathToId[a];
+    final j = _pathToId[b];
+    if (i == null || j == null) return 0.0;
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    final hist = _csrLookup(_jRowPtr, _jColIdx, _jValues, lo, hi);
+    final sym = _csrLookup(_sRowPtr, _sColIdx, _sValues, lo, hi);
+    return hist > sym ? hist : sym;
   }
 
   /// Return a copy with symbol overlap data merged in. Called once per
   /// change-set update; the rest of the pipeline consumes the merged matrix
   /// transparently through [score].
-  FileCouplingMatrix withSymbol(Map<String, Map<String, double>> sym) =>
-      FileCouplingMatrix(
-        jaccard: jaccard,
-        symbol: sym,
+  ///
+  /// The new matrix shares the jaccard CSR (immutable) but builds a
+  /// fresh symbol CSR over the union of the existing path set and any
+  /// new paths in [sym]. New paths get appended to the path id space.
+  FileCouplingMatrix withSymbol(Map<String, Map<String, double>> sym) {
+    // Fast path: no new paths in symbol → reuse the existing path id
+    // space directly without rebuilding the union.
+    var hasNewPaths = false;
+    for (final entry in sym.entries) {
+      if (!_pathToId.containsKey(entry.key)) {
+        hasNewPaths = true;
+        break;
+      }
+      for (final neighbour in entry.value.keys) {
+        if (!_pathToId.containsKey(neighbour)) {
+          hasNewPaths = true;
+          break;
+        }
+      }
+      if (hasNewPaths) break;
+    }
+    if (!hasNewPaths) {
+      final newSym = _buildSymmetricCsr(sym, _pathToId, paths.length);
+      return FileCouplingMatrix._(
+        paths: paths,
+        pathToId: _pathToId,
         headHash: headHash,
         commitsAnalyzed: commitsAnalyzed,
+        jRowPtr: _jRowPtr,
+        jColIdx: _jColIdx,
+        jValues: _jValues,
+        sRowPtr: newSym.rowPtr,
+        sColIdx: newSym.colIdx,
+        sValues: newSym.values,
       );
+    }
+    // Slow path: new paths in [sym] expand the universe. We do NOT
+    // materialise `jaccard` back to a map and re-feed the constructor
+    // — that's a CSR → Map → CSR round-trip, expensive enough to be
+    // its own performance regression. Instead we rebuild the path id
+    // space, remap the existing jaccard CSR's column indices into the
+    // new id space directly (no intermediate map), and build the
+    // symbol CSR fresh against the expanded path set.
+    final pathSet = <String>{...paths};
+    for (final entry in sym.entries) {
+      pathSet.add(entry.key);
+      pathSet.addAll(entry.value.keys);
+    }
+    final newPaths = pathSet.toList()..sort();
+    final newPathToId = <String, int>{};
+    for (var i = 0; i < newPaths.length; i++) {
+      newPathToId[newPaths[i]] = i;
+    }
+    // Old-id → new-id permutation. The existing CSR holds edges keyed
+    // by old ids; this maps them into the new sorted id space without
+    // touching the values.
+    final oldToNew = Int32List(paths.length);
+    for (var i = 0; i < paths.length; i++) {
+      oldToNew[i] = newPathToId[paths[i]]!;
+    }
+    final remappedJaccard = _remapCsr(
+      _jRowPtr, _jColIdx, _jValues, oldToNew, newPaths.length,
+    );
+    final newSym = _buildSymmetricCsr(sym, newPathToId, newPaths.length);
+    return FileCouplingMatrix._(
+      paths: List<String>.unmodifiable(newPaths),
+      pathToId: newPathToId,
+      headHash: headHash,
+      commitsAnalyzed: commitsAnalyzed,
+      jRowPtr: remappedJaccard.rowPtr,
+      jColIdx: remappedJaccard.colIdx,
+      jValues: remappedJaccard.values,
+      sRowPtr: newSym.rowPtr,
+      sColIdx: newSym.colIdx,
+      sValues: newSym.values,
+    );
+  }
 
   /// Coherence of a *set* of files: the mean of all pairwise scores.
   /// Returns 1.0 for ≤1 files (trivially coherent — nothing to compare).
@@ -84,23 +269,386 @@ class FileCouplingMatrix {
     final list = paths.toList();
     if (list.length < 2) return 1.0;
     if (commitsAnalyzed < 50) return 0.5;
+    // Resolve every input path to its row id once, so the inner
+    // double-loop's lookup goes int→int instead of string→int per
+    // pair (k ids vs k×k string lookups for k inputs).
+    final ids = List<int>.filled(list.length, -1, growable: false);
+    for (var i = 0; i < list.length; i++) {
+      ids[i] = _pathToId[list[i]] ?? -1;
+    }
     double sum = 0.0;
     int pairs = 0;
     for (var i = 0; i < list.length; i++) {
+      final ai = ids[i];
       for (var j = i + 1; j < list.length; j++) {
-        sum += score(list[i], list[j]);
+        if (list[i] == list[j]) {
+          sum += 1.0;
+          pairs++;
+          continue;
+        }
+        final bj = ids[j];
+        double s;
+        if (ai < 0 || bj < 0) {
+          s = 0.0;
+        } else {
+          final lo = ai < bj ? ai : bj;
+          final hi = ai < bj ? bj : ai;
+          final hist = _csrLookup(_jRowPtr, _jColIdx, _jValues, lo, hi);
+          final sym = _csrLookup(_sRowPtr, _sColIdx, _sValues, lo, hi);
+          s = hist > sym ? hist : sym;
+        }
+        sum += s;
         pairs++;
       }
     }
     return pairs == 0 ? 1.0 : sum / pairs;
   }
 
-  static const empty = FileCouplingMatrix(
-    jaccard: {},
-    symbol: {},
+  // ── New CSR-native accessors for hot paths ────────────────────────
+
+  /// O(1) check for whether [path] is tracked in the matrix.
+  /// Replaces `matrix.jaccard.containsKey(path)`.
+  bool containsPath(String path) => _pathToId.containsKey(path);
+
+  /// Iterate the jaccard neighbours of [path] as (path, score) entries.
+  /// Replaces `matrix.jaccard[path]?.entries` / `matrix.jaccard[path]?.keys`.
+  /// Skips zero entries (CSR stores them as absent rather than 0.0).
+  Iterable<MapEntry<String, double>> jaccardEntriesOf(String path) sync* {
+    final i = _pathToId[path];
+    if (i == null) return;
+    final lo = _jRowPtr[i];
+    final hi = _jRowPtr[i + 1];
+    for (var k = lo; k < hi; k++) {
+      yield MapEntry(paths[_jColIdx[k]], _jValues[k]);
+    }
+  }
+
+  /// Just the keys — a frequent shape in graph-builder loops where
+  /// the score is irrelevant and only neighbour identity matters.
+  Iterable<String> jaccardKeysOf(String path) sync* {
+    final i = _pathToId[path];
+    if (i == null) return;
+    final lo = _jRowPtr[i];
+    final hi = _jRowPtr[i + 1];
+    for (var k = lo; k < hi; k++) {
+      yield paths[_jColIdx[k]];
+    }
+  }
+
+  /// CSR-native lookup of the jaccard component ONLY (no symbol max).
+  /// Used by callers that want to read the historical co-change
+  /// component independent of the per-changeset symbol axis — e.g.
+  /// the semantic manifest's coupling pair report. Same algorithmic
+  /// shape as [score] but skips the symbol lookup.
+  double jaccardScoreOf(String a, String b) {
+    if (a == b) return 1.0;
+    final i = _pathToId[a];
+    final j = _pathToId[b];
+    if (i == null || j == null) return 0.0;
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    return _csrLookup(_jRowPtr, _jColIdx, _jValues, lo, hi);
+  }
+
+  // ── Legacy map-shape getters (lazily materialised) ────────────────
+
+  /// Backward-compatible nested-map view of the jaccard CSR. **Lazy**:
+  /// the first read materialises the full Map<String, Map<String, double>>
+  /// once and caches it. Cold-path callers (formatting, serialisation,
+  /// rare `.entries` walks) keep working unchanged. Hot-path callers
+  /// should migrate to [jaccardEntriesOf] / [jaccardKeysOf] /
+  /// [containsPath] to stay on the CSR fast path.
+  Map<String, Map<String, double>> get jaccard =>
+      _jaccardMapView ??= _materialiseMap(_jRowPtr, _jColIdx, _jValues);
+
+  /// Backward-compatible nested-map view of the symbol CSR. Same lazy
+  /// pattern as [jaccard].
+  Map<String, Map<String, double>> get symbol =>
+      _symbolMapView ??= _materialiseMap(_sRowPtr, _sColIdx, _sValues);
+
+  Map<String, Map<String, double>> _materialiseMap(
+    Int32List rowPtr,
+    Int32List colIdx,
+    Float64List values,
+  ) {
+    final out = <String, Map<String, double>>{};
+    for (var i = 0; i < paths.length; i++) {
+      final lo = rowPtr[i];
+      final hi = rowPtr[i + 1];
+      // Always create a row entry (even if empty) so callers that
+      // probe `containsKey(path)` against the materialised map see
+      // the same answer as `containsPath(path)`.
+      final row = <String, double>{};
+      for (var k = lo; k < hi; k++) {
+        row[paths[colIdx[k]]] = values[k];
+      }
+      out[paths[i]] = row;
+    }
+    return out;
+  }
+
+  /// Cached empty matrix. Replaces the previous `const empty` field —
+  /// CSR storage requires typed lists which can't be const, but this
+  /// singleton is lifetime-scoped and trivially shareable.
+  static final FileCouplingMatrix empty = FileCouplingMatrix(
+    jaccard: const {},
     headHash: '',
     commitsAnalyzed: 0,
   );
+
+  /// Binary-search lookup of `(i, j)` in a CSR matrix. Returns the
+  /// stored value or 0.0 if absent.
+  static double _csrLookup(
+    Int32List rowPtr,
+    Int32List colIdx,
+    Float64List values,
+    int i,
+    int j,
+  ) {
+    var lo = rowPtr[i];
+    var hi = rowPtr[i + 1];
+    while (lo < hi) {
+      final mid = (lo + hi) >>> 1;
+      final c = colIdx[mid];
+      if (c < j) {
+        lo = mid + 1;
+      } else if (c > j) {
+        hi = mid;
+      } else {
+        return values[mid];
+      }
+    }
+    return 0.0;
+  }
+}
+
+/// Translate an existing upper-triangle CSR matrix into a new path id
+/// space defined by [oldToNew], without round-tripping through the
+/// nested-map representation.
+///
+/// Used by [FileCouplingMatrix.withSymbol]'s slow path when a new
+/// symbol overlay introduces previously-unseen paths. The path id
+/// space expands and shifts (we keep paths lex-sorted), so every
+/// edge `(oldI, oldJ)` needs to land at `(min(newI, newJ), max(newI,
+/// newJ))` in the new CSR.
+///
+/// Cost is `O(nnz)` two-pass over the existing edges plus per-row
+/// insertion sorts on the rows that grew. No string interning, no
+/// hashmap lookups, no Map<String, Map<String, double>> allocation.
+_CsrTriple _remapCsr(
+  Int32List oldRowPtr,
+  Int32List oldColIdx,
+  Float64List oldValues,
+  Int32List oldToNew,
+  int nNewFiles,
+) {
+  if (nNewFiles == 0 || oldColIdx.isEmpty) {
+    return _CsrTriple(
+      Int32List(nNewFiles + 1),
+      Int32List(0),
+      Float64List(0),
+    );
+  }
+
+  // Pass 1: count entries per new lo-row. Each old edge becomes a
+  // new edge at `(min(newI, newJ), max(newI, newJ))` — count it on
+  // the lo side only since storage is upper-triangle.
+  final newRowCount = Int32List(nNewFiles);
+  for (var oldI = 0; oldI < oldToNew.length; oldI++) {
+    final newI = oldToNew[oldI];
+    final lo = oldRowPtr[oldI];
+    final hi = oldRowPtr[oldI + 1];
+    for (var k = lo; k < hi; k++) {
+      final newJ = oldToNew[oldColIdx[k]];
+      final newLo = newI < newJ ? newI : newJ;
+      newRowCount[newLo]++;
+    }
+  }
+
+  // Build new rowPtr (cumulative).
+  final newRowPtr = Int32List(nNewFiles + 1);
+  var cum = 0;
+  for (var i = 0; i < nNewFiles; i++) {
+    newRowPtr[i] = cum;
+    cum += newRowCount[i];
+  }
+  newRowPtr[nNewFiles] = cum;
+
+  final newColIdx = Int32List(cum);
+  final newValues = Float64List(cum);
+
+  // Pass 2: scatter every edge into its new lo-row. Reuse newRowCount
+  // as the per-row write cursor.
+  newRowCount.fillRange(0, nNewFiles, 0);
+  for (var oldI = 0; oldI < oldToNew.length; oldI++) {
+    final newI = oldToNew[oldI];
+    final lo = oldRowPtr[oldI];
+    final hi = oldRowPtr[oldI + 1];
+    for (var k = lo; k < hi; k++) {
+      final newJ = oldToNew[oldColIdx[k]];
+      final newLo = newI < newJ ? newI : newJ;
+      final newHi = newI < newJ ? newJ : newI;
+      final w = newRowPtr[newLo] + newRowCount[newLo]++;
+      newColIdx[w] = newHi;
+      newValues[w] = oldValues[k];
+    }
+  }
+
+  // Pass 3: sort each new row by colIdx. Same insertion-sort pattern
+  // as `_buildSymmetricCsr`: short rows in real repos make insertion
+  // sort win on cache locality vs more general sorts.
+  for (var i = 0; i < nNewFiles; i++) {
+    final lo = newRowPtr[i];
+    final hi = newRowPtr[i + 1];
+    if (hi - lo < 2) continue;
+    for (var k = lo + 1; k < hi; k++) {
+      final ck = newColIdx[k];
+      final vk = newValues[k];
+      var m = k - 1;
+      while (m >= lo && newColIdx[m] > ck) {
+        newColIdx[m + 1] = newColIdx[m];
+        newValues[m + 1] = newValues[m];
+        m--;
+      }
+      newColIdx[m + 1] = ck;
+      newValues[m + 1] = vk;
+    }
+  }
+
+  return _CsrTriple(newRowPtr, newColIdx, newValues);
+}
+
+/// Internal CSR triple. Used only inside [FileCouplingMatrix]
+/// construction; the matrix immediately decomposes the record into
+/// its three named final fields.
+class _CsrTriple {
+  final Int32List rowPtr;
+  final Int32List colIdx;
+  final Float64List values;
+  const _CsrTriple(this.rowPtr, this.colIdx, this.values);
+}
+
+/// Convert a nested-map sparse matrix to upper-triangle CSR storage.
+///
+/// Each logical edge is stored exactly once — at row `min(i, j)`,
+/// column `max(i, j)`. Lookups canonicalise the pair via the same
+/// min/max rule before doing a binary search on the row's slice.
+/// This matches the legacy nested-map storage semantics: the
+/// materialised view via [FileCouplingMatrix.jaccard] yields each
+/// edge exactly once, indexed by the lex-smaller endpoint, so
+/// callers that explicitly add both endpoints (centrality counters
+/// in `commit_tagger.dart`, build-loop "iterate from both endpoints,
+/// one will find the other" patterns in `logos_git.dart`) see the
+/// same shape they always have.
+///
+/// Steps:
+///   1. Tally each lo-row's non-zero count to build rowPtr (only
+///      the smaller of each pair gets a row entry).
+///   2. Allocate colIdx + values, scatter entries into their lo-row,
+///      then per-row sort by colIdx so binary search works.
+///
+/// Output rowPtr has length nFiles+1; values + colIdx have length
+/// equal to the unique edge count.
+_CsrTriple _buildSymmetricCsr(
+  Map<String, Map<String, double>> map,
+  Map<String, int> pathToId,
+  int nFiles,
+) {
+  if (map.isEmpty || nFiles == 0) {
+    return _CsrTriple(
+      Int32List(nFiles + 1),
+      Int32List(0),
+      Float64List(0),
+    );
+  }
+
+  // Pass 1: count per-row entries. We only count an edge once, at
+  // its lo-endpoint; (b, a, v) duplicates of (a, b, v) are detected
+  // via the visited-set and skipped.
+  final rowCount = Int32List(nFiles);
+  final visited = <int>{}; // encoded lo * nFiles + hi
+  void noteEdge(int i, int j) {
+    if (i == j) return;
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    if (!visited.add(lo * nFiles + hi)) return;
+    rowCount[lo]++;
+  }
+
+  for (final entry in map.entries) {
+    final i = pathToId[entry.key];
+    if (i == null) continue;
+    for (final inner in entry.value.entries) {
+      final j = pathToId[inner.key];
+      if (j == null || j == i) continue;
+      if (inner.value <= 0) continue;
+      noteEdge(i, j);
+    }
+  }
+
+  // Build rowPtr (cumulative).
+  final rowPtr = Int32List(nFiles + 1);
+  var cum = 0;
+  for (var i = 0; i < nFiles; i++) {
+    rowPtr[i] = cum;
+    cum += rowCount[i];
+  }
+  rowPtr[nFiles] = cum;
+
+  final colIdx = Int32List(cum);
+  final values = Float64List(cum);
+
+  // Pass 2: scatter entries into the lo-row only.
+  rowCount.fillRange(0, nFiles, 0);
+  visited.clear();
+
+  void scatter(int i, int j, double v) {
+    if (i == j) return;
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    if (!visited.add(lo * nFiles + hi)) return;
+    final wi = rowPtr[lo] + rowCount[lo]++;
+    colIdx[wi] = hi;
+    values[wi] = v;
+  }
+
+  for (final entry in map.entries) {
+    final i = pathToId[entry.key];
+    if (i == null) continue;
+    for (final inner in entry.value.entries) {
+      final j = pathToId[inner.key];
+      if (j == null || j == i) continue;
+      if (inner.value <= 0) continue;
+      scatter(i, j, inner.value);
+    }
+  }
+
+  // Pass 3: sort each row's slice by colIdx so binary search works.
+  // Per-row sort: small N; use a simple co-sort of (colIdx, values).
+  for (var i = 0; i < nFiles; i++) {
+    final lo = rowPtr[i];
+    final hi = rowPtr[i + 1];
+    final n = hi - lo;
+    if (n < 2) continue;
+    // Insertion sort — tight loops, friendly to short rows (typical
+    // degree ≪ 64). For pathologically high-degree rows we'd want
+    // quicksort, but the constant factor on insertion sort wins
+    // below ~30 entries which dominates real repos.
+    for (var k = lo + 1; k < hi; k++) {
+      final ck = colIdx[k];
+      final vk = values[k];
+      var m = k - 1;
+      while (m >= lo && colIdx[m] > ck) {
+        colIdx[m + 1] = colIdx[m];
+        values[m + 1] = values[m];
+        m--;
+      }
+      colIdx[m + 1] = ck;
+      values[m + 1] = vk;
+    }
+  }
+
+  return _CsrTriple(rowPtr, colIdx, values);
 }
 
 /// Compute co-change matrix for a repo from the last [commitLimit] commits.
@@ -410,20 +958,21 @@ FileClusters clusterFiles(
     return lo * n + hi;
   }
 
-  // -- 1. Historical pairs: sparse iteration over the jaccard matrix.
+  // -- 1. Historical pairs: sparse iteration over the jaccard CSR.
   //    For each current file, walk its neighbour row; only add pairs where
-  //    the neighbour is also in the current change set.
+  //    the neighbour is also in the current change set. Uses the CSR-
+  //    native row iterator so we don't materialise the legacy nested
+  //    map view just to read this row's entries.
   for (var i = 0; i < n; i++) {
     final a = currentPaths[i];
-    final row = matrix.jaccard[a];
-    if (row == null) continue;
-    row.forEach((b, s) {
-      if (s < threshold) return;
-      final j = pathIndex[b];
-      if (j == null || i == j) return;
+    for (final entry in matrix.jaccardEntriesOf(a)) {
+      final s = entry.value;
+      if (s < threshold) continue;
+      final j = pathIndex[entry.key];
+      if (j == null || i == j) continue;
       final key = encode(i, j);
       if (seen.add(key)) candidates.add(_PairScore(s, i, j));
-    });
+    }
   }
 
   // -- 2. Path-affinity pairs for new/untracked files (and for pairs the
@@ -446,8 +995,8 @@ FileClusters clusterFiles(
         final j = idxs[jj];
         final a = currentPaths[i];
         final b = currentPaths[j];
-        final aTracked = matrix.jaccard.containsKey(a);
-        final bTracked = matrix.jaccard.containsKey(b);
+        final aTracked = matrix.containsPath(a);
+        final bTracked = matrix.containsPath(b);
         if (aTracked && bTracked) continue; // history-only for that case
         final s = pathAffinity(a, b);
         if (s < threshold) continue;
@@ -674,13 +1223,17 @@ FileClusters clusterFiles(
         final s = signals[p];
         final raw = (s == null || s.binary) ? 0.0 : (s.adds + s.dels).toDouble();
         var maxJ = 0.0;
-        final row = matrix.jaccard[p];
-        if (row != null && raw > 0) {
-          row.forEach((peer, j) {
-            if (peer == p) return;
-            if (!pathSet.contains(peer)) return;
+        if (raw > 0) {
+          // CSR-native row walk for the impact attenuation. Same
+          // semantics as the old `matrix.jaccard[p]?.forEach`, but
+          // doesn't trigger lazy nested-map materialisation.
+          for (final entry in matrix.jaccardEntriesOf(p)) {
+            final peer = entry.key;
+            if (peer == p) continue;
+            if (!pathSet.contains(peer)) continue;
+            final j = entry.value;
             if (j > maxJ) maxJ = j;
-          });
+          }
         }
         effective[p] = raw * (1 - maxJ);
         basenames[p] = _basenameOf(p);
@@ -1430,7 +1983,7 @@ double combinedCouplingScore(String a, String b, FileCouplingMatrix m) {
   final s = m.score(a, b);
   if (s > 0) return s;
   // Both files are tracked with no co-change history → trust the history.
-  if (m.jaccard.containsKey(a) && m.jaccard.containsKey(b)) return 0.0;
+  if (m.containsPath(a) && m.containsPath(b)) return 0.0;
   return pathAffinity(a, b);
 }
 

@@ -1,0 +1,225 @@
+// ═════════════════════════════════════════════════════════════════════════
+// engram_file_ktable.dart — dense column-store of per-file K-vectors.
+//
+// The LogosGit engine wants to ask "what K-vector does this file have?"
+// and "what well does this file live in?" thousands of times during a
+// single build. The old storage was `Map<String, HunkKVector>` — one
+// hashmap entry per file, each pointing at an object holding two
+// Float64Lists, an `EngramWellMatch` struct, and scalar metadata.
+//
+// That shape *answered* the question but fought the geometry at every
+// step: a hashmap lookup for the path, an object dereference for the
+// HunkKVector, two more object dereferences for the Float64Lists, a
+// fifth dereference for the well match. Five pointer hops to reach a
+// f64 value that conceptually lives at `kRe[row * pairs + pair]`.
+//
+// This file gives the geometry its native shape. Columns live in
+// contiguous typed arrays. Rows are addressed by integer id. The
+// `pathToRow` map is the ONLY hashmap in the hot path, and it's
+// touched once per query to translate a path into an index — after
+// that, everything is pointer-bumping linear access.
+//
+// Public surface mirrors what callers used to ask of the map:
+//
+//   • `rowOf(path)` — O(1) path → row id (or null for unencoded files)
+//   • `wellOf(path)` / `wellOfRow(row)` — semantic well name, null if none
+//   • `viewKRe(row)` / `viewKIm(row)` — zero-copy Float64List slices
+//     of the flat columns (no allocation)
+//   • Direct flat-array access (`kRe`, `kIm`, `vocabHits`, …) for hot
+//     paths that iterate over rows — the LogosGit EN axis does this
+//
+// Construction is one-shot from a `Map<String, HunkKVector>` — the
+// output of the parallel encode phase. The map itself is discarded
+// after the table is built. For a 1000-file repo this replaces ~1000
+// hashmap entries + 1000 HunkKVector objects + 3000 Float64List
+// wrappers with a handful of typed arrays.
+// ═════════════════════════════════════════════════════════════════════════
+
+import 'dart:typed_data';
+
+import 'package:meta/meta.dart';
+
+import 'engram_hunk_encoder.dart';
+
+/// Sentinel "no well" value stored in [EngramFileKTable.wellIdx] for
+/// rows whose encoder returned `HunkKVector.well == null`.
+const int kEngramNoWell = -1;
+
+/// Dense column-store for per-file engram encodings.
+///
+/// Immutable after construction. Safe to share across isolates — the
+/// typed-array columns copy as bulk bytes, the String list + Map are
+/// small and cheap to serialise.
+@immutable
+class EngramFileKTable {
+  EngramFileKTable._({
+    required this.pairs,
+    required this.n,
+    required this.paths,
+    required Map<String, int> pathToRow,
+    required this.kRe,
+    required this.kIm,
+    required this.meanRms,
+    required this.vocabHits,
+    required this.wellIdx,
+    required this.wellRawDistance,
+    required this.wellWeightedDistance,
+    required this.wellNamesByOriginalIndex,
+  }) : _pathToRow = pathToRow;
+
+  /// Number of complex pairs per K-vector (matches `brain.pairs`).
+  final int pairs;
+
+  /// Number of encoded file rows.
+  final int n;
+
+  /// Row id → repo-relative path. Parallel to every column array.
+  final List<String> paths;
+
+  /// Path → row id. The only hashmap access on the hot path; translates
+  /// an external-facing path into a column-store index so subsequent
+  /// reads are pointer-bumping array loads.
+  final Map<String, int> _pathToRow;
+
+  /// K-vector real parts, row-major: `kRe[row * pairs + pair]`.
+  final Float64List kRe;
+
+  /// K-vector imaginary parts, row-major: `kIm[row * pairs + pair]`.
+  final Float64List kIm;
+
+  /// Per-row mean RMS of the AR(2) fit. f32 because this is a signal-
+  /// quality indicator, not a precision-critical value.
+  final Float32List meanRms;
+
+  /// Per-row count of sub-tokens that hit the GloVe vocabulary.
+  final Int32List vocabHits;
+
+  /// Per-row nearest-well ORIGINAL index (stable across cache reloads)
+  /// or [kEngramNoWell] for rows whose fit produced no well match.
+  final Int32List wellIdx;
+
+  /// Per-row raw RMS distance to the nearest well centroid.
+  final Float64List wellRawDistance;
+
+  /// Per-row mass-weighted distance (the value used for argmin).
+  final Float64List wellWeightedDistance;
+
+  /// Full well-name lookup table indexed by ORIGINAL (brain-side) well
+  /// index. Lives on the table so callers don't need a reference to
+  /// the brain to look up names. Small (~225 strings for Alexandria);
+  /// stored once, shared across all row lookups.
+  final List<String> wellNamesByOriginalIndex;
+
+  /// True when no files were encoded (engram assets missing or every
+  /// file failed to fit). Downstream consumers branch on this to fall
+  /// back to the legacy 4-axis graph without an EN contribution.
+  bool get isEmpty => n == 0;
+
+  /// O(1) path → row id, or null if the file isn't encoded.
+  int? rowOf(String path) => _pathToRow[path];
+
+  /// O(1) well name at [row], or null if this row had no nearest well.
+  String? wellOfRow(int row) {
+    final wi = wellIdx[row];
+    if (wi < 0) return null;
+    return wellNamesByOriginalIndex[wi];
+  }
+
+  /// O(1) well name at [path], or null if the file isn't encoded or
+  /// had no nearest well.
+  String? wellOf(String path) {
+    final r = _pathToRow[path];
+    if (r == null) return null;
+    return wellOfRow(r);
+  }
+
+  /// Raw distance to the row's nearest well, or null if the row has
+  /// no well match. Used by callers that want to surface the distance
+  /// metric alongside the well name.
+  double? wellRawDistanceOfRow(int row) {
+    if (wellIdx[row] < 0) return null;
+    return wellRawDistance[row];
+  }
+
+  /// Empty table for the "no engram" path.
+  factory EngramFileKTable.empty(int pairs) {
+    return EngramFileKTable._(
+      pairs: pairs,
+      n: 0,
+      paths: const [],
+      pathToRow: const {},
+      kRe: Float64List(0),
+      kIm: Float64List(0),
+      meanRms: Float32List(0),
+      vocabHits: Int32List(0),
+      wellIdx: Int32List(0),
+      wellRawDistance: Float64List(0),
+      wellWeightedDistance: Float64List(0),
+      wellNamesByOriginalIndex: const [],
+    );
+  }
+
+  /// Build a table from a map of path → encoded K-vector. Typical
+  /// caller is the resolver after merging cache hits and fresh
+  /// parallel encodes. [wellNamesByOriginalIndex] is the brain's
+  /// name table (copied into the result so the brain is no longer
+  /// required for `wellOf` lookups).
+  factory EngramFileKTable.fromMap({
+    required int pairs,
+    required Map<String, HunkKVector> encodings,
+    required List<String> wellNamesByOriginalIndex,
+  }) {
+    final n = encodings.length;
+    if (n == 0) return EngramFileKTable.empty(pairs);
+
+    final paths = List<String>.filled(n, '', growable: false);
+    final pathToRow = <String, int>{};
+    final kRe = Float64List(n * pairs);
+    final kIm = Float64List(n * pairs);
+    final meanRms = Float32List(n);
+    final vocabHits = Int32List(n);
+    final wellIdx = Int32List(n)..fillRange(0, n, kEngramNoWell);
+    final wellRawDistance = Float64List(n);
+    final wellWeightedDistance = Float64List(n);
+
+    var row = 0;
+    for (final entry in encodings.entries) {
+      final path = entry.key;
+      final kv = entry.value;
+      paths[row] = path;
+      pathToRow[path] = row;
+
+      // Bulk block-copy each row's K-vector into the column store.
+      // setRange is memcpy at the VM level; scalar loop would be per-
+      // element.
+      final base = row * pairs;
+      kRe.setRange(base, base + pairs, kv.kRe);
+      kIm.setRange(base, base + pairs, kv.kIm);
+      meanRms[row] = kv.meanRms;
+      vocabHits[row] = kv.vocabHits;
+      final w = kv.well;
+      if (w != null) {
+        wellIdx[row] = w.index;
+        wellRawDistance[row] = w.rawDistance;
+        wellWeightedDistance[row] = w.weightedDistance;
+      }
+      row++;
+    }
+
+    return EngramFileKTable._(
+      pairs: pairs,
+      n: n,
+      paths: List<String>.unmodifiable(paths),
+      pathToRow: pathToRow,
+      kRe: kRe,
+      kIm: kIm,
+      meanRms: meanRms,
+      vocabHits: vocabHits,
+      wellIdx: wellIdx,
+      wellRawDistance: wellRawDistance,
+      wellWeightedDistance: wellWeightedDistance,
+      wellNamesByOriginalIndex:
+          List<String>.unmodifiable(wellNamesByOriginalIndex),
+    );
+  }
+}

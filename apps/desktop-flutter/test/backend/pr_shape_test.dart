@@ -16,7 +16,7 @@ import 'package:git_desktop/backend/pr_shape.dart';
 LogosGit _ringEngine() {
   // 4-node ring: a-b, b-c, c-d, d-a — bounded spectrum, two clear
   // halves so PR shapes can be meaningfully distinguished.
-  const matrix = FileCouplingMatrix(
+  final matrix = FileCouplingMatrix(
     jaccard: {
       'lib/a.dart': {'lib/b.dart': 0.7, 'lib/d.dart': 0.7},
       'lib/b.dart': {'lib/a.dart': 0.7, 'lib/c.dart': 0.7},
@@ -122,7 +122,7 @@ void main() {
     test('weights respect recency — newer touches dominate', () {
       // Engine where one file has only ancient touches, another only
       // recent — the recent one should carry strictly more weight.
-      const matrix = FileCouplingMatrix(
+      final matrix = FileCouplingMatrix(
         jaccard: {
           'lib/old.dart': {'lib/new.dart': 0.5},
           'lib/new.dart': {'lib/old.dart': 0.5},
@@ -154,7 +154,7 @@ void main() {
 
   group('PrShapeComputer.compute', () {
     test('null when engine is empty', () {
-      final emptyEngine = LogosGit.buildFromStats(const LogosGitStats(
+      final emptyEngine = LogosGit.buildFromStats(LogosGitStats(
         touches: {},
         totalCommits: 0,
         volatility: {},
@@ -246,7 +246,7 @@ void main() {
 
   group('PrShapeComputer.computeField', () {
     test('null on empty engine', () {
-      final emptyEngine = LogosGit.buildFromStats(const LogosGitStats(
+      final emptyEngine = LogosGit.buildFromStats(LogosGitStats(
         touches: {},
         totalCommits: 0,
         volatility: {},

@@ -533,9 +533,12 @@ SemanticManifest buildSemanticManifest(
         final b = fileList[j];
         final key = a.compareTo(b) <= 0 ? '$a\u0000$b' : '$b\u0000$a';
         if (!seen.add(key)) continue;
-        final jac = couplingMatrix.jaccard[a]?[b] ??
-            couplingMatrix.jaccard[b]?[a] ??
-            0.0;
+        // CSR-native jaccard lookup (no symbol blend). Equivalent to
+        // the legacy `couplingMatrix.jaccard[a]?[b] ?? jaccard[b]?[a]
+        // ?? 0.0` two-direction probe — one binary search with
+        // canonicalised (lo, hi) instead of two hashmap lookups, no
+        // lazy-map materialisation triggered.
+        final jac = couplingMatrix.jaccardScoreOf(a, b);
         if (jac >= _kCouplingFloor) {
           couplingPairs.add(CouplingEntry(fileA: a, fileB: b, jaccard: jac));
         }

@@ -7458,8 +7458,9 @@ Set<String> _resonanceForecast(
   if (matrix == null) return const {};
   final scored = <String, double>{};
   for (final f in files) {
-    final neighbors = matrix.jaccard[f.path] ?? const <String, double>{};
-    for (final entry in neighbors.entries) {
+    // CSR-native row iteration — yields each neighbour's (path,
+    // score) without materialising the legacy nested-map view.
+    for (final entry in matrix.jaccardEntriesOf(f.path)) {
       if (entry.value < threshold) continue;
       if (inPr.contains(entry.key)) continue;
       // Take the max score for any (PR file → neighbor) pair so a

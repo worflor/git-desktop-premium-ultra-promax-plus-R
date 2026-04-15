@@ -40,12 +40,14 @@ void main() {
     test('Alexandria loads with expected dim / pairs / wells', () {
       expect(brain.dim, 300);
       expect(brain.pairs, 150);
-      expect(brain.wells, isNotEmpty);
+      expect(brain.wellCount, greaterThan(0));
       // Alexandria has 225 wells including a "computing" one.
-      final names = brain.wells.map((w) => w.name).toSet();
+      final names = {
+        for (var i = 0; i < brain.wellCount; i++) brain.wellName(i),
+      };
       expect(names.contains('computing'), isTrue,
           reason: 'expected the `computing` well in the bundled brain');
-      expect(brain.wells.length, greaterThanOrEqualTo(50));
+      expect(brain.wellCount, greaterThanOrEqualTo(50));
     });
 
     test('GloVe loads with expected dim and covers common code tokens',

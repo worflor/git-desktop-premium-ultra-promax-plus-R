@@ -772,9 +772,15 @@ RepositoryTagProfile buildTagProfile({
   // Pure topological derivation, zero taste.
   final fileCentrality = <String, double>{};
   if (coupling != null) {
-    for (final entry in coupling.jaccard.entries) {
-      final a = entry.key;
-      for (final neighbor in entry.value.entries) {
+    // CSR-native upper-triangle iteration: walk every known path's
+    // row directly via the CSR's `paths` and `jaccardEntriesOf`. Each
+    // edge appears once (storage is upper-triangle, indexed by the
+    // lex-smaller endpoint), so we accumulate both endpoints to give
+    // every file its full degree-weighted score — same invariant the
+    // legacy nested-map iteration relied on. Skips materialising the
+    // entire backward-compat map view.
+    for (final a in coupling.paths) {
+      for (final neighbor in coupling.jaccardEntriesOf(a)) {
         final b = neighbor.key;
         final v = neighbor.value;
         fileCentrality[a] = (fileCentrality[a] ?? 0.0) + v;
