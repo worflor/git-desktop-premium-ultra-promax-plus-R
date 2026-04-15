@@ -13,6 +13,10 @@ class ThemeShaders {
   static Future<FragmentProgram>? _cellshadeFuture;
   static FragmentProgram? _iridescent;
   static Future<FragmentProgram>? _iridescentFuture;
+  static FragmentProgram? _darkIridescent;
+  static Future<FragmentProgram>? _darkIridescentFuture;
+  static FragmentProgram? _loveboyBg;
+  static Future<FragmentProgram>? _loveboyBgFuture;
   static FragmentProgram? _glass;
   static Future<FragmentProgram>? _glassFuture;
 
@@ -121,6 +125,84 @@ class ThemeShaders {
       ..setFloat(8, tiltX)
       ..setFloat(9, tiltY)
       ..setFloat(10, time);
+    return s;
+  }
+
+  /// Loverboy dark rose iridescence program. Same uniform layout as
+  /// [iridescent] — hue cycle compressed to pink–lavender–violet band,
+  /// saturation raised, spec crest tinted pink. Separate program cache
+  /// so both can be live simultaneously without evicting each other.
+  static FragmentProgram? darkIridescent() {
+    if (_darkIridescent != null) return _darkIridescent;
+    _darkIridescentFuture ??=
+        FragmentProgram.fromAsset('shaders/dark_iridescent.frag').then((p) {
+      _darkIridescent = p;
+      return p;
+    });
+    return null;
+  }
+
+  /// Build a configured `FragmentShader` for dark iridescent surfaces.
+  /// Uniform order is identical to [iridescentShader] — the `.frag`
+  /// files share the same declaration sequence.
+  static ui.FragmentShader? darkIridescentShader({
+    required double width,
+    required double height,
+    required double intensity,
+    required ui.Color pearlBase,
+    double hueOffset = 0,
+    double tiltX = 0,
+    double tiltY = 0,
+    double time = 0,
+  }) {
+    final program = darkIridescent();
+    if (program == null) return null;
+    final s = program.fragmentShader();
+    s
+      ..setFloat(0, width)
+      ..setFloat(1, height)
+      ..setFloat(2, intensity)
+      ..setFloat(3, hueOffset)
+      ..setFloat(4, pearlBase.r)
+      ..setFloat(5, pearlBase.g)
+      ..setFloat(6, pearlBase.b)
+      ..setFloat(7, pearlBase.a)
+      ..setFloat(8, tiltX)
+      ..setFloat(9, tiltY)
+      ..setFloat(10, time);
+    return s;
+  }
+
+  /// Loverboy background: GoL-inspired fractal cellular field.
+  /// Uniforms: 0..1 uSize, 2 uIntensity, 3 uTime, 4..5 uTilt
+  static FragmentProgram? loveboyBg() {
+    if (_loveboyBg != null) return _loveboyBg;
+    _loveboyBgFuture ??=
+        FragmentProgram.fromAsset('shaders/loverboy_bg.frag').then((p) {
+      _loveboyBg = p;
+      return p;
+    });
+    return null;
+  }
+
+  static ui.FragmentShader? loveboyBgShader({
+    required double width,
+    required double height,
+    double intensity = 1.0,
+    double time = 0,
+    double tiltX = 0,
+    double tiltY = 0,
+  }) {
+    final program = loveboyBg();
+    if (program == null) return null;
+    final s = program.fragmentShader();
+    s
+      ..setFloat(0, width)
+      ..setFloat(1, height)
+      ..setFloat(2, intensity)
+      ..setFloat(3, time)
+      ..setFloat(4, tiltX)
+      ..setFloat(5, tiltY);
     return s;
   }
 

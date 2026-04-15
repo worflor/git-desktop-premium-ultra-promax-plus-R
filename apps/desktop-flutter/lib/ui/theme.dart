@@ -104,6 +104,7 @@ ThemeData _buildTheme(AppTokens t) {
         borderRadius: BorderRadius.circular(
           switch (t.id) {
             AppThemeId.crafty => 0,
+            AppThemeId.loverboy => 0,
             AppThemeId.blackboard => 2,
             _ => 4,
           },
@@ -236,6 +237,7 @@ List<String>? _fontFallbackFor(AppThemeId id) {
     case AppThemeId.kirby:
       return const ['Segoe UI', 'Arial', 'sans-serif'];
     case AppThemeId.nacre:
+    case AppThemeId.loverboy:
       return const ['Georgia', 'Times New Roman', 'serif'];
   }
 }
@@ -290,6 +292,12 @@ SliderComponentShape _sliderThumbShape(AppTokens t) => switch (t.id) {
           fillColor: Colors.white.withValues(alpha: 0.6),
           borderColor: t.accentBright,
           glowColor: t.accentBright.withValues(alpha: 0.4),
+        ),
+      AppThemeId.loverboy => _GlassSliderThumbShape(
+          size: 18,
+          fillColor: t.bg3.withValues(alpha: 0.75),
+          borderColor: t.accentBright,
+          glowColor: t.chromeBorder.withValues(alpha: 0.45),
         ),
     };
 
@@ -430,6 +438,7 @@ class _ThemedSliderTrackShape extends SliderTrackShape
         // CRT pixel rectangle.
         _strokeTrack(canvas, trackRRect, tokens.chromeAccent, width: 1);
       case AppThemeId.nacre:
+      case AppThemeId.loverboy:
         _strokeTrack(
           canvas,
           trackRRect,

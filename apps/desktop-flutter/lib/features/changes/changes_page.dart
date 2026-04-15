@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../ui/animated_icons.dart';
 import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
@@ -22,9 +23,12 @@ import '../../backend/ai.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
+import '../../backend/file_layout.dart';
+import '../../backend/stash_shape.dart';
 import '../../backend/logos_git.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/file_coupling_state.dart';
+import '../../app/symbol_frequency_state.dart';
 import '../../app/logos_git_state.dart';
 import '../../app/preferences_state.dart';
 import '../../app/desk_drop_payload.dart';
@@ -35,6 +39,7 @@ import '../../diagnostics/diagnostics_state.dart';
 import '../branches/branches_page.dart' show showPatchPreviewDialog;
 import '../diff/diff_shell.dart';
 import '../diff/diff_models.dart';
+import 'file_constellation.dart';
 
 String _guardrailLabelForStage(int stage) {
   switch (stage.clamp(0, 3)) {
@@ -105,6 +110,11 @@ class _ChangesPageState extends State<ChangesPage> {
   bool _actionRunning = false;
   bool _generateRunning = false;
   bool _generateSuccess = false;
+  // Monotonic counter for commit-message generation requests. Each call
+  // captures the counter at start; when the awaited result returns, it
+  // only applies if the counter still matches — otherwise the user
+  // cancelled (by clicking the button again) and we discard the result.
+  int _generateRequestId = 0;
   bool _reviewRunning = false;
   bool _reviewSuccess = false;
   bool _commitAiLoading = false;
@@ -160,11 +170,26 @@ class _ChangesPageState extends State<ChangesPage> {
   // files are most tightly coupled to the currently-hovered one.
   String? _railHoverPath;
 
+  // Atlas view: when true the file list is replaced with the commit
+  // candidates panel from `file_constellation.dart`. Aims to flip the
+  // user's job from "carve files out of a list" to "critique the
+  // candidates the engine already proposed." Persisted across sessions
+  // via SharedPreferences (NOT exposed in settings UI — discovered by
+  // clicking the toggle button next to the file list header).
+  static const _kAtlasOpenKey = 'changes.atlas_open';
+  bool _constellationOpen = false;
+
   // Per-path line churn (adds + dels) feeding the "by impact" sort.
   // Refreshed whenever the status signature changes. Empty until the
   // first fetch lands; until then impact-sort tiebreaks alphabetically.
   Map<String, FileChangeWeight> _changeWeights = const {};
   String? _weightsFetchedForKey;
+
+  // Symbol-overlap coupling for the current change set. Computed from
+  // file content (identifier IDF-Jaccard) so new/untracked files get a
+  // structural coupling score even before their first commit.
+  Map<String, Map<String, double>> _symbolCoupling = const {};
+  String? _symbolCouplingFetchedForKey;
 
   // Filing cabinet (stashes)
   List<StashEntryData> _stashes = const [];
@@ -179,6 +204,10 @@ class _ChangesPageState extends State<ChangesPage> {
   // expand; dropped when the stash list is reloaded.
   final Map<int, List<StashFileStat>> _stashFiles = {};
   final Set<int> _stashFilesLoading = {};
+  // Geometric signature per stash (keyed by stash.index). Computed lazily
+  // in build() once both files and the coupling matrix are available.
+  // Cleared when the stash list reloads so shapes don't go stale.
+  final Map<int, StashShape> _stashShapes = {};
 
   // Coupling-matrix loader guard: tracks "I kicked off a compute for this
   // repo in this session" so we don't spam the provider on every rebuild.
@@ -200,6 +229,22 @@ class _ChangesPageState extends State<ChangesPage> {
       _refreshCommitAiConfig();
       unawaited(context.read<AiSettingsState>().refreshProviders());
     });
+    _loadAtlasOpenPref();
+  }
+
+  Future<void> _loadAtlasOpenPref() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getBool(_kAtlasOpenKey) ?? false;
+    if (mounted && v != _constellationOpen) {
+      setState(() => _constellationOpen = v);
+    }
+  }
+
+  Future<void> _toggleAtlasOpen() async {
+    final next = !_constellationOpen;
+    setState(() => _constellationOpen = next);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kAtlasOpenKey, next);
   }
 
   /// Resolve the git directory for a repo. Handles worktrees and submodules
@@ -645,6 +690,26 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
+  /// Batch include/exclude every path in [paths]. When [include] is null,
+  /// toggles based on whether the group is already fully included: if any
+  /// member is unincluded → include all; otherwise exclude all. Single
+  /// setState so the animation plays once, not N times.
+  void _toggleGroup(Iterable<String> paths, {bool? include}) {
+    final list = paths.toList();
+    if (list.isEmpty) return;
+    final target = include ?? !list.every(_includedPaths.contains);
+    setState(() {
+      _clearReviewState();
+      if (target) {
+        _includedPaths.addAll(list);
+      } else {
+        _includedPaths.removeAll(list);
+      }
+      _actionError = null;
+      _actionMessage = null;
+    });
+  }
+
   /// Show the per-file right-click menu, anchored at [globalPos]. Four
   /// sections: discard, ignore, copy, reveal. Click outside or
   /// right-click elsewhere to dismiss.
@@ -1055,6 +1120,41 @@ class _ChangesPageState extends State<ChangesPage> {
       onApplied: () async {
         if (!mounted) return;
         await repoState.refreshStatus();
+      },
+    );
+  }
+
+  /// Fetch a stash's diff and route it through [showPatchPreviewDialog] —
+  /// identical flow to desk dumps so the user gets the same conflict surface.
+  Future<void> _handleStashDump(
+    BuildContext ctx,
+    int index,
+    String label,
+    String repoPath,
+  ) async {
+    final result = await stashShow(repoPath, index: index);
+    if (!mounted) return;
+    if (!result.ok) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(content: Text('Shelf read failed: ${result.error}')),
+      );
+      return;
+    }
+    final diff = result.data ?? '';
+    if (diff.trim().isEmpty) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('Empty shelf — nothing to dump.')),
+      );
+      return;
+    }
+    await showPatchPreviewDialog(
+      ctx,
+      repoPath: repoPath,
+      rawPatch: diff,
+      sourceLabel: 'shelf $label',
+      onApplied: () async {
+        if (!mounted) return;
+        await ctx.read<RepositoryState>().refreshStatus();
       },
     );
   }
@@ -1721,6 +1821,19 @@ class _ChangesPageState extends State<ChangesPage> {
     String repoPath,
     RepositoryStatus status,
   ) async {
+    // Click while a generation is running = cancel. Bumping the counter
+    // invalidates any in-flight result; the click itself doesn't wait
+    // for the backend to unwind — the UI returns to idle immediately.
+    if (_generateRunning) {
+      setState(() {
+        _generateRequestId++;
+        _generateRunning = false;
+        _actionError = null;
+        _actionMessage = null;
+      });
+      return;
+    }
+
     final included = status.files
         .where((file) => _includedPaths.contains(file.path))
         .toList();
@@ -1732,6 +1845,7 @@ class _ChangesPageState extends State<ChangesPage> {
       return;
     }
 
+    final requestId = ++_generateRequestId;
     setState(() {
       _generateRunning = true;
       _actionError = null;
@@ -1739,7 +1853,7 @@ class _ChangesPageState extends State<ChangesPage> {
     });
 
     final categories = await _resolveCommitAiCategories();
-    if (!mounted) {
+    if (!mounted || requestId != _generateRequestId) {
       return;
     }
     if (categories == null) {
@@ -1786,6 +1900,17 @@ class _ChangesPageState extends State<ChangesPage> {
         ? 'all included files'
         : '${included.length} included file${included.length == 1 ? '' : 's'}';
 
+    // Semantic priors for the manifest that sits above the packed diff
+    // in the prompt. Both are best-effort: null until the background
+    // computes land, in which case the manifest simply skips the
+    // IDF-ranking and coupling sections (logos φ + engram wells still
+    // emit). Read from state once so the values are stable for this
+    // invocation even if state notifies mid-call.
+    final couplingMatrix =
+        context.read<FileCouplingState>().matrixFor(repoPath);
+    final symbolIndex =
+        context.read<SymbolFrequencyState>().indexFor(repoPath);
+
     final result = await generateCommitMessage(
       repositoryPath: repoPath,
       modelValue: selectedModel.value,
@@ -1803,8 +1928,10 @@ class _ChangesPageState extends State<ChangesPage> {
       structure: preferences.commitStructure,
       voice: preferences.commitVoice,
       coverage: preferences.commitCoverage,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
     );
-    if (!mounted) {
+    if (!mounted || requestId != _generateRequestId) {
       return;
     }
 
@@ -1912,6 +2039,11 @@ class _ChangesPageState extends State<ChangesPage> {
         ? 'all included files'
         : '${included.length} included file${included.length == 1 ? '' : 's'}';
 
+    final reviewCouplingMatrix =
+        context.read<FileCouplingState>().matrixFor(repoPath);
+    final reviewSymbolIndex =
+        context.read<SymbolFrequencyState>().indexFor(repoPath);
+
     final result = await reviewCommit(
       repositoryPath: repoPath,
       modelValue: selectedModel.value,
@@ -1928,6 +2060,8 @@ class _ChangesPageState extends State<ChangesPage> {
       guardrailStage: preferences.guardrailStage,
       doubleCheckEnabled: aiSettings.reviewCommitDoubleCheckEnabled,
       readOnly: preferences.aiReadOnlyDefault,
+      symbolIndex: reviewSymbolIndex,
+      couplingMatrix: reviewCouplingMatrix,
     );
     if (!mounted) {
       return;
@@ -2053,6 +2187,11 @@ class _ChangesPageState extends State<ChangesPage> {
         ? 'all included files'
         : '${included.length} included file${included.length == 1 ? '' : 's'}';
 
+    final museCouplingMatrix =
+        context.read<FileCouplingState>().matrixFor(repoPath);
+    final museSymbolIndex =
+        context.read<SymbolFrequencyState>().indexFor(repoPath);
+
     final result = await runMuse(
       repositoryPath: repoPath,
       brainstormModelValue: brainstormModel.value,
@@ -2065,6 +2204,8 @@ class _ChangesPageState extends State<ChangesPage> {
       commitDraft: _commitMsgCtrl.text.trim(),
       guardrailStage: preferences.guardrailStage,
       readOnly: preferences.aiReadOnlyDefault,
+      symbolIndex: museSymbolIndex,
+      couplingMatrix: museCouplingMatrix,
     );
     if (!mounted) return;
     if (_museScopeKey != scopeKey) {
@@ -2329,6 +2470,7 @@ class _ChangesPageState extends State<ChangesPage> {
       // after pop/drop/push.
       _stashFiles.clear();
       _stashFilesLoading.clear();
+      _stashShapes.clear();
       // Drop open-state entries whose index no longer exists so reopening
       // a new stash at the same slot doesn't surprise the user.
       final validIndices = _stashes.map((s) => s.index).toSet();
@@ -2344,8 +2486,38 @@ class _ChangesPageState extends State<ChangesPage> {
     if (!mounted) return;
     setState(() {
       _stashFilesLoading.remove(index);
-      if (r.ok) _stashFiles[index] = r.data!;
+      if (r.ok) {
+        _stashFiles[index] = r.data!;
+        _stashShapes.remove(index); // Recompute shape with real file list.
+      }
     });
+    if (r.ok) _maybeComputeStashShape(index);
+  }
+
+  /// Compute (or recompute) the stash shape for [index] if both the file
+  /// list and the coupling matrix are available. Runs outside build so
+  /// we never mutate state as a side effect of the widget tree flush.
+  void _maybeComputeStashShape(int index) {
+    if (!mounted) return;
+    final files = _stashFiles[index];
+    if (files == null) return;
+    final repoPath = context.read<RepositoryState>().activePath;
+    if (repoPath == null) return;
+    final matrix = context.read<FileCouplingState>().matrixFor(repoPath);
+    if (matrix == null) return;
+    final currentPaths = context
+            .read<RepositoryState>()
+            .status
+            ?.files
+            .map((f) => f.path)
+            .toList() ??
+        [];
+    final shape = computeStashShape(
+      stashPaths: files.map((f) => f.path).toList(),
+      currentPaths: currentPaths,
+      matrix: matrix,
+    );
+    setState(() => _stashShapes[index] = shape);
   }
 
   void _toggleStashOpen(String repo, int index) {
@@ -2469,7 +2641,14 @@ class _ChangesPageState extends State<ChangesPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         final couplingState = context.read<FileCouplingState>();
-        await couplingState.loadForRepo(repoPath);
+        // ignore: use_build_context_synchronously
+        final symbolFreqState = context.read<SymbolFrequencyState>();
+        // Kick off BOTH in parallel — the co-change matrix reads git log,
+        // the corpus frequency index reads file contents. Independent I/O.
+        await Future.wait([
+          couplingState.loadForRepo(repoPath),
+          symbolFreqState.loadForRepo(repoPath),
+        ]);
         if (!mounted) return;
         // Chain: once the coupling matrix is warm, immediately warm the
         // LogosGit engine too — it needs the matrix for the CC axis and
@@ -2480,6 +2659,12 @@ class _ChangesPageState extends State<ChangesPage> {
           context
               .read<LogosGitState>()
               .loadForRepo(repoPath, coupling: matrix);
+          // Compute shapes for any stashes whose files loaded before the matrix.
+          for (final idx in _stashFiles.keys) {
+            if (!_stashShapes.containsKey(idx)) {
+              _maybeComputeStashShape(idx);
+            }
+          }
         }
       });
     }
@@ -2496,6 +2681,39 @@ class _ChangesPageState extends State<ChangesPage> {
         if (r.ok) {
           setState(() => _changeWeights = r.data!);
         }
+      });
+    }
+    // Recompute symbol-overlap coupling whenever the change set changes.
+    // Reads file content from disk — fast for typical change-set sizes
+    // (O(n) file reads, no git subprocess). Results layer on top of the
+    // historical Jaccard matrix so new/untracked files get structural scores.
+    //
+    // Uses the corpus frequency index (self-learning, language-agnostic
+    // stop-word filter) when available; falls back to change-set-local
+    // IDF until the index finishes its first-time scan.
+    //
+    // Also re-fires when the corpus index key changes — so the first
+    // time the index finishes warming, we recompute with the better IDF.
+    final symbolFreqStateRead = context.watch<SymbolFrequencyState>();
+    final corpusIndex = symbolFreqStateRead.indexFor(repoPath);
+    final symbolFetchKey =
+        '$couplingStateKey|corpus=${corpusIndex?.totalDocuments ?? 0}';
+    if (_symbolCouplingFetchedForKey != symbolFetchKey) {
+      _symbolCouplingFetchedForKey = symbolFetchKey;
+      final pathsSnapshot = status?.files.map((f) => f.path).toList() ?? [];
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        final sym = await Future(
+          () => computeSymbolCoupling(
+            pathsSnapshot,
+            repoPath,
+            corpus: corpusIndex,
+          ),
+        );
+        if (!mounted || _symbolCouplingFetchedForKey != symbolFetchKey) {
+          return;
+        }
+        setState(() => _symbolCoupling = sym);
       });
     }
     // Detect repo or branch switch — cancel any pending saves,
@@ -2535,11 +2753,71 @@ class _ChangesPageState extends State<ChangesPage> {
     _syncDraftFromStatus(status);
 
     if (status.files.isEmpty && _stashes.isEmpty && !_stashesLoading) {
-      return _CleanTreeDashboard(
-        tokens: t,
-        status: status,
-        repoPath: repoPath,
-        onRefresh: () => repo.refreshStatus(),
+      // The dirty-state surface below wraps its content in a DragTarget
+      // so a desk pill can be dropped to dump its diff here. The clean
+      // state is actually the friendliest moment to imprint — no local
+      // changes to reconcile — so the drop target lives here too,
+      // mirroring the same accept policy and overlay.
+      return DragTarget<DeskDropPayload>(
+        onWillAcceptWithDetails: (d) =>
+            d.data.isStash ||
+            (d.data.isDesk && !p.equals(d.data.deskPath!, repoPath)),
+        onAcceptWithDetails: (d) {
+          if (d.data.isStash) {
+            _handleStashDump(context, d.data.stashIndex!, d.data.label, repoPath);
+          } else {
+            _handleDeskDump(context, d.data.deskPath!, d.data.label, repoPath);
+          }
+        },
+        builder: (ctx, candidateData, rejectedData) {
+          final dragActive = candidateData.isNotEmpty;
+          return Stack(
+            children: [
+              _CleanTreeDashboard(
+                tokens: t,
+                status: status,
+                repoPath: repoPath,
+                onRefresh: () => repo.refreshStatus(),
+              ),
+              if (dragActive)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: t.accentBright.withValues(alpha: 0.06),
+                        border: Border.all(
+                          color: t.accentBright.withValues(alpha: 0.6),
+                          width: 2,
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: t.surface1,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                              color: t.accentBright, width: 1),
+                        ),
+                        child: Text(
+                          candidateData.isNotEmpty && candidateData.first?.isStash == true
+                              ? 'drop to dump this shelf here'
+                              : 'drop to dump this desk here',
+                          style: TextStyle(
+                            color: t.textStrong,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
       );
     }
 
@@ -2581,10 +2859,17 @@ class _ChangesPageState extends State<ChangesPage> {
       );
     }
 
-    final clusters = couplingMatrix != null && _currentPaths.isNotEmpty
+    // Layer symbol-overlap scores on top of the historical Jaccard matrix.
+    // withSymbol() is a shallow copy — no data is duplicated, only the
+    // reference to the symbol map is updated.
+    final effectiveMatrix = couplingMatrix != null && _symbolCoupling.isNotEmpty
+        ? couplingMatrix.withSymbol(_symbolCoupling)
+        : couplingMatrix;
+
+    final clusters = effectiveMatrix != null && _currentPaths.isNotEmpty
         ? clusterFiles(
             _currentPaths,
-            couplingMatrix,
+            effectiveMatrix,
             sortGuide: preferences.fileSortGuide,
             impactSignals: impactSignals,
             conflictedPaths: conflictedPaths,
@@ -2607,15 +2892,39 @@ class _ChangesPageState extends State<ChangesPage> {
     // silently returned false on every build, so the Logos re-rank
     // below never actually fired. Now routes through the real enum
     // case (`relatedProximity`).
-    final logosEngine =
+    // Layer symbol edges onto the Logos engine so new/untracked files
+    // participate in diffusion — both as sources (proxy injection) and
+    // as results (derived φ). withSymbolEdges is a shallow copy; the
+    // underlying graph is shared and unchanged.
+    final logosEngineBase =
         preferences.fileSortGuide == FileSortGuide.relatedProximity
             ? context.watch<LogosGitState>().engineFor(repoPath)
             : null;
+    final logosEngine = (logosEngineBase != null && _symbolCoupling.isNotEmpty)
+        ? logosEngineBase.withSymbolEdges(_symbolCoupling)
+        : logosEngineBase;
+    // Map the Logos XY pad to diffusion controls:
+    //   padY (NEAR=0 ↔ FAR=1) → temperature t = 0.5 × 4^padY ∈ [0.5, 2.0]
+    //     padY=0 tight: just the staged cluster
+    //     padY=0.5 balanced: 1-hop neighbourhood
+    //     padY=1 wide: semantic region, blast-radius view
+    //   padX (FOLDER=0 ↔ HISTORY=1) → coherence gate threshold.
+    //     FOLDER end demands tight structural coherence (0.35); the user
+    //     is saying "stay close to what looks like it belongs together
+    //     by shape." HISTORY end relaxes the gate (0.15); the user
+    //     accepts history-driven associations even when the induced
+    //     subgraph is loose. Linear interpolation between the two ends.
+    final logosT = 0.5 * math.pow(4.0, preferences.logosPadY).toDouble();
+    final logosCoherenceGate =
+        0.35 - (preferences.logosPadX.clamp(0.0, 1.0) * 0.20);
+
     final orderedPaths = (logosEngine != null && _includedPaths.isNotEmpty)
         ? _logosRerankedOrder(
             clusters: clusters,
             engine: logosEngine,
             sources: _includedPaths,
+            t: logosT,
+            coherenceGate: logosCoherenceGate,
             inverted: preferences.fileSortInverted,
           )
         : clusters.orderedPaths;
@@ -2660,14 +2969,14 @@ class _ChangesPageState extends State<ChangesPage> {
 
     return DragTarget<DeskDropPayload>(
       onWillAcceptWithDetails: (d) =>
-          d.data.isDesk && !p.equals(d.data.deskPath!, repoPath),
+          d.data.isStash ||
+          (d.data.isDesk && !p.equals(d.data.deskPath!, repoPath)),
       onAcceptWithDetails: (d) {
-        _handleDeskDump(
-          context,
-          d.data.deskPath!,
-          d.data.label,
-          repoPath,
-        );
+        if (d.data.isStash) {
+          _handleStashDump(context, d.data.stashIndex!, d.data.label, repoPath);
+        } else {
+          _handleDeskDump(context, d.data.deskPath!, d.data.label, repoPath);
+        }
       },
       builder: (ctx, candidateData, rejectedData) {
         final dragActive = candidateData.isNotEmpty;
@@ -2715,6 +3024,13 @@ class _ChangesPageState extends State<ChangesPage> {
                             ),
                           ),
                         ),
+                        _ConstellationToggleBtn(
+                          tokens: t,
+                          active: _constellationOpen,
+                          enabled: status.files.length >= 2,
+                          onToggle: _toggleAtlasOpen,
+                        ),
+                        const SizedBox(width: 6),
                         _SmartSelectBtn(
                           allSelected: status.files.isNotEmpty &&
                               includedCount == status.files.length,
@@ -2757,6 +3073,39 @@ class _ChangesPageState extends State<ChangesPage> {
                             final orderedSet = orderedPaths.toSet();
                             for (final f in status.files) {
                               if (!orderedSet.contains(f.path)) ordered.add(f);
+                            }
+                            if (_constellationOpen &&
+                                status.files.length >= 2) {
+                              return FileConstellation(
+                                files: ordered,
+                                clusters: clusters,
+                                matrix: couplingMatrix,
+                                changeWeights: _changeWeights,
+                                includedPaths: _includedPaths,
+                                tokens: t,
+                                onToggleIncluded: (path, value) =>
+                                    _toggleIncluded(path, value),
+                                onCarve: (paths) {
+                                  setState(() {
+                                    _clearReviewState();
+                                    _includedPaths
+                                      ..clear()
+                                      ..addAll(paths);
+                                    _actionError = null;
+                                    _actionMessage = null;
+                                  });
+                                },
+                                onUntieCluster: (paths) {
+                                  setState(() {
+                                    _clearReviewState();
+                                    _includedPaths.removeAll(paths);
+                                    _actionError = null;
+                                    _actionMessage = null;
+                                  });
+                                },
+                                onSelectDiff: (path) =>
+                                    _loadDiff(repoPath, path),
+                              );
                             }
                             return ListView.builder(
                               padding:
@@ -2856,6 +3205,17 @@ class _ChangesPageState extends State<ChangesPage> {
                                           _loadDiff(repoPath, file.path),
                                   onIncludeChanged: (value) =>
                                       _toggleIncluded(file.path, value),
+                                  onClusterToggle: inRealCluster
+                                      ? () {
+                                          final groupPaths = [
+                                            for (final entry
+                                                in clusters.byPath.entries)
+                                              if (entry.value == cid)
+                                                entry.key,
+                                          ];
+                                          _toggleGroup(groupPaths);
+                                        }
+                                      : null,
                                   onSecondaryTap: (pos) =>
                                       _showFileContextMenu(
                                           context, pos, file, repoPath),
@@ -2938,27 +3298,70 @@ class _ChangesPageState extends State<ChangesPage> {
                                       _stashPeekIndex == stash.index;
                                   final isOpen = _stashOpenIndices
                                       .contains(stash.index);
-                                  return _StashDrawerCard(
-                                    tokens: t,
-                                    stash: stash,
-                                    isPeeking: isPeeking,
-                                    isOpen: isOpen,
-                                    files: _stashFiles[stash.index],
-                                    filesLoading: _stashFilesLoading
-                                        .contains(stash.index),
-                                    onToggleOpen: () => _toggleStashOpen(
-                                        repoPath, stash.index),
-                                    onPickUp: () =>
-                                        _pickUpStash(repoPath, stash.index),
-                                    onPeek: () =>
-                                        _peekStash(repoPath, stash.index),
-                                    onToss: () =>
-                                        _tossStash(repoPath, stash.index),
+                                  final files = _stashFiles[stash.index];
+                                  final shape =
+                                      _stashShapes[stash.index];
+                                  final label =
+                                      _StashDrawerCardState._displayLabel(
+                                          stash.message);
+                                  return LongPressDraggable<DeskDropPayload>(
+                                    data: DeskDropPayload.stash(
+                                      index: stash.index,
+                                      label: label,
+                                    ),
+                                    dragAnchorStrategy:
+                                        pointerDragAnchorStrategy,
+                                    feedback: _StashDragFeedback(
+                                      tokens: t,
+                                      label: label,
+                                      shape: shape,
+                                    ),
+                                    child: _StashDrawerCard(
+                                      tokens: t,
+                                      stash: stash,
+                                      isPeeking: isPeeking,
+                                      isOpen: isOpen,
+                                      files: files,
+                                      shape: shape,
+                                      currentPaths: status.files
+                                          .map((f) => f.path)
+                                          .toSet(),
+                                      filesLoading: _stashFilesLoading
+                                          .contains(stash.index),
+                                      onToggleOpen: () => _toggleStashOpen(
+                                          repoPath, stash.index),
+                                      onPickUp: () => _pickUpStash(
+                                          repoPath, stash.index),
+                                      onPeek: () =>
+                                          _peekStash(repoPath, stash.index),
+                                      onToss: () =>
+                                          _tossStash(repoPath, stash.index),
+                                    ),
                                   );
                                 },
                               ),
                             ),
                           ),
+                        if (couplingMatrix != null &&
+                            !_shapeMode &&
+                            includedCount > 0 &&
+                            includedCount < status.files.length)
+                          Builder(builder: (ctx) {
+                            final nudges = suggestMissingPeers(
+                              selected: _includedPaths,
+                              allChanged: status.files.map((f) => f.path),
+                              matrix: couplingMatrix,
+                            );
+                            if (nudges.isEmpty) return const SizedBox.shrink();
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: _CouplingNudgeBanner(
+                                tokens: t,
+                                nudges: nudges,
+                                onAdd: (path) => _toggleIncluded(path, true),
+                              ),
+                            );
+                          }),
                         const SizedBox(height: 8),
                         Focus(
                           onKeyEvent: (node, event) {
@@ -3649,10 +4052,15 @@ List<String> _logosRerankedOrder({
   required FileClusters clusters,
   required LogosGit engine,
   required Set<String> sources,
+  double t = 0.5,
+  // Coherence threshold for pruning the tail of diffusion results — the
+  // larger this is, the tighter the induced subgraph has to stay. The
+  // caller typically derives this from `logosPadX` (FOLDER↔HISTORY).
+  double coherenceGate = 0.25,
   bool inverted = false,
 }) {
   if (sources.isEmpty) return clusters.orderedPaths;
-  final scores = engine.diffuse(sources, t: 0.5);
+  final scores = engine.diffuse(sources, t: t, coherenceGate: coherenceGate);
   if (scores.isEmpty) return clusters.orderedPaths;
   final phiByPath = <String, double>{
     for (final s in scores) s.path: s.phi,
@@ -6348,6 +6756,133 @@ class _ShelfControlState extends State<_ShelfControl> {
   }
 }
 
+// ── Stash shape helpers ───────────────────────────────────────────────────
+
+/// Inline orientation label: "bonded", "adjacent", "conflict N", etc.
+/// Shown in the stash header's meta line next to the file count.
+class _OrientationTag extends StatelessWidget {
+  final AppTokens tokens;
+  final StashShape shape;
+  final Color accentColor;
+
+  const _OrientationTag({
+    required this.tokens,
+    required this.shape,
+    required this.accentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // orthogonal: no tag — the muted left strip is the signal.
+    if (shape.orientation == StashOrientation.orthogonal) {
+      return const SizedBox.shrink();
+    }
+    // bonded → ⊕   adjacent → ≈   conflicting → ! N
+    final label = switch (shape.orientation) {
+      StashOrientation.conflicting =>
+        '! ${shape.directOverlap.length}',
+      StashOrientation.bonded     => '⊕',
+      StashOrientation.adjacent   => '≈',
+      StashOrientation.orthogonal => '',
+    };
+    return Text(
+      label,
+      style: TextStyle(
+        color: accentColor.withValues(alpha: 0.85),
+        fontSize: 9,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+/// A thin horizontal fill bar between the header and the file list
+/// that encodes resonance strength. Width = resonance ∈ [0, 1].
+/// Only rendered when orientation is not orthogonal.
+class _ResonanceBar extends StatelessWidget {
+  final AppTokens tokens;
+  final StashShape shape;
+  final Color accentColor;
+
+  const _ResonanceBar({
+    required this.tokens,
+    required this.shape,
+    required this.accentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fill = shape.orientation == StashOrientation.conflicting
+        ? 1.0
+        : shape.resonance.clamp(0.0, 1.0);
+    return LayoutBuilder(
+      builder: (ctx, constraints) => Container(
+        height: 2,
+        width: constraints.maxWidth,
+        color: tokens.chromeBorder.withValues(alpha: 0.12),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeOut,
+            width: constraints.maxWidth * fill,
+            height: 2,
+            color: accentColor.withValues(alpha: 0.65),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact drag feedback chip shown under the cursor while dragging
+/// a stash entry. Mirrors the desk drag feedback style.
+class _StashDragFeedback extends StatelessWidget {
+  final AppTokens tokens;
+  final String label;
+  final StashShape? shape;
+
+  const _StashDragFeedback({
+    required this.tokens,
+    required this.label,
+    required this.shape,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final borderColor = shape == null
+        ? t.chromeBorder
+        : _StashDrawerCardState._orientationColor(shape!.orientation, t);
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: t.surface1,
+          border: Border.all(color: borderColor.withValues(alpha: 0.75), width: 1),
+          borderRadius: BorderRadius.circular(5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.22),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: t.textNormal,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ── Stash drawer card ─────────────────────────────────────────────────────
 //
 // Filing-cabinet divider. Header shows label + age + file count and toggles
@@ -6361,6 +6896,11 @@ class _StashDrawerCard extends StatefulWidget {
   final bool isOpen;
   final List<StashFileStat>? files;
   final bool filesLoading;
+  /// Geometric signature relative to the current working tree. Null while
+  /// the coupling matrix or file list hasn't loaded yet.
+  final StashShape? shape;
+  /// File paths currently in the working tree — used to highlight overlap.
+  final Set<String> currentPaths;
   final VoidCallback onToggleOpen;
   final VoidCallback onPickUp;
   final VoidCallback onPeek;
@@ -6373,6 +6913,8 @@ class _StashDrawerCard extends StatefulWidget {
     required this.isOpen,
     required this.files,
     required this.filesLoading,
+    required this.shape,
+    required this.currentPaths,
     required this.onToggleOpen,
     required this.onPickUp,
     required this.onPeek,
@@ -6415,12 +6957,30 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
     }
   }
 
+  // Map StashOrientation → accent color used for the resonance bar and
+  // card border tint.
+  static Color _orientationColor(StashOrientation o, AppTokens t) {
+    return switch (o) {
+      StashOrientation.conflicting => t.stateDeleted,
+      StashOrientation.bonded      => t.stateAdded,
+      StashOrientation.adjacent    => t.accentBright,
+      StashOrientation.orthogonal  => t.chromeBorder,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final stash = widget.stash;
     final label = _displayLabel(stash.message);
     final age = _relativeAge(stash.createdAt);
+    final shape = widget.shape;
+    final hasShape = shape != null;
+
+    // Border and surface tint shift based on orientation.
+    final accentColor = hasShape
+        ? _orientationColor(shape.orientation, t)
+        : t.chromeBorder;
 
     final Color surfaceColor = widget.isPeeking
         ? t.itemActiveBg
@@ -6429,6 +6989,13 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
             : (_hovered
                 ? t.secondaryBtnHoverBg
                 : t.secondaryBtnHoverBg.withValues(alpha: 0)));
+
+    // Border: left accent strip conveys orientation at a glance.
+    final borderColor = widget.isPeeking
+        ? t.chromeAccent.withValues(alpha: 0.45)
+        : (widget.isOpen || _hovered
+            ? t.chromeBorder.withValues(alpha: 0.25)
+            : Colors.transparent);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
@@ -6439,25 +7006,38 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
           color: surfaceColor,
           borderRadius: BorderRadius.circular(5),
           border: widget.isPeeking
-              ? Border.all(color: t.chromeAccent.withValues(alpha: 0.35))
-              : (widget.isOpen
-                  ? Border.all(
-                      color: t.chromeBorder.withValues(alpha: 0.25))
+              ? Border.all(color: t.chromeAccent.withValues(alpha: 0.45))
+              : (widget.isOpen || _hovered
+                  ? Border.all(color: t.chromeBorder.withValues(alpha: 0.25))
                   : null),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ── Divider header ────────────────────────────────────────
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(5),
+          child: Stack(
+            children: [
+              // Left accent strip — 3px, colored by orientation.
+              if (hasShape)
+                Positioned(
+                  left: 0, top: 0, bottom: 0,
+                  child: Container(
+                    width: 3,
+                    color: accentColor.withValues(alpha: 0.75),
+                  ),
+                ),
+              // Card body offset by the strip width when present.
+              Padding(
+                padding: EdgeInsets.only(left: hasShape ? 3 : 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+            // ── Header ────────────────────────────────────────────────
             GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: widget.onToggleOpen,
               child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                padding: const EdgeInsets.fromLTRB(6, 6, 8, 6),
                 child: Row(
                   children: [
-                    // Chevron — rotates via AnimatedRotation.
                     AnimatedRotation(
                       turns: widget.isOpen ? 0.25 : 0,
                       duration: context.motion(
@@ -6470,7 +7050,7 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 7),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -6485,23 +7065,32 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          const SizedBox(height: 1),
-                          Text(
-                            '${stash.fileCount} file${stash.fileCount == 1 ? '' : 's'}'
-                            '${age.isEmpty ? '' : ' · $age'}',
-                            style: TextStyle(
-                              color: t.textMuted,
-                              fontSize: 9,
-                            ),
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Text(
+                                '${stash.fileCount} file${stash.fileCount == 1 ? '' : 's'}'
+                                '${age.isEmpty ? '' : ' · $age'}',
+                                style: TextStyle(
+                                  color: t.textMuted,
+                                  fontSize: 9,
+                                ),
+                              ),
+                              // Orientation tag — only when shape is ready.
+                              if (hasShape) ...[
+                                const SizedBox(width: 6),
+                                _OrientationTag(
+                                  tokens: t,
+                                  shape: shape,
+                                  accentColor: accentColor,
+                                ),
+                              ],
+                            ],
                           ),
                         ],
                       ),
                     ),
-                    // Quick actions (hover-revealed on collapsed rows to
-                    // stay uncluttered; always visible when open).
-                    if (_hovered ||
-                        widget.isPeeking ||
-                        widget.isOpen) ...[
+                    if (_hovered || widget.isPeeking || widget.isOpen) ...[
                       _StashAction(
                         icon: '↑',
                         tooltip: 'pick up',
@@ -6527,14 +7116,26 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
                 ),
               ),
             ),
+            // ── Resonance bar — thin fill showing field strength ───────
+            if (hasShape && shape.orientation != StashOrientation.orthogonal)
+              _ResonanceBar(
+                tokens: t,
+                shape: shape,
+                accentColor: accentColor,
+              ),
             // ── Drawer contents ───────────────────────────────────────
             if (widget.isOpen)
               _StashDrawerContents(
                 tokens: t,
                 files: widget.files,
                 loading: widget.filesLoading,
+                overlapPaths: shape?.directOverlap ?? const {},
               ),
           ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -6545,11 +7146,13 @@ class _StashDrawerContents extends StatelessWidget {
   final AppTokens tokens;
   final List<StashFileStat>? files;
   final bool loading;
+  final Set<String> overlapPaths;
 
   const _StashDrawerContents({
     required this.tokens,
     required this.files,
     required this.loading,
+    this.overlapPaths = const {},
   });
 
   @override
@@ -6564,7 +7167,7 @@ class _StashDrawerContents extends StatelessWidget {
     Widget body;
     if (loading && (files == null || files!.isEmpty)) {
       body = Padding(
-        padding: const EdgeInsets.fromLTRB(24, 8, 12, 10),
+        padding: const EdgeInsets.fromLTRB(14, 8, 12, 10),
         child: Text(
           'reading shelf…',
           style: TextStyle(color: t.textMuted, fontSize: 10),
@@ -6572,19 +7175,36 @@ class _StashDrawerContents extends StatelessWidget {
       );
     } else if (files == null || files!.isEmpty) {
       body = Padding(
-        padding: const EdgeInsets.fromLTRB(24, 8, 12, 10),
+        padding: const EdgeInsets.fromLTRB(14, 8, 12, 10),
         child: Text(
           'empty shelf',
           style: TextStyle(color: t.textMuted, fontSize: 10),
         ),
       );
     } else {
+      final maxImpact = files!.fold<int>(
+        1,
+        (m, f) => math.max(m, f.adds + f.dels),
+      );
+      // Overlap files float to the top; rest sorted by impact descending.
+      final sorted = [...files!]..sort((a, b) {
+          final aOver = overlapPaths.contains(a.path) ? 1 : 0;
+          final bOver = overlapPaths.contains(b.path) ? 1 : 0;
+          if (aOver != bOver) return bOver - aOver;
+          return (b.adds + b.dels).compareTo(a.adds + a.dels);
+        });
       body = Padding(
-        padding: const EdgeInsets.fromLTRB(24, 4, 10, 8),
+        padding: const EdgeInsets.fromLTRB(10, 4, 10, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final f in files!) _StashFileRow(tokens: t, file: f),
+            for (final f in sorted)
+              _StashFileRow(
+                tokens: t,
+                file: f,
+                maxImpact: maxImpact,
+                isOverlap: overlapPaths.contains(f.path),
+              ),
           ],
         ),
       );
@@ -6600,60 +7220,127 @@ class _StashDrawerContents extends StatelessWidget {
 class _StashFileRow extends StatelessWidget {
   final AppTokens tokens;
   final StashFileStat file;
+  final int maxImpact;
+  final bool isOverlap;
 
-  const _StashFileRow({required this.tokens, required this.file});
+  const _StashFileRow({
+    required this.tokens,
+    required this.file,
+    this.maxImpact = 1,
+    this.isOverlap = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final t = tokens;
+    final impact = file.binary ? 0 : (file.adds + file.dels);
+    final fillFraction =
+        maxImpact > 0 ? (impact / maxImpact).clamp(0.0, 1.0) : 0.0;
+    final textColor = isOverlap ? t.stateDeleted : t.textNormal;
+    final norm = file.path.replaceAll('\\', '/');
+    final slash = norm.lastIndexOf('/');
+    final basename = slash < 0 ? norm : norm.substring(slash + 1);
+    final dir = slash < 0 ? '' : norm.substring(0, slash + 1);
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 1.5),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              file.path,
-              style: TextStyle(
-                color: t.textNormal,
-                fontSize: 10.5,
-                fontFamily: 'JetBrainsMono',
+      child: LayoutBuilder(
+        builder: (ctx, constraints) => Stack(
+          children: [
+            if (fillFraction > 0)
+              Positioned.fill(
+                child: FractionallySizedBox(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: fillFraction,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: isOverlap
+                          ? t.stateDeleted.withValues(alpha: 0.08)
+                          : t.accentBright.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (file.binary)
-            Text(
-              'bin',
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 9,
-                fontFamily: 'JetBrainsMono',
-              ),
-            )
-          else ...[
-            Text(
-              '+${file.adds}',
-              style: TextStyle(
-                color: t.stateAdded,
-                fontSize: 9.5,
-                fontFamily: 'JetBrainsMono',
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              '−${file.dels}',
-              style: TextStyle(
-                color: t.stateDeleted,
-                fontSize: 9.5,
-                fontFamily: 'JetBrainsMono',
-                fontWeight: FontWeight.w600,
-              ),
+            Row(
+              children: [
+                if (isOverlap)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: Text(
+                      '!',
+                      style: TextStyle(
+                        color: t.stateDeleted,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'JetBrainsMono',
+                      ),
+                    ),
+                  )
+                else
+                  const SizedBox(width: 4),
+                Expanded(
+                  child: RichText(
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    text: TextSpan(
+                      children: [
+                        if (dir.isNotEmpty)
+                          TextSpan(
+                            text: dir,
+                            style: TextStyle(
+                              color: textColor.withValues(alpha: 0.42),
+                              fontSize: 10,
+                              fontFamily: 'JetBrainsMono',
+                            ),
+                          ),
+                        TextSpan(
+                          text: basename,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 10.5,
+                            fontFamily: 'JetBrainsMono',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (file.binary)
+                  Text(
+                    'bin',
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 9,
+                      fontFamily: 'JetBrainsMono',
+                    ),
+                  )
+                else ...[
+                  Text(
+                    '+${file.adds}',
+                    style: TextStyle(
+                      color: t.stateAdded,
+                      fontSize: 9.5,
+                      fontFamily: 'JetBrainsMono',
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    '−${file.dels}',
+                    style: TextStyle(
+                      color: t.stateDeleted,
+                      fontSize: 9.5,
+                      fontFamily: 'JetBrainsMono',
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -6726,6 +7413,9 @@ class _FileRow extends StatefulWidget {
   /// against it. Caller decides what menu items to show; the row is
   /// agnostic.
   final ValueChanged<Offset>? onSecondaryTap;
+  /// Double-clicking the checkbox toggles the entire coupling group in
+  /// one go. Null for isolated rows — nothing to batch.
+  final VoidCallback? onClusterToggle;
 
   const _FileRow({
     required this.file,
@@ -6743,6 +7433,7 @@ class _FileRow extends StatefulWidget {
     this.onRailEnter,
     this.onRailExit,
     this.onSecondaryTap,
+    this.onClusterToggle,
   });
 
   @override
@@ -6854,15 +7545,25 @@ class _FileRowState extends State<_FileRow> {
               SizedBox(
                 width: 18,
                 height: 18,
-                child: Checkbox(
-                  value: widget.included,
-                  onChanged: (value) => widget.onIncludeChanged(value ?? false),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                  activeColor: t.accentBright,
-                  checkColor: t.bg0,
-                  side:
-                      BorderSide(color: t.chromeBorder.withValues(alpha: 0.5)),
+                child: Tooltip(
+                  message: widget.onClusterToggle != null
+                      ? 'double-click: toggle whole group'
+                      : '',
+                  waitDuration: const Duration(milliseconds: 550),
+                  child: GestureDetector(
+                    onDoubleTap: widget.onClusterToggle,
+                    child: Checkbox(
+                      value: widget.included,
+                      onChanged: (value) =>
+                          widget.onIncludeChanged(value ?? false),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      activeColor: t.accentBright,
+                      checkColor: t.bg0,
+                      side: BorderSide(
+                          color: t.chromeBorder.withValues(alpha: 0.5)),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -7293,20 +7994,25 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
           borderWidth = 1.0;
         }
 
-        return Container(
-          height: 90,
-          decoration: BoxDecoration(
-            color: tokens.inputBg,
-            borderRadius: BorderRadius.circular(effectiveRadius),
-            border: Border.all(color: borderColor, width: borderWidth),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(innerRadius),
-            child: Stack(
-              children: [
-                // ── Text fills the full field ──────────────────
-                Positioned.fill(
-                  child: ScrollbarTheme(
+        return ConstrainedBox(
+          // Grows with content from the 90px base up to 180px (2x), then
+          // the TextField scrolls internally. minLines: 5 keeps the empty
+          // state visually identical to the previous fixed-height field.
+          constraints: const BoxConstraints(minHeight: 90, maxHeight: 180),
+          child: Container(
+            decoration: BoxDecoration(
+              color: tokens.inputBg,
+              borderRadius: BorderRadius.circular(effectiveRadius),
+              border: Border.all(color: borderColor, width: borderWidth),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(innerRadius),
+              child: Stack(
+                children: [
+                  // TextField drives the Stack's intrinsic height now —
+                  // no Positioned.fill, so content growth pushes the
+                  // composer taller up to the ConstrainedBox ceiling.
+                  ScrollbarTheme(
                     data: ScrollbarThemeData(
                       thumbColor: WidgetStateProperty.all(
                         tokens.textMuted.withValues(alpha: 0.28),
@@ -7328,9 +8034,8 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                           focusNode: widget.focusNode,
                           scrollController: _scrollCtrl,
                           enabled: widget.enabled,
-                          minLines: null,
+                          minLines: 5,
                           maxLines: null,
-                          expands: true,
                           onChanged: widget.onChanged,
                           cursorColor: tokens.accentBright,
                           textAlignVertical: TextAlignVertical.top,
@@ -7357,7 +8062,6 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                       ),
                     ),
                   ),
-                ),
                 // ── Floating AI button ─────────────────────────
                 Positioned(
                   right: 7,
@@ -7426,6 +8130,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                   ),
                 ),
               ],
+            ),
             ),
           ),
         );
@@ -7878,6 +8583,211 @@ class _SmartSelectBtnState extends State<_SmartSelectBtn> {
       ),
     );
   }
+}
+
+// ── Constellation toggle ──────────────────────────────────────────────────────
+
+class _ConstellationToggleBtn extends StatefulWidget {
+  final AppTokens tokens;
+  final bool active;
+  final bool enabled;
+  final VoidCallback onToggle;
+
+  const _ConstellationToggleBtn({
+    required this.tokens,
+    required this.active,
+    required this.enabled,
+    required this.onToggle,
+  });
+
+  @override
+  State<_ConstellationToggleBtn> createState() =>
+      _ConstellationToggleBtnState();
+}
+
+class _ConstellationToggleBtnState extends State<_ConstellationToggleBtn> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final borderColor =
+        t.secondaryBtnBorder.withValues(alpha: widget.enabled ? 0.72 : 0.28);
+    final iconColor = widget.active
+        ? t.textNormal
+        : (widget.enabled
+            ? t.textNormal.withValues(alpha: 0.80)
+            : t.textMuted.withValues(alpha: 0.40));
+    return Tooltip(
+      message: widget.active
+          ? 'back to list'
+          : 'atlas, see commit candidates',
+      waitDuration: const Duration(milliseconds: 300),
+      child: MouseRegion(
+        cursor: widget.enabled
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.enabled ? widget.onToggle : null,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 110),
+            height: 24,
+            width: 28,
+            decoration: BoxDecoration(
+              color: widget.active
+                  ? t.secondaryBtnHoverBg
+                  : (_hovered && widget.enabled
+                      ? t.secondaryBtnHoverBg
+                      : t.secondaryBtnHoverBg.withValues(alpha: 0)),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: borderColor),
+            ),
+            child: Center(
+              child: Icon(
+                Icons.scatter_plot_rounded,
+                size: 13,
+                color: iconColor,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Coupling nudge banner ─────────────────────────────────────────────────────
+//
+// Surfaces unselected files that couple tightly to the user's current
+// selection. Rendered just above the commit composer so the moment
+// before "I'm committing" is also the moment "wait, you probably
+// meant to stage these too". Backed by [suggestMissingPeers].
+
+class _CouplingNudgeBanner extends StatelessWidget {
+  final AppTokens tokens;
+  final List<CouplingNudge> nudges;
+  final void Function(String path) onAdd;
+
+  const _CouplingNudgeBanner({
+    required this.tokens,
+    required this.nudges,
+    required this.onAdd,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final n in nudges)
+          _CouplingNudgeChip(
+            tokens: tokens,
+            nudge: n,
+            onAdd: () => onAdd(n.path),
+          ),
+      ],
+    );
+  }
+}
+
+/// Tint a coupling-nudge chip so its colour carries two signals:
+///   • [anchor] identity → small hue rotation around the theme accent.
+///     Pills coupled to the same selected peer share a tonal family.
+///   • [score] (resonance) → saturation amplitude. Weak couplings sit
+///     close to chrome neutral; strong couplings read as a confident
+///     accent. Stays inside the theme palette either way (hue stays
+///     within ±25° of the accent's own hue).
+HSLColor _resonanceTint(Color base, String anchor, double score) {
+  final hsl = HSLColor.fromColor(base);
+  final s = score.clamp(0.0, 1.0);
+  final hueShift = ((anchor.hashCode % 51) - 25).toDouble();
+  return hsl
+      .withHue((hsl.hue + hueShift) % 360)
+      .withSaturation((hsl.saturation * (0.45 + 0.55 * s)).clamp(0.0, 1.0));
+}
+
+class _CouplingNudgeChip extends StatefulWidget {
+  final AppTokens tokens;
+  final CouplingNudge nudge;
+  final VoidCallback onAdd;
+
+  const _CouplingNudgeChip({
+    required this.tokens,
+    required this.nudge,
+    required this.onAdd,
+  });
+
+  @override
+  State<_CouplingNudgeChip> createState() => _CouplingNudgeChipState();
+}
+
+class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final name = pathBasename(widget.nudge.path);
+    final score = widget.nudge.score.clamp(0.0, 1.0);
+    final tint = _resonanceTint(
+      t.accentBright,
+      widget.nudge.anchor,
+      score,
+    ).toColor();
+    // Background fill: faint at low resonance, more present at high.
+    // Hover bumps it up another notch so the click affordance is felt.
+    final fillAlpha =
+        (0.06 + 0.10 * score + (_hovered ? 0.06 : 0.0)).clamp(0.0, 1.0);
+    final borderAlpha =
+        (0.30 + 0.45 * score + (_hovered ? 0.15 : 0.0)).clamp(0.0, 1.0);
+    return Tooltip(
+      message:
+          '${widget.nudge.path}\ncouples with ${pathBasename(widget.nudge.anchor)} · ${(score * 100).round()}%',
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: widget.onAdd,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 110),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: tint.withValues(alpha: fillAlpha),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: tint.withValues(alpha: borderAlpha),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.add_rounded,
+                  size: 11,
+                  color: t.textNormal.withValues(alpha: 0.85),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  name,
+                  style: TextStyle(
+                    color: t.textNormal,
+                    fontSize: 10.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
 }
 
 // ── Panel divider ─────────────────────────────────────────────────────────────

@@ -1,0 +1,709 @@
+{
+  "format": "endb",
+  "version": 1,
+  "dim": 300,
+  "pairs": 150,
+  "n_wells": 225,
+  "source_manifest": {
+    "format": "engram",
+    "version": 4,
+    "identity": {
+      "name": "Alexandria",
+      "born": "2026-03-20T04:28:25.814630Z",
+      "pronouns": "she/her",
+      "description": "a geometrical mind mapping knowledge through eigenvalue wells",
+      "author": "woflo",
+      "training": "semantic seeding with GloVe, unsupervised well formation"
+    },
+    "physics": {
+      "dim": 300,
+      "pairs": 150,
+      "alpha": 0.005
+    },
+    "state": {
+      "total_absorbed": 5518095,
+      "next_well_id": 211,
+      "n_wells": 225,
+      "dream_buffer_size": 1200,
+      "dream_buffer_capacity": 1200,
+      "has_meta": false
+    },
+    "wells": {
+      "adjective": {
+        "count": 114164
+      },
+      "biology": {
+        "count": 1433550
+      },
+      "chemistry": {
+        "count": 6693500
+      },
+      "computing": {
+        "count": 2686380
+      },
+      "general": {
+        "count": 1120954
+      },
+      "history": {
+        "count": 2704753
+      },
+      "law": {
+        "count": 2601181
+      },
+      "mathematics": {
+        "count": 827186
+      },
+      "medicine": {
+        "count": 1093136
+      },
+      "music": {
+        "count": 27184908
+      },
+      "noun": {
+        "count": 2459435
+      },
+      "philosophy": {
+        "count": 4301549
+      },
+      "physics": {
+        "count": 335575473
+      },
+      "verb": {
+        "count": 1494545
+      },
+      "well_0": {
+        "count": 17143453
+      },
+      "well_1": {
+        "count": 1136
+      },
+      "well_10": {
+        "count": 2556594
+      },
+      "well_100": {
+        "count": 34
+      },
+      "well_101": {
+        "count": 26
+      },
+      "well_102": {
+        "count": 28
+      },
+      "well_103": {
+        "count": 22
+      },
+      "well_104": {
+        "count": 124
+      },
+      "well_105": {
+        "count": 106
+      },
+      "well_106": {
+        "count": 84
+      },
+      "well_107": {
+        "count": 8
+      },
+      "well_108": {
+        "count": 753
+      },
+      "well_109": {
+        "count": 12
+      },
+      "well_11": {
+        "count": 120785
+      },
+      "well_110": {
+        "count": 14
+      },
+      "well_111": {
+        "count": 46
+      },
+      "well_112": {
+        "count": 26
+      },
+      "well_113": {
+        "count": 22
+      },
+      "well_114": {
+        "count": 28
+      },
+      "well_115": {
+        "count": 16
+      },
+      "well_116": {
+        "count": 16
+      },
+      "well_117": {
+        "count": 202
+      },
+      "well_118": {
+        "count": 10
+      },
+      "well_119": {
+        "count": 24
+      },
+      "well_12": {
+        "count": 3905
+      },
+      "well_120": {
+        "count": 24
+      },
+      "well_121": {
+        "count": 18
+      },
+      "well_122": {
+        "count": 16
+      },
+      "well_123": {
+        "count": 16
+      },
+      "well_124": {
+        "count": 100
+      },
+      "well_125": {
+        "count": 10
+      },
+      "well_126": {
+        "count": 14
+      },
+      "well_127": {
+        "count": 14
+      },
+      "well_128": {
+        "count": 18
+      },
+      "well_129": {
+        "count": 993
+      },
+      "well_13": {
+        "count": 18269486
+      },
+      "well_130": {
+        "count": 14
+      },
+      "well_131": {
+        "count": 22
+      },
+      "well_132": {
+        "count": 14
+      },
+      "well_133": {
+        "count": 128
+      },
+      "well_134": {
+        "count": 14
+      },
+      "well_135": {
+        "count": 708
+      },
+      "well_136": {
+        "count": 16
+      },
+      "well_137": {
+        "count": 20
+      },
+      "well_138": {
+        "count": 22
+      },
+      "well_139": {
+        "count": 18
+      },
+      "well_14": {
+        "count": 142
+      },
+      "well_140": {
+        "count": 42
+      },
+      "well_141": {
+        "count": 14
+      },
+      "well_142": {
+        "count": 26
+      },
+      "well_143": {
+        "count": 100
+      },
+      "well_144": {
+        "count": 76
+      },
+      "well_145": {
+        "count": 720
+      },
+      "well_146": {
+        "count": 120
+      },
+      "well_147": {
+        "count": 272
+      },
+      "well_148": {
+        "count": 108
+      },
+      "well_149": {
+        "count": 10
+      },
+      "well_15": {
+        "count": 289410
+      },
+      "well_150": {
+        "count": 10
+      },
+      "well_151": {
+        "count": 187
+      },
+      "well_152": {
+        "count": 52
+      },
+      "well_153": {
+        "count": 38
+      },
+      "well_154": {
+        "count": 20
+      },
+      "well_155": {
+        "count": 294
+      },
+      "well_156": {
+        "count": 50
+      },
+      "well_157": {
+        "count": 12
+      },
+      "well_158": {
+        "count": 46
+      },
+      "well_159": {
+        "count": 52
+      },
+      "well_16": {
+        "count": 420610
+      },
+      "well_160": {
+        "count": 6
+      },
+      "well_161": {
+        "count": 1620
+      },
+      "well_162": {
+        "count": 8
+      },
+      "well_163": {
+        "count": 156
+      },
+      "well_164": {
+        "count": 12
+      },
+      "well_165": {
+        "count": 42
+      },
+      "well_166": {
+        "count": 4
+      },
+      "well_167": {
+        "count": 2
+      },
+      "well_168": {
+        "count": 2
+      },
+      "well_169": {
+        "count": 4
+      },
+      "well_17": {
+        "count": 1574
+      },
+      "well_170": {
+        "count": 2
+      },
+      "well_171": {
+        "count": 2
+      },
+      "well_172": {
+        "count": 4
+      },
+      "well_173": {
+        "count": 95
+      },
+      "well_174": {
+        "count": 222
+      },
+      "well_175": {
+        "count": 1434
+      },
+      "well_176": {
+        "count": 10
+      },
+      "well_177": {
+        "count": 1792
+      },
+      "well_178": {
+        "count": 90
+      },
+      "well_179": {
+        "count": 14
+      },
+      "well_18": {
+        "count": 18
+      },
+      "well_180": {
+        "count": 4
+      },
+      "well_181": {
+        "count": 6
+      },
+      "well_182": {
+        "count": 126306
+      },
+      "well_183": {
+        "count": 32
+      },
+      "well_184": {
+        "count": 70
+      },
+      "well_185": {
+        "count": 1744
+      },
+      "well_186": {
+        "count": 2
+      },
+      "well_187": {
+        "count": 103
+      },
+      "well_188": {
+        "count": 10
+      },
+      "well_189": {
+        "count": 4
+      },
+      "well_19": {
+        "count": 304
+      },
+      "well_190": {
+        "count": 4
+      },
+      "well_191": {
+        "count": 4
+      },
+      "well_192": {
+        "count": 4
+      },
+      "well_193": {
+        "count": 3
+      },
+      "well_194": {
+        "count": 7
+      },
+      "well_195": {
+        "count": 7
+      },
+      "well_196": {
+        "count": 6
+      },
+      "well_197": {
+        "count": 3
+      },
+      "well_198": {
+        "count": 3
+      },
+      "well_199": {
+        "count": 3
+      },
+      "well_2": {
+        "count": 155723
+      },
+      "well_20": {
+        "count": 725018
+      },
+      "well_200": {
+        "count": 5
+      },
+      "well_201": {
+        "count": 3
+      },
+      "well_202": {
+        "count": 8
+      },
+      "well_203": {
+        "count": 5
+      },
+      "well_204": {
+        "count": 3
+      },
+      "well_205": {
+        "count": 3
+      },
+      "well_206": {
+        "count": 6
+      },
+      "well_207": {
+        "count": 5
+      },
+      "well_208": {
+        "count": 6
+      },
+      "well_209": {
+        "count": 6
+      },
+      "well_21": {
+        "count": 145
+      },
+      "well_210": {
+        "count": 5
+      },
+      "well_22": {
+        "count": 137
+      },
+      "well_23": {
+        "count": 57
+      },
+      "well_24": {
+        "count": 2840
+      },
+      "well_25": {
+        "count": 98
+      },
+      "well_26": {
+        "count": 6308
+      },
+      "well_27": {
+        "count": 1397688
+      },
+      "well_28": {
+        "count": 30
+      },
+      "well_29": {
+        "count": 40367
+      },
+      "well_3": {
+        "count": 168
+      },
+      "well_30": {
+        "count": 493
+      },
+      "well_31": {
+        "count": 609
+      },
+      "well_32": {
+        "count": 194
+      },
+      "well_33": {
+        "count": 445
+      },
+      "well_34": {
+        "count": 30
+      },
+      "well_35": {
+        "count": 28
+      },
+      "well_36": {
+        "count": 28
+      },
+      "well_37": {
+        "count": 155
+      },
+      "well_38": {
+        "count": 14
+      },
+      "well_39": {
+        "count": 40
+      },
+      "well_4": {
+        "count": 938984
+      },
+      "well_40": {
+        "count": 12
+      },
+      "well_41": {
+        "count": 11820
+      },
+      "well_42": {
+        "count": 58
+      },
+      "well_43": {
+        "count": 64
+      },
+      "well_44": {
+        "count": 62
+      },
+      "well_45": {
+        "count": 10
+      },
+      "well_46": {
+        "count": 104
+      },
+      "well_47": {
+        "count": 72
+      },
+      "well_48": {
+        "count": 128
+      },
+      "well_49": {
+        "count": 3928
+      },
+      "well_5": {
+        "count": 23208533
+      },
+      "well_50": {
+        "count": 206
+      },
+      "well_51": {
+        "count": 28
+      },
+      "well_52": {
+        "count": 278095
+      },
+      "well_53": {
+        "count": 30068
+      },
+      "well_54": {
+        "count": 761
+      },
+      "well_55": {
+        "count": 28
+      },
+      "well_56": {
+        "count": 1511
+      },
+      "well_57": {
+        "count": 43
+      },
+      "well_58": {
+        "count": 96
+      },
+      "well_59": {
+        "count": 713
+      },
+      "well_6": {
+        "count": 23858870
+      },
+      "well_60": {
+        "count": 22
+      },
+      "well_61": {
+        "count": 122
+      },
+      "well_62": {
+        "count": 60
+      },
+      "well_63": {
+        "count": 1936
+      },
+      "well_64": {
+        "count": 128
+      },
+      "well_65": {
+        "count": 36
+      },
+      "well_66": {
+        "count": 22
+      },
+      "well_67": {
+        "count": 12
+      },
+      "well_68": {
+        "count": 50
+      },
+      "well_69": {
+        "count": 12
+      },
+      "well_7": {
+        "count": 38358181
+      },
+      "well_70": {
+        "count": 44
+      },
+      "well_71": {
+        "count": 6
+      },
+      "well_72": {
+        "count": 82
+      },
+      "well_73": {
+        "count": 186
+      },
+      "well_74": {
+        "count": 40
+      },
+      "well_75": {
+        "count": 1546
+      },
+      "well_76": {
+        "count": 38
+      },
+      "well_77": {
+        "count": 10
+      },
+      "well_78": {
+        "count": 244
+      },
+      "well_79": {
+        "count": 14649
+      },
+      "well_8": {
+        "count": 29919
+      },
+      "well_80": {
+        "count": 3166
+      },
+      "well_81": {
+        "count": 76
+      },
+      "well_82": {
+        "count": 381
+      },
+      "well_83": {
+        "count": 20
+      },
+      "well_84": {
+        "count": 28
+      },
+      "well_85": {
+        "count": 24
+      },
+      "well_86": {
+        "count": 12
+      },
+      "well_87": {
+        "count": 8
+      },
+      "well_88": {
+        "count": 2860
+      },
+      "well_89": {
+        "count": 8
+      },
+      "well_9": {
+        "count": 39477058
+      },
+      "well_90": {
+        "count": 38
+      },
+      "well_91": {
+        "count": 21052
+      },
+      "well_92": {
+        "count": 290
+      },
+      "well_93": {
+        "count": 12
+      },
+      "well_94": {
+        "count": 10
+      },
+      "well_95": {
+        "count": 12
+      },
+      "well_96": {
+        "count": 210
+      },
+      "well_97": {
+        "count": 24
+      },
+      "well_98": {
+        "count": 24
+      },
+      "well_99": {
+        "count": 34
+      }
+    }
+  }
+}

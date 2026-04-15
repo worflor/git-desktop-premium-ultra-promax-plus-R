@@ -33,6 +33,8 @@ import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'engram_bootstrap.dart' show EngramAssets;
+import 'engram_hunk_encoder.dart';
 import 'logos_core.dart';
 import 'logos_git.dart' show LogosGit;
 
@@ -80,10 +82,27 @@ class DiffHunk {
 }
 
 class HunkRanking {
-  HunkRanking({required this.hunk, required this.phi, required this.rank});
+  HunkRanking({
+    required this.hunk,
+    required this.phi,
+    required this.rank,
+    this.wellName,
+    this.wellDistance,
+  });
   final DiffHunk hunk;
   final double phi;
   final int rank; // 0 = top
+
+  /// Nearest Alexandria well for this hunk (e.g. "computing", "well_43").
+  /// Null when engram assets weren't loaded, the brain had zero wells, or
+  /// the hunk didn't have enough in-vocab sub-tokens to fit an AR(2).
+  /// Surfaced in the prompt bundle so the model sees feature-cluster
+  /// membership alongside φ.
+  final String? wellName;
+
+  /// Raw RMS distance to the nearest well centroid in K-space. Lower =
+  /// stronger domain match. Present whenever [wellName] is.
+  final double? wellDistance;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -279,6 +298,7 @@ CsrGraph _buildHunkGraph({
   required List<Set<String>> tokens,
   required Map<String, double> fileCouplingFromParent,
   required int topK,
+  List<HunkKVector?>? engramKVectors,
 }) {
   final n = hunks.length;
   if (n == 0) {
@@ -377,14 +397,117 @@ CsrGraph _buildHunkGraph({
       }
     }
   }
+
+  // Engram-augmented H_sym blend.
+  //
+  // When engram assets are loaded, each hunk has a K-vector ∈ ℂ^P that
+  // encodes its semantic position in Alexandria's GloVe-seeded well
+  // geometry. Cosine similarity between two hunk K-vectors ∈ [0,1]
+  // captures "shared concept space" even when no identifier strings
+  // overlap — a hunk using `dispatchEvent` and one using `emitSignal`
+  // share zero Jaccard but ~0.7 K-cosine. That's the feature-cluster
+  // signal Jaccard misses.
+  //
+  // **Blend is evidence-weighted, not magic-constant-weighted.** Each
+  // signal contributes in proportion to `log1p(evidence)` — the same
+  // nats-of-information metric the Born mixer uses elsewhere in the
+  // engine. A hunk with many shared tokens leans Jaccard; a hunk with
+  // many in-vocab GloVe hits leans engram. Neither axis gets an
+  // arbitrary weight floor or ceiling — their evidence decides.
+  //
+  //   w_jac = log1p(|tokens_i| + |tokens_j|)   — larger bag → better Jaccard
+  //   w_eng = log1p(min(hits_i, hits_j))      — more hits → tighter K-vector
+  //   blended = (w_jac·jaccard + w_eng·cos) / (w_jac + w_eng)
+  //
+  // Pairs with neither Jaccard overlap nor an engram connection drop
+  // out entirely — preserving graph sparsity. Pairs with engram signal
+  // but no Jaccard still enter the graph: we seed those via the
+  // file-level H_file coupling below when both files have touched
+  // hunks, and via an e-decay thresholded engram-only pass here when
+  // they don't.
+  //
+  // The engram-only admission threshold is `1/e ≈ 0.368` — the natural
+  // exponential decay floor. Below 1/e the cosine has decayed past one
+  // e-folding from perfect alignment; that's the classical "signal has
+  // faded to noise" boundary, not a hand-picked decimal.
+  final engramOnlyThreshold = math.exp(-1.0);
+
+  // Pass 1: pairs with at least one shared token. Blend Jaccard with
+  // engram cosine using evidence-weighted convex combination.
   symNumerator.forEach((i, row) {
     row.forEach((j, overlap) {
       final denom = tokens[i].length + tokens[j].length - overlap;
       if (denom <= 0) return;
       final jaccard = overlap / denom;
-      addEdge(i, j, wSym * jaccard);
+      double weight;
+      if (engramKVectors != null) {
+        final kvi = engramKVectors[i];
+        final kvj = engramKVectors[j];
+        final cos = EngramHunkEncoder.cosine(kvi, kvj);
+        if (cos > 0 && kvi != null && kvj != null) {
+          // log1p of pool size = Jaccard's own evidence in nats.
+          final jaccardEvidence =
+              math.log(1.0 + (tokens[i].length + tokens[j].length).toDouble());
+          // log1p of min vocab hits = engram's evidence in nats.
+          final engramEvidence = math.log(1.0 +
+              (kvi.vocabHits < kvj.vocabHits
+                  ? kvi.vocabHits
+                  : kvj.vocabHits)
+                  .toDouble());
+          final totalEvidence = jaccardEvidence + engramEvidence;
+          final blended = totalEvidence > 0
+              ? (jaccardEvidence * jaccard + engramEvidence * cos) /
+                  totalEvidence
+              : jaccard;
+          weight = wSym * blended;
+        } else {
+          // One or both hunks couldn't be encoded — fall back to pure
+          // Jaccard so H_sym degrades gracefully per hunk.
+          weight = wSym * jaccard;
+        }
+      } else {
+        weight = wSym * jaccard;
+      }
+      addEdge(i, j, weight);
     });
   });
+
+  // Pass 2: engram-only edges. Walk every pair that has K-vectors but
+  // did NOT share any tokens, and admit those clearing the 1/e cosine
+  // floor. This is O(N²) on hunks that have K-vectors — we bound it
+  // by the hunk count (already ≤ hundreds in practice) and skip
+  // entirely when engram isn't loaded. The engram-only weight uses
+  // pure engram evidence (no Jaccard term, by definition there's no
+  // Jaccard overlap on these pairs), scaled by `w_eng / (w_eng + 1)`
+  // — a self-normalising factor derivable from the evidence blend
+  // with the Jaccard evidence held at its "zero overlap, single
+  // witness" baseline of log(1+1) = ln(2).
+  if (engramKVectors != null) {
+    for (var i = 0; i < n; i++) {
+      final kvi = engramKVectors[i];
+      if (kvi == null) continue;
+      final alreadyBonded = symNumerator[i];
+      for (var j = i + 1; j < n; j++) {
+        final kvj = engramKVectors[j];
+        if (kvj == null) continue;
+        // Skip pairs already scored in pass 1.
+        if (alreadyBonded != null && alreadyBonded.containsKey(j)) continue;
+        final cos = EngramHunkEncoder.cosine(kvi, kvj);
+        if (cos < engramOnlyThreshold) continue;
+        final engEvidence = math.log(1.0 +
+            (kvi.vocabHits < kvj.vocabHits ? kvi.vocabHits : kvj.vocabHits)
+                .toDouble());
+        // Self-normalised engram-only weight. With Jaccard evidence =
+        // ln(2) (the zero-overlap baseline), the blend collapses to:
+        //   weight = cos · engEvidence / (engEvidence + ln2)
+        // which tends to `cos` as evidence grows and to `0` when
+        // evidence is tiny — exactly the "confidence-gated signal"
+        // shape the Born mixer uses on its axes.
+        final selfNorm = engEvidence / (engEvidence + math.ln2);
+        addEdge(i, j, wSym * cos * selfNorm);
+      }
+    }
+  }
 
   // ── H_file: same-file = 1; cross-file = parent-file-φ ──────────────
   for (final group in fileToHunks.values) {
@@ -597,13 +720,18 @@ class HunkDiffusionResult {
 HunkDiffusionResult rankHunksByPhi({
   required List<DiffHunk> hunks,
   LogosGit? logosEngine,
+  EngramAssets? engramAssets,
 }) {
   // Resolve the engine-side coupling prior on the calling thread (it
   // touches the engine, which we don't want to ship across an isolate).
   // Then dispatch the heavy graph build + Chebyshev to the pure-data
   // core path.
   final fileCoupling = _resolveFileCoupling(hunks, logosEngine);
-  return _rankHunksByPhiCore(hunks: hunks, fileCoupling: fileCoupling);
+  return _rankHunksByPhiCore(
+    hunks: hunks,
+    fileCoupling: fileCoupling,
+    engramAssets: engramAssets,
+  );
 }
 
 /// Async variant — runs the graph build + 3-temperature recombination
@@ -611,17 +739,31 @@ HunkDiffusionResult rankHunksByPhi({
 /// hitch the UI on every diff-panel switch. Engine touches still
 /// happen on the calling thread (cheap diffuseWeighted), then the
 /// pure-data core hops to an isolate.
+///
+/// [engramAssets], when provided, enables the engram-backed H_sym blend
+/// and annotates rankings with their nearest Alexandria well. The assets
+/// are raw byte blobs so they cross the isolate boundary cheaply; the
+/// encoder is constructed inside the isolate once.
 Future<HunkDiffusionResult> rankHunksByPhiAsync({
   required List<DiffHunk> hunks,
   LogosGit? logosEngine,
+  EngramAssets? engramAssets,
 }) async {
   final fileCoupling = _resolveFileCoupling(hunks, logosEngine);
   // Trivial cases — skip the isolate hop's serialisation cost.
   if (hunks.length <= 1) {
-    return _rankHunksByPhiCore(hunks: hunks, fileCoupling: fileCoupling);
+    return _rankHunksByPhiCore(
+      hunks: hunks,
+      fileCoupling: fileCoupling,
+      engramAssets: engramAssets,
+    );
   }
   return Isolate.run<HunkDiffusionResult>(
-    () => _rankHunksByPhiCore(hunks: hunks, fileCoupling: fileCoupling),
+    () => _rankHunksByPhiCore(
+      hunks: hunks,
+      fileCoupling: fileCoupling,
+      engramAssets: engramAssets,
+    ),
     debugName: 'rankHunksByPhi',
   );
 }
@@ -649,6 +791,7 @@ Map<String, double> _resolveFileCoupling(
 HunkDiffusionResult _rankHunksByPhiCore({
   required List<DiffHunk> hunks,
   required Map<String, double> fileCoupling,
+  EngramAssets? engramAssets,
 }) {
   final n = hunks.length;
   if (n == 0) {
@@ -671,6 +814,20 @@ HunkDiffusionResult _rankHunksByPhiCore({
       ? rawTokens
       : [for (final ts in rawTokens) ts.difference(stopSet)];
 
+  // Optional engram H_sym augmentation. Build the encoder from the
+  // already-transferred byte blobs (cheap inside this isolate) and
+  // encode every hunk to a K-vector. Returns a list aligned with
+  // `hunks` — entries stay null for hunks that couldn't be encoded
+  // (too few in-vocab sub-tokens to fit AR(2)); H_sym falls back to
+  // pure Jaccard for those.
+  List<HunkKVector?>? engramKVectors;
+  final engramEncoder = engramAssets?.buildEncoder();
+  if (engramEncoder != null) {
+    engramKVectors = [
+      for (var i = 0; i < n; i++) engramEncoder.encode(tokens[i]),
+    ];
+  }
+
   // Top-K per node: sqrt(n) is the classical "enough-neighbours" heuristic
   // that keeps the graph sparse while preserving global connectivity.
   final topK = math.max(4, math.sqrt(n).ceil());
@@ -680,6 +837,7 @@ HunkDiffusionResult _rankHunksByPhiCore({
     tokens: tokens,
     fileCouplingFromParent: fileCoupling,
     topK: topK,
+    engramKVectors: engramKVectors,
   );
 
   // Source mass ρ = log(1+bytes). Normalised to unit mass inside the
@@ -734,7 +892,14 @@ HunkDiffusionResult _rankHunksByPhiCore({
   final rankings = <HunkRanking>[];
   for (var r = 0; r < indexed.length; r++) {
     final id = indexed[r];
-    rankings.add(HunkRanking(hunk: hunks[id], phi: blended[id], rank: r));
+    final kv = engramKVectors?[id];
+    rankings.add(HunkRanking(
+      hunk: hunks[id],
+      phi: blended[id],
+      rank: r,
+      wellName: kv?.well?.name,
+      wellDistance: kv?.well?.rawDistance,
+    ));
   }
   return HunkDiffusionResult(
     rankings: rankings,
@@ -776,6 +941,23 @@ HunkPackResult packHunksUnderBudget({
 
   final admitted = <DiffHunk>[];
   final skipped = <DiffHunk>[];
+  // Cache ranking metadata per-hunk so we can annotate the emitted
+  // diff with φ + well labels without re-walking `rankings`.
+  final byHunk = <DiffHunk, HunkRanking>{
+    for (final r in rankings) r.hunk: r,
+  };
+  // Any engram-derived labels? If not we skip the metadata annotation
+  // overhead entirely (keeps behaviour identical to the pre-engram
+  // builds when assets aren't loaded).
+  final anyWells = rankings.any((r) => r.wellName != null);
+  // Budget cost of an in-diff annotation line, in characters. Grows
+  // with each emitted hunk — approximately `<!-- engram well=NAME
+  // phi=0.NN -->\n` which is ~40-50 chars per hunk.
+  int hunkAnnotationCost(HunkRanking r) {
+    if (r.wellName == null) return 0;
+    return '<!-- engram well=${r.wellName} phi=${r.phi.toStringAsFixed(3)} -->\n'
+        .length;
+  }
 
   // Group admitted hunks by parent file so the emitted body reads like a
   // normal diff: one header per file, its admitted hunks in order.
@@ -790,7 +972,9 @@ HunkPackResult packHunksUnderBudget({
   for (final r in rankings) {
     final h = r.hunk;
     final needsHeader = !perFile.containsKey(h.filePath);
-    final cost = h.bytes + (needsHeader ? headerCost(h.filePath) : 0);
+    final cost = h.bytes +
+        (needsHeader ? headerCost(h.filePath) : 0) +
+        (anyWells ? hunkAnnotationCost(r) : 0);
     if (cost > remaining) {
       skipped.add(h);
       continue;
@@ -809,13 +993,24 @@ HunkPackResult packHunksUnderBudget({
   // the normal diff reading shape so the model doesn't have to re-sort.
   final fileOrder = perFile.keys.toList()..sort();
   final buf = StringBuffer();
-  buf.writeln('<logos_packed_diff admitted=${admitted.length} skipped=${skipped.length}>');
+  buf.writeln(
+      '<logos_packed_diff admitted=${admitted.length} skipped=${skipped.length}>');
   for (final fp in fileOrder) {
     final group = perFile[fp]!..sort((a, b) => a.hunkIndex.compareTo(b.hunkIndex));
     buf.writeln('diff --git a/$fp b/$fp');
     buf.writeln('--- a/$fp');
     buf.writeln('+++ b/$fp');
     for (final h in group) {
+      final ranking = byHunk[h];
+      // Annotate with the nearest Alexandria well and φ — a feature-
+      // cluster hint for the LLM. Wrapped in an HTML-style comment so
+      // most diff renderers just show it inline; `git apply` ignores
+      // lines between hunks, so the output stays applicable when
+      // emitted for that purpose.
+      if (ranking != null && ranking.wellName != null) {
+        buf.writeln(
+            '<!-- engram well=${ranking.wellName} phi=${ranking.phi.toStringAsFixed(3)} -->');
+      }
       buf.write(h.body);
     }
   }

@@ -2604,7 +2604,7 @@ class _ModelSlotsGrid extends StatelessWidget {
 }
 
 /// Compact model slot tile — label editable inline, dropdown below, provider pill on the right.
-class _CompactModelSlot extends StatelessWidget {
+class _CompactModelSlot extends StatefulWidget {
   final AiModelCategoryData category;
   final TextEditingController controller;
   final String selectedValue;
@@ -2620,15 +2620,106 @@ class _CompactModelSlot extends StatelessWidget {
   });
 
   @override
+  State<_CompactModelSlot> createState() => _CompactModelSlotState();
+}
+
+class _CompactModelSlotState extends State<_CompactModelSlot> {
+  final Map<String, TextEditingController> _customControllers = {};
+
+  List<({String providerId, String providerLabel})> get _uniqueProviders {
+    final seen = <String>{};
+    final result = <({String providerId, String providerLabel})>[];
+    for (final model in widget.category.models) {
+      if (seen.add(model.providerId)) {
+        result.add((
+          providerId: model.providerId,
+          providerLabel: model.providerLabel,
+        ));
+      }
+    }
+    return result;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _syncControllers();
+  }
+
+  @override
+  void didUpdateWidget(_CompactModelSlot old) {
+    super.didUpdateWidget(old);
+    if (old.category.models != widget.category.models ||
+        old.selectedValue != widget.selectedValue) {
+      _syncControllers();
+    }
+  }
+
+  void _syncControllers() {
+    final providers = _uniqueProviders;
+    final providerIds = providers.map((p) => p.providerId).toSet();
+
+    for (final p in providers) {
+      _customControllers.putIfAbsent(p.providerId, () => TextEditingController());
+    }
+
+    for (final key in _customControllers.keys.where((k) => !providerIds.contains(k)).toList()) {
+      _customControllers.remove(key)!.dispose();
+    }
+
+    // Pre-fill when selected value is a custom entry for a known provider.
+    final sel = widget.selectedValue;
+    final colonIdx = sel.indexOf(':');
+    if (colonIdx > 0) {
+      final selProvider = sel.substring(0, colonIdx);
+      final selModel = sel.substring(colonIdx + 1);
+      final knownValues = widget.category.models.map((m) => m.value).toSet();
+      final ctrl = _customControllers[selProvider];
+      if (!knownValues.contains(sel) && ctrl != null && ctrl.text != selModel) {
+        ctrl.text = selModel;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final ctrl in _customControllers.values) {
+      ctrl.dispose();
+    }
+    super.dispose();
+  }
+
+  void _commitCustom(String providerId) {
+    if (widget.onModelChanged == null) return;
+    final text = _customControllers[providerId]?.text.trim() ?? '';
+    if (text.isEmpty) return;
+    widget.onModelChanged!('$providerId:$text');
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+
     AiModelOptionData? selectedModel;
-    for (final model in category.models) {
-      if (model.value == selectedValue) {
+    for (final model in widget.category.models) {
+      if (model.value == widget.selectedValue) {
         selectedModel = model;
         break;
       }
     }
+
+    // Resolve provider label even for custom selections.
+    String? resolvedProviderLabel = selectedModel?.providerLabel;
+    if (resolvedProviderLabel == null && widget.selectedValue.contains(':')) {
+      final selProvider = widget.selectedValue.split(':').first;
+      for (final model in widget.category.models) {
+        if (model.providerId == selProvider) {
+          resolvedProviderLabel = model.providerLabel;
+          break;
+        }
+      }
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -2644,40 +2735,35 @@ class _CompactModelSlot extends StatelessWidget {
             children: [
               Expanded(
                 child: _EditableSlotTitle(
-                  controller: controller,
-                  hintText: category.label,
-                  onChanged: onLabelChanged,
+                  controller: widget.controller,
+                  hintText: widget.category.label,
+                  onChanged: widget.onLabelChanged,
                 ),
               ),
               const SizedBox(width: 8),
-              if (selectedModel != null)
-                _ProviderPill(label: selectedModel.providerLabel),
+              if (resolvedProviderLabel != null)
+                _ProviderPill(label: resolvedProviderLabel),
             ],
           ),
           const SizedBox(height: 8),
-          // Model picker
-          if (category.models.isEmpty)
+          if (widget.category.models.isEmpty)
             Text(
               'No models detected for this slot.',
               style: TextStyle(color: t.textMuted, fontSize: 11),
             )
           else
-            AppDropdownField<String>(
-              value: selectedValue,
-              items: category.models
-                  .map(
-                    (model) => DropdownMenuItem<String>(
-                      value: model.value,
-                      child: Text(model.label),
-                    ),
-                  )
-                  .toList(),
-              onChanged: onModelChanged ?? (_) {},
+            _ModelPickerField(
+              value: widget.selectedValue,
+              models: widget.category.models,
+              providers: _uniqueProviders,
+              customControllers: _customControllers,
+              onChanged: widget.onModelChanged ?? (_) {},
+              onCustomSubmit: _commitCustom,
             ),
-          if (selectedModel != null) ...[
+          if (resolvedProviderLabel != null) ...[
             const SizedBox(height: 6),
             Text(
-              'via ${selectedModel.providerLabel.toLowerCase()}',
+              'via ${resolvedProviderLabel.toLowerCase()}',
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.65),
                 fontSize: 10,
@@ -2687,6 +2773,80 @@ class _CompactModelSlot extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// A single custom-model input row: mono provider label + text field.
+class _CustomModelRow extends StatelessWidget {
+  final String providerLabel;
+  final TextEditingController controller;
+  final VoidCallback onSubmit;
+
+  const _CustomModelRow({
+    required this.providerLabel,
+    required this.controller,
+    required this.onSubmit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      children: [
+        SizedBox(
+          width: 54,
+          child: Text(
+            providerLabel.toLowerCase(),
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.50),
+              fontSize: 10,
+              fontFamily: 'JetBrainsMono',
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: TextField(
+            controller: controller,
+            maxLines: 1,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 11,
+              fontFamily: 'JetBrainsMono',
+            ),
+            cursorColor: t.accentBright,
+            onSubmitted: (_) => onSubmit(),
+            decoration: InputDecoration(
+              isCollapsed: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide:
+                    BorderSide(color: t.chromeBorder.withValues(alpha: 0.22)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide:
+                    BorderSide(color: t.chromeBorder.withValues(alpha: 0.22)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide:
+                    BorderSide(color: t.accentBright.withValues(alpha: 0.50)),
+              ),
+              hintText: 'custom model id',
+              hintStyle: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.30),
+                fontSize: 11,
+                fontFamily: 'JetBrainsMono',
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2713,6 +2873,256 @@ class _ProviderPill extends StatelessWidget {
           fontSize: 9,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Custom overlay-based model picker — replaces AppDropdownField so that the
+// custom-model text inputs live inside the popup list itself.
+// ---------------------------------------------------------------------------
+
+class _ModelPickerField extends StatefulWidget {
+  final String value;
+  final List<AiModelOptionData> models;
+  final List<({String providerId, String providerLabel})> providers;
+  final Map<String, TextEditingController> customControllers;
+  final ValueChanged<String?> onChanged;
+  final void Function(String providerId) onCustomSubmit;
+
+  const _ModelPickerField({
+    required this.value,
+    required this.models,
+    required this.providers,
+    required this.customControllers,
+    required this.onChanged,
+    required this.onCustomSubmit,
+  });
+
+  @override
+  State<_ModelPickerField> createState() => _ModelPickerFieldState();
+}
+
+class _ModelPickerFieldState extends State<_ModelPickerField> {
+  final _link = LayerLink();
+  final _triggerKey = GlobalKey();
+  OverlayEntry? _entry;
+
+  bool get _isOpen => _entry != null;
+
+  @override
+  void dispose() {
+    _closeOverlay();
+    super.dispose();
+  }
+
+  void _toggle() => _isOpen ? _closeOverlay() : _openOverlay();
+
+  void _openOverlay() {
+    if (_isOpen) return;
+    _entry = OverlayEntry(builder: _buildOverlayContent);
+    Overlay.of(context).insert(_entry!);
+    setState(() {});
+  }
+
+  void _closeOverlay() {
+    if (!_isOpen) return;
+    _entry!.remove();
+    _entry = null;
+    if (mounted) setState(() {});
+  }
+
+  void _select(String v) {
+    widget.onChanged(v);
+    _closeOverlay();
+  }
+
+  void _submitCustom(String providerId) {
+    widget.onCustomSubmit(providerId);
+    _closeOverlay();
+  }
+
+  Widget _buildOverlayContent(BuildContext ctx) {
+    final box = _triggerKey.currentContext?.findRenderObject() as RenderBox?;
+    final width = box?.size.width ?? 240.0;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: _closeOverlay,
+            behavior: HitTestBehavior.translucent,
+          ),
+        ),
+        CompositedTransformFollower(
+          link: _link,
+          showWhenUnlinked: false,
+          targetAnchor: Alignment.bottomLeft,
+          followerAnchor: Alignment.topLeft,
+          child: SizedBox(
+            width: width,
+            child: _ModelPickerOverlay(
+              models: widget.models,
+              selectedValue: widget.value,
+              providers: widget.providers,
+              customControllers: widget.customControllers,
+              onSelect: _select,
+              onCustomSubmit: _submitCustom,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+
+    // Display label for the trigger.
+    String label = widget.value;
+    for (final m in widget.models) {
+      if (m.value == widget.value) {
+        label = m.label;
+        break;
+      }
+    }
+    // Custom value: show just the model-id part.
+    if (label == widget.value &&
+        widget.value.contains(':') &&
+        !widget.models.any((m) => m.value == widget.value)) {
+      label = widget.value.split(':').last;
+    }
+
+    return CompositedTransformTarget(
+      link: _link,
+      child: AppInputShell(
+        key: _triggerKey,
+        focused: _isOpen,
+        child: GestureDetector(
+          onTap: _toggle,
+          behavior: HitTestBehavior.opaque,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(color: t.textNormal, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Icon(
+                _isOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down,
+                color: t.textMuted,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelPickerOverlay extends StatelessWidget {
+  final List<AiModelOptionData> models;
+  final String selectedValue;
+  final List<({String providerId, String providerLabel})> providers;
+  final Map<String, TextEditingController> customControllers;
+  final ValueChanged<String> onSelect;
+  final void Function(String providerId) onCustomSubmit;
+
+  const _ModelPickerOverlay({
+    required this.models,
+    required this.selectedValue,
+    required this.providers,
+    required this.customControllers,
+    required this.onSelect,
+    required this.onCustomSubmit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Material(
+      color: t.bg1,
+      elevation: 4,
+      borderRadius: BorderRadius.circular(6),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 340),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Flexible(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                shrinkWrap: true,
+                children: [
+                  for (final model in models)
+                    _ModelPickerItem(
+                      model: model,
+                      selected: model.value == selectedValue,
+                      onTap: () => onSelect(model.value),
+                    ),
+                ],
+              ),
+            ),
+            if (providers.isNotEmpty) ...[
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: t.chromeBorder.withValues(alpha: 0.12),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                child: Column(
+                  children: [
+                    for (var i = 0; i < providers.length; i++) ...[
+                      _CustomModelRow(
+                        providerLabel: providers[i].providerLabel,
+                        controller: customControllers[providers[i].providerId]!,
+                        onSubmit: () => onCustomSubmit(providers[i].providerId),
+                      ),
+                      if (i < providers.length - 1) const SizedBox(height: 4),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelPickerItem extends StatelessWidget {
+  final AiModelOptionData model;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ModelPickerItem({
+    required this.model,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        color: selected ? t.accentBright.withValues(alpha: 0.08) : null,
+        child: Text(
+          model.label,
+          style: TextStyle(
+            color: selected ? t.accentBright : t.textNormal,
+            fontSize: 12,
+          ),
         ),
       ),
     );

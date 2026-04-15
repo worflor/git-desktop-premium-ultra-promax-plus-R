@@ -37,6 +37,7 @@ import '../../app/desk_drop_payload.dart';
 import '../../app/repository_state.dart';
 import '../../app/repository_xray_state.dart';
 import '../../app/file_coupling_state.dart';
+import '../../app/symbol_frequency_state.dart';
 import '../../app/logos_git_state.dart';
 import '../diff/diff_models.dart';
 import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
@@ -3642,6 +3643,15 @@ class _BranchesPageState extends State<BranchesPage> {
     // it pops automatically when the future resolves. Barrier dismiss
     // is off — cancelling mid-inference doesn't stop the CLI subprocess
     // and would orphan the result.
+    // Semantic priors for the manifest above the packed diff. Best
+    // effort: null until the background indices warm, in which case the
+    // manifest simply skips IDF-ranking and coupling sections (themes +
+    // moves from logos φ and engram wells still emit).
+    final prCouplingMatrix =
+        context.read<FileCouplingState>().matrixFor(repoPath);
+    final prSymbolIndex =
+        context.read<SymbolFrequencyState>().indexFor(repoPath);
+
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -3662,6 +3672,8 @@ class _BranchesPageState extends State<BranchesPage> {
       readOnly: preferences.aiReadOnlyDefault,
       rawDiffOverride: detail.diff,
       diffBranchName: pr.headRef,
+      symbolIndex: prSymbolIndex,
+      couplingMatrix: prCouplingMatrix,
     );
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop(); // close progress

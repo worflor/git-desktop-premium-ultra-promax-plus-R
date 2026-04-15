@@ -1382,6 +1382,15 @@ class _HistoryPageState extends State<HistoryPage> {
   /// Every field is derived from this repo's own data; nothing is
   /// hardcoded.
   RepositoryTagProfile _tagProfile = RepositoryTagProfile.empty;
+
+  /// Per-commit Born-mixed coherence, keyed by commit hash. Computed
+  /// once per tag-profile rebuild on the main isolate (the LogosGit
+  /// engine can't cross isolate boundaries) and held here so every
+  /// visible row's tag computation does a single map lookup instead
+  /// of a fresh `engine.coherence(files)` walk. Was costing
+  /// ~300-500ms on a 500-row history page with 2-axis coherence
+  /// recomputation per row.
+  Map<String, double>? _cachedEngineCoherences;
   int _tagProfileBuildId = 0;
   Timer? _tagProfileDebounce;
 
@@ -1524,7 +1533,10 @@ class _HistoryPageState extends State<HistoryPage> {
         expectedTokensByHash: expectedTokensByHash,
       ));
       if (!mounted || myBuildId != _tagProfileBuildId) return;
-      setState(() => _tagProfile = profile);
+      setState(() {
+        _tagProfile = profile;
+        _cachedEngineCoherences = engineCoherences;
+      });
     });
   }
 
@@ -2138,6 +2150,7 @@ class _HistoryPageState extends State<HistoryPage> {
                       logosEngine: context
                           .read<LogosGitState>()
                           .engineFor(repoPath),
+                      engineCoherences: _cachedEngineCoherences,
                       onTap: (shift) => _onCommitTap(i, shift),
                       onSecondaryTap: (pos) => _showCommitContextMenu(
                           context, pos, _commits[i], repoPath),
@@ -2299,6 +2312,12 @@ class _CommitRow extends StatefulWidget {
   /// Born-mixed multi-axis coherence to the row's focused/sprawl gate
   /// in preference to the raw Jaccard fallback.
   final LogosGit? logosEngine;
+  /// Per-commit coherence map cached at tag-profile build time. When
+  /// non-null, the row reads its coherence from here instead of
+  /// recomputing `engine.coherence(files)` (which is ~2-10ms per
+  /// call on a wide diff). Shared reference across every row — no
+  /// per-row allocation.
+  final Map<String, double>? engineCoherences;
   final void Function(bool shift) onTap;
   final ValueChanged<Offset>? onSecondaryTap;
   const _CommitRow({
@@ -2310,6 +2329,7 @@ class _CommitRow extends StatefulWidget {
     required this.tagProfile,
     required this.couplingMatrix,
     required this.logosEngine,
+    required this.engineCoherences,
     required this.onTap,
     this.onSecondaryTap,
   });
@@ -2326,15 +2346,23 @@ class _CommitRowState extends State<_CommitRow> {
   /// numeric comparisons.
   List<CommitTag> _autoTagsFor(CommitHistoryEntry c) {
     if (widget.tagProfile.commitCount == 0) return const [];
-    double? engineCoherence;
-    final detail = widget.cachedDetail;
-    final engine = widget.logosEngine;
-    if (engine != null && detail != null && detail.files.length >= 2) {
-      engineCoherence = engine.coherence(detail.files.map((f) => f.path));
+    // Prefer the pre-computed coherence map — populated at profile
+    // build time so every row does a map lookup, not an
+    // `engine.coherence(...)` walk. The fallback path only fires
+    // when the map is null (tag profile built before the engine
+    // warmed) or doesn't have this commit (detail cached after the
+    // map was built — rare race during async history scroll).
+    double? engineCoherence = widget.engineCoherences?[c.commitHash];
+    if (engineCoherence == null) {
+      final detail = widget.cachedDetail;
+      final engine = widget.logosEngine;
+      if (engine != null && detail != null && detail.files.length >= 2) {
+        engineCoherence = engine.coherence(detail.files.map((f) => f.path));
+      }
     }
     return tagCommit(
       commit: c,
-      detail: detail,
+      detail: widget.cachedDetail,
       profile: widget.tagProfile,
       coupling: widget.couplingMatrix,
       engineCoherence: engineCoherence,

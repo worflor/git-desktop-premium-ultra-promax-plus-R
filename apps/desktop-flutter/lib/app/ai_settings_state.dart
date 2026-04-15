@@ -100,7 +100,10 @@ class AiSettingsState extends ChangeNotifier {
       _modelCategoryLabels.putIfAbsent(category.id, () => category.label);
       final allowedValues = category.models.map((model) => model.value).toSet();
       final currentValue = _modelSelections[category.id] ?? '';
-      final resolvedValue = allowedValues.contains(currentValue)
+      final providerIds = category.models.map((m) => m.providerId).toSet();
+      final isCustomValue = currentValue.contains(':') &&
+          providerIds.contains(currentValue.split(':').first);
+      final resolvedValue = allowedValues.contains(currentValue) || isCustomValue
           ? currentValue
           : (category.models.isNotEmpty ? category.models.first.value : '');
       if (resolvedValue.isNotEmpty) {

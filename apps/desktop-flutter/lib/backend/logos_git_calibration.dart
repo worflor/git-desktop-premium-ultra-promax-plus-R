@@ -72,8 +72,10 @@ enum LogosRegime {
 /// Which observable got a file emitted. Primary = the diff itself;
 /// M = pickaxe pulled it in; Ab = path-mirror pulled it in; Graph =
 /// none of the above (the diffusion ranked it high from graph edges
-/// alone — CC / SP / V / F0 collectively).
-enum LogosAxis { primary, m, ab, graph }
+/// alone — CC / SP / V / F0 collectively). Symbol = the file had no
+/// git history but was structurally coupled via identifier overlap
+/// (IDF-Jaccard) — the leading-signal counterpart to CC's lagging one.
+enum LogosAxis { primary, m, ab, graph, symbol }
 
 /// The fundamental SSE cell: an (emitted, cited) counter per
 /// (regime, axis), with two decay mechanisms:

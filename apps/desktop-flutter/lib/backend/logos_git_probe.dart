@@ -98,17 +98,23 @@ class ProbeStats {
   final int abMatches;
   final int mSymbols;
   final double coherence;
+  /// Number of files surfaced via the symbol-overlap axis — new/untracked
+  /// files whose identifier overlap with change-set peers was the signal.
+  /// Tracked so SSE can calibrate symbol-axis utility per regime.
+  final int symbolMatches;
   const ProbeStats({
     required this.primaryCount,
     required this.mMatches,
     required this.abMatches,
     required this.mSymbols,
     required this.coherence,
+    this.symbolMatches = 0,
   });
 
   @override
   String toString() =>
-      'primary=$primaryCount M=$mMatches/$mSymbols Ab=$abMatches coh=${coherence.toStringAsFixed(2)}';
+      'primary=$primaryCount M=$mMatches/$mSymbols Ab=$abMatches '
+      'sym=$symbolMatches coh=${coherence.toStringAsFixed(2)}';
 }
 
 /// SSE-learned utility scales are clamped to this band before scaling
@@ -286,6 +292,17 @@ class LogosGitProbeBuilder {
       coherence: coherence,
     );
 
+    // Symbol-axis diagnostic: count primary paths that are NOT graph
+    // nodes but have symbol-edge neighbours — these are the files where
+    // the symbol axis carries real information (new/untracked files with
+    // identifier overlap against the change set). Feeds SSE regime
+    // classification and the probe's toString() for observability.
+    var symbolMatches = 0;
+    for (final path in primaryPaths) {
+      if (engine.pathToId.containsKey(path)) continue;
+      if (engine.symbolEdges[path]?.isNotEmpty ?? false) symbolMatches++;
+    }
+
     return DiffProbe(
       sourceWeights: weights,
       primaryPaths: primaryPaths,
@@ -296,6 +313,7 @@ class LogosGitProbeBuilder {
         abMatches: abMatches,
         mSymbols: addedRemovedSymbols.length,
         coherence: coherence,
+        symbolMatches: symbolMatches,
       ),
     );
   }

@@ -739,6 +739,59 @@ Future<GitResult<void>> commentOnIssue(
   return const GitResult.ok(null);
 }
 
+/// Create a new GitHub issue. Returns the newly-created issue number.
+/// `gh issue create` outputs the issue URL to stdout — we parse the
+/// trailing `/issues/<n>` to extract the number.
+Future<GitResult<int>> createGhIssue(
+  String repoPath, {
+  required String title,
+  String body = '',
+  List<String> labels = const [],
+  List<String> assignees = const [],
+}) async {
+  final args = ['issue', 'create', '--title', title, '--body', body];
+  for (final l in labels) { args.addAll(['--label', l]); }
+  for (final a in assignees) { args.addAll(['--assignee', a]); }
+  final r = await _gh(repoPath, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  final out = r.stdout.toString().trim();
+  // Match the issue number anywhere in the output. `gh` normally emits
+  // just the URL, but extra lines or trailing CR on Windows shouldn't
+  // break the parse.
+  final match = RegExp(r'/issues/(\d+)').firstMatch(out);
+  if (match == null) return GitResult.err('unexpected output: $out');
+  return GitResult.ok(int.parse(match.group(1)!));
+}
+
+/// Edit an existing GitHub issue's title, body, or labels.
+/// Only sends flags for fields that are non-null / non-empty.
+Future<GitResult<void>> editGhIssue(
+  String repoPath,
+  int number, {
+  String? title,
+  String? body,
+  List<String> addLabels = const [],
+  List<String> removeLabels = const [],
+}) async {
+  final args = ['issue', 'edit', '$number'];
+  if (title != null) args.addAll(['--title', title]);
+  if (body != null) args.addAll(['--body', body]);
+  for (final l in addLabels) { args.addAll(['--add-label', l]); }
+  for (final l in removeLabels) { args.addAll(['--remove-label', l]); }
+  // Nothing to edit — avoid a no-op CLI call.
+  if (args.length == 3) return const GitResult.ok(null);
+  final r = await _gh(repoPath, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+/// Reopen a closed GitHub issue.
+Future<GitResult<void>> reopenGhIssue(String repoPath, int number) async {
+  final r = await _gh(repoPath, ['issue', 'reopen', '$number']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
 Future<GitResult<void>> commentOnPullRequest(
     String repoPath, int number, String body) async {
   if (body.trim().isEmpty) return const GitResult.ok(null);

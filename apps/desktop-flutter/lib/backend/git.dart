@@ -741,29 +741,87 @@ Future<GitResult<String>> getFileDiff(String repo, String path,
   return GitResult.ok(r.stdout.toString());
 }
 
-/// Everything a desk contains beyond [targetRef] as a single unified
-/// diff. Run from inside the desk's worktree and compared against a
-/// ref that lives in its shared repo (typically the destination
-/// branch's tip), this folds:
+/// Everything a desk has *added* relative to where it diverged from
+/// [targetRef], as a single unified diff. Run from inside the desk's
+/// worktree and compared against the **merge-base** of [targetRef] and
+/// the desk's HEAD, this folds:
 ///
-///   • commits the desk has ahead of [targetRef] (if any), AND
-///   • uncommitted work in the desk's working tree
+///   • commits the desk has made since branching from [targetRef],
+///   • uncommitted modifications to tracked files, AND
+///   • untracked files in the desk's working tree
 ///
-/// into one patch that, when applied to a clean [targetRef] tree,
-/// reproduces the desk's current state. Perfect for "drag-dump this
-/// desk onto the current Changes page." Returns an empty string when
-/// the desk is at parity with [targetRef] and has no WIP.
+/// into one patch that, when applied to a [targetRef] worktree, brings
+/// the desk's contributions over without reverting anything [targetRef]
+/// has gained in the meantime. Returns an empty string when the desk
+/// has nothing beyond the divergence point (no own commits, no WIP,
+/// no new files).
+///
+/// Diffing against [targetRef] directly was an earlier implementation
+/// and was wrong: when the desk was behind [targetRef], the resulting
+/// patch contained reversals of every [targetRef] commit the desk
+/// hadn't yet picked up. Imprinting that on a clean [targetRef]
+/// worktree wiped real work. Merge-base scoping is the only shape
+/// that captures "the desk's contribution" symmetrically across
+/// ahead / behind / diverged states.
+///
+/// `git diff` ignores untracked files by default, so a separate
+/// `ls-files --others --exclude-standard` pass enumerates them and
+/// each is rendered as a synthetic `/dev/null → b/<path>` block. The
+/// same helper [getSelectionDiff] uses on the changes page; format is
+/// what `git apply` consumes for new-file creation.
 Future<GitResult<String>> getDeskDumpDiff(
   String deskPath,
   String targetRef, {
   int contextLines = 3,
 }) async {
-  final r = await _git(
+  final base = await _git(
     deskPath,
-    ['diff', '-U$contextLines', targetRef],
+    ['merge-base', targetRef, 'HEAD'],
   );
-  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
-  return GitResult.ok(r.stdout.toString());
+  if (base.exitCode != 0) {
+    // No common ancestor — unrelated histories. There is no meaningful
+    // "desk's contribution" to extract; surface the underlying error so
+    // the caller can show it instead of silently dumping a giant
+    // whole-tree diff.
+    return GitResult.err(base.stderr.toString().trim().isEmpty
+        ? 'No common history between desk and $targetRef.'
+        : base.stderr.toString().trim());
+  }
+  final mergeBase = base.stdout.toString().trim();
+
+  // Tracked changes since divergence (committed + WIP modifications).
+  final tracked = await _git(
+    deskPath,
+    ['diff', '-U$contextLines', mergeBase],
+  );
+  if (tracked.exitCode != 0) {
+    return GitResult.err(tracked.stderr.toString().trim());
+  }
+
+  // Untracked files — enumerate then synthesize new-file diffs.
+  // --exclude-standard honours .gitignore + .git/info/exclude + the
+  // user's global excludes, so ignored junk doesn't leak into the dump.
+  final untracked = await _git(
+    deskPath,
+    ['ls-files', '--others', '--exclude-standard'],
+  );
+  if (untracked.exitCode != 0) {
+    return GitResult.err(untracked.stderr.toString().trim());
+  }
+  final untrackedPaths = untracked.stdout
+      .toString()
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+
+  final parts = <String>[];
+  final trackedOut = tracked.stdout.toString();
+  if (trackedOut.trim().isNotEmpty) parts.add(trackedOut);
+  for (final path in untrackedPaths) {
+    parts.add(await _buildSyntheticUntrackedDiff(deskPath, path));
+  }
+  return GitResult.ok(parts.where((p) => p.trim().isNotEmpty).join('\n'));
 }
 
 Future<GitResult<String>> getSelectionDiff(
@@ -1320,7 +1378,37 @@ Future<GitResult<FileSignals>> scanFileSignals(
 
 
 Future<GitResult<void>> stagePaths(String repo, List<String> paths) async {
-  final r = await _git(repo, ['add', '--', ...paths]);
+  if (paths.isEmpty) return const GitResult.ok(null);
+
+  // Pre-flight gitignore filter. `git add` refuses to add a path that
+  // matches a .gitignore rule AND isn't already tracked — it exits 1
+  // with the matching *pattern* in the error list ("paths ignored by
+  // one of your .gitignore files: .claude"). That's fine when the
+  // caller genuinely tried to stage a fresh ignored file, but it also
+  // fires on staged-deletion paths: a file previously untracked via
+  // `git rm --cached` is in the index as a deletion, in the UI's
+  // "included" list as a change to commit, and on disk as an ignored
+  // file. The deletion is already in the index — no `add` needed —
+  // but the UI layer doesn't know that, so the blanket add breaks.
+  //
+  // `git check-ignore` gives us the filter: exit 0 + stdout lists
+  // matching paths; exit 1 = no matches; exit 128 = fatal. We fail
+  // open on errors (treat as "nothing to filter") so a broken
+  // check-ignore never blocks a legitimate stage.
+  final ignoreCheck = await _git(repo, ['check-ignore', '--', ...paths]);
+  final ignored = <String>{};
+  if (ignoreCheck.exitCode == 0) {
+    for (final line in ignoreCheck.stdout.toString().split('\n')) {
+      final p = line.trim();
+      if (p.isNotEmpty) ignored.add(p);
+    }
+  }
+  final toAdd = ignored.isEmpty
+      ? paths
+      : paths.where((p) => !ignored.contains(p)).toList();
+  if (toAdd.isEmpty) return const GitResult.ok(null);
+
+  final r = await _git(repo, ['add', '--', ...toAdd]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }

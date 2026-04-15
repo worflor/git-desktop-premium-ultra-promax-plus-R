@@ -9,15 +9,19 @@ import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
 import 'app/repository_xray_state.dart';
 import 'app/file_coupling_state.dart';
+import 'app/symbol_frequency_state.dart';
 import 'app/logos_git_state.dart';
 import 'app/worktree_state.dart';
 import 'app/desk_pr_state.dart';
 import 'app/desk_issue_state.dart';
+import 'app/remote_issue_cache_state.dart';
 import 'app/hyper_reactivity.dart';
 import 'app/brand_lockup.dart';
 import 'app/sidebar_rail.dart';
 import 'app/theme_state.dart';
 import 'app/workspace_shell.dart';
+import 'backend/engram_bootstrap.dart';
+import 'backend/logos_git_resolver.dart' as logos_resolver;
 import 'backend/settings_store.dart';
 import 'diagnostics/diagnostics_state.dart';
 import 'features/onboarding/onboarding_flow.dart';
@@ -63,17 +67,50 @@ void main() async {
   ThemeShaders.iridescent();
   ThemeShaders.glass();
 
+  // Same idea for the Alexandria engram + GloVe vocab: ~12MB of asset
+  // bytes need to be parsed before the first hunk-ranking can use them.
+  // Fire-and-forget: the EngramRuntime singleton memoises the future,
+  // so the first `await EngramRuntime.instance.assets()` inside the
+  // diff prompt builder either finds them ready or waits on the same
+  // load we kicked off here. Failure is silent — H_sym degrades to
+  // pure Jaccard.
+  EngramRuntime.instance.assets();
+
   final themeState = ThemeState();
   await themeState.load();
 
   final repoState = RepositoryState();
   await repoState.loadRecents();
+
+  // Pre-warm the most-recently-used repo's LogosGit engine in the
+  // background. By the time the user clicks through the repo picker
+  // (or if they auto-land on the MRU), the engine's git-log walks,
+  // engram file index, and graph build have already happened in
+  // another isolate — what used to be a visible 1–2s repo-switch
+  // latency becomes a ~50ms cache lookup.
+  //
+  // Fire-and-forget; never awaited on the main thread. Silent on
+  // failure (network drive disappeared, repo deleted, corrupted
+  // HEAD) — the user's first explicit interaction still works, it
+  // just pays the cold cost then instead of getting the preload
+  // discount.
+  final mruRepo = repoState.recentPaths.isNotEmpty
+      ? repoState.recentPaths.first
+      : null;
+  if (mruRepo != null) {
+    logos_resolver.resolveLogosGit(mruRepo).then((_) {}, onError: (_) {});
+  }
   final repoXrayState = RepositoryXrayState();
   final fileCouplingState = FileCouplingState();
+  final symbolFrequencyState = SymbolFrequencyState();
   final logosGitState = LogosGitState();
   final worktreeState = WorktreeState(repoState);
   final deskPrState = DeskPrState(repoState, appIdentityState);
   final deskIssueState = DeskIssueState(repoState, appIdentityState);
+  final remoteIssueCacheState = RemoteIssueCacheState(repoState);
+  // Wire the cache so DeskIssueState's remote writes (promote/push) auto-
+  // refresh the cache — keeps cross-cutting UI surfaces in sync.
+  deskIssueState.attachRemoteCache(remoteIssueCacheState);
 
   final preferencesState = PreferencesState();
   await preferencesState.load();
@@ -91,10 +128,12 @@ void main() async {
         ChangeNotifierProvider.value(value: repoState),
         ChangeNotifierProvider.value(value: repoXrayState),
         ChangeNotifierProvider.value(value: fileCouplingState),
+        ChangeNotifierProvider.value(value: symbolFrequencyState),
         ChangeNotifierProvider.value(value: logosGitState),
         ChangeNotifierProvider.value(value: worktreeState),
         ChangeNotifierProvider.value(value: deskPrState),
         ChangeNotifierProvider.value(value: deskIssueState),
+        ChangeNotifierProvider.value(value: remoteIssueCacheState),
         ChangeNotifierProvider.value(value: preferencesState),
         ChangeNotifierProvider.value(value: aiSettingsState),
         ChangeNotifierProvider.value(value: diagnosticsState),
@@ -236,6 +275,12 @@ class _AppFrameState extends State<_AppFrame> {
                   ),
                 ),
               ),
+            if (t.id == AppThemeId.loverboy)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: _LoveboyBackground(),
+                ),
+              ),
             Row(
               children: [
                 SizedBox(width: _sidebarWidth, child: const SidebarRail()),
@@ -320,6 +365,8 @@ double _rootTextureOpacity(AppTokens tokens) {
   return switch (tokens.id) {
     AppThemeId.aether => 0.72,
     AppThemeId.quanta => 0.5,
+    // Faint shimmer over the dark. Background is otherwise solid.
+    AppThemeId.loverboy => 0.06,
     _ => 1,
   };
 }
@@ -1432,4 +1479,52 @@ class _Debris {
     velocity = velocity * dragFactor;
     life -= dt * 1.5;
   }
+}
+
+/// Loverboy app-root cellular background. Subscribes to the
+/// [LiquidGlassProvider] pulse so the shader's time + tilt uniforms
+/// drive repaints in lockstep with the rest of the theme's parallax.
+class _LoveboyBackground extends StatelessWidget {
+  const _LoveboyBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    final pulse = LiquidGlassProvider.of(context);
+    return RepaintBoundary(
+      child: ValueListenableBuilder<LiquidGlassPulse>(
+        valueListenable: pulse,
+        builder: (_, value, __) => CustomPaint(
+          painter: _LoveboyBgPainter(pulse: value),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoveboyBgPainter extends CustomPainter {
+  final LiquidGlassPulse pulse;
+  const _LoveboyBgPainter({required this.pulse});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fragShader = ThemeShaders.loveboyBgShader(
+      width: size.width,
+      height: size.height,
+      intensity: 1.0,
+      time: pulse.time,
+      tiltX: pulse.tilt.dx,
+      tiltY: pulse.tilt.dy,
+    );
+    if (fragShader == null) return;
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = fragShader
+        ..blendMode = BlendMode.srcOver,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_LoveboyBgPainter old) =>
+      old.pulse.time != pulse.time || old.pulse.tilt != pulse.tilt;
 }

@@ -327,7 +327,7 @@ pub fn list_model_options() -> Result<AiModelOptionListData, AppError> {
 
             for model_id in ranked_models {
                 let key = normalize_model_key(model_id.as_str());
-                if !seen.insert(key.clone()) {
+                if !seen.insert(format!("{}:{}", provider.provider_id, key)) {
                     continue;
                 }
 

@@ -18,8 +18,15 @@
 
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' as math;
 
+import 'engram_bootstrap.dart';
+import 'engram_brain.dart';
+import 'engram_file_index.dart';
+import 'engram_file_index_cache.dart';
+import 'engram_hunk_encoder.dart';
 import 'file_coupling.dart';
 import 'git.dart';
 import 'logos_git.dart';
@@ -43,6 +50,191 @@ const int _kMaxEngines = 3;
 /// for a 3-entry cache.
 final LinkedHashMap<String, _ResolverEntry> _engines = LinkedHashMap();
 final Map<String, Future<LogosGit?>> _inflight = {};
+
+/// Build the per-file engram K-vector index with disk caching +
+/// parallel encoding. Runs on the main isolate so we can fan out to
+/// multiple worker isolates via `Isolate.run`; isolates can't nest
+/// cleanly, so doing this before the build isolate spawn is the right
+/// shape.
+///
+/// Steps:
+///   1. Peek the brain's `pairs` count (cheap — just the header).
+///   2. Load the disk cache for this repo path.
+///   3. stat() every node-path and classify as (hit, miss).
+///   4. Fan out misses across up to [_kMaxEncodeIsolates] isolates.
+///   5. Merge + persist cache.
+Future<Map<String, HunkKVector>> _buildEngramFileIndexFast({
+  required String repoPath,
+  required LogosGitStats stats,
+  required EngramAssets assets,
+}) async {
+  // Peek pairs by loading just the header locally. The full brain
+  // parse is cheap too (~5ms) so we just load it outright.
+  int pairs;
+  try {
+    pairs = EngramBrain.loadBytes(assets.brainBytes).pairs;
+  } on Object {
+    return const {};
+  }
+
+  // Union of all node paths (same set buildFromStats uses).
+  final repoRelPaths = <String>{
+    ...stats.touches.keys,
+    ...stats.volatility.keys,
+    ...stats.coupling.jaccard.keys,
+  };
+  if (repoRelPaths.isEmpty) return const {};
+
+  // Disk cache keyed by absolute path (what buildEngramFileIndex
+  // passes to stat). We also read the cache's entries once and reuse
+  // them below when classifying paths as cache hits or misses.
+  final cache = await EngramFileIndexCache.load(
+    repoPath: repoPath,
+    expectedPairs: pairs,
+  );
+
+  final hits = <String, HunkKVector>{};
+  final missPaths = <String>[];
+  final freshMeta = <String, ({int mtimeMs, int size})>{};
+
+  // Classify every path. A `stat` is ~5–10µs — 1000 files = ~10ms
+  // total, parallelism-free. Worth it to skip a full read + encode
+  // for files whose mtime+size haven't moved.
+  for (final rel in repoRelPaths) {
+    try {
+      final file = File(_join(repoPath, rel));
+      final stat = file.statSync();
+      // Directories / missing files have FileSystemEntityType.notFound
+      // — they were in stats' key set but aren't on disk right now.
+      // Skip silently; the engine can still work without them.
+      if (stat.type != FileSystemEntityType.file) continue;
+      final mtimeMs = stat.modified.millisecondsSinceEpoch;
+      final size = stat.size;
+      freshMeta[rel] = (mtimeMs: mtimeMs, size: size);
+
+      final cached = cache.get(rel);
+      if (cached != null &&
+          cached.mtimeMs == mtimeMs &&
+          cached.size == size) {
+        hits[rel] = cached.kVector;
+      } else {
+        missPaths.add(rel);
+      }
+    } on FileSystemException {
+      // Unreadable file — neither cached nor will encode.
+      continue;
+    }
+  }
+
+  // Parallel encode on misses. Each chunk is wrapped in its own
+  // try-catch so a single bad isolate (e.g. corrupt brain bytes on one
+  // thread) contributes an empty map rather than aborting Future.wait
+  // and discarding all cache hits from the other chunks.
+  final encoded = <String, HunkKVector>{};
+  if (missPaths.isNotEmpty) {
+    final chunks = _splitPaths(missPaths);
+    final futures = <Future<Map<String, HunkKVector>>>[];
+    for (final chunk in chunks) {
+      futures.add(
+        Isolate.run<Map<String, HunkKVector>>(
+          () => engramEncodeChunk(EngramEncodeJob(
+            brainBytes: assets.brainBytes,
+            gloveBytes: assets.gloveBytes,
+            repoPath: repoPath,
+            paths: chunk,
+          )),
+          debugName: 'engram.encodeChunk',
+        ).catchError((_) => const <String, HunkKVector>{}),
+      );
+    }
+    final results = await Future.wait(futures);
+    for (final r in results) {
+      encoded.addAll(r);
+    }
+  }
+
+  // Merge hits + fresh encoded → final map.
+  final merged = <String, HunkKVector>{}..addAll(hits)..addAll(encoded);
+
+  // Persist the updated cache (fire-and-forget). We write the full
+  // cache including both prior hits and new misses so stale entries
+  // for files that moved out of the node set eventually get flushed
+  // when the user opens a different repo that causes a rewrite.
+  unawaited(_persistCache(
+    repoPath: repoPath,
+    pairs: pairs,
+    merged: merged,
+    freshMeta: freshMeta,
+  ));
+
+  return merged;
+}
+
+/// Hard cap on encoding isolates. Beyond 8 the coordination + spawn
+/// overhead eats the parallel gain — and most machines the app runs
+/// on have 4–16 logical cores anyway. Derived from `numberOfProcessors`
+/// with a pragmatic ceiling.
+final int _kMaxEncodeIsolates =
+    math.min(8, math.max(2, Platform.numberOfProcessors));
+
+/// Minimum paths per chunk. Below this the isolate spawn cost (~20ms
+/// per spawn) dominates the encode cost. Keeps tiny repos on a
+/// single isolate where they belong.
+const int _kMinPathsPerChunk = 64;
+
+/// Split missing-paths into up to [_kMaxEncodeIsolates] roughly equal
+/// chunks. Chunks are stable for a given input order (not randomised)
+/// so the on-disk cache's write ordering stays deterministic.
+List<List<String>> _splitPaths(List<String> paths) {
+  if (paths.length <= _kMinPathsPerChunk) return [paths];
+  final nChunks = math.min(
+    _kMaxEncodeIsolates,
+    (paths.length / _kMinPathsPerChunk).ceil(),
+  );
+  final chunkSize = (paths.length / nChunks).ceil();
+  final out = <List<String>>[];
+  for (var start = 0; start < paths.length; start += chunkSize) {
+    final end = math.min(start + chunkSize, paths.length);
+    out.add(paths.sublist(start, end));
+  }
+  return out;
+}
+
+/// Cross-platform path join without pulling in `package:path` up here.
+/// This is only used for the on-disk file lookup; the engram encoder
+/// does its own path joining internally.
+String _join(String base, String rel) {
+  final sep = Platform.pathSeparator;
+  if (base.endsWith(sep) || base.endsWith('/')) return '$base$rel';
+  return '$base$sep$rel';
+}
+
+Future<void> _persistCache({
+  required String repoPath,
+  required int pairs,
+  required Map<String, HunkKVector> merged,
+  required Map<String, ({int mtimeMs, int size})> freshMeta,
+}) async {
+  try {
+    final entries = <String, EngramFileIndexCacheEntry>{};
+    for (final e in merged.entries) {
+      final meta = freshMeta[e.key];
+      if (meta == null) continue; // couldn't stat → don't cache
+      entries[e.key] = EngramFileIndexCacheEntry(
+        mtimeMs: meta.mtimeMs,
+        size: meta.size,
+        kVector: e.value,
+      );
+    }
+    await EngramFileIndexCache.save(
+      repoPath: repoPath,
+      pairs: pairs,
+      entries: entries,
+    );
+  } catch (_) {
+    // Cache write is best-effort. Next run just pays the cold cost.
+  }
+}
 
 /// Resolve the [LogosGit] engine for [repoPath]. Returns the cached
 /// engine when HEAD hasn't moved; otherwise builds, caches, returns.
@@ -123,8 +315,50 @@ Future<LogosGit?> _resolveImpl(
     // file engine the copy cost is a few ms versus hundreds-of-ms of
     // build cost, so the trade is firmly net-positive.
     final stats = statsResult.data!;
+
+    // ── Engram file index — parallel + disk-cached. ─────────────────
+    //
+    // The expensive part of engram integration used to be a single
+    // isolate walking every node-path on disk, reading + encoding
+    // each file. On a thousand-file repo that was 5–15 seconds of
+    // pure serial work.
+    //
+    // Now:
+    //   1. Check a disk cache keyed by (file path, mtime, size).
+    //      Unchanged files reuse their previously-encoded K-vectors —
+    //      a stat() call per file instead of a full read + encode.
+    //      On a warm reload this is ~50ms total for a kilo-file repo.
+    //   2. Split the remaining (cache-miss) paths across N isolates,
+    //      one per CPU core up to a cap. Each runs `engramEncodeChunk`
+    //      independently and returns a Map<path, HunkKVector>.
+    //      4–8× speedup on cold builds.
+    //   3. Merge results, write the updated cache back to disk
+    //      asynchronously so it's available on next launch.
+    //
+    // Done BEFORE the LogosGit build isolate so the engine build gets
+    // the K-vectors as a pre-computed Map (cheap to cross the isolate
+    // boundary — typed lists sendable as bulk bytes).
+    final engramAssets = await EngramRuntime.instance.assets();
+    Map<String, HunkKVector> perFileKVectors = const {};
+    if (engramAssets != null) {
+      try {
+        perFileKVectors = await _buildEngramFileIndexFast(
+          repoPath: repoPath,
+          stats: stats,
+          assets: engramAssets,
+        );
+      } catch (_) {
+        // Engram is best-effort — any failure falls through to the
+        // legacy 4-axis engine.
+        perFileKVectors = const {};
+      }
+    }
+
     final engine = await Isolate.run<LogosGit>(
-      () => LogosGit.buildFromStats(stats),
+      () => LogosGit.buildFromStats(
+        stats,
+        perFileKVectors: perFileKVectors,
+      ),
       debugName: 'LogosGit.buildFromStats',
     );
 

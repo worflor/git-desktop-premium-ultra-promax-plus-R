@@ -79,8 +79,10 @@ import 'dart:typed_data';
 import 'package:meta/meta.dart';
 
 import 'engram_fit.dart';
+import 'engram_hunk_encoder.dart';
 import 'file_coupling.dart';
 import 'logos_core.dart';
+import 'logos_git_calibration.dart' show LogosAxis;
 
 /// Internals re-exported for tests. Not stable API — the `@visibleForTesting`
 /// annotation makes accidental production use lint.
@@ -244,8 +246,10 @@ class BornMixer {
 // in the same order. Keep them in lockstep.
 
 /// The canonical axis order. [BornMixer.caps] is indexed in this order;
-/// any axis reshuffle needs both lists to move together.
-enum AxisId { f0, cc, sp, v }
+/// any axis reshuffle needs both lists to move together. EN sits last
+/// because it's optional (only present when the engine was built with
+/// engram K-vectors); the engram-less mixer uses caps[0..3] only.
+enum AxisId { f0, cc, sp, v, en }
 
 /// F0 — global frequency axis.
 ///
@@ -335,6 +339,55 @@ class _VAxis {
     // We don't track per-file sample counts; use a small fixed evidence
     // count (axis remains informative but can't dominate).
     return AxisObs(p, 4);
+  }
+}
+
+/// EN — engram K-space cosine. Optional; only present when the engine
+/// was built with `perFileKVectors` populated by the resolver.
+///
+/// Each file gets a K-vector ∈ ℂ^P (Alexandria's 150-pair eigenvalue
+/// signature for the file's identifier content). Pairwise cosine in
+/// ℝ^(2P) measures **content-semantic** affinity — orthogonal to CC's
+/// historical co-change and SP's directory geometry, complementary to
+/// the existing symbolEdges per-changeset symbol-overlap signal.
+///
+/// What this catches that the other axes miss:
+///   • Files with similar purpose that have never co-changed (refactored
+///     out, renamed, freshly-added).
+///   • Cross-module semantic neighbours (test fixtures next to the
+///     service they exercise; reducer + selector pairs in different dirs).
+///   • Cold-start: a brand-new repo with empty history still has full
+///     EN signal because K-vectors come from current content, not history.
+///
+/// Probability is the cosine clamped to [0, 1] then re-anchored against
+/// the 0.5 mid-line (the silent default) — cosine ≥ 0.5 reads as a
+/// positive predictor; below pulls the mixer toward "unrelated".
+class _EnAxis {
+  final Map<String, HunkKVector> perFileKVectors;
+
+  const _EnAxis(this.perFileKVectors);
+
+  AxisObs observe(String a, String b) {
+    final ka = perFileKVectors[a];
+    if (ka == null) return AxisObs.silent;
+    final kb = perFileKVectors[b];
+    if (kb == null) return AxisObs.silent;
+    final cos = EngramHunkEncoder.cosine(ka, kb);
+    if (cos <= 0) return AxisObs.silent;
+    // Map cosine ∈ [0,1] to p ∈ [0.5, 1] — the axis is a "boost only"
+    // signal: high cosine pulls the mix toward "related"; low cosine
+    // contributes nothing (we have no calibration for what *low*
+    // cosine should mean as a NEGATIVE predictor — it might just be
+    // "different domains" not "should not co-occur"). The 0.5 anchor
+    // makes the confidence gate `|p - 0.5|` proportional to the cosine
+    // itself, which is what we want.
+    final p = 0.5 + 0.5 * cos;
+    // Evidence: the K-vector quality reflects how many GloVe-hittable
+    // sub-tokens fed the AR(2). Use the smaller of the pair so a
+    // sparsely-tokenised file can't claim more confidence than its
+    // signal supports.
+    final n = ka.vocabHits < kb.vocabHits ? ka.vocabHits : kb.vocabHits;
+    return AxisObs(p, n);
   }
 }
 
@@ -471,6 +524,17 @@ final _defaultCaps = <double>[
   math.log(3),       // V:  ln(3)
 ];
 
+/// Caps when the engine was built with engram K-vectors. Adds an EN
+/// cap of ln(4) = 2 bits — Alexandria's wells distinguish ~225 semantic
+/// basins, but most files cluster around a handful of dominant ones in
+/// any given repo. Two bits captures "same well | adjacent well | far
+/// well | unrelated" without letting the EN axis dominate well-evidenced
+/// CC signals.
+final _defaultCapsWithEngram = <double>[
+  ..._defaultCaps,
+  2 * math.ln2,      // EN: ln(4)
+];
+
 /// The Logos-inspired git context engine.
 ///
 /// Usage:
@@ -507,6 +571,32 @@ class LogosGit {
   /// log-walk in features that need both.
   final LogosGitStats stats;
 
+  /// Symbol-overlap edges for the current change set. Injected per
+  /// change-set via [withSymbolEdges]; absent from the base engine built
+  /// from history alone. Stored fully-symmetric (both directions present)
+  /// so neighbour lookups are a single map access.
+  ///
+  /// Used in two places:
+  ///   • [_buildRho] — proxies heat from unknown (new/untracked) source
+  ///     paths through their symbol-linked known graph nodes.
+  ///   • [_deriveNewPathPhi] — computes a derived φ for new paths so they
+  ///     appear in diffusion output even though they aren't graph nodes.
+  final Map<String, Map<String, double>> symbolEdges;
+
+  /// Per-file K-vector signatures from Alexandria. Empty when the
+  /// engine was built without engram assets (the fallback path that
+  /// keeps the engine working in cold-asset / test scenarios).
+  ///
+  /// When non-empty:
+  ///   • Drives the EN axis in the Born mixer (semantic content
+  ///     similarity between file pairs).
+  ///   • Surfaced via [wellOf] for tagging and prompt annotations:
+  ///     callers can ask "what semantic basin does file X live in?".
+  ///
+  /// Built once per HEAD inside the resolver isolate; ~5–15s on a
+  /// thousand-file repo, then memoised with the engine.
+  final Map<String, HunkKVector> perFileKVectors;
+
   LogosGit._({
     required this.graph,
     required this.nodePaths,
@@ -514,7 +604,44 @@ class LogosGit {
     required this.mixer,
     required this.perFileMetrics,
     required this.stats,
+    this.symbolEdges = const {},
+    this.perFileKVectors = const {},
   });
+
+  /// Nearest Alexandria well for [path], or null if the engine wasn't
+  /// built with engram K-vectors / the file failed to encode. The
+  /// returned name is the well's label (e.g. "computing", "well_43").
+  String? wellOf(String path) => perFileKVectors[path]?.well?.name;
+
+  /// Return a copy of this engine aware of symbol-overlap edges for the
+  /// current change set. Cheap — shares the immutable graph; only the
+  /// edge map is new. The symmetrisation step here means every caller
+  /// can do a single `symbolEdges[path]` lookup instead of checking
+  /// both triangle directions.
+  LogosGit withSymbolEdges(Map<String, Map<String, double>> sym) {
+    if (sym.isEmpty) return this;
+    // Expand upper-triangle storage → fully symmetric.
+    final expanded = <String, Map<String, double>>{};
+    for (final entry in sym.entries) {
+      final a = entry.key;
+      for (final inner in entry.value.entries) {
+        final b = inner.key;
+        final score = inner.value;
+        (expanded[a] ??= {})[b] = score;
+        (expanded[b] ??= {})[a] = score;
+      }
+    }
+    return LogosGit._(
+      graph: graph,
+      nodePaths: nodePaths,
+      pathToId: pathToId,
+      mixer: mixer,
+      perFileMetrics: perFileMetrics,
+      stats: stats,
+      symbolEdges: expanded,
+      perFileKVectors: perFileKVectors,
+    );
+  }
 
   /// Construct the engine from per-file statistics. Nodes are all files
   /// with at least one observation from any axis; edges are the
@@ -523,7 +650,15 @@ class LogosGit {
   static LogosGit buildFromStats(
     LogosGitStats stats, {
     int edgeDensity = _defaultEdgeDensity,
+    Map<String, HunkKVector>? perFileKVectors,
   }) {
+    // Whether the EN axis is active for this build. Determined once
+    // here so the build loop can branch cleanly without per-edge
+    // null checks inside the hot path.
+    final useEngram = perFileKVectors != null && perFileKVectors.isNotEmpty;
+    final caps = useEngram ? _defaultCapsWithEngram : _defaultCaps;
+    final obsBufSize = caps.length;
+
     // Materialise the node set: union of files seen by any axis.
     final pathSet = <String>{};
     pathSet.addAll(stats.touches.keys);
@@ -550,12 +685,13 @@ class LogosGit {
         nodePaths: nodePaths,
         perFileMetrics: const {},
         pathToId: pathToId,
-        mixer: BornMixer(_defaultCaps),
+        mixer: BornMixer(caps),
         stats: stats,
+        perFileKVectors: useEngram ? perFileKVectors : const {},
       );
     }
 
-    final mixer = BornMixer(_defaultCaps);
+    final mixer = BornMixer(caps);
     final f0 = _F0Axis(touches: stats.touches, totalCommits: stats.totalCommits);
     final cc = _CcAxis(stats.coupling);
     // SP observe is inlined into the build loop below (uses cached
@@ -567,6 +703,10 @@ class LogosGit {
       mean: stats.volMean,
       stddev: stats.volStddev,
     );
+    // EN axis — only constructed when we have K-vectors. When silent
+    // we keep the variable null and the build loop simply skips the
+    // 5th observation (mixer caps stay 4-element).
+    final en = useEngram ? _EnAxis(perFileKVectors) : null;
 
     // ── Per-file curved metric (Whisper Harmonic, applied per-file).
     // For each file with sufficient touch history, fit AR(2) on the
@@ -629,6 +769,27 @@ class LogosGit {
     final pathSegments = List<List<String>>.generate(
         n, (i) => nodePaths[i].split('/'));
     final curvatures = Float64List(n);
+    // Well → node-ids index. Same shape as `dirIndex` but partitioned
+    // by Alexandria's learned semantic wells instead of directory
+    // structure. This is the creative move: wells already group files
+    // that talk about the same concepts (via K-space geometry). By
+    // surfacing same-well siblings as EDGE CANDIDATES — not just
+    // scoring existing candidates with the EN axis — we capture
+    // cross-directory, cross-history feature clusters that CC
+    // (co-change) and SP (directory) structurally can't see.
+    //
+    // Empty when `useEngram=false`; the downstream candidate loop
+    // just skips the well-siblings contribution in that case.
+    final wellIndex = <String, List<int>>{};
+    if (useEngram) {
+      for (var i = 0; i < n; i++) {
+        final kv = perFileKVectors![nodePaths[i]];
+        final wellName = kv?.well?.name;
+        if (wellName != null) {
+          (wellIndex[wellName] ??= <int>[]).add(i);
+        }
+      }
+    }
     for (var i = 0; i < n; i++) {
       final p = nodePaths[i];
       final slash = p.lastIndexOf('/');
@@ -652,7 +813,9 @@ class LogosGit {
 
     // Reused buffer fed to BornMixer.mix — saves one 4-element list
     // allocation per scored edge (~candidates × N allocations otherwise).
-    final obsBuf = List<AxisObs>.filled(4, AxisObs.silent, growable: false);
+    // Sized to match the active mixer (4 axes by default, 5 with EN).
+    final obsBuf = List<AxisObs>.filled(obsBufSize, AxisObs.silent,
+        growable: false);
 
     for (var i = 0; i < n; i++) {
       final a = nodePaths[i];
@@ -676,6 +839,36 @@ class LogosGit {
         if (siblings != null) {
           for (final id in siblings) {
             if (id != i) candidates.add(id);
+          }
+        }
+      }
+
+      // Well-siblings — semantic candidates. If this node has a
+      // K-vector with a nearest well, consider every other node in
+      // that well as a candidate too. Capped at [edgeDensity] per
+      // node to match the downstream top-K sparsifier's budget —
+      // beyond that the sparsifier would drop extras anyway, so we
+      // don't pay the scoring cost.
+      //
+      // Together with the CC + SP sources, this widens the graph's
+      // reach in exactly the dimension the existing axes don't: a
+      // same-concept file sitting in a different directory, never
+      // co-changed with `i` yet, now has a chance to be considered.
+      // The Born mixer then decides whether the evidence across F0 /
+      // CC / SP / V / EN actually justifies an edge.
+      if (useEngram) {
+        final myKv = perFileKVectors![nodePaths[i]];
+        final myWell = myKv?.well?.name;
+        if (myWell != null) {
+          final wellSiblings = wellIndex[myWell];
+          if (wellSiblings != null) {
+            final cap = edgeDensity < wellSiblings.length
+                ? edgeDensity
+                : wellSiblings.length;
+            for (var k = 0; k < cap; k++) {
+              final id = wellSiblings[k];
+              if (id != i) candidates.add(id);
+            }
           }
         }
       }
@@ -717,6 +910,9 @@ class LogosGit {
         obsBuf[1] = cc.observe(a, b);
         obsBuf[2] = spObs;
         obsBuf[3] = v.observe(a, b);
+        if (en != null) {
+          obsBuf[4] = en.observe(a, b);
+        }
         var p = mixer.mix(obsBuf);
         p *= math.sqrt(curvA * curvatures[j]);
         if (p <= 0.5) continue; // only keep edges with positive lift
@@ -815,6 +1011,7 @@ class LogosGit {
       mixer: mixer,
       perFileMetrics: perFileMetrics,
       stats: stats,
+      perFileKVectors: useEngram ? perFileKVectors : const {},
     );
   }
 
@@ -896,22 +1093,20 @@ class LogosGit {
   /// degrade gracefully (no rail, no temperature interaction).
   DiffusionBasis? buildBasis(Set<String> sourceFiles, {int K = kDefaultChebyshevK}) {
     if (graph.n == 0) return null;
-    final rho = Float64List(graph.n);
-    var sourceWeight = 0.0;
-    for (final p in sourceFiles) {
-      final id = pathToId[p];
-      if (id == null) continue;
-      rho[id] = 1.0;
-      sourceWeight += 1.0;
-    }
-    if (sourceWeight == 0) return null;
-    for (var i = 0; i < graph.n; i++) {
-      rho[i] /= sourceWeight;
-    }
-    return _buildDiffusionBasis(graph: graph, rho: rho, K: K, sources: {
-      for (final p in sourceFiles)
-        if (pathToId.containsKey(p)) p,
-    });
+    final rho = _buildRho({for (final p in sourceFiles) p: 1.0});
+    if (rho == null) return null;
+    // `sources` tracks ORIGINAL source paths (both graph nodes and
+    // symbol-proxied new files) so downstream exclusion works on the
+    // caller's intent, not on the graph-level routing.
+    return _buildDiffusionBasis(
+      graph: graph,
+      rho: rho,
+      K: K,
+      sources: {
+        for (final p in sourceFiles)
+          if (pathToId.containsKey(p) || symbolEdges.containsKey(p)) p,
+      },
+    );
   }
 
   /// Weighted variant of [buildBasis] — sources carry impact-weights
@@ -931,25 +1126,20 @@ class LogosGit {
     int K = kDefaultChebyshevK,
   }) {
     if (graph.n == 0 || weights.isEmpty) return null;
-    final rho = Float64List(graph.n);
-    var total = 0.0;
-    final inGraphSources = <String>{};
-    for (final entry in weights.entries) {
-      if (entry.value <= 0) continue;
-      final id = pathToId[entry.key];
-      if (id == null) continue;
-      rho[id] = entry.value;
-      total += entry.value;
-      inGraphSources.add(entry.key);
-    }
-    if (total <= 0) return null;
-    // Normalise to unit total mass — same convention as buildBasis /
-    // diffuseWeighted. Downstream ranking is invariant to scale.
-    for (var i = 0; i < graph.n; i++) {
-      rho[i] /= total;
-    }
+    final rho = _buildRho(weights);
+    if (rho == null) return null;
+    // Track all contributing source paths (both in-graph and
+    // symbol-proxied new files) so downstream exclusion respects the
+    // caller's intent regardless of the routing mechanism.
+    final sources = <String>{
+      for (final entry in weights.entries)
+        if (entry.value > 0 &&
+            (pathToId.containsKey(entry.key) ||
+                symbolEdges.containsKey(entry.key)))
+          entry.key,
+    };
     return _buildDiffusionBasis(
-        graph: graph, rho: rho, K: K, sources: inGraphSources);
+        graph: graph, rho: rho, K: K, sources: sources);
   }
 
   /// Diffuse from the source file set. Returns every node with positive
@@ -967,6 +1157,102 @@ class LogosGit {
   /// [topK]: when non-null, returns at most this many results, using a
   /// bounded min-heap during scan — O(n log topK) instead of O(n log n)
   /// for the full sort. The result list is still sorted descending.
+  // ─── Coherence gate ───────────────────────────────────────────────────
+
+  /// Prune [results] to the largest prefix whose induced-subgraph coherence
+  /// on the Logos graph stays at or above [minCoherence].
+  ///
+  /// Walks from the tail inward: if the full set is already coherent, returns
+  /// [results] unchanged. Otherwise removes the weakest-φ tail nodes one by
+  /// one until the remaining set clears the threshold or only one node is
+  /// left. Cost: O(k·d) per pruning step where d is average graph degree —
+  /// fast for the small topK result sets this is called on.
+  ///
+  /// This turns coherence from a post-hoc metric into an active gate: the
+  /// diffusion aperture closes when heat has spread into incoherent territory.
+  List<RelevanceScore> _gateByCoherence(
+    List<RelevanceScore> results,
+    double minCoherence,
+  ) {
+    if (results.length < 2) return results;
+    var k = results.length;
+    while (k > 1) {
+      final paths = results.take(k).map((r) => r.path);
+      if (coherence(paths) >= minCoherence) break;
+      k--;
+    }
+    return k == results.length ? results : results.sublist(0, k);
+  }
+
+  // ─── Helpers for new-file / symbol-edge support ───────────────────────
+
+  /// Build and normalise a source vector ρ from [weights] (path → weight).
+  /// Returns null when total injected mass is zero (nothing in the graph
+  /// and no resolvable symbol proxy).
+  ///
+  /// For paths present in the graph: inject weight directly.
+  /// For paths absent but reachable via [symbolEdges]: distribute weight
+  /// across their known neighbours proportionally to symbol overlap score.
+  /// This makes new/untracked files valid diffusion sources — heat enters
+  /// the graph through the files they're structurally coupled to.
+  Float64List? _buildRho(Map<String, double> weights) {
+    final rho = Float64List(graph.n);
+    var total = 0.0;
+    for (final entry in weights.entries) {
+      final w = entry.value;
+      if (w <= 0) continue;
+      final id = pathToId[entry.key];
+      if (id != null) {
+        rho[id] += w;
+        total += w;
+      } else if (symbolEdges.isNotEmpty) {
+        // Unknown node — proxy through symbol-linked known neighbours.
+        final neighbours = symbolEdges[entry.key];
+        if (neighbours == null || neighbours.isEmpty) continue;
+        for (final ne in neighbours.entries) {
+          final nid = pathToId[ne.key];
+          if (nid == null) continue;
+          final proxied = w * ne.value;
+          rho[nid] += proxied;
+          total += proxied;
+        }
+      }
+    }
+    if (total <= 0) return null;
+    for (var i = 0; i < graph.n; i++) {
+      rho[i] /= total;
+    }
+    return rho;
+  }
+
+  /// Derive φ scores for paths that are not graph nodes but are reachable
+  /// via [symbolEdges]. Each new path's score is the symbol-overlap-weighted
+  /// mean of its known neighbours' φ values — the same interpolation used
+  /// in MDS for out-of-sample points.
+  ///
+  /// Returns an empty map when [symbolEdges] is empty or no new paths have
+  /// any known neighbour with non-zero φ.
+  Map<String, double> _deriveNewPathPhi(Float64List phi) {
+    if (symbolEdges.isEmpty) return const {};
+    final derived = <String, double>{};
+    for (final entry in symbolEdges.entries) {
+      final path = entry.key;
+      if (pathToId.containsKey(path)) continue; // already a node
+      var weightedSum = 0.0;
+      var totalWeight = 0.0;
+      for (final ne in entry.value.entries) {
+        final nid = pathToId[ne.key];
+        if (nid == null) continue;
+        weightedSum += ne.value * phi[nid];
+        totalWeight += ne.value;
+      }
+      if (totalWeight > 0) derived[path] = weightedSum / totalWeight;
+    }
+    return derived;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+
   /// [phiThreshold]: when non-zero, drops sub-threshold φ values during
   /// scan (kills numerical-noise allocations on warm diffusions where
   /// thousands of nodes carry near-zero positive φ).
@@ -976,35 +1262,43 @@ class LogosGit {
     int K = kDefaultChebyshevK,
     int? topK,
     double phiThreshold = 0.0,
+    // When set, the result is pruned to the largest prefix whose induced
+    // coherence on the Logos graph stays ≥ this value. Prevents diffusion
+    // from surfacing files that are incoherent with the source cluster.
+    // null = no gate (default). Good default for commit reranking: 0.25.
+    double? coherenceGate,
   }) {
     if (graph.n == 0) return const [];
-    // Build source vector ρ. Files outside the graph are ignored.
-    final rho = Float64List(graph.n);
-    var sourceWeight = 0.0;
-    for (final p in sourceFiles) {
-      final id = pathToId[p];
-      if (id == null) continue;
-      rho[id] = 1.0; // unit weight per touched file
-      sourceWeight += 1.0;
-    }
-    if (sourceWeight == 0) return const [];
-    // Normalise ρ so total injected "heat" is 1.
-    for (var i = 0; i < graph.n; i++) {
-      rho[i] /= sourceWeight;
-    }
+    final rho = _buildRho({for (final p in sourceFiles) p: 1.0});
+    if (rho == null) return const [];
 
     final phi = Float64List(graph.n);
     chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
 
-    // Pack into sorted list, excluding exact source files (they're the
-    // diff itself — not context). Callers that want them can add them
-    // back trivially.
-    return _packTopPhi(
+    var results = _packTopPhi(
       phi: phi,
       excludePaths: sourceFiles,
       topK: topK,
       phiThreshold: phiThreshold,
     );
+
+    final derived = _deriveNewPathPhi(phi);
+    if (derived.isNotEmpty) {
+      final extras = [
+        for (final e in derived.entries)
+          if (!sourceFiles.contains(e.key) && e.value > phiThreshold)
+            RelevanceScore(e.key, e.value),
+      ];
+      if (extras.isNotEmpty) {
+        results = ([...results, ...extras]
+          ..sort((a, b) => b.phi.compareTo(a.phi)));
+      }
+    }
+
+    if (coherenceGate != null) {
+      results = _gateByCoherence(results, coherenceGate);
+    }
+    return results;
   }
 
   /// Diffuse from a WEIGHTED source map — the correct path for
@@ -1028,34 +1322,39 @@ class LogosGit {
     Set<String> excludePaths = const {},
     int? topK,
     double phiThreshold = 0.0,
+    double? coherenceGate,
   }) {
     if (graph.n == 0 || weights.isEmpty) return const [];
-    final rho = Float64List(graph.n);
-    var total = 0.0;
-    for (final entry in weights.entries) {
-      if (entry.value <= 0) continue;
-      final id = pathToId[entry.key];
-      if (id == null) continue;
-      rho[id] = entry.value;
-      total += entry.value;
-    }
-    if (total <= 0) return const [];
-    // Normalise to unit mass — same convention as `diffuse`. The
-    // downstream ranking is invariant to this scale, but it keeps φ
-    // values comparable across different weight magnitudes.
-    for (var i = 0; i < graph.n; i++) {
-      rho[i] /= total;
-    }
+    final rho = _buildRho(weights);
+    if (rho == null) return const [];
 
     final phi = Float64List(graph.n);
     chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
 
-    return _packTopPhi(
+    var results = _packTopPhi(
       phi: phi,
       excludePaths: excludePaths,
       topK: topK,
       phiThreshold: phiThreshold,
     );
+
+    final derived = _deriveNewPathPhi(phi);
+    if (derived.isNotEmpty) {
+      final extras = [
+        for (final e in derived.entries)
+          if (!excludePaths.contains(e.key) && e.value > phiThreshold)
+            RelevanceScore(e.key, e.value),
+      ];
+      if (extras.isNotEmpty) {
+        results = ([...results, ...extras]
+          ..sort((a, b) => b.phi.compareTo(a.phi)));
+      }
+    }
+
+    if (coherenceGate != null) {
+      results = _gateByCoherence(results, coherenceGate);
+    }
+    return results;
   }
 
   /// Pack a φ vector into a sorted-descending list of [RelevanceScore],
@@ -1124,19 +1423,8 @@ class LogosGit {
     if (graph.n == 0 || sourceWeights.isEmpty || fileTokenCounts.isEmpty) {
       return const {};
     }
-    final rho = Float64List(graph.n);
-    var total = 0.0;
-    for (final entry in sourceWeights.entries) {
-      if (entry.value <= 0) continue;
-      final id = pathToId[entry.key];
-      if (id == null) continue;
-      rho[id] = entry.value;
-      total += entry.value;
-    }
-    if (total <= 0) return const {};
-    for (var i = 0; i < graph.n; i++) {
-      rho[i] /= total;
-    }
+    final rho = _buildRho(sourceWeights);
+    if (rho == null) return const {};
 
     final phi = Float64List(graph.n);
     chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
@@ -1218,19 +1506,8 @@ class LogosGit {
     int K,
   ) {
     if (weights.isEmpty) return null;
-    final rho = Float64List(graph.n);
-    var total = 0.0;
-    for (final entry in weights.entries) {
-      if (entry.value <= 0) continue;
-      final id = pathToId[entry.key];
-      if (id == null) continue;
-      rho[id] = entry.value;
-      total += entry.value;
-    }
-    if (total <= 0) return null;
-    for (var i = 0; i < graph.n; i++) {
-      rho[i] /= total;
-    }
+    final rho = _buildRho(weights);
+    if (rho == null) return null;
     final phi = Float64List(graph.n);
     chebyshevDiffuse(graph: graph, rho: rho, phi: phi, t: t, K: K);
     return phi;
@@ -1324,29 +1601,68 @@ class LogosGit {
     double t = 1.0,
     int K = kDefaultChebyshevK,
     Set<String> excludePaths = const {},
+    // When set, the combined result is pruned so every included path
+    // keeps the induced-subgraph coherence ≥ this value. Per-axis φ
+    // vectors are not pruned (callers that want them can apply the
+    // same gate themselves). Mirrors the behaviour in [diffuse].
+    double? coherenceGate,
   }) {
     if (graph.n == 0 || weightsByPath.isEmpty) return null;
 
-    // Bucket per axis, applying the global mass normalisation up front
-    // so per-axis φ vectors sum to combined φ.
-    final perAxisRaw = <String, Float64List>{};
+    // Symbol-axis routing: a source path absent from the graph but
+    // present in [symbolEdges] is proxied through its known neighbours,
+    // with the proxied mass attributed to the `symbol` axis regardless
+    // of the caller's label. This keeps attribution math consistent with
+    // _buildRho and surfaces new-file contributions in per-axis φ.
+    final symbolAxisLabel = LogosAxis.symbol.name;
+
+    // Bucket per axis, applying global mass normalisation up front so
+    // per-axis φ vectors sum to combined φ. Two-pass structure: first
+    // compute totalMass including any proxied mass, then populate rho.
+    double resolveMass(String path, double weight) {
+      if (pathToId.containsKey(path)) return weight;
+      final neighbours = symbolEdges[path];
+      if (neighbours == null || neighbours.isEmpty) return 0.0;
+      var m = 0.0;
+      for (final ne in neighbours.entries) {
+        if (pathToId.containsKey(ne.key)) m += weight * ne.value;
+      }
+      return m;
+    }
+
     var totalMass = 0.0;
     for (final entry in weightsByPath.entries) {
       final w = entry.value;
       if (w <= 0) continue;
-      if (!pathToId.containsKey(entry.key)) continue;
-      totalMass += w;
+      totalMass += resolveMass(entry.key, w);
     }
     if (totalMass <= 0) return null;
 
+    final perAxisRaw = <String, Float64List>{};
     for (final entry in weightsByPath.entries) {
       final w = entry.value;
       if (w <= 0) continue;
-      final id = pathToId[entry.key];
-      if (id == null) continue;
-      final axis = axisLabelByPath[entry.key] ?? '_default';
-      final rho = perAxisRaw.putIfAbsent(axis, () => Float64List(graph.n));
-      rho[id] += w / totalMass;
+      final path = entry.key;
+      final id = pathToId[path];
+      if (id != null) {
+        final axis = axisLabelByPath[path] ?? '_default';
+        final rho = perAxisRaw.putIfAbsent(axis, () => Float64List(graph.n));
+        rho[id] += w / totalMass;
+      } else {
+        // Unknown path — proxy through symbol neighbours under the
+        // symbol axis label (the real mechanism that surfaced the heat).
+        final neighbours = symbolEdges[path];
+        if (neighbours == null || neighbours.isEmpty) continue;
+        final rho = perAxisRaw.putIfAbsent(
+          symbolAxisLabel,
+          () => Float64List(graph.n),
+        );
+        for (final ne in neighbours.entries) {
+          final nid = pathToId[ne.key];
+          if (nid == null) continue;
+          rho[nid] += (w * ne.value) / totalMass;
+        }
+      }
     }
 
     // Batch all axes into one Chebyshev pass. AoSoA-pack the per-axis
@@ -1429,10 +1745,35 @@ class LogosGit {
       if (bestAxis.isNotEmpty) dominantAxis[path] = bestAxis;
       if (shares.isNotEmpty) shareByAxis[path] = shares;
     }
+
+    // Derived φ for new / symbol-coupled paths not in the graph — same
+    // interpolation as `_deriveNewPathPhi` but applied to combinedPhi.
+    // Attribution for these paths is wholly the symbol axis: they exist
+    // only because the symbol-overlap axis surfaced them, so their
+    // dominantAxis and full share (1.0) go to `LogosAxis.symbol.name`.
+    final derived = _deriveNewPathPhi(combinedPhi);
+    if (derived.isNotEmpty) {
+      for (final e in derived.entries) {
+        if (excludePaths.contains(e.key)) continue;
+        if (e.value <= 0) continue;
+        combined.add(RelevanceScore(e.key, e.value));
+        dominantAxis[e.key] = symbolAxisLabel;
+        shareByAxis[e.key] = {symbolAxisLabel: 1.0};
+      }
+    }
+
     combined.sort((x, y) => y.phi.compareTo(x.phi));
 
+    // Apply coherence gate to combined if requested. Only combined is
+    // gated — per-axis φ is preserved for callers that need the raw
+    // per-axis breakdown across the full graph.
+    var gatedCombined = combined;
+    if (coherenceGate != null) {
+      gatedCombined = _gateByCoherence(combined, coherenceGate);
+    }
+
     return AxisAttribution(
-      combined: combined,
+      combined: gatedCombined,
       perAxisPhi: perAxisPhi,
       nodePaths: nodePaths,
       dominantAxis: dominantAxis,
@@ -1496,7 +1837,12 @@ class LogosGit {
     double t = 1.0,
     int limit = 20,
   }) {
-    if (!pathToId.containsKey(seed)) return const [];
+    // Seed may be a graph node OR a new/untracked file with symbol edges.
+    // In either case, `diffuse` via `_buildRho` routes heat correctly.
+    // Only bail when neither path exists — nothing to diffuse from.
+    final hasSeed = pathToId.containsKey(seed) ||
+        (symbolEdges[seed]?.isNotEmpty ?? false);
+    if (!hasSeed) return const [];
     final scores = diffuse({seed}, t: t);
     if (scores.length <= limit) return scores;
     return scores.sublist(0, limit);

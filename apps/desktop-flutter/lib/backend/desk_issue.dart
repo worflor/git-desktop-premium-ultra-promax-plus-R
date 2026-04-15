@@ -67,6 +67,10 @@ class DeskIssue {
   /// `DeskPr.linkedIssues: [issueId, ...]`.
   final List<String> addressedBy;
   final List<DeskIssueComment> comments;
+  /// GitHub issue number this local issue is linked to.
+  /// null  = never promoted / never imported from remote.
+  /// non-null = bidirectionally synced with GitHub issue #[remoteNumber].
+  final int? remoteNumber;
 
   const DeskIssue({
     required this.issueId,
@@ -80,6 +84,7 @@ class DeskIssue {
     this.assignees = const [],
     this.addressedBy = const [],
     this.comments = const [],
+    this.remoteNumber,
   });
 
   /// Adapter — present this DeskIssue as an IssueSummary so the
@@ -116,6 +121,7 @@ class DeskIssue {
         'assignees': assignees,
         'addressedBy': addressedBy,
         'comments': comments.map((c) => c.toJson()).toList(),
+        if (remoteNumber != null) 'remoteNumber': remoteNumber,
       };
 
   factory DeskIssue.fromJson(Map<String, dynamic> j) => DeskIssue(
@@ -141,7 +147,11 @@ class DeskIssue {
             .whereType<Map<String, dynamic>>()
             .map(DeskIssueComment.fromJson)
             .toList(),
+        remoteNumber: (j['remoteNumber'] as num?)?.toInt(),
       );
+
+  /// Sentinel for clearing remoteNumber in [copyWith].
+  static const _clearRemote = Object();
 
   DeskIssue copyWith({
     String? title,
@@ -152,6 +162,10 @@ class DeskIssue {
     List<String>? assignees,
     List<String>? addressedBy,
     List<DeskIssueComment>? comments,
+    /// To preserve the existing value: omit this parameter (default = sentinel).
+    /// To set a new value: pass an int.
+    /// To clear it (unlink from remote): pass null explicitly.
+    Object? remoteNumber = _clearRemote,
   }) =>
       DeskIssue(
         issueId: issueId,
@@ -165,6 +179,9 @@ class DeskIssue {
         assignees: assignees ?? this.assignees,
         addressedBy: addressedBy ?? this.addressedBy,
         comments: comments ?? this.comments,
+        remoteNumber: identical(remoteNumber, _clearRemote)
+            ? this.remoteNumber
+            : remoteNumber as int?,
       );
 
   String toBlob() => const JsonEncoder.withIndent('  ').convert(toJson());

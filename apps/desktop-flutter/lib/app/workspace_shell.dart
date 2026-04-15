@@ -22,8 +22,12 @@ import '../ui/morph_text.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart';
 import '../diagnostics/diagnostics_state.dart';
+import '../backend/desk_issue.dart';
+import '../backend/remote_issue_provider.dart' show IssueSummary;
 import 'desk_drop_payload.dart';
+import 'desk_issue_state.dart';
 import 'desk_pr_state.dart';
+import 'remote_issue_cache_state.dart';
 import 'hyper_reactivity.dart';
 import 'repository_state.dart';
 import 'repository_xray_state.dart';
@@ -1868,6 +1872,25 @@ class _BranchPillState extends State<_BranchPill> {
         .map((d) => d.branch!)
         .toSet();
 
+    final issueState = context.read<DeskIssueState>();
+    final openIssues = issueState.all.where((i) => i.state == 'OPEN').toList();
+
+    // Remote issues from the global cache — no gh call needed at open time.
+    final remoteCache = context.read<RemoteIssueCacheState>();
+    final remoteIssues = remoteCache.all;
+
+    // Build branch → remote-issue-numbers map from local desk PRs so the
+    // side panel can filter remote issues when hovering a branch row.
+    // DeskPr.linkedRemoteIssues records which remote issues a branch's PR
+    // addresses — the exact join we need for hover filtering.
+    final deskPrs = context.read<DeskPrState>().all;
+    final branchRemoteIssues = <String, Set<int>>{};
+    for (final pr in deskPrs) {
+      if (pr.linkedRemoteIssues.isNotEmpty) {
+        branchRemoteIssues[pr.headRef] = pr.linkedRemoteIssues.toSet();
+      }
+    }
+
     _overlay = OverlayEntry(builder: (_) {
       return _BranchPanelOverlay(
         // Panel starts at pill's top — pill fades out, panel morphs in.
@@ -1882,6 +1905,9 @@ class _BranchPillState extends State<_BranchPill> {
         loading: _loading,
         switching: _switching,
         currentBranch: widget.branch,
+        issues: openIssues,
+        remoteIssues: remoteIssues,
+        branchRemoteIssues: branchRemoteIssues,
         onDismiss: _close,
         onCheckout: _checkout,
         onOpenAsDesk: (branchName) async {
@@ -1913,6 +1939,26 @@ class _BranchPillState extends State<_BranchPill> {
           _close();
           widget.onNavigate();
         },
+        onCreateIssue: widget.repoPath == null
+            ? null
+            : ({
+                required String title,
+                required String body,
+                required bool promoteRemote,
+              }) async {
+                final err = await issueState.createMaybeRemote(
+                  repoPath: widget.repoPath!,
+                  title: title,
+                  body: body,
+                  promoteRemote: promoteRemote,
+                );
+                if (err == null && promoteRemote) {
+                  // ignore: unawaited_futures
+                  remoteCache.refreshFor(widget.repoPath!);
+                }
+                if (err == null && mounted) _close();
+                return err;
+              },
       );
     });
 
@@ -2022,12 +2068,23 @@ class _BranchPanelOverlay extends StatefulWidget {
   final bool loading;
   final bool switching;
   final String currentBranch;
+  final List<DeskIssue> issues;
+  /// Remote issues from [RemoteIssueCacheState].
+  final List<IssueSummary> remoteIssues;
+  /// Maps desk-PR head branches to the remote issue numbers they address.
+  final Map<String, Set<int>> branchRemoteIssues;
   final VoidCallback onDismiss;
   final ValueChanged<String> onCheckout;
   final ValueChanged<String>? onOpenAsDesk;
   final ValueChanged<String>? onCreateDeskFromHead;
   final Set<String> branchesOpenAsDesks;
   final VoidCallback onNavigate;
+  /// Submit a new issue. Returns an error string or null on success.
+  final Future<String?> Function({
+    required String title,
+    required String body,
+    required bool promoteRemote,
+  })? onCreateIssue;
 
   const _BranchPanelOverlay({
     required this.top,
@@ -2038,12 +2095,16 @@ class _BranchPanelOverlay extends StatefulWidget {
     required this.loading,
     required this.switching,
     required this.currentBranch,
+    this.issues = const [],
+    this.remoteIssues = const [],
+    this.branchRemoteIssues = const {},
     required this.onDismiss,
     required this.onCheckout,
     this.onOpenAsDesk,
     this.onCreateDeskFromHead,
     this.branchesOpenAsDesks = const {},
     required this.onNavigate,
+    this.onCreateIssue,
   });
 
   @override
@@ -2055,6 +2116,7 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
   late final AnimationController _ctrl;
   late final Animation<double> _reveal;
   late final Animation<double> _fade;
+  String? _hoveredBranch;
 
   @override
   void initState() {
@@ -2114,92 +2176,113 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
                 ),
                 child: Material(
                   color: Colors.transparent,
-                  child: Container(
-                    width: widget.minWidth,
-                    decoration: BoxDecoration(
-                      color: Color.alphaBlend(t.inputBg, t.bg0),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: borderColor),
-                      // offset.dy > blurRadius → shadow only goes downward
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black
-                              .withValues(alpha: t.isDark ? 0.45 : 0.18),
-                          blurRadius: 10,
-                          offset: const Offset(0, 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // ── Main panel ──────────────────────────────────────
+                      Container(
+                        width: widget.minWidth,
+                        decoration: BoxDecoration(
+                          color: Color.alphaBlend(t.inputBg, t.bg0),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: borderColor),
+                          // offset.dy > blurRadius → shadow only goes downward
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black
+                                  .withValues(alpha: t.isDark ? 0.45 : 0.18),
+                              blurRadius: 10,
+                              offset: const Offset(0, 12),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // ── Pill header — tapping here closes the panel ──
-                        GestureDetector(
-                          onTap: widget.onDismiss,
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.click,
-                            child: SizedBox(
-                              height: widget.pillHeight,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    AppIcon(
-                                        name: 'git-branch',
-                                        size: 11,
-                                        color: t.accentBright),
-                                    const SizedBox(width: 5),
-                                    Flexible(
-                                      child: ThemeMorphText(
-                                        widget.currentBranch,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        softWrap: false,
-                                        style: TextStyle(
-                                          color: t.textNormal,
-                                          fontSize: 10.5,
-                                          fontWeight: FontWeight.w600,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // ── Pill header — tapping here closes the panel ──
+                            GestureDetector(
+                              onTap: widget.onDismiss,
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: SizedBox(
+                                  height: widget.pillHeight,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        AppIcon(
+                                            name: 'git-branch',
+                                            size: 11,
+                                            color: t.accentBright),
+                                        const SizedBox(width: 5),
+                                        Flexible(
+                                          child: ThemeMorphText(
+                                            widget.currentBranch,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            softWrap: false,
+                                            style: TextStyle(
+                                              color: t.textNormal,
+                                              fontSize: 10.5,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
                                         ),
-                                      ),
+                                        const SizedBox(width: 4),
+                                        // Chevron pointing down (open state)
+                                        Transform.rotate(
+                                          angle: math.pi / 2,
+                                          child: AppIcon(
+                                              name: 'chevron-right',
+                                              size: 10,
+                                              color: t.textMuted),
+                                        ),
+                                      ],
                                     ),
-                                    const SizedBox(width: 4),
-                                    // Chevron pointing down (open state)
-                                    Transform.rotate(
-                                      angle: math.pi / 2,
-                                      child: AppIcon(
-                                          name: 'chevron-right',
-                                          size: 10,
-                                          color: t.textMuted),
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
+                            // Divider between pill header and branch list
+                            Container(
+                              height: 1,
+                              color: borderColor.withValues(alpha: 0.5),
+                            ),
+                            // ── Branch list ──────────────────────────────
+                            _PanelBody(
+                              branches: widget.branches,
+                              loading: widget.loading,
+                              switching: widget.switching,
+                              currentBranch: widget.currentBranch,
+                              onCheckout: widget.onCheckout,
+                              onOpenAsDesk: widget.onOpenAsDesk,
+                              onCreateDeskFromHead: widget.onCreateDeskFromHead,
+                              branchesOpenAsDesks: widget.branchesOpenAsDesks,
+                              onNavigate: widget.onNavigate,
+                              onBranchHover: (b) =>
+                                  setState(() => _hoveredBranch = b),
+                              t: t,
+                            ),
+                          ],
                         ),
-                        // Divider between pill header and branch list
-                        Container(
-                          height: 1,
-                          color: borderColor.withValues(alpha: 0.5),
-                        ),
-                        // ── Branch list ──────────────────────────────────
-                        _PanelBody(
-                          branches: widget.branches,
-                          loading: widget.loading,
-                          switching: widget.switching,
-                          currentBranch: widget.currentBranch,
-                          onCheckout: widget.onCheckout,
-                          onOpenAsDesk: widget.onOpenAsDesk,
-                          onCreateDeskFromHead: widget.onCreateDeskFromHead,
-                          branchesOpenAsDesks: widget.branchesOpenAsDesks,
-                          onNavigate: widget.onNavigate,
-                          t: t,
-                        ),
-                      ],
-                    ),
+                      ),
+                      // ── Issues side panel — always present so the popout
+                      // functions as the issue hub (list, filter, create).
+                      const SizedBox(width: 6),
+                      _IssuesSidePanel(
+                        localIssues: widget.issues,
+                        remoteIssues: widget.remoteIssues,
+                        branchRemoteIssues: widget.branchRemoteIssues,
+                        hoveredBranch: _hoveredBranch,
+                        borderColor: borderColor,
+                        onCreateIssue: widget.onCreateIssue,
+                        t: t,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -2222,6 +2305,8 @@ class _PanelBody extends StatelessWidget {
   /// Create a new branch from HEAD and open it on a new desk, in one motion.
   final ValueChanged<String>? onCreateDeskFromHead;
   final VoidCallback onNavigate;
+  /// Called with branch name on row hover-enter, null on hover-exit.
+  final ValueChanged<String?>? onBranchHover;
   final AppTokens t;
 
   const _PanelBody({
@@ -2234,6 +2319,7 @@ class _PanelBody extends StatelessWidget {
     this.branchesOpenAsDesks = const {},
     this.onCreateDeskFromHead,
     required this.onNavigate,
+    this.onBranchHover,
     required this.t,
   });
 
@@ -2279,6 +2365,8 @@ class _PanelBody extends StatelessWidget {
                 ? null
                 : () => onOpenAsDesk!(branch.name),
             alreadyOpenAsDesk: branchesOpenAsDesks.contains(branch.name),
+            onHoverChanged: (hovered) =>
+                onBranchHover?.call(hovered ? branch.name : null),
           ),
         const SizedBox(height: 4),
         Container(
@@ -2307,6 +2395,8 @@ class _BranchRow extends StatefulWidget {
   /// True when this branch is already open as a separate desk — the desk
   /// action then "jumps" instead of creating a new one.
   final bool alreadyOpenAsDesk;
+  /// Reports hover state changes to parent (true = entered, false = exited).
+  final ValueChanged<bool>? onHoverChanged;
 
   const _BranchRow({
     required this.branch,
@@ -2316,6 +2406,7 @@ class _BranchRow extends StatefulWidget {
     required this.onTap,
     this.onOpenAsDesk,
     this.alreadyOpenAsDesk = false,
+    this.onHoverChanged,
   });
 
   @override
@@ -2334,8 +2425,14 @@ class _BranchRowState extends State<_BranchRow> {
     return MouseRegion(
       cursor:
           canSwitch ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) {
+        setState(() => _hovered = true);
+        widget.onHoverChanged?.call(true);
+      },
+      onExit: (_) {
+        setState(() => _hovered = false);
+        widget.onHoverChanged?.call(false);
+      },
       child: GestureDetector(
         onTap: canSwitch ? widget.onTap : null,
         child: AnimatedContainer(
@@ -2611,6 +2708,635 @@ class _NavRowState extends State<_NavRow> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ── Issues side panel ─────────────────────────────────────────────────────────
+
+const double _kIssuesPanelWidth = 172.0;
+
+/// Unified item for the side panel — wraps either a local [DeskIssue] or a
+/// pure-remote [IssueSummary] (one that has no local counterpart yet).
+class _SidePanelIssue {
+  final int displayId;
+  final String title;
+  final String state;
+  /// True when backed by a local DeskIssue (has git storage).
+  final bool isLocal;
+  /// True when the issue exists on GitHub (local+promoted counts here too).
+  final bool isRemote;
+
+  const _SidePanelIssue({
+    required this.displayId,
+    required this.title,
+    required this.state,
+    required this.isLocal,
+    required this.isRemote,
+  });
+
+  bool get isOpen => state == 'OPEN';
+}
+
+/// Side panel attached to the branch picker overlay.
+///
+/// Shows a deduplicated list of open issues from both local storage
+/// ([localIssues]) and the GitHub cache ([remoteIssues]). A local issue
+/// with [DeskIssue.remoteNumber] set is considered the canonical record and
+/// suppresses the matching remote entry.
+///
+/// Hover filter:
+///   • Local issues → `addressedBy.contains(hoveredBranch)`
+///   • Remote-only  → `branchRemoteIssues[hoveredBranch]?.contains(number)`
+class _IssuesSidePanel extends StatefulWidget {
+  final List<DeskIssue> localIssues;
+  final List<IssueSummary> remoteIssues;
+  final Map<String, Set<int>> branchRemoteIssues;
+  final String? hoveredBranch;
+  final Color borderColor;
+  final Future<String?> Function({
+    required String title,
+    required String body,
+    required bool promoteRemote,
+  })? onCreateIssue;
+  final AppTokens t;
+
+  const _IssuesSidePanel({
+    required this.localIssues,
+    required this.remoteIssues,
+    required this.branchRemoteIssues,
+    required this.hoveredBranch,
+    required this.borderColor,
+    required this.onCreateIssue,
+    required this.t,
+  });
+
+  @override
+  State<_IssuesSidePanel> createState() => _IssuesSidePanelState();
+}
+
+class _IssuesSidePanelState extends State<_IssuesSidePanel> {
+  bool _composing = false;
+  bool _promoteRemote = false;
+  bool _submitting = false;
+  String? _error;
+  final _titleCtrl = TextEditingController();
+  final _bodyCtrl = TextEditingController();
+  final _titleFocus = FocusNode();
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _bodyCtrl.dispose();
+    _titleFocus.dispose();
+    super.dispose();
+  }
+
+  void _openCompose() {
+    setState(() {
+      _composing = true;
+      _error = null;
+    });
+    // Focus after the frame so the field is mounted.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _titleFocus.requestFocus();
+    });
+  }
+
+  void _cancelCompose() {
+    setState(() {
+      _composing = false;
+      _error = null;
+      _promoteRemote = false;
+      _titleCtrl.clear();
+      _bodyCtrl.clear();
+    });
+  }
+
+  Future<void> _submit() async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty || widget.onCreateIssue == null) return;
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    final err = await widget.onCreateIssue!(
+      title: title,
+      body: _bodyCtrl.text.trim(),
+      promoteRemote: _promoteRemote,
+    );
+    if (!mounted) return;
+    if (err != null) {
+      setState(() {
+        _submitting = false;
+        _error = err;
+      });
+    } else {
+      // Reset form state so the widget is not frozen if the parent is slow
+      // to close the overlay (e.g. due to a rebuild race).
+      setState(() {
+        _submitting = false;
+        _composing = false;
+      });
+    }
+  }
+
+  List<_SidePanelIssue> _buildItems() {
+    // Build a fast lookup map so the hover-filter pass never does a linear
+    // scan and can't throw StateError on a missing id.
+    final localById = {for (final i in widget.localIssues) i.issueId: i};
+
+    // Remote issue numbers already represented locally (promoted / imported).
+    final promotedNumbers = widget.localIssues
+        .where((i) => i.remoteNumber != null)
+        .map((i) => i.remoteNumber!)
+        .toSet();
+
+    final items = <_SidePanelIssue>[
+      for (final i in widget.localIssues)
+        _SidePanelIssue(
+          displayId: i.issueId,
+          title: i.title,
+          state: i.state,
+          isLocal: true,
+          isRemote: i.remoteNumber != null,
+        ),
+      for (final r in widget.remoteIssues)
+        if (!promotedNumbers.contains(r.number))
+          _SidePanelIssue(
+            displayId: r.number,
+            title: r.title,
+            state: r.state,
+            isLocal: false,
+            isRemote: true,
+          ),
+    ];
+
+    if (widget.hoveredBranch == null) return items;
+
+    final linked = widget.branchRemoteIssues[widget.hoveredBranch] ?? const {};
+    return items.where((item) {
+      if (item.isLocal) {
+        final local = localById[item.displayId];
+        if (local == null) return false; // shouldn't happen, but safe
+        return local.addressedBy.contains(widget.hoveredBranch) ||
+            (local.remoteNumber != null && linked.contains(local.remoteNumber));
+      }
+      // Pure-remote: check via DeskPr linkage.
+      return linked.contains(item.displayId);
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    final items = _buildItems();
+
+    return Container(
+      width: _kIssuesPanelWidth,
+      decoration: BoxDecoration(
+        color: Color.alphaBlend(t.inputBg, t.bg0),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: widget.borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: t.isDark ? 0.45 : 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header with inline "+ new" affordance.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 7, 6, 5),
+            child: Row(
+              children: [
+                Text(
+                  'issues',
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${items.length}',
+                  style: TextStyle(
+                    color: t.textMuted.withValues(alpha: 0.55),
+                    fontSize: 9,
+                  ),
+                ),
+                if (widget.onCreateIssue != null) ...[
+                  const SizedBox(width: 6),
+                  _CompactIconButton(
+                    icon: _composing ? 'x' : 'plus',
+                    tooltip: _composing ? 'cancel' : 'new issue',
+                    onTap: _composing ? _cancelCompose : _openCompose,
+                    t: t,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Container(
+            height: 1,
+            color: widget.borderColor.withValues(alpha: 0.5),
+          ),
+          if (_composing)
+            _IssueComposeForm(
+              titleCtrl: _titleCtrl,
+              bodyCtrl: _bodyCtrl,
+              titleFocus: _titleFocus,
+              promoteRemote: _promoteRemote,
+              submitting: _submitting,
+              error: _error,
+              onPromoteToggle: (v) => setState(() => _promoteRemote = v),
+              onSubmit: _submit,
+              t: t,
+            ),
+          if (!_composing && items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Text(
+                widget.hoveredBranch != null ? 'none linked' : 'no open issues',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.45),
+                  fontSize: 9.5,
+                ),
+              ),
+            ),
+          if (!_composing)
+            for (final item in items.take(8))
+              _SidePanelIssueRow(item: item, t: t),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small icon button for header actions (+/x).
+class _CompactIconButton extends StatefulWidget {
+  final String icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final AppTokens t;
+
+  const _CompactIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    required this.t,
+  });
+
+  @override
+  State<_CompactIconButton> createState() => _CompactIconButtonState();
+}
+
+class _CompactIconButtonState extends State<_CompactIconButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Tooltip(
+        message: widget.tooltip,
+        waitDuration: const Duration(milliseconds: 400),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: Container(
+            width: 16,
+            height: 16,
+            decoration: BoxDecoration(
+              color: _hovered
+                  ? t.accentBright.withValues(alpha: 0.15)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(3),
+            ),
+            alignment: Alignment.center,
+            child: AppIcon(
+              name: widget.icon,
+              size: 10,
+              color: _hovered ? t.accentBright : t.textMuted,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Inline compose form for creating a new issue (local, optionally promoted).
+class _IssueComposeForm extends StatelessWidget {
+  final TextEditingController titleCtrl;
+  final TextEditingController bodyCtrl;
+  final FocusNode titleFocus;
+  final bool promoteRemote;
+  final bool submitting;
+  final String? error;
+  final ValueChanged<bool> onPromoteToggle;
+  final VoidCallback onSubmit;
+  final AppTokens t;
+
+  const _IssueComposeForm({
+    required this.titleCtrl,
+    required this.bodyCtrl,
+    required this.titleFocus,
+    required this.promoteRemote,
+    required this.submitting,
+    required this.error,
+    required this.onPromoteToggle,
+    required this.onSubmit,
+    required this.t,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: titleCtrl,
+            focusNode: titleFocus,
+            enabled: !submitting,
+            onSubmitted: (_) => onSubmit(),
+            style: TextStyle(color: t.textNormal, fontSize: 10.5),
+            decoration: InputDecoration(
+              hintText: 'title',
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              hintStyle: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 10.5,
+              ),
+              filled: true,
+              fillColor: t.inputBg,
+              border: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: t.inputBorder.withValues(alpha: 0.6),
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: t.inputBorder.withValues(alpha: 0.6),
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: t.inputFocusBorder),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: bodyCtrl,
+            enabled: !submitting,
+            minLines: 2,
+            maxLines: 4,
+            style: TextStyle(color: t.textNormal, fontSize: 10),
+            decoration: InputDecoration(
+              hintText: 'body (optional)',
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              hintStyle: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 10,
+              ),
+              filled: true,
+              fillColor: t.inputBg,
+              border: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: t.inputBorder.withValues(alpha: 0.6),
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: t.inputBorder.withValues(alpha: 0.6),
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: t.inputFocusBorder),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              _RemoteToggle(
+                value: promoteRemote,
+                onChanged: submitting ? null : onPromoteToggle,
+                t: t,
+              ),
+              const Spacer(),
+              _SubmitButton(
+                label: promoteRemote ? 'create + push' : 'create',
+                busy: submitting,
+                onTap: onSubmit,
+                t: t,
+              ),
+            ],
+          ),
+          if (error != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              error!,
+              style: TextStyle(
+                color: t.danger,
+                fontSize: 9,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RemoteToggle extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final AppTokens t;
+
+  const _RemoteToggle({
+    required this.value,
+    required this.onChanged,
+    required this.t,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: onChanged == null
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onChanged == null ? null : () => onChanged!(!value),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: value ? t.accentBright : Colors.transparent,
+                border: Border.all(
+                  color: value
+                      ? t.accentBright
+                      : t.inputBorder.withValues(alpha: 0.7),
+                ),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              alignment: Alignment.center,
+              child: value
+                  ? AppIcon(name: 'check', size: 8, color: t.bg0)
+                  : null,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              'remote',
+              style: TextStyle(
+                color: value ? t.accentBright : t.textMuted,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SubmitButton extends StatefulWidget {
+  final String label;
+  final bool busy;
+  final VoidCallback onTap;
+  final AppTokens t;
+
+  const _SubmitButton({
+    required this.label,
+    required this.busy,
+    required this.onTap,
+    required this.t,
+  });
+
+  @override
+  State<_SubmitButton> createState() => _SubmitButtonState();
+}
+
+class _SubmitButtonState extends State<_SubmitButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    return MouseRegion(
+      cursor: widget.busy
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.busy ? null : widget.onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: widget.busy
+                ? t.accentBright.withValues(alpha: 0.35)
+                : _hovered
+                    ? t.accentBright
+                    : t.accentBright.withValues(alpha: 0.82),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(
+            widget.busy ? '…' : widget.label,
+            style: TextStyle(
+              color: t.bg0,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SidePanelIssueRow extends StatelessWidget {
+  final _SidePanelIssue item;
+  final AppTokens t;
+
+  const _SidePanelIssueRow({required this.item, required this.t});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Container(
+              width: 5,
+              height: 5,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: item.isOpen
+                    ? t.accentBright.withValues(alpha: 0.85)
+                    : t.chromeBorder.withValues(alpha: 0.35),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '#${item.displayId} ${item.title}',
+              style: TextStyle(
+                color: t.textNormal,
+                fontSize: 10,
+                height: 1.3,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // Subtle indicator: remote-only issues get a faint cloud dot;
+          // promoted (local+remote) issues get nothing extra — they're first-class.
+          if (item.isRemote && !item.isLocal) ...[
+            const SizedBox(width: 4),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                '↑',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.4),
+                  fontSize: 8,
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

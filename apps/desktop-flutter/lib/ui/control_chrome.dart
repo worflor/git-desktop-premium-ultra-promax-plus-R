@@ -171,13 +171,16 @@ double _buttonScale(
     return switch (t.id) {
       AppThemeId.blackboard => 0.97,
       AppThemeId.nightwalker => 0.99,
+      AppThemeId.loverboy => 1,
       _ => 1,
     };
   }
   if (!hovered) return 1;
   return switch (t.id) {
     AppThemeId.aether => 1.05,
-    AppThemeId.blackboard || AppThemeId.nightwalker => 1,
+    AppThemeId.blackboard
+        || AppThemeId.nightwalker
+        || AppThemeId.loverboy => 1,
     _ => 1.02,
   };
 }
@@ -194,6 +197,7 @@ Offset _buttonOffset(
       AppThemeId.crafty => const Offset(0, 4),
       AppThemeId.halo || AppThemeId.nightwalker => const Offset(0, 1),
       AppThemeId.blackboard => Offset.zero,
+      AppThemeId.loverboy => Offset.zero,
       _ => const Offset(1, 1),
     };
   }
@@ -278,6 +282,13 @@ List<BoxShadow> _primaryButtonShadows(
             offset: const Offset(1, 1),
           ),
         ],
+      // Hard 2px pink drop, no blur. Always visible.
+      AppThemeId.loverboy => [
+          BoxShadow(
+            color: t.accentBright.withValues(alpha: 0.35),
+            offset: const Offset(2, 2),
+          ),
+        ],
       _ => [
           BoxShadow(
             color: base.withValues(alpha: t.isDark ? 0.22 : 0.10),
@@ -293,6 +304,13 @@ List<BoxShadow> _primaryButtonShadows(
           color: Colors.white.withValues(alpha: 0.2),
           blurRadius: 1,
           spreadRadius: 0.5,
+        ),
+      ],
+    // Same direction as the base shadow, longer and more opaque on hover.
+    AppThemeId.loverboy => [
+        BoxShadow(
+          color: t.accentBright.withValues(alpha: 0.65),
+          offset: const Offset(3, 3),
         ),
       ],
     _ => [

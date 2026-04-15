@@ -88,14 +88,23 @@ class _NamingStepPageState extends State<NamingStepPage>
           FadeTransition(
             opacity: _questionFade,
             child: Center(
-              child: Text(
-                'what is this to you?',
-                style: TextStyle(
-                  color: t.textStrong,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0.2,
-                  height: 1.2,
+              child: RichText(
+                text: TextSpan(
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.2,
+                    height: 1.2,
+                  ),
+                  children: const [
+                    TextSpan(text: 'what is '),
+                    TextSpan(
+                      text: 'this',
+                      style: TextStyle(fontStyle: FontStyle.italic),
+                    ),
+                    TextSpan(text: ' to you?'),
+                  ],
                 ),
               ),
             ),
@@ -176,7 +185,7 @@ class _InlineSentence extends StatelessWidget {
             underlineColor: t.accentBright.withValues(alpha: 0.55),
           ),
           Text(
-            ', your personal Git Client.',
+            '\u2009, your personal Git Client.',
             style: sentenceStyle.copyWith(color: t.textNormal),
           ),
         ],

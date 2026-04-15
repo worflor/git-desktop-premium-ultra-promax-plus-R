@@ -9,6 +9,7 @@ import 'ai_audit_store.dart';
 import '../diagnostics/diagnostics_state.dart';
 import 'commit_format.dart';
 import 'dtos.dart';
+import 'engram_bootstrap.dart';
 import 'engram_fit.dart';
 import 'file_coupling.dart' show logCommitSeparator;
 import 'git.dart';
@@ -21,8 +22,10 @@ import 'logos_git_calibration.dart';
 import 'logos_git_diagnostics.dart';
 import 'logos_git_probe.dart';
 import 'logos_git_resolver.dart';
+import 'file_coupling.dart' show FileCouplingMatrix, SymbolFrequencyIndex;
 import 'logos_chunks.dart' as chunks;
 import 'logos_hunks.dart' as hunks;
+import 'semantic_manifest.dart' show buildSemanticManifest;
 
 const _providerSpecs = <_ProviderSpec>[
   _ProviderSpec(id: 'codex', binary: 'codex', kind: _ProviderKind.codex),
@@ -324,6 +327,11 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
   CommitStructure structure = kDefaultCommitStructure,
   CommitVoice voice = kDefaultCommitVoice,
   CommitCoverage coverage = kDefaultCommitCoverage,
+  // Semantic priors for the manifest above the packed diff. Pass from
+  // the app layer's SymbolFrequencyState / FileCouplingState. Both are
+  // optional; null = skip that signal, manifest still emits.
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
@@ -353,6 +361,8 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
     );
 
     if (!diffContext.ok) {
@@ -731,6 +741,10 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
   // header for the reviewer's sense of "which branch am I reading".
   String rawDiffOverride = '',
   String diffBranchName = '',
+  // Semantic priors for the manifest above the packed diff. Pass from
+  // the app layer's SymbolFrequencyState / FileCouplingState.
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
@@ -765,6 +779,8 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       branchNameOverride: usingOverride
           ? (diffBranchName.isNotEmpty ? diffBranchName : null)
           : null,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
     );
     if (!diffContext.ok) {
       return GitResult.err(diffContext.error!);
@@ -1530,7 +1546,10 @@ Future<({String text, LogosEmissionRecord? record})>
 
     if (seedMap.isEmpty) return (text: '', record: null);
 
-    // Diffuse with the brainstorm-biased seed map.
+    // Diffuse with the brainstorm-biased seed map. Default t=1.0 used
+    // deliberately: brainstorm is a neutral 1-hop exploration, not a
+    // user-driven commit-focus call. Keep the temperature reproducible
+    // so repeated brainstorms over the same diff yield stable context.
     final scores = engine.diffuseWeighted(
       seedMap,
       excludePaths: const {},
@@ -1560,8 +1579,15 @@ Future<({String text, LogosEmissionRecord? record})>
     for (final item in plan) {
       if (remaining <= 200) break;
       final tag = item.tier.name.toUpperCase();
+      // Engram well pill — feature-cluster label for this surfaced
+      // file. Helps the LLM reason about why a brainstorm seed pulled
+      // this file in: same well as the diff's touched files → strong
+      // semantic link; orthogonal well → probably a structural /
+      // volatility-matched surprise.
+      final well = engine.wellOf(item.path);
+      final wellTag = well != null ? ' well=$well' : '';
       buffer.writeln(
-        '[$tag φ=${item.phi.toStringAsFixed(3)}] ${item.path}',
+        '[$tag φ=${item.phi.toStringAsFixed(3)}$wellTag] ${item.path}',
       );
       // For full/signature tiers, attempt to attach the file shape.
       if (item.tier == EmissionTier.full ||
@@ -1571,8 +1597,9 @@ Future<({String text, LogosEmissionRecord? record})>
           if (await f.exists()) {
             final content = await f.readAsString();
             final lineCount = '\n'.allMatches(content).length + 1;
+            final wellPill = well != null ? ' [well=$well]' : '';
             final block = item.tier == EmissionTier.full
-                ? '--- ${item.path} ($lineCount lines) ---\n$content\n'
+                ? '--- ${item.path} ($lineCount lines)$wellPill ---\n$content\n'
                 : _buildFileOutline(content, item.path, lineCount);
             if (block.length < remaining) {
               buffer.write(block);
@@ -1831,6 +1858,10 @@ Future<GitResult<AiMuseData>> runMuse({
   String commitDraft = '',
   required int guardrailStage,
   bool readOnly = true,
+  // Semantic priors for the manifest above the packed diff. Pass from
+  // the app layer's SymbolFrequencyState / FileCouplingState.
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
@@ -1876,6 +1907,8 @@ Future<GitResult<AiMuseData>> runMuse({
       scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
     );
     if (!diffContext.ok) return GitResult.err(diffContext.error!);
 
@@ -2685,6 +2718,12 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   String? branchNameOverride,
   String? statusSummaryOverride,
   String? statSummaryOverride,
+  // Optional semantic priors for the manifest builder. Null = skip
+  // those enhancements (manifest still emits themes/moves from the
+  // logos+engram signal). App-layer callers fetch these from
+  // FileCouplingState / SymbolFrequencyState and pass down.
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
 }) async {
   final scopeArgs =
       scopedPaths.isEmpty ? const <String>[] : ['--', ...scopedPaths];
@@ -2816,6 +2855,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   final diffBundle = await _buildDiffPromptBundle(
     fullDiff,
     repositoryPath: repositoryPath,
+    symbolIndex: symbolIndex,
+    couplingMatrix: couplingMatrix,
   );
 
   // Frame-yield after the hunk-diffusion CPU burst so Flutter can paint
@@ -3579,14 +3620,18 @@ Future<String> _collectFileContext({
   // where structural awareness for large diff-touched files lives.
   final pathList = paths.toList();
   List<String> orderedPaths;
+  LogosGit? engine;
   try {
-    final engine = await resolveLogosGit(repositoryPath);
+    engine = await resolveLogosGit(repositoryPath);
     if (engine != null) {
       // Self-φ via heat-kernel: how much heat each source file retains
       // after t=1.0 diffusion. Files coupled to a strong neighborhood
       // bleed less; isolated files bleed most. Highest-retention files
       // are the most "anchored" parts of the change.
       final sourceWeights = {for (final p in pathList) p: 1.0};
+      // Default t=1.0 is the canonical self-φ diffusion distance — any
+      // other temperature would change what "anchored" means and break
+      // the retention-ranking heuristic documented above.
       final scores =
           engine.diffuseWeighted(sourceWeights, excludePaths: const {});
       final phi = {for (final s in scores) s.path: s.phi};
@@ -3615,7 +3660,16 @@ Future<String> _collectFileContext({
       if (!await file.exists()) continue;
       final content = await file.readAsString();
       final lineCount = '\n'.allMatches(content).length + 1;
-      final block = '--- $filePath ($lineCount lines) ---\n$content\n';
+      // Engram semantic well annotation. The resolver populates
+      // `engine.perFileKVectors` for every file the engine has
+      // encoded (working-tree content → K-vector). When present, we
+      // emit the dominant well next to the file path so the LLM sees
+      // a semantic pill (`[well=computing]`, `[well=well_42]`) on
+      // every file header. Silent when engram assets didn't load or
+      // the file was unencodable — no noisy empty labels.
+      final well = engine?.wellOf(filePath);
+      final wellPill = well != null ? ' [well=$well]' : '';
+      final block = '--- $filePath ($lineCount lines)$wellPill ---\n$content\n';
       if (block.length <= remaining) {
         buffer.write(block);
         remaining -= block.length;
@@ -3902,9 +3956,17 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
     // in flight can paint before we block the thread for the math.
     await Future<void>.delayed(Duration.zero);
     final diffuseStart = Stopwatch()..start();
+    final symbolPaths = <String>{
+      for (final p in engine.symbolEdges.keys)
+        if (!engine.pathToId.containsKey(p)) p,
+    };
     final axisLabels = <String, String>{
       for (final entry in probe.sourceWeights.entries)
-        entry.key: _classifyAxis(entry.key, probe).name,
+        entry.key: _classifyAxis(
+          entry.key,
+          probe,
+          symbolPaths: symbolPaths,
+        ).name,
     };
     final attribution = engine.diffuseWithAttribution(
       weightsByPath: probe.sourceWeights,
@@ -4019,8 +4081,15 @@ Future<({String text, LogosEmissionRecord? record})>
       fileCount: probe.stats.primaryCount,
       coherence: probe.stats.coherence,
     );
+    // Only NEW (non-graph) paths qualify as symbol-axis — in-graph files
+    // that happen to have symbol edges were routed through another axis.
+    final symbolPaths = <String>{
+      for (final p in engine.symbolEdges.keys)
+        if (!engine.pathToId.containsKey(p)) p,
+    };
     final axisByPath = <String, LogosAxis>{
-      for (final item in plan) item.path: _classifyAxis(item.path, probe),
+      for (final item in plan)
+        item.path: _classifyAxis(item.path, probe, symbolPaths: symbolPaths),
     };
     final emissionRecord = LogosEmissionRecord(
       regime: regime,
@@ -4066,9 +4135,17 @@ Future<({String text, LogosEmissionRecord? record})>
       // file's φ. Falls through silently when no attribution was
       // computed (engine cold) — the rest of the line is unchanged.
       final via = _formatAxisBreakdown(result.attribution, item.path);
+      // Engram well pill — the dominant Alexandria well for this
+      // file's identifier content. Present whenever the resolver
+      // loaded engram assets and the file encoded successfully.
+      // Surfaces the feature-cluster label alongside the φ and
+      // axis-attribution so the LLM sees "this neighbour belongs
+      // to the `computing` well" when deciding whether it's relevant.
+      final well = result.engine.wellOf(item.path);
+      final wellPill = well != null ? '  well=$well' : '';
       final header = via.isEmpty
-          ? '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)} ---'
-          : '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}  via=$via ---';
+          ? '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}$wellPill ---'
+          : '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}  via=$via$wellPill ---';
       if (item.tier == EmissionTier.breadcrumb) {
         final line = '$header\n';
         if (line.length > remaining) continue;
@@ -4168,18 +4245,27 @@ String _formatAxisBreakdown(AxisAttribution? attr, String path) {
   return parts.join(' ');
 }
 
-/// Which observable put `path` on the emission list. Primary if it's
-/// in the diff, M if pickaxe pulled it in, Ab if a path-mirror did.
-/// Anything left is graph-diffusion surfaced (CC/SP/V/F0 collectively).
-LogosAxis _classifyAxis(String path, DiffProbe probe) {
+/// Which observable put `path` on the emission list.
+///   primary  — the diff itself
+///   symbol   — new/untracked file, derived φ via identifier overlap
+///   m        — pickaxe identifier search pulled it in
+///   ab       — path-mirror (test ↔ source) pulled it in
+///   graph    — diffusion ranked it from graph edges (CC/SP/V/F0)
+///
+/// [symbolPaths] should be the keys of the engine's [symbolEdges] map —
+/// paths whose presence in the emission list is due to symbol-overlap
+/// coupling rather than git history.
+LogosAxis _classifyAxis(
+  String path,
+  DiffProbe probe, {
+  Set<String> symbolPaths = const {},
+}) {
   if (probe.primaryPaths.contains(path)) return LogosAxis.primary;
-  // The probe's sourceWeights map tracks explicit (M, Ab) additions.
-  // We can't tell M from Ab just by path membership after-the-fact, so
-  // we heuristic: if the path *looks* like a test-mirror of a primary
-  // path, call it Ab; otherwise M.
+  if (symbolPaths.contains(path)) return LogosAxis.symbol;
   if (probe.sourceWeights.containsKey(path)) {
-    final looksMirror = _pathLooksLikeMirrorOf(path, probe.primaryPaths);
-    return looksMirror ? LogosAxis.ab : LogosAxis.m;
+    return _pathLooksLikeMirrorOf(path, probe.primaryPaths)
+        ? LogosAxis.ab
+        : LogosAxis.m;
   }
   return LogosAxis.graph;
 }
@@ -4399,9 +4485,17 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
     // Use the per-axis attribution diffusion so we can label *which*
     // axis surfaced each missing file (graph vs M-pickaxe vs Ab-mirror)
     // — much more actionable in the prompt than just a φ score.
+    final symbolPaths = <String>{
+      for (final p in engine.symbolEdges.keys)
+        if (!engine.pathToId.containsKey(p)) p,
+    };
     final axisLabels = <String, String>{
       for (final entry in probe.sourceWeights.entries)
-        entry.key: _classifyAxis(entry.key, probe).name,
+        entry.key: _classifyAxis(
+          entry.key,
+          probe,
+          symbolPaths: symbolPaths,
+        ).name,
     };
     final attr = engine.diffuseWithAttribution(
       weightsByPath: probe.sourceWeights,
@@ -4624,6 +4718,8 @@ String _buildFileOutline(String content, String filePath, int lineCount) {
 Future<_DiffPromptBundle> _buildDiffPromptBundle(
   String fullDiff, {
   required String repositoryPath,
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
 }) async {
   // ── Unified pipeline. One path. One budget. One wrapper shape ─────
   //
@@ -4679,11 +4775,58 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
     engine = null;
   }
 
-  final ranking =
-      await hunks.rankHunksByPhiAsync(hunks: parsed, logosEngine: engine);
+  // Alexandria engram for K-space hunk similarity (H_sym augment +
+  // semantic well labels). Loading is cached across calls; the first
+  // diff pays the ~12MB vocab parse, subsequent diffs reuse the
+  // already-decoded byte blobs. A null result silently falls back to
+  // Jaccard-only H_sym.
+  final engramAssets = await EngramRuntime.instance.assets();
+
+  final ranking = await hunks.rankHunksByPhiAsync(
+    hunks: parsed,
+    logosEngine: engine,
+    engramAssets: engramAssets,
+  );
+
+  // Semantic manifest: turn logos + engram outputs into a compact
+  // structured narrative that sits ABOVE the packed diff. The model
+  // sees "here is what the engine already determined" before it sees
+  // raw hunk text — which collapses the cross-hunk-reasoning
+  // hallucination class (moves misread as removals, etc.). Bounded
+  // by its own internal caps; deduct its size from the packer's
+  // budget so the combined body stays under [_kDiffBudgetChars].
+  //
+  // Fail-soft: the builder is pure and never throws, but the render
+  // path traverses dozens of string ops. Any defect there must NOT
+  // tank the whole AI invocation — an empty manifest silently falls
+  // through to the packed-diff-only path the pipeline had before this
+  // feature shipped.
+  String manifestXml = '';
+  try {
+    final manifest = buildSemanticManifest(
+      ranking.rankings,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
+    );
+    if (!manifest.isEmpty) {
+      manifestXml = manifest.toPromptXml();
+    }
+  } catch (e, st) {
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'warning',
+      command: 'ai.semantic_manifest',
+      message: 'manifest build/render failed, skipping: $e\n$st',
+    );
+    manifestXml = '';
+  }
+  final packBudget = math.max(
+    0,
+    _kDiffBudgetChars - (manifestXml.isEmpty ? 0 : manifestXml.length + 1),
+  );
+
   final pack = hunks.packHunksUnderBudget(
     rankings: ranking.rankings,
-    budgetChars: _kDiffBudgetChars,
+    budgetChars: packBudget,
   );
 
   // Append the metadata postscript when there's anything to say.
@@ -4696,7 +4839,11 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
   // (after the packer's body) so a 2000-binary-file repo can't blow
   // the prompt with metadata noise. Per-entry caps inside the
   // formatter prevent any single file from monopolising the block.
-  final buf = StringBuffer(pack.body);
+  final buf = StringBuffer();
+  if (manifestXml.isNotEmpty) {
+    buf.writeln(manifestXml);
+  }
+  buf.write(pack.body);
   if (metadataOnly.isNotEmpty) {
     final remaining = _kDiffBudgetChars - buf.length;
     if (remaining > 0) {

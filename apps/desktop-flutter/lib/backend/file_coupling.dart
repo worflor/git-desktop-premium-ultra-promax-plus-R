@@ -1,6 +1,9 @@
 import 'dart:convert' show LineSplitter;
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
+import 'package:path/path.dart' as p;
 
 import 'engram_fit.dart';
 import 'git.dart';
@@ -18,10 +21,18 @@ const String logCommitSeparator = '__C__';
 /// to read it out and cluster the current change set by it.
 ///
 /// Built once per repo (keyed by HEAD hash) and reused across every render.
+/// The [symbol] axis is layered on top per change-set — same shape as
+/// [jaccard] but computed from identifier overlap in the current working
+/// tree rather than from git history. See [computeSymbolCoupling].
 class FileCouplingMatrix {
   /// Jaccard coefficient keyed by (path → other path → score in 0..1).
   /// Symmetric: jaccard[A][B] == jaccard[B][A].
   final Map<String, Map<String, double>> jaccard;
+
+  /// Symbol-overlap scores for the current change set. Upper-triangle,
+  /// same convention as [jaccard]. Empty until enriched via [withSymbol].
+  final Map<String, Map<String, double>> symbol;
+
   final String headHash;
   final int commitsAnalyzed;
 
@@ -29,14 +40,30 @@ class FileCouplingMatrix {
     required this.jaccard,
     required this.headHash,
     required this.commitsAnalyzed,
+    this.symbol = const {},
   });
 
-  /// Co-change score for an ordered pair. Storage is upper-triangle (lex)
-  /// so we check both directions.
+  /// Coupling score for a pair — maximum of historical co-change and
+  /// structural symbol overlap. The two axes are independent evidence;
+  /// neither suppresses the other. New files have zero history, so symbol
+  /// carries them. Old files use whichever axis is stronger.
   double score(String a, String b) {
     if (a == b) return 1.0;
-    return jaccard[a]?[b] ?? jaccard[b]?[a] ?? 0.0;
+    final hist = jaccard[a]?[b] ?? jaccard[b]?[a] ?? 0.0;
+    final sym = symbol[a]?[b] ?? symbol[b]?[a] ?? 0.0;
+    return math.max(hist, sym);
   }
+
+  /// Return a copy with symbol overlap data merged in. Called once per
+  /// change-set update; the rest of the pipeline consumes the merged matrix
+  /// transparently through [score].
+  FileCouplingMatrix withSymbol(Map<String, Map<String, double>> sym) =>
+      FileCouplingMatrix(
+        jaccard: jaccard,
+        symbol: sym,
+        headHash: headHash,
+        commitsAnalyzed: commitsAnalyzed,
+      );
 
   /// Coherence of a *set* of files: the mean of all pairwise scores.
   /// Returns 1.0 for ≤1 files (trivially coherent — nothing to compare).
@@ -70,6 +97,7 @@ class FileCouplingMatrix {
 
   static const empty = FileCouplingMatrix(
     jaccard: {},
+    symbol: {},
     headHash: '',
     commitsAnalyzed: 0,
   );
@@ -1083,13 +1111,18 @@ double pathAffinity(String a, String b) {
   final aStem = _stripExt(aSegs.last);
   final bStem = _stripExt(bSegs.last);
   var common = 0;
-  final minStem = math.min(aStem.length, bStem.length);
-  for (var i = 0; i < minStem; i++) {
+  final minLen = math.min(aStem.length, bStem.length);
+  for (var i = 0; i < minLen; i++) {
     if (aStem[i] != bStem[i]) break;
     common++;
   }
-  final maxStem = math.max(aStem.length, bStem.length);
-  final stemScore = maxStem > 0 ? common / maxStem : 0.0;
+  // Dice coefficient: 2·common / (|a| + |b|). Symmetric and penalises
+  // neither party for having a longer name — unlike common/max, which
+  // under-scores pairs like `file_coupling` vs `file_constellation`
+  // because the shared prefix (`file_co`) is measured against the longer
+  // stem's full length rather than the combined mass.
+  final totalStem = aStem.length + bStem.length;
+  final stemScore = totalStem > 0 ? (2.0 * common) / totalStem : 0.0;
 
   // Require BOTH some dir overlap AND some name overlap to couple by path.
   // This prevents unrelated files in a flat directory from being grouped
@@ -1102,23 +1135,302 @@ String _stripExt(String filename) {
   return dot > 0 ? filename.substring(0, dot) : filename;
 }
 
-/// Blend historical co-change with path-structure affinity.
-///
-/// If both files appear in git history we trust the historical Jaccard —
-/// files that have previously co-evolved are strongly coupled.
-/// If either file has no history (new/untracked), fall back to path
-/// affinity so structurally-related but unstaged siblings still cluster.
-double combinedCouplingScore(String a, String b, FileCouplingMatrix m) {
-  final hist = m.score(a, b);
-  final aTracked = m.jaccard.containsKey(a);
-  final bTracked = m.jaccard.containsKey(b);
-  if (aTracked && bTracked) {
-    // Both tracked: trust history. Path affinity used only as a tiebreaker
-    // when history shows non-zero but low coupling.
-    if (hist > 0) return hist;
-    return 0.0;
+// ═════════════════════════════════════════════════════════════════════════
+// SYMBOL-OVERLAP COUPLING — structural axis for new / untracked files
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Co-change history is a lagging signal: it can only score files that have
+// appeared together in at least one prior commit. A brand-new file has zero
+// Jaccard against everything, so the historical axis is blind to it.
+//
+// Symbol overlap is a leading signal: it scores files by shared identifier
+// usage right now, before any commit exists. A file that uses FileClusters
+// and FileCouplingMatrix is structurally coupled to file_coupling.dart
+// regardless of whether that relationship has ever appeared in git log.
+//
+// ── Self-learning IDF, language-agnostic ────────────────────────────────
+//
+// Scoring is IDF-weighted Jaccard over identifier sets. The IDF weights
+// come from a CORPUS-WIDE document-frequency index built once per repo
+// ([SymbolFrequencyIndex] — scanned from every tracked file, cached by
+// HEAD hash). This makes the filter self-learning and language-agnostic:
+//   • `def` appears in every Python file → df is huge → idf ≈ 0 → ignored
+//   • `func` appears in every Go file → same
+//   • `FileCouplingMatrix` appears in 2 files repo-wide → idf is high
+//   • the repo *teaches* the filter what's noise vs signal
+//
+// No hardcoded language keywords. No per-language stop-word lists. The
+// math is the filter. The only fallback (when the corpus index hasn't
+// been built yet) is change-set-local IDF plus a tiny universal
+// C-family keyword set — enough to keep cold-start sane without biasing.
+//
+//   idf(id) = ln(1 + N / (1 + df(id)))   [corpus available]
+//   idf(id) = 1 / df_local(id)           [change-set fallback]
+//
+//   overlap(a, b) = Σ idf(id) for id in a∩b
+//                   ────────────────────────
+//                   Σ idf(id) for id in a∪b
+
+/// Max file size we'll read for symbol extraction. Avoids tokenising
+/// multi-megabyte generated files or binary blobs with a source extension.
+const int _symMaxBytes = 256 * 1024; // 256 KB
+
+/// Hard cap on files scanned when building the corpus frequency index.
+/// Beyond this, a uniform random sample is taken — at 2000 files the
+/// df estimates are already well-converged for any reasonable codebase.
+const int _symCorpusSampleCap = 2000;
+
+/// Minimal, language-neutral cold-start filter. Only universal
+/// C-family keywords that the IDF corpus would downweight anyway if it
+/// were warm. Deliberately short — the corpus index is the real filter.
+/// Single-/two-character tokens are already excluded by the identifier
+/// regex (`{2,}` suffix), so nothing here is shorter than 3 chars.
+const Set<String> _symColdStartFilter = {
+  'for', 'while', 'return', 'class', 'struct', 'enum', 'union',
+  'true', 'false', 'null', 'nil', 'None', 'undefined',
+  'new', 'this', 'self', 'super', 'super_',
+  'public', 'private', 'protected', 'static', 'const', 'final',
+  'let', 'var', 'val', 'mut',
+  'import', 'export', 'from', 'package', 'using', 'module',
+  'void', 'int', 'bool', 'string', 'float',
+  'def', 'fun', 'func', 'fn', 'sub', 'lambda',
+  'try', 'catch', 'throw', 'throws', 'except', 'finally',
+  'async', 'await', 'yield',
+};
+
+/// Extract meaningful identifier tokens from [content].
+/// Language-agnostic: matches any C-family identifier (3+ chars,
+/// alphanumeric + underscore). Works for Dart, Python, Go, Rust, JS,
+/// TS, Java, C, C++, Kotlin, Swift, Ruby, etc.
+Set<String> _extractSymbols(String content) {
+  final out = <String>{};
+  final pattern = RegExp(r'\b([A-Za-z_][A-Za-z0-9_]{2,})\b');
+  for (final m in pattern.allMatches(content)) {
+    final id = m.group(1)!;
+    if (!_symColdStartFilter.contains(id)) out.add(id);
   }
-  // At least one file is new / untracked / moved — path signal takes over.
+  return out;
+}
+
+/// Read [path] (relative to [repoRoot]) and extract its symbol set.
+/// Returns empty on I/O error, missing file, or oversize file.
+Set<String> _symbolsForFile(String repoRoot, String path) {
+  try {
+    final file = File(p.join(repoRoot, p.joinAll(path.split('/'))));
+    if (!file.existsSync()) return const {};
+    if (file.lengthSync() > _symMaxBytes) return const {};
+    return _extractSymbols(file.readAsStringSync());
+  } catch (_) {
+    return const {};
+  }
+}
+
+/// Corpus-wide identifier document-frequency index.
+///
+/// Built once per repo (keyed by HEAD hash) by scanning every tracked
+/// file's identifier set. Replaces hardcoded language-specific stop-word
+/// lists: any identifier that appears in most of the repo's files ends up
+/// with near-zero IDF weight automatically, whether that's `def` in a
+/// Python project or `public` in a Java project. The repo teaches the
+/// filter what's noise.
+///
+/// Computed asynchronously in the background (see
+/// `computeSymbolFrequencyIndex`); change-set coupling falls back to
+/// local IDF when the index isn't ready yet.
+class SymbolFrequencyIndex {
+  /// identifier → number of documents containing it (1 ≤ df ≤ totalDocuments).
+  final Map<String, int> documentFrequency;
+
+  /// Total distinct documents scanned (denominator for IDF).
+  final int totalDocuments;
+
+  /// HEAD hash at the time of indexing. Callers invalidate when HEAD moves.
+  final String headHash;
+
+  const SymbolFrequencyIndex({
+    required this.documentFrequency,
+    required this.totalDocuments,
+    required this.headHash,
+  });
+
+  /// Inverse-document-frequency weight for [term].
+  ///
+  /// Uses the smoothed form `ln(1 + N / (1 + df))`. Bounded below by 0
+  /// (terms appearing in every document) and above by `ln(1 + N)` (terms
+  /// never seen in the corpus — could be new symbols in the change set).
+  /// A term in 50% of the corpus gets roughly `ln(1 + 2) ≈ 1.1`; a term
+  /// in 1% gets `ln(1 + 100) ≈ 4.6`. Rare terms dominate, common terms
+  /// vanish — the self-learning stop-word filter.
+  double idf(String term) {
+    if (totalDocuments <= 0) return 1.0;
+    final df = documentFrequency[term] ?? 0;
+    return math.log(1 + totalDocuments / (1 + df));
+  }
+
+  bool get isEmpty => totalDocuments == 0;
+  bool get isNotEmpty => totalDocuments > 0;
+
+  static const empty = SymbolFrequencyIndex(
+    documentFrequency: {},
+    totalDocuments: 0,
+    headHash: '',
+  );
+}
+
+/// Build a [SymbolFrequencyIndex] for the repo at [repoRoot].
+///
+/// Uses `git ls-files` to enumerate tracked files. When the corpus
+/// exceeds [maxFiles], a uniform random sample is taken — df estimates
+/// converge fast, so 2000 files is plenty for any codebase.
+///
+/// [sampleSeed] gives deterministic sampling for tests; leave null in
+/// production (wall-clock seeded).
+Future<GitResult<SymbolFrequencyIndex>> computeSymbolFrequencyIndex(
+  String repoRoot, {
+  int maxFiles = _symCorpusSampleCap,
+  int? sampleSeed,
+}) async {
+  final lsProbe = await runGitProbe(repoRoot, ['ls-files']);
+  if (lsProbe.exitCode != 0) {
+    return GitResult.err(lsProbe.stderr.toString().trim());
+  }
+
+  final headProbe = await runGitProbe(repoRoot, ['rev-parse', 'HEAD']);
+  final headHash =
+      headProbe.exitCode == 0 ? headProbe.stdout.toString().trim() : '';
+
+  final allPaths = const LineSplitter()
+      .convert(lsProbe.stdout.toString())
+      .where((l) => l.isNotEmpty)
+      .toList();
+
+  // Uniform random sample when the repo is large. Deterministic when
+  // [sampleSeed] is set. We pick files, not bytes — a tiny file counts
+  // the same as a big one for df estimation, which is what we want.
+  List<String> scan;
+  if (allPaths.length > maxFiles) {
+    final rng = math.Random(sampleSeed ?? DateTime.now().millisecondsSinceEpoch);
+    final shuffled = [...allPaths]..shuffle(rng);
+    scan = shuffled.take(maxFiles).toList();
+  } else {
+    scan = allPaths;
+  }
+
+  final df = <String, int>{};
+  var totalDocs = 0;
+  for (final path in scan) {
+    final syms = _symbolsForFile(repoRoot, path);
+    if (syms.isEmpty) continue;
+    totalDocs++;
+    for (final sym in syms) {
+      df[sym] = (df[sym] ?? 0) + 1;
+    }
+  }
+
+  return GitResult.ok(
+    SymbolFrequencyIndex(
+      documentFrequency: df,
+      totalDocuments: totalDocs,
+      headHash: headHash,
+    ),
+  );
+}
+
+/// Compute pairwise symbol-overlap coupling for [paths].
+///
+/// Returns an upper-triangle map (same convention as [FileCouplingMatrix.jaccard])
+/// of IDF-weighted Jaccard scores. Only pairs with a non-zero score are
+/// stored.
+///
+/// When [corpus] is provided and non-empty, uses corpus-wide IDF (the
+/// self-learning, language-agnostic filter). Otherwise falls back to
+/// change-set-local IDF — the local `1 / df_local` form is a good
+/// proxy when n is small but can overweight rare language keywords in
+/// tiny change sets; prefer passing a warm corpus when available.
+Map<String, Map<String, double>> computeSymbolCoupling(
+  List<String> paths,
+  String repoRoot, {
+  SymbolFrequencyIndex? corpus,
+}) {
+  if (paths.length < 2) return const {};
+
+  // Read identifier sets for every file in the change set.
+  final symSets = <String, Set<String>>{};
+  for (final path in paths) {
+    final syms = _symbolsForFile(repoRoot, path);
+    if (syms.isNotEmpty) symSets[path] = syms;
+  }
+  if (symSets.length < 2) return const {};
+
+  // Resolve an IDF function once — corpus if warm, local fallback if not.
+  final bool useCorpus = corpus != null && corpus.isNotEmpty;
+  double Function(String) idfOf;
+  if (useCorpus) {
+    idfOf = corpus.idf;
+  } else {
+    final localDf = <String, int>{};
+    for (final syms in symSets.values) {
+      for (final id in syms) {
+        localDf[id] = (localDf[id] ?? 0) + 1;
+      }
+    }
+    idfOf = (id) => 1.0 / (localDf[id] ?? 1);
+  }
+
+  // IDF-weighted Jaccard for each pair (upper triangle only).
+  final result = <String, Map<String, double>>{};
+  final fileList = symSets.keys.toList();
+  for (var i = 0; i < fileList.length; i++) {
+    for (var j = i + 1; j < fileList.length; j++) {
+      final a = fileList[i];
+      final b = fileList[j];
+      final symsA = symSets[a]!;
+      final symsB = symSets[b]!;
+
+      var numerator = 0.0;
+      var denominator = 0.0;
+
+      // Walk the union; intersection contributes to both.
+      for (final id in symsA) {
+        final w = idfOf(id);
+        denominator += w;
+        if (symsB.contains(id)) numerator += w;
+      }
+      for (final id in symsB) {
+        if (!symsA.contains(id)) denominator += idfOf(id);
+      }
+
+      if (numerator == 0 || denominator == 0) continue;
+      final score = numerator / denominator;
+
+      // Upper-triangle: lex order for consistency with jaccard storage.
+      final lo = a.compareTo(b) < 0 ? a : b;
+      final hi = a.compareTo(b) < 0 ? b : a;
+      (result[lo] ??= {})[hi] = score;
+    }
+  }
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Coupling score used by clustering and seriation.
+///
+/// Reads the blended score from the matrix (historical Jaccard + symbol
+/// overlap, whichever is stronger). Falls back to path-structure affinity
+/// only when the matrix has no signal at all for the pair — typically two
+/// files that are both new AND share no identifiers.
+///
+/// If BOTH files are present in the co-change history (jaccard map), a
+/// score of 0.0 is meaningful: they've been tracked and they don't
+/// co-change. pathAffinity must NOT fire in that case — it would
+/// manufacture coupling that contradicts the historical record and corrupt
+/// clustering for pairs that deliberately don't co-change.
+double combinedCouplingScore(String a, String b, FileCouplingMatrix m) {
+  final s = m.score(a, b);
+  if (s > 0) return s;
+  // Both files are tracked with no co-change history → trust the history.
+  if (m.jaccard.containsKey(a) && m.jaccard.containsKey(b)) return 0.0;
   return pathAffinity(a, b);
 }
 
@@ -1131,4 +1443,78 @@ const int kFileClusterPaletteSize = 4;
 double couplingConfidence(FileCouplingMatrix matrix) {
   if (matrix.commitsAnalyzed <= 0) return 0;
   return math.min(1.0, matrix.commitsAnalyzed / 200.0);
+}
+
+/// A single "you might have forgotten this" signal: an unselected changed
+/// file whose coupling to the current selection is strong enough that
+/// committing without it is likely a bug or a split the user didn't mean
+/// to make.
+class CouplingNudge {
+  /// The unselected file the user is being nudged about.
+  final String path;
+
+  /// Mean `combinedCouplingScore` against the selection. 0..1.
+  final double score;
+
+  /// The selected peer with the tightest coupling — used to render the
+  /// "because this file goes with X" affordance.
+  final String anchor;
+
+  const CouplingNudge({
+    required this.path,
+    required this.score,
+    required this.anchor,
+  });
+}
+
+/// Rank unselected files by how tightly they couple to the current
+/// selection. A nudge fires when the mean coupling to the selection
+/// reaches [threshold] — the same default used by [clusterFiles], so a
+/// nudge aligns with what the clustering engine would have grouped.
+///
+/// Returns at most [limit] nudges, sorted by descending score. Empty when:
+///   * [selected] is empty (nothing to couple *to*),
+///   * [matrix] has fewer commits than the confidence gate in
+///     [FileCouplingMatrix.coherenceFor] (we'd be surfacing noise), or
+///   * no unselected file clears the threshold.
+///
+/// Cost: O(|selected| · |unselected|) combined-coupling lookups. Selection
+/// sizes are small in practice (≤ tens); the whole call is microseconds.
+List<CouplingNudge> suggestMissingPeers({
+  required Iterable<String> selected,
+  required Iterable<String> allChanged,
+  required FileCouplingMatrix matrix,
+  double threshold = 0.25,
+  int limit = 5,
+}) {
+  final selectedList = selected.toList(growable: false);
+  if (selectedList.isEmpty) return const [];
+  // Gate on the same commit-count confidence bar [coherenceFor] uses —
+  // under 50 commits the Jaccard rows are too noisy to nudge from.
+  if (matrix.commitsAnalyzed < 50) return const [];
+
+  final selectedSet = selectedList.toSet();
+  final nudges = <CouplingNudge>[];
+  for (final p in allChanged) {
+    if (selectedSet.contains(p)) continue;
+    double sum = 0.0;
+    double best = 0.0;
+    String bestAnchor = selectedList.first;
+    for (final s in selectedList) {
+      final c = combinedCouplingScore(p, s, matrix);
+      sum += c;
+      if (c > best) {
+        best = c;
+        bestAnchor = s;
+      }
+    }
+    final mean = sum / selectedList.length;
+    if (mean < threshold) continue;
+    nudges.add(CouplingNudge(path: p, score: mean, anchor: bestAnchor));
+  }
+  nudges.sort((a, b) => b.score.compareTo(a.score));
+  if (nudges.length > limit) {
+    return nudges.sublist(0, limit);
+  }
+  return nudges;
 }

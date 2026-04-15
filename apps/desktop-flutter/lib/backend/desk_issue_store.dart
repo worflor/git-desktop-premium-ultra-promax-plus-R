@@ -98,6 +98,14 @@ class DeskIssueStore {
     required String body,
     required String authorIdentity,
     List<String> labels = const [],
+    List<String> assignees = const [],
+    /// Initial state — defaults to OPEN. Pass 'CLOSED' for issues
+    /// imported from already-closed remotes (avoids a 2-commit round-trip).
+    String state = 'OPEN',
+    /// Pre-link to a remote issue number — used by importFromRemote so
+    /// the issue is born already-linked, with no window where a concurrent
+    /// reader could see an unlinked imported issue.
+    int? remoteNumber,
   }) async {
     final idR = await _allocId();
     if (!idR.ok) return GitResult.err(idR.error ?? 'allocId failed');
@@ -106,11 +114,13 @@ class DeskIssueStore {
       issueId: idR.data!,
       title: title,
       body: body,
-      state: 'OPEN',
+      state: state.toUpperCase(),
       authorIdentity: authorIdentity,
       createdAt: now,
       updatedAt: now,
       labels: labels,
+      assignees: assignees,
+      remoteNumber: remoteNumber,
     );
     final w = await _commit(issue, message: 'create issue');
     if (!w.ok) return GitResult.err(w.error ?? 'create commit failed');
@@ -203,5 +213,58 @@ class DeskIssueStore {
 
   Future<GitResult<void>> abandon(int id) async {
     return refs.deleteRef(refFor(id));
+  }
+
+  /// Set (or clear) the GitHub issue number this local issue is linked to.
+  /// Calling with null unlinks the remote association.
+  Future<GitResult<DeskIssue>> setRemoteNumber(
+    int id,
+    int? remoteNumber,
+  ) async {
+    final cur = await read(id);
+    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
+    if (cur.data == null) return GitResult.err('no desk issue $id');
+    final next = cur.data!.copyWith(
+      remoteNumber: remoteNumber,
+      updatedAt: DateTime.now(),
+    );
+    final msg = remoteNumber != null
+        ? 'link remote #$remoteNumber'
+        : 'unlink remote';
+    final w = await _commit(next, message: msg);
+    if (!w.ok) return GitResult.err(w.error ?? 'setRemoteNumber failed');
+    return GitResult.ok(next);
+  }
+
+  /// Overwrite local metadata from freshly-fetched remote values.
+  /// Preserves: issueId, authorIdentity, createdAt, addressedBy, comments,
+  /// remoteNumber (keeps existing link). Everything else comes from remote.
+  ///
+  /// `updatedAt` is set to [DateTime.now()] — it tracks when this LOCAL copy
+  /// was last touched, which is what `listAll()` uses for sort order.
+  /// Using the remote's timestamp would make recently-synced issues sort
+  /// to the bottom whenever the remote was older than local activity.
+  Future<GitResult<DeskIssue>> applyRemoteSnapshot({
+    required int id,
+    required String title,
+    required String body,
+    required String state,
+    required List<String> labels,
+    required List<String> assignees,
+  }) async {
+    final cur = await read(id);
+    if (!cur.ok) return GitResult.err(cur.error ?? 'read failed');
+    if (cur.data == null) return GitResult.err('no desk issue $id');
+    final next = cur.data!.copyWith(
+      title: title,
+      body: body,
+      state: state,
+      labels: labels,
+      assignees: assignees,
+      updatedAt: DateTime.now(),
+    );
+    final w = await _commit(next, message: 'sync from remote');
+    if (!w.ok) return GitResult.err(w.error ?? 'applyRemoteSnapshot failed');
+    return GitResult.ok(next);
   }
 }

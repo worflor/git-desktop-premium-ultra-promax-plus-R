@@ -28,6 +28,11 @@ class DeskDropPayload {
   /// the active working tree via the existing patch-preview flow.
   final String? deskPath;
 
+  /// Stash index (`stash@{N}`) being dragged from the shelf. The
+  /// Changes-page drop target fetches the stash's diff and routes it
+  /// through the same patch-preview flow as desk dumps.
+  final int? stashIndex;
+
   /// Human label for the drag feedback chip. Branch name when a branch
   /// is being dragged; PR title when a PR is.
   final String label;
@@ -37,6 +42,7 @@ class DeskDropPayload {
     this.branchName,
     this.remotePrNumber,
     this.deskPath,
+    this.stashIndex,
   });
 
   /// Dragging a local branch — e.g. from the BRANCHES list.
@@ -58,7 +64,14 @@ class DeskDropPayload {
   factory DeskDropPayload.desk({required String path, required String label}) =>
       DeskDropPayload._(label: label, deskPath: path);
 
+  /// Dragging a stash entry from the shelf onto the Changes page to
+  /// preview and optionally apply its patch. [label] is the stripped
+  /// stash message so the drag chip reads meaningfully.
+  factory DeskDropPayload.stash({required int index, required String label}) =>
+      DeskDropPayload._(label: label, stashIndex: index);
+
   bool get isBranch => branchName != null;
   bool get isRemotePr => remotePrNumber != null;
   bool get isDesk => deskPath != null;
+  bool get isStash => stashIndex != null;
 }
