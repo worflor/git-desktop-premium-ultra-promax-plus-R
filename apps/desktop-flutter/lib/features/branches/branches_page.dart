@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as pathlib;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1708,6 +1709,7 @@ class _BranchesPageState extends State<BranchesPage> {
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.55),
       builder: (ctx) => _PatchPreviewDialog(
+        repoPath: repoPath,
         sourceLabel: sourceLabel,
         rawPatch: rawPatch,
         prFiles: prFiles,
@@ -1721,7 +1723,11 @@ class _BranchesPageState extends State<BranchesPage> {
         couplingMatrix: couplingMatrix,
         auroraSource: auroraSource,
         filePillsWrap: _filePillsWrap,
-        onApply: ({required bool threeWay, required bool reverse}) async {
+        onApply: ({
+          required String rawPatch,
+          required bool threeWay,
+          required bool reverse,
+        }) async {
           final r = await applyPatch(
             repoPath,
             rawPatch,
@@ -10132,6 +10138,7 @@ Future<void> showPatchPreviewDialog(
     context: context,
     barrierColor: Colors.black.withValues(alpha: 0.55),
     builder: (ctx) => _PatchPreviewDialog(
+      repoPath: repoPath,
       sourceLabel: sourceLabel,
       rawPatch: rawPatch,
       prFiles: prFiles,
@@ -10148,7 +10155,11 @@ Future<void> showPatchPreviewDialog(
       stageMode: stageMode,
       expectedPaths: expectedPaths,
       onRefine: onRefine,
-      onApply: ({required bool threeWay, required bool reverse}) async {
+      onApply: ({
+        required String rawPatch,
+        required bool threeWay,
+        required bool reverse,
+      }) async {
         final r = await applyPatch(
           repoPath,
           rawPatch,
@@ -10288,6 +10299,7 @@ class _PatchSourceRowState extends State<_PatchSourceRow> {
 }
 
 class _PatchPreviewDialog extends StatefulWidget {
+  final String repoPath;
   final String sourceLabel;
   final String rawPatch;
   final List<PrFile> prFiles;
@@ -10310,11 +10322,13 @@ class _PatchPreviewDialog extends StatefulWidget {
   /// = skip the check.
   final Set<String> expectedPaths;
   final Future<GitResult<void>> Function({
+    required String rawPatch,
     required bool threeWay,
     required bool reverse,
   }) onApply;
 
   const _PatchPreviewDialog({
+    required this.repoPath,
     required this.sourceLabel,
     required this.rawPatch,
     required this.prFiles,
@@ -10352,13 +10366,49 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
   bool _applied = false;
   bool _reverseArmed = false;
 
+  // Mutable patch state — starts as the widget's initial values. The
+  // AI resolve flow rewrites these when it returns a cleaner patch, so
+  // the dialog re-renders with new file list, new badge, new apply
+  // payload without needing to be dismissed and reopened.
+  late String _rawPatch;
+  late List<PrFile> _prFiles;
+  late Map<String, List<ParsedLine>> _filesByPath;
+  late bool _dryRunOk;
+  late String? _dryRunError;
+  bool _resolving = false;
+  String? _resolveError;
+  /// The ORIGINAL patch's file set, captured once at dialog open.
+  /// The dropped-paths check compares against this, NOT the last
+  /// resolve's output, so a chain of multiple AI resolve attempts
+  /// can't progressively hide files that were dropped early on.
+  late final Set<String> _originalPatchPaths;
+  /// True once an AI resolve has completed at least once. Gates the
+  /// resolve-specific banner — without this flag the banner would
+  /// flash for any caller that opened the dialog with a subset of
+  /// the paths in [_originalPatchPaths], which isn't what we want.
+  bool _hasResolved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _rawPatch = widget.rawPatch;
+    _prFiles = widget.prFiles;
+    _filesByPath = widget.filesByPath;
+    _dryRunOk = widget.dryRunOk;
+    _dryRunError = widget.dryRunError;
+    _originalPatchPaths = widget.filesByPath.keys.toSet();
+  }
+
   Future<void> _doApply({required bool threeWay}) async {
     setState(() {
       _applying = true;
       _applyError = null;
     });
-    final r =
-        await widget.onApply(threeWay: threeWay, reverse: _reverseArmed);
+    final r = await widget.onApply(
+      rawPatch: _rawPatch,
+      threeWay: threeWay,
+      reverse: _reverseArmed,
+    );
     if (!mounted) return;
     setState(() {
       _applying = false;
@@ -10379,16 +10429,250 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     return (adds, dels);
   }
 
+  // ── AI patch resolution ──────────────────────────────────────────
+  //
+  // When `git apply --check` fails, the user can hand the failing
+  // patch + the current state of the conflicting files to an LLM.
+  // The model rewrites the patch so it applies cohesively against
+  // the current target. We swap the result into the dialog's state,
+  // re-run dry-run, and let the user apply normally. If the model
+  // returns something that also fails, we show the new error and
+  // keep the old patch around so the user can retry.
+
+  /// Parse `git apply` stderr for the paths that failed to apply.
+  /// stderr lines look like:
+  ///   `error: patch failed: path/to/file.dart:29`
+  ///   `error: path/to/file.dart: patch does not apply`
+  /// Uses the known sentinels ("patch failed: ", ": patch does not
+  /// apply") to bound the path slice so we correctly handle paths
+  /// containing spaces or embedded colons — a regex with `\S+?` would
+  /// truncate at the first whitespace or colon.
+  Set<String> _failingPathsFromStderr(String err) {
+    const failedPrefix = 'error: patch failed: ';
+    const notAppliedSuffix = ': patch does not apply';
+    const errorPrefix = 'error: ';
+    final out = <String>{};
+    for (final raw in err.split('\n')) {
+      final line = raw.trim();
+      if (line.startsWith(failedPrefix)) {
+        // "<path>:<linenum>" — the trailing `:<linenum>` is always
+        // at the last colon because linenums are digits only and
+        // paths can't end in a colon-integer suffix.
+        final rest = line.substring(failedPrefix.length);
+        final lastColon = rest.lastIndexOf(':');
+        if (lastColon <= 0) continue;
+        final tail = rest.substring(lastColon + 1);
+        if (RegExp(r'^\d+$').hasMatch(tail)) {
+          out.add(rest.substring(0, lastColon));
+        }
+        continue;
+      }
+      if (line.startsWith(errorPrefix) && line.endsWith(notAppliedSuffix)) {
+        final path = line.substring(
+            errorPrefix.length, line.length - notAppliedSuffix.length);
+        if (path.isNotEmpty) out.add(path);
+      }
+    }
+    return out;
+  }
+
+  String _buildPatchResolutionPrompt(
+    String raw,
+    String err,
+    List<({String path, String content})> files,
+  ) {
+    final buf = StringBuffer();
+    buf.writeln(
+        'A unified diff failed to apply against a git repository with `git apply --check`.');
+    buf.writeln(
+        'Rewrite the patch so it applies cleanly against the current target state.');
+    buf.writeln();
+    buf.writeln('Rules:');
+    buf.writeln(
+        '  1. Output ONE unified diff that preserves the original intent of every hunk.');
+    buf.writeln(
+        '  2. For failing hunks, integrate the change in a situationally cohesive way that');
+    buf.writeln(
+        '     aligns with the contextual surroundings already present on the target.');
+    buf.writeln(
+        '  3. Keep non-failing hunks verbatim (file paths, line numbers, context all unchanged).');
+    buf.writeln(
+        '  4. New files stay new. Deleted files stay deleted. No reordering of file blocks.');
+    buf.writeln(
+        '  5. Output format: raw unified diff only. No code fences, no prose, no commentary.');
+    buf.writeln();
+    buf.writeln('Original patch:');
+    buf.writeln('--- begin patch ---');
+    buf.writeln(raw);
+    buf.writeln('--- end patch ---');
+    buf.writeln();
+    buf.writeln('`git apply --check` stderr:');
+    buf.writeln('--- begin stderr ---');
+    buf.writeln(err);
+    buf.writeln('--- end stderr ---');
+    buf.writeln();
+    buf.writeln('Current target-side contents of the failing files:');
+    buf.writeln();
+    for (final f in files) {
+      buf.writeln('--- file: ${f.path} ---');
+      buf.writeln(f.content);
+      buf.writeln('--- end: ${f.path} ---');
+      buf.writeln();
+    }
+    buf.writeln(
+        'Output the rewritten unified diff that applies cleanly over the target.');
+    return buf.toString();
+  }
+
+  Future<void> _resolveWithAi(String categoryId) async {
+    if (_resolving) return;
+    final aiSettings = context.read<AiSettingsState>();
+    final modelValue = aiSettings.modelSelections[categoryId] ?? '';
+    if (modelValue.isEmpty) {
+      setState(() => _resolveError =
+          'no model configured for "${aiSettings.labelForCategory(categoryId, categoryId)}"');
+      return;
+    }
+
+    final err = _dryRunError ?? '';
+    final failingPaths = _failingPathsFromStderr(err);
+    // If we couldn't parse anything, include every path the patch
+    // touches — better to send too much context than none.
+    final pathsToInclude =
+        failingPaths.isEmpty ? _filesByPath.keys.toSet() : failingPaths;
+
+    setState(() {
+      _resolving = true;
+      _resolveError = null;
+    });
+
+    try {
+      // Canonical repo root — used to verify every read stays inside
+      // the repository. Patch headers from an imported `.patch` file
+      // are attacker-controlled; a path like `../../.ssh/id_rsa`
+      // would otherwise let a malicious patch exfiltrate arbitrary
+      // files through the LLM prompt. Containment check below makes
+      // the read a no-op for any path that escapes the repo.
+      final repoRoot = pathlib.canonicalize(widget.repoPath);
+      // Per-file size ceiling for the prompt context. A patch may
+      // legitimately reference a multi-MB generated file; reading it
+      // all into memory to feed the LLM would OOM on any reasonable
+      // input. 512KB covers source code with room to spare; anything
+      // larger is almost certainly binary or minified and wouldn't
+      // help the model anyway.
+      const maxBytes = 512 * 1024;
+      final snapshots = <({String path, String content})>[];
+      for (final p in pathsToInclude) {
+        if (isSensitivePath(p)) continue;
+        try {
+          final abs = p.startsWith('/') || p.contains(':')
+              ? p
+              : pathlib.join(widget.repoPath, p);
+          final canonical = pathlib.canonicalize(abs);
+          // Reject anything outside the repo root — no silent skip, no
+          // disk read, no prompt inclusion. `pathlib.isWithin` returns
+          // false when the target equals the root, so we allow equality
+          // as well (a patch against the repo root is legal).
+          if (canonical != repoRoot &&
+              !pathlib.isWithin(repoRoot, canonical)) {
+            continue;
+          }
+          final file = File(canonical);
+          // Stat first. `length()` is cheap and doesn't load the
+          // file; skipping oversized files here prevents `readAsString`
+          // from ever allocating a giant buffer.
+          final size = await file.length();
+          if (size > maxBytes) continue;
+          snapshots.add((path: p, content: await file.readAsString()));
+        } catch (_) {
+          // File missing on target (legit new-file hunk) or unreadable.
+          // The LLM will see the path listed in the original patch but
+          // no target-side content — that's the signal for "new file".
+        }
+      }
+
+      final prompt = _buildPatchResolutionPrompt(_rawPatch, err, snapshots);
+      final secretHit = detectLikelySecretInPrompt(prompt);
+      if (secretHit != null) {
+        if (!mounted) return;
+        setState(() => _resolveError =
+            'blocked — a failing file looks like it contains a $secretHit');
+        return;
+      }
+
+      final r = await generatePatch(
+        repositoryPath: widget.repoPath,
+        modelValue: modelValue,
+        prompt: prompt,
+        commandLabelPrefix: 'ai.patch_resolve',
+      );
+      if (!mounted) return;
+      if (!r.ok) {
+        setState(() => _resolveError = r.error ?? 'resolution failed');
+        return;
+      }
+
+      final newPatch = r.data!.patch;
+      // Re-parse and re-check the rewritten patch.
+      final lines = newPatch.length < 32 * 1024
+          ? parseUnifiedDiff(newPatch)
+          : await compute(parseUnifiedDiff, newPatch);
+      final parsed = <String, List<ParsedLine>>{};
+      for (final l in lines) {
+        final key = l.filePath;
+        if (key == null) continue;
+        (parsed[key] ??= <ParsedLine>[]).add(l);
+      }
+      if (parsed.isEmpty) {
+        if (!mounted) return;
+        setState(() =>
+            _resolveError = 'model returned an empty or unparseable patch');
+        return;
+      }
+      final newPrFiles = <PrFile>[];
+      for (final entry in parsed.entries) {
+        var adds = 0, dels = 0;
+        for (final l in entry.value) {
+          if (l.kind == LineKind.added) adds++;
+          else if (l.kind == LineKind.deleted) dels++;
+        }
+        newPrFiles.add(PrFile(path: entry.key, additions: adds, deletions: dels));
+      }
+
+      final check = await applyPatch(
+        widget.repoPath,
+        newPatch,
+        cached: widget.stageMode,
+        dryRun: true,
+        telemetryLabel: 'git.patch_resolve_check',
+      );
+      if (!mounted) return;
+
+      setState(() {
+        _rawPatch = newPatch;
+        _filesByPath = parsed;
+        _prFiles = newPrFiles;
+        _dryRunOk = check.ok;
+        _dryRunError =
+            check.ok ? null : (check.error ?? 'apply --check failed');
+        _expanded = null;
+        _hasResolved = true;
+      });
+    } finally {
+      if (mounted) setState(() => _resolving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final shader = context.surfaceShader;
-    final files = widget.filesByPath.keys.toList()..sort();
-    final totalAdds = widget.prFiles.fold<int>(0, (s, f) => s + f.additions);
-    final totalDels = widget.prFiles.fold<int>(0, (s, f) => s + f.deletions);
-    final clusters = _computeClusters(widget.prFiles, widget.couplingMatrix);
+    final files = _filesByPath.keys.toList()..sort();
+    final totalAdds = _prFiles.fold<int>(0, (s, f) => s + f.additions);
+    final totalDels = _prFiles.fold<int>(0, (s, f) => s + f.deletions);
+    final clusters = _computeClusters(_prFiles, widget.couplingMatrix);
     final ghosts = _resonanceForecast(
-      widget.prFiles,
+      _prFiles,
       widget.couplingMatrix,
       engine: () {
         final repo = context.read<RepositoryState>().activePath;
@@ -10439,8 +10723,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                     ),
                     const Spacer(),
                     _ApplyBadge(
-                      ok: widget.dryRunOk,
-                      error: widget.dryRunError,
+                      ok: _dryRunOk,
+                      error: _dryRunError,
                     ),
                     const SizedBox(width: 6),
                     MouseRegion(
@@ -10483,7 +10767,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       // a patch that silently omitted 2 of 12 files.
                       if (widget.expectedPaths.isNotEmpty)
                         Builder(builder: (ctx) {
-                          final got = widget.filesByPath.keys.toSet();
+                          final got = _filesByPath.keys.toSet();
                           final missing =
                               widget.expectedPaths.difference(got);
                           if (missing.isEmpty) {
@@ -10494,6 +10778,29 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                             child: _DroppedPathsBanner(
                               missing: missing.toList()..sort(),
                               total: widget.expectedPaths.length,
+                            ),
+                          );
+                        }),
+                      // AI RESOLVE DROP — same trust-failure guard as
+                      // the expectedPaths banner, scoped to the
+                      // patch-resolve flow. Compares against the
+                      // ORIGINAL patch's paths (captured in initState),
+                      // not the last resolve's output — a chain of
+                      // resolves can't progressively hide files
+                      // dropped by earlier attempts.
+                      if (_hasResolved)
+                        Builder(builder: (ctx) {
+                          final got = _filesByPath.keys.toSet();
+                          final missing =
+                              _originalPatchPaths.difference(got);
+                          if (missing.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _DroppedPathsBanner(
+                              missing: missing.toList()..sort(),
+                              total: _originalPatchPaths.length,
                             ),
                           );
                         }),
@@ -10515,14 +10822,14 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       ],
                       // FILES header — same "resonance" strip we use in PRs.
                       _FilesSectionHeader(
-                        files: widget.prFiles,
+                        files: _prFiles,
                         matrix: widget.couplingMatrix,
                         isWrapped: widget.filePillsWrap,
                         onToggleWrap: () {},
                       ),
                       const SizedBox(height: 6),
                       _FilePillStrip(
-                        files: widget.prFiles,
+                        files: _prFiles,
                         activePath: _expanded ?? '',
                         clusterByPath: clusters,
                         heatByPath: const {},
@@ -10544,11 +10851,11 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       for (final path in files)
                         _PatchFileBlock(
                           path: path,
-                          lines: widget.filesByPath[path]!,
+                          lines: _filesByPath[path]!,
                           expanded: _expanded == path,
                           onToggle: () => setState(() =>
                               _expanded = _expanded == path ? null : path),
-                          counts: _countsFor(widget.filesByPath[path]!),
+                          counts: _countsFor(_filesByPath[path]!),
                         ),
                     ],
                   ),
@@ -10590,9 +10897,29 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                               fontSize: 11,
                               fontFamily: 'JetBrainsMono',
                             )),
+                      )
+                    else if (_resolveError != null)
+                      Flexible(
+                        child: Text(_resolveError!,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: t.stateConflicted,
+                              fontSize: 11,
+                              fontFamily: 'JetBrainsMono',
+                            )),
                       ),
                     const Spacer(),
                     if (!_applied) ...[
+                      // AI resolve — only appears when the patch won't
+                      // apply cleanly. Rewrites the failing hunks against
+                      // the current target state so the apply succeeds.
+                      if (!_dryRunOk) ...[
+                        _PatchResolveSplitButton(
+                          busy: _resolving,
+                          onAction: _resolveWithAi,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       // Reverse + 3-way only make sense for patches that
                       // touch the working tree. In stage mode the patch
                       // shapes the index only — undo via `git restore
@@ -10616,7 +10943,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                         label: _applying
                             ? (widget.stageMode ? 'staging…' : 'applying…')
                             : (widget.stageMode ? 'stage' : 'apply'),
-                        tone: widget.dryRunOk
+                        tone: _dryRunOk
                             ? _ActionTone.primary
                             : _ActionTone.neutral,
                         onTap: _applying
@@ -10869,6 +11196,289 @@ class _DroppedPathsBanner extends StatelessWidget {
                 fontStyle: FontStyle.italic,
               )),
         ],
+      ),
+    );
+  }
+}
+
+/// Split button wired into the patch preview dialog. Main click runs
+/// AI resolution with the user's default model category; chevron opens
+/// a menu of the other configured categories. Matches the shape of the
+/// merge-resolve split button in changes_page but is local here so the
+/// two flows don't cross-import.
+class _PatchResolveSplitButton extends StatefulWidget {
+  final bool busy;
+  final ValueChanged<String> onAction;
+  const _PatchResolveSplitButton({
+    required this.busy,
+    required this.onAction,
+  });
+  @override
+  State<_PatchResolveSplitButton> createState() =>
+      _PatchResolveSplitButtonState();
+}
+
+class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
+  final LayerLink _link = LayerLink();
+  OverlayEntry? _entry;
+  bool _hoverMain = false;
+  bool _hoverChev = false;
+
+  String _defaultCategoryId(AiSettingsState ai) {
+    if ((ai.modelSelections['fast'] ?? '').isNotEmpty) return 'fast';
+    final first = ai.modelSelections.entries.firstWhere(
+      (e) => e.value.isNotEmpty,
+      orElse: () => const MapEntry('', ''),
+    );
+    return first.key;
+  }
+
+  String _modelDisplay(String modelValue) {
+    if (modelValue.isEmpty) return '';
+    final i = modelValue.indexOf(':');
+    if (i < 0 || i >= modelValue.length - 1) return modelValue;
+    return modelValue.substring(i + 1);
+  }
+
+  void _openMenu(String currentDefault) {
+    final overlay = Overlay.of(context);
+    final ai = context.read<AiSettingsState>();
+    final t = context.tokens;
+    final alt = ai.modelSelections.entries
+        .where((e) => e.value.isNotEmpty && e.key != currentDefault)
+        .toList();
+    if (alt.isEmpty) return;
+    _entry = OverlayEntry(builder: (ctx) {
+      return Stack(children: [
+        Positioned.fill(
+          child: Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (_) => _closeMenu(),
+          ),
+        ),
+        Positioned(
+          child: CompositedTransformFollower(
+            link: _link,
+            followerAnchor: Alignment.topRight,
+            targetAnchor: Alignment.bottomRight,
+            offset: const Offset(0, 6),
+            child: MaterialSurface(
+              tone: AppMaterialTone.surface1,
+              radius: ctx.surfaceShader.geometry.cardRadius,
+              elevated: true,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: IntrinsicWidth(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                      child: Text('OR WITH',
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 9,
+                            letterSpacing: 1.4,
+                            fontFamily: 'JetBrainsMono',
+                            fontWeight: FontWeight.w800,
+                          )),
+                    ),
+                    for (final e in alt)
+                      _PatchResolveMenuRow(
+                        label: ai.labelForCategory(e.key, e.key),
+                        modelDisplay: _modelDisplay(e.value),
+                        onTap: () {
+                          _closeMenu();
+                          widget.onAction(e.key);
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ]);
+    });
+    overlay.insert(_entry!);
+  }
+
+  void _closeMenu() {
+    _entry?.remove();
+    _entry = null;
+  }
+
+  @override
+  void dispose() {
+    _entry?.remove();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final shader = context.surfaceShader;
+    final ai = context.watch<AiSettingsState>();
+    final defaultCategory = _defaultCategoryId(ai);
+    if (defaultCategory.isEmpty) {
+      return Text('no AI model configured',
+          style: TextStyle(
+            color: t.textMuted,
+            fontSize: 10.5,
+            fontFamily: 'JetBrainsMono',
+            fontStyle: FontStyle.italic,
+          ));
+    }
+    final label = ai.labelForCategory(defaultCategory, defaultCategory);
+    final modelValue = ai.modelSelections[defaultCategory] ?? '';
+    final modelDisplay = _modelDisplay(modelValue);
+    return CompositedTransformTarget(
+      link: _link,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hoverMain = true),
+            onExit: (_) => setState(() => _hoverMain = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.busy
+                  ? null
+                  : () => widget.onAction(defaultCategory),
+              child: Tooltip(
+                message: modelDisplay.isEmpty
+                    ? 'apply with patch from $label'
+                    : 'apply with patch from $label  ·  $modelDisplay',
+                child: AnimatedContainer(
+                  duration: context.motion(shader.duration),
+                  curve: shader.safeCurve,
+                  padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+                  decoration: BoxDecoration(
+                    color: widget.busy
+                        ? t.accentBright.withValues(alpha: 0.08)
+                        : (_hoverMain
+                            ? t.accentBright.withValues(alpha: 0.14)
+                            : t.accentBright.withValues(alpha: 0.08)),
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(shader.geometry.badgeRadius),
+                      bottomLeft:
+                          Radius.circular(shader.geometry.badgeRadius),
+                    ),
+                    border: Border.all(
+                      color: t.accentBright.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Text(
+                    widget.busy ? 'patching…' : '✦  apply with patch from $label',
+                    style: TextStyle(
+                      color: t.accentBright,
+                      fontSize: 11,
+                      fontFamily: 'JetBrainsMono',
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hoverChev = true),
+            onExit: (_) => setState(() => _hoverChev = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.busy ? null : () => _openMenu(defaultCategory),
+              child: Tooltip(
+                message: 'or with another model',
+                child: AnimatedContainer(
+                  duration: context.motion(shader.duration),
+                  curve: shader.safeCurve,
+                  padding: const EdgeInsets.fromLTRB(6, 7, 8, 7),
+                  decoration: BoxDecoration(
+                    color: _hoverChev
+                        ? t.accentBright.withValues(alpha: 0.16)
+                        : t.accentBright.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.only(
+                      topRight: Radius.circular(shader.geometry.badgeRadius),
+                      bottomRight:
+                          Radius.circular(shader.geometry.badgeRadius),
+                    ),
+                    border: Border.all(
+                        color: t.accentBright.withValues(alpha: 0.45)),
+                  ),
+                  child: Text('▾',
+                      style: TextStyle(
+                        color: t.accentBright,
+                        fontSize: 10,
+                        fontFamily: 'JetBrainsMono',
+                        fontWeight: FontWeight.w800,
+                      )),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PatchResolveMenuRow extends StatefulWidget {
+  final String label;
+  final String modelDisplay;
+  final VoidCallback onTap;
+  const _PatchResolveMenuRow({
+    required this.label,
+    required this.modelDisplay,
+    required this.onTap,
+  });
+  @override
+  State<_PatchResolveMenuRow> createState() => _PatchResolveMenuRowState();
+}
+
+class _PatchResolveMenuRowState extends State<_PatchResolveMenuRow> {
+  bool _hover = false;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final shader = context.surfaceShader;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: context.motion(shader.duration),
+          curve: shader.safeCurve,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: _hover
+                ? t.accentBright.withValues(alpha: 0.08)
+                : Colors.transparent,
+          ),
+          child: Row(
+            children: [
+              Text(widget.label,
+                  style: TextStyle(
+                    color: t.textNormal,
+                    fontSize: 12,
+                    fontFamily: 'JetBrainsMono',
+                    fontWeight: FontWeight.w600,
+                  )),
+              const SizedBox(width: 14),
+              Text(widget.modelDisplay,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontFamily: 'JetBrainsMono',
+                  )),
+            ],
+          ),
+        ),
       ),
     );
   }
