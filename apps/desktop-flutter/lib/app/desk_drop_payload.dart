@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // desk_drop_payload.dart — drag-to-desk payload
 //
 // When the user drags a branch row (from the BRANCHES lens) or a PR
@@ -11,7 +10,6 @@
 // Small, sealed, serializable. No callbacks on the payload itself —
 // the DragTarget owns the dispatch logic so the source widgets just
 // describe "what's being dragged," not "what to do with it."
-// ═════════════════════════════════════════════════════════════════════════
 
 class DeskDropPayload {
   /// Local branch to open as a new desk. Mutually exclusive with

@@ -10,7 +10,6 @@ import '../../backend/dtos.dart';
 import '../../app/repository_state.dart';
 import '../../components/icons/app_icons.dart';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 String _pluralize(int n, String noun) => '$n $noun${n == 1 ? "" : "s"}';
 
@@ -89,7 +88,6 @@ _ActionDescriptor _describeAction(RepositoryStatus? status) {
   );
 }
 
-// ── SyncPanel ─────────────────────────────────────────────────────────────────
 
 class SyncPanel extends StatefulWidget {
   final VoidCallback onClose;
@@ -190,7 +188,6 @@ class _SyncPanelState extends State<SyncPanel> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Header ──────────────────────────────────────────────────────────
             Container(
               padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
               decoration: BoxDecoration(
@@ -218,7 +215,6 @@ class _SyncPanelState extends State<SyncPanel> {
               ]),
             ),
 
-            // ── Body ────────────────────────────────────────────────────────────
             Flexible(
               fit: FlexFit.loose,
               child: _buildBody(
@@ -329,7 +325,6 @@ class _SyncPanelState extends State<SyncPanel> {
   }
 }
 
-// ── Sync body ─────────────────────────────────────────────────────────────────
 
 class _InlineSyncError extends StatelessWidget {
   final AppTokens t;
@@ -463,7 +458,6 @@ class _SyncBody extends StatelessWidget {
   }
 }
 
-// ── Hero: branch + upstream + pills ──────────────────────────────────────────
 
 class _HeroSection extends StatelessWidget {
   final AppTokens t;
@@ -578,7 +572,6 @@ class _SummaryPill extends StatelessWidget {
   }
 }
 
-// ── Action block ──────────────────────────────────────────────────────────────
 
 class _ActionBlock extends StatelessWidget {
   final AppTokens t;
@@ -644,7 +637,6 @@ class _ActionBlock extends StatelessWidget {
   }
 }
 
-// ── Metrics ───────────────────────────────────────────────────────────────────
 
 class _MetricsSection extends StatelessWidget {
   final AppTokens t;
@@ -796,7 +788,6 @@ class _MetricSymbolPainter extends CustomPainter {
       old.symbol != symbol || old.color != color;
 }
 
-// ── Activity log ──────────────────────────────────────────────────────────────
 
 class _ActivityLog extends StatelessWidget {
   final AppTokens t;
@@ -835,9 +826,7 @@ class _ActivityLog extends StatelessWidget {
   }
 }
 
-// ── Empty state ───────────────────────────────────────────────────────────────
 
-// ── Buttons ───────────────────────────────────────────────────────────────────
 
 class _PrimaryBtn extends StatefulWidget {
   final String label;

@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // desk_pr_store.dart — read/write DeskPr through git plumbing
 //
 // Each desk PR lives at refs/manifold/desks/<encoded-branch>. The ref
@@ -13,7 +12,6 @@
 // All mutations are CAS via update-ref's three-arg form: `update-ref
 // <ref> <new> <old>` rejects when the ref has moved since we read
 // it. Caller retries on failure (refresh from disk, re-apply mutation).
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:convert';
@@ -42,7 +40,6 @@ class DeskPrStore {
   /// each other. Percent-encoding is reversible: every illegal char
   /// becomes `%XX` and `%` itself is escaped first so the encoding is
   /// injective.
-  ///
   /// Slash is preserved — multi-segment refs are valid and we want
   /// `feat/x` to render as `refs/manifold/desks/feat/x`, not flattened.
   /// Trailing `.`, leading `/`, and `..` sequences are rejected by git
@@ -200,7 +197,6 @@ class DeskPrStore {
 
   /// Promote a branch to a desk PR. Refuses if the branch already has
   /// one (caller should check first via [read]).
-  ///
   /// On first promotion in a repo, also configures the manifold fetch
   /// refspec on the active remote so `git fetch origin` auto-pulls
   /// manifold metadata. Without this, a clone-and-recover loses every

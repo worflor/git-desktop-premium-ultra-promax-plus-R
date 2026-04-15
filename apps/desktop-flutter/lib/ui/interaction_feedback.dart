@@ -7,7 +7,6 @@ import 'tokens.dart';
 /// Wrap any tap target in this to get the active theme's `ThemeInteraction`
 /// rendered on click. Themes declaring `ThemeInteraction.none` (petrichor,
 /// helix, redshift, crafty) get a transparent pass-through — zero overhead.
-///
 /// Each instance owns a single reusable [AnimationController]; retriggers
 /// reset + re-forward instead of allocating. The feedback layer is above
 /// the child in a `Stack`, clipped to the provided [borderRadius] so
@@ -169,7 +168,6 @@ CustomPainter _feedbackPainter({
   }
 }
 
-// ── Caustic (Halo) — expanding halo ring, gilded bloom ──────────────────────
 class _CausticPainter extends CustomPainter {
   final Offset origin;
   final Color color;
@@ -213,7 +211,6 @@ class _CausticPainter extends CustomPainter {
       old.t != t || old.origin != origin || old.color != color;
 }
 
-// ── Etch (Nightwalker) — obsidian gets stamped ──────────────────────────────
 class _EtchPainter extends CustomPainter {
   final Color color;
   final double t;
@@ -249,7 +246,6 @@ class _EtchPainter extends CustomPainter {
   bool shouldRepaint(_EtchPainter old) => old.t != t || old.color != color;
 }
 
-// ── Warp (Aether) — chromatic glass bend ────────────────────────────────────
 class _WarpPainter extends CustomPainter {
   final Offset origin;
   final Color color;
@@ -284,7 +280,6 @@ class _WarpPainter extends CustomPainter {
       old.t != t || old.origin != origin || old.color != color;
 }
 
-// ── Vibration (Quanta) — crystalline shiver ─────────────────────────────────
 class _VibrationPainter extends CustomPainter {
   final Offset origin;
   final Color color;
@@ -320,7 +315,6 @@ class _VibrationPainter extends CustomPainter {
       old.t != t || old.origin != origin || old.color != color;
 }
 
-// ── Chalk (Blackboard) — dust smudge ────────────────────────────────────────
 class _ChalkPainter extends CustomPainter {
   final Offset origin;
   final Color color;
@@ -357,7 +351,6 @@ class _ChalkPainter extends CustomPainter {
       old.t != t || old.origin != origin || old.color != color;
 }
 
-// ── Ink Splat (Kirby) — comic-book POW-shape starburst ────────────────────
 class _InkSplatPainter extends CustomPainter {
   final Offset origin;
   final double t;
@@ -373,7 +366,6 @@ class _InkSplatPainter extends CustomPainter {
     final fade = (1 - t).clamp(0.0, 1.0);
     if (fade <= 0.01) return;
 
-    // ── Yellow POW! starburst behind the click ────────────────────
     // 8-pointed star whose long spikes alternate with short ones —
     // classic Marvel-Comics impact-burst silhouette. Radius pops
     // outward over the first half then holds.
@@ -410,7 +402,6 @@ class _InkSplatPainter extends CustomPainter {
         ..strokeJoin = StrokeJoin.miter,
     );
 
-    // ── Three short ink-line "speed flecks" radiating outward ─────
     // Like the impact lines around a comic-book punch.
     final flickPaint = Paint()
       ..color = const Color(0xFF14141A).withValues(alpha: fade * 0.9)

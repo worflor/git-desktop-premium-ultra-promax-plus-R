@@ -29,7 +29,6 @@ import 'engram_hunk_encoder.dart';
 /// Returns null when GloVe coverage is too thin to fit an AR(2) — most
 /// commonly short/vague prose ("looks weird", "maybe a bug") or ideas
 /// dominated by proper nouns not in the embedding vocab.
-///
 /// The encoder internally applies `splitIdentifier` to each "raw token"
 /// it receives. Splitting prose on whitespace up front keeps the
 /// sub-tokens cleaner than passing whole sentences as a single token
@@ -59,9 +58,7 @@ HunkKVector? encodeProse(String text, EngramHunkEncoder encoder) {
 }
 
 /// Complex inner-product-based similarity between two K-vectors in ℂ^P.
-///
 ///   sim = Re(⟨a, b⟩) / (‖a‖ · ‖b‖)   ∈ [-1, 1]
-///
 /// This is the real part of the hermitian inner product, normalised —
 /// it's the natural cosine in complex K-space. 1.0 = same direction,
 /// 0 = orthogonal, negative = opposite phase.
@@ -100,7 +97,6 @@ class FileSimilarity {
 /// K-nearest-rows in [table] to the query vector (qRe, qIm). Returns
 /// up to [topK] entries sorted by similarity descending, dropping
 /// anything below [minSimilarity].
-///
 /// Cost: O(n · pairs) for the row scan + O(n · log topK) for the
 /// streaming top-K; the brain's Cauchy-Schwarz / triangle tricks from
 /// [EngramBrain.nearestWell] don't apply here because we want the

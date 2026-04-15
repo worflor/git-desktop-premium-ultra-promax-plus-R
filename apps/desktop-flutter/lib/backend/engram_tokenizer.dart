@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_tokenizer.dart — split identifiers into sub-tokens.
 //
 // Code identifiers (`getUserAuthProfile`, `build_diff_hunk`, `PHPVersion`)
@@ -11,7 +10,6 @@
 // those tokens rather than re-tokenising the raw hunk body. This keeps
 // the signals aligned (hunk A and hunk B compared via engram run on the
 // same vocabulary they compared via Jaccard on).
-// ═════════════════════════════════════════════════════════════════════════
 
 /// Minimum sub-token length to keep. 2 chars preserves meaningful code
 /// shorthand (`db`, `io`, `ui`) that's in the GloVe vocab.
@@ -27,7 +25,6 @@ const int _kMaxSubTokenLen = 32;
 ///   - lower→upper transition inside camelCase (`getUser` → `get`, `user`)
 ///   - acronym→word transition (`HTTPServer` → `http`, `server`)
 ///   - letter→digit / digit→letter transition
-///
 /// Digits-only runs are dropped (they're not in the GloVe vocabulary
 /// anyway and carry little semantic signal for code domains).
 List<String> splitIdentifier(String identifier) {

@@ -4,7 +4,6 @@ import '../backend/file_coupling.dart';
 import '../backend/git.dart';
 
 /// Owns the co-change matrix per repo, cached by HEAD hash.
-///
 /// Unlike RepositoryXrayState this one is background-only: UI never waits on
 /// it. If the matrix isn't ready yet the changes list renders without
 /// cluster stripes; a notify on load fades them in.

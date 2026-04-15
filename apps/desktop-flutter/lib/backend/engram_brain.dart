@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_brain.dart — Alexandria brain (wells + pairing) loaded at runtime.
 //
 // Reads the compact ENDB ("Engram Dart Brain") binary produced by the
@@ -6,7 +5,6 @@
 // pairing (permutation over dim dims into complex pairs) and every
 // well's sum_K + count so centroids can be computed on demand.
 //
-// ─── Storage geometry ──────────────────────────────────────────────────
 //
 // The brain's hot path is `nearestWell`, called once per file during
 // index builds (typically 10k+ calls per repo switch). It needs:
@@ -38,7 +36,6 @@
 //
 // The brain is stateless after load: no absorption, no dream buffer, no
 // training. It's a semantic lookup table for the hunk encoder.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
 import 'dart:math' as math;
@@ -80,7 +77,6 @@ class EngramWellMatch {
 
 /// Snapshot of Alexandria's learned structure: reference pairing + every
 /// well's centroid + count. Immutable. Safe to share across isolates.
-///
 /// All per-well data is stored in flat typed arrays (no per-well object).
 /// Construct via [EngramBrain.loadBytes]; access via the public
 /// `wellCount` / `wellName(i)` / `wellCentroidReView(i)` accessors.
@@ -125,7 +121,6 @@ class EngramBrain {
   /// Total number of wells the brain holds.
   final int wellCount;
 
-  // ── Hot-path (nearest-well) flat arrays in DESCENDING logMass order ──
 
   /// Permutation: `_flatOrder[sortPos]` is the well's ORIGINAL index.
   /// Used at the end of [nearestWell] to translate the winner's sorted
@@ -174,7 +169,6 @@ class EngramBrain {
   /// identities.
   final List<String> _wellNamesOriginal;
 
-  // ── Public accessors for external callers (tests, diagnostics) ──
 
   /// Well name at its ORIGINAL (on-disk) index.
   String wellName(int originalIdx) => _wellNamesOriginal[originalIdx];
@@ -208,7 +202,6 @@ class EngramBrain {
   /// Deserialize a brain from its compact ENDB binary form. Throws
   /// [FormatException] on magic / version / bounds mismatches — callers
   /// at the singleton layer should catch and degrade silently.
-  ///
   /// Binary layout is little-endian throughout, matching the byte order
   /// emitted by `tools/export_engram_assets.py` (which uses Python's
   /// `struct.pack('<...')` and numpy's default little-endian dtypes).
@@ -364,23 +357,19 @@ class EngramBrain {
   }
 
   /// Find the well closest to an observation K-vector.
-  ///
   /// Matches Python `nearest_well` exactly:
   /// - compute raw RMS distance to every well centroid
   /// - mass-weight by dividing by log(1+count)
   /// - return the well at argmin(weighted), but report *raw* distance.
-  ///
   /// Performance shape (called once per hunk, also once per file in
   /// the engram file index so tens of thousands of times per repo
   /// build):
-  ///
   ///   • One-time query norm compute for the Cauchy-Schwarz gate
   ///   • Sweep every well's centroid via flat arrays
   ///   • Three-layer pruning: sort-by-mass + CS gate (O(1) per well)
   ///     + triangle-inequality break inside the pair loop
   ///   • Squared-distance accumulator (no sqrt in the hot loop);
   ///     one sqrt at the end on the winner
-  ///
   /// `kRe` / `kIm` must have length == [pairs].
   EngramWellMatch? nearestWell(Float64List kRe, Float64List kIm) {
     final n = wellCount;
@@ -413,7 +402,6 @@ class EngramBrain {
       // they carry no observations and can't be a meaningful match.
       if (invLogMass == 0.0) continue;
 
-      // ── Cauchy-Schwarz gate ─────────────────────────────────────
       //
       // `||c - k||² ≥ (||c|| − ||k||)²` by CS, so the weighted-square
       // distance is at least `(||c|| − ||k||)² / pairs / logMass²`.

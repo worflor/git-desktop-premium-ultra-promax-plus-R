@@ -8,7 +8,6 @@ import '../../ui/tokens.dart';
 /// ═════════════════════════════════════════════════════════════════════════
 /// COMMIT SIGIL — visual rendering of the 25D fingerprint
 /// ═════════════════════════════════════════════════════════════════════════
-///
 /// Renders the 25-component Walsh-Hadamard fingerprint as a 5×5 grid of
 /// signed cells. Each cell is positive (top-axis token color) or negative
 /// (deletion-axis token color), with intensity proportional to the cell's
@@ -16,10 +15,8 @@ import '../../ui/tokens.dart';
 /// renders the same sigil forever; cherry-picks render identically;
 /// refactors that touched the same neighborhood look like dialect-
 /// variations of one shape. Cheap: a 25-cell paint per commit.
-///
 /// The grid layout is the canonical mask order — row-major reading of
 /// the 25 masks in their declared order:
-///
 ///   row 0: L0 L1 L2 L3 L4
 ///   row 1: L5 L6 L7 U0 U1
 ///   row 2: U2 U3 U4 U5 U6

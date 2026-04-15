@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // remote_issue_cache_state.dart — forge-agnostic remote issue cache
 //
 // Promotes remote issues from a page-local concern (BranchesPage._issues)
@@ -13,7 +12,6 @@
 //
 // available=false is a silent no-op (local repo, unknown forge, unauthed
 // CLI, …). Callers branch on [available] for optional empty states.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/foundation.dart';
 

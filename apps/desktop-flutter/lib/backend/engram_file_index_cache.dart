@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_file_index_cache.dart — disk-persisted K-vector cache.
 //
 // The file index is expensive to build from scratch (read + tokenize +
@@ -39,7 +38,6 @@
 //
 // All multi-byte fields little-endian — matches the rest of the
 // engram binaries for consistency.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
 import 'dart:io';
@@ -146,7 +144,6 @@ class EngramFileIndexCache {
     await tmp.rename(file.path);
   }
 
-  // ── private: parse ─────────────────────────────────────────────
 
   static EngramFileIndexCache _parse(Uint8List bytes, int expectedPairs) {
     if (bytes.length < 16) return EngramFileIndexCache.empty();
@@ -219,7 +216,6 @@ class EngramFileIndexCache {
     return EngramFileIndexCache._(entries);
   }
 
-  // ── private: encode ────────────────────────────────────────────
 
   static Uint8List _encode(
     int pairs,
@@ -282,7 +278,6 @@ class EngramFileIndexCache {
   /// a collision-free filename for the repo path without pulling in a
   /// full crypto dependency. Paths that differ by a single character
   /// land at distinct cache files.
-  ///
   /// Uses BigInt for the arithmetic: the canonical FNV offset basis
   /// (0xcbf29ce484222325) exceeds int64_max and would be stored as a
   /// negative value in Dart's signed-int64 native representation, making

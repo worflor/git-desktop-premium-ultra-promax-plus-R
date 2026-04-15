@@ -7,13 +7,11 @@ import 'package:window_manager/window_manager.dart';
 /// on Windows a merely-unfocused visible window stays at
 /// [AppLifecycleState.resumed] — the framework's lifecycle signal alone
 /// misses "user alt-tabbed to Chrome but our window is still on screen."
-///
 /// Purpose: lets decorative continuous animations (particle backdrop,
 /// liquid-glass pulse, hypercube logo) stop their tickers the moment the
 /// window loses focus or gets minimized, then resume instantly when it
 /// comes back. The app is snappy when interacted with and consumes
 /// near-zero CPU while idle in the background.
-///
 /// Global singleton because the signal is inherently per-process and the
 /// consumers are scattered across the widget tree — threading a
 /// `ChangeNotifier` through provider for a global concept just adds
@@ -37,7 +35,6 @@ class WindowActivity extends ChangeNotifier
   bool get awake =>
       _windowFocused && !_windowMinimized && _lifecycleActive;
 
-  // ── window_manager events ───────────────────────────────────────────
 
   @override
   void onWindowFocus() {
@@ -67,7 +64,6 @@ class WindowActivity extends ChangeNotifier
     notifyListeners();
   }
 
-  // ── Flutter lifecycle events ─────────────────────────────────────────
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {

@@ -1,6 +1,4 @@
-// ═════════════════════════════════════════════════════════════════════════
 // COMMIT ATLAS, candidate commits, not a file list
-// ═════════════════════════════════════════════════════════════════════════
 //
 // The conventional Git UI asks *which files?*, a mechanical checkbox.
 // That's the wrong question. A commit is a *claim of intent*: "these
@@ -32,9 +30,7 @@ import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
 import '../../ui/tokens.dart';
 
-// ─────────────────────────────────────────────────────────────────────────
 // Candidate, a provisional commit the Atlas proposes
-// ─────────────────────────────────────────────────────────────────────────
 
 class _Candidate {
   final int id; // cluster id (-1 for "leftovers" bench)
@@ -56,10 +52,8 @@ class _Candidate {
   bool get isLeftovers => id == FileClusters.clusterIdIsolated;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Public widget, kept named FileConstellation for import stability; the
 // design has been fully rethought beneath the name.
-// ─────────────────────────────────────────────────────────────────────────
 
 class FileConstellation extends StatefulWidget {
   final List<RepositoryStatusFile> files;
@@ -237,14 +231,11 @@ class _Hairline extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Auto-namer, cluster → (TITLE, subtitle)
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Given a set of paths, invent a two-part title:
 ///   • TITLE: uppercase letterspaced, the *where* (deepest shared dir)
 ///   • subtitle: the *what* (shared basename stem, or null)
-///
 /// Normalises separators, skips leaf filenames when computing directory
 /// prefix, handles the common dart-project shape `lib/<domain>/<area>`
 /// by preferring 1–2 meaningful segments over the full path.
@@ -327,9 +318,7 @@ class _Hairline extends StatelessWidget {
   return (title, subtitle);
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Candidate card, one proposed commit
-// ─────────────────────────────────────────────────────────────────────────
 
 class _CandidateCard extends StatefulWidget {
   final AppTokens tokens;
@@ -483,7 +472,6 @@ class _CandidateCardState extends State<_CandidateCard>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ── Header row ────────────────────────────────────────────
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
                 child: Row(
@@ -540,7 +528,6 @@ class _CandidateCardState extends State<_CandidateCard>
                   ],
                 ),
               ),
-              // ── File chips, wrapped by the binding ribbon ─────────────
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                 child: AnimatedBuilder(
@@ -588,9 +575,7 @@ class _CandidateCardState extends State<_CandidateCard>
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Binding ribbon, the action visualised as geometry
-// ─────────────────────────────────────────────────────────────────────────
 //
 // At progress 0 nothing is drawn. The path traces clockwise from the
 // top-left corner around the chips area. As progress climbs, the line
@@ -707,9 +692,7 @@ class _BindingPainter extends CustomPainter {
 }
 
 
-// ─────────────────────────────────────────────────────────────────────────
 // File chip, tiny, clickable
-// ─────────────────────────────────────────────────────────────────────────
 
 class _FileChip extends StatefulWidget {
   final AppTokens tokens;
@@ -801,9 +784,7 @@ class _FileChipState extends State<_FileChip> {
 
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Orbit chip, a coupled neighbor the user didn't include
-// ─────────────────────────────────────────────────────────────────────────
 
 class _OrbitChip extends StatefulWidget {
   final AppTokens tokens;
@@ -881,7 +862,6 @@ class _OrbitChipState extends State<_OrbitChip> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Candidate glyph, 44px sigil of the cluster.
 //
 //   • One central hub.
@@ -893,7 +873,6 @@ class _OrbitChipState extends State<_OrbitChip> {
 //   • Included files fill; excluded files ring. Cluster identity
 //     (cluster id) phase-shifts the starting angle so sibling cards
 //     don't all line up the same.
-// ─────────────────────────────────────────────────────────────────────────
 
 class _CandidateGlyph extends StatelessWidget {
   final AppTokens tokens;
@@ -1076,9 +1055,7 @@ class _GlyphPainter extends CustomPainter {
       old.accent != accent;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Leftovers bench, isolated files, displayed quietly
-// ─────────────────────────────────────────────────────────────────────────
 
 class _LeftoversBench extends StatelessWidget {
   final AppTokens tokens;

@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // manifold_refs.dart — git plumbing for Manifold metadata refs
 //
 // "Local PRs" (and local issues, etc.) live as orphan commit histories
@@ -11,7 +10,6 @@
 // for-each-ref, ls-tree). Everything above it (DeskPrStore,
 // DeskIssueStore) speaks ManifoldRefs and never touches git directly.
 // Keeps the I/O surface small and testable.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:convert';
@@ -246,14 +244,12 @@ class ManifoldRefs {
   }
 
   /// Allocate the next sequential integer from the shared counter ref.
-  ///
   /// The counter lives as a single-blob tree at [ref] containing the
   /// integer plus a newline under [filename]. CAS on the ref handles
   /// concurrent allocations on the same machine: if another allocation
   /// landed between our resolveRef and updateRef, update-ref rejects
   /// and the caller gets a failure they can retry from. Starts at 1
   /// when the ref doesn't yet exist.
-  ///
   /// DeskPrStore and DeskIssueStore both allocate from the same ref
   /// so PR-ids and issue-ids never collide. [commitLabel] is the
   /// caller-visible flavour ("desk-id" vs "id") baked into the commit
@@ -321,7 +317,6 @@ class ManifoldRefs {
   /// `git merge-tree --write-tree` (git ≥ 2.38) which produces a tree
   /// in the object store and reports conflicts on stderr without
   /// touching the working tree or index.
-  ///
   /// Returns 'MERGEABLE', 'CONFLICTING', or 'UNKNOWN' (when either ref
   /// doesn't resolve or merge-tree itself errors for reasons other
   /// than conflicts).

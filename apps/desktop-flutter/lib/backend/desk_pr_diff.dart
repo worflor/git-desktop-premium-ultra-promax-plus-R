@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // desk_pr_diff.dart — compute a DeskPr's diff/files on demand
 //
 // A DeskPr's metadata (title, body, comments, reviews) lives in
@@ -7,7 +6,6 @@
 // PullRequestDetail shape the existing renderer consumes for remote
 // PRs, so the diff view, file pills, magnetic field, etc. all light
 // up identically for local PRs.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:convert';
@@ -23,7 +21,6 @@ import '../features/diff/diff_models.dart';
 /// Build a [PullRequestDetail] for a local desk PR by diffing
 /// `pr.baseRef..pr.headRef` in [repoPath] (which should be the main
 /// repo or any of its worktrees — git resolves through the common dir).
-///
 /// Returns `ok(null)` when the diff is empty (legitimate: no commits
 /// on the branch yet). Returns an err only on infrastructure failure
 /// (git missing, baseRef unresolvable).

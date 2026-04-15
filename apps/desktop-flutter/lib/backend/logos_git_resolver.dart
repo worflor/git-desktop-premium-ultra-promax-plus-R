@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // logos_git_resolver.dart — single source of truth for engine lifecycle
 //
 // One resolver. Any caller — UI state class, AI context builder, tests —
@@ -14,7 +13,6 @@
 // COMPUTE POLICY: `LogosGit.buildFromStats` is hundreds of ms to
 // seconds of pure CPU on a real repo. It runs on a background isolate
 // via `Isolate.run` so the UI never freezes during a cold build.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:collection';
@@ -58,7 +56,6 @@ final Map<String, Future<LogosGit?>> _inflight = {};
 /// multiple worker isolates via `Isolate.run`; isolates can't nest
 /// cleanly, so doing this before the build isolate spawn is the right
 /// shape.
-///
 /// Steps:
 ///   1. Load the brain (cheap, ~5ms — needed for pairs + well names).
 ///   2. Load the disk cache for this repo path.
@@ -346,7 +343,6 @@ Future<LogosGit?> _resolveImpl(
     // build cost, so the trade is firmly net-positive.
     final stats = statsResult.data!;
 
-    // ── Engram file index — parallel + disk-cached. ─────────────────
     //
     // The expensive part of engram integration used to be a single
     // isolate walking every node-path on disk, reading + encoding

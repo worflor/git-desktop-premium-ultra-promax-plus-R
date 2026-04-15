@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_bootstrap.dart — singleton provider + isolate-safe snapshot.
 //
 // The brain + glove assets are loaded once per app launch (via
@@ -13,7 +12,6 @@
 // rebuilds the in-isolate encoder from them. Reusing the byte buffers
 // (not re-downloading/parsing from disk) means isolate spawn cost is
 // roughly the cost of parsing the vocab Map, which is milliseconds.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:typed_data';
@@ -54,7 +52,6 @@ class EngramAssets {
 /// main isolate once (usually at init time — the first hunk ranking
 /// will await it if not already loaded). Subsequent calls return the
 /// cached future.
-///
 /// The runtime stores byte blobs, not the encoder — construction of
 /// the encoder (building the vocab HashMap) is re-done in worker
 /// isolates because Maps don't cross isolate boundaries cheaply.

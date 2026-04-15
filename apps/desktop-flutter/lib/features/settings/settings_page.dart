@@ -2879,10 +2879,8 @@ class _ProviderPill extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Custom overlay-based model picker — replaces AppDropdownField so that the
 // custom-model text inputs live inside the popup list itself.
-// ---------------------------------------------------------------------------
 
 class _ModelPickerField extends StatefulWidget {
   final String value;
@@ -3356,7 +3354,6 @@ class _AiMuseIntegrationEditor extends StatelessWidget {
 
 /// The muse stage — a [1] → [2] visual that lets the user assign which
 /// AI category (slot) drives each phase of the oracle pipeline.
-///
 /// Phase 1 (brainstorm) is cheap and divergent — defaults to "fast".
 /// Phase 2 (synthesis) is rigorous and grounding-aware — defaults to
 /// the same category review uses, typically "quality". Either may be
@@ -3491,10 +3488,9 @@ class _MuseStage extends StatelessWidget {
   }
 }
 
-/// One numbered station inside the muse stage. Header row carries the
-/// [1]/[2] tag + phase title; body row is the slot dropdown + resolved
-/// model pill. Sharp borders, no rounding — matches the brutalist
-/// terminal vibe of the rest of the settings page.
+/// Numbered station inside the muse pipeline.
+/// Header row shows [1]/[2] and phase title. Body row has the model
+/// dropdown plus resolved model pill.
 class _MuseStation extends StatelessWidget {
   final AppTokens tokens;
   final String number;
@@ -3757,15 +3753,7 @@ class _SettingsGap extends StatelessWidget {
   }
 }
 
-// ── Logos dynamics stage ────────────────────────────────────────────────────
-//
-// An instrument, not a form. The pad IS the preview: file-nodes live inside
-// the grid at their natural (attribute) positions; the puck is a gravity
-// source; relevance is spatial distance. As the user drags, nearby nodes
-// brighten, grow, and reveal their names; distant ones fade into the
-// field. Four corners carry pictograms (folder-stack / hub-and-spoke /
-// cluster / pulse) — the labels are the shapes themselves. Ambient halo
-// pulse + drag trail + quadrant whisper round out the tactile feel.
+// Logos pad and grip are one control: interactive tuning + static status.
 
 class _LogosDynamicsStage extends StatelessWidget {
   final double padX;
@@ -3781,21 +3769,13 @@ class _LogosDynamicsStage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (ctx, c) {
-      // Layout: pad takes available width minus the grip column.
-      // Grip is fixed ~128px so its content reads at the same size
-      // regardless of how wide the settings panel is.
+      // Pad uses the remaining width; grip stays fixed at 128px.
       const gripW = 128.0;
       const gap = 12.0;
       final totalW = c.maxWidth.clamp(420.0, 720.0).toDouble();
       final padW = (totalW - gripW - gap).clamp(280.0, 600.0).toDouble();
       final padH = (padW / 1.7).clamp(220.0, 360.0).toDouble();
-      // Row height = max(padH, gripIntrinsicH). IntrinsicHeight makes the
-      // row stretch to whichever child wants more vertical space, so the
-      // grip's fixed-typography column is never clipped at narrow widths
-      // (where the pad's aspect-ratio height would otherwise win and
-      // overflow the grip's content). The pad keeps its preferred height
-      // via the inner SizedBox; the grip reports its natural Column
-      // height as its intrinsic.
+      // Use IntrinsicHeight so whichever child is taller sets the row height.
       return SizedBox(
         width: totalW,
         child: IntrinsicHeight(
@@ -3839,9 +3819,8 @@ class _LogosPad extends StatefulWidget {
   State<_LogosPad> createState() => _LogosPadState();
 }
 
-/// A single waypoint on the puck's recent trail. Fade is computed from
-/// age at paint time rather than stored — avoids drifting over long
-/// idle periods.
+/// Trail point used for the puck history.
+/// Alpha is calculated from age at paint time, not stored state.
 class _TrailDot {
   final double x;
   final double y;
@@ -3851,31 +3830,21 @@ class _TrailDot {
 
 class _LogosPadState extends State<_LogosPad>
     with SingleTickerProviderStateMixin {
-  // Ambient pulse driving the puck halo and a faint field shimmer.
-  // 2.6s period — slow enough to feel like a living surface, fast
-  // enough that a glance catches the motion.
+  // Ambient pulse drives the halo and field shimmer.
   late final AnimationController _ambient;
 
-  // Recent puck positions. New entries append on every emit; old ones
-  // prune each paint. Capped so extreme drag storms don't blow memory.
+  // Keep a capped trail of puck positions while dragging.
   final List<_TrailDot> _trail = [];
   static const int _kTrailMax = 18;
   static const Duration _kTrailFade = Duration(milliseconds: 520);
 
   bool _hovered = false;
 
-  // Parallax — normalized -1..1 from pad center based on cursor
-  // position. _target is set by hover; _current eases toward it on
-  // every frame so a fast cursor exit settles back to neutral over
-  // ~6 ticks, and re-entry feels physically resisted (not snappy).
+  // Cursor parallax is normalized to [-1, 1] around the pad center.
   Offset _targetParallax = Offset.zero;
   Offset _currentParallax = Offset.zero;
 
-  // Scroll parallax — additive Y offset based on where the pad sits
-  // inside its ancestor scrollable. Recomputed on every scroll
-  // notification; -1..1 normalized (pad above viewport center → +y;
-  // below → -y; combined this makes the deeper layers "lag behind"
-  // foreground as you scroll past, selling depth.
+  // Scroll parallax adds a small Y shift based on scroll position.
   ScrollPosition? _scrollPos;
   double _scrollParallaxY = 0.0;
 
@@ -3896,7 +3865,7 @@ class _LogosPadState extends State<_LogosPad>
       _scrollPos?.removeListener(_onScroll);
       _scrollPos = found;
       _scrollPos?.addListener(_onScroll);
-      // First sample after layout settles.
+      // Recompute scroll offset once layout is settled.
       WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
     }
   }
@@ -3931,12 +3900,7 @@ class _LogosPadState extends State<_LogosPad>
     super.dispose();
   }
 
-  // Snap radius around dead-center. Inside: cursor input is attenuated
-  // by smoothstep so the puck gracefully docks at (0.5, 0.5). Outside:
-  // no effect — full precision for users who want a non-default value.
-  // 4.5% of pad width is roughly an 18px radius on a 400px pad: small
-  // enough to disappear during deliberate dragging, big enough to
-  // catch a "I just want defaults back" gesture.
+  // Snap radius around center dampens small pointer movements.
   static const double _kSnapRadius = 0.045;
 
   void _emit(Offset pos, double w, double h) {
@@ -3946,9 +3910,7 @@ class _LogosPadState extends State<_LogosPad>
     final dy = ny - 0.5;
     final dist = math.sqrt(dx * dx + dy * dy);
     if (dist < _kSnapRadius) {
-      // Smoothstep gain: 0 at center → 1 at radius. Cursor still
-      // moves the puck inside the zone, just with shrinking gain so
-      // it converges on (0.5, 0.5) as you approach the middle.
+      // Smoothstep keeps movement gradual near center.
       final t = dist / _kSnapRadius;
       final gain = t * t * (3 - 2 * t);
       nx = 0.5 + dx * gain;
@@ -3999,14 +3961,12 @@ class _LogosPadState extends State<_LogosPad>
           child: AnimatedBuilder(
             animation: _ambient,
             builder: (_, __) {
-              // Prune trail to live window. Done in build so it also
-              // tightens while idle (no emits → old dots still drop off).
+              // Drop stale trail points while rendering.
               final now = DateTime.now();
               _trail.removeWhere(
                 (d) => now.difference(d.at) > _kTrailFade,
               );
-              // Critically-damped exponential ease toward target. With
-              // an ambient frame rate of ~60fps this settles in ~150ms.
+              // Critically damped easing keeps the parallax smooth.
               const easing = 0.18;
               _currentParallax = Offset(
                 _currentParallax.dx +
@@ -4014,9 +3974,7 @@ class _LogosPadState extends State<_LogosPad>
                 _currentParallax.dy +
                     (_targetParallax.dy - _currentParallax.dy) * easing,
               );
-              // Combine hover parallax (full strength) with scroll
-              // parallax (gentler — multiplied down so a fast scroll
-              // doesn't overwhelm the surface). Scroll only affects Y.
+              // Combine hover and scroll parallax; scroll effect is softer.
               final combined = Offset(
                 _currentParallax.dx,
                 _currentParallax.dy + _scrollParallaxY * 0.55,
@@ -4041,11 +3999,8 @@ class _LogosPadState extends State<_LogosPad>
   }
 }
 
-/// A point in the pad representing one conceptual file. Base (bx, by)
-/// is its natural address — derived offline from "how folder-dominant
-/// vs history-dominant is it" and "how local vs central." Puck
-/// distance to base IS the live relevance. Paths are illustrative —
-/// the pad is a teaching surface, not a live query against the repo.
+/// Point in the pad for one file path.
+/// Relevance is based on distance from the puck.
 class _LogosNode {
   final String path;
   final double bx;
@@ -4053,18 +4008,8 @@ class _LogosNode {
   const _LogosNode(this.path, this.bx, this.by);
 }
 
-// Real paths from this app, anchored on the recent Logos-pad work
-// session as the implicit "source." That makes every label honest —
-// these files actually exist; their position on the pad reflects the
-// kind of relatedness each archetype emphasises:
-//
-//   • folder×far: whole module trees we've been touching
-//   • history×far: files git sees move with almost everything (hubs)
-//   • folder×near: siblings of logos_git.dart inside backend/
-//   • history×near: this exact dev session's co-change cluster
-//
-// No stub paths, no "auth/" cosplay. The pad demonstrates the engine
-// using the engine's own neighborhood.
+// Nodes are real paths from this app/session.
+// Grouped by axis (folder/history x far/near).
 const List<_LogosNode> _kLogosNodes = [
   // Folder × Far — directory roots, the architecture-level view.
   _LogosNode('backend/', 0.12, 0.16),
@@ -4107,10 +4052,7 @@ class _LogosPadPainter extends CustomPainter {
     required this.tokens,
   });
 
-  // Per-layer parallax magnitudes in pixels at full deflection. Deeper
-  // layers shift OPPOSITE to the cursor (less, recessed feel); the
-  // foreground shifts WITH the cursor (more, popped feel). Combined,
-  // they create a tilt-card depth illusion centered on the puck.
+  // Parallax offsets for depth layers, in pixels at full deflection.
   static const double _depthFieldPx = -3.0;
   static const double _depthGridPx = -2.0;
   static const double _depthGlyphPx = 1.5;
@@ -4129,8 +4071,7 @@ class _LogosPadPainter extends CustomPainter {
     canvas.save();
     canvas.clipRRect(rr);
 
-    // Each layer is wrapped in save/translate/restore so the parallax
-    // is purely visual — no math elsewhere needs to know about it.
+    // Each depth layer is translated independently.
     void layer(double depthPx, void Function() draw) {
       final s = _shift(depthPx);
       canvas.save();
@@ -4162,28 +4103,21 @@ class _LogosPadPainter extends CustomPainter {
     canvas.drawRRect(rr, border);
   }
 
-  // ── Field: a stippled, structural background ─────────────────────
   //
-  // No glow, no atmosphere. Instead: a deterministic dot field — like
-  // graph paper or a Risograph stipple — that gives the surface
-  // texture without leaning on radial blur. Density is uniform; the
-  // PUCK creates emphasis through its own structure (rings, ticks),
-  // not through bleeding light into the field.
-  //
-  // Pattern is generated from a stable hash so it doesn't shimmer
-  // between frames; only the puck and nodes redraw meaningfully.
+  /// Deterministic textured background.
+  ///
+  /// Stable hash keeps the dot field static between frames.
   void _paintField(Canvas canvas, double w, double h) {
     canvas.drawRect(
       Rect.fromLTWH(0, 0, w, h),
       Paint()..color = tokens.surface0.withValues(alpha: 0.5),
     );
 
-    // Stipple — small static dots on a coarse grid, each jittered
-    // pseudo-randomly so it reads as texture, not as a grid.
+    // Static jittered dots create subtle texture without shimmer.
     const step = 14.0;
     final dotPaint = Paint()..style = PaintingStyle.fill;
     int hash(int a, int b) {
-      // 32-bit Wang-style hash. Cheap, deterministic, no allocations.
+      // Deterministic hash avoids allocations and drift.
       var n = (a * 73856093) ^ (b * 19349663);
       n = (n ^ (n >> 13)) * 1274126177;
       return n & 0x7fffffff;
@@ -4205,12 +4139,11 @@ class _LogosPadPainter extends CustomPainter {
     }
   }
 
-  // ── Grid: quadrant crosshair at low opacity ───────────────────────
   void _paintGrid(Canvas canvas, double w, double h) {
     final g = Paint()
       ..color = tokens.chromeBorder.withValues(alpha: 0.14)
       ..strokeWidth = 1;
-    // Dashed crosshair — hand-rolled for control over dash size.
+    // Dashed crosshair centered on both axes.
     _drawDashedLine(canvas, Offset(w * 0.5, 16), Offset(w * 0.5, h - 16),
         g, dashLen: 3, gapLen: 5);
     _drawDashedLine(canvas, Offset(16, h * 0.5), Offset(w - 16, h * 0.5),
@@ -4237,11 +4170,7 @@ class _LogosPadPainter extends CustomPainter {
     }
   }
 
-  // ── Corner pictograms: four geometric glyphs replacing corner text.
-  //
-  // Each glyph is a mini-diagram of the archetype. Active corner
-  // (nearest to puck) renders in textNormal; others in textFaint.
-  // Sizes tuned so the glyphs read as pictograms, not decoration.
+  // Corner glyphs for each quadrant; active corner is brighter.
   void _paintPictograms(Canvas canvas, double w, double h) {
     const inset = 20.0;
     const glyphSize = 22.0;
@@ -4336,7 +4265,6 @@ class _LogosPadPainter extends CustomPainter {
     }
   }
 
-  // ── Axis hints: ultra-faint directional words at edges ────────────
   void _paintAxisHints(Canvas canvas, double w, double h) {
     final col = tokens.textFaint.withValues(alpha: 0.35);
     void word(String s, Offset c, {double rotate = 0}) {
@@ -4365,13 +4293,11 @@ class _LogosPadPainter extends CustomPainter {
     word('NEAR', Offset(12, h * 0.75), rotate: -math.pi / 2);
   }
 
-  // ── Nodes: the constellation. Brightness + size track relevance. ──
   //
   // Relevance = 1 / (1 + k·d²) — a soft Lorentzian that gives nearby
   // nodes a strong pull while letting far ones fade gracefully.
-  //
-  // Top-3 nodes get labels. Labels draw on the side of the node
-  // opposite the puck (so they never tuck INTO the puck halo).
+  // Relevance is 1/(1 + k*d²), so nearby nodes dominate smoothly.
+  // Top-3 labels are placed opposite the puck to avoid overlap.
   void _paintNodes(Canvas canvas, double w, double h) {
     final px = x * w;
     final py = y * h;
@@ -4382,9 +4308,7 @@ class _LogosPadPainter extends CustomPainter {
       final dx = (nx - px) / w;
       final dy = (ny - py) / h;
       final d2 = dx * dx + dy * dy;
-      // k=12 tuned by eye: a node 25% pad-units away lands ~0.25
-      // relevance, corner-to-opposite-corner ≈ 0.08. Top-3 at a
-      // corner read as > 0.6.
+      // k=12 keeps nearby nodes readable while suppressing distant ones.
       final rel = 1.0 / (1.0 + 12.0 * d2);
       scored.add((n: n, r: rel, pos: Offset(nx, ny)));
     }
@@ -4405,8 +4329,7 @@ class _LogosPadPainter extends CustomPainter {
       )!;
       dot.color = col;
       canvas.drawCircle(s.pos, r, dot);
-      // High-relevance nodes get a thin OUTLINE ring instead of a
-      // glow halo. Same "this one matters" affordance, structural.
+      // Use an extra ring for high-relevance nodes.
       if (s.r > 0.35) {
         ring.color = tokens.accentBright
             .withValues(alpha: ((s.r - 0.35) / 0.65 * 0.55).clamp(0.0, 1.0));
@@ -4414,7 +4337,7 @@ class _LogosPadPainter extends CustomPainter {
       }
     }
 
-    // Label the top 3 most-relevant. Already at tail of sorted list.
+    // Label the top 3 nodes by relevance.
     final topN = scored.sublist(scored.length - 3);
     for (final s in topN) {
       final labelAlpha = ((s.r - 0.18) / 0.5).clamp(0.0, 1.0);
@@ -4445,9 +4368,7 @@ class _LogosPadPainter extends CustomPainter {
       textDirection: TextDirection.ltr,
     )..layout();
 
-    // Place label OPPOSITE the puck side of the node so it doesn't
-    // collide with the puck's halo. Fall back to right if the node
-    // sits very close to the puck (direction is ill-defined there).
+    // Place labels away from the puck and keep them readable.
     final dx = nodePos.dx - puckPos.dx;
     final dy = nodePos.dy - puckPos.dy;
     final len = math.sqrt(dx * dx + dy * dy);
@@ -4472,11 +4393,7 @@ class _LogosPadPainter extends CustomPainter {
     tp.paint(canvas, Offset(lx, ly));
   }
 
-  // ── Trail: a polyline brushstroke of the recent gesture ───────────
-  //
-  // Replaces the dot-fade trail with a single thin polyline whose
-  // alpha tapers per segment. Reads as "I remember where you came
-  // from" without adding any new glow surface.
+  // Render trail as a thin polyline with age-based alpha.
   void _paintTrail(Canvas canvas, double w, double h) {
     if (trail.length < 2) return;
     final fadeMs = _LogosPadState._kTrailFade.inMilliseconds;
@@ -4499,11 +4416,7 @@ class _LogosPadPainter extends CustomPainter {
     }
   }
 
-  // ── Puck: a precision instrument, not a light source ──────────────
-  //
-  // Concentric thin rings + 4 directional ticks + center dot. Reads
-  // as a sniper reticle / surveyor's mark. Breathing only modulates
-  // ring spacing by ~1px so it stays alive without glowing.
+  // Draw puck rings, directional ticks, and center dot.
   void _paintPuck(Canvas canvas, double w, double h) {
     final px = x * w;
     final py = y * h;
@@ -4516,8 +4429,7 @@ class _LogosPadPainter extends CustomPainter {
 
     final accent = tokens.accentBright;
 
-    // Filled disc backing — dense at the center, falling off via two
-    // concentric strokes. No alpha bleed; cleanly bounded.
+    // Draw filled center and concentric outer strokes.
     canvas.drawCircle(
       c,
       ringInner - 0.5,
@@ -4538,8 +4450,7 @@ class _LogosPadPainter extends CustomPainter {
       ..color = accent.withValues(alpha: 0.45);
     canvas.drawCircle(c, ringOuter, stroke);
 
-    // Cardinal ticks — short outward marks at N/E/S/W of the outer
-    // ring. Compass / surveyor cue.
+    // Cardinal ticks at N/E/S/W of the outer ring.
     final tickPaint = Paint()
       ..color = accent.withValues(alpha: 0.7)
       ..strokeWidth = 1.1
@@ -4566,10 +4477,9 @@ class _LogosPadPainter extends CustomPainter {
     );
   }
 
-  // ── Quadrant whisper: the current archetype's name, surfacing only
-  //    when the puck commits to a corner. Fades smoothly with distance
-  //    from center; disappears entirely at the exact midpoint so the
-  //    centre position "neutral balance" reads clean.
+  // Show a quadrant label only when the puck is meaningfully in a corner.
+  // Opacity scales with distance-from-center so the neutral center state
+  // stays label-free.
   void _paintQuadrantWhisper(Canvas canvas, double w, double h) {
     final dx = x - 0.5;
     final dy = y - 0.5;
@@ -4612,8 +4522,7 @@ class _LogosPadPainter extends CustomPainter {
       old.trail.length != trail.length;
 }
 
-/// Four corners of the pad. The `whisper` is a short, intimate name
-/// the pad surfaces near the puck when it commits to a corner.
+/// Quadrant labels for the pad; the label appears near the puck near each corner.
 enum _LogosQuadrant {
   moduleMap,
   repoCenters,
@@ -4635,10 +4544,9 @@ enum _LogosQuadrant {
       };
 }
 
-/// Static info plate to the right of the pad. Reads as an instrument
-/// label — what's under the hood, presented as engraved text. Doesn't
-/// react to puck position; it's the constant that grounds the live
-/// surface next to it.
+/// Static info plate to the right of the pad.
+/// It's read-only and mirrors the active Logos configuration while the
+/// puck interaction updates continuously.
 class _LogosGrip extends StatelessWidget {
   const _LogosGrip();
 
@@ -4681,8 +4589,8 @@ class _LogosGrip extends StatelessWidget {
           const SizedBox(height: 14),
           _GripDivider(t: t),
           const SizedBox(height: 12),
-          // Spec rows — instrument-plate style. Two columns, the
-          // value column right-aligned so the eye can scan numerics.
+          // Static stat rows use a two-column layout so values stay
+          // stable and easy to compare.
           _GripStat(label: 'method', value: 'heat-kernel', t: t),
           _GripStat(label: 'graph', value: 'born-mix', t: t),
           _GripStat(label: 'axes', value: '4', t: t),
@@ -4695,8 +4603,6 @@ class _LogosGrip extends StatelessWidget {
           const SizedBox(height: 14),
           _GripDivider(t: t),
           const SizedBox(height: 10),
-          // A faint serial-style id at the bottom — fictional, but
-          // sells the "this is a real piece of equipment" feel.
           Text(
             'self-tuned\nno manual\nweights',
             style: TextStyle(
@@ -4747,10 +4653,7 @@ class _GripStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Vertical stack: small-caps label on top, value below. Avoids
-    // any wrap risk from wide values inside the narrow grip column,
-    // and reads as a stamped spec entry — closer to an instrument
-    // plate than a settings row.
+    // Keep value rows two-line to avoid wrapping.
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Column(
@@ -5674,11 +5577,9 @@ class _RecentSamplesList extends StatelessWidget {
 }
 
 /// Custom toggle for "Reduce motion."
-///
 /// Not a checkbox — the element *itself* demonstrates its effect. The
 /// dots show a traveling-Gaussian pulse whose forward velocity is
 /// modulated by a single envelope:
-///
 ///   * [_speed] is a 0..1 envelope. At 1 the wave advances at the base
 ///     frequency (≈ 0.556 Hz); at 0 it sits perfectly still. Toggling
 ///     the pref animates [_speed] across 520ms with easeOutCubic in
@@ -5687,24 +5588,19 @@ class _RecentSamplesList extends StatelessWidget {
 ///     `dt * baseHz * speed` each frame and stops itself once the
 ///     envelope has settled to zero (no point burning frames on a
 ///     frozen wave).
-///
 /// Going INTO reduced: the wave decelerates and the bump freezes
 /// wherever it lands — never a teleport, never a disappearing dot.
 /// Going OUT: the bump accelerates back up from its frozen position.
 /// The frequency badge reads `speed * baseHz` so the Hz number lerps
 /// honestly to 0.00 as the wave actually slows, not snapped at toggle
 /// time.
-///
 /// Keyboard: Space/Enter toggle while focused. Focus draws an accent
 /// ring. No tap-down scale on this control by design — see the build
 /// method.
-/// "Change sort guide" picker — three options, rendered as an interactive
-/// demo. Above the option row a small stage holds six "file tiles" (each
-/// with a stable identity: id / cluster color / letter / impact weight).
-/// Hover or focus any option and the tiles *rehearse* that ordering in
-/// real time, animating their positions without committing. Click to
-/// commit. Same energy as Reduce Motion — the element shows you what it
-/// does, so the label becomes a footnote.
+/// Interactive sort-guide picker with a live preview.
+/// Six demo tiles with stable identity (id, cluster color, letter,
+/// impact weight) animate into each ordering without committing.
+/// Hover/focus previews an option; click commits it.
 class _ChangeSortGuide extends StatefulWidget {
   final FileSortGuide value;
   final bool inverted;
@@ -5722,9 +5618,9 @@ class _ChangeSortGuide extends StatefulWidget {
   State<_ChangeSortGuide> createState() => _ChangeSortGuideState();
 }
 
-/// One demo tile in the rehearsal stage. Stable identity across re-sorts
-/// so the implicit AnimatedPositioned animates the *same* tile from old
-/// position → new position (not a spawn/fade swap).
+/// One demo tile in the preview.
+/// Stable identity across re-sorts so AnimatedPositioned animates the same
+/// tile from old position to new position (no spawn/fade swap).
 class _SortDemoTile {
   final int id;
   final int cluster;
@@ -5840,7 +5736,6 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
   }
 
   /// Return tile ids in the order they should appear for [guide].
-  ///
   /// Runs the mode's own sort on non-conflict tiles, applies invert if
   /// requested (by reversing the non-conflict list), then prepends any
   /// conflict tiles at position 0. Mirrors the production rule in
@@ -5951,12 +5846,10 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
             },
           ),
           const SizedBox(height: 12),
-          // ── The rehearsal stage — also the invert toggle ─────────
-          // The stage itself is the interaction surface: clicking
-          // anywhere on the rehearsal tiles flips the sort order.
-          // The tiles animate through to the inverted arrangement via
-          // the same AnimatedPositioned machinery, so the "game board"
-          // gesture and the invert mechanic are the same thing.
+          // The preview itself is the interaction surface: tapping any tile
+          // flips the sort-order inversion.
+          // The same AnimatedPositioned flow drives both preview and commit
+          // so the motion stays consistent.
           MouseRegion(
             cursor: SystemMouseCursors.click,
             child: GestureDetector(
@@ -5985,7 +5878,6 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
             ),
           ),
           const SizedBox(height: 10),
-          // ── Option row with a sliding selection pill ─────────────
           // The Row of labels is a STABLE subtree: its GestureDetector
           // + MouseRegion elements never rebuild on hover. Reactive
           // visuals (pill position + each label's color) live in
@@ -6152,15 +6044,10 @@ class _SortGuideBadge extends StatelessWidget {
   }
 }
 
-/// The rehearsal stage — a horizontal strip of demo tiles that physically
-/// translate to new x-positions when the effective sort order changes.
-/// Each tile's ValueKey is its id, so Flutter's element reconciliation
-/// keeps the *same* widget instance at each id and AnimatedPositioned
-/// tweens its new left offset smoothly.
-///
-/// Sized responsively via LayoutBuilder — tile width fills the available
-/// room up to a cap so the stage scales cleanly from a narrow settings
-/// column to a wide one without stretching tiles absurdly.
+/// Horizontal strip of demo tiles that animate to new x-positions when the
+/// effective sort order changes.
+/// Each tile's ValueKey is its id, so Flutter keeps the same widget
+/// instance per tile and AnimatedPositioned interpolates its new left offset.
 class _SortDemoStage extends StatelessWidget {
   final List<_SortDemoTile> tiles;
   final Map<int, int> positions;
@@ -6352,7 +6239,6 @@ class _SortDemoTileBody extends StatelessWidget {
 
 /// A transparent label that sits on top of the shared sliding selection
 /// pill. Hovering writes to [previewing]; tap commits the choice.
-///
 /// Crucial architectural detail: the `MouseRegion` + `GestureDetector`
 /// form a **stable** element tree — neither ever rebuilds on hover or
 /// press. Hover/press state travels through [ValueNotifier]s, and only
@@ -6362,7 +6248,6 @@ class _SortDemoTileBody extends StatelessWidget {
 /// lifecycle; the "first click gets eaten" bug was caused by an
 /// ancestor `setState` on `onEnter` swapping those recognizers before
 /// the tap could resolve.
-///
 /// `HitTestBehavior.opaque` on the GestureDetector makes the full chip
 /// bounds tappable, not just the text glyphs — so a click on whitespace
 /// near the label still commits.
@@ -6733,7 +6618,6 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
                   ),
                 ),
                 const SizedBox(width: 12),
-                // ── 5-dot wave: identical paint, now also a scrub ────
                 // No onTap here — tap falls through to the outer
                 // row-level GestureDetector so the whole button keeps
                 // toggling. Only horizontal drag is captured so scrub
@@ -6844,7 +6728,6 @@ class _HzBadge extends StatelessWidget {
 }
 
 /// Five-dot traveling Gaussian pulse.
-///
 /// Phase is the only input — the bump always paints at full magnitude.
 /// "Slowing down" is expressed by the parent advancing phase more slowly
 /// (or not at all when the speed envelope settles to zero), not by
@@ -7209,8 +7092,8 @@ class _InstantBlameMiniIndicator extends StatelessWidget {
           ),
           // Tooltip — present iff instant. When off, it's simply
           // absent (because the delay would have held it back).
-          // Scale-from-cursor materialization on toggle sells the
-          // "popped immediately into place" beat.
+          // It scales in from the cursor so the tooltip appears with instant
+          // mode timing.
           Positioned(
             top: 13,
             left: 10,
@@ -7409,19 +7292,7 @@ String _reviewGuideHint(int stage) {
       return 'Optional guidance for what the review should care about.';
   }
 }
-
-// ── Commit-message format stage ────────────────────────────────────────
-//
-// Three-axis preference for the shape of generated commit messages:
-//   * Structure — title+body / title only / freeform.
-//   * Voice     — verb-led / descriptive / narrative.
-//   * Coverage  — essentials / balanced / everything.
-//
-// Mirrors the visual language of the Change Sort Guide: a bordered
-// stage with a preview card up top and sliding-pill chip rows below.
-// Hover any control to peek the resulting message; click to commit.
-// All three axes feed a single pure function that assembles a sample
-// commit message — so users see the exact combination they'd get.
+/// Commit format controls with live preview.
 
 class _CommitFormatStage extends StatefulWidget {
   final CommitStructure structure;
@@ -7467,18 +7338,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
   CommitCoverage _effectiveCoverage(CommitCoverage? peek) =>
       peek ?? widget.coverage;
 
-  /// Sample-message assembler. The same scene plays out across every
-  /// preview: a fox is taught to refuse off-scent tokens, with amber as
-  /// scent-witness, drift as ambient air, and a gate thorn that marks
-  /// the refusals. Coverage controls how far into the scene the
-  /// narrator goes (headline / aftermath / deep environment). Voice
-  /// controls the grammar and pacing. Guardrail controls the narrator's
-  /// mental state: at loose the narrator can barely be bothered to
-  /// finish sentences; at paranoid the narrator notices the wrong
-  /// things (wood grain, fence-post angles, what amber "weighs" on
-  /// certain mornings) and spirals. Every cell of the 4 (beats) ×
-  /// 3 (voices) × 4 (stages) matrix is hand-written so the sample
-  /// genuinely shifts with each axis instead of word-swapping.
+  /// Build preview text for the selected structure, voice, and coverage.
   String _previewFor({
     required CommitStructure structure,
     required CommitVoice voice,
@@ -7504,14 +7364,8 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     }
   }
 
-  /// Walk the 27 (structure × voice × coverage) combinations for the
-  /// given [guardrailStage] and return the tallest rendered height at
-  /// [width] under [style]. The preview card uses this to reserve a
-  /// footprint that's the exact maximum for *this* stage — so chip
-  /// swaps never grow the card, but a loose-stage preview isn't stuck
-  /// at paranoid-stage height either. Moving the guardrail slider
-  /// resizes the card to fit the new stage's ceiling. Cheap — 27
-  /// TextPainter layouts, once per width- or stage-change.
+  /// Compute max preview height across all combinations for this stage.
+  /// Keeps the preview card height stable while stage options change.
   double _maxPreviewHeight({
     required double width,
     required TextStyle style,
@@ -7540,7 +7394,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     return tallest;
   }
 
-  /// Beat 1 of the scene: the headline. What was done with the cookie.
+  /// Headline text for each voice/stage combination.
   String _titleFor(CommitVoice voice, int stage) {
     switch (voice) {
       case CommitVoice.verbLed:
@@ -7582,8 +7436,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     }
   }
 
-  /// Beat 2 of the scene: what the fox actually does now. The body's
-  /// opening sentence; coverage tiers add suffixes after it.
+  /// Base body text for each voice/stage combination.
   String _baseFor(CommitVoice voice, int stage) {
     switch (voice) {
       case CommitVoice.verbLed:
@@ -7636,9 +7489,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     }
   }
 
-  /// Beat 3 of the scene: the aftermath. What the porch and backyard
-  /// look like after the refusals. Pulled in by the "balanced" coverage
-  /// tier and inherited by "everything".
+  /// Extra text for the "balanced" coverage tier (also included in "everything").
   String _balancedSuffixFor(CommitVoice voice, int stage) {
     switch (voice) {
       case CommitVoice.verbLed:
@@ -7688,11 +7539,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     }
   }
 
-  /// Beat 4 of the scene: the deep environment. Amber, drift, and the
-  /// gate thorn — the witnesses that keep the day's record. This is
-  /// where the schizo dial hits hardest: at paranoid the narrator
-  /// starts noticing things the fox would notice and nobody else
-  /// would. Pulled in only by the "everything" coverage tier.
+  /// Extra text for the "everything" coverage tier only.
   String _everythingSuffix(CommitVoice voice, int stage) {
     switch (voice) {
       case CommitVoice.verbLed:
@@ -7857,19 +7704,9 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
             ],
           ),
           const SizedBox(height: 10),
-          // Live preview card — FIXED height.
-          //
-          // The card reserves exactly as much height as the tallest of
-          // the 27 (structure × voice × coverage) variants needs at the
-          // current width, measured with a TextPainter for the current
-          // guardrail stage's vocabulary. Because the reserved height
-          // is the max, no variant can ever grow the card; swapping
-          // chips only changes the text inside, never the box. Chip
-          // rows below the card therefore never shift. No AnimatedSize,
-          // no ConstrainedBox minHeight — those were floor-only and let
-          // the card grow above the floor for the paranoid × narrative
-          // × everything variant, which is what caused the full-page
-          // jump the user saw.
+          // Fixed-height preview card.
+          // Pre-measure all format combinations once per width so chip
+          // swaps never change card height.
           LayoutBuilder(
             builder: (context, constraints) {
               const horizontalPad = 10.0;
@@ -8192,4 +8029,5 @@ class _CommitFormatChipLabel<T> extends StatelessWidget {
     );
   }
 }
+
 

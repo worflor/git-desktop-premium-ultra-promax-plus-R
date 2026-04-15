@@ -28,7 +28,6 @@ import 'edit_units.dart';
 import 'motion_policy.dart';
 import 'patch_engine.dart';
 
-// ── Row layout constants (single source of truth) ────────────────────────
 //
 // The diff row has a fixed left-edge composition: a 2px ribbon (staged
 // state / keyboard focus indicator), then a 16px stage-sigil cell. Overlays
@@ -45,7 +44,6 @@ const double _kStageCellWidth = 16.0;
 const double _kLeftReserveWidth = _kRibbonWidth + _kStageCellWidth;
 const double _kLineItemExtent = 18.0;
 
-// ── Data types (Moved to diff_models.dart) ────────────────────────────────────
 
 class _AgeRange {
   final DateTime min;
@@ -132,7 +130,6 @@ String? _diffDisplayDirectory(String filePath) {
   return parts.sublist(0, parts.length - 1).join('/');
 }
 
-// ── DiffShell ─────────────────────────────────────────────────────────────────
 
 class DiffShell extends StatefulWidget {
   final String filePath;
@@ -287,7 +284,6 @@ class _DiffShellState extends State<DiffShell> {
   double _motionRate = 1.0;
   bool _instantBlameHover = false;
 
-  // ── Staging ────────────────────────────────────────────────────────────
   static const Duration _kApplyDebounce = Duration(milliseconds: 250);
   final FocusNode _stagingFocus = FocusNode(debugLabel: 'DiffShellStaging');
   Timer? _applyDebounce;
@@ -748,7 +744,6 @@ class _DiffShellState extends State<DiffShell> {
     return _blameByFile[_blameKey(filePath, _trailSelectedHash)]?[lineNum];
   }
 
-  // ── Wear map ────────────────────────────────────────────────────────────
 
   Set<String> _uniqueFilePathsInDiff() {
     final paths = <String>{};
@@ -862,7 +857,6 @@ class _DiffShellState extends State<DiffShell> {
     });
   }
 
-  // ── Staging orchestration ─────────────────────────────────────────────
 
   bool get _stagingEnabled =>
       widget.enableStaging && widget.repositoryPath != null;
@@ -963,7 +957,6 @@ class _DiffShellState extends State<DiffShell> {
     _scheduleApply();
   }
 
-  // ── Paint-drag ────────────────────────────────────────────────────────
 
   void _beginPaint(ParsedLine line) {
     final idx = _lines.indexWhere((l) => identical(l, line));
@@ -1015,7 +1008,6 @@ class _DiffShellState extends State<DiffShell> {
 
   final GlobalKey _listViewKey = GlobalKey();
 
-  // ── Keyboard navigation ───────────────────────────────────────────────
 
   KeyEventResult _handleKey(FocusNode _, KeyEvent event) {
     if (!_stagingEnabled) return KeyEventResult.ignored;
@@ -1080,7 +1072,6 @@ class _DiffShellState extends State<DiffShell> {
   /// should play its reveal / peripheral animations (skip during fast scroll,
   /// play when the viewport has settled). No setState — the flag is sampled
   /// at itemBuilder time; changing it does not trigger a list rebuild.
-  ///
   /// Also cancels any pending blame-hover load and clears the hovered line:
   /// with whole-row hover, a stationary cursor sees every scrolled-past row
   /// fire its onEnter, which would otherwise stack blame loads for rows the
@@ -1116,14 +1107,12 @@ class _DiffShellState extends State<DiffShell> {
   /// acceleration. When the system is clearly decelerating toward rest,
   /// eagerly warm blame for the current file so the upcoming hover doesn't
   /// pay both the hover-debounce timer AND the git blame roundtrip.
-  ///
   /// Verlet / symplectic Euler math (Principia Circle XXXIX — integer
   /// symplectic mechanics, real-valued variant here since scroll is 1D
   /// and we don't need eigenvalue stability):
   ///   v[n]   = x[n] − x[n-1]                 (backward difference)
   ///   a[n]   = x[n] − 2·x[n-1] + x[n-2]      (2nd-order central)
   ///   x[n+1] = x[n] + v[n] + 0.5·a[n]        (leapfrog extrapolation)
-  ///
   /// Settle condition: |v| below a line-height-ish threshold AND
   /// sign(v)·sign(a) ≤ 0 (the jerk opposes motion → decelerating). The
   /// thresholds are modest — we want to err on the side of firing EARLY,
@@ -1173,7 +1162,6 @@ class _DiffShellState extends State<DiffShell> {
   /// Predict the line index the scroll is about to settle on.
   /// Returns null when the engram isn't confident enough to call it —
   /// fast scroll (large |v|), or accelerating (|v| rising, v·a > 0).
-  ///
   ///   x(t)    = x₀ + v·t + ½·a·t²
   ///   settle  when v(t) = 0   →   t* = -v / a
   ///   Δx     = -v²/(2a)   (signed; positive when v > 0 & a < 0)
@@ -1424,7 +1412,6 @@ class _DiffShellState extends State<DiffShell> {
   /// prediction (gated by [_blameWarmedThisScroll]). Cost when the caches
   /// are cold is bounded by the number of files in the diff (typically
   /// 1-3); when warm it's a no-op.
-  ///
   /// This is the payoff for the engram — by the time the user's hover
   /// timer fires, blame for their current file is already loaded, so
   /// the chip + ghost appear with no git-roundtrip latency.
@@ -1583,7 +1570,6 @@ class _DiffShellState extends State<DiffShell> {
     }
   }
 
-  // ── Live apply ────────────────────────────────────────────────────────
 
   void _scheduleApply() {
     if (!_stagingEnabled) return;
@@ -1862,7 +1848,6 @@ class _DiffShellState extends State<DiffShell> {
     });
   }
 
-  // ── Paper Trail ────────────────────────────────────────────────────────
 
   // Regex matches our own synthetic multi-file label: "N selected files".
   static final RegExp _multiFileLabelRe = RegExp(r'^\d+ selected files?$');
@@ -2030,7 +2015,6 @@ class _DiffShellState extends State<DiffShell> {
 
     return Stack(children: [
       Column(children: [
-        // ── Paper trail strip ───────────────────────────────────────────
         if (_trailVisible)
           _TrailStrip(
             tokens: t,
@@ -2040,7 +2024,6 @@ class _DiffShellState extends State<DiffShell> {
             onSelectStop: _selectTrailStop,
             onSelectNow: _selectTrailNow,
           ),
-        // ── Toolbar: search + hunk nav ─────────────────────────────────────
         MaterialSurface(
           tone: AppMaterialTone.surface1,
           radius: 0,
@@ -2169,7 +2152,6 @@ class _DiffShellState extends State<DiffShell> {
           ]),
         ),
 
-        // ── Diff lines ────────────────────────────────────────────────────
         Expanded(
           child: Stack(
             children: [
@@ -2506,7 +2488,6 @@ class _DiffShellState extends State<DiffShell> {
   }
 }
 
-// ── Diff line ─────────────────────────────────────────────────────────────────
 
 class DiffLineView extends StatefulWidget {
   final ParsedLine line;
@@ -2803,7 +2784,6 @@ class _DiffLineState extends State<DiffLineView> {
       );
     }
 
-    // ── Stage sigil column ────────────────────────────────────────────
     // The sigil cell owns BOTH tap and drag — the interactive zone is the
     // sigil itself, not the wider margin. Clicking the line-number cell or
     // the line-state ribbon does nothing, by design.
@@ -3044,7 +3024,6 @@ class _DiffLineState extends State<DiffLineView> {
   /// it never intercepts clicks. TweenAnimationBuilder fades alpha from its
   /// begin value down to 0 on mount — since the widget key (stagingKey) is
   /// stable, the animation plays once per restore, not on every rebuild.
-  ///
   /// The pulse is MotionIntent.attention: the whole point is to break the
   /// reader's visual scan, so it plays even under reduce-motion — but its
   /// duration is scaled so the signal reads as feedback, not ornament.
@@ -3073,7 +3052,6 @@ class _DiffLineState extends State<DiffLineView> {
   }
 }
 
-// ── Stage sigil ──────────────────────────────────────────────────────────────
 //
 // The only staging affordance: a click target on the left of every +/- line.
 // Shows a filled glyph when staged, outlined when not. Tap = toggle. Vertical
@@ -3156,7 +3134,6 @@ class _StageSigil extends StatelessWidget {
   }
 }
 
-// ── Toolbar button ────────────────────────────────────────────────────────────
 
 class _DiffMeltText extends StatefulWidget {
   final String text;
@@ -3572,7 +3549,6 @@ class _DiffMeltTextPainter extends CustomPainter {
   }
 }
 
-// ── Paper Trail strip ─────────────────────────────────────────────────────
 
 /// A horizontal node-style rail for the file's commit history.
 /// Mirrors the visual language of `_MultiDiffProgressRail` in changes_page —
@@ -3867,7 +3843,6 @@ class _ToolbarBtnState extends State<_ToolbarBtn> {
   }
 }
 
-// ── Toolbar filename chip ─────────────────────────────────────────────
 // Compact filename display that lives in the diff toolbar next to the
 // search icon. Takes over the "big bold filename" that used to sit in
 // the _DiffFileHeader. Click toggles the paper trail; hovers underline.
@@ -3947,7 +3922,6 @@ class _ToolbarFileNameChipState extends State<_ToolbarFileNameChip> {
   }
 }
 
-// ── Hunk dropdown ─────────────────────────────────────────────────────────────
 
 class _HunkDropdown extends StatelessWidget {
   final List<_HunkHeader> hunks;
@@ -4000,7 +3974,6 @@ class _HunkDropdown extends StatelessWidget {
   }
 }
 
-// ── Sticky hunk header ────────────────────────────────────────────────────────
 //
 // While scrolled deep inside a hunk, the natural `@@ ... @@` header scrolls
 // away. This overlay pins the current hunk's label at the top of the viewport

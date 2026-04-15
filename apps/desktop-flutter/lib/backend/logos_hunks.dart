@@ -1,6 +1,4 @@
-// ═════════════════════════════════════════════════════════════════════════
 // LOGOS HUNKS — hunk-level heat-kernel diffusion
-// ═════════════════════════════════════════════════════════════════════════
 //
 // Sits parallel to LogosGit's file graph. Nodes are HUNKS inside one diff;
 // edges are the geometric bonds between them:
@@ -38,9 +36,7 @@ import 'engram_hunk_encoder.dart';
 import 'logos_core.dart';
 import 'logos_git.dart' show LogosGit;
 
-// ─────────────────────────────────────────────────────────────────────────
 // Data model
-// ─────────────────────────────────────────────────────────────────────────
 
 class DiffHunk {
   DiffHunk({
@@ -105,9 +101,7 @@ class HunkRanking {
   final double? wellDistance;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Parser — unified diff → List<DiffHunk>
-// ─────────────────────────────────────────────────────────────────────────
 
 List<DiffHunk> parseDiffHunks(String diffText) {
   final result = <DiffHunk>[];
@@ -186,11 +180,9 @@ String _pathFromDiffHeader(String line) {
   return candidate.startsWith('b/') ? candidate.substring(2) : candidate;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Identifier tokenisation — camelCase + snake_case + separators.
 // Deliberately matches the commit-tagger basename tokenizer so identifiers
 // coupling here are the same kind logos treats as meaningful elsewhere.
-// ─────────────────────────────────────────────────────────────────────────
 
 final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
 final _camelBoundary =
@@ -281,14 +273,11 @@ Set<String> _hunkChangeTokens(DiffHunk hunk) {
   return _tokensOf(buf.toString());
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Hunk-graph construction. Diffusion math lives in logos_core.dart —
 // this file only owns the hunk-specific axis blend (H_sym / H_file /
 // H_prox / H_vol) and the source-mass model.
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Build the hunk graph.
-///
 /// [fileCoupling] is an optional map that gives, for each non-source file,
 /// the file-φ score from LogosGit. When building cross-file hunk edges we
 /// multiply by this to get hunk-level cross-file weight for free — the
@@ -372,7 +361,6 @@ CsrGraph _buildHunkGraph({
     rowB[a] = (rowB[a] ?? 0.0) + w;
   }
 
-  // ── H_sym: Jaccard via inverted index ──────────────────────────────
   //
   // For each bucket of hunks sharing a token, add pair contributions
   // weighted by 1/bucket_size. Repeated across all shared tokens this
@@ -509,7 +497,6 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  // ── H_file: same-file = 1; cross-file = parent-file-φ ──────────────
   for (final group in fileToHunks.values) {
     for (var a = 0; a < group.length; a++) {
       for (var b = a + 1; b < group.length; b++) {
@@ -571,7 +558,6 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  // ── H_prox: within-file line distance ──────────────────────────────
   // Edges land inside the σ-scaled horizon; beyond it `exp(-d/σ)` is
   // below [_proxFloor] — numerically indistinguishable from zero after
   // D^{-1/2} normalisation — so we break the inner loop. Because `ids`
@@ -595,7 +581,6 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  // ── H_vol: add/delete balance similarity ───────────────────────────
   // balance_i = (adds - dels) / (adds + dels + 1) ∈ [-1, 1]
   // similarity_ij = 1 - |balance_i - balance_j| / 2 ∈ [0, 1]
   // Only contribute within-file (balance across unrelated files is
@@ -617,7 +602,6 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  // ── Top-K sparsification per node ──────────────────────────────────
   final trimmedRows = List<List<_Edge>>.generate(n, (_) => <_Edge>[]);
   edges.forEach((i, row) {
     final list = row.entries
@@ -691,9 +675,7 @@ class _Edge {
 // — see [chebyshevBasis], [recombineHeatPhi], and [kChebyshevSmallGraph]
 // for the polynomial-order policy this engine shares with logos_chunks.
 
-// ─────────────────────────────────────────────────────────────────────────
 // Public API — rank hunks by semantic centrality φ in this diff.
-// ─────────────────────────────────────────────────────────────────────────
 
 class HunkDiffusionResult {
   HunkDiffusionResult({
@@ -711,7 +693,6 @@ class HunkDiffusionResult {
 }
 
 /// Rank [hunks] by heat-kernel centrality.
-///
 /// If a [logosEngine] is provided we use it to compute the cross-file
 /// coupling prior for the H_file axis — the factorisation trick. If it's
 /// null (cold repo, no engine yet), within-file coupling still works and
@@ -739,7 +720,6 @@ HunkDiffusionResult rankHunksByPhi({
 /// hitch the UI on every diff-panel switch. Engine touches still
 /// happen on the calling thread (cheap diffuseWeighted), then the
 /// pure-data core hops to an isolate.
-///
 /// [engramAssets], when provided, enables the engram-backed H_sym blend
 /// and annotates rankings with their nearest Alexandria well. The assets
 /// are raw byte blobs so they cross the isolate boundary cheaply; the
@@ -776,10 +756,23 @@ Map<String, double> _resolveFileCoupling(
   if (touchedFiles.isEmpty) return coupling;
   try {
     final weights = <String, double>{for (final p in touchedFiles) p: 1.0};
-    final scores = engine.diffuseWeighted(weights);
-    for (final s in scores) {
-      if (touchedFiles.contains(s.path) && s.phi > 0) {
-        coupling[s.path] = s.phi;
+    final evidence = engine.gatherEvidence(
+      focusWeights: weights,
+      excludePaths: const {},
+    );
+    if (evidence != null) {
+      for (final s in evidence.ranked) {
+        if (touchedFiles.contains(s.path)) {
+          final inherited = s.support * s.integrity;
+          if (inherited > 0) coupling[s.path] = inherited;
+        }
+      }
+    } else {
+      final scores = engine.diffuseWeighted(weights);
+      for (final s in scores) {
+        if (touchedFiles.contains(s.path) && s.phi > 0) {
+          coupling[s.path] = s.phi;
+        }
       }
     }
   } catch (_) {
@@ -907,9 +900,7 @@ HunkDiffusionResult _rankHunksByPhiCore({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Prompt packing — emit full hunk bodies greedily under a byte budget.
-// ─────────────────────────────────────────────────────────────────────────
 
 class HunkPackResult {
   HunkPackResult({
@@ -926,7 +917,6 @@ class HunkPackResult {
 /// bodies; hunks that don't fit the remaining budget are skipped rather
 /// than truncated (a partial hunk is worse than no hunk — it breaks
 /// git-apply and confuses the model).
-///
 /// The output is wrapped with a `<logos_packed_diff>` tag carrying
 /// honest metadata: how many hunks admitted vs skipped, and the skipped
 /// hunk paths (so the AI knows the model saw a filtered view, not the

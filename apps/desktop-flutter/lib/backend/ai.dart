@@ -108,7 +108,6 @@ const _kDiffBudgetChars = 180000;
 /// Model-API reservations — character counts the prompt template
 /// itself eats, plus the response space we have to leave for the model.
 /// Both are model-contract properties, not UX knobs:
-///
 ///   • `_kReviewOverheadChars` — system prompt + evidence rules + XML
 ///     schema + structural framing + custom prompt for the *review*
 ///     and *commit-message* templates. Measured from actual prompt
@@ -402,7 +401,6 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       logosShape: commitShape,
     );
 
-    // --- API providers: direct HTTP, no CLI ---
     if (provider.kind == _ProviderKind.geminiApi) {
       final geminiModel = modelId.startsWith('gemini ')
           ? modelId.substring('gemini '.length)
@@ -428,7 +426,6 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       );
     }
 
-    // --- CLI providers: process spawning ---
     final attempts = _buildProviderAttempts(provider.kind, modelId,
         readOnly: readOnly, resolvedCommand: availability.resolution!.command);
     String? providerOutput;
@@ -506,7 +503,6 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
 /// `applyPatch(..., dryRun: true)` to verify. Code fences (```diff …)
 /// are stripped so downstream only ever sees clean `--- a/ +++ b/`
 /// headers regardless of how the model decided to frame its output.
-///
 /// This function deliberately stays dumb about WHAT context went in —
 /// the clever context engineering lives at call sites. Keeping the
 /// primitive generic lets the merge resolver, NL partial staging, and
@@ -536,7 +532,6 @@ Future<GitResult<AiPatchData>> generatePatch({
       );
     }
 
-    // --- API providers: direct HTTP ---
     if (provider.kind == _ProviderKind.geminiApi) {
       final geminiModel = modelId.startsWith('gemini ')
           ? modelId.substring('gemini '.length)
@@ -559,7 +554,6 @@ Future<GitResult<AiPatchData>> generatePatch({
       ));
     }
 
-    // --- CLI providers: same attempt-fallback loop as generateCommitMessage ---
     final attempts = _buildProviderAttempts(
       provider.kind,
       modelId,
@@ -666,7 +660,6 @@ bool isSensitivePath(String path) {
 /// it to Google" scenario. Uses the same regex set as [_scrubSecrets]
 /// so a secret that leaks in an error reply is ALSO one that would
 /// have been caught on the way out.
-///
 /// This is an HONEST-EFFORT scan — regexes are bypassable by
 /// obfuscation and it only knows common token shapes. But the normal
 /// failure mode (dev has `sk-abc123…` hardcoded in a .env that's
@@ -1060,9 +1053,7 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
   }
 }
 
-// ═════════════════════════════════════════════════════════════════════════
 // MUSE — three-phase oracle pipeline
-// ═════════════════════════════════════════════════════════════════════════
 //
 // Phase 1 (Diverge): cheap-and-loose model spews 12-25 ideas about the
 //   diff. Two registers mixed: code-rooted (a path, symbol, or domain
@@ -1697,10 +1688,8 @@ Set<String> _ideaHandleTokens(String idea) {
 
 /// Phase 2 — take the tagged brainstorm ideas and build a reshaped
 /// relevance neighborhood that the synthesis call will see.
-///
 /// Pipeline (all three pulls feed a single weighted seed map, then one
 /// attribution-aware diffusion pass settles the combined field):
-///
 ///   1. Each idea's text is embedded into the engram K-space via the
 ///      hunk encoder. Ideas with too little GloVe coverage to fit fall
 ///      through to the legacy path-token fuzzy match.
@@ -1984,22 +1973,37 @@ Future<({String text, LogosEmissionRecord? record})>
     // Attribution-aware diffusion. Temperature reacts to the kind
     // distribution — bugfix-heavy ideas get a tighter t, refactor /
     // risk-heavy ideas get a broader one.
-    final attribution = engine.diffuseWithAttribution(
-      weightsByPath: seedMap,
+    final evidence = engine.gatherEvidence(
+      focusWeights: seedMap,
       axisLabelByPath: axisLabel,
       t: _temperatureForIdeas(ideas),
     );
+    final attribution = evidence?.supportAttribution ??
+        engine.diffuseWithAttribution(
+          weightsByPath: seedMap,
+          axisLabelByPath: axisLabel,
+          t: _temperatureForIdeas(ideas),
+        );
     if (attribution == null) return (text: '', record: null);
 
     // Diffusion complete — canvas reveals neighbours coloured by φ +
     // well. wellByPath is only populated for paths the K-table knows
     // about (engram-less engines skip this bucket).
     final phiEmit = <String, double>{};
-    for (final s in attribution.combined) {
+    final emittedScores = evidence != null && evidence.ranked.isNotEmpty
+        ? [
+            for (final e in evidence.ranked)
+              RelevanceScore(
+                e.path,
+                e.utility > 0 ? e.utility : (e.support * e.integrity * 0.05),
+              ),
+          ]
+        : attribution.combined;
+    for (final s in emittedScores) {
       phiEmit[s.path] = s.phi;
     }
     final wellEmit = <String, String>{};
-    for (final s in attribution.combined) {
+    for (final s in emittedScores) {
       final w = engine.wellOf(s.path);
       if (w != null) wellEmit[s.path] = w;
     }
@@ -2016,7 +2020,7 @@ Future<({String text, LogosEmissionRecord? record})>
     // is the key "logos + muse" signal: it isn't just where the diff
     // lives, it's also where the brainstorm pointed, together.
     final scores = _rerankWithAttribution(
-      attribution.combined,
+      emittedScores,
       attribution.shareByAxis,
       perPathSources,
     );
@@ -3470,7 +3474,6 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // events, then returns us to the next phase.
   await Future<void>.delayed(Duration.zero);
 
-  // ── Parallel context enrichment ──────────────────────────────────────
   // Five anti-hallucination layers gathered simultaneously. The budget
   // split between sections is derived from two Logos signals on the
   // diff probe:
@@ -3627,13 +3630,11 @@ String _joinDiffSections({
 }
 
 /// Build unified-diff entries for all untracked files.
-///
 /// `git diff` and `git diff --cached` never show untracked files, but new
 /// files are exactly the kind of thing an AI reviewer needs to see (or
 /// it'll hallucinate that they don't exist). We read each file's content
 /// and emit a synthetic `/dev/null → b/<path>` diff block so the reviewer
 /// gets the full new file content as added lines.
-///
 /// [scopeArgs] follows the same convention as elsewhere — either `['--']`
 /// for "all files" or `['--', path1, path2, ...]` to restrict scope.
 /// Decode bytes as UTF-8, tolerating malformed sequences by falling back
@@ -3928,7 +3929,6 @@ class _FileMetaResult {
   });
 }
 
-// ── Anti-hallucination: change type classification ──────────────────
 /// Runs `git diff --name-status -M -C` to get the change type per file.
 /// Tells the AI whether each file is Added/Modified/Deleted/Renamed/Copied
 /// so it doesn't guess.
@@ -3992,7 +3992,6 @@ Future<String> _collectChangeTypes({
   }
 }
 
-// ── Anti-hallucination: structural verification ─────────────────────
 /// Scans the diff for import statements and new symbol definitions,
 /// then verifies them against the working tree. Produces a compact
 /// verification summary the AI can trust instead of guessing.
@@ -4191,7 +4190,6 @@ Future<String> _verifyRemovals(String repositoryPath, String diffText) async {
 
 /// Collect full file contents for small changed files to give the AI
 /// reviewer complete context (imports, function signatures, surrounding code).
-///
 /// Budget-aware: fills up to [budgetChars] with the most impactful files
 /// (largest diffs first), skipping files that exceed the remaining budget.
 /// Language-agnostic — just reads the working tree file.
@@ -4309,20 +4307,16 @@ Future<String> _collectFileContext({
 /// touch frequency, and volatility match. This surfaces the "hidden
 /// caller" class of bugs: things the reviewer needs to see even though
 /// they weren't changed.
-///
 /// Uses the Logos-inspired git engine ([LogosGit]). The diff's touched
 /// paths become a heat source ρ; relevance φ is the heat-kernel
 /// diffusion φ = exp(-t·L_sym)·ρ at t=1.0 (commit-review scope).
-///
 /// Emission follows a greedy-density knapsack with three tiers:
 ///   FULL       — full source; chunk-pack fallback if oversized
 ///   SIGNATURE  — outline (same format as [_buildFileOutline])
 ///   BREADCRUMB — one-liner with path + score + dominant axis
-///
 /// Budget-bounded. Returns an empty string on any error — this is a
 /// best-effort enrichment layer; failures never poison the primary
 /// context path.
-// ─────────────────────────────────────────────────────────────────────────
 // Concrete producers wired to the existing _collect* functions. Private
 // to ai.dart because they wrap private collectors; the engine they slot
 // into ([AiContextEngine]) is public.
@@ -4344,7 +4338,6 @@ Future<String> _collectFileContext({
 // and the others return 0.0. [AiContextEngine] excludes zero-urgency
 // producers from allocation, so file_context absorbs the full
 // variable pool — the only useful producer when there's no signal.
-// ─────────────────────────────────────────────────────────────────────────
 
 class _FileContextProducer extends AiContextProducer {
   const _FileContextProducer();
@@ -4580,14 +4573,23 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
           symbolPaths: symbolPaths,
         ).name,
     };
-    final attribution = engine.diffuseWithAttribution(
-      weightsByPath: probe.sourceWeights,
+    final evidence = engine.gatherEvidence(
+      focusWeights: probe.sourceWeights,
       axisLabelByPath: axisLabels,
       t: resolvedT,
       excludePaths: probe.primaryPaths,
     );
+    final attribution = evidence?.supportAttribution;
     final List<RelevanceScore> scores;
-    if (attribution != null) {
+    if (evidence != null && evidence.ranked.isNotEmpty) {
+      scores = [
+        for (final e in evidence.ranked)
+          RelevanceScore(
+            e.path,
+            e.utility > 0 ? e.utility : (e.support * e.integrity * 0.05),
+          ),
+      ];
+    } else if (attribution != null) {
       scores = attribution.combined;
     } else {
       // Engine cold or all sources out-of-graph — keep the plain path.
@@ -4610,6 +4612,7 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
       scores: scores,
       resolvedT: resolvedT,
       attribution: attribution,
+      evidence: evidence,
     );
 
     // Visualisation events: the diff's source files (what ignited) +
@@ -4661,7 +4664,6 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
 /// holds across producers (each one queries the same numbers from the
 /// same probe). Centralised so a future regime/SSE-aware refinement
 /// updates all three producers at once.
-///
 /// Returns:
 ///   coh         — coherence ∈ [0, 1]: mean pairwise edge weight under
 ///                 the engine's Born-mixed metric for the primary path
@@ -4687,7 +4689,6 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
 /// Returns the prompt section *and* the emission record for this call,
 /// so the caller can feed citations back to SSE without relying on
 /// process-level globals (which would race across overlapping reviews).
-///
 /// Accepts a pre-built [logos] result from [_runLogosDiffusion] — the
 /// caller hoists that work to drive the budget allocation, and we
 /// reuse the same artifact here for emission. Falls back to building
@@ -4712,6 +4713,10 @@ Future<({String text, LogosEmissionRecord? record})>
     final probe = result.probe;
     final scores = result.scores;
     final resolvedT = result.resolvedT;
+    final evidenceByPath = <String, LogosEvidenceScore>{
+      for (final e in result.evidence?.ranked ?? const <LogosEvidenceScore>[])
+        e.path: e,
+    };
 
     // No candidate trim — let the knapsack see the full ranking. The
     // budget closes the long tail naturally; an arbitrary pre-trim
@@ -4769,6 +4774,8 @@ Future<({String text, LogosEmissionRecord? record})>
       ', coherence=${probe.stats.coherence.toStringAsFixed(2)}'
       ', regime=${regime.name}'
       ', t=${resolvedT.toStringAsFixed(2)}'
+      '${result.evidence?.sourceAlignment != null ? ', sourceAlign=${result.evidence!.sourceAlignment!.toStringAsFixed(2)}' : ''}'
+      '${result.evidence?.fieldAlignment != null ? ', fieldAlign=${result.evidence!.fieldAlignment!.toStringAsFixed(2)}' : ''}'
       '; ${plan.length} neighbors surfaced)',
     );
     var remaining = budgetChars - buffer.length;
@@ -4781,6 +4788,7 @@ Future<({String text, LogosEmissionRecord? record})>
       // file's φ. Falls through silently when no attribution was
       // computed (engine cold) — the rest of the line is unchanged.
       final via = _formatAxisBreakdown(result.attribution, item.path);
+      final ev = evidenceByPath[item.path];
       // Engram well pill — the dominant Alexandria well for this
       // file's identifier content. Present whenever the resolver
       // loaded engram assets and the file encoded successfully.
@@ -4789,9 +4797,12 @@ Future<({String text, LogosEmissionRecord? record})>
       // to the `computing` well" when deciding whether it's relevant.
       final well = result.engine.wellOf(item.path);
       final wellPill = well != null ? '  well=$well' : '';
+      final evidencePill = ev == null
+          ? ''
+          : '  u=${ev.utility.toStringAsFixed(3)} s=${ev.support.toStringAsFixed(3)} a=${ev.ambient.toStringAsFixed(3)} i=${ev.integrity.toStringAsFixed(2)}';
       final header = via.isEmpty
-          ? '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}$wellPill ---'
-          : '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}  via=$via$wellPill ---';
+          ? '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}$evidencePill$wellPill ---'
+          : '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}  via=$via$evidencePill$wellPill ---';
       if (item.tier == EmissionTier.breadcrumb) {
         final line = '$header\n';
         if (line.length > remaining) continue;
@@ -4865,7 +4876,6 @@ String formatAxisBreakdownForTesting(AxisAttribution? attr, String path) =>
 /// gets the parens marker, others listed in descending share. Axes
 /// contributing below 10% are omitted (signal floor; otherwise tiny
 /// numerical leakage muddies the line).
-///
 /// Returns '' when there's no attribution to read or no axis cleared
 /// the threshold — caller falls back to the un-decorated header.
 String _formatAxisBreakdown(AxisAttribution? attr, String path) {
@@ -4897,7 +4907,6 @@ String _formatAxisBreakdown(AxisAttribution? attr, String path) {
 ///   m        — pickaxe identifier search pulled it in
 ///   ab       — path-mirror (test ↔ source) pulled it in
 ///   graph    — diffusion ranked it from graph edges (CC/SP/V/F0)
-///
 /// [symbolPaths] should be the keys of the engine's [symbolEdges] map —
 /// paths whose presence in the emission list is due to symbol-overlap
 /// coupling rather than git history.
@@ -4935,7 +4944,6 @@ bool _pathLooksLikeMirrorOf(String candidate, Set<String> primary) {
 /// cited paths from `<findings>` XML and records them against the
 /// emission record produced for *this* review call. Fire-and-forget;
 /// failure is logged but never surfaces to the user.
-///
 /// The record is passed in explicitly (not read from a global) so two
 /// reviews running concurrently can't cross-contaminate each other's
 /// citation tallies.
@@ -5006,6 +5014,10 @@ class LogosCommitShape {
   /// completes the foo refactor"), diverging → hedged ("fold back into
   /// a tighter scope if possible"), steady → neutral.
   final String? branchTrajectory;
+  final double? sourceAlignment;
+  final double? fieldAlignment;
+  final double? sourceSurprise;
+  final double? fieldSurprise;
 
   const LogosCommitShape({
     required this.regime,
@@ -5018,6 +5030,10 @@ class LogosCommitShape {
     this.dominantAxisByPath = const {},
     this.stability,
     this.branchTrajectory,
+    this.sourceAlignment,
+    this.fieldAlignment,
+    this.sourceSurprise,
+    this.fieldSurprise,
   });
 }
 
@@ -5069,7 +5085,6 @@ Future<BranchOrbit?> _probeBranchOrbit(String repositoryPath) async {
 /// benefits from the opposite: a hotter diffusion that casts a
 /// wider net to catch the sprawl's real boundaries. Steady /
 /// null / insufficient orbits get neutral (×1.0).
-///
 /// Values derived from the orbit's own semantics, not tuned:
 ///   converging → 1 − trendSlope magnitude → cooler (min 0.75)
 ///   diverging  → 1 + trendSlope magnitude → hotter (max 1.25)
@@ -5143,17 +5158,32 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
           symbolPaths: symbolPaths,
         ).name,
     };
-    final attr = engine.diffuseWithAttribution(
-      weightsByPath: probe.sourceWeights,
+    final evidence = engine.gatherEvidence(
+      focusWeights: probe.sourceWeights,
       axisLabelByPath: axisLabels,
       t: t,
       excludePaths: probe.primaryPaths,
+      topK: 5,
     );
+    final attr = evidence?.supportAttribution;
 
     List<RelevanceScore> missing;
     Map<String, double> axisShares = const {};
     Map<String, String> dominantByPath = const {};
-    if (attr != null) {
+    if (evidence != null && evidence.ranked.isNotEmpty) {
+      missing = [
+        for (final e in evidence.ranked.take(5))
+          RelevanceScore(
+            e.path,
+            e.utility > 0 ? e.utility : (e.support * e.integrity * 0.05),
+          ),
+      ];
+      axisShares = attr?.axisMassFractions() ?? const {};
+      dominantByPath = {
+        for (final e in evidence.ranked.take(5))
+          if (e.dominantAxis != null) e.path: e.dominantAxis!,
+      };
+    } else if (attr != null) {
       missing = attr.combined.take(5).toList();
       axisShares = attr.axisMassFractions();
       dominantByPath = {
@@ -5205,6 +5235,10 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
       dominantAxisByPath: dominantByPath,
       stability: stability,
       branchTrajectory: branchTrajectory,
+      sourceAlignment: evidence?.sourceAlignment,
+      fieldAlignment: evidence?.fieldAlignment,
+      sourceSurprise: evidence?.sourceSurprise,
+      fieldSurprise: evidence?.fieldSurprise,
     );
   } catch (e, st) {
     LogosGitDiagnostics.instance.recordFailure(
@@ -5226,6 +5260,18 @@ String _formatCommitShapeBlock(LogosCommitShape? shape) {
   buf.writeln('coherence: ${shape.coherence.toStringAsFixed(2)}');
   buf.writeln('primary files: ${shape.primaryCount}');
   buf.writeln('diffusion t: ${shape.temperature.toStringAsFixed(2)}');
+  if (shape.sourceAlignment != null) {
+    buf.writeln('source alignment: ${shape.sourceAlignment!.toStringAsFixed(2)}');
+  }
+  if (shape.fieldAlignment != null) {
+    buf.writeln('field alignment: ${shape.fieldAlignment!.toStringAsFixed(2)}');
+  }
+  if (shape.sourceSurprise != null) {
+    buf.writeln('source surprise: ${shape.sourceSurprise!.toStringAsFixed(2)}');
+  }
+  if (shape.fieldSurprise != null) {
+    buf.writeln('field surprise: ${shape.fieldSurprise!.toStringAsFixed(2)}');
+  }
   if (shape.scopeCentroid != null) {
     buf.writeln(
       'scope centroid (likely semantic subject): ${shape.scopeCentroid}',
@@ -5367,7 +5413,6 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
   SymbolFrequencyIndex? symbolIndex,
   FileCouplingMatrix? couplingMatrix,
 }) async {
-  // ── Unified pipeline. One path. One budget. One wrapper shape ─────
   //
   // Every diff — small, medium, huge — flows through the same hunk-
   // diffusion + knapsack admission. The budget [_kDiffBudgetChars] is
@@ -5540,19 +5585,15 @@ Map<String, List<String>> extractMetadataOnlyChangesForTesting(String fullDiff) 
 ///   • `similarity index N%` / `rename from`/`rename to`
 ///   • `copy from`/`copy to`
 ///   • `deleted file mode N` / `dissimilarity index N%`
-///
 /// Captured for ALL files (not just hunkless ones) — a file with a
 /// mode change AND content edits would otherwise have its mode change
 /// vanish from the prompt because the packer reassembles only the
 /// `diff --git` / `---` / `+++` triple per file.
-///
 /// Filters OUT noise lines:
 ///   • `index abc..def` (blob SHAs — useless for AI)
 ///   • `--- a/X` / `+++ b/X` (auto-emitted by the packer)
-///
 /// Handles git's C-string quoting for paths containing spaces or
 /// non-ASCII characters: `diff --git "a/X X" "b/X X"`.
-///
 /// Returns Map<path, metadataLines>. Empty when nothing notable.
 Map<String, List<String>> _extractMetadataOnlyChanges(String fullDiff) {
   final out = <String, List<String>>{};
@@ -5605,7 +5646,6 @@ Map<String, List<String>> _extractMetadataOnlyChanges(String fullDiff) {
 /// caps. Returns '' if nothing fits within [maxChars]. The closing
 /// `</header_metadata>` tag is always emitted (or the whole
 /// block is dropped) — never returns malformed XML mid-tag.
-///
 /// Per-entry safety: each file's metadata is capped so one
 /// pathological file (a 100-line conflict marker block, etc.) can't
 /// monopolise the postscript and crowd out other files' visibility.
@@ -5750,7 +5790,6 @@ String _buildCommitMessagePrompt({
   return _capPromptBody(buffer.toString().trim(), 'commit_message_prompt');
 }
 
-// ── Commit-message format directives ────────────────────────────────────
 //
 // Each user-facing preference axis maps to an explicit instruction the
 // model can follow. The three strings below are appended in sequence
@@ -6172,7 +6211,6 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   required String repositoryPath,
   bool readOnly = true,
 }) async {
-  // --- API providers: direct HTTP ---
   if (provider.kind == _ProviderKind.geminiApi) {
     final geminiModel = modelId.startsWith('gemini ')
         ? modelId.substring('gemini '.length)
@@ -6194,7 +6232,6 @@ Future<_ProviderPromptResult> _runProviderPrompt({
     );
   }
 
-  // --- CLI providers: process spawning ---
   final attempts = _buildProviderAttempts(provider.kind, modelId,
       readOnly: readOnly, resolvedCommand: resolution.command);
   String? providerOutput;
@@ -7001,10 +7038,8 @@ String _normalizeOpenCodeError(String raw) {
 // Codex dumps a session header + the echoed prompt when it exits with an error.
 // Pattern:
 //   OpenAI Codex v0.x.x
-//   --------
 //   workdir: ...
 //   model: ...
-//   --------
 //   <echoed user prompt>
 //
 // We try to find the real error (rate limit message, API error, etc.) inside
@@ -7744,7 +7779,6 @@ _ProcessInvocation _buildProcessInvocation(String command, List<String> args) {
 
 /// Given a Node.js launcher script (e.g. opencode's `bin/opencode`), try to
 /// find the platform-native binary it wraps.
-///
 /// Many npm packages ship a small Node.js launcher that discovers and
 /// `spawnSync`s a platform-native executable from a sibling `node_modules`
 /// package (e.g. `opencode-windows-x64/bin/opencode.exe`). Invoking the

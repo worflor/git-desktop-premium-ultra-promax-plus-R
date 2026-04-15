@@ -5,7 +5,6 @@ import '../ui/tokens.dart';
 import 'app_identity.dart';
 import 'repository_state.dart';
 
-// ── TitlebarStrip ─────────────────────────────────────────────────────────────
 // 40px tall custom titlebar.
 // Left: repo name (textNormal 13px) or the app name (textMuted).
 // Right: 6px status dot.

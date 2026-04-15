@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // logos_vis_events.dart — transparency stream for the relevance engine.
 //
 // The logos pipeline runs in hundreds of milliseconds and is invisible
@@ -19,7 +18,6 @@
 // multiple reviews; only the most-recent session's events matter.
 // We identify each with an integer [sessionId] allocated on begin.
 // Stale events from a superseded session are ignored by the canvas.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 
@@ -193,15 +191,12 @@ class LogosVisComplete extends LogosVisEvent {
 /// Broadcast singleton. Publishers call `emit(event)`; subscribers
 /// listen on [stream]. Broadcast so multiple UIs (tests, diagnostics,
 /// the canvas) can share the feed.
-///
 /// ─── Session scoping via Zone ─────────────────────────────────────────
-///
 /// The review pipeline threads through many functions across multiple
 /// files — threading a session id as a parameter to every emitter
 /// would add noise everywhere. Instead callers wrap their invocation
 /// in [runInSession] (which uses `runZoned`) and downstream emitters
 /// read the session id from the current Zone via [currentSession].
-///
 /// Dart's Future machinery propagates Zone.current across `await`,
 /// so every async leg of the pipeline inherits the session id
 /// without a single parameter change. If an emitter fires outside a
@@ -225,7 +220,6 @@ class LogosVisBus {
   /// before blending the brainstorm anchors, so a user yanking a
   /// file during "dreaming" actually biases which files the engine
   /// pulls into the synthesis context.
-  ///
   /// The value is a unit-ish scalar (normalised pull relative to
   /// canvas size); consumers clamp + map to their own weight range.
   /// Cleared by `consumeUserSpokeBoosts()` — fresh run starts clean.
@@ -255,7 +249,6 @@ class LogosVisBus {
   /// Allocate a fresh session id + wrap [body] in a zone that exposes
   /// it to downstream emitters. Canvas subscribers observe events
   /// tagged with this id and ignore events from older sessions.
-  ///
   /// Returns whatever [body] returned. If [body] throws the zone is
   /// closed normally.
   Future<T> runInSession<T>(Future<T> Function(int sessionId) body) async {
@@ -290,7 +283,6 @@ class LogosVisBus {
   /// Silently drops if there's no active session (caller wasn't
   /// inside [runInSession]). [builder] receives the session id and
   /// returns the concrete event.
-  ///
   /// Typical call site:
   ///   LogosVisBus.instance.emitInSession((sid) =>
   ///     LogosVisEngineResolving(sid, repoPath: path));

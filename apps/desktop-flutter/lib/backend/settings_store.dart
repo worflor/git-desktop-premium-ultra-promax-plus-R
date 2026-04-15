@@ -22,7 +22,6 @@ class AppSettingsSnapshot {
   /// frequency — 0.0 stops motion entirely (same as reduceMotion=true),
   /// 1.0 is normal speed, 2.0 runs animations at twice their authored Hz.
   /// Durations are scaled reciprocally: `duration / motionRate`.
-  ///
   /// [reduceMotion] is retained for migration of older on-disk settings;
   /// when motionRate is absent, it's derived as `reduceMotion ? 0.0 : 1.0`.
   /// On fresh writes both fields are persisted so downgrades still work

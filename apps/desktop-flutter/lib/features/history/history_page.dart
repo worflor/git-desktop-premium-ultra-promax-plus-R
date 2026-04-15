@@ -32,7 +32,6 @@ import 'commit_sigil.dart';
 import 'commit_tag_pill.dart';
 import 'commit_tagger.dart';
 
-// ── Constants (matching original) ────────────────────────────────────────────
 
 const double _kNodeRadius = 3;
 const double _kVertInset = 8;
@@ -59,7 +58,6 @@ const double _kLensMax = 64;
 const int _kHistoryDefault = 100;
 const int _kHistoryMax = 500;
 
-// ── Graph types ───────────────────────────────────────────────────────────────
 
 class _GNode {
   final CommitHistoryEntry entry;
@@ -113,7 +111,6 @@ class _LensMetric {
   const _LensMetric(this.x, this.y, this.scale);
 }
 
-// ── Graph builder ─────────────────────────────────────────────────────────────
 
 _GLayout _buildLayout(
   List<CommitHistoryEntry> entries, {
@@ -123,7 +120,6 @@ _GLayout _buildLayout(
   /// branch's diverged commits their own visually-offset lane, so a
   /// worktree on `feat/foo` reads as "this is the branch, that's the
   /// trunk" instead of one flat line identical to main.
-  ///
   /// When null, falls back to classic git-log multi-parent lane
   /// tracking (works but produces a flat line for any linear-parent
   /// history — which is what this override is here to correct).
@@ -257,7 +253,6 @@ _GLayout _buildLayout(
       hashToIndex: hashToIndex);
 }
 
-// ── Temporal position computation ─────────────────────────────────────────────
 
 List<double> _computePercents(List<CommitHistoryEntry> entries) {
   final n = entries.length;
@@ -317,7 +312,6 @@ List<double> _projectXs(
   });
 }
 
-// ── Lens metrics ─────────────────────────────────────────────────────────────
 
 List<_LensMetric> _lensMetrics({
   required List<_GNode> nodes,
@@ -355,7 +349,6 @@ List<_LensMetric> _lensMetrics({
   });
 }
 
-// ── Timeline painter ──────────────────────────────────────────────────────────
 
 class _TimelinePainter extends CustomPainter {
   final _GLayout layout;
@@ -464,7 +457,6 @@ class _TimelinePainter extends CustomPainter {
         ..style = PaintingStyle.stroke,
     );
 
-    // ── Edges ───────────────────────────────────────────────────────
     // Two reusable Paints (mainline vs. branch) + one reusable Path
     // shared across every edge. Previously allocated ~2 objects per
     // edge per frame = up to 2000 allocs/frame on a 1000-edge graph.
@@ -578,7 +570,6 @@ class _TimelinePainter extends CustomPainter {
       drawOrder = layout.nodes;
     }
 
-    // ── Nodes ───────────────────────────────────────────────────────
     // Two reusable Paints — fill (color swaps per node) and selected
     // ring (constant). Replaces 2 Paint allocs per commit per frame.
     final nodeFillPaint = Paint()..style = PaintingStyle.fill;
@@ -769,7 +760,6 @@ class _TimelinePainter extends CustomPainter {
       old.previewCommits.length != previewCommits.length;
 }
 
-// ── Timeline strip ────────────────────────────────────────────────────────────
 
 class _TimelineStrip extends StatefulWidget {
   final List<CommitHistoryEntry> commits;
@@ -1133,7 +1123,6 @@ class _TimelineStripState extends State<_TimelineStrip>
   }
 }
 
-// ── CommitImpact ──────────────────────────────────────────────────────────────
 
 class _CommitImpact extends StatelessWidget {
   final CommitDetailData? detail;
@@ -1213,7 +1202,6 @@ class _CommitImpact extends StatelessWidget {
   }
 }
 
-// ── Tag-profile isolate payload ──────────────────────────────────────────────
 
 /// Input bundle for the off-main-isolate profile build. Must only
 /// contain isolate-transferable types — `FileCouplingMatrix`,
@@ -1308,7 +1296,6 @@ RepositoryTagProfile _tagProfileIsolate(_TagProfileInput input) {
   );
 }
 
-// ── History page ──────────────────────────────────────────────────────────────
 
 class HistoryPage extends StatefulWidget {
   final String? initialCommitHash;
@@ -1420,7 +1407,6 @@ class _HistoryPageState extends State<HistoryPage> {
   /// render on lane 0 and commits diverged on the current branch
   /// render on lane 1 — the visual "we forked here" that's missing
   /// when the painter sees only a linear parent chain.
-  ///
   /// Empty when we couldn't determine the default branch (detached,
   /// no origin, fresh repo) — the timeline falls back to classic
   /// single-lane rendering. Re-populated whenever [_load] runs.
@@ -1994,7 +1980,6 @@ class _HistoryPageState extends State<HistoryPage> {
     final rangeMax = max(rebaseStart, rebaseEnd);
 
     return Column(children: [
-      // ── History controls ─────────────────────────────────────────────
       MaterialSurface(
         tone: AppMaterialTone.surface0,
         radius: 0,
@@ -2034,7 +2019,6 @@ class _HistoryPageState extends State<HistoryPage> {
         ]),
       ),
 
-      // ── Timeline strip ───────────────────────────────────────────────
       if (_commits.isNotEmpty)
         _TimelineStrip(
           commits: _commits,
@@ -2056,7 +2040,6 @@ class _HistoryPageState extends State<HistoryPage> {
               : (_previewCommitsCache[_previewDeskPath] ?? const []),
         ),
 
-      // ── Main content ─────────────────────────────────────────────────
       Expanded(
         child: Row(children: [
           // Left — commit list
@@ -2071,7 +2054,6 @@ class _HistoryPageState extends State<HistoryPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ── In-flight desks strip ──────────────────────────────
                 // Other desks with commits ahead of THEIR own upstream
                 // surface here as ghost rows. Click → switch to that
                 // desk + drop the user on its Changes panel (where the
@@ -2294,7 +2276,6 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 }
 
-// ── Commit row ────────────────────────────────────────────────────────────────
 
 class _CommitRow extends StatefulWidget {
   final CommitHistoryEntry commit;
@@ -2490,7 +2471,6 @@ class _CommitRowState extends State<_CommitRow> {
   }
 }
 
-// ── Reflog divider ────────────────────────────────────────────────────────────
 
 class _ReflogDivider extends StatelessWidget {
   final AppTokens t;
@@ -2532,7 +2512,6 @@ class _ReflogDivider extends StatelessWidget {
   }
 }
 
-// ── Tag pill ──────────────────────────────────────────────────────────────────
 
 /// Greedy-fit tag strip: measures pills with a TextPainter and stops
 /// admitting once the cumulative width would exceed the parent's max.
@@ -2635,7 +2614,6 @@ class _TagPill extends StatelessWidget {
   }
 }
 
-// ── Reflog row ────────────────────────────────────────────────────────────────
 
 class _ReflogRow extends StatefulWidget {
   final ReflogEntryData entry;
@@ -2695,7 +2673,6 @@ class _ReflogRowState extends State<_ReflogRow> {
   }
 }
 
-// ── Commit detail ─────────────────────────────────────────────────────────────
 
 class _CommitDetail extends StatelessWidget {
   final CommitDetailData detail;
@@ -3269,7 +3246,6 @@ class _StatChip extends StatelessWidget {
   }
 }
 
-// ── Rebase editor ─────────────────────────────────────────────────────────────
 
 class _RebaseEditor extends StatefulWidget {
   final List<CommitHistoryEntry> commits;
@@ -3501,7 +3477,6 @@ class _RebaseBtnState extends State<_RebaseBtn> {
 /// click away from "drop me into that desk's Changes panel" so the
 /// strip closes the symmetric gap with the Changes-page strip that
 /// already lists the same set.
-///
 /// Watches WorktreeState so when a desk gains / loses ahead commits
 /// (commit, push, fetch) the strip re-renders without a manual
 /// refresh. Returns SizedBox.shrink when no other desk is ahead — no
@@ -3701,7 +3676,6 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
 /// "already on this branch". Each row's opacity + subtle translate-in
 /// is driven by a delay proportional to its preview index, so the
 /// sequence populates in rather than snap-appearing.
-///
 /// Not clickable in v1 — the preview is read-only. The IN FLIGHT
 /// chip above is the action surface; these rows just show what
 /// clicking would bring.

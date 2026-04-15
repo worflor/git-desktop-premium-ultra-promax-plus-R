@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_file_index.dart — per-file K-vectors for LogosGit's EN axis.
 //
 // For each file we care about (typically the LogosGit nodePaths set,
@@ -18,7 +17,6 @@
 // because the isolate has nothing else to do; doing it async would just
 // add scheduler overhead. For a 1000-file repo the index builds in
 // ~5–15 seconds on a cold cache and is then memoised by the resolver.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:io';
 import 'dart:typed_data';
@@ -37,21 +35,18 @@ const int _kMaxTokensPerFile = 256;
 
 /// Hard cap on file content read into memory. **The cap sits at 16KB
 /// because that's where code stops being semantically dense.**
-///
 /// In a typical source file the identifier-bearing lines — imports,
 /// class declarations, type definitions, function signatures, named
 /// constants — live in the top few kilobytes. The rest is expression
 /// bodies: control flow and arithmetic that reuses the same identifiers
 /// already seen near the top. Past ~16KB you're paying disk bandwidth
 /// and tokeniser time to re-read tokens that are already in the bag.
-///
 /// For the outlier giant files (generated code, vendored bundles,
 /// minified JS, lockfiles) 16KB is plenty — again, the top carries the
 /// import list and public surface, which is everything Alexandria's
 /// AR(2) needs to locate the file semantically. Lower tail content is
 /// noise that was getting averaged into the K-vector with diminishing
 /// returns.
-///
 /// 16× smaller than the previous 256KB cap. On a thousand-file repo
 /// where half the files are >16KB, this shaves ~100–400ms off cold
 /// builds. Zero signal loss measurable in the well-assignment: the
@@ -85,10 +80,8 @@ final RegExp _identifierRun = RegExp(r'[A-Za-z_][A-Za-z0-9_]{1,40}');
 
 /// Build a map from repo-relative path → K-vector for every path in
 /// [paths] that successfully tokenises and encodes.
-///
 /// [repoPath] is the absolute repo root; paths are joined relative to it.
 /// [encoder] does the heavy lifting (already loaded with brain + glove).
-///
 /// Files that don't exist, are too large, decode badly, or have too
 /// few in-vocab sub-tokens to fit AR(2) are simply absent from the
 /// returned map — callers (the EN axis) treat absence as "silent".
@@ -159,9 +152,7 @@ String _safeDecodeUtf8(Uint8List bytes) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Parallel encoding — isolate-safe payload + fan-out helpers.
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Isolate-sendable payload for a single-chunk encode job. The byte
 /// blobs are shared across chunks (each isolate gets its own copy via

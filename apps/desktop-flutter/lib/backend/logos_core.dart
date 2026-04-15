@@ -1,6 +1,4 @@
-// ═════════════════════════════════════════════════════════════════════════
 // LOGOS CORE — shared geometric primitives
-// ═════════════════════════════════════════════════════════════════════════
 //
 // The math substrate every Logos engine in this codebase composes over.
 // Three engines (file-graph in `logos_git.dart`, intra-file chunk graph
@@ -26,7 +24,6 @@
 // engine here builds its own graph (its own axis blend, its own edge
 // construction) and then defers to this module for diffusion.
 //
-// ── Performance architecture ─────────────────────────────────────────────
 //
 // The inner loops are hot: a single commit review can run ~10 Chebyshev
 // steps across three engines (file/hunk/chunk) at up to four temperatures.
@@ -59,9 +56,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-// ─────────────────────────────────────────────────────────────────────────
 // Constants — pinned by the math, not by tuning
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Default Chebyshev truncation order. K=20 gives relative error <1e-8
 /// on the normalised-Laplacian spectrum [0, 2] for diffusion times
@@ -116,12 +111,9 @@ const double _coeffSkipEps = 1e-12;
 /// cheap FTZ/DAZ equivalent — no observable impact on ranking stability.
 const double _subnormalFloor = 1e-300;
 
-// ─────────────────────────────────────────────────────────────────────────
 // CsrGraph — the data structure every engine builds
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Compressed sparse-row graph with a fused-D⁻¹ᐟ² edge weight encoding.
-///
 /// Each engine constructs one of these from its own axis-mixed edge
 /// weights, then hands it to the diffusion primitives. The values
 /// stored in [values] are already `D^{-1/2}[i] · W[i,j] · D^{-1/2}[j]`
@@ -170,7 +162,6 @@ class CsrGraph {
   /// single pass over the edge arrays (indptr, indices, values)
   /// updates all `B` accumulators, amortising graph-array memory
   /// traffic — the dominant cost of SpMV — across the batch.
-  ///
   /// For `B=4` on the review path, graph traffic drops 4× vs. running
   /// four independent [applyLsym] calls. The B=4 inner block is packed
   /// as two [Float64x2] accumulators when input/output alignment
@@ -243,7 +234,6 @@ class CsrGraph {
   /// diagnostic — useful for verifying the bound holds on a given
   /// graph and for catching numerical-error drift on pathological
   /// inputs.
-  ///
   /// Cost: `O(iterations · |E|)`. 24 iterations gives 2-3 significant
   /// figures on any realistic graph.
   double estimateSpectralRadius({
@@ -294,23 +284,18 @@ class CsrGraph {
 bool _isX2Aligned(Float64List v) =>
     (v.offsetInBytes & 15) == 0 && (v.length & 1) == 0;
 
-// ─────────────────────────────────────────────────────────────────────────
 // Bessel coefficients — `c_k(t) = 2·e^{-t}·I_k(-t)` with `c_0` halved
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Modified Bessel coefficients for the heat-kernel Chebyshev
 /// expansion: `c_k(t) = (k==0 ? 1 : 2) · e^{-t} · I_k(-t)`.
-///
 /// `I_k(-t) = (-1)^k · I_k(t)`. We compute `I_k(t)` via the ascending
 /// power series in log-space (overflow-safe for any t) with an inner-
 /// loop convergence check.
-///
 /// Numerical safety:
 ///   • NaN input → returns coefficients for t=0 (degenerate identity).
 ///   • t > [_maxSafeT] → clamped to the safe ceiling.
 ///   • Non-finite intermediate values → coerced to 0 (truncates the
 ///     expansion early; never propagates non-finite into the recurrence).
-///
 /// Cost: O(K) log() calls for the factorial table, plus the inner series
 /// loop. The earlier version re-summed `Σ log(i)` per k for O(K²) total
 /// log()s — measurably slower at the three-temperature blend call rate.
@@ -368,15 +353,12 @@ int adaptiveK(List<double> coeffs, double eps) {
   return 1;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Heat-kernel diffusion — one-shot and basis-cached forms
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Apply the heat kernel to source ρ at temperature t using the
 /// Chebyshev expansion. Writes result into [phi]. Pure — no hidden
 /// state. Allocates three ring-buffer scratch vectors internally; each
 /// Chebyshev step cycles them by reference rather than copying bytes.
-///
 /// Internally calls [adaptiveK] to skip the coefficient-tail past the
 /// noise floor, so the effective polynomial order is `≤ K`. Elementwise
 /// passes run as [Float64x2] SIMD when `n > 1`; arithmetic within each
@@ -479,7 +461,6 @@ void chebyshevDiffuse({
 /// row `k` starts at offset `k·n`. Cache once, then call
 /// [recombineHeatPhi] at any temperature in O(K·n) instead of
 /// rerunning O(K·|E|) Chebyshev matvecs.
-///
 /// Useful for multi-temperature blends (e.g. the three-temperature
 /// geometric-mean trick used by the chunk and hunk engines) and any
 /// future temperature-sweep analysis. Uses the same ring-buffer +
@@ -542,13 +523,11 @@ Float64List chebyshevBasis({
 /// simultaneously on the same graph. `rhoBatch` is AoSoA-packed:
 /// `rhoBatch[i*B + b]` is the initial mass at node `i` for batch `b`.
 /// Returns `phiBatch` in the same layout.
-///
 /// One pass over the edge arrays per Chebyshev step services all `B`
 /// matvecs, so graph-array memory traffic scales as `O(K·|E|)` rather
 /// than `O(B·K·|E|)`. The arithmetic still scales with `B` (each
 /// edge contributes `B` multiply-adds), but arithmetic is cheap; the
 /// graph load was the bottleneck.
-///
 /// Now also uses [adaptiveK] to prune the Chebyshev tail (was missing
 /// — full K SpMVs ran regardless of coefficient magnitude), ring-
 /// buffers the three basis slots, and SIMD-vectorises the elementwise
@@ -644,7 +623,6 @@ Float64List chebyshevDiffuseBatch({
 /// solution at t, evaluated as a linear combination of the basis
 /// vectors. Cost is O(K·n), regardless of `|E|`. Coefficients below
 /// [_coeffSkipEps] are skipped (no observable accuracy impact).
-///
 /// Each per-k accumulation runs as a SIMD AXPY over Float64x2 pairs
 /// when n is even (or handles the odd tail scalar-wise).
 Float64List recombineHeatPhi({

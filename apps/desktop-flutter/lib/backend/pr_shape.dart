@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // pr_shape.dart — geometric / magnetic signature of a PR
 //
 // A PR isn't a queue entry; it's a magnet dropped into a field. Its
@@ -22,7 +21,6 @@
 //
 // Pure data + pure functions. No I/O, no Flutter. Caching/lifetime is
 // the caller's problem (BranchesPageState owns the per-PR map).
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -64,7 +62,6 @@ enum FieldOrientation {
 /// Geometric signature of a single PR — the data the orbital
 /// list-ordering, rail tinting, and "WILL FIGHT" pairwise visualisation
 /// all read from. Constructed via [PrShapeComputer.compute].
-///
 /// Immutable. Cheap to hold per-PR; dense vectors are compact (8 bytes
 /// per node, ≤ a few KB for typical repos).
 class PrShape {
@@ -146,7 +143,6 @@ class PrShapeComputer {
   /// LogosGit for the repo; `prFiles` are the changed files (path +
   /// additions + deletions). `field` is optional — when present, the
   /// shape carries [PrShape.fieldAlignment] and [PrShape.orientation].
-  ///
   /// Returns null when the engine is empty or none of the PR files
   /// land in-graph (a brand-new file the engine hasn't analyzed yet).
   static PrShape? compute({

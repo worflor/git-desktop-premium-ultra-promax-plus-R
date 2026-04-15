@@ -4,7 +4,6 @@ import 'package:flutter/painting.dart';
 /// Shared motion vocabulary. Every animation in the app should source its
 /// duration + curve from here instead of hardcoding a Duration inline. One
 /// place to tune the feel across 9 themes and 100+ call-sites.
-///
 /// Three tiers, roughly matching the `SurfaceMotion` shader enum that the
 /// theme engine already emits:
 ///   * snap  — instant feedback (hover flips, toggle state, press-in)
@@ -12,7 +11,6 @@ import 'package:flutter/painting.dart';
 ///             container decorations settling)
 ///   * fluid — choreographed moments (page loads, panel opens, the
 ///             logo animation's visible phases)
-///
 /// Durations are intentionally short. Flutter framework animations default
 /// to 300ms; this app's house voice is crisper.
 class AppMotion {
@@ -42,7 +40,6 @@ class AppMotion {
 /// `BoxDecoration.boxShadow` instead of rolling one-off shadows per widget.
 /// Keeps the app's depth language consistent and lets us tune elevation
 /// app-wide by editing this file.
-///
 /// Colors are token-agnostic black with alpha; for themed shadows, layer
 /// an additional tinted glow on top.
 class AppElev {

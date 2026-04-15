@@ -1,11 +1,9 @@
-// ═════════════════════════════════════════════════════════════════════════
 // desk_issue_state.dart — provider for desk-issue metadata
 //
 // Mirrors DeskPrState's lifecycle: auto-refresh on
 // RepositoryState.activePath change, route writes through the same
 // ManifoldRefs so PRs and issues share author identity, common-dir
 // resolution, and the id-counter ref.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:io';
@@ -260,7 +258,6 @@ class DeskIssueState extends ChangeNotifier {
     return null;
   }
 
-  // ── Remote sync ───────────────────────────────────────────────────────
   //
   // All methods resolve the forge via detectProvider() and use the
   // RemoteIssueProvider interface — no GitHub-specific calls here.
@@ -268,11 +265,9 @@ class DeskIssueState extends ChangeNotifier {
 
   /// Promote a local issue to the remote forge, linking them via
   /// [DeskIssue.remoteNumber]. Works on any supported forge.
-  ///
   /// Concurrent calls for the same id are rejected via [_promoting] —
   /// without this guard a double-click could create two remote issues
   /// before the first setRemoteNumber commits, orphaning one.
-  ///
   /// On success, also refreshes [_remoteCache] so the new remote issue
   /// appears in side panels / lists without a manual reload.
   Future<String?> promoteToRemote({
@@ -329,7 +324,6 @@ class DeskIssueState extends ChangeNotifier {
 
   /// Import a remote issue into local storage, creating a [DeskIssue]
   /// that mirrors it and is bidirectionally linked via [remoteNumber].
-  ///
   /// Single-commit: the local issue is born already-linked with all
   /// fields populated, so no concurrent reader can ever see a partial
   /// import (e.g. an issue without its remoteNumber set).
@@ -409,11 +403,9 @@ class DeskIssueState extends ChangeNotifier {
   /// Push local edits to the remote forge. Each field is only written
   /// if it differs from the current remote value; labels are diffed to
   /// produce add/remove sets.
-  ///
   /// Concurrent calls for the same id are rejected via [_pushing] —
   /// without this guard two racing calls would fetch the same remote
   /// state, compute stale label diffs, and interleave edits on the forge.
-  ///
   /// On success, refreshes [_remoteCache] so other consumers see the
   /// new remote state.
   Future<String?> pushToRemote({

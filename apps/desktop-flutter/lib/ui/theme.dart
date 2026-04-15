@@ -9,7 +9,6 @@ ThemeData buildTheme(AppTokens t) {
 
 /// Flatten a translucent palette token against [t.bg0] to produce a
 /// guaranteed-opaque equivalent.
-///
 /// **Why this exists**: Material3 widgets (Card, PopupMenu, anything
 /// with an elevation overlay, anything reading `colorScheme.surface`)
 /// internally call `Color.alphaBlend(surfaceTint, baseColor)` to
@@ -18,7 +17,6 @@ ThemeData buildTheme(AppTokens t) {
 /// `colorScheme.surface` produces a fully-opaque pixel regardless of
 /// the declared alpha. This silently flattens any translucency the
 /// theme palette intended.
-///
 /// **The invariant**: every Material-system color slot
 /// (`ColorScheme.surface`, `CardTheme.color`, `PopupMenuTheme.color`,
 /// any other widget theme that takes a "background" Color) must
@@ -26,7 +24,6 @@ ThemeData buildTheme(AppTokens t) {
 /// EXCLUSIVELY from `MaterialSurface`, which owns its own
 /// `BackdropFilter` machinery and is not subject to `alphaBlend`
 /// flattening.
-///
 /// `Color.alphaBlend(translucent, opaque)` here pre-bakes the visual
 /// result the translucent token described, producing an opaque pixel
 /// that Material widgets can use as a canvas without surprise.

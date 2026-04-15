@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // remote_issue_provider.dart — forge-agnostic issue sync interface
 //
 // The local DeskIssue layer is already forge-agnostic: issues are stored
@@ -18,7 +17,6 @@
 //   GhIssueProvider   — GitHub  via `gh` CLI
 //   GlabIssueProvider — GitLab  via `glab` CLI (stub until wired)
 //   _NullIssueProvider — local / unknown remotes — read-only no-op
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
 import 'dart:io';
@@ -26,7 +24,6 @@ import 'dart:io';
 import 'gh.dart' as _gh;
 import 'git_result.dart';
 
-// ── Shared result types ───────────────────────────────────────────────────
 //
 // IssueSummary / IssueDetail are defined in gh.dart but contain no
 // GitHub-specific fields — they're just the canonical DTO shape for an
@@ -38,7 +35,6 @@ import 'git_result.dart';
 
 export 'gh.dart' show IssueSummary, IssueDetail;
 
-// ── Status ────────────────────────────────────────────────────────────────
 
 class RemoteProviderStatus {
   final bool available;
@@ -52,7 +48,6 @@ class RemoteProviderStatus {
   static const yes = RemoteProviderStatus(available: true);
 }
 
-// ── Abstract interface ────────────────────────────────────────────────────
 
 abstract class RemoteIssueProvider {
   const RemoteIssueProvider();
@@ -95,14 +90,11 @@ abstract class RemoteIssueProvider {
   Future<GitResult<void>> addComment(String repoPath, int number, String body);
 }
 
-// ── Detection factory ─────────────────────────────────────────────────────
 
 /// Resolves the best [RemoteIssueProvider] for [repoPath] by inspecting
 /// the `origin` remote URL's hostname.
-///
 /// Detection is a single `git remote get-url origin` call — cache the
 /// result per repo-change to avoid repeated spawns.
-///
 /// Hostname matching (rather than substring on the full URL) correctly
 /// handles:
 ///   • https://github.com/u/r           → github
@@ -134,7 +126,6 @@ Future<RemoteIssueProvider> detectProvider(String repoPath) async {
 
 /// Extract the hostname portion of a git remote URL.
 /// Handles both SSH (`git@host:path`) and HTTPS (`https://host/path`) forms.
-///
 /// The alternation anchors on `@` (SSH) or `//` (HTTPS) — never `^`.
 /// Using `^` as an alternative would match at position 0 with zero width,
 /// causing `firstMatch` to capture the URL scheme instead of the hostname.
@@ -143,7 +134,6 @@ String _hostOf(String url) {
   return m?.group(1) ?? url;
 }
 
-// ── GitHub — via `gh` CLI ─────────────────────────────────────────────────
 
 class GhIssueProvider extends RemoteIssueProvider {
   const GhIssueProvider();
@@ -222,7 +212,6 @@ class GhIssueProvider extends RemoteIssueProvider {
       _gh.commentOnIssue(repoPath, number, body);
 }
 
-// ── GitLab — via `glab` CLI ───────────────────────────────────────────────
 //
 // Stub: returns available=false until glab wrappers are added.
 // The interface is already complete — wire up when needed.
@@ -254,7 +243,6 @@ class GlabIssueProvider extends RemoteIssueProvider {
   @override Future<GitResult<void>> addComment(_, __, ___) async => _stub();
 }
 
-// ── Null provider — local repos / unrecognised remotes ───────────────────
 //
 // List ops return empty (local issues still work fine).
 // Write ops return an error so callers can surface a sensible message.

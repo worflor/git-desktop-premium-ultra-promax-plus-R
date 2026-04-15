@@ -5,11 +5,9 @@ import '../backend/logos_git.dart';
 import '../backend/logos_git_resolver.dart' as resolver;
 
 /// Owns the [LogosGit] engine per repo, cached by HEAD hash.
-///
 /// Mirror of [FileCouplingState]'s shape so the provider tree treats it
 /// the same way. Background-only — UI never blocks on the build. When
 /// the engine arrives, a `notifyListeners()` fans out to consumers.
-///
 /// The engine layers ON TOP of the file-coupling matrix: it reuses the
 /// matrix when provided (via [loadForRepo]'s optional `coupling` arg)
 /// so the two stores share the same cold-path cost. Without a coupling

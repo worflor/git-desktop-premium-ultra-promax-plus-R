@@ -1,11 +1,9 @@
-// ═════════════════════════════════════════════════════════════════════════
 // desk_pr_state.dart — provider for desk-PR metadata
 //
 // Mirrors WorktreeState's lifecycle: auto-refresh on
 // RepositoryState.activePath change. Reads/writes go through
 // DeskPrStore (refs/manifold/desks/<branch>) so the PR list is
 // always derived from git, never from a sidecar cache.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:io';
@@ -134,7 +132,6 @@ class DeskPrState extends ChangeNotifier {
 
   /// Promote a branch to a desk PR. Returns null on success, error
   /// message on failure.
-  ///
   /// [baseRef] is optional: when omitted we resolve the repo's default
   /// branch (origin/HEAD → fallback to `main`/`master`). Hardcoding
   /// `'main'` here used to break the promote flow on `master`-style

@@ -13,12 +13,10 @@ import '../features/diff/diff_models.dart';
 /// `gh` rather than rolling our own GitHub API client because it
 /// already solves auth, refresh, and rate-limit handling — every user
 /// that has `gh auth login` finished gets PR/issue support for free.
-///
 /// Surfaces in the UI must handle the case where `gh` is missing or
 /// unauthenticated: call [ghStatus] once on first lens activation and
 /// branch the empty state on the result.
 
-// ── DTOs ──────────────────────────────────────────────────────────────
 
 /// Single reviewer-state pair on a PR. Aggregated from `reviewRequests`
 /// (people who've been asked but haven't reviewed yet) and `reviews`
@@ -173,7 +171,6 @@ class PullRequestDetail {
   /// rebuild. Key = file path (matches [PrFile.path]); value = the
   /// `ParsedLine`s that belong to that file in source order. Empty map
   /// if the diff is empty.
-  ///
   /// Parsing once in the backend (when the future resolves) instead of
   /// per diff-render is the root-cause fix for the diff-view freeze:
   /// AnimatedSize tweens, prefetch progress notifications, and any
@@ -298,11 +295,9 @@ class GhStatus {
   bool get usable => installed && authenticated;
 }
 
-// ── Public API ────────────────────────────────────────────────────────
 
 /// One-shot probe — is `gh` on PATH, and is the user logged in?
 /// Cheap to call; cache the result on the lens-state side.
-///
 /// Both probes run in parallel because they're independent — the auth
 /// check spawns even if version returns first, and we make the install
 /// vs auth distinction from the two results. ~50ms saving in the
@@ -831,7 +826,6 @@ Future<GitResult<List<CheckSummary>>> listChecks(
   }
 }
 
-// ── Internal ──────────────────────────────────────────────────────────
 
 Future<ProcessResult> _gh(String repo, List<String> args) async {
   final commandLabel = 'gh.${args.isNotEmpty ? args.first : 'unknown'}';

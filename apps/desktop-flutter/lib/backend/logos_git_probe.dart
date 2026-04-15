@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // logos_git_probe.dart — structural probe enrichment for the context builder
 //
 // Philosophy — Logos is an attention codec:
@@ -38,7 +37,6 @@
 //   precisely because we don't know where to look. This is the
 //   codec-aesthetic equivalent of "when the match state is crystal,
 //   trust the predictor; when it's gas, let the prior take over."
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:convert';
@@ -122,7 +120,6 @@ class ProbeStats {
 /// over- or under-confident utilities early (cold-start KT prior
 /// deviations), so the clamp caps how aggressively the calibration
 /// loop can push the weights away from the hand-picked defaults.
-///
 /// Upper bound 2.5× matches the cap Agent B recommended during the
 /// SSE calibration design pass; lower bound 0.3× keeps an axis alive
 /// even when historically uncited so it can re-earn weight if the
@@ -150,10 +147,8 @@ class LogosGitProbeBuilder {
   /// Optional SSE calibration store. When supplied, the probe reads
   /// learned per-regime utilities and SCALES the default m/ab weights
   /// accordingly. This is the closed learning loop:
-  ///
   ///   emission → audit → citation matching → SSE cell update → next
   ///   probe reads utility → weight scales → better emission
-  ///
   /// Null falls back to the hardcoded weights; existing tests and the
   /// cold-start path stay deterministic.
   final LogosSseStore? sseStore;
@@ -343,7 +338,6 @@ class LogosGitProbeBuilder {
     return (1.0 + sizeScale + cohShift).clamp(0.3, 3.0);
   }
 
-  // ─── internals ─────────────────────────────────────────────────────────
 
   Set<String> _extractTouchedPaths(String diffText) =>
       extractDiffTouchedPaths(diffText);
@@ -566,7 +560,6 @@ Future<DiffProbe> buildDiffProbe({
 /// Diffuse from a [DiffProbe]. Unlike the engine's `diffuse(Set<String>)`,
 /// this respects per-source *weights* — M and Ab contributions land with
 /// less starting mass than the primary diff.
-///
 /// Lives here (not on [LogosGit]) because probe construction is repo-aware
 /// (I/O + git) but diffusion is pure math. Keeping the engine pure makes
 /// the WASM port trivial later.
@@ -577,6 +570,33 @@ List<RelevanceScore> diffuseFromProbe({
 }) {
   if (probe.sourceWeights.isEmpty) return const [];
   final t = temperatureOverride ?? probe.suggestedTemperature ?? 1.0;
+  final symbolPaths = <String>{
+    for (final p in engine.symbolEdges.keys)
+      if (!engine.pathToId.containsKey(p)) p,
+  };
+  final axisLabels = <String, String>{
+    for (final entry in probe.sourceWeights.entries)
+      entry.key: _classifyProbeAxis(
+        entry.key,
+        probe,
+        symbolPaths: symbolPaths,
+      ),
+  };
+  final evidence = engine.gatherEvidence(
+    focusWeights: probe.sourceWeights,
+    axisLabelByPath: axisLabels,
+    t: t,
+    excludePaths: probe.primaryPaths,
+  );
+  if (evidence != null && evidence.ranked.isNotEmpty) {
+    return [
+      for (final e in evidence.ranked)
+        RelevanceScore(
+          e.path,
+          e.utility > 0 ? e.utility : (e.support * e.integrity * 0.05),
+        ),
+    ];
+  }
 
   // Build a weighted set via repeated application: diffuse returns a
   // single ranking from a unit source. For weighted sources we scale
@@ -592,6 +612,16 @@ List<RelevanceScore> diffuseFromProbe({
   // Heat kernel is linear in ρ, so the weighted mixture diffuses in
   // one matvec pass — no per-source basis needed.
   return _weightedDiffuse(engine: engine, probe: probe, t: t);
+}
+
+String _classifyProbeAxis(
+  String path,
+  DiffProbe probe, {
+  required Set<String> symbolPaths,
+}) {
+  if (probe.primaryPaths.contains(path)) return 'primary';
+  if (symbolPaths.contains(path)) return LogosAxis.symbol.name;
+  return 'graph';
 }
 
 List<RelevanceScore> _weightedDiffuse({

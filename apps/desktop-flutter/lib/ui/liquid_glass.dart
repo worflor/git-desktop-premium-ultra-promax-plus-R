@@ -24,7 +24,6 @@ class LiquidGlassPulse {
 /// Provides a `ValueListenable<LiquidGlassPulse>` to descendants. Glass
 /// surfaces opt in by reading `LiquidGlassProvider.of(context)` and
 /// wrapping their paint in an `AnimatedBuilder` against the listenable.
-///
 /// Cost is bounded: a single 30Hz Ticker drives `notifyListeners`, and
 /// only subscribed surfaces repaint. Themes without glass mode never
 /// touch this notifier so they pay nothing.

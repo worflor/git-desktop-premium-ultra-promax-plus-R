@@ -398,7 +398,6 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
   /// notification). Refreshed only on shader-kind change.
   Listenable? _backdropSignal;
 
-  // ── Whisp simulation state ──────────────────────────────────────────
   // Redshift's `ThemeParticles.whisps` runs a tiny physics sim: up to 3
   // trailing ribbons drift around the backdrop in normalized coords, and
   // when any two heads come within a few percent of each other they
@@ -1435,7 +1434,6 @@ class _SourceRandom {
   }
 }
 
-// ── Redshift whisp simulation ──────────────────────────────────────────
 // Tiny self-contained physics for the redshift backdrop. 3 ribbons drift
 // in normalized [0,1] space; when any two heads come within ~4% of each
 // other they annihilate into a burst of short-lived debris. All state

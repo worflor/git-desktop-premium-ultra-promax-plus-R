@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // semantic_manifest.dart — structured change summary for AI prompts
 //
 // Upstream of the packed diff in the commit-message / review prompt, the
@@ -35,14 +34,12 @@
 //     moved together in the past — the commit's structural story.
 // Both optional inputs degrade gracefully: null = skip that signal, not
 // error. The manifest still emits usefully on the φ + well axis alone.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'package:meta/meta.dart';
 
 import 'file_coupling.dart' show FileCouplingMatrix, SymbolFrequencyIndex;
 import 'logos_hunks.dart' show DiffHunk, HunkRanking;
 
-// ── Identifier extraction ────────────────────────────────────────────────
 
 /// Matches identifier-shaped runs. Same shape as the engram file-index
 /// tokeniser so move/add/remove detection classifies tokens on the same
@@ -80,7 +77,6 @@ const Set<String> _kSkipTokens = {
 /// always parameter names or index variables — noise for the manifest.
 const int _kMinTokenLen = 3;
 
-// ── Manifest shape ───────────────────────────────────────────────────────
 
 /// Structured pre-computed summary of a commit, designed to be emitted
 /// ABOVE the packed diff so the model has a trustworthy narrative frame
@@ -336,7 +332,6 @@ class CouplingEntry {
   final double jaccard;
 }
 
-// ── Bounds ───────────────────────────────────────────────────────────────
 
 const int _kMaxThemes = 5;
 const int _kMaxMoves = 30;
@@ -352,15 +347,12 @@ const int _kMaxCouplingPairs = 10;
 /// are. 0.25 matches the coupling_nudge threshold convention elsewhere.
 const double _kCouplingFloor = 0.25;
 
-// ── Builder ──────────────────────────────────────────────────────────────
 
 /// Build a manifest from a ranked hunk list (φ + optional well).
-///
 /// Pure function: given the same rankings + state, returns the same
 /// manifest. Never throws — a malformed hunk body just contributes no
 /// tokens. Returns an empty-ish manifest when [rankings] is empty;
 /// callers can check [SemanticManifest.isEmpty] before emitting.
-///
 /// [symbolIndex] — corpus IDF. When non-null and non-empty, identifier
 /// ranking uses true rarity instead of commit-local repetition.
 /// [couplingMatrix] — historical co-change data. When non-null, file
@@ -606,7 +598,6 @@ SemanticManifest buildSemanticManifest(
   );
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
 
 /// Walk a hunk body and extract identifier tokens on + and - lines.
 /// Context lines (starting with a space) and diff metadata (`+++`,

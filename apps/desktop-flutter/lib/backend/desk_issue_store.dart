@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // desk_issue_store.dart — read/write DeskIssue through git plumbing
 //
 // Each desk issue lives at refs/manifold/issues/<id>. Same orphan-
@@ -7,7 +6,6 @@
 // scoped). Single id-counter shared between PRs and issues so users
 // can write `#42` without ambiguity about which kind it is — fed by
 // the existing refs/manifold/_id-counter ref.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 
@@ -239,7 +237,6 @@ class DeskIssueStore {
   /// Overwrite local metadata from freshly-fetched remote values.
   /// Preserves: issueId, authorIdentity, createdAt, addressedBy, comments,
   /// remoteNumber (keeps existing link). Everything else comes from remote.
-  ///
   /// `updatedAt` is set to [DateTime.now()] — it tracks when this LOCAL copy
   /// was last touched, which is what `listAll()` uses for sort order.
   /// Using the remote's timestamp would make recently-synced issues sort

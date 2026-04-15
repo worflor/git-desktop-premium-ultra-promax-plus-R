@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_complex.dart — complex AR(2) fit_all (port of engram_codec.fit_all)
 //
 // Companion to engram_fit.dart. That file is the real-1D specialisation
@@ -18,7 +17,6 @@
 // Fallback: inputs with T < SEED_COUNT+1 return the "linear K" fallback
 // (K=2+0i, G=1+0i) exactly as Engram does, so well assignment never
 // sees NaN.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -48,7 +46,6 @@ const int engramComplexMinSamples = engramSeedCount + 1;
 /// Python codec's `RIDGE_SCALE`. The ridge is applied proportional to
 /// the trace (sAA + sBB), so it never distorts well-conditioned
 /// systems; singular/degenerate systems get regularised into solvability.
-///
 /// 1e-4 is a standard numerical-analysis ridge scale (the sqrt of
 /// ~f32-epsilon-squared-over-unity): large enough to dominate true
 /// floating-point noise at f64, small enough not to bias the solved
@@ -118,7 +115,6 @@ class EngramFitAll {
 /// needs; by keeping them alive across calls we turn what used to be
 /// 9 Float64List allocations per hunk into zero — all the GC pressure
 /// from thousands of hunks per diff evaporates.
-///
 /// Only the *internal accumulators* are reused. The output K/G/rms
 /// arrays are freshly allocated per call because the caller's
 /// `HunkKVector` retains a reference and the solver would otherwise
@@ -126,7 +122,6 @@ class EngramFitAll {
 /// from 9 f64 lists to 4 f64 + 1 f32 — more than halved — and the
 /// kept lists exactly fit the shape a downstream K-vector consumer
 /// wants to hold.
-///
 /// Not thread-safe on purpose: every caller owns its own instance
 /// (the hunk encoder creates one at construction; isolates have
 /// their own encoder anyway). Size is fixed at construction to
@@ -168,14 +163,11 @@ class EngramComplexScratch {
 
 /// Fit P independent complex AR(2) oscillators to a [T, P] complex matrix
 /// stored row-major as separate real/imaginary Float64Lists of length T*P.
-///
 /// `zRe[t*P + p]` and `zIm[t*P + p]` are the real/imag components of
 /// observation t for pair p.
-///
 /// Direct port of Python's `fit_all` in engram_codec.py — including the
 /// ridge regularisation, per-pair degenerate-determinant guard, linear
 /// fallback for bad pairs, and algebraic RMS computation.
-///
 /// If [scratch] is provided it's reused across calls (the hot path).
 /// If null we allocate a fresh one for this call — fine for
 /// one-off test code but the hunk encoder always passes its own.
@@ -374,7 +366,6 @@ EngramFitAll fitAllComplex({
 /// matrix, producing a [T, pairs] complex trajectory. `pairing[2k]` and
 /// `pairing[2k+1]` are the original dim indices that become the real/imag
 /// components of complex pair k.
-///
 /// Returns (zRe, zIm), each length T * pairs.
 ({Float64List zRe, Float64List zIm}) applyPairingToComplex({
   required Float64List w,

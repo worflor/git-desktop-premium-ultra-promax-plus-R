@@ -53,7 +53,6 @@ extension AppTokenSurfaceTones on AppTokens {
   /// intent (hairline vs. subtle vs. emphasized) instead of rolling
   /// bespoke alphas. Tuned against the 40+ scattered chromeBorder.withValues
   /// sites that drifted across 0.05–0.30.
-  ///
   /// faint (0.08)  — inner grid lines, near-invisible dividers
   /// subtle (0.14) — standard card chrome, default choice
   /// strong (0.28) — accent dividers, emphasis
@@ -637,7 +636,6 @@ class MaterialTexturePainter extends CustomPainter {
 /// drift + window-tilt parallax actually drive repaints. Other texture
 /// kinds (grain, scanlines, pixels, halftone) get a plain CustomPaint
 /// with no pulse subscription — they pay zero cost.
-///
 /// Used both for per-surface texture passes inside `MaterialSurface`
 /// and for the app-root texture backdrop in `main.dart` so iridescent
 /// parallax behaves identically wherever the texture appears.
@@ -690,7 +688,6 @@ class MaterialTextureLayer extends StatelessWidget {
 /// nacre surfaces to `LiquidGlassProvider` so the shader's time/tilt
 /// drift drives repaints. Other themes get a plain CustomPaint with no
 /// subscription — they pay zero cost.
-///
 /// `RepaintBoundary` isolates the per-frame glass repaint from the rest
 /// of the surface tree (text, borders, shadows). Without it, every
 /// pulse tick would invalidate the whole surface subtree.

@@ -233,7 +233,6 @@ class WorktreeState extends ChangeNotifier {
 
   /// Creates a new desk for [branch] under the main repo's hidden worktrees
   /// directory, then switches to it as the active desk.
-  ///
   /// When [createNewBranch] is true, also creates the branch from HEAD
   /// (uses `git worktree add -b`) — useful for "+ new desk from HEAD".
   Future<String?> addDesk(
@@ -351,7 +350,6 @@ class WorktreeState extends ChangeNotifier {
   /// if we're currently viewing a desk (worktree), that path is NOT the
   /// main repo, and creating a new desk with it as a base would nest
   /// worktrees inside each other.
-  ///
   /// Uses `git rev-parse --git-common-dir` which points at the MAIN repo's
   /// `.git` directory regardless of which worktree we're in; the parent
   /// of that directory is the main repo root.

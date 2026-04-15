@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 
 /// What an animation is trying to *communicate*. The policy maps intent to a
 /// decision (play it, skip it, or soften it) based on user preferences.
-///
 /// Before this existed, every animation in the diff shell was a DIY
 /// AnimationController or TweenAnimationBuilder with no shared layer to gate
 /// it. `reduce-motion` was honoured by exactly one of six animations, and

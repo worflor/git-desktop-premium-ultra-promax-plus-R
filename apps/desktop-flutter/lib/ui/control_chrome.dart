@@ -5,7 +5,6 @@ import 'tokens.dart';
 /// Per-theme button-chrome quirks. Lets the chrome builders stay declarative
 /// (just consume getters) instead of scattering `t.id == AppThemeId.X`
 /// branches across every paint path. Single source of truth per quirk.
-///
 /// Null-returning getters mean "no override — caller uses its fallback."
 extension AppTokenButtonChrome on AppTokens {
   /// Nightwalker shifts its button content up-and-left on hover as part of

@@ -9,13 +9,11 @@ import '../app/window_activity.dart';
 ///   * 0.0 — no motion (same effective behavior as the old boolean toggle)
 ///   * 1.0 — authored speed
 ///   * 2.0 — double-time
-///
 /// Rather than scatter `context.watch<PreferencesState>().motionRate`
 /// across dozens of animated widgets, every animation in the app should
 /// consult [BuildContextMotion] so a rate change silently rescales
 /// durations, skips scroll animations at rate=0, and stops repeating
 /// controllers.
-///
 /// Entry points:
 ///   * `context.motionRate` / `Read` — continuous scalar (subscribe / read).
 ///   * `context.reduceMotion` / `Read` — legacy boolean view (rate ≤ ε).
@@ -77,7 +75,6 @@ extension MotionScrollControllerExt on ScrollController {
 
 /// Mixin for State<T> that owns a repeating [AnimationController] driving
 /// constant motion (pulses, shimmers, idle loops).
-///
 /// Implementing states declare [motionLoops], a list of controllers that
 /// should repeat while motion is allowed. The mixin subscribes to
 /// [PreferencesState] and, on each pref change, either stops + resets the

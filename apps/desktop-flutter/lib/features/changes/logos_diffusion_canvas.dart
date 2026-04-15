@@ -786,7 +786,6 @@ enum _Element {
 }
 
 /// Observatory-chart painter.
-///
 /// Each element animates on entrance then holds — no infinite
 /// oscillators. The only post-settle motion is the transmit beam
 /// (which represents data actually moving). Polar coordinates
@@ -1093,7 +1092,6 @@ class _TopoPainter {
     canvas.drawCircle(center, r, paint);
   }
 
-  // ── background starfield + topology densification ─────────────
   void _paintStarfield() {
     // Base layer fades in on mount; a denser layer fades in once the
     // engine reports its node count. Both persist for the session.
@@ -1135,7 +1133,6 @@ class _TopoPainter {
     }
   }
 
-  // ── well sectors (faint coloured bleed) ────────────────────────
   void _paintWellSectors() {
     final env = envFor(_Element.wellSectors, fadeMs: 1100);
     if (env <= 0 || wellLayout.isEmpty) return;
@@ -1157,7 +1154,6 @@ class _TopoPainter {
     }
   }
 
-  // ── neighbour nodes (post-diffusion positions) ─────────────────
   void _paintNeighbourNodes() {
     final env = envFor(_Element.neighbourNodes, fadeMs: 900);
     if (env <= 0 || phiSortedDesc.isEmpty) return;
@@ -1352,7 +1348,6 @@ class _TopoPainter {
     }
   }
 
-  // ── transmission beam ─────────────────────────────────────────
   void _paintTransmitBeam() {
     final env = envFor(_Element.transmitBeam, fadeMs: 800);
     if (env <= 0) return;

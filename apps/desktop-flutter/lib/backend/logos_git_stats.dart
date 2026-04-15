@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // logos_git_stats.dart — repo telemetry harvester for LogosGit
 //
 // Pulls the four Phase-1 statistics the engine needs (touches, total
@@ -9,7 +8,6 @@
 // Kept separate from the engine so (a) the engine can be unit-tested
 // with synthesised stats, and (b) a future sidecar / WASM port can
 // replace this file without touching the numerics.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:io';
 import 'dart:math' as math;
@@ -18,14 +16,15 @@ import 'dart:typed_data';
 import 'file_coupling.dart';
 import 'git_result.dart';
 import 'logos_git.dart';
+import 'logos_git_integrity.dart';
 
 /// Window of history, in commits, used to build F0 + volatility stats.
 /// Same order of magnitude as the coupling matrix's `commitLimit` so
 /// all three signals reflect the same time slice.
 const int _statsCommitWindow = 1000;
+const String _commitMetaSep = '\u001f';
 
 /// Gather the four Phase-1 statistics the engine needs from the repo.
-///
 /// We walk the commit log via two independent `git log` invocations —
 /// one with `--numstat` (drives F0 + V), one with `--name-only` (drives
 /// CC via [computeFileCoupling]). They are kicked off **concurrently**
@@ -50,7 +49,7 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
       '$commitWindow',
       '--no-merges',
       '--numstat',
-      '--format=%H',
+      '--format=%H%x1f%an%x1f%s',
     ],
     workingDirectory: repoPath,
     runInShell: false,
@@ -76,13 +75,17 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   }
   final cc = ccResult.matrix!;
 
-  final touches = <String, int>{};
+  final rawTouches = <String, int>{};
+  final touchMass = <String, double>{};
   final volatility = <String, double>{};
   // Per-file commit-index series — for each file, the list of commit
   // indices (oldest=0 .. newest=totalCommits-1) where the file
   // appeared. Drives [LogosGit]'s per-file curved AR(2) metric.
   final perFileCommitIndices = <String, List<int>>{};
+  final perFileCommitClock = <String, List<double>>{};
+  final ritualMassByPath = <String, double>{};
   var totalCommits = 0;
+  var semanticCommitMass = 0.0;
 
   // EWMA half-life: 90 commits. λ = 1 - 2^(-1/90) ≈ 0.00767.
   // Recent commits outweigh old ones in the V-axis signal.
@@ -98,10 +101,26 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   // each file's commit-index series stays in oldest→newest order
   // ready for AR(2) gap-fitting downstream.
   var commitIndex = 0;
+  var semanticClock = 0.0;
   for (var i = blocks.length - 1; i >= 0; i--) {
     final b = blocks[i];
     if (b.numstatLines.isEmpty) continue;
     totalCommits++;
+    final paths = <String>{};
+    for (final stat in b.numstatLines) {
+      final parts = stat.split('\t');
+      if (parts.length < 3) continue;
+      final path = parts[2];
+      if (path.isNotEmpty) paths.add(path);
+    }
+    final meaningfulness = inferCommitMeaningfulness(
+      author: b.author,
+      subject: b.subject,
+      paths: paths,
+    );
+    final step = meaningfulness.weight.clamp(0.0, 1.0);
+    semanticClock += step;
+    semanticCommitMass += step;
     for (final stat in b.numstatLines) {
       final parts = stat.split('\t');
       if (parts.length < 3) continue;
@@ -111,15 +130,26 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
       if (path.isEmpty) continue;
       // Binary files ("-\t-\tpath") still count as a touch but can't
       // contribute a churn number.
-      touches[path] = (touches[path] ?? 0) + 1;
+      rawTouches[path] = (rawTouches[path] ?? 0) + 1;
+      touchMass[path] = (touchMass[path] ?? 0.0) + step;
+      ritualMassByPath[path] = (ritualMassByPath[path] ?? 0.0) + (1.0 - step);
       (perFileCommitIndices[path] ??= <int>[]).add(commitIndex);
-      if (added == null || deleted == null) continue;
-      final churn = (added + deleted).toDouble();
+      if (step > 0) {
+        (perFileCommitClock[path] ??= <double>[]).add(semanticClock);
+      }
+      if (step <= 0 || added == null || deleted == null) continue;
+      final churn = (added + deleted).toDouble() * step;
       final prev = volatility[path] ?? 0.0;
       volatility[path] = (1 - lambda) * prev + lambda * churn;
     }
     commitIndex++;
   }
+
+  final integrityProfile = buildLogosIntegrityProfile(
+    rawTouches: rawTouches,
+    semanticTouchMass: touchMass,
+    ritualMassByPath: ritualMassByPath,
+  );
 
   // Mean + stddev of volatility for the V-axis z-score.
   var volMean = 0.0;
@@ -151,15 +181,33 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   perFileCommitIndices.forEach((path, growable) {
     compactedIndices[path] = Int32List.fromList(growable);
   });
+  final compactedClock = <String, List<double>>{};
+  perFileCommitClock.forEach((path, growable) {
+    compactedClock[path] = Float64List.fromList(growable);
+  });
+  final semanticTouches = <String, int>{
+    for (final entry in touchMass.entries)
+      if (entry.value > 0) entry.key: math.max(1, entry.value.round()),
+  };
+  final semanticTotalCommits =
+      semanticCommitMass > 0 ? math.max(1, semanticCommitMass.round()) : 0;
 
   return GitResult.ok(LogosGitStats(
-    touches: touches,
-    totalCommits: totalCommits,
+    touches: semanticTouches,
+    totalCommits: semanticTotalCommits,
+    rawTouches: rawTouches,
+    rawTotalCommits: totalCommits,
+    touchMass: touchMass,
+    semanticCommitMass: semanticCommitMass,
     volatility: volatility,
     volMean: volMean,
     volStddev: volStddev,
     coupling: cc,
     perFileCommitIndices: compactedIndices,
+    perFileCommitClock: compactedClock,
+    ritualnessByPath: integrityProfile.ritualnessByPath,
+    integrityByPath: integrityProfile.integrityByPath,
+    integrityReasonsByPath: integrityProfile.reasonsByPath,
   ));
 }
 
@@ -173,12 +221,13 @@ class _CouplingResult {
   const _CouplingResult.err(this.error) : matrix = null;
 }
 
-// ─── parse ───────────────────────────────────────────────────────────────
 
 class _CommitBlock {
   final String hash;
+  final String author;
+  final String subject;
   final List<String> numstatLines;
-  const _CommitBlock(this.hash, this.numstatLines);
+  const _CommitBlock(this.hash, this.author, this.subject, this.numstatLines);
 }
 
 List<_CommitBlock> _splitCommitBlocks(List<String> lines) {
@@ -193,24 +242,46 @@ List<_CommitBlock> _splitCommitBlocks(List<String> lines) {
   //   ...
   final blocks = <_CommitBlock>[];
   String? currentHash;
+  String currentAuthor = '';
+  String currentSubject = '';
   var current = <String>[];
   for (final raw in lines) {
     final line = raw.trimRight();
     if (line.isEmpty) continue;
-    if (_isCommitHash(line)) {
+    final header = _parseCommitHeader(line);
+    if (header != null) {
       if (currentHash != null) {
-        blocks.add(_CommitBlock(currentHash, current));
+        blocks.add(_CommitBlock(currentHash, currentAuthor, currentSubject, current));
       }
-      currentHash = line;
+      currentHash = header.hash;
+      currentAuthor = header.author;
+      currentSubject = header.subject;
       current = <String>[];
     } else {
       current.add(line);
     }
   }
   if (currentHash != null) {
-    blocks.add(_CommitBlock(currentHash, current));
+    blocks.add(_CommitBlock(currentHash, currentAuthor, currentSubject, current));
   }
   return blocks;
+}
+
+_CommitHeader? _parseCommitHeader(String line) {
+  final parts = line.split(_commitMetaSep);
+  if (parts.length < 3 || !_isCommitHash(parts[0])) return null;
+  return _CommitHeader(
+    parts[0],
+    parts[1].trim(),
+    parts.sublist(2).join(_commitMetaSep).trim(),
+  );
+}
+
+class _CommitHeader {
+  final String hash;
+  final String author;
+  final String subject;
+  const _CommitHeader(this.hash, this.author, this.subject);
 }
 
 bool _isCommitHash(String s) {

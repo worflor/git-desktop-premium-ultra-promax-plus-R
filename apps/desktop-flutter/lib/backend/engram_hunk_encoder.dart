@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_hunk_encoder.dart — encode hunks into K-space vectors.
 //
 // Pipeline:
@@ -18,7 +17,6 @@
 // The encoder is cheap when the brain+glove are loaded (~10μs per hunk
 // for typical token counts). It's designed to be called inside the
 // existing logos diffusion isolate, not on the UI thread.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:typed_data';
 
@@ -87,7 +85,6 @@ class EngramHunkEncoder {
   /// old design also carried a [T, dim] real buffer (`_trajectoryBuf`)
   /// because the reference pairing was applied at encode time —
   /// scatter-gather from [T, dim] into [T, pairs] re/im pairs.
-  ///
   /// With the pairing pre-baked into the GloVe storage at load, the
   /// encode path writes directly into [_trajectoryReBuf]/[_trajectoryImBuf]
   /// via [EngramGlove.fillPairedRow], which does unit-stride reads on

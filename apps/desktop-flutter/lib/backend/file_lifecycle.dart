@@ -5,14 +5,12 @@ import 'logos_git.dart';
 /// ═════════════════════════════════════════════════════════════════════════
 /// FILE LIFECYCLE — two-axis classifier per file
 /// ═════════════════════════════════════════════════════════════════════════
-///
 /// Ports the lifecycle vocabulary from the hyperdimensional research
 /// codebase (memories were classified as `candidate/reinforced/canonical`
 /// for promotion strength, and `fresh/cooling/aging/stale` for decay).
 /// Same shape applies cleanly to repository files: a file's history of
 /// touches gives it BOTH a promotion class (how structurally important
 /// it is to the repo) AND a decay class (how recently it was touched).
-///
 /// Both axes derive from data the engine already has — touch count
 /// quantiles for promotion, recency-weighted alive-mass quantiles for
 /// decay. Zero new git work; the classifier is one O(N log N) pass over
@@ -69,13 +67,11 @@ class FileLifecycle {
 }
 
 /// Build a per-file classifier from a [LogosGit] engine's stats.
-///
 /// Promotion thresholds: top-10% of files by touch count are
 /// `canonical`; next 20% are `reinforced`; the rest are `candidate`.
 /// Decay thresholds: alive-mass (exp-decay over commit-age) bucketed
 /// at 0.7 / 0.4 / 0.15 — a fresh file's most-recent touch is within
 /// ~halfLife/2 commits, aging is past 2-3 half-lives, stale beyond 4.
-///
 /// Cost: O(N log N) for the touch-count sort, O(N · |touches|) for
 /// the alive-mass pass. Both run once per engine; the result is a
 /// `Map<String, FileLifecycle>` retained for the engine's lifetime.

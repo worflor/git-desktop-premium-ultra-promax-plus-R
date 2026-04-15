@@ -1,7 +1,6 @@
 /// User preferences for the shape of generated commit messages.
 /// Consumed by `_buildCommitMessagePrompt` in `ai.dart` to shape the
 /// AI's output, and by the settings stage UI to preview it.
-///
 /// Three orthogonal axes:
 ///   * [CommitStructure] — skeleton (title+body, title only, freeform).
 ///   * [CommitVoice]     — grammatical mood (imperative, descriptive,

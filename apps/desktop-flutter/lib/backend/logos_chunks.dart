@@ -1,6 +1,4 @@
-// ═════════════════════════════════════════════════════════════════════════
 // LOGOS CHUNKS — intra-file chunk-level heat-kernel diffusion
-// ═════════════════════════════════════════════════════════════════════════
 //
 // Sits parallel to LogosGit (file graph) and LogosHunks (diff-hunk graph).
 // Nodes are CHUNKS inside one source file; edges are the geometric bonds
@@ -29,13 +27,11 @@ import 'dart:typed_data';
 
 import 'logos_core.dart';
 
-// ─────────────────────────────────────────────────────────────────────────
 // Chunker — split a source file on signature-line boundaries.
 //
 // Same regex set used by `_buildFileOutline` in ai.dart. Kept in sync by
 // convention: any change to the universal sig detection there should be
 // mirrored here so chunk boundaries match outline anchors.
-// ─────────────────────────────────────────────────────────────────────────
 
 final List<RegExp> _sigPatterns = [
   RegExp(
@@ -95,7 +91,6 @@ class SourceChunk {
 }
 
 /// Split [content] into chunks using signature-line boundaries.
-///
 /// A new chunk starts at every signature line. Lines before the first sig
 /// form a "preamble" chunk (imports, copyright, top-of-file comments).
 /// Tiny tail chunks (<3 lines) merge into the previous chunk to avoid
@@ -178,10 +173,8 @@ List<SourceChunk> chunkSourceFile(String content) {
   return coalesced;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Identifier tokenisation — same shape as logos_hunks (camelCase + snake +
 // stop-list). Duplicated by convention so this module stays self-contained.
-// ─────────────────────────────────────────────────────────────────────────
 
 final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
 final _camelBoundary =
@@ -239,12 +232,10 @@ Set<String> _deriveStopTokens(List<Set<String>> perChunkTokens) {
   return stop;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Chunk-graph construction. Diffusion math lives in logos_core.dart —
 // this file only owns the chunk-specific axis blend (C_sym / C_prox /
 // C_struct) and the source-mass model. The graph itself is the shared
 // [CsrGraph] type.
-// ─────────────────────────────────────────────────────────────────────────
 
 CsrGraph _buildChunkGraph({
   required List<SourceChunk> chunks,
@@ -301,7 +292,6 @@ CsrGraph _buildChunkGraph({
     rowB[a] = (rowB[a] ?? 0.0) + w;
   }
 
-  // ── C_sym ──────────────────────────────────────────────────────────
   final symNumerator = <int, Map<int, int>>{};
   for (final bucket in tokenBuckets.values) {
     if (bucket.length < 2) continue;
@@ -328,7 +318,6 @@ CsrGraph _buildChunkGraph({
     });
   });
 
-  // ── C_prox ─────────────────────────────────────────────────────────
   for (var i = 0; i < n; i++) {
     for (var j = i + 1; j < n; j++) {
       final d = (chunks[j].startLine - chunks[i].startLine).abs().toDouble();
@@ -338,7 +327,6 @@ CsrGraph _buildChunkGraph({
     }
   }
 
-  // ── C_struct ───────────────────────────────────────────────────────
   // Same start-indent → likely siblings in the same scope. Cheap prior
   // that nudges adjacent same-scope defs to be packed together.
   for (var i = 0; i < n; i++) {
@@ -416,10 +404,8 @@ class _Edge {
 // — see [chebyshevBasis], [recombineHeatPhi], and [kChebyshevSmallGraph]
 // for the polynomial-order policy this engine shares with logos_hunks.
 
-// ─────────────────────────────────────────────────────────────────────────
 // Public API — pack the most relevant chunks of one source file under a
 // byte budget.
-// ─────────────────────────────────────────────────────────────────────────
 
 class ChunkPackResult {
   ChunkPackResult({
@@ -450,13 +436,11 @@ class TouchedLineRange {
 
 /// Pack the most diff-relevant chunks of [content] into a budget-bounded
 /// prompt body for [filePath].
-///
 /// Mass model: each chunk's source mass = number of diff-touched lines
 /// that fall within its [startLine, endLine] window. Chunks with zero
 /// touched lines start at zero mass; the heat kernel is what pulls them
 /// in. Adjacent admitted chunks are stitched without a redundant header
 /// so the output reads as a continuous excerpt.
-///
 /// Async variant — runs the entire pack on a background isolate so a
 /// large file's chunk graph + 3-temperature recombination never hitches
 /// the UI on diff open. The function is pure data in / data out (no

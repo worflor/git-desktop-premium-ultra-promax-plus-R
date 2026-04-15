@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // stash_shape.dart — geometric signature of a stash relative to the
 // current working tree.
 //
@@ -25,7 +24,6 @@
 //   bonded       resonance ≥ 0.4, no overlap
 //   adjacent     0.15 ≤ resonance < 0.4, no overlap
 //   orthogonal   resonance < 0.15, no overlap
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'file_coupling.dart';
 
@@ -83,11 +81,9 @@ class StashShape {
 
 /// Compute the geometric signature of a stash entry relative to the
 /// current working tree changes.
-///
 /// [stashPaths] — file paths touched by the stash.
 /// [currentPaths] — file paths in the current working tree (status.files).
 /// [matrix] — the repo's coupling matrix.
-///
 /// Returns [StashShape.empty] when [stashPaths] is empty.
 StashShape computeStashShape({
   required List<String> stashPaths,

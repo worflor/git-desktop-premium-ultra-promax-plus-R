@@ -7,12 +7,10 @@ import 'commit_tagger.dart';
 
 /// Renders a single auto-derived commit tag as a compact pill sitting
 /// inline with the existing git-tag pills on a commit row.
-///
 /// Color derivation is deterministic from the label string — same
 /// label always paints the same hue across the app. Saturation and
 /// lightness are pulled from the theme tokens so each theme auto-
 /// paints its own palette; no per-label color map anywhere.
-///
 /// Kind only modulates emphasis (saturation + alpha weight), not the
 /// hue itself. A `type` tag reads a touch brighter than an axis tag
 /// to reinforce the "this is the author's own word" / "this is a

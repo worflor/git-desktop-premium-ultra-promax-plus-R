@@ -7,7 +7,6 @@ import '../backend/git.dart';
 /// HEAD hash. Background-only: UI never waits. Until the index is warm,
 /// `computeSymbolCoupling` falls back to change-set-local IDF — correct
 /// but less effective at suppressing language-specific stop-words.
-///
 /// Mirrors [FileCouplingState]'s shape so the provider tree treats it
 /// the same way.
 class SymbolFrequencyState extends ChangeNotifier {

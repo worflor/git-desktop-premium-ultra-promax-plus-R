@@ -11,11 +11,9 @@ enum EditKind { context, hunk, meta, insert, delete, replace, move }
 /// as the canonical unit of change. The patch engine continues to operate on
 /// raw ParsedLines — EditUnit is a VIEW, not a replacement for the staging
 /// authority.
-///
 /// Every EditUnit has a stable [id] derived from content + position that does
 /// NOT depend on staged state. That makes it safe as an animation / widget
 /// key across stage toggles and scroll recycling.
-///
 /// The id is a 64-bit integer computed via the SplitMix64 avalanche
 /// (Principia Circle XVII) over the unit's structural fingerprint. This
 /// replaces the older string-form id (`'rp:3:45:46:1234:5678'`), which
@@ -80,7 +78,6 @@ class EditUnit {
   /// NEW side of the unit. A rename `foo()` → `bar()` matches both "foo" and
   /// "bar", fixing the blind spot where only the delete's tokens were
   /// searchable after pair fusion.
-  ///
   /// Recomputed per call; callers doing tight-loop search (e.g. typed-query
   /// filtering on large diffs) should hoist the value into a local.
   String get searchText {
@@ -125,7 +122,6 @@ String stripDiffLineSign(String text) {
 /// Compute a rolling 64-bit content hash of a diff line's text, normalized
 /// for block-move matching: strip the leading +/- sign, trim trailing
 /// whitespace, then fold the remaining bytes via xorshift-style bit mixing.
-///
 /// This replaces the earlier `HashMap<String, int>` approach, which
 /// normalized each line into a freshly allocated String (copy + trim),
 /// then hashed that string through the VM's generic string hasher. With
@@ -178,7 +174,6 @@ int _contentHashForMove(String rawLineText) {
 }
 
 /// Build the canonical EditUnit stream from a flat ParsedLine list.
-///
 /// Contract:
 ///   - Every ParsedLine appears inside exactly one EditUnit (either as the
 ///     sole content of a singleton unit or as part of a multi-line unit).
@@ -186,7 +181,6 @@ int _contentHashForMove(String rawLineText) {
 ///     engine sees exactly the same bytes it always did.
 ///   - Order is preserved: units are emitted in the order their FIRST
 ///     backing line appeared.
-///
 /// When [detectMoves] is true (default), an additional pass pairs pure
 /// single-line deletes and inserts whose content matches across the file
 /// into [EditKind.move] units. Only non-adjacent pairs are considered
@@ -306,7 +300,6 @@ List<EditUnit> buildEditUnits(
 /// diff, then **extend each match into the longest contiguous block** that
 /// can be shown as one moved region. Both sides become [EditKind.move]
 /// units pointing at each other via [EditUnit.moveTargetId].
-///
 /// This is Rabin-Karp block matching over the unit stream: the content
 /// hash per line (computed once via [_contentHashForMove]) acts as the
 /// rolling-hash key, and for each candidate 1-line match we greedily
@@ -314,7 +307,6 @@ List<EditUnit> buildEditUnits(
 /// next insert's content hash AND both sit in the same file. Verification
 /// happens in hash space, so a k-line extension is O(k) of integer
 /// compares — no per-line string work during extension.
-///
 /// Why block-level detection matters: when a reviewer moves a 10-line
 /// function elsewhere in a file, git emits it as 10 deletes + 10 inserts
 /// in two separated hunks. Single-line matching would mark exactly ONE
@@ -322,7 +314,6 @@ List<EditUnit> buildEditUnits(
 /// insert/delete pairs. That's structurally wrong — the reviewer sees
 /// "lots of churn" instead of "this function moved." Extending to the
 /// full block makes the whole relocation read as one coherent event.
-///
 /// Conservative guards:
 ///   - Normalized content ≥ 4 chars (see [_contentHashForMove]) so
 ///     punctuation-only lines like `}` don't anchor bogus blocks.
@@ -337,7 +328,6 @@ List<EditUnit> buildEditUnits(
 ///     the one that extends furthest. This avoids the first-match-wins
 ///     pathology where a trivial 1-line coincidence sunk a genuine 10-line
 ///     block move.
-///
 /// Complexity: O(N) expected. The hash index is O(N) to build; each unit
 /// contributes at most O(|candidate list|) work during extension, and
 /// because each unit is visited at most once (via the `claimed` bitmap)
@@ -463,7 +453,6 @@ void _detectMoves(List<EditUnit> units) {
     }
   }
 
-  // ── Fuzzy pass ────────────────────────────────────────────────────────
   // For every unclaimed delete+insert that the exact Rabin-Karp pass left
   // behind, check if their SimHashes are within a tight Hamming distance.
   // Catches rename-in-place moves: `function foo(x)` → `function bar(x)`

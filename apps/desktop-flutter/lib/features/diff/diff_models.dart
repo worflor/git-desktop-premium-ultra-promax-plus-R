@@ -50,7 +50,6 @@ class ParsedLine {
   /// bits (letters / digits / common punctuation each land in distinct
   /// slots; uppercase folds onto lowercase naturally since lowerText is
   /// already case-folded).
-  ///
   /// Used as the first-stage pre-filter for substring search. A query's
   /// charBits is computed once; every line runs one `AND` against it, and
   /// lines missing any query character are rejected without running the
@@ -66,7 +65,6 @@ class ParsedLine {
   /// every line), charBits saturates and fails to reject. But the SPECIFIC
   /// 2-grams (fu, un, nc, ct, ti, io, on) are much rarer — lines that
   /// don't contain at least one of them cannot contain the full query.
-  ///
   /// Each adjacent code-unit pair `(c₀, c₁)` hashes to a bit position
   /// via `((c₀ & 0x3F) * 37 + (c₁ & 0x3F)) & 0x3F` — multiplicative
   /// scramble that spreads bigrams roughly uniformly across 64 bits
@@ -77,7 +75,6 @@ class ParsedLine {
   /// charBits — the cumulative `(charBits & qc) == qc && (bigramBits &
   /// qb) == qb` check typically drops to <1% pass-through for queries
   /// ≥ 4 characters.
-  ///
   /// Principia Circle XXVIII (shift-or bitap family) — a sparser N-gram
   /// presence filter, though we stop short of full Bitap NFA since
   /// Dart's native `String.contains` is already SIMD-accelerated and
@@ -92,13 +89,11 @@ class ParsedLine {
   /// that share many trigrams end up with SimHashes differing in few
   /// bits, so a `popcount(a ^ b)` threshold becomes a cheap fuzzy
   /// similarity test.
-  ///
   /// Used by the fuzzy move-detection pass to catch relocations that
   /// also edited one or two identifiers (e.g. `function foo(x)` moved
   /// and renamed to `function bar(x)`). Exact-match Rabin-Karp handles
   /// identical-block moves; SimHash handles the surrounding signature
   /// line that exact matching misses.
-  ///
   /// Principia Circle XVII (SplitMix64 avalanche per trigram) combined
   /// with a bit-counting projection — sign-of-weighted-sum per output
   /// bit. Zero for lines shorter than 3 characters (no trigrams).
@@ -182,7 +177,6 @@ class ParsedLine {
   ///      weight counter: +1 if the fingerprint's bit `k` is set, -1
   ///      otherwise.
   ///   3. Output bit `k` = 1 iff final weight `k` > 0.
-  ///
   /// Runs two counters in parallel (`Int32List[64]`) with a single
   /// per-trigram bit-walk. Cost is O(n·64) per line; on a 50-char line
   /// that's 3k simple integer ops — negligible at parse time.
@@ -214,13 +208,11 @@ class ParsedLine {
   /// Hamming distance between two 64-bit values via the canonical
   /// parallel-bit-sum popcount (Principia Circle II — SWAR). No builtin
   /// in Dart for this; rolling our own keeps us in the integer pipeline.
-  ///
   ///   step 1: subtract pairs  (2-bit counts)
   ///   step 2: sum adjacent 2-bit pairs into 4-bit counts
   ///   step 3: mask into 8-bit groups
   ///   step 4: multiply by 0x0101... to cascade all bytes into the MSB
   ///           via carries, then shift the sum down from the top byte.
-  ///
   /// Five fused ops give the total in O(1). Used by the fuzzy move
   /// matcher to compare SimHashes cheaply (sub-microsecond per pair).
   static int hamming64(int a, int b) {
@@ -270,7 +262,6 @@ class ParsedLine {
 /// line so callers can post-filter by file. Handles `\ No newline at
 /// end of file` markers by attaching them to the previous line via
 /// [ParsedLine.noNewlineAtEof] without consuming a counter slot.
-///
 /// This is the canonical parser for the app — used by the changes-panel
 /// diff shell, the patch engine, and the PR detail surface so every
 /// place that reads a diff sees the exact same model.
@@ -370,12 +361,10 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
 /// `filePath` values exactly. Each value is the raw diff text belonging
 /// to that file, starting with its `diff --git ...` header and ending
 /// just before the next file's header (or the end of the input).
-///
 /// Mirrors [parseUnifiedDiff]'s header regex so the two stay in lockstep
 /// — any parser-side change to how paths are extracted must be mirrored
 /// here. Returns an empty map for empty input; files whose header can't
 /// be parsed are skipped (same degrade behaviour as the parser).
-///
 /// Used by surfaces that want to hand a RAW diff string to [DiffShell]
 /// for a single file out of a multi-file PR payload, without forcing
 /// the Shell to re-scan the full patch for every rebuild. Pair with

@@ -409,7 +409,6 @@ double _measureHeight(String text, TextStyle s) {
   return tp.height;
 }
 
-// ── Breadcrumb ──────────────────────────────────────────────────────────────
 
 class _Breadcrumb extends StatelessWidget {
   final List<String> focusPath;
@@ -474,7 +473,6 @@ class _Breadcrumb extends StatelessWidget {
   }
 }
 
-// ── Body: stacked tracks ─────────────────────────────────────────────────────
 
 class _SeismographBody extends StatelessWidget {
   final AppTokens tokens;
@@ -601,7 +599,6 @@ class _GridPainter extends CustomPainter {
       old.headerWidth != headerWidth;
 }
 
-// ── Track header ─────────────────────────────────────────────────────────────
 
 class _TrackHeader extends StatefulWidget {
   final SeismographTrack track;
@@ -701,7 +698,6 @@ class _TrackHeaderState extends State<_TrackHeader> {
   }
 }
 
-// ── Track body: ridgeline of segment bars ───────────────────────────────────
 
 class _Track extends StatelessWidget {
   final SeismographTrack track;
@@ -912,7 +908,6 @@ class _RidgelinePainter extends CustomPainter {
       old.wakeProgress != wakeProgress;
 }
 
-// ── Segment ──────────────────────────────────────────────────────────────────
 
 class _Segment extends StatefulWidget {
   final SeismographTrack track;
@@ -1396,7 +1391,6 @@ class _SplitBar extends StatelessWidget {
   }
 }
 
-// ── Single-file fallback ─────────────────────────────────────────────────────
 
 class _SingleFileRow extends StatelessWidget {
   final SeismographSegment segment;
@@ -1460,7 +1454,6 @@ class _SingleFileRow extends StatelessWidget {
   }
 }
 
-// ── Diff-mode rail ───────────────────────────────────────────────────────────
 
 /// Compact horizontal seismograph used as a navigator while the user is
 /// viewing a diff. One bar per file in the commit, height ∝ churn share,
@@ -1737,7 +1730,6 @@ class _RailBarState extends State<_RailBar> {
   }
 }
 
-// ── Filter bar ───────────────────────────────────────────────────────────────
 
 class _FilterBar extends StatelessWidget {
   final AppTokens tokens;

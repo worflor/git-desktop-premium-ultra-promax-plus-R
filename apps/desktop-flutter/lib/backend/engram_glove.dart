@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_glove.dart — compact GloVe vocabulary loader.
 //
 // Reads the int16-quantised GloVe binary produced by the preprocessing
@@ -17,7 +16,6 @@
 // Load time is fast: we parse the vocab into a Dart `Map<String, int>`
 // and keep the int16 vector block as a view into the original bytes.
 // Lookup is O(1) hash + in-place dequant into a reusable Float64 buffer.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -65,7 +63,6 @@ class EngramGlove {
 
   /// Parse a GLV1 binary into a queryable [EngramGlove]. Throws on a
   /// bad header. Safe to call off the UI thread.
-  ///
   /// All multi-byte fields are little-endian, matching what
   /// `tools/export_engram_assets.py` writes via Python `struct.pack('<...')`
   /// and numpy's default little-endian int16 dtype.
@@ -151,7 +148,6 @@ class EngramGlove {
   /// into `out` (length dim). Returns the number of hits — callers
   /// divide `out` themselves to finish the mean. Returns 0 if none of
   /// the tokens were in vocabulary.
-  ///
   /// This is the hot path used by the hunk encoder: it avoids building
   /// an intermediate list of per-token vectors and reuses `out` across
   /// many hunks.
@@ -198,13 +194,11 @@ class EngramGlove {
   /// row into P complex pairs. This fuses them: read each of the
   /// P pairs directly from the permuted pairing positions, dequant
   /// on the fly, split into re/im on the fly.
-  ///
   /// No intermediate `[T, dim]` Float64List is allocated or touched.
   /// For a 50-token hunk at dim=300 that's 15,000 fewer loads + 15,000
   /// fewer stores compared to the separate-stages version, and zero
   /// per-call allocation of the (previously reusable) trajectory
   /// buffer.
-  ///
   /// The pairing argument is the brain's reference pairing. It's a
   /// constant across all encodes for a given brain — callers
   /// typically pass `brain.pairing` and receive interleaved re/im

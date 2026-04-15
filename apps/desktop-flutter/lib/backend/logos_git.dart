@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // logos_git.dart — Logos-inspired git context engine
 //
 // A relevance diffusion engine for code review context. The diff is a
@@ -19,9 +18,7 @@
 // method bodies are shaped the same as the kernels would be. Porting
 // to `logos_git.wat` later is mechanical.
 //
-// ───────────────────────────────────────────────────────────────────────
 // AXIS DECOMPOSITION (Phase 1 — zero new dependencies)
-// ───────────────────────────────────────────────────────────────────────
 //
 //   F0 (global frequency)     — per-file touch rate in history
 //                               analogue: Logos order-0 bit distribution
@@ -43,9 +40,7 @@
 // d(i,j) = -ln(p_mix). Edge weights for the graph Laplacian use
 // exp(-d) = p_mix, so the same number serves both roles.
 //
-// ───────────────────────────────────────────────────────────────────────
 // HEAT-KERNEL DIFFUSION
-// ───────────────────────────────────────────────────────────────────────
 //
 //   φ(t) = exp(-t · L_sym) · ρ
 //
@@ -59,9 +54,7 @@
 // spectrum [0, 2]. Each T_k(L)·ρ step is a sparse matvec — O(|E|) work.
 // Total: O(K·|E|). A 10k-file repo with 100k edges diffuses in ~2M ops.
 //
-// ───────────────────────────────────────────────────────────────────────
 // THE TEMPERATURE KNOB
-// ───────────────────────────────────────────────────────────────────────
 //
 // Single scalar t controls diffusion range:
 //   t ≈ 0.25  — just the touched items
@@ -71,7 +64,6 @@
 //   t → ∞     — graph centrality (whole-repo summary)
 //
 // Same engine, same data, different t.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -84,6 +76,7 @@ import 'engram_hunk_encoder.dart';
 import 'file_coupling.dart';
 import 'logos_core.dart';
 import 'logos_git_calibration.dart' show LogosAxis;
+import 'logos_git_integrity.dart';
 
 /// Internals re-exported for tests. Not stable API — the `@visibleForTesting`
 /// annotation makes accidental production use lint.
@@ -126,9 +119,7 @@ extension LogosGitTestAccess on LogosGit {
   CsrGraph get graphForTesting => graph;
 }
 
-// ═════════════════════════════════════════════════════════════════════════
 // LAZY LUTs — adapted from logos.wat
-// ═════════════════════════════════════════════════════════════════════════
 
 /// log1p(n) — returns ln(1+n). Cached for small integer n so the
 /// repeated weight computation doesn't call `math.log` for every edge.
@@ -160,9 +151,7 @@ double _sigmoid(double x) {
   return 1.0 / (1.0 + math.exp(-x));
 }
 
-// ═════════════════════════════════════════════════════════════════════════
 // BORN-AMPLITUDE MIX — the core blend operation
-// ═════════════════════════════════════════════════════════════════════════
 
 /// Per-axis observation: probability `p` in [ε, 1-ε] and evidence count `n`.
 /// Axes with `n == 0` declare themselves silent via `weight() == 0`.
@@ -174,21 +163,17 @@ class AxisObs {
 }
 
 /// Born-amplitude mix with confidence-gated, evidence-capped weights.
-///
 ///   weight(i) = |p_i - 0.5| · min(log1p(n_i), cap_i)
 ///   A  = Σ w_i · √p_i
 ///   Ā  = Σ w_i · √(1 - p_i)
 ///   p  = A² / (A² + Ā²)
-///
 /// The confidence gate |p-0.5| makes axes at p≈0.5 (pure uncertainty)
 /// contribute zero — they can't drown out sharper axes. The `cap_i` per
 /// axis prevents an over-evidenced axis from monopolising the mix.
-///
 /// Correlated axes (CC and AU firing together because same team edits
 /// same files) don't double-count: amplitude interference absorbs the
 /// shared component quadratically. Orthogonal lifts add as Pythagorean
 /// limbs.
-///
 /// Returns a single probability in (ε, 1-ε). If all axes are silent,
 /// returns 0.5 (maximum uncertainty — edge contributes weight exp(-d)=
 /// exp(ln(2)) ≈ 0.5 to the graph, i.e. a "weak connection").
@@ -235,9 +220,7 @@ class BornMixer {
   }
 }
 
-// ═════════════════════════════════════════════════════════════════════════
 // AXIS COMPUTERS — Phase 1 set
-// ═════════════════════════════════════════════════════════════════════════
 //
 // Each axis is a function (file_a, file_b, repoStats) → AxisObs.
 // Axes only need the symmetric pair; the engine feeds every edge it
@@ -253,7 +236,6 @@ class BornMixer {
 enum AxisId { f0, cc, sp, v, en }
 
 /// F0 — global frequency axis.
-///
 /// Purely conditional on the *destination* file: "how often does this
 /// file appear in commits at all?" Symmetric by design — we're asking
 /// whether `b` is a noteworthy node in the repo regardless of `a`.
@@ -261,24 +243,24 @@ enum AxisId { f0, cc, sp, v, en }
 class _F0Axis {
   /// touches[file] = commits that touched the file over the analysed
   /// history window.
-  final Map<String, int> touches;
+  final Map<String, double> touchMass;
 
   /// Total commits in the window (denominator for the KT prior).
-  final int totalCommits;
+  final double totalCommitMass;
 
-  const _F0Axis({required this.touches, required this.totalCommits});
+  const _F0Axis({required this.touchMass, required this.totalCommitMass});
 
   AxisObs observe(String b) {
-    final t = touches[b] ?? 0;
-    if (totalCommits == 0) return AxisObs.silent;
+    final t = touchMass[b] ?? 0.0;
+    if (totalCommitMass <= 0) return AxisObs.silent;
     // KT prior: (t + 0.5) / (totalCommits + 1)
-    final p = (t + 0.5) / (totalCommits + 1.0);
-    return AxisObs(p, totalCommits);
+    final p = (t + 0.5) / (totalCommitMass + 1.0);
+    final evidence = totalCommitMass.clamp(0.0, 1 << 20).round();
+    return AxisObs(p, evidence);
   }
 }
 
 /// CC — co-change axis. Uses the existing [FileCouplingMatrix].
-///
 /// P(b co-occurs with a | history) = Jaccard(a, b) smoothed with a KT
 /// prior against the number of commits touching either side.
 class _CcAxis {
@@ -311,7 +293,6 @@ class _CcAxis {
 //   p = (shared + 0.5) / (max + 1.0); evidence = max
 
 /// V — volatility (GARCH-style second moment).
-///
 /// Each file has an EWMA of per-commit churn magnitude (additions +
 /// deletions). Two files are "V-related" when their volatilities *match*
 /// — the axis rewards probes diffusing toward other noisy files when
@@ -345,13 +326,11 @@ class _VAxis {
 
 /// EN — engram K-space cosine. Optional; only present when the engine
 /// was built with `perFileKVectors` populated by the resolver.
-///
 /// Each file gets a K-vector ∈ ℂ^P (Alexandria's 150-pair eigenvalue
 /// signature for the file's identifier content). Pairwise cosine in
 /// ℝ^(2P) measures **content-semantic** affinity — orthogonal to CC's
 /// historical co-change and SP's directory geometry, complementary to
 /// the existing symbolEdges per-changeset symbol-overlap signal.
-///
 /// What this catches that the other axes miss:
 ///   • Files with similar purpose that have never co-changed (refactored
 ///     out, renamed, freshly-added).
@@ -359,11 +338,9 @@ class _VAxis {
 ///     service they exercise; reducer + selector pairs in different dirs).
 ///   • Cold-start: a brand-new repo with empty history still has full
 ///     EN signal because K-vectors come from current content, not history.
-///
 /// Probability is the cosine clamped to [0, 1] then re-anchored against
 /// the 0.5 mid-line (the silent default) — cosine ≥ 0.5 reads as a
 /// positive predictor; below pulls the mixer toward "unrelated".
-///
 /// Built atop [EngramFileKTable] so observations read from contiguous
 /// flat arrays — no per-pair object dereference. The build loop
 /// pre-resolves each nodePath to its table row id once, then
@@ -429,9 +406,7 @@ double _cosineRows(EngramFileKTable t, int rowA, int rowB) {
   return cos;
 }
 
-// ═════════════════════════════════════════════════════════════════════════
 // SPARSE GRAPH (CSR) + Chebyshev heat-kernel — moved to logos_core.dart
-// ═════════════════════════════════════════════════════════════════════════
 //
 // The graph data structure ([CsrGraph]) and all heat-kernel diffusion
 // primitives ([besselCoeffs], [adaptiveK], [chebyshevDiffuse],
@@ -480,14 +455,16 @@ const int _defaultEdgeDensity = 24;
 
 // (besselCoeffs / adaptiveK / chebyshevDiffuse live in logos_core.dart.)
 
-// ═════════════════════════════════════════════════════════════════════════
 // THE ENGINE
-// ═════════════════════════════════════════════════════════════════════════
 
 /// Raw per-file statistics the engine needs to construct its axes.
 class LogosGitStats {
   final Map<String, int> touches;
   final int totalCommits;
+  final Map<String, int> rawTouches;
+  final int rawTotalCommits;
+  final Map<String, double> touchMass;
+  final double semanticCommitMass;
   final Map<String, double> volatility;
   final double volMean;
   final double volStddev;
@@ -501,13 +478,16 @@ class LogosGitStats {
   /// multiplied by the geometric mean of the two endpoints' spectral
   /// radii so heat flows respect each file's own time-scale (Whisper
   /// Harmonic's curved-Christoffel pattern, applied per-file).
-  ///
   /// Required: pass `const {}` to explicitly opt out (flat-metric
   /// graph, curvature factor 1.0 for every edge). Tests + light-
   /// weight engines that don't have per-commit data should be
   /// explicit about it rather than silently falling through a
   /// default.
   final Map<String, List<int>> perFileCommitIndices;
+  final Map<String, List<double>> perFileCommitClock;
+  final Map<String, double> ritualnessByPath;
+  final Map<String, double> integrityByPath;
+  final Map<String, List<String>> integrityReasonsByPath;
 
   const LogosGitStats({
     required this.touches,
@@ -517,6 +497,14 @@ class LogosGitStats {
     required this.volStddev,
     required this.coupling,
     required this.perFileCommitIndices,
+    this.rawTouches = const {},
+    this.rawTotalCommits = 0,
+    this.touchMass = const {},
+    this.semanticCommitMass = 0.0,
+    this.perFileCommitClock = const {},
+    this.ritualnessByPath = const {},
+    this.integrityByPath = const {},
+    this.integrityReasonsByPath = const {},
   });
 }
 
@@ -541,17 +529,61 @@ class EmissionPlan {
   const EmissionPlan(this.path, this.phi, this.tier);
 }
 
+class LogosEvidenceScore {
+  final String path;
+  final double support;
+  final double ambient;
+  final double rawSurplus;
+  final double surplus;
+  final double integrity;
+  final double utility;
+  final String? dominantAxis;
+  final Map<String, double>? axisShares;
+
+  const LogosEvidenceScore({
+    required this.path,
+    required this.support,
+    required this.ambient,
+    required this.rawSurplus,
+    required this.surplus,
+    required this.integrity,
+    required this.utility,
+    this.dominantAxis,
+    this.axisShares,
+  });
+}
+
+class LogosEvidenceQueryResult {
+  final List<LogosEvidenceScore> ranked;
+  final double? sourceAlignment;
+  final double? fieldAlignment;
+  final double? sourceSurprise;
+  final double? fieldSurprise;
+  final double coherence;
+  final double stability;
+  final AxisAttribution? supportAttribution;
+
+  const LogosEvidenceQueryResult({
+    required this.ranked,
+    required this.sourceAlignment,
+    required this.fieldAlignment,
+    required this.sourceSurprise,
+    required this.fieldSurprise,
+    required this.coherence,
+    required this.stability,
+    required this.supportAttribution,
+  });
+}
+
 /// Born-mix caps per axis, in the canonical [AxisId] order (f0, cc, sp, v).
 /// The caps are the maximum evidence (in nats) each axis can contribute
 /// to the Born amplitude mix. They're information-theoretic — each is
 /// the natural log of the axis's intrinsic branching factor:
-///
 ///   F0 = ln(2) — one bit: "is this file touched at all in this window?"
 ///   CC = ln(4) — two bits: four effective co-change regimes
 ///                (together|sometimes|rarely|never)
 ///   SP = ln(3) — one trit: same file | same directory | elsewhere
 ///   V  = ln(3) — one trit: calmer | matched | noisier than the partner
-///
 /// Derivable not magic: each value is literally `ln(k)` where k is the
 /// axis's distinguishable states. Expressed as such so the relationship
 /// is visible in the code, not stranded in a comment.
@@ -574,12 +606,10 @@ final _defaultCapsWithEngram = <double>[
 ];
 
 /// The Logos-inspired git context engine.
-///
 /// Usage:
 ///   final engine = await LogosGit.buildFromStats(stats);
 ///   final scores = engine.diffuse({'lib/validators.dart', 'lib/auth.dart'});
 ///   final plan = engine.plan(scores, budget: 80000);
-///
 /// The engine is immutable after construction. To refresh after new
 /// commits, rebuild.
 class LogosGit {
@@ -593,7 +623,6 @@ class LogosGit {
   /// in [buildFromStats] when [LogosGitStats.perFileCommitIndices] is
   /// available and the file has enough touches for the fit. Empty for
   /// files with insufficient history (curvature factor = 1.0 for them).
-  ///
   /// Drives the curved-metric edge weighting: each file's spectral
   /// radius `r_f = √G_f` measures how regular its touch pattern is
   /// (1.0 = perfectly periodic, 0 = chaotic). Edge weight `W'[a,b] =
@@ -608,12 +637,12 @@ class LogosGit {
   /// engine is the *how* — keeping both adjacent avoids duplicating the
   /// log-walk in features that need both.
   final LogosGitStats stats;
+  final Map<String, double> integrityByPath;
 
   /// Symbol-overlap edges for the current change set. Injected per
   /// change-set via [withSymbolEdges]; absent from the base engine built
   /// from history alone. Stored fully-symmetric (both directions present)
   /// so neighbour lookups are a single map access.
-  ///
   /// Used in two places:
   ///   • [_buildRho] — proxies heat from unknown (new/untracked) source
   ///     paths through their symbol-linked known graph nodes.
@@ -625,13 +654,11 @@ class LogosGit {
   /// store. Empty (`isEmpty == true`) when the engine was built
   /// without engram assets — the fallback path that keeps the engine
   /// working in cold-asset / test scenarios.
-  ///
   /// When non-empty:
   ///   • Drives the EN axis in the Born mixer (semantic content
   ///     similarity between file pairs).
   ///   • Surfaced via [wellOf] for tagging and prompt annotations:
   ///     callers can ask "what semantic basin does file X live in?".
-  ///
   /// Built once per HEAD inside the resolver; persisted to disk across
   /// app launches so repo reopens hit the cache.
   final EngramFileKTable perFileKVectors;
@@ -643,6 +670,7 @@ class LogosGit {
     required this.mixer,
     required this.perFileMetrics,
     required this.stats,
+    required this.integrityByPath,
     this.symbolEdges = const {},
     EngramFileKTable? perFileKVectors,
   })  : perFileKVectors = perFileKVectors ?? _emptyTable;
@@ -682,6 +710,7 @@ class LogosGit {
       mixer: mixer,
       perFileMetrics: perFileMetrics,
       stats: stats,
+      integrityByPath: integrityByPath,
       symbolEdges: expanded,
       perFileKVectors: perFileKVectors,
     );
@@ -709,8 +738,11 @@ class LogosGit {
     // just to read the key set.
     final pathSet = <String>{};
     pathSet.addAll(stats.touches.keys);
+    pathSet.addAll(stats.rawTouches.keys);
+    pathSet.addAll(stats.touchMass.keys);
     pathSet.addAll(stats.volatility.keys);
     pathSet.addAll(stats.coupling.paths);
+    pathSet.addAll(stats.integrityByPath.keys);
 
     // Stable ordering — sort for determinism (helps debugging + caching).
     final nodePaths = pathSet.toList()..sort();
@@ -734,12 +766,23 @@ class LogosGit {
         pathToId: pathToId,
         mixer: BornMixer(caps),
         stats: stats,
+        integrityByPath: stats.integrityByPath,
         perFileKVectors: useEngram ? perFileKVectors : null,
       );
     }
 
     final mixer = BornMixer(caps);
-    final f0 = _F0Axis(touches: stats.touches, totalCommits: stats.totalCommits);
+    final f0 = _F0Axis(
+      touchMass: stats.touchMass.isNotEmpty
+          ? stats.touchMass
+          : {
+              for (final entry in stats.touches.entries)
+                entry.key: entry.value.toDouble(),
+            },
+      totalCommitMass: stats.semanticCommitMass > 0
+          ? stats.semanticCommitMass
+          : stats.totalCommits.toDouble(),
+    );
     final cc = _CcAxis(stats.coupling);
     // SP observe is inlined into the build loop below (uses cached
     // pathSegments to avoid the per-call `.split('/')` allocations).
@@ -782,19 +825,26 @@ class LogosGit {
     // so they're indistinguishable from the previous flat-metric
     // behaviour, not silently muted.
     final perFileMetrics = <String, EngramFit>{};
-    for (final entry in stats.perFileCommitIndices.entries) {
-      final indices = entry.value;
-      if (indices.length < 3) continue; // need ≥2 gaps for any signal
+    final metricPaths = <String>{
+      ...stats.perFileCommitIndices.keys,
+      ...stats.perFileCommitClock.keys,
+    };
+    for (final path in metricPaths) {
+      final series = stats.perFileCommitClock[path] ??
+          stats.perFileCommitIndices[path]
+              ?.map((i) => i.toDouble())
+              .toList(growable: false);
+      if (series == null || series.length < 3) continue; // need ≥2 gaps
       final gaps = <double>[];
-      for (var k = 1; k < indices.length; k++) {
-        gaps.add((indices[k] - indices[k - 1]).toDouble());
+      for (var k = 1; k < series.length; k++) {
+        gaps.add(series[k] - series[k - 1]);
       }
       final fit = engramFit(gaps);
       // Skip non-orbital fits — their spectral radius is meaningless
       // for the curvature interpretation. Files left out of the map
       // get curvature 1.0 (no attenuation, no boost).
       if (fit.isLinearFallback) continue;
-      perFileMetrics[entry.key] = fit;
+      perFileMetrics[path] = fit;
     }
 
     // (Per-file curvature factor — formerly an inline closure here —
@@ -808,7 +858,6 @@ class LogosGit {
     // `edgeDensity` by mixed probability. This is the critical step —
     // a fully-connected graph would be n² edges; we prune here.
     //
-    // ── Hot-path indexes built ONCE before the per-node loop ──
     //
     // Without these the inner loop is O(N²·d): the original code did a
     // `for (final p in nodePaths) if (p.startsWith('$parent/'))` scan
@@ -913,6 +962,7 @@ class LogosGit {
 
     for (var i = 0; i < n; i++) {
       final a = nodePaths[i];
+      final integrityA = stats.integrityByPath[a] ?? 1.0;
       // Candidate set as ids — avoids the eventual pathToId hash lookup
       // we'd have done if we collected strings first. Set semantics
       // dedupe between the CC neighbours and the directory siblings.
@@ -1011,6 +1061,8 @@ class LogosGit {
         }
         var p = mixer.mix(obsBuf);
         p *= math.sqrt(curvA * curvatures[j]);
+        p *= math.sqrt(integrityA * (stats.integrityByPath[b] ?? 1.0)) *
+            logosPairPenalty(a, b);
         if (p <= 0.5) continue; // only keep edges with positive lift
         scored.add(_EdgeCandidate(j, p));
       }
@@ -1107,6 +1159,7 @@ class LogosGit {
       mixer: mixer,
       perFileMetrics: perFileMetrics,
       stats: stats,
+      integrityByPath: stats.integrityByPath,
       perFileKVectors: useEngram ? perFileKVectors : null,
     );
   }
@@ -1131,31 +1184,37 @@ class LogosGit {
   /// `stats.totalCommits` and τ = [halfLifeCommits] / ln(2). Files with
   /// zero recent activity (all touches outside the meaningful decay
   /// horizon) drop out of the map.
-  ///
   /// Diffuse this through the engine to get the **field vector** — a
   /// dense φ over the coupling graph that represents "what direction is
   /// the codebase moving lately." Pass each PR's footprint cosine
   /// against this field to get its alignment ("with the field" vs
   /// "against the field").
-  ///
   /// Cheap: O(Σ |perFileCommitIndices[f]|), no diffusion. Diffusion is
   /// the caller's responsibility — pass the result to
   /// [diffuseWithAttribution] with a single axis label.
   Map<String, double> recentActivityWeights({int halfLifeCommits = 30}) {
-    if (stats.totalCommits <= 0) return const {};
+    final useSemanticClock =
+        stats.semanticCommitMass > 0 && stats.perFileCommitClock.isNotEmpty;
+    if (!useSemanticClock && stats.totalCommits <= 0) return const {};
     // Memoise — same engine + same halfLife = identical output. The
     // rail, lede, and PR-shape signals all call this with the default
     // halfLife per render; recomputing every frame is wasted work.
     final cached = _activityCache[halfLifeCommits];
     if (cached != null) return cached;
     final tau = halfLifeCommits / math.ln2;
-    final newest = stats.totalCommits - 1;
+    final newest = useSemanticClock
+        ? stats.semanticCommitMass
+        : (stats.totalCommits - 1).toDouble();
     final cutoff = halfLifeCommits * 6;
     final out = <String, double>{};
-    for (final entry in stats.perFileCommitIndices.entries) {
+    final seriesByPath = useSemanticClock
+        ? stats.perFileCommitClock
+        : {
+            for (final entry in stats.perFileCommitIndices.entries)
+              entry.key: entry.value.map((v) => v.toDouble()).toList(),
+          };
+    for (final entry in seriesByPath.entries) {
       var w = 0.0;
-      // Indexed loop over the typed Int32List is cheaper than for-in
-      // (no iterator allocation, primitive int access).
       final v = entry.value;
       for (var k = 0; k < v.length; k++) {
         final age = newest - v[k];
@@ -1180,11 +1239,9 @@ class LogosGit {
   /// Chebyshev expansion separates cleanly into:
   ///   • basis vectors `T_k(x)·ρ`  — t-independent, computed ONCE
   ///   • scalar coefficients `c_k(t)` — the only t-dependent part
-  ///
   /// So for temperature-slider UIs we compute the K+1 basis vectors
   /// once (O(K·|E|)), then per-frame just recombine at a new t
   /// (O(K·|V|) — a dozen float multiplies per node, no matvec).
-  ///
   /// Returns null on empty graph / empty source set — callers should
   /// degrade gracefully (no rail, no temperature interaction).
   DiffusionBasis? buildBasis(Set<String> sourceFiles, {int K = kDefaultChebyshevK}) {
@@ -1209,7 +1266,6 @@ class LogosGit {
   /// (e.g. file churn for a commit-borrow query, where a high-line-
   /// change file should inject more heat than a one-line tweak).
   /// Returns null on empty graph / no in-graph sources.
-  ///
   /// Like [buildBasis], the returned [DiffusionBasis] is t-independent
   /// — `recombine(t)` evaluates at any temperature in O(K·|V|) work.
   /// For a multi-temperature distillation (e.g. blending t=0.5/1.0/2.0
@@ -1240,30 +1296,24 @@ class LogosGit {
 
   /// Diffuse from the source file set. Returns every node with positive
   /// relevance, sorted descending by φ.
-  ///
   /// [t] is diffusion time. Defaults to 1.0 (commit-review scope).
   ///    0.25 — "only the touched files"
   ///    1.0  — "1-hop neighbourhood"                 ← commit review
   ///    2.0  — "2-hop + semantic"                    ← code Q&A
   ///    4.0  — "wide historical"                     ← codebase nav
   ///    ∞    — "graph equilibrium"                   ← repo summary
-  ///
   /// [K] controls Chebyshev truncation. 20 is enough for t ∈ [0, 10].
-  ///
   /// [topK]: when non-null, returns at most this many results, using a
   /// bounded min-heap during scan — O(n log topK) instead of O(n log n)
   /// for the full sort. The result list is still sorted descending.
-  // ─── Coherence gate ───────────────────────────────────────────────────
 
   /// Prune [results] to the largest prefix whose induced-subgraph coherence
   /// on the Logos graph stays at or above [minCoherence].
-  ///
   /// Walks from the tail inward: if the full set is already coherent, returns
   /// [results] unchanged. Otherwise removes the weakest-φ tail nodes one by
   /// one until the remaining set clears the threshold or only one node is
   /// left. Cost: O(k·d) per pruning step where d is average graph degree —
   /// fast for the small topK result sets this is called on.
-  ///
   /// This turns coherence from a post-hoc metric into an active gate: the
   /// diffusion aperture closes when heat has spread into incoherent territory.
   List<RelevanceScore> _gateByCoherence(
@@ -1280,12 +1330,10 @@ class LogosGit {
     return k == results.length ? results : results.sublist(0, k);
   }
 
-  // ─── Helpers for new-file / symbol-edge support ───────────────────────
 
   /// Build and normalise a source vector ρ from [weights] (path → weight).
   /// Returns null when total injected mass is zero (nothing in the graph
   /// and no resolvable symbol proxy).
-  ///
   /// For paths present in the graph: inject weight directly.
   /// For paths absent but reachable via [symbolEdges]: distribute weight
   /// across their known neighbours proportionally to symbol overlap score.
@@ -1325,7 +1373,6 @@ class LogosGit {
   /// via [symbolEdges]. Each new path's score is the symbol-overlap-weighted
   /// mean of its known neighbours' φ values — the same interpolation used
   /// in MDS for out-of-sample points.
-  ///
   /// Returns an empty map when [symbolEdges] is empty or no new paths have
   /// any known neighbour with non-zero φ.
   Map<String, double> _deriveNewPathPhi(Float64List phi) {
@@ -1347,7 +1394,6 @@ class LogosGit {
     return derived;
   }
 
-  // ──────────────────────────────────────────────────────────────────────
 
   /// [phiThreshold]: when non-zero, drops sub-threshold φ values during
   /// scan (kills numerical-noise allocations on warm diffusions where
@@ -1400,15 +1446,12 @@ class LogosGit {
   /// Diffuse from a WEIGHTED source map — the correct path for
   /// probe-based queries where different observables (primary, M-axis,
   /// Ab-axis) carry different starting amplitudes.
-  ///
   /// Heat kernel is linear in ρ, so callers used to sum N unit-mass
   /// diffusions scaled by their weight. That's mathematically fine but
   /// wastes O(N) matvec passes per review. This method builds a single
   /// properly-weighted ρ and runs one Chebyshev expansion.
-  ///
   /// `excludePaths` is filtered from the returned list — typically the
   /// diff's primary paths, which callers don't want surfaced back.
-  ///
   /// Returns empty when the graph is empty, weights are empty, or every
   /// weighted entry misses the graph.
   List<RelevanceScore> diffuseWeighted(
@@ -1503,10 +1546,8 @@ class LogosGit {
   /// Diffuses [sourceWeights] through the file graph and projects the
   /// resulting φ through [fileTokenCounts] (file → token → count) to
   /// produce an expected-token distribution:
-  ///
   ///     expected(t) = Σ_f φ(f) · P(t | f)
   ///     P(t | f)    = fileTokenCounts[f][t] / Σ_{t'} fileTokenCounts[f][t']
-  ///
   /// Callers typically compare this against an observed distribution
   /// with `log((observed + ε) / (expected + ε))` to score surprise.
   /// Returned values aren't normalised; divide by sum for probabilities.
@@ -1554,9 +1595,7 @@ class LogosGit {
   /// probes' diffused fields. Measures how much they interfere on the
   /// manifold: near 1 = they cover overlapping territory; near 0 =
   /// disjoint neighbourhoods.
-  ///
   ///   I(ρ_a, ρ_b; t) = Σ_v √(φ_a(v) · φ_b(v))
-  ///
   /// The √ is the Born amplitude — same operation `BornMixer.mix` uses
   /// to compose axis distributions. Cosine / dot products would also
   /// give an "overlap" number, but Born overlap is the coherent-sum
@@ -1565,7 +1604,6 @@ class LogosGit {
   ///     same semantic region")
   ///   - cross-branch ghost-conflict detection
   ///   - diff-pair similarity that respects multi-axis topology
-  ///
   /// Null on empty weights either side. Both weight maps are normalised
   /// to unit mass before diffusion (same convention as [diffuseWeighted]).
   double? bornOverlap(
@@ -1609,6 +1647,201 @@ class LogosGit {
     return phi;
   }
 
+  LogosEvidenceQueryResult? gatherEvidence({
+    required Map<String, double> focusWeights,
+    Map<String, String> axisLabelByPath = const {},
+    double t = 1.0,
+    int K = kDefaultChebyshevK,
+    int ambientHalfLifeCommits = 30,
+    double lambda = 0.5,
+    Set<String> excludePaths = const {},
+    int? topK,
+    double phiThreshold = 0.0,
+  }) {
+    if (graph.n == 0 || focusWeights.isEmpty) return null;
+    final focusRho = _buildRho(focusWeights);
+    if (focusRho == null) return null;
+
+    final ambientWeights =
+        recentActivityWeights(halfLifeCommits: ambientHalfLifeCommits);
+    final ambientRho = ambientWeights.isEmpty ? null : _buildRho(ambientWeights);
+    final supportAttribution = diffuseWithAttribution(
+      weightsByPath: focusWeights,
+      axisLabelByPath: axisLabelByPath,
+      t: t,
+      K: K,
+      excludePaths: excludePaths,
+    );
+
+    final batchWidth = ambientRho == null ? 1 : 2;
+    final rhoBatch = Float64List(graph.n * batchWidth);
+    for (var i = 0; i < graph.n; i++) {
+      final base = i * batchWidth;
+      rhoBatch[base] = focusRho[i];
+      if (ambientRho != null) {
+        rhoBatch[base + 1] = ambientRho[i];
+      }
+    }
+
+    final phiBatch = chebyshevDiffuseBatch(
+      graph: graph,
+      rhoBatch: rhoBatch,
+      B: batchWidth,
+      t: t,
+      K: K,
+    );
+    final focusPhi = Float64List(graph.n);
+    final ambientPhi = Float64List(graph.n);
+    for (var i = 0; i < graph.n; i++) {
+      final base = i * batchWidth;
+      focusPhi[i] = phiBatch[base];
+      if (ambientRho != null) {
+        ambientPhi[i] = phiBatch[base + 1];
+      }
+    }
+
+    var focusMass = 0.0;
+    var ambientMass = 0.0;
+    for (var i = 0; i < graph.n; i++) {
+      if (focusPhi[i] > 0) focusMass += focusPhi[i];
+      if (ambientPhi[i] > 0) ambientMass += ambientPhi[i];
+    }
+
+    final focusDerived = _deriveNewPathPhi(focusPhi);
+    final ambientDerived = ambientRho == null
+        ? const <String, double>{}
+        : _deriveNewPathPhi(ambientPhi);
+    final focusPaths = <String>{
+      for (final entry in focusWeights.entries)
+        if (entry.value > 0) entry.key,
+    };
+
+    final ranked = <LogosEvidenceScore>[];
+    for (var i = 0; i < graph.n; i++) {
+      final path = nodePaths[i];
+      if (excludePaths.contains(path)) continue;
+      final support =
+          focusMass > 0 && focusPhi[i] > 0 ? focusPhi[i] / focusMass : 0.0;
+      final ambient = ambientMass > 0 && ambientPhi[i] > 0
+          ? ambientPhi[i] / ambientMass
+          : 0.0;
+      if (support <= phiThreshold && ambient <= phiThreshold) continue;
+      final rawSurplus = support - lambda * ambient;
+      final surplus = rawSurplus > 0 ? rawSurplus : 0.0;
+      final integrity = integrityByPath[path] ?? kNeutralIntegrity;
+      final rescue = _witnessRescueScore(path, focusPaths, support, integrity);
+      ranked.add(LogosEvidenceScore(
+        path: path,
+        support: support,
+        ambient: ambient,
+        rawSurplus: rawSurplus,
+        surplus: surplus,
+        integrity: integrity,
+        utility: math.max(surplus * integrity, rescue),
+        dominantAxis: supportAttribution?.dominantAxis[path],
+        axisShares: supportAttribution?.shareByAxis[path],
+      ));
+    }
+
+    for (final entry in focusDerived.entries) {
+      final path = entry.key;
+      if (excludePaths.contains(path)) continue;
+      final support =
+          focusMass > 0 && entry.value > 0 ? entry.value / focusMass : 0.0;
+      final ambientRaw = ambientDerived[path] ?? 0.0;
+      final ambient =
+          ambientMass > 0 && ambientRaw > 0 ? ambientRaw / ambientMass : 0.0;
+      if (support <= phiThreshold && ambient <= phiThreshold) continue;
+      final rawSurplus = support - lambda * ambient;
+      final surplus = rawSurplus > 0 ? rawSurplus : 0.0;
+      final integrity = integrityByPath[path] ?? kNeutralIntegrity;
+      final rescue = _witnessRescueScore(path, focusPaths, support, integrity);
+      ranked.add(LogosEvidenceScore(
+        path: path,
+        support: support,
+        ambient: ambient,
+        rawSurplus: rawSurplus,
+        surplus: surplus,
+        integrity: integrity,
+        utility: math.max(surplus * integrity, rescue),
+      ));
+    }
+
+    ranked.sort((a, b) {
+      final byUtility = b.utility.compareTo(a.utility);
+      if (byUtility != 0) return byUtility;
+      final bySupport = b.support.compareTo(a.support);
+      if (bySupport != 0) return bySupport;
+      return a.path.compareTo(b.path);
+    });
+    final limited = topK != null && topK > 0 && ranked.length > topK
+        ? ranked.sublist(0, topK)
+        : ranked;
+    final coherenceScore =
+        limited.isEmpty ? 1.0 : coherence(limited.take(12).map((r) => r.path));
+    final stability = diffuseStability(focusWeights, t: t);
+    final sourceAlignment = ambientWeights.isEmpty
+        ? null
+        : bornOverlap(focusWeights, ambientWeights, t: t, K: K);
+    final fieldAlignment = ambientRho == null
+        ? null
+        : _bornOverlapFromPhi(
+            focusPhi,
+            ambientPhi,
+            focusMass: focusMass,
+            ambientMass: ambientMass,
+          );
+
+    return LogosEvidenceQueryResult(
+      ranked: limited,
+      sourceAlignment: sourceAlignment,
+      fieldAlignment: fieldAlignment,
+      sourceSurprise:
+          sourceAlignment == null
+              ? null
+              : (1.0 - sourceAlignment).clamp(0.0, 1.0).toDouble(),
+      fieldSurprise:
+          fieldAlignment == null
+              ? null
+              : (1.0 - fieldAlignment).clamp(0.0, 1.0).toDouble(),
+      coherence: coherenceScore,
+      stability: stability,
+      supportAttribution: supportAttribution,
+    );
+  }
+
+  double _bornOverlapFromPhi(
+    Float64List a,
+    Float64List b, {
+    required double focusMass,
+    required double ambientMass,
+  }) {
+    if (focusMass <= 0 || ambientMass <= 0) return 0.0;
+    var sum = 0.0;
+    for (var i = 0; i < graph.n; i++) {
+      final av = a[i];
+      final bv = b[i];
+      if (av <= 0 || bv <= 0) continue;
+      sum += math.sqrt((av / focusMass) * (bv / ambientMass));
+    }
+    return sum;
+  }
+
+  double _witnessRescueScore(
+    String candidate,
+    Set<String> focusPaths,
+    double support,
+    double integrity,
+  ) {
+    var bestPrivilege = 0.0;
+    for (final focus in focusPaths) {
+      final privilege = logosWitnessPrivilege(focus, candidate);
+      if (privilege > bestPrivilege) bestPrivilege = privilege;
+    }
+    if (bestPrivilege <= 0 || support <= 0) return 0.0;
+    return support * bestPrivilege * math.max(integrity, 0.35);
+  }
+
   /// **Stability of a diffusion query** — returns a [0, 1] score where
   /// 1.0 means "tiny perturbations to the source weights don't change
   /// the top-K ranking at all" and 0 means "one dropped source and the
@@ -1616,12 +1849,10 @@ class LogosGit {
   /// signal: the same machinery that produces an answer produces its
   /// own self-consistency score, so downstream code can abstain rather
   /// than act on knife-edge rankings.
-  ///
   /// Algorithm: run [nTrials] diffusions, each with source weights
   /// multiplicatively perturbed by ±[epsilon] (deterministic seed).
   /// Stability = mean pairwise Jaccard overlap of their top-[topK]
   /// sets against the unperturbed top-K.
-  ///
   /// Returns 1.0 on degenerate inputs (empty graph, single source, K=0)
   /// — no perturbation can change a single-element ranking, so it's
   /// trivially stable.
@@ -1685,11 +1916,9 @@ class LogosGit {
   /// kernel is linear in ρ, so the combined φ equals the sum of per-
   /// axis φ. Use this to answer "*why* did file X surface as relevant?"
   /// — by reading the dominant axis bucket per result.
-  ///
   /// `weightsByPath` carries the source amplitudes; `axisLabelByPath`
   /// assigns each path to a bucket label. Paths not in [pathToId] are
   /// silently dropped (out-of-graph). Paths with weight ≤ 0 are dropped.
-  ///
   /// Returns null if no source contributes.
   AxisAttribution? diffuseWithAttribution({
     required Map<String, double> weightsByPath,
@@ -1881,10 +2110,8 @@ class LogosGit {
   /// under the full Born-mixed metric. Replaces the single-axis
   /// `FileCouplingMatrix.coherenceFor(paths)` with a metric that
   /// considers frequency, coupling, proximity, and volatility together.
-  ///
   /// Returns 1.0 for ≤1 known paths (nothing to compare).
   /// Returns in [0, 1] where higher = tighter semantic grouping.
-  ///
   /// Used by the branches page to score PR "focus" — a high coherence
   /// means the PR touches files that historically belong together; low
   /// means a scattered sweep.
@@ -1949,7 +2176,6 @@ class LogosGit {
   ///   FULL        — avg 1600 tokens, info 1.0
   ///   SIGNATURE   —        300              0.45
   ///   BREADCRUMB  —         60              0.12
-  ///
   /// These numbers are deliberately conservative defaults; Phase 2 will
   /// learn them from audit-log citations.
   List<EmissionPlan> plan(
@@ -1997,7 +2223,6 @@ class LogosGit {
 /// Result of [LogosGit.diffuseWithAttribution]. Carries the combined
 /// φ field (summed across axes — exactly what plain `diffuseWeighted`
 /// would have returned), plus per-axis φ vectors and per-node provenance.
-///
 /// Use [combined] for ranking emissions and [dominantAxis] / [shareByAxis]
 /// for explaining why a result surfaced. Intended consumers: the
 /// `<logos_shape>` block in AI prompts, the X-Ray UI's "why this file"
@@ -2106,7 +2331,6 @@ void _heapSiftDown(List<RelevanceScore> heap, int i) {
   }
 }
 
-// ═════════════════════════════════════════════════════════════════════════
 // DiffusionBasis — cached Chebyshev basis for temperature-slider UIs.
 //
 // The heat kernel φ(t) = exp(-t·L)·ρ factors into
@@ -2120,7 +2344,6 @@ void _heapSiftDown(List<RelevanceScore> heap, int i) {
 // Exposed on the engine as `engine.buildBasis(sources)`. UI code holds
 // the basis as long as the source set is stable and calls
 // `basis.recombine(t)` per frame.
-// ═════════════════════════════════════════════════════════════════════════
 
 class DiffusionBasis {
   final int n;
@@ -2141,7 +2364,6 @@ class DiffusionBasis {
 
   /// Recombine the cached basis at temperature [t]. Output is a fresh
   /// Float64List of length n. Fast enough to call every animation frame.
-  ///
   /// Adaptive truncation: at low t the Bessel tail is already below
   /// 1e-8; we skip those terms. At high t we use the full K.
   Float64List recombine(double t) {

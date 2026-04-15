@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // desk_pr.dart — "local PR" data model
 //
 // A worktree + metadata is a local PR. The metadata lives as an orphan
@@ -9,7 +8,6 @@
 // gh.dart so the row renderer can adapt either form without a shared
 // abstract class. See `toSummary()` and `toDetail(...)` for the
 // adapters consumed by branches_page.dart.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
 

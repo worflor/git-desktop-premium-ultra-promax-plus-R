@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-// ── Semantic severity palette ──────────────────────────────────────────
 // Theme-independent signal colors used for review verdicts, guardrail
 // stages, and any UI that communicates a confidence/risk level.
 // Order: safe → informational → cautious → risky → critical.
@@ -1337,7 +1336,6 @@ final _tokens = <AppThemeId, AppTokens>{
     appGradientColors: const [Color(0xFF17110E), Color(0xFF1C1511)],
     appGradientAlignments: const [Alignment.topCenter, Alignment.bottomCenter],
   ),
-  // ── Phosphor — CRT terminal, green-on-black, scanlines ───────────
   // Iconic serial-line / VT220 vibe. Pure black background, bright
   // phosphor green text that bleeds horizontally like CRT signal,
   // amber as the secondary "warning" color (matches old terminals).
@@ -1822,7 +1820,6 @@ extension ClusterColors on AppTokens {
   /// app's logo so cluster groups read as part of the family rather
   /// than as alarm semantics. Step alpha down for the 5th+ cluster so
   /// far-out groups fade rather than flash.
-  ///
   /// Promoted from a private helper in `changes_page.dart` so the
   /// branches lens (PR file pills) and any future surface that wants
   /// to visualize coupling can share the exact same color identity.

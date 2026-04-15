@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_file_ktable.dart — dense column-store of per-file K-vectors.
 //
 // The LogosGit engine wants to ask "what K-vector does this file have?"
@@ -33,7 +32,6 @@
 // after the table is built. For a 1000-file repo this replaces ~1000
 // hashmap entries + 1000 HunkKVector objects + 3000 Float64List
 // wrappers with a handful of typed arrays.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:typed_data';
 
@@ -44,7 +42,6 @@ import 'engram_hunk_encoder.dart';
 const int kEngramNoWell = -1;
 
 /// Dense column-store for per-file engram encodings.
-///
 /// Observably immutable after construction. Safe to share across
 /// isolates — the typed-array columns copy as bulk bytes, the String
 /// list + Map are small and cheap to serialise. Carries one internal

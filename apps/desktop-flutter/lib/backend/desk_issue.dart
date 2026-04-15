@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // desk_issue.dart — "local issue" data model
 //
 // Mirrors the local-PR pattern: an issue is metadata stored as an
@@ -10,7 +9,6 @@
 // renderer adapts both. Cross-references with desk PRs are stored
 // symmetrically: an issue's `addressedBy: [branch, ...]` matches a
 // desk PR's `linkedIssues: [issueId, ...]`.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:convert';
 

@@ -13,7 +13,6 @@ import '../../ui/tokens.dart';
 /// The metadata header for a commit, expressed as a single typographic
 /// artifact: the subject text with an underline that ENCODES — not
 /// labels — the commit's place in the repo.
-///
 /// Five signals carried by one element:
 ///   • Thickness of the underline       = combined importance
 ///   • Add/del horizontal split colors  = additions vs deletions ratio
@@ -21,7 +20,6 @@ import '../../ui/tokens.dart';
 ///                                        (this commit's files co-change)
 ///   • Top rim accent                   = your-tree overlap
 ///   • (Notches reserved for keystone files when xray is loaded.)
-///
 /// The principle: don't label what you can encode. Plain text says
 /// what; visual form says how-much-it-matters.
 class CommitLede extends StatelessWidget {

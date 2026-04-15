@@ -6,10 +6,8 @@ import 'dtos.dart';
 /// ═════════════════════════════════════════════════════════════════════════
 /// COMMIT FINGERPRINT — 25D Walsh-Hadamard signature + 256-bit witness
 /// ═════════════════════════════════════════════════════════════════════════
-///
 /// Two layered structural fingerprints per commit, both deterministic from
 /// the commit's diff alone:
-///
 ///   • [Float32List fingerprint] (length 25) — Walsh-Hadamard coefficients
 ///     against a fixed 25-mask family (lower / upper / cross / global) over
 ///     a 16-bit-indexed distribution built from the commit's files. Cosine
@@ -17,19 +15,16 @@ import 'dtos.dart';
 ///     commits whose diffs operate in similar parts of the file-id space
 ///     produce similar fingerprints. Doubles as the data input for the
 ///     5×5 sigil glyph rendered next to each commit hash.
-///
 ///   • [Uint32List witness] (length 8 = 256 bits) — bipolar sign-projection
 ///     of the 25-fingerprint through a fixed scramble matrix. Hamming
 ///     distance between witnesses (XOR + popcount, O(8) words) is a cheap
 ///     cosine proxy. Use as a first-pass filter before falling back to
 ///     expensive Logos diffusion: pairwise scan over a 1000-commit history
 ///     is sub-millisecond.
-///
 /// The math is sparse — only the commit's actual files contribute, so the
 /// per-commit cost scales with file count (~|files| × 25 ops for the WHT,
 /// plus 256 × 25 = 6400 FMAs for the sign-projection). Both fingerprints
 /// fit in 132 bytes of typed-array memory; a 1000-commit cache is ~130 KB.
-///
 /// SOURCE OF THE 25-MASK FAMILY: ports the Kizuna 25D bond geometry
 /// (lower/upper/cross/global decomposition over 16-bit indices) from the
 /// hyperdimensional-chemistry research codebase. The mask family is fixed
@@ -49,12 +44,10 @@ const int kWitnessBits = 256;
 const int _kScrambleSeed = 0xABDE;
 
 /// The 25 canonical Kizuna masks over 16-bit indices.
-///
 ///   L0..L7 : single-bit masks 1<<i for i in [0,8)   — lower byte
 ///   U0..U7 : single-bit masks 1<<(i+8) for i in [0,8) — upper byte
 ///   X0..X7 : cross-byte pairs (1<<i) | (1<<(i+8))   — diagonal coupling
 ///   FFFF   : global mask 0xFFFF                      — total parity
-///
 /// Order is canonical and matches the sigil grid (5×5 reading row-major).
 final Uint16List _kKizunaMasks = (() {
   final m = Uint16List(kFingerprintDim);
@@ -115,7 +108,6 @@ class CommitSignature {
 }
 
 /// Compute the structural signature for a commit from its file list.
-///
 /// Build phase:
 ///  1. Distribute each touched file into one of 65 536 buckets via
 ///     `path.hashCode & 0xFFFF`, accumulating add+del churn per bucket.
@@ -124,7 +116,6 @@ class CommitSignature {
 ///     total is O(|files| × 25).
 ///  3. Sign-project the 25-fingerprint through the fixed scramble matrix
 ///     to derive the 256-bit witness. 6 400 FMAs per commit.
-///
 /// Determinism: file order, additions, deletions, and `String.hashCode`
 /// are the only inputs. Same diff → same fingerprint forever.
 CommitSignature computeCommitSignature(CommitDetailData detail) {

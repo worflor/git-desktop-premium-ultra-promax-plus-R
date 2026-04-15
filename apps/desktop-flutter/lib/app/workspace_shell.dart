@@ -173,7 +173,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
               ignoring: _panel != _Panel.settings && _panel != _Panel.search,
               child: Stack(
                 children: [
-                  // ── Dim backdrop: opacity-only, static position ──────
                   Positioned.fill(
                     child: AnimatedOpacity(
                       duration: context.surfaceShader.duration,
@@ -191,7 +190,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                       ),
                     ),
                   ),
-                  // ── Panel body: fade + slide via AnimatedSwitcher ────
                   Positioned.fill(
                     child: AnimatedSwitcher(
                       duration: context.surfaceShader.duration,
@@ -775,7 +773,6 @@ class _XrayModeBtn extends StatelessWidget {
   }
 }
 
-// ── Desk row: active branch pill + other open worktrees ─────────────────────
 
 /// The desk row lives in the second line of the topbar. The first position
 /// is the active desk (rendered as `_BranchPill` — keeps the dropdown
@@ -1125,7 +1122,6 @@ class _DeskRow extends StatelessWidget {
   /// "Apply to main" routes through the same PR plumbing the branches
   /// page uses for its PR-row merge — desks are glorified PRs, so the
   /// audit trail and lifecycle transitions are identical.
-  ///
   /// Steps:
   ///   1. Refuse if the desk has uncommitted edits (mirrors the branches
   ///      page's `dirtyFileCount > 0` guard).
@@ -1800,7 +1796,6 @@ class _CloseDeskDialog extends StatelessWidget {
   }
 }
 
-// ── Branch pill + emerging panel ─────────────────────────────────────────────
 
 class _BranchPill extends StatefulWidget {
   final String branch;
@@ -2057,7 +2052,6 @@ class _BranchPillState extends State<_BranchPill> {
 /// without leaving a gap against the next desk tab.
 const double _kBranchPillMaxWidth = 280;
 
-// ── Panel overlay ─────────────────────────────────────────────────────────────
 
 class _BranchPanelOverlay extends StatefulWidget {
   final double top;
@@ -2180,7 +2174,6 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // ── Main panel ──────────────────────────────────────
                       Container(
                         width: widget.minWidth,
                         decoration: BoxDecoration(
@@ -2201,7 +2194,6 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            // ── Pill header — tapping here closes the panel ──
                             GestureDetector(
                               onTap: widget.onDismiss,
                               child: MouseRegion(
@@ -2252,7 +2244,6 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
                               height: 1,
                               color: borderColor.withValues(alpha: 0.5),
                             ),
-                            // ── Branch list ──────────────────────────────
                             _PanelBody(
                               branches: widget.branches,
                               loading: widget.loading,
@@ -2713,7 +2704,6 @@ class _NavRowState extends State<_NavRow> {
   }
 }
 
-// ── Issues side panel ─────────────────────────────────────────────────────────
 
 const double _kIssuesPanelWidth = 172.0;
 
@@ -2740,12 +2730,10 @@ class _SidePanelIssue {
 }
 
 /// Side panel attached to the branch picker overlay.
-///
 /// Shows a deduplicated list of open issues from both local storage
 /// ([localIssues]) and the GitHub cache ([remoteIssues]). A local issue
 /// with [DeskIssue.remoteNumber] set is considered the canonical record and
 /// suppresses the matching remote entry.
-///
 /// Hover filter:
 ///   • Local issues → `addressedBy.contains(hoveredBranch)`
 ///   • Remote-only  → `branchRemoteIssues[hoveredBranch]?.contains(number)`
