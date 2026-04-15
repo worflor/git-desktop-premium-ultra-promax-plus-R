@@ -18,6 +18,7 @@ import 'app/remote_issue_cache_state.dart';
 import 'app/hyper_reactivity.dart';
 import 'app/brand_lockup.dart';
 import 'app/sidebar_rail.dart';
+import 'app/window_activity.dart';
 import 'app/theme_state.dart';
 import 'app/workspace_shell.dart';
 import 'backend/engram_bootstrap.dart';
@@ -421,16 +422,33 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     windowManager.addListener(this);
+    WindowActivity.instance.addListener(_syncAwake);
     _controller = AnimationController(
       vsync: this,
       duration: _particleAnimationDuration(widget.shader),
     );
     _controller.addListener(_tickSim);
-    if (_particlesAnimate(widget.shader)) {
+    if (_particlesAnimate(widget.shader) && WindowActivity.instance.awake) {
       _controller.repeat();
     }
     _rebuildBackdropSignal();
     _captureBaseWindowPos();
+  }
+
+  /// Window-focus / minimize / lifecycle observer drives this. The N²
+  /// whisp collision loop and blur-glow CustomPaint are pure background
+  /// ornament — burning cycles on them while the user is looking at a
+  /// different app is waste. Stop hard when the window loses focus;
+  /// resume when it comes back.
+  void _syncAwake() {
+    if (!mounted) return;
+    final shouldAnimate =
+        _particlesAnimate(widget.shader) && WindowActivity.instance.awake;
+    if (shouldAnimate && !_controller.isAnimating) {
+      _controller.repeat();
+    } else if (!shouldAnimate && _controller.isAnimating) {
+      _controller.stop();
+    }
   }
 
   void _rebuildBackdropSignal() {
@@ -575,7 +593,7 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
     if (oldWidget.shader.particles != widget.shader.particles ||
         _controller.duration != duration) {
       _controller.duration = duration;
-      if (_particlesAnimate(widget.shader)) {
+      if (_particlesAnimate(widget.shader) && WindowActivity.instance.awake) {
         _controller.repeat();
       } else {
         _controller.stop();
@@ -590,17 +608,15 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.hidden) {
-      _controller.stop();
-    } else if (!_controller.isAnimating) {
-      _controller.repeat();
-    }
+    // Lifecycle is already folded into [WindowActivity.awake]; defer to
+    // the shared observer so the start/stop decision is made in exactly
+    // one place, not split between two overlapping code paths.
+    _syncAwake();
   }
 
   @override
   void dispose() {
+    WindowActivity.instance.removeListener(_syncAwake);
     windowManager.removeListener(this);
     WidgetsBinding.instance.removeObserver(this);
     _windowDelta.dispose();

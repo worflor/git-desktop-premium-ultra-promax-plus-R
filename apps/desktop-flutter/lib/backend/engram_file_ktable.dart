@@ -37,8 +37,6 @@
 
 import 'dart:typed_data';
 
-import 'package:meta/meta.dart';
-
 import 'engram_hunk_encoder.dart';
 
 /// Sentinel "no well" value stored in [EngramFileKTable.wellIdx] for
@@ -47,10 +45,11 @@ const int kEngramNoWell = -1;
 
 /// Dense column-store for per-file engram encodings.
 ///
-/// Immutable after construction. Safe to share across isolates — the
-/// typed-array columns copy as bulk bytes, the String list + Map are
-/// small and cheap to serialise.
-@immutable
+/// Observably immutable after construction. Safe to share across
+/// isolates — the typed-array columns copy as bulk bytes, the String
+/// list + Map are small and cheap to serialise. Carries one internal
+/// lazy cache (the well→rows reverse index) which doesn't affect
+/// observable state.
 class EngramFileKTable {
   EngramFileKTable._({
     required this.pairs,
@@ -140,6 +139,32 @@ class EngramFileKTable {
     if (wellIdx[row] < 0) return null;
     return wellRawDistance[row];
   }
+
+  /// Reverse index cache: well's original index → list of row ids.
+  /// Built on first access — muse typically hits many wells in a
+  /// single brainstorm pass so the O(n) build amortises cleanly.
+  Map<int, List<int>>? _rowsByWellIdxCache;
+
+  /// Rows whose nearest well is [wellOriginalIndex], in row-id order.
+  /// Returns `const []` for wells with no encoded files.
+  List<int> rowsInWell(int wellOriginalIndex) {
+    var cache = _rowsByWellIdxCache;
+    if (cache == null) {
+      cache = <int, List<int>>{};
+      for (var row = 0; row < n; row++) {
+        final wi = wellIdx[row];
+        if (wi < 0) continue;
+        (cache[wi] ??= <int>[]).add(row);
+      }
+      _rowsByWellIdxCache = cache;
+    }
+    return cache[wellOriginalIndex] ?? const [];
+  }
+
+  /// All rows in the table, for callers that want to iterate paths with
+  /// their K-vectors (e.g. a muse KNN scan). The underlying list is
+  /// already unmodifiable; exposed here for clarity at call sites.
+  Iterable<String> get allPaths => paths;
 
   /// Empty table for the "no engram" path.
   factory EngramFileKTable.empty(int pairs) {

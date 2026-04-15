@@ -20,7 +20,7 @@ class PreferencesState extends ChangeNotifier {
   bool _crashReportingEnabled = false;
   bool _aiReadOnlyDefault = true;
   bool _logoAnimatesWhenUnfocused = true;
-  bool _reduceMotion = false;
+  double _motionRate = 1.0;
   double _reduceMotionPhase = 0.0;
   bool _stashCabinetDefaultExpanded = false;
   bool _instantBlameHover = false;
@@ -40,8 +40,24 @@ class PreferencesState extends ChangeNotifier {
   bool get crashReportingEnabled => _crashReportingEnabled;
   bool get aiReadOnlyDefault => _aiReadOnlyDefault;
   bool get logoAnimatesWhenUnfocused => _logoAnimatesWhenUnfocused;
-  bool get reduceMotion => _reduceMotion;
+
+  /// Global motion-rate scalar in [0.0, 2.0]. 0 = no motion (reduce-motion
+  /// equivalent), 1 = authored speed, 2 = double-time. Animations compute
+  /// their actual duration as `authored / motionRate`, and skip entirely
+  /// (Duration.zero) when the rate is at or below [_kMotionRateOff].
+  double get motionRate => _motionRate;
+
+  /// Legacy boolean view of [motionRate]. Returns true when the rate is at
+  /// or below the "off" threshold — preserved so callers that only cared
+  /// about the binary flip continue to work unchanged.
+  bool get reduceMotion => _motionRate <= _kMotionRateOff;
+
   double get reduceMotionPhase => _reduceMotionPhase;
+
+  /// Rates at or below this threshold are treated as "no motion". Chosen
+  /// slightly above zero so a rounding artifact from persistence doesn't
+  /// accidentally re-enable animations when the user meant OFF.
+  static const double _kMotionRateOff = 0.0001;
   bool get stashCabinetDefaultExpanded => _stashCabinetDefaultExpanded;
   bool get instantBlameHover => _instantBlameHover;
   FileSortGuide get fileSortGuide => _fileSortGuide;
@@ -63,7 +79,7 @@ class PreferencesState extends ChangeNotifier {
     _crashReportingEnabled = settings.crashReportingEnabled;
     _aiReadOnlyDefault = settings.aiReadOnlyDefault;
     _logoAnimatesWhenUnfocused = settings.logoAnimatesWhenUnfocused;
-    _reduceMotion = settings.reduceMotion;
+    _motionRate = settings.motionRate.clamp(0.0, 2.0);
     _reduceMotionPhase = settings.reduceMotionPhase;
     _stashCabinetDefaultExpanded = settings.stashCabinetDefaultExpanded;
     _instantBlameHover = settings.instantBlameHover;
@@ -88,6 +104,7 @@ class PreferencesState extends ChangeNotifier {
     String? updateChannel,
     bool? crashReportingEnabled,
     bool? reduceMotion,
+    double? motionRate,
     double? reduceMotionPhase,
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
@@ -108,6 +125,7 @@ class PreferencesState extends ChangeNotifier {
         updateChannel: updateChannel,
         crashReportingEnabled: crashReportingEnabled,
         reduceMotion: reduceMotion,
+        motionRate: motionRate,
         reduceMotionPhase: reduceMotionPhase,
         stashCabinetDefaultExpanded: stashCabinetDefaultExpanded,
         instantBlameHover: instantBlameHover,
@@ -138,12 +156,26 @@ class PreferencesState extends ChangeNotifier {
     await _persistWith(logosPadX: cx, logosPadY: cy);
   }
 
-  Future<void> setReduceMotion(bool value) async {
-    if (_reduceMotion == value) return;
-    _reduceMotion = value;
-    await _persistWith(reduceMotion: value);
+  /// Write a new [motionRate]. Value is clamped to [0, 2]. Persists both
+  /// `motionRate` (authoritative) AND the derived `reduceMotion` boolean
+  /// so on-disk downgrades keep working — an older build reading this
+  /// settings file will see `reduceMotion = rate <= 0` and behave
+  /// correctly even without knowing about the rate field.
+  Future<void> setMotionRate(double value) async {
+    final clamped = value.clamp(0.0, 2.0);
+    if (_motionRate == clamped) return;
+    _motionRate = clamped;
+    await _persistWith(
+      motionRate: clamped,
+      reduceMotion: clamped <= _kMotionRateOff,
+    );
     notifyListeners();
   }
+
+  /// Convenience toggle for callers that only care about the binary flip.
+  /// Maps `true → 0.0` (off), `false → 1.0` (normal). Callers that want
+  /// a tuned rate use [setMotionRate] directly.
+  Future<void> setReduceMotion(bool value) => setMotionRate(value ? 0.0 : 1.0);
 
   /// Persist the pulse-wave phase that the reduce-motion toggle froze
   /// at. Intentionally does NOT call [notifyListeners] — nothing in the

@@ -18,6 +18,16 @@ class AppSettingsSnapshot {
   final bool utilityDrawerDefaultExpanded;
   final int utilityDrawerHeightPx;
   final bool reduceMotion;
+  /// Global motion-rate scalar in [0.0, 2.0]. Multiplies animation
+  /// frequency — 0.0 stops motion entirely (same as reduceMotion=true),
+  /// 1.0 is normal speed, 2.0 runs animations at twice their authored Hz.
+  /// Durations are scaled reciprocally: `duration / motionRate`.
+  ///
+  /// [reduceMotion] is retained for migration of older on-disk settings;
+  /// when motionRate is absent, it's derived as `reduceMotion ? 0.0 : 1.0`.
+  /// On fresh writes both fields are persisted so downgrades still work
+  /// (older code reads `reduceMotion = motionRate <= 0.0`).
+  final double motionRate;
   /// Last-known phase (0..1) of the reduce-motion toggle's pulse wave.
   /// Persisted so the bump resumes from where it was frozen on the
   /// previous session instead of snapping back to zero on restart.
@@ -62,6 +72,7 @@ class AppSettingsSnapshot {
     required this.utilityDrawerDefaultExpanded,
     required this.utilityDrawerHeightPx,
     required this.reduceMotion,
+    required this.motionRate,
     required this.reduceMotionPhase,
     required this.stashCabinetDefaultExpanded,
     required this.instantBlameHover,
@@ -91,6 +102,7 @@ class AppSettingsSnapshot {
         'utilityDrawerDefaultExpanded': utilityDrawerDefaultExpanded,
         'utilityDrawerHeightPx': utilityDrawerHeightPx,
         'reduceMotion': reduceMotion,
+        'motionRate': motionRate,
         'reduceMotionPhase': reduceMotionPhase,
         'stashCabinetDefaultExpanded': stashCabinetDefaultExpanded,
         'instantBlameHover': instantBlameHover,
@@ -120,6 +132,7 @@ class AppSettingsSnapshot {
         utilityDrawerDefaultExpanded: false,
         utilityDrawerHeightPx: 180,
         reduceMotion: false,
+        motionRate: 1.0,
         reduceMotionPhase: 0.0,
         stashCabinetDefaultExpanded: false,
         instantBlameHover: false,
@@ -191,6 +204,16 @@ class AppSettingsSnapshot {
         json['reduceMotion'],
         defaults.reduceMotion,
       ),
+      // motionRate migration: if the new field is present, use it. Else
+      // fall back to the legacy bool — reduceMotion=true ⇒ rate=0.0 (no
+      // motion), reduceMotion=false ⇒ rate=1.0 (normal). New writes
+      // always emit both fields so a downgrade still behaves correctly.
+      motionRate: json.containsKey('motionRate')
+          ? SettingsStore._doubleOr(json['motionRate'], defaults.motionRate)
+              .clamp(0.0, 2.0)
+          : (SettingsStore._boolOr(json['reduceMotion'], defaults.reduceMotion)
+              ? 0.0
+              : 1.0),
       reduceMotionPhase: SettingsStore._doubleOr(
         json['reduceMotionPhase'],
         defaults.reduceMotionPhase,
@@ -264,6 +287,7 @@ class AppSettingsSnapshot {
     bool? utilityDrawerDefaultExpanded,
     int? utilityDrawerHeightPx,
     bool? reduceMotion,
+    double? motionRate,
     double? reduceMotionPhase,
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
@@ -297,6 +321,7 @@ class AppSettingsSnapshot {
       utilityDrawerHeightPx:
           utilityDrawerHeightPx ?? this.utilityDrawerHeightPx,
       reduceMotion: reduceMotion ?? this.reduceMotion,
+      motionRate: motionRate ?? this.motionRate,
       reduceMotionPhase: reduceMotionPhase ?? this.reduceMotionPhase,
       stashCabinetDefaultExpanded:
           stashCabinetDefaultExpanded ?? this.stashCabinetDefaultExpanded,

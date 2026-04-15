@@ -937,11 +937,11 @@ class _SettingsPageState extends State<SettingsPage> {
               const _SettingsSubtitle('Behavioural Dynamics'),
               const SizedBox(height: 12),
               _ReduceMotionToggle(
-                value: preferences.reduceMotion,
+                value: preferences.motionRate,
                 onChanged: (value) {
                   unawaited(context
                       .read<PreferencesState>()
-                      .setReduceMotion(value));
+                      .setMotionRate(value));
                 },
               ),
               const SizedBox(height: 10),
@@ -6456,8 +6456,10 @@ class _SortOptionLabel extends StatelessWidget {
 }
 
 class _ReduceMotionToggle extends StatefulWidget {
-  final bool value;
-  final ValueChanged<bool> onChanged;
+  /// Current motion rate in [0, 2]. 0 = no motion (matches the legacy
+  /// reduce-motion=true behavior), 1 = authored speed, 2 = double-time.
+  final double value;
+  final ValueChanged<double> onChanged;
 
   const _ReduceMotionToggle({
     required this.value,
@@ -6470,41 +6472,65 @@ class _ReduceMotionToggle extends StatefulWidget {
 
 class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
     with TickerProviderStateMixin {
-  static const Duration _kEnvelopeDuration = Duration(milliseconds: 520);
-  // 1 cycle / 1.8 s ≈ 0.556 Hz. The base frequency at full speed.
-  static const double _kWaveHz = 1000.0 / 1800.0;
+  // 1 cycle / 1.8 s ≈ 0.556 Hz at rate 1.0. The live Hz readout and the
+  // pulse-wave phase advance both scale from this base by the current
+  // rate, so rate=2.0 shows ~1.11 Hz and the wave literally animates 2×
+  // as fast. The number on screen and the speed of the wave are the
+  // same quantity rendered in two different modalities.
+  static const double _kWaveHzBase = 1000.0 / 1800.0;
+  static const double _kMaxRate = 2.0;
+  static const Duration _kEnvelopeDuration = Duration(milliseconds: 280);
 
-  // Speed envelope drives both the Hz readout AND the phase advancement
-  // rate. Going INTO reduced: speed eases 1 → 0, the wave decelerates
-  // to a halt and the bump freezes wherever it lands. Going OUT: speed
-  // eases 0 → 1, the bump accelerates back up from its frozen position.
-  // The dots themselves never disappear — the wave is the same shape
-  // throughout, only its forward velocity changes.
-  late final AnimationController _speed;
+  // The wave IS the slider. Width matches the original 56px layout
+  // exactly so the 5 dots look identical to before the control became
+  // a scrub target. Drag precision is ~28px per unit rate — arrow
+  // keys (±0.1) are available for finer tuning.
+  static const double _kWaveWidth = 56.0;
+  static const double _kWaveHeight = 18.0;
+
+  // Live rate for the pulse animation. Eases toward widget.value on every
+  // external change, so a programmatic set from elsewhere (or a toggle
+  // tap) produces a smooth ramp instead of a snap. During an active
+  // horizontal drag the rate is updated immediately without easing —
+  // the wave tracks the finger in real time.
+  late final AnimationController _envelope;
+  double _rateFrom = 1.0;
+  double _rateTo = 1.0;
+  double get _liveRate {
+    final t = _envelope.value;
+    return _rateFrom + (_rateTo - _rateFrom) * t;
+  }
+
   late final Ticker _phaseTicker;
   final ValueNotifier<double> _phase = ValueNotifier(0.0);
   Duration _lastTick = Duration.zero;
   final FocusNode _focusNode = FocusNode(debugLabel: 'ReduceMotionToggle');
 
-  bool _hovered = false;
+  // Remembers the last non-zero rate so tap-to-toggle (the muscle-memory
+  // gesture from the old boolean toggle) can restore whatever speed the
+  // user had dialed in before going to zero.
+  double _lastPositiveRate = 1.0;
+
+  // Row-wide hover — the whole button is clickable (tap = toggle), so
+  // the whole row is the hover target. Matches the original bool toggle.
+  bool _rowHovered = false;
   bool _focused = false;
 
   @override
   void initState() {
     super.initState();
-    _speed = AnimationController(
+    _rateFrom = widget.value;
+    _rateTo = widget.value;
+    if (widget.value > 0) _lastPositiveRate = widget.value;
+    _envelope = AnimationController(
       vsync: this,
       duration: _kEnvelopeDuration,
-      value: widget.value ? 0.0 : 1.0,
+      value: 1.0, // start settled at the initial rate
     );
-    // Seed phase from the last-persisted position so the bump resumes
-    // from wherever it was frozen on the previous session. When reduce
-    // motion is OFF, the ticker starts immediately and phase advances
-    // from this seed forward; when ON, phase stays put until toggled.
     _phase.value =
         context.read<PreferencesState>().reduceMotionPhase.clamp(0.0, 1.0);
     _phaseTicker = createTicker(_onPhaseTick);
-    if (!widget.value) _phaseTicker.start();
+    if (widget.value > 0.0001) _phaseTicker.start();
     _focusNode.addListener(_onFocusChanged);
   }
 
@@ -6513,23 +6539,18 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
         ? 0.0
         : (elapsed - _lastTick).inMicroseconds / Duration.microsecondsPerSecond;
     _lastTick = elapsed;
-    final s = _speed.value;
-    // When the envelope has fully settled to zero, the wave has come to
-    // rest: stop consuming frames AND persist the frozen phase so the
-    // next session can resume the bump from this exact position. The
-    // ticker restarts from didUpdateWidget when the user toggles back
-    // to normal motion. Without the ticker.stop, it would idle forever
-    // computing a phase delta of 0 each frame.
-    if (s <= 0.0001 && !_speed.isAnimating) {
+    final rate = _liveRate;
+    // When the rate collapses to ~0 AND the envelope has settled, the
+    // wave has come to rest. Stop consuming frames AND persist the
+    // frozen phase so the next session resumes the bump from here.
+    if (rate <= 0.0001 && !_envelope.isAnimating) {
       _phaseTicker.stop();
       _lastTick = Duration.zero;
-      // Fire-and-forget; the setter debounces writes internally by
-      // skipping when the value hasn't changed.
       context.read<PreferencesState>().setReduceMotionPhase(_phase.value);
       return;
     }
-    if (s > 0) {
-      _phase.value = (_phase.value + dt * _kWaveHz * s) % 1.0;
+    if (rate > 0) {
+      _phase.value = (_phase.value + dt * _kWaveHzBase * rate) % 1.0;
     }
   }
 
@@ -6537,17 +6558,15 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
   void didUpdateWidget(covariant _ReduceMotionToggle old) {
     super.didUpdateWidget(old);
     if (widget.value == old.value) return;
-    // Symmetric easing in both directions — the wave decelerates into
-    // stillness, accelerates back out of it. No instant snap, no
-    // disappearing dots; the bump is always visible, only its forward
-    // velocity changes. The Hz readout reads `_speed * _kWaveHz`, so it
-    // honestly counts down to 0.00 as the wave actually slows.
-    _speed.animateTo(
-      widget.value ? 0.0 : 1.0,
-      duration: _kEnvelopeDuration,
-      curve: Curves.easeOutCubic,
-    );
-    if (!_phaseTicker.isActive) {
+    if (widget.value > 0.0001) _lastPositiveRate = widget.value;
+    // Ease from current live rate to the new target. During an active
+    // drag the setState loop overwrites these each frame; the tween
+    // duration is effectively inert because the value updates faster
+    // than the envelope completes.
+    _rateFrom = _liveRate;
+    _rateTo = widget.value;
+    _envelope.forward(from: 0);
+    if (!_phaseTicker.isActive && widget.value > 0.0001) {
       _lastTick = Duration.zero;
       _phaseTicker.start();
     }
@@ -6558,7 +6577,7 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
     _focusNode.removeListener(_onFocusChanged);
     _focusNode.dispose();
     _phaseTicker.dispose();
-    _speed.dispose();
+    _envelope.dispose();
     _phase.dispose();
     super.dispose();
   }
@@ -6568,119 +6587,167 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
     setState(() => _focused = _focusNode.hasFocus);
   }
 
-  void _toggle() {
-    widget.onChanged(!widget.value);
+  /// Tap toggles between OFF (rate=0) and the last non-zero rate. This
+  /// preserves the muscle-memory of the old boolean control — users who
+  /// just want "motion off" keep their one-tap workflow; users who want
+  /// to tune pull horizontally.
+  void _onTap() {
+    final next = widget.value > 0.0001 ? 0.0 : _lastPositiveRate;
+    widget.onChanged(next);
     _focusNode.requestFocus();
+  }
+
+  /// Horizontal drag across the wave maps cursor X to rate. 0 at the
+  /// left edge, [_kMaxRate] at the right. Updates fire live so the wave
+  /// speeds up / slows down in step with the finger — the speed of the
+  /// wave IS the feedback, no overlay required.
+  void _onDragStart(DragStartDetails d) {
+    _applyDragRate(d.localPosition.dx);
+    _focusNode.requestFocus();
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    _applyDragRate(d.localPosition.dx);
+  }
+
+  void _applyDragRate(double dx) {
+    final frac = (dx / _kWaveWidth).clamp(0.0, 1.0);
+    final rate = (frac * _kMaxRate).clamp(0.0, _kMaxRate);
+    if ((widget.value - rate).abs() < 0.005) return;
+    widget.onChanged(rate);
   }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    if (event.logicalKey == LogicalKeyboardKey.space ||
-        event.logicalKey == LogicalKeyboardKey.enter ||
-        event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-      _toggle();
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.space ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      _onTap();
+      return KeyEventResult.handled;
+    }
+    // Arrow keys nudge by 0.1 in each direction — keyboard parity with
+    // the horizontal drag gesture, for accessibility.
+    if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowDown) {
+      widget.onChanged((widget.value - 0.1).clamp(0.0, _kMaxRate));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowUp) {
+      widget.onChanged((widget.value + 0.1).clamp(0.0, _kMaxRate));
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
 
+  String _subtitleForRate(double r) =>
+      r <= 0.0001 ? 'Still… like ice?' : 'Flow like water.';
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final reduced = widget.value;
+    final rate = widget.value;
+    final off = rate <= 0.0001;
 
+    // Border/fill mirror the original reduce-motion toggle exactly —
+    // hover of the whole row picks up the accent tint, off state dims
+    // the chrome. Focus ring renders when the keyboard accelerator
+    // (space/enter toggle, arrow nudges) has focus.
     final Color borderColor = _focused
         ? t.accentBright
-        : (reduced
+        : (off
             ? t.chromeBorder.withValues(alpha: 0.25)
-            : (_hovered
+            : (_rowHovered
                 ? t.accentBright.withValues(alpha: 0.5)
                 : t.inputBorder));
-
-    final Color fillColor = reduced
+    final Color fillColor = off
         ? t.surface1.withValues(alpha: 0.4)
-        : (_hovered ? t.accentBright.withValues(alpha: 0.06) : t.inputBg);
+        : (_rowHovered ? t.accentBright.withValues(alpha: 0.06) : t.inputBg);
 
     return Focus(
       focusNode: _focusNode,
       onKeyEvent: _handleKey,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => setState(() => _rowHovered = true),
+        onExit: (_) => setState(() => _rowHovered = false),
         child: GestureDetector(
+          // Whole-row tap toggles OFF ↔ last-positive rate — preserves the
+          // original single-click-to-reduce-motion muscle memory. Drag
+          // lives on the inner wave only, so tapping the label / badge
+          // still just toggles, but dragging across the 5 dots scrubs
+          // the rate. The gesture arena resolves the split automatically:
+          // no horizontal motion → tap; horizontal motion started over
+          // the wave → drag.
           behavior: HitTestBehavior.opaque,
-          onTap: _toggle,
-          // No press-scale here by design. Every other tappable in the
-          // app gets a subtle 0.985× bounce on tap-down, but THIS button
-          // is the one place where any tactile micro-motion would
-          // contradict the control's purpose — the user is asking for
-          // less motion, giving them a farewell bounce on the way in
-          // reads as the app not listening. The tap feels instant, the
-          // state change is the only feedback needed.
+          onTap: _onTap,
           child: AnimatedContainer(
-              duration: context.motion(const Duration(milliseconds: 200)),
-              curve: Curves.easeOutCubic,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: fillColor,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: borderColor,
-                  width: _focused ? 1.5 : 1,
-                ),
-                boxShadow: _focused
-                    ? [
-                        BoxShadow(
-                          color: t.accentBright.withValues(alpha: 0.18),
-                          blurRadius: 10,
-                        ),
-                      ]
-                    : null,
+            duration: context.motion(const Duration(milliseconds: 200)),
+            curve: Curves.easeOutCubic,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: fillColor,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: borderColor,
+                width: _focused ? 1.5 : 1,
               ),
-              child: Row(
-                children: [
-                  // Label first — it's what identifies the control.
-                  // The waveform (a live demonstration of the motion
-                  // state) sits to the right of the text so it reads
-                  // as "here's what motion looks like right now",
-                  // not as an icon prefixed onto a label.
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Reduce motion',
-                          style: TextStyle(
-                            color: t.textNormal,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
+              boxShadow: _focused
+                  ? [
+                      BoxShadow(
+                        color: t.accentBright.withValues(alpha: 0.18),
+                        blurRadius: 10,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Reduce motion',
+                        style: TextStyle(
+                          color: t.textNormal,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                         ),
-                        const SizedBox(height: 2),
-                        AnimatedDefaultTextStyle(
-                          duration:
-                              context.motion(const Duration(milliseconds: 180)),
-                          curve: Curves.easeOutCubic,
-                          style: TextStyle(
-                            color: t.textMuted,
-                            fontSize: 11,
-                            height: 1.35,
-                          ),
-                          child: Text(
-                            reduced
-                                ? 'Still… like ice?'
-                                : 'Flow like water.',
-                          ),
+                      ),
+                      const SizedBox(height: 2),
+                      AnimatedDefaultTextStyle(
+                        duration: context
+                            .motion(const Duration(milliseconds: 180)),
+                        curve: Curves.easeOutCubic,
+                        style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 11,
+                          height: 1.35,
                         ),
-                      ],
-                    ),
+                        child: Text(_subtitleForRate(rate)),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 56,
-                    height: 18,
+                ),
+                const SizedBox(width: 12),
+                // ── 5-dot wave: identical paint, now also a scrub ────
+                // No onTap here — tap falls through to the outer
+                // row-level GestureDetector so the whole button keeps
+                // toggling. Only horizontal drag is captured so scrub
+                // works precisely on the wave area. Wave speed tracks
+                // live rate; no separate overlays, no baseline boost,
+                // no emphasis shift — the dots look exactly as they
+                // did when the control was a pure bool.
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onHorizontalDragStart: _onDragStart,
+                  onHorizontalDragUpdate: _onDragUpdate,
+                  child: SizedBox(
+                    width: _kWaveWidth,
+                    height: _kWaveHeight,
                     child: AnimatedBuilder(
                       animation: _phase,
                       builder: (context, _) => CustomPaint(
@@ -6692,18 +6759,21 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  _HzBadge(
-                    speed: _speed,
-                    hz: _kWaveHz,
-                    tokens: t,
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 10),
+                _HzBadge(
+                  envelope: _envelope,
+                  rateFrom: () => _rateFrom,
+                  rateTo: () => _rateTo,
+                  hzBase: _kWaveHzBase,
+                  tokens: t,
+                ),
+              ],
             ),
           ),
         ),
-      );
+      ),
+    );
   }
 }
 
@@ -6711,24 +6781,36 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
 /// smoothly during the 520ms transition — 0.56 ↔ 0.00 is rendered
 /// honestly as the wave actually accelerates / decelerates, not snapped
 /// at toggle time.
+/// Live Hz readout. Interpolates the displayed rate between the previous
+/// and target values across the envelope tween so the digits lerp
+/// smoothly during a transition — a drag that moves the rate from 0.56
+/// to 1.34 shows the intermediate values ticking by, not a snap.
 class _HzBadge extends StatelessWidget {
-  final Animation<double> speed;
-  final double hz;
+  final Animation<double> envelope;
+  final double Function() rateFrom;
+  final double Function() rateTo;
+  final double hzBase;
   final AppTokens tokens;
 
   const _HzBadge({
-    required this.speed,
-    required this.hz,
+    required this.envelope,
+    required this.rateFrom,
+    required this.rateTo,
+    required this.hzBase,
     required this.tokens,
   });
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: speed,
+      animation: envelope,
       builder: (context, _) {
-        final live = speed.value * hz;
-        final fraction = speed.value;
+        final t = envelope.value;
+        final rate = rateFrom() + (rateTo() - rateFrom()) * t;
+        final live = rate * hzBase;
+        // Visual intensity tracks rate magnitude, clamped so >1 rates
+        // don't oversaturate the badge. 1.0 = full accent, 0 = muted.
+        final fraction = (rate / 2.0).clamp(0.0, 1.0);
         final fg = Color.lerp(tokens.textMuted, tokens.accentBright, fraction)!;
         final bg = Color.lerp(
           tokens.textMuted.withValues(alpha: 0.12),

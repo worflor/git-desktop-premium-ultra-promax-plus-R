@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
@@ -20,10 +21,12 @@ import '../../ui/resonance_text.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/ai.dart';
+import '../../backend/engram_text_kspace.dart' show nearestRowsInTable;
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
 import '../../backend/file_layout.dart';
+import 'logos_diffusion_canvas.dart';
 import '../../backend/stash_shape.dart';
 import '../../backend/logos_git.dart';
 import '../../app/ai_settings_state.dart';
@@ -743,7 +746,123 @@ class _ChangesPageState extends State<ChangesPage> {
             .toList()
         : const <RepositoryStatusFile>[];
     final othersCount = multi ? selectedFiles.length - 1 : 0;
+    final t = context.tokens;
+
+    // Logos section. Two items, each earning its place:
+    //
+    //   • "Include likely co-changes" (+N) — the actionable verb
+    //     when the engine's coupling × semantic intersection with
+    //     the currently-modified set is non-empty. One click adds
+    //     the files the engine predicts you're about to forget.
+    //
+    //   • Top-3 historical companions — always present when the
+    //     file has known coupling partners. Each is a nav item
+    //     that jumps the diff view to that file. Lets the user
+    //     answer "what does touching this file usually entail?"
+    //     without leaving the current pane.
+    final changedPathSet = status == null
+        ? <String>{}
+        : status.files.map((f) => f.path).toSet();
+    final likely = _likelyCoChangesFor(
+      context,
+      repoPath,
+      file.path,
+      changedPathSet,
+      _includedPaths,
+    );
+    final companions = _topCompanionsFor(context, repoPath, file.path, limit: 3);
+
+    final engine = context.read<LogosGitState>().engineFor(repoPath);
+
+    // Mutable set the submenu mutates on each checkbox toggle; the
+    // parent row's click reads this at action time so the "Include"
+    // verb commits exactly what's currently checked. Starts as all
+    // of `likely` checked (default-in).
+    final checkedLikely = Set<String>.from(likely);
+
+    final logosSection = <AppContextMenuItem>[
+      if (likely.isNotEmpty)
+        AppContextMenuItem(
+          icon: Icons.hub_outlined,
+          label: 'Include likely co-changes',
+          onTap: () {
+            if (checkedLikely.isEmpty) return;
+            setState(() {
+              _includedPaths.addAll(checkedLikely);
+            });
+          },
+          submenuBuilder: () => [
+            for (final path in likely)
+              AppContextMenuItem(
+                icon: Icons.check_box_outline_blank, // fallback; unused
+                leading: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: Checkbox(
+                    value: checkedLikely.contains(path),
+                    // onChanged runs independently of the row's tap
+                    // handler — either surface (clicking the box or
+                    // clicking the row) flips the checkmark. Tapping
+                    // anywhere on the row feels obvious; the checkbox
+                    // just makes the state visually legible.
+                    onChanged: (v) {
+                      if (v == true) {
+                        checkedLikely.add(path);
+                      } else {
+                        checkedLikely.remove(path);
+                      }
+                    },
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+                label: p.basename(path),
+                keepOpen: true,
+                onTap: () {
+                  if (checkedLikely.contains(path)) {
+                    checkedLikely.remove(path);
+                  } else {
+                    checkedLikely.add(path);
+                  }
+                },
+              ),
+          ],
+        ),
+      // Ripple — hover opens a cascading submenu with the top 5
+      // files the engine's heat-kernel diffusion predicts will need
+      // attention downstream of this file. Instant computation from
+      // the in-memory engine, so the submenu builder runs cheaply
+      // on first hover with no spinner needed. Each submenu entry
+      // carries a φ-weighted bar alongside the path so the reader
+      // sees relative forecast weight at a glance.
+      if (engine != null)
+        AppContextMenuItem(
+          icon: Icons.waves_outlined,
+          label: 'Ripple',
+          onTap: () {}, // hover-only; submenu drives the action
+          submenuBuilder: () => _buildRippleSubmenu(engine, repoPath, file.path),
+        ),
+      // Rhythm — inline sparkline derived from the file's commit
+      // touch pattern over the engine's analysed window. Silent,
+      // non-interactive; the row IS the information. Answers "is
+      // this file warm or cold right now?" at a glance.
+      if (engine != null)
+        AppContextMenuItem(
+          icon: Icons.graphic_eq_outlined,
+          label: 'Rhythm',
+          onTap: () {},
+          inert: true,
+          trailing: _RhythmSpark(
+            commitIndices:
+                engine.stats.perFileCommitIndices[file.path] ?? const [],
+            totalCommits: engine.stats.totalCommits,
+            tokens: t,
+          ),
+        ),
+    ];
+
     final sections = <List<AppContextMenuItem>>[
+      if (logosSection.isNotEmpty) logosSection,
       [
         AppContextMenuItem(
           icon: isUntracked
@@ -793,6 +912,149 @@ class _ChangesPageState extends State<ChangesPage> {
     showAppContextMenu(context, globalPos, sections);
   }
 
+  /// Compute the set of files that historically co-change with
+  /// [filePath] AND are present in the current diff's changed-file
+  /// set AND aren't already in the user's selection. Blends two
+  /// signals the engine uniquely provides:
+  ///
+  ///   • Coupling (historical): jaccard entries from the matrix.
+  ///     Files that keep being touched alongside this one across
+  ///     commit history.
+  ///   • Semantic (content): K-space nearest files from engram.
+  ///     Files whose content lives near this one in Alexandria's
+  ///     well-space.
+  ///
+  /// A union of the two, thresholded so only real signal comes
+  /// through. The intersection with currently-changed files is
+  /// what makes this useful as a selection-extension action: if
+  /// you're staging `auth.dart` and the engine knows `auth_test.dart`
+  /// co-changes 82% of the time AND it's sitting modified in your
+  /// working tree, you probably forgot to stage it.
+  Set<String> _likelyCoChangesFor(
+    BuildContext ctx,
+    String repoPath,
+    String filePath,
+    Set<String> changedPaths,
+    Set<String> alreadyIncluded,
+  ) {
+    final engine = ctx.read<LogosGitState>().engineFor(repoPath);
+    final matrix = ctx.read<FileCouplingState>().matrixFor(repoPath);
+    if (engine == null && matrix == null) return const {};
+
+    final out = <String>{};
+
+    if (matrix != null && matrix.containsPath(filePath)) {
+      // Coupling threshold: low enough to catch real partners on
+      // small/young repos where 0.25 is hard to reach, high enough
+      // that a file co-changed twice won't look like a pattern.
+      for (final e in matrix.jaccardEntriesOf(filePath)) {
+        if (e.value < 0.15) continue;
+        if (!changedPaths.contains(e.key)) continue;
+        if (alreadyIncluded.contains(e.key)) continue;
+        out.add(e.key);
+      }
+    }
+
+    if (engine != null) {
+      final table = engine.perFileKVectors;
+      final row = table.rowOf(filePath);
+      if (row != null && !table.isEmpty) {
+        final p = table.pairs;
+        final base = row * p;
+        final qRe = Float64List(p);
+        final qIm = Float64List(p);
+        for (var j = 0; j < p; j++) {
+          qRe[j] = table.kRe[base + j];
+          qIm[j] = table.kIm[base + j];
+        }
+        // Semantic threshold is tighter than the panel's lookup
+        // because we're making a suggestion the user can one-click
+        // accept — false positives cost them an unwanted checkbox.
+        final near = nearestRowsInTable(
+          table,
+          qRe: qRe,
+          qIm: qIm,
+          topK: 12,
+          minSimilarity: 0.55,
+        );
+        for (final n in near) {
+          if (n.path == filePath) continue;
+          if (!changedPaths.contains(n.path)) continue;
+          if (alreadyIncluded.contains(n.path)) continue;
+          out.add(n.path);
+        }
+      }
+    }
+
+    return out;
+  }
+
+  /// Build the submenu items for "Ripple" — runs the engine's heat
+  /// kernel from `filePath` with weight 1.0 and surfaces the top-5
+  /// neighbour files the diffusion predicts will want attention when
+  /// this change lands. Each row carries the neighbour's φ as an
+  /// inline bar so the submenu itself visualises the weight
+  /// distribution — the strongest predictions read largest.
+  List<AppContextMenuItem> _buildRippleSubmenu(
+    LogosGit engine,
+    String repoPath,
+    String filePath,
+  ) {
+    if (!engine.pathToId.containsKey(filePath)) return const [];
+    final scores = engine.diffuseWeighted({filePath: 1.0});
+    if (scores.isEmpty) return const [];
+    // Skip self; first entry after sorting is typically the source.
+    final filtered = scores.where((s) => s.path != filePath).toList()
+      ..sort((a, b) => b.phi.compareTo(a.phi));
+    final top = filtered.take(5).toList();
+    if (top.isEmpty) return const [];
+    final maxPhi = top.first.phi.clamp(0.0001, double.infinity);
+    final tokens = context.tokens;
+    return [
+      for (final s in top)
+        AppContextMenuItem(
+          icon: Icons.chevron_right,
+          label: p.basename(s.path),
+          // `_inspectSingleDiff` hides the review pane + clears
+          // multi-diff state before loading — plain `_loadDiff`
+          // would silently fill state that the multi-diff mode
+          // ignores, making the click feel like a no-op.
+          onTap: () => _inspectSingleDiff(repoPath, s.path),
+          trailing: _PhiBar(
+            relative: (s.phi / maxPhi).clamp(0.0, 1.0),
+            tokens: tokens,
+          ),
+        ),
+    ];
+  }
+
+  /// Top-N historical companions for [filePath] from the coupling
+  /// matrix — the files that have most often been touched alongside
+  /// it across commit history. Used as always-on nav items in the
+  /// context menu so a user can jump to a file's "usual neighbours"
+  /// without needing anything else modified. Semantic similarity is
+  /// deliberately excluded here: the intent is "what do I usually
+  /// edit with this?" — a historical question — not "what other
+  /// file reads like this?".
+  List<String> _topCompanionsFor(
+    BuildContext ctx,
+    String repoPath,
+    String filePath, {
+    int limit = 3,
+  }) {
+    final matrix = ctx.read<FileCouplingState>().matrixFor(repoPath);
+    if (matrix == null || !matrix.containsPath(filePath)) return const [];
+    final entries = matrix.jaccardEntriesOf(filePath).toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final out = <String>[];
+    for (final e in entries) {
+      if (e.value < 0.10) break; // sorted desc; cut once scores dip
+      out.add(e.key);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   /// File extension *without* the leading dot, or null when the path
   /// has none (e.g. `Makefile`, `.env`). Used to decide whether the
   /// "Ignore all .ext files" row is meaningful.
@@ -831,20 +1093,34 @@ class _ChangesPageState extends State<ChangesPage> {
   /// Open the OS file explorer with the file selected. Windows: invoke
   /// `explorer.exe /select,<path>`. macOS: `open -R <path>`. Linux:
   /// `xdg-open <dir>` (no per-file selection in standard xdg-open).
+  ///
+  /// The spawned process detaches from us — the file manager keeps
+  /// running for the user's whole session — but the Dart-side `Process`
+  /// object still holds the stdout/stderr pipes until they're drained
+  /// and `exitCode` is awaited. Without that cleanup, the pipe FDs
+  /// accumulate for as long as the spawned window stays open. We
+  /// drain both streams, unawait the exitCode future (fire-and-forget;
+  /// it resolves whenever the user eventually closes the window), and
+  /// get the handles released promptly.
   Future<void> _revealInExplorer(String repoPath, String relPath) async {
     final absPath = '$repoPath${Platform.pathSeparator}'
         '${relPath.replaceAll('/', Platform.pathSeparator)}';
     try {
+      final Process p;
       if (Platform.isWindows) {
-        await Process.start('explorer.exe', ['/select,$absPath']);
+        p = await Process.start('explorer.exe', ['/select,$absPath']);
       } else if (Platform.isMacOS) {
-        await Process.start('open', ['-R', absPath]);
+        p = await Process.start('open', ['-R', absPath]);
       } else {
-        // Linux best-effort: open the containing folder.
         final dir =
             absPath.substring(0, absPath.lastIndexOf(Platform.pathSeparator));
-        await Process.start('xdg-open', [dir]);
+        p = await Process.start('xdg-open', [dir]);
       }
+      // Drain pipes so they don't back-pressure or hold FDs. Errors
+      // are ignored — the OS file-manager output is irrelevant to us.
+      unawaited(p.stdout.drain<void>());
+      unawaited(p.stderr.drain<void>());
+      unawaited(p.exitCode);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -3010,11 +3286,21 @@ class _ChangesPageState extends State<ChangesPage> {
                       children: [
                         Expanded(
                           child: Text(
-                            includedCount == 0
-                                ? 'No files selected'
-                                : includedCount == status.files.length
-                                    ? 'All ${status.files.length} file${status.files.length == 1 ? "" : "s"}'
-                                    : '$includedCount of ${status.files.length} files',
+                            // Staged count moved up here from the old
+                            // commit-composer "forehead" — same info,
+                            // one row higher, so the strip below the
+                            // file list can disappear and the shelve
+                            // button can float on its own.
+                            (() {
+                              final base = includedCount == 0
+                                  ? 'No files selected'
+                                  : includedCount == status.files.length
+                                      ? 'All ${status.files.length} file${status.files.length == 1 ? "" : "s"}'
+                                      : '$includedCount of ${status.files.length} files';
+                              return stagedCount > 0
+                                  ? '$base · $stagedCount staged'
+                                  : base;
+                            })(),
                             style: TextStyle(
                               color: includedCount == 0
                                   ? t.textMuted.withValues(alpha: 0.55)
@@ -3059,7 +3345,9 @@ class _ChangesPageState extends State<ChangesPage> {
                                 _resolveMergeConflicts(repoPath, categoryId),
                           ),
                         Expanded(
-                          child: Builder(builder: (context) {
+                          child: Stack(children: [
+                            Positioned.fill(
+                              child: Builder(builder: (context) {
                             // `clusters` hoisted at build-method scope so the
                             // header + list share the same clustering.
                             final fileByPath = {
@@ -3230,6 +3518,35 @@ class _ChangesPageState extends State<ChangesPage> {
                               },
                             );
                           }),
+                            ),
+                            // Floating shelve control — sits over the
+                            // bottom-right of the file list, no chrome
+                            // around it. The drawer that expands when
+                            // toggled lives inside the commit-composer
+                            // area below (it's just a sibling of this
+                            // Stack in the parent column structure), so
+                            // hitting the button still raises the
+                            // filing-cabinet drawer from the commit
+                            // area exactly as before.
+                            Positioned(
+                              right: 12,
+                              bottom: 12,
+                              child: _ShelfControl(
+                                tokens: t,
+                                count: _stashes.length,
+                                loading: _stashesLoading,
+                                expanded: _stashesExpanded,
+                                canShelve: status.files.isNotEmpty,
+                                onShelve: status.files.isNotEmpty
+                                    ? () => _shelveAll(repoPath)
+                                    : null,
+                                onToggleExpanded: _stashes.isEmpty
+                                    ? null
+                                    : () => setState(() => _stashesExpanded =
+                                        !_stashesExpanded),
+                              ),
+                            ),
+                          ]),
                         ),
                       ],
                     ),
@@ -3247,40 +3564,12 @@ class _ChangesPageState extends State<ChangesPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ThemeMorphText(
-                                includedCount == 0
-                                    ? (stagedCount > 0
-                                        ? 'Nothing selected · $stagedCount staged'
-                                        : 'Nothing selected')
-                                    : (stagedCount > 0
-                                        ? '$includedCount file${includedCount == 1 ? '' : 's'} selected · $stagedCount staged'
-                                        : '$includedCount file${includedCount == 1 ? '' : 's'} selected'),
-                                style: TextStyle(
-                                  color:
-                                      includedCount == 0 ? t.textMuted : t.textNormal,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ),
-                            _ShelfControl(
-                              tokens: t,
-                              count: _stashes.length,
-                              loading: _stashesLoading,
-                              expanded: _stashesExpanded,
-                              canShelve: status.files.isNotEmpty,
-                              onShelve: status.files.isNotEmpty
-                                  ? () => _shelveAll(repoPath)
-                                  : null,
-                              onToggleExpanded: _stashes.isEmpty
-                                  ? null
-                                  : () => setState(() =>
-                                      _stashesExpanded = !_stashesExpanded),
-                            ),
-                          ],
-                        ),
+                        // The shelve button itself now floats over the
+                        // bottom-right of the file list (see the Stack
+                        // wrapping the file-list Expanded). The drawer
+                        // it controls still expands here in the
+                        // commit-composer area — toggling the floating
+                        // button raises this drawer.
                         // ── Filing cabinet drawers (inline) ────────
                         if (_stashesExpanded && _stashes.isNotEmpty)
                           Padding(
@@ -3751,6 +4040,9 @@ class _ChangesPageState extends State<ChangesPage> {
                                 jumpToLineRequestId: _multiDiffJumpRequestId,
                                 showFileHeader: false,
                                 enableStaging: true,
+                                couplingMatrix: context
+                                    .read<FileCouplingState>()
+                                    .matrixFor(repoPath),
                                 onStagingApplied: () {
                                   unawaited(_loadMultiDiff(
                                     repoPath,
@@ -3789,6 +4081,9 @@ class _ChangesPageState extends State<ChangesPage> {
                             tokens: t,
                             repositoryPath: repoPath,
                             enableStaging: true,
+                            couplingMatrix: context
+                                .read<FileCouplingState>()
+                                .matrixFor(repoPath),
                             onStagingApplied: () {
                               final path =
                                   _visibleDiffPath ?? _selectedDiffPath;
@@ -4437,12 +4732,19 @@ class _MusePaneState extends State<_MusePane> {
         children: [
           _museHeader(t),
           const SizedBox(height: 14),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.only(bottom: 24),
-              child: _museBody(t),
+          // While loading, the logos canvas owns the pane. No
+          // SingleChildScrollView here — loading screens shouldn't
+          // scroll; the visual needs to sit on exactly one panel,
+          // sized to fit whatever height the parent hands us.
+          if (widget.loading)
+            Expanded(child: _museBody(t))
+          else
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: _museBody(t),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -4492,14 +4794,24 @@ class _MusePaneState extends State<_MusePane> {
 
   Widget _museBody(AppTokens t) {
     if (widget.loading) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 40),
-        child: Center(
-          child: _DreamingText(
-            text: 'the muse is dreaming...',
-            style: TextStyle(color: t.textFaint, fontSize: 12),
+      // Dreaming text at top, canvas fills the remaining height. The
+      // caller wraps this in an `Expanded` (not a scrollview) while
+      // loading, so the whole thing fits on one panel — no scroll
+      // bar disrupting the visual.
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 20, bottom: 4),
+            child: Center(
+              child: _DreamingText(
+                text: 'the muse is dreaming...',
+                style: TextStyle(color: t.textFaint, fontSize: 12),
+              ),
+            ),
           ),
-        ),
+          Expanded(child: LogosDiffusionCanvas(tokens: t)),
+        ],
       );
     }
     final err = widget.error;
@@ -4521,12 +4833,14 @@ class _MusePaneState extends State<_MusePane> {
       children: [
         if (r.intent.isNotEmpty) _section(t, 'intent', r.intent, prose: true),
         if (r.resonances.isNotEmpty)
-          _movesSection(t, 'resonances', r.resonances, r.brainstormIdeas),
+          _movesSection(t, 'resonances', r.resonances, r.brainstormIdeas,
+              r.userBoostedPaths),
         if (r.alternatives.isNotEmpty)
-          _movesSection(
-              t, 'alternatives', r.alternatives, r.brainstormIdeas),
+          _movesSection(t, 'alternatives', r.alternatives, r.brainstormIdeas,
+              r.userBoostedPaths),
         if (r.extensions.isNotEmpty)
-          _movesSection(t, 'extensions', r.extensions, r.brainstormIdeas),
+          _movesSection(t, 'extensions', r.extensions, r.brainstormIdeas,
+              r.userBoostedPaths),
         if (r.trajectory.isNotEmpty)
           _section(t, 'trajectory', r.trajectory, prose: true),
         if (r.brainstormIdeas.isNotEmpty) _brainstormReveal(t, r),
@@ -4573,7 +4887,7 @@ class _MusePaneState extends State<_MusePane> {
   }
 
   Widget _movesSection(AppTokens t, String label, List<AiMuseMove> moves,
-      List<AiMuseIdea> ideas) {
+      List<AiMuseIdea> ideas, Set<String> userBoostedPaths) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 18),
       child: Column(
@@ -4586,13 +4900,23 @@ class _MusePaneState extends State<_MusePane> {
                 letterSpacing: 1.2,
               )),
           const SizedBox(height: 6),
-          for (final m in moves) _moveCard(t, m, ideas),
+          for (final m in moves) _moveCard(t, m, ideas, userBoostedPaths),
         ],
       ),
     );
   }
 
-  Widget _moveCard(AppTokens t, AiMuseMove m, List<AiMuseIdea> ideas) {
+  Widget _moveCard(AppTokens t, AiMuseMove m, List<AiMuseIdea> ideas,
+      Set<String> userBoostedPaths) {
+    // A move is "pulled" when at least one of its cited paths matches
+    // a spoke the user yanked during the loading canvas. Closes the
+    // gesture loop — a physical pull becomes a marker in the rendered
+    // result rather than disappearing into invisible context.
+    final pulledCitations = userBoostedPaths.isEmpty
+        ? const <String>{}
+        : {for (final c in m.citations)
+            if (userBoostedPaths.contains(c)) c};
+    final isPulled = pulledCitations.isNotEmpty;
     // final so Dart 3 flow analysis promotes the null-check across closure
     // boundaries — removes the need for idea! inside onTap.
     final idea = m.originatingIdeaIndex == null
@@ -4610,14 +4934,41 @@ class _MusePaneState extends State<_MusePane> {
               : Colors.transparent,
           border: Border(
             left: BorderSide(
-              color: t.textFaint.withValues(alpha: 0.4),
-              width: 2,
+              // Pulled moves take the accent colour on the left rail
+              // — the visual echo of the user's gesture. Unpulled
+              // moves keep the subtle chrome border.
+              color: isPulled
+                  ? t.accentBright
+                  : t.textFaint.withValues(alpha: 0.4),
+              width: isPulled ? 2.5 : 2,
             ),
           ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (isPulled) ...[
+              Row(
+                children: [
+                  Container(
+                    width: 5,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: t.accentBright,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text('you pulled this',
+                      style: TextStyle(
+                        color: t.accentBright.withValues(alpha: 0.9),
+                        fontSize: 10,
+                        letterSpacing: 0.8,
+                      )),
+                ],
+              ),
+              const SizedBox(height: 6),
+            ],
             SelectableText(m.body,
                 style: TextStyle(
                   color: t.textStrong,
@@ -4633,9 +4984,17 @@ class _MusePaneState extends State<_MusePane> {
                   for (final c in m.citations)
                     Text(c,
                         style: TextStyle(
-                          color: t.textFaint,
+                          // Boosted citations glow in the accent hue so
+                          // the user can trace their pull to the exact
+                          // cited file within a multi-citation move.
+                          color: pulledCitations.contains(c)
+                              ? t.accentBright
+                              : t.textFaint,
                           fontSize: 10.5,
                           fontFamily: 'monospace',
+                          fontWeight: pulledCitations.contains(c)
+                              ? FontWeight.w600
+                              : FontWeight.normal,
                         )),
                   if (idea != null)
                     GestureDetector(
@@ -4823,39 +5182,18 @@ class _CommitReviewPane extends StatelessWidget {
             ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 18, 24, 18),
-                child: Column(
-                  children: [
-                    const Spacer(),
-                    Text(
-                      'Checking these changes...',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: tokens.textStrong,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Looking for issues before you commit.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: tokens.textMuted,
-                        fontSize: 11,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Align(
-                      alignment: Alignment.center,
-                      child: _GhostActionChip(
-                        tokens: tokens,
-                        label: 'Cancel',
-                        onTap: onCancel,
-                      ),
-                    ),
-                    const Spacer(),
-                  ],
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
+                // Live visualisation of the logos relevance engine's
+                // traversal. Subscribes to LogosVisBus events emitted
+                // during `reviewCommit` and animates through the
+                // pipeline's phases (engine resolving → source
+                // ignition → heat-kernel diffusion → well reveal →
+                // hunk ranking → transmission). Replaces the static
+                // "Checking these changes..." text with a geometric
+                // narration of what the engine is actually doing.
+                child: LogosDiffusionCanvas(
+                  tokens: tokens,
+                  onCancel: onCancel,
                 ),
               ),
             ),
@@ -9496,3 +9834,147 @@ class _DreamingTextState extends State<_DreamingText>
 // Removed in favor of the History page's IN FLIGHT strip, which is
 // the single canonical "other desks at a glance" surface and adds
 // hover-to-preview of the diverged commits in-place.)
+
+/// Thin accent-colour bar rendered inside a submenu row's trailing
+/// slot to visualise relative φ weight. Width is fixed (36px) so
+/// rows align; fill proportion encodes score. Tiny but carries the
+/// forecast distribution at a glance.
+class _PhiBar extends StatelessWidget {
+  final double relative;
+  final AppTokens tokens;
+  const _PhiBar({required this.relative, required this.tokens});
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 36,
+      height: 4,
+      child: CustomPaint(
+        painter: _PhiBarPainter(
+          relative: relative.clamp(0.0, 1.0),
+          colour: tokens.accentBright,
+          track: tokens.chromeBorder,
+        ),
+      ),
+    );
+  }
+}
+
+class _PhiBarPainter extends CustomPainter {
+  final double relative;
+  final Color colour;
+  final Color track;
+  const _PhiBarPainter({
+    required this.relative,
+    required this.colour,
+    required this.track,
+  });
+  @override
+  void paint(Canvas canvas, Size size) {
+    final trackRect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final trackRR = RRect.fromRectAndRadius(
+        trackRect, Radius.circular(size.height / 2));
+    canvas.drawRRect(trackRR,
+        Paint()..color = track.withValues(alpha: 0.25));
+    final fillRect = Rect.fromLTWH(0, 0, size.width * relative, size.height);
+    final fillRR =
+        RRect.fromRectAndRadius(fillRect, Radius.circular(size.height / 2));
+    canvas.drawRRect(fillRR, Paint()..color = colour);
+  }
+
+  @override
+  bool shouldRepaint(covariant _PhiBarPainter old) =>
+      old.relative != relative || old.colour != colour || old.track != track;
+}
+
+/// Tiny sparkline showing a file's touch-density across the engine's
+/// analysed commit window. Bars are binned into 10 buckets; height
+/// scales to the max-bucket touch count so the shape reads relative
+/// to the file's own history (a file that was hot 3 months ago but
+/// cold now shows a left-loaded silhouette). Rendered inline in the
+/// file context menu as a glance-level rhythm indicator — the row
+/// carries the signal, no submenu required.
+class _RhythmSpark extends StatelessWidget {
+  final List<int> commitIndices;
+  final int totalCommits;
+  final AppTokens tokens;
+  const _RhythmSpark({
+    required this.commitIndices,
+    required this.totalCommits,
+    required this.tokens,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 48,
+      height: 12,
+      child: CustomPaint(
+        painter: _RhythmSparkPainter(
+          commitIndices: commitIndices,
+          totalCommits: totalCommits,
+          colour: tokens.accentBright,
+          faint: tokens.textFaint,
+        ),
+      ),
+    );
+  }
+}
+
+class _RhythmSparkPainter extends CustomPainter {
+  final List<int> commitIndices;
+  final int totalCommits;
+  final Color colour;
+  final Color faint;
+  const _RhythmSparkPainter({
+    required this.commitIndices,
+    required this.totalCommits,
+    required this.colour,
+    required this.faint,
+  });
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (totalCommits <= 0 || commitIndices.isEmpty) {
+      // Empty-state dot: a single faint mark so the row doesn't
+      // read as a layout error.
+      canvas.drawCircle(
+        Offset(size.width / 2, size.height / 2),
+        1.2,
+        Paint()..color = faint.withValues(alpha: 0.4),
+      );
+      return;
+    }
+    const buckets = 10;
+    final counts = List<int>.filled(buckets, 0);
+    for (final idx in commitIndices) {
+      if (idx < 0 || idx >= totalCommits) continue;
+      final b = ((idx / totalCommits) * buckets).floor().clamp(0, buckets - 1);
+      counts[b]++;
+    }
+    var maxCount = 0;
+    for (final c in counts) {
+      if (c > maxCount) maxCount = c;
+    }
+    if (maxCount == 0) return;
+    final barWidth = (size.width - (buckets - 1)) / buckets;
+    final paint = Paint()..color = colour;
+    for (var i = 0; i < buckets; i++) {
+      final h = (counts[i] / maxCount) * size.height;
+      if (h <= 0) continue;
+      // Faintly colour older buckets, brighter for recent ones, so
+      // recency reads as rightward warmth without needing a label.
+      final recency = i / (buckets - 1);
+      paint.color = colour.withValues(alpha: 0.35 + 0.6 * recency);
+      final x = i * (barWidth + 1);
+      canvas.drawRect(
+        Rect.fromLTWH(x, size.height - h, barWidth, h),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _RhythmSparkPainter old) =>
+      !identical(old.commitIndices, commitIndices) ||
+      old.totalCommits != totalCommits ||
+      old.colour != colour ||
+      old.faint != faint;
+}

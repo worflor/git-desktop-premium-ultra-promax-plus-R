@@ -769,6 +769,13 @@ class AiMuseData {
   /// is seeing a partial result — rendered as a warning note in the UI.
   final int droppedMoves;
 
+  /// Paths the user explicitly pulled on during the loading canvas.
+  /// These boosted the phase-2 seed map and their presence in a move's
+  /// citation list is what lets the UI surface "you pulled this" to
+  /// the reader — closing the loop between the physical gesture and
+  /// the rendered result.
+  final Set<String> userBoostedPaths;
+
   const AiMuseData({
     required this.providerId,
     required this.modelId,
@@ -782,6 +789,7 @@ class AiMuseData {
     required this.promptCharacters,
     required this.diffCharacters,
     this.droppedMoves = 0,
+    this.userBoostedPaths = const {},
   });
 
   int get keptIdeaCount =>

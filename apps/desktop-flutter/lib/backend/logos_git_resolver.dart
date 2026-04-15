@@ -33,6 +33,7 @@ import 'git.dart';
 import 'logos_git.dart';
 import 'logos_git_diagnostics.dart';
 import 'logos_git_stats.dart';
+import 'logos_vis_events.dart';
 
 class _ResolverEntry {
   final String headHash;
@@ -284,6 +285,13 @@ Future<LogosGit?> _resolveImpl(
 ) async {
   final sw = Stopwatch()..start();
   final log = LogosGitDiagnostics.instance;
+  // Visualisation event: start of engine resolution. If we're inside
+  // a review session (runInSession scope), the canvas narrates the
+  // "terrain materialising" frame while we work below. Outside a
+  // session (e.g. sidebar refresh), no-op.
+  LogosVisBus.instance.emitInSession(
+    (sid) => LogosVisEngineResolving(sid, repoPath: repoPath),
+  );
   try {
     // Staleness check — cheap rev-parse, bail if HEAD unchanged.
     final head = await runGitProbe(
@@ -307,6 +315,15 @@ Future<LogosGit?> _resolveImpl(
         ..remove(repoPath)
         ..[repoPath] = cached;
       log.recordCacheHit(repoPath, sw.elapsed);
+      // Cache-hit path. Canvas snaps to the ready frame with no
+      // warming linger since the engine was already built.
+      LogosVisBus.instance.emitInSession(
+        (sid) => LogosVisEngineReady(
+          sid,
+          nodeCount: cached.engine.nodePaths.length,
+          cached: true,
+        ),
+      );
       return cached.engine;
     }
 
@@ -385,6 +402,14 @@ Future<LogosGit?> _resolveImpl(
       repoPath: repoPath,
       nodes: engine.nodePaths.length,
       duration: sw.elapsed,
+    );
+    // Fresh-build path. Canvas crystallises the topology dots here.
+    LogosVisBus.instance.emitInSession(
+      (sid) => LogosVisEngineReady(
+        sid,
+        nodeCount: engine.nodePaths.length,
+        cached: false,
+      ),
     );
     return engine;
   } catch (e, st) {
