@@ -3,13 +3,11 @@ import 'package:flutter/material.dart';
 
 import 'motion.dart';
 
-// ── Animated icon state machine ──────────────────────────────────────────────
 // Each icon transitions between these states. The widget manages its own
 // AnimationControllers internally — callers just set the desired state.
 
 enum IconAnimState { idle, hovered, loading, success, error }
 
-// ── Base animated icon widget ────────────────────────────────────────────────
 
 abstract class _AnimatedIconBase extends StatefulWidget {
   final IconAnimState state;
@@ -141,7 +139,6 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // 1.  SPARKLE  —  generate commit message
 //
 //     Two stars: a main 4-point star and a small accent star (top-right).
@@ -154,7 +151,6 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
 //              starburst), small star orbits the main star
 //     success: points fold inward and re-emerge as a checkmark stroke
 //     error:   star crumples (points collapse asymmetrically) then reforms
-// ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedSparkleIcon extends _AnimatedIconBase {
   const AnimatedSparkleIcon({
@@ -209,21 +205,18 @@ class _SparklePainter extends CustomPainter {
 
     canvas.save();
 
-    // ── Success: star points converge → checkmark ──
     if (state == IconAnimState.success && flash > 0) {
       _paintMorphToCheck(canvas, paint, cx, cy, u);
       canvas.restore();
       return;
     }
 
-    // ── Error: asymmetric crumple then reform ──
     if (state == IconAnimState.error) {
       _paintCrumple(canvas, paint, cx, cy, u);
       canvas.restore();
       return;
     }
 
-    // ── Main star: 4 points with individual reach ──
     // Each point has its own outer radius that can vary independently.
     final baseOuter = u * 4.2;
     final baseInner = u * 1.6;
@@ -264,7 +257,6 @@ class _SparklePainter extends CustomPainter {
     starPath.close();
     canvas.drawPath(starPath, paint);
 
-    // ── Small accent star (top-right) ──
     double smallX = cx + u * 3.8;
     double smallY = cy - u * 3.5;
     double smallOuter = u * 1.8;
@@ -402,7 +394,6 @@ class _SparklePainter extends CustomPainter {
       state != old.state || color != old.color;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // 2.  SEARCH / LENS  —  review commit
 //
 //     A magnifying glass: lens circle + handle.
@@ -416,7 +407,6 @@ class _SparklePainter extends CustomPainter {
 //     success: lens circle morphs into shield outline, handle becomes
 //              the check's descending stroke
 //     error:   fracture lines crack across the lens, then heal
-// ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedSearchIcon extends _AnimatedIconBase {
   /// Review verdict — controls what the lens morphs into on success.
@@ -476,21 +466,18 @@ class _SearchPainter extends CustomPainter {
 
     canvas.save();
 
-    // ── Success: morph based on review verdict ──
     if (state == IconAnimState.success && flash > 0) {
       _paintVerdictMorph(canvas, paint, s, size);
       canvas.restore();
       return;
     }
 
-    // ── Error: lens cracks then heals ──
     if (state == IconAnimState.error) {
       _paintCrack(canvas, paint, s);
       canvas.restore();
       return;
     }
 
-    // ── Lens position (base: 7,7) ──
     double lensX = 7 * s;
     double lensY = 7 * s;
     double lensR = 4.5 * s;
@@ -501,7 +488,6 @@ class _SearchPainter extends CustomPainter {
     double handleEndX = 13.5 * s;
     double handleEndY = 13.5 * s;
 
-    // ── Hover: lens zooms forward, handle retracts ──
     if (state == IconAnimState.hovered) {
       final h = Curves.easeOutCubic.transform(hover);
       lensR += 0.5 * s * h;              // lens grows
@@ -511,7 +497,6 @@ class _SearchPainter extends CustomPainter {
       handleEndY -= 1.0 * s * h;
     }
 
-    // ── Loading: lens sways examining, handle follows with lag ──
     if (state == IconAnimState.loading) {
       final swayX = math.sin(loop * math.pi * 2) * 1.8 * s;
       final swayY = math.cos(loop * math.pi * 2 * 0.7) * 0.8 * s;
@@ -526,11 +511,9 @@ class _SearchPainter extends CustomPainter {
       handleEndY += lagY * 0.3;
     }
 
-    // ── Draw lens circle ──
     paint.strokeWidth = 1.5 * s;
     canvas.drawCircle(Offset(lensX, lensY), lensR, paint);
 
-    // ── Draw handle ──
     paint.strokeWidth = 1.8 * s;
     canvas.drawLine(
       Offset(handleStartX, handleStartY),
@@ -538,7 +521,6 @@ class _SearchPainter extends CustomPainter {
       paint,
     );
 
-    // ── Glint: a small highlight arc on the lens surface ──
     double glintAngle = -math.pi * 0.75; // default position (top-left)
     double glintAlpha = 0.20;
 
@@ -565,7 +547,6 @@ class _SearchPainter extends CustomPainter {
       glintPaint,
     );
 
-    // ── Loading: sweep highlight inside lens ──
     if (state == IconAnimState.loading) {
       canvas.save();
       canvas.clipPath(Path()..addOval(
@@ -634,7 +615,6 @@ class _SearchPainter extends CustomPainter {
     }
   }
 
-  // ── Phase 1 (shared): lens collapses, handle retracts ──
   void _paintLensCollapse(Canvas canvas, Paint paint, double s, double morph) {
     final em = Curves.easeInOutCubic.transform(morph);
     final cx = s * 8;
@@ -680,7 +660,6 @@ class _SearchPainter extends CustomPainter {
     paint.strokeWidth = 1.5 * s;
 
     switch (verdict) {
-      // ── Ready: shield with check ──
       case 'Ready':
         final shield = Path()
           ..moveTo(0, -6 * s)
@@ -705,7 +684,6 @@ class _SearchPainter extends CustomPainter {
           canvas.drawPath(cm.extractPath(0, cm.length * ct), paint);
         }
 
-      // ── Mostly ready: simple bold checkmark ──
       case 'Mostly ready':
         final check = Path()
           ..moveTo(-4 * s, 0)
@@ -715,7 +693,6 @@ class _SearchPainter extends CustomPainter {
         final cm = check.computeMetrics().first;
         canvas.drawPath(cm.extractPath(0, cm.length * symbolT), paint);
 
-      // ── Needs attention: open eye ──
       case 'Needs attention':
         // Eye outline (almond shape)
         final eyeTop = Path()
@@ -734,7 +711,6 @@ class _SearchPainter extends CustomPainter {
           canvas.drawCircle(Offset.zero, 1.8 * s * pupilT, paint);
         }
 
-      // ── High risk: warning triangle with ! ──
       case 'High risk':
         final tri = Path()
           ..moveTo(0, -5.5 * s)
@@ -762,7 +738,6 @@ class _SearchPainter extends CustomPainter {
           }
         }
 
-      // ── Block: bold X ──
       case 'Block':
         // Sad robot face: head circle, antenna, dash eyes, frown arc.
         // Phase 1 (0→0.35): head draws
@@ -823,7 +798,6 @@ class _SearchPainter extends CustomPainter {
           canvas.drawPath(fm.extractPath(0, fm.length * frownT), paint);
         }
 
-      // ── Fallback (no verdict or unknown): simple check ──
       default:
         final check = Path()
           ..moveTo(-3.5 * s, 0)
@@ -840,7 +814,6 @@ class _SearchPainter extends CustomPainter {
       state != old.state || color != old.color || verdict != old.verdict;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // 3.  PUSH ARROW  —  commit & push
 //
 //     An upward arrow (shaft + chevron head) and a horizontal bar at top.
@@ -856,7 +829,6 @@ class _SearchPainter extends CustomPainter {
 //              checkmark that settles in with a bounce
 //     error:   arrow slams into bar (bar shakes on impact), arrow
 //              compresses and bounces back down
-// ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedPushIcon extends _AnimatedIconBase {
   const AnimatedPushIcon({
@@ -909,21 +881,18 @@ class _PushPainter extends CustomPainter {
 
     canvas.save();
 
-    // ── Success: arrow through bar → checkmark ──
     if (state == IconAnimState.success && flash > 0) {
       _paintSuccess(canvas, paint, s, cx);
       canvas.restore();
       return;
     }
 
-    // ── Error: arrow slams into bar, compresses, bounces back ──
     if (state == IconAnimState.error) {
       _paintError(canvas, paint, s, cx);
       canvas.restore();
       return;
     }
 
-    // ── Top bar ──
     double barWidth = 10 * s;
     double barStroke = 1.5 * s;
 
@@ -940,7 +909,6 @@ class _PushPainter extends CustomPainter {
       paint,
     );
 
-    // ── Arrow ──
     paint.strokeWidth = 1.5 * s;
 
     // Shaft endpoints
@@ -960,7 +928,6 @@ class _PushPainter extends CustomPainter {
     }
 
     if (state == IconAnimState.loading) {
-      // ── Streaming particles instead of solid arrow ──
       _paintStreamingParticles(canvas, paint, s, cx);
       canvas.restore();
       return;
@@ -1107,12 +1074,10 @@ class _PushPainter extends CustomPainter {
       state != old.state || color != old.color;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // 4.  SYNC  —  mode toggle (commit ↔ sync)
 //
 //     Same commit icon (circle + lines) but rotated 90°, so the pipeline
 //     runs horizontally. Same animations, same personality, different axis.
-// ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedSyncIcon extends _AnimatedIconBase {
   const AnimatedSyncIcon({
@@ -1169,7 +1134,6 @@ class _SyncPainter extends CustomPainter {
       state != old.state || color != old.color;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // 5.  COMMIT CIRCLE  —  commit-only mode toggle
 //
 //     Circle with vertical lines through it — data flowing through a node.
@@ -1178,7 +1142,6 @@ class _SyncPainter extends CustomPainter {
 //     idle:    static circle + lines
 //     hover:   lines extend outward, circle breathes slightly
 //     loading: streaming dashes flow through, circle pulses
-// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Shared paint logic for commit (vertical) and sync (horizontal = rotated).
 void _paintCommitShape(Canvas canvas, Size size, Color color,
@@ -1195,7 +1158,6 @@ void _paintCommitShape(Canvas canvas, Size size, Color color,
 
   canvas.save();
 
-  // ── Circle ──
   double circleR = 2.5 * s;
 
   // Hover: smooth gentle grow — no sin pulse, just linear interpolation
@@ -1211,7 +1173,6 @@ void _paintCommitShape(Canvas canvas, Size size, Color color,
   paint.strokeWidth = 1.5 * s;
   canvas.drawCircle(Offset(cx, cy), circleR, paint);
 
-  // ── Pipeline lines ──
   final isStreaming = state == IconAnimState.loading;
 
   // Line extension on hover (lines reach outward smoothly)
@@ -1309,7 +1270,6 @@ class _CommitPainter extends CustomPainter {
       state != old.state || color != old.color;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // 6.  HISTORY  —  a clockface that unwinds time
 //
 //     Anatomy: clock circle, hour hand (10), minute hand (2 — "10:10"),
@@ -1328,7 +1288,6 @@ class _CommitPainter extends CustomPainter {
 //              from the center dot (a chime resonating outward).
 //     error:   hands lurch forward (wrong direction) in a damped
 //              oscillation; the indicator's alpha stutters.
-// ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedHistoryIcon extends _AnimatedIconBase {
   const AnimatedHistoryIcon({
@@ -1549,7 +1508,6 @@ class _HistoryPainter extends CustomPainter {
       state != old.state || color != old.color;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // 7.  BRANCHES  —  a living commit graph
 //
 //     Anatomy: base commit (bottom) → merge/split node (center) → two tip
@@ -1568,7 +1526,6 @@ class _HistoryPainter extends CustomPainter {
 //              them (a merge) and fades. The graph "completed".
 //     error:   the right branch line breaks (gap grows, stays, heals).
 //              The right tip jitters while the branch is severed.
-// ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedBranchesIcon extends _AnimatedIconBase {
   const AnimatedBranchesIcon({
@@ -1669,7 +1626,6 @@ class _BranchesPainter extends CustomPainter {
       return;
     }
 
-    // ── Flow rate and particle count scale with state ──
     // Idle is still (loop stopped, no activity). Hover is a slow,
     // deliberate flow (~3s per commit). Loading is steadier (~1.8s).
     final double flowSpeed;
@@ -1761,7 +1717,6 @@ class _BranchesPainter extends CustomPainter {
     drawNode(leftX, leftY, leftTipPulse);
     drawNode(rightX, rightY, rightTipPulse);
 
-    // ── Particles with trails ──
     // Each particle leaves 2 ghost positions behind it for momentum blur.
     void drawParticle(double x, double y, double r, double a) {
       canvas.drawCircle(
@@ -1804,7 +1759,6 @@ class _BranchesPainter extends CustomPainter {
       }
     }
 
-    // ── Tip absorption burst — radial spokes that expand and fade ──
     void burst(double x, double y, double intensity) {
       if (intensity < 0.12) return;
       final spokeR = nodeR * 1.8 + intensity * 1.9 * s;
@@ -1917,7 +1871,6 @@ class _BranchesPainter extends CustomPainter {
       state != old.state || color != old.color;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // 8.  XRAY  —  a scanning eye
 //
 //     Anatomy: almond/oval eye outline (twin quadratic beziers), iris
@@ -1935,7 +1888,6 @@ class _BranchesPainter extends CustomPainter {
 //              ring with a tiny checkmark drawn into it.
 //     error:   whole icon shakes horizontally. Scan lines scramble
 //              (random angles each frame). Pupil becomes a small X.
-// ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedXrayIcon extends _AnimatedIconBase {
   const AnimatedXrayIcon({
@@ -2005,7 +1957,6 @@ class _XrayPainter extends CustomPainter {
       return;
     }
 
-    // ── Chain reaction: eyelid → pupil → iris → refocus ring → scan lines ──
     // Each stage depends on the one before it. On hover, this plays out as
     // a story in 250ms. On loading, all stages run concurrently in loops.
 
@@ -2060,11 +2011,9 @@ class _XrayPainter extends CustomPainter {
       scanBotA = 0.18 * (1.0 - hover);
     }
 
-    // ── Eye outline ──
     paint.strokeWidth = 1.5 * s;
     canvas.drawPath(_eye(cx, cy, halfW, halfH), paint);
 
-    // ── Scan lines (clipped inside eye) ──
     canvas.save();
     canvas.clipPath(_eye(cx, cy, halfW - 0.8 * s, halfH - 0.5 * s));
     if (state == IconAnimState.loading) {
@@ -2109,7 +2058,6 @@ class _XrayPainter extends CustomPainter {
     }
     canvas.restore();
 
-    // ── Refocus ring (stage 4 of hover chain) ──
     if (refocusA > 0.01) {
       canvas.drawCircle(
         Offset(cx, cy), refocusR,
@@ -2120,11 +2068,9 @@ class _XrayPainter extends CustomPainter {
       );
     }
 
-    // ── Iris ──
     paint.strokeWidth = 1.3 * s;
     canvas.drawCircle(Offset(cx, cy), irisR, paint);
 
-    // ── Iris highlight (the wet glint of a living eye) ──
     if (irisHighlightA > 0.01) {
       canvas.drawArc(
         Rect.fromCircle(center: Offset(cx, cy), radius: irisR - 0.25 * s),
@@ -2137,7 +2083,6 @@ class _XrayPainter extends CustomPainter {
       );
     }
 
-    // ── Pupil (tracks with gaze) ──
     // Clamp gaze so pupil can't leave the iris
     final maxGaze = irisR - 0.9 * s;
     final gazeMag = math.sqrt(pupilGazeX * pupilGazeX + pupilGazeY * pupilGazeY);
@@ -2150,7 +2095,6 @@ class _XrayPainter extends CustomPainter {
       Paint()..color = color..style = PaintingStyle.fill,
     );
 
-    // ── Loading: sonar ring radiates outward, then another does ──
     if (state == IconAnimState.loading) {
       // Two sonar rings at offset phases for a continuous feel
       for (int i = 0; i < 2; i++) {
@@ -2269,7 +2213,6 @@ class _XrayPainter extends CustomPainter {
       state != old.state || color != old.color;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 // 9.  SETTINGS  —  a mechanical gear
 //
 //     Anatomy: 6-tooth gear, filled (evenOdd rule punches the center hole).
@@ -2286,7 +2229,6 @@ class _XrayPainter extends CustomPainter {
 //              checkmark draws itself inside the center hole.
 //     error:   gear stutters back-and-forth (damped sin) — a jammed
 //              mechanism. Occasional bright sparks pop at the top tooth.
-// ═══════════════════════════════════════════════════════════════════════════════
 
 class AnimatedSettingsIcon extends _AnimatedIconBase {
   const AnimatedSettingsIcon({
@@ -2399,7 +2341,6 @@ class _SettingsPainter extends CustomPainter {
     final outerHole = 2.3 * s;  // slightly larger to fit inner gear
     final innerTipR = 1.85 * s, innerRootR = 1.3 * s;
 
-    // ── Outer gear (filled, evenOdd hole) ──
     final gear = _gearPath(cx, cy, tipR, rootR, 6, outerRot)
       ..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: outerHole))
       ..fillType = PathFillType.evenOdd;
@@ -2408,7 +2349,6 @@ class _SettingsPainter extends CustomPainter {
       Paint()..color = color..style = PaintingStyle.fill,
     );
 
-    // ── Inner gear (revealed through the hole) ──
     // 4-tooth small gear. Always drawn inside the hole clip so it never
     // escapes. Alpha comes from `innerReveal`.
     if (innerReveal > 0.02) {
@@ -2427,7 +2367,6 @@ class _SettingsPainter extends CustomPainter {
       canvas.restore();
     }
 
-    // ── Inner-rim outline (the window the hidden gear lives behind) ──
     canvas.drawCircle(
       Offset(cx, cy), outerHole,
       Paint()
@@ -2474,7 +2413,6 @@ class _SettingsPainter extends CustomPainter {
       }
     }
 
-    // ── Pin at 12 o'clock (stationary) that ticks when a tooth passes ──
     // The pin is a small inward-pointing mark just above the outer tip.
     // Its alpha spikes when an outer tooth aligns with 12 o'clock.
     {
@@ -2513,7 +2451,6 @@ class _SettingsPainter extends CustomPainter {
       }
     }
 
-    // ── Error spark at top tooth ──
     if (state == IconAnimState.error) {
       final si = math.sin(loop * math.pi * 8).abs() * (1 - loop);
       if (si > 0.15) {

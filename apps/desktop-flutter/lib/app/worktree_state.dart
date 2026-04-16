@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -5,6 +6,28 @@ import 'package:path/path.dart' as p;
 import '../backend/git.dart';
 import '../backend/dtos.dart';
 import 'repository_state.dart';
+
+/// Lightweight per-desk activity signal — what's actually going on
+/// in this worktree without having to switch into it. Drives the
+/// status-aware tab chrome (ahead/behind glyphs, last-touched peek)
+/// so the desk row reads as a parallelism map at a glance.
+class DeskActivity {
+  /// Commits this desk's HEAD is ahead of its tracking base
+  /// (upstream `@{u}` if configured, else `main`/`master` if either
+  /// exists, else 0).
+  final int ahead;
+  /// Commits behind the same base.
+  final int behind;
+  /// HEAD commit's author timestamp. Null if unresolvable.
+  final DateTime? lastActivity;
+  const DeskActivity({
+    required this.ahead,
+    required this.behind,
+    required this.lastActivity,
+  });
+  static const empty =
+      DeskActivity(ahead: 0, behind: 0, lastActivity: null);
+}
 
 /// Caches the list of worktrees ("desks") for the currently-active repo.
 /// Auto-refreshes when [RepositoryState.activePath] changes.
@@ -17,6 +40,10 @@ class WorktreeState extends ChangeNotifier {
   int _requestId = 0;
   DateTime _lastRefreshAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const _minRefreshInterval = Duration(seconds: 3);
+  // Per-desk activity probes — populated lazily after each refresh so
+  // the cheap path (worktree list) lands first and the chrome can
+  // tint when the slower probes resolve.
+  final Map<String, DeskActivity> _activityByPath = {};
 
   WorktreeState(this._repo) {
     _repo.addListener(_onRepoChanged);
@@ -35,6 +62,8 @@ class WorktreeState extends ChangeNotifier {
   List<WorktreeData> get desks => _desks;
   bool get loading => _loading;
   String? get error => _error;
+  DeskActivity? activityFor(String worktreePath) =>
+      _activityByPath[_normalize(worktreePath)];
 
   /// Returns the worktree that matches [RepositoryState.activePath],
   /// or null if the active repo isn't among the known worktrees yet.
@@ -108,11 +137,102 @@ class WorktreeState extends ChangeNotifier {
       _error = e.toString();
     }
     notifyListeners();
+    // Probe per-desk activity in the background — the worktree list
+    // itself doesn't carry ahead/behind or HEAD timestamps, so each
+    // desk gets a cheap rev-list + log probe. Notifications fire as
+    // probes resolve so the chrome lights up incrementally.
+    unawaited(_refreshActivityForDesks(id));
+  }
+
+  Future<void> _refreshActivityForDesks(int requestId) async {
+    final snapshot = List<WorktreeData>.from(_desks);
+    for (final d in snapshot) {
+      if (requestId != _requestId) return;
+      final probed = await _probeDeskActivity(d);
+      if (requestId != _requestId) return;
+      _activityByPath[_normalize(d.path)] = probed;
+      notifyListeners();
+    }
+  }
+
+  Future<DeskActivity> _probeDeskActivity(WorktreeData d) async {
+    if (d.path.isEmpty) return DeskActivity.empty;
+    DateTime? lastActivity;
+    int ahead = 0;
+    int behind = 0;
+    try {
+      // Last commit's author timestamp on this worktree's HEAD.
+      // Cheap — single object lookup; no I/O over the working tree.
+      final logRes = await Process.run(
+        'git',
+        ['log', '-1', '--format=%cI', 'HEAD'],
+        workingDirectory: d.path,
+      );
+      if (logRes.exitCode == 0) {
+        final iso = (logRes.stdout as String).trim();
+        if (iso.isNotEmpty) lastActivity = DateTime.tryParse(iso);
+      }
+    } catch (_) {/* probe is best-effort */}
+    try {
+      // Resolve a base ref to compare against. Prefer the upstream
+      // tracking branch; otherwise fall back to main/master if either
+      // exists. If nothing usable is found, ahead/behind stay 0 (no
+      // misleading number is shown).
+      final baseRef = await _resolveBaseRef(d.path);
+      if (baseRef != null) {
+        final r = await Process.run(
+          'git',
+          ['rev-list', '--left-right', '--count', '$baseRef...HEAD'],
+          workingDirectory: d.path,
+        );
+        if (r.exitCode == 0) {
+          final parts = (r.stdout as String).trim().split(RegExp(r'\s+'));
+          if (parts.length == 2) {
+            behind = int.tryParse(parts[0]) ?? 0;
+            ahead = int.tryParse(parts[1]) ?? 0;
+          }
+        }
+      }
+    } catch (_) {/* probe is best-effort */}
+    return DeskActivity(
+      ahead: ahead,
+      behind: behind,
+      lastActivity: lastActivity,
+    );
+  }
+
+  Future<String?> _resolveBaseRef(String path) async {
+    // Upstream tracking ref first.
+    try {
+      final up = await Process.run(
+        'git',
+        ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+        workingDirectory: path,
+      );
+      if (up.exitCode == 0) {
+        final v = (up.stdout as String).trim();
+        if (v.isNotEmpty && v != 'HEAD') return v;
+      }
+    } catch (_) {}
+    // Fall back to local main / master if either resolves.
+    for (final name in ['main', 'master']) {
+      try {
+        final r = await Process.run(
+          'git',
+          ['rev-parse', '--verify', '--quiet', name],
+          workingDirectory: path,
+        );
+        if (r.exitCode == 0 &&
+            (r.stdout as String).trim().isNotEmpty) {
+          return name;
+        }
+      } catch (_) {}
+    }
+    return null;
   }
 
   /// Creates a new desk for [branch] under the main repo's hidden worktrees
   /// directory, then switches to it as the active desk.
-  ///
   /// When [createNewBranch] is true, also creates the branch from HEAD
   /// (uses `git worktree add -b`) — useful for "+ new desk from HEAD".
   Future<String?> addDesk(
@@ -230,7 +350,6 @@ class WorktreeState extends ChangeNotifier {
   /// if we're currently viewing a desk (worktree), that path is NOT the
   /// main repo, and creating a new desk with it as a base would nest
   /// worktrees inside each other.
-  ///
   /// Uses `git rev-parse --git-common-dir` which points at the MAIN repo's
   /// `.git` directory regardless of which worktree we're in; the parent
   /// of that directory is the main repo root.

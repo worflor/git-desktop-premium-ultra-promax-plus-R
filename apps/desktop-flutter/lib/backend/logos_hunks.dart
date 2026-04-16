@@ -1,6 +1,4 @@
-// ═════════════════════════════════════════════════════════════════════════
 // LOGOS HUNKS — hunk-level heat-kernel diffusion
-// ═════════════════════════════════════════════════════════════════════════
 //
 // Sits parallel to LogosGit's file graph. Nodes are HUNKS inside one diff;
 // edges are the geometric bonds between them:
@@ -29,15 +27,16 @@
 // the budget, hunks are emitted in φ-desc order at full content. Logos
 // picks which hunks matter most; peripheral mass-edit noise drops off.
 
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'engram_bootstrap.dart' show EngramAssets;
+import 'engram_hunk_encoder.dart';
 import 'logos_core.dart';
 import 'logos_git.dart' show LogosGit;
 
-// ─────────────────────────────────────────────────────────────────────────
 // Data model
-// ─────────────────────────────────────────────────────────────────────────
 
 class DiffHunk {
   DiffHunk({
@@ -79,15 +78,30 @@ class DiffHunk {
 }
 
 class HunkRanking {
-  HunkRanking({required this.hunk, required this.phi, required this.rank});
+  HunkRanking({
+    required this.hunk,
+    required this.phi,
+    required this.rank,
+    this.wellName,
+    this.wellDistance,
+  });
   final DiffHunk hunk;
   final double phi;
   final int rank; // 0 = top
+
+  /// Nearest Alexandria well for this hunk (e.g. "computing", "well_43").
+  /// Null when engram assets weren't loaded, the brain had zero wells, or
+  /// the hunk didn't have enough in-vocab sub-tokens to fit an AR(2).
+  /// Surfaced in the prompt bundle so the model sees feature-cluster
+  /// membership alongside φ.
+  final String? wellName;
+
+  /// Raw RMS distance to the nearest well centroid in K-space. Lower =
+  /// stronger domain match. Present whenever [wellName] is.
+  final double? wellDistance;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Parser — unified diff → List<DiffHunk>
-// ─────────────────────────────────────────────────────────────────────────
 
 List<DiffHunk> parseDiffHunks(String diffText) {
   final result = <DiffHunk>[];
@@ -166,15 +180,28 @@ String _pathFromDiffHeader(String line) {
   return candidate.startsWith('b/') ? candidate.substring(2) : candidate;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Identifier tokenisation — camelCase + snake_case + separators.
 // Deliberately matches the commit-tagger basename tokenizer so identifiers
 // coupling here are the same kind logos treats as meaningful elsewhere.
-// ─────────────────────────────────────────────────────────────────────────
 
 final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
 final _camelBoundary =
     RegExp(r'(?<=[\p{Ll}\p{N}])(?=[\p{Lu}])', unicode: true);
+
+/// Horizon multiplier for H_prox: pairs with `d ≥ σ · ratio` contribute
+/// `exp(-ratio) ≈ 1e-6` — below the noise floor after D^{-1/2} Laplacian
+/// normalisation and Chebyshev basis truncation. Precomputed as `ln(1e6)`
+/// since `math.log` isn't a const expression in Dart; tightening the
+/// floor is a literal change.
+const double _proxHorizonLnRatio = 13.815510557964274;
+
+/// Maximum hunk-pair edges materialised per (file_a, file_b) cross-file
+/// coupling pass. Above this, the loop samples a deterministic stride
+/// of representative pairs that preserves the file pair's total mass
+/// without paying for the |A|·|B| explosion. Picked to stay within an
+/// order of magnitude of the per-node top-K fanout the symmetriser
+/// keeps anyway, so larger values would do redundant work.
+const int _kCrossFileFanoutCap = 32;
 
 Set<String> _tokensOf(String text) {
   if (text.isEmpty) return const {};
@@ -246,14 +273,11 @@ Set<String> _hunkChangeTokens(DiffHunk hunk) {
   return _tokensOf(buf.toString());
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Hunk-graph construction. Diffusion math lives in logos_core.dart —
 // this file only owns the hunk-specific axis blend (H_sym / H_file /
 // H_prox / H_vol) and the source-mass model.
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Build the hunk graph.
-///
 /// [fileCoupling] is an optional map that gives, for each non-source file,
 /// the file-φ score from LogosGit. When building cross-file hunk edges we
 /// multiply by this to get hunk-level cross-file weight for free — the
@@ -263,6 +287,7 @@ CsrGraph _buildHunkGraph({
   required List<Set<String>> tokens,
   required Map<String, double> fileCouplingFromParent,
   required int topK,
+  List<HunkKVector?>? engramKVectors,
 }) {
   final n = hunks.length;
   if (n == 0) {
@@ -284,10 +309,19 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  // Precompute per-file statistics for H_prox (line-gap σ).
+  // Precompute per-file statistics for H_prox (line-gap σ). Sort each
+  // file's hunk-id list by newStart once here — downstream consumers
+  // (fileSigma gap statistics, H_prox horizon break) both require
+  // ordered line positions, and H_file / H_vol are order-independent
+  // pair iterations so the sort has no side effect on them.
   final fileToHunks = <String, List<int>>{};
   for (var i = 0; i < n; i++) {
     (fileToHunks[hunks[i].filePath] ??= <int>[]).add(i);
+  }
+  for (final ids in fileToHunks.values) {
+    if (ids.length > 1) {
+      ids.sort((x, y) => hunks[x].newStart.compareTo(hunks[y].newStart));
+    }
   }
   final fileSigma = <String, double>{};
   for (final entry in fileToHunks.entries) {
@@ -295,9 +329,8 @@ CsrGraph _buildHunkGraph({
     if (ids.length < 2) continue;
     final gaps = <int>[];
     for (var k = 1; k < ids.length; k++) {
-      final a = hunks[ids[k - 1]].newStart;
-      final b = hunks[ids[k]].newStart;
-      final g = (b - a).abs();
+      // ids is sorted by newStart, so b ≥ a and abs() is redundant.
+      final g = hunks[ids[k]].newStart - hunks[ids[k - 1]].newStart;
       if (g > 0) gaps.add(g);
     }
     if (gaps.isEmpty) continue;
@@ -328,7 +361,6 @@ CsrGraph _buildHunkGraph({
     rowB[a] = (rowB[a] ?? 0.0) + w;
   }
 
-  // ── H_sym: Jaccard via inverted index ──────────────────────────────
   //
   // For each bucket of hunks sharing a token, add pair contributions
   // weighted by 1/bucket_size. Repeated across all shared tokens this
@@ -353,16 +385,118 @@ CsrGraph _buildHunkGraph({
       }
     }
   }
+
+  // Engram-augmented H_sym blend.
+  //
+  // When engram assets are loaded, each hunk has a K-vector ∈ ℂ^P that
+  // encodes its semantic position in Alexandria's GloVe-seeded well
+  // geometry. Cosine similarity between two hunk K-vectors ∈ [0,1]
+  // captures "shared concept space" even when no identifier strings
+  // overlap — a hunk using `dispatchEvent` and one using `emitSignal`
+  // share zero Jaccard but ~0.7 K-cosine. That's the feature-cluster
+  // signal Jaccard misses.
+  //
+  // **Blend is evidence-weighted, not magic-constant-weighted.** Each
+  // signal contributes in proportion to `log1p(evidence)` — the same
+  // nats-of-information metric the Born mixer uses elsewhere in the
+  // engine. A hunk with many shared tokens leans Jaccard; a hunk with
+  // many in-vocab GloVe hits leans engram. Neither axis gets an
+  // arbitrary weight floor or ceiling — their evidence decides.
+  //
+  //   w_jac = log1p(|tokens_i| + |tokens_j|)   — larger bag → better Jaccard
+  //   w_eng = log1p(min(hits_i, hits_j))      — more hits → tighter K-vector
+  //   blended = (w_jac·jaccard + w_eng·cos) / (w_jac + w_eng)
+  //
+  // Pairs with neither Jaccard overlap nor an engram connection drop
+  // out entirely — preserving graph sparsity. Pairs with engram signal
+  // but no Jaccard still enter the graph: we seed those via the
+  // file-level H_file coupling below when both files have touched
+  // hunks, and via an e-decay thresholded engram-only pass here when
+  // they don't.
+  //
+  // The engram-only admission threshold is `1/e ≈ 0.368` — the natural
+  // exponential decay floor. Below 1/e the cosine has decayed past one
+  // e-folding from perfect alignment; that's the classical "signal has
+  // faded to noise" boundary, not a hand-picked decimal.
+  final engramOnlyThreshold = math.exp(-1.0);
+
+  // Pass 1: pairs with at least one shared token. Blend Jaccard with
+  // engram cosine using evidence-weighted convex combination.
   symNumerator.forEach((i, row) {
     row.forEach((j, overlap) {
       final denom = tokens[i].length + tokens[j].length - overlap;
       if (denom <= 0) return;
       final jaccard = overlap / denom;
-      addEdge(i, j, wSym * jaccard);
+      double weight;
+      if (engramKVectors != null) {
+        final kvi = engramKVectors[i];
+        final kvj = engramKVectors[j];
+        final cos = EngramHunkEncoder.cosine(kvi, kvj);
+        if (cos > 0 && kvi != null && kvj != null) {
+          // log1p of pool size = Jaccard's own evidence in nats.
+          final jaccardEvidence =
+              math.log(1.0 + (tokens[i].length + tokens[j].length).toDouble());
+          // log1p of min vocab hits = engram's evidence in nats.
+          final engramEvidence = math.log(1.0 +
+              (kvi.vocabHits < kvj.vocabHits
+                  ? kvi.vocabHits
+                  : kvj.vocabHits)
+                  .toDouble());
+          final totalEvidence = jaccardEvidence + engramEvidence;
+          final blended = totalEvidence > 0
+              ? (jaccardEvidence * jaccard + engramEvidence * cos) /
+                  totalEvidence
+              : jaccard;
+          weight = wSym * blended;
+        } else {
+          // One or both hunks couldn't be encoded — fall back to pure
+          // Jaccard so H_sym degrades gracefully per hunk.
+          weight = wSym * jaccard;
+        }
+      } else {
+        weight = wSym * jaccard;
+      }
+      addEdge(i, j, weight);
     });
   });
 
-  // ── H_file: same-file = 1; cross-file = parent-file-φ ──────────────
+  // Pass 2: engram-only edges. Walk every pair that has K-vectors but
+  // did NOT share any tokens, and admit those clearing the 1/e cosine
+  // floor. This is O(N²) on hunks that have K-vectors — we bound it
+  // by the hunk count (already ≤ hundreds in practice) and skip
+  // entirely when engram isn't loaded. The engram-only weight uses
+  // pure engram evidence (no Jaccard term, by definition there's no
+  // Jaccard overlap on these pairs), scaled by `w_eng / (w_eng + 1)`
+  // — a self-normalising factor derivable from the evidence blend
+  // with the Jaccard evidence held at its "zero overlap, single
+  // witness" baseline of log(1+1) = ln(2).
+  if (engramKVectors != null) {
+    for (var i = 0; i < n; i++) {
+      final kvi = engramKVectors[i];
+      if (kvi == null) continue;
+      final alreadyBonded = symNumerator[i];
+      for (var j = i + 1; j < n; j++) {
+        final kvj = engramKVectors[j];
+        if (kvj == null) continue;
+        // Skip pairs already scored in pass 1.
+        if (alreadyBonded != null && alreadyBonded.containsKey(j)) continue;
+        final cos = EngramHunkEncoder.cosine(kvi, kvj);
+        if (cos < engramOnlyThreshold) continue;
+        final engEvidence = math.log(1.0 +
+            (kvi.vocabHits < kvj.vocabHits ? kvi.vocabHits : kvj.vocabHits)
+                .toDouble());
+        // Self-normalised engram-only weight. With Jaccard evidence =
+        // ln(2) (the zero-overlap baseline), the blend collapses to:
+        //   weight = cos · engEvidence / (engEvidence + ln2)
+        // which tends to `cos` as evidence grows and to `0` when
+        // evidence is tiny — exactly the "confidence-gated signal"
+        // shape the Born mixer uses on its axes.
+        final selfNorm = engEvidence / (engEvidence + math.ln2);
+        addEdge(i, j, wSym * cos * selfNorm);
+      }
+    }
+  }
+
   for (final group in fileToHunks.values) {
     for (var a = 0; a < group.length; a++) {
       for (var b = a + 1; b < group.length; b++) {
@@ -373,6 +507,17 @@ CsrGraph _buildHunkGraph({
   // Cross-file hunk coupling via LogosGit file-φ. We treat the file
   // with the higher φ contribution as the "host" and multiply the pair
   // weight by the lesser of their φ values (conservative).
+  //
+  // Fanout cap: the original |A|·|B| double loop allocated up to
+  // ~|A|·|B| edge entries per file pair, then the top-K sparsifier
+  // discarded the bulk. On a 20-file × 10-hunk diff that was ~200k
+  // wasted addEdge calls. We now cap the per-pair fanout at
+  // [_kCrossFileFanoutCap]: once the product exceeds the cap, sample
+  // a deterministic subset of representative pairs that preserves the
+  // total mass (each kept edge carries the full weight share that the
+  // dropped edges would have summed to). The 1/sqrt normaliser is
+  // unchanged, so total injected mass per file pair still equals
+  // ~coupling regardless of the fanout path taken.
   if (fileCouplingFromParent.isNotEmpty) {
     final filePaths = fileToHunks.keys.toList(growable: false);
     for (var a = 0; a < filePaths.length; a++) {
@@ -387,38 +532,55 @@ CsrGraph _buildHunkGraph({
         if (coupling <= 0) continue;
         final listA = fileToHunks[fa]!;
         final listB = fileToHunks[fb]!;
-        // Cap the pair explosion: cross-file file pairs with a large
-        // hunk×hunk product would dominate edge count. Scale weight by
-        // 1/sqrt(|A|·|B|) so the total mass injected per file pair stays
-        // ~coupling, not coupling·|A|·|B|.
-        final norm = 1.0 / math.sqrt(listA.length * listB.length);
-        for (final ia in listA) {
-          for (final ib in listB) {
-            addEdge(ia, ib, wFile * coupling * norm);
+        final fanout = listA.length * listB.length;
+        final norm = 1.0 / math.sqrt(fanout);
+        if (fanout <= _kCrossFileFanoutCap) {
+          for (final ia in listA) {
+            for (final ib in listB) {
+              addEdge(ia, ib, wFile * coupling * norm);
+            }
+          }
+        } else {
+          // Sample _kCrossFileFanoutCap pairs deterministically along
+          // a stride that visits both lists' index spaces uniformly.
+          // Each kept edge carries `(fanout / cap)`× the per-pair
+          // weight so the summed mass over the file pair matches the
+          // full-fanout case.
+          final massScale = fanout / _kCrossFileFanoutCap;
+          final w = wFile * coupling * norm * massScale;
+          for (var k = 0; k < _kCrossFileFanoutCap; k++) {
+            final ia = listA[(k * 31) % listA.length];
+            final ib = listB[(k * 17) % listB.length];
+            addEdge(ia, ib, w);
           }
         }
       }
     }
   }
 
-  // ── H_prox: within-file line distance ──────────────────────────────
+  // Edges land inside the σ-scaled horizon; beyond it `exp(-d/σ)` is
+  // below [_proxFloor] — numerically indistinguishable from zero after
+  // D^{-1/2} normalisation — so we break the inner loop. Because `ids`
+  // is sorted by newStart (monotone non-decreasing), the first `b` that
+  // exceeds the horizon proves all later `b` do too. The horizon is
+  // derived from the floor (not a magic constant): `exp(-d/σ) ≥ ε ⟺
+  // d ≤ σ·ln(1/ε)`. On a file with 50 scattered hunks this collapses
+  // exp() calls from 1225 to roughly `hunks × horizon / median-gap`.
   for (final entry in fileToHunks.entries) {
     final ids = entry.value;
     if (ids.length < 2) continue;
     final sigma = fileSigma[entry.key] ?? 1.0;
+    final horizon = sigma * _proxHorizonLnRatio;
     for (var a = 0; a < ids.length; a++) {
+      final la = hunks[ids[a]].newStart;
       for (var b = a + 1; b < ids.length; b++) {
-        final la = hunks[ids[a]].newStart;
-        final lb = hunks[ids[b]].newStart;
-        final d = (lb - la).abs().toDouble();
-        final k = math.exp(-d / sigma);
-        if (k <= 1e-6) continue;
-        addEdge(ids[a], ids[b], wProx * k);
+        final d = hunks[ids[b]].newStart - la; // sorted ⇒ ≥ 0
+        if (d >= horizon) break;
+        addEdge(ids[a], ids[b], wProx * math.exp(-d / sigma));
       }
     }
   }
 
-  // ── H_vol: add/delete balance similarity ───────────────────────────
   // balance_i = (adds - dels) / (adds + dels + 1) ∈ [-1, 1]
   // similarity_ij = 1 - |balance_i - balance_j| / 2 ∈ [0, 1]
   // Only contribute within-file (balance across unrelated files is
@@ -440,7 +602,6 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  // ── Top-K sparsification per node ──────────────────────────────────
   final trimmedRows = List<List<_Edge>>.generate(n, (_) => <_Edge>[]);
   edges.forEach((i, row) {
     final list = row.entries
@@ -514,9 +675,7 @@ class _Edge {
 // — see [chebyshevBasis], [recombineHeatPhi], and [kChebyshevSmallGraph]
 // for the polynomial-order policy this engine shares with logos_chunks.
 
-// ─────────────────────────────────────────────────────────────────────────
 // Public API — rank hunks by semantic centrality φ in this diff.
-// ─────────────────────────────────────────────────────────────────────────
 
 class HunkDiffusionResult {
   HunkDiffusionResult({
@@ -534,7 +693,6 @@ class HunkDiffusionResult {
 }
 
 /// Rank [hunks] by heat-kernel centrality.
-///
 /// If a [logosEngine] is provided we use it to compute the cross-file
 /// coupling prior for the H_file axis — the factorisation trick. If it's
 /// null (cold repo, no engine yet), within-file coupling still works and
@@ -543,6 +701,90 @@ class HunkDiffusionResult {
 HunkDiffusionResult rankHunksByPhi({
   required List<DiffHunk> hunks,
   LogosGit? logosEngine,
+  EngramAssets? engramAssets,
+}) {
+  // Resolve the engine-side coupling prior on the calling thread (it
+  // touches the engine, which we don't want to ship across an isolate).
+  // Then dispatch the heavy graph build + Chebyshev to the pure-data
+  // core path.
+  final fileCoupling = _resolveFileCoupling(hunks, logosEngine);
+  return _rankHunksByPhiCore(
+    hunks: hunks,
+    fileCoupling: fileCoupling,
+    engramAssets: engramAssets,
+  );
+}
+
+/// Async variant — runs the graph build + 3-temperature recombination
+/// on a background isolate so a diff with hundreds of hunks doesn't
+/// hitch the UI on every diff-panel switch. Engine touches still
+/// happen on the calling thread (cheap diffuseWeighted), then the
+/// pure-data core hops to an isolate.
+/// [engramAssets], when provided, enables the engram-backed H_sym blend
+/// and annotates rankings with their nearest Alexandria well. The assets
+/// are raw byte blobs so they cross the isolate boundary cheaply; the
+/// encoder is constructed inside the isolate once.
+Future<HunkDiffusionResult> rankHunksByPhiAsync({
+  required List<DiffHunk> hunks,
+  LogosGit? logosEngine,
+  EngramAssets? engramAssets,
+}) async {
+  final fileCoupling = _resolveFileCoupling(hunks, logosEngine);
+  // Trivial cases — skip the isolate hop's serialisation cost.
+  if (hunks.length <= 1) {
+    return _rankHunksByPhiCore(
+      hunks: hunks,
+      fileCoupling: fileCoupling,
+      engramAssets: engramAssets,
+    );
+  }
+  return Isolate.run<HunkDiffusionResult>(
+    () => _rankHunksByPhiCore(
+      hunks: hunks,
+      fileCoupling: fileCoupling,
+      engramAssets: engramAssets,
+    ),
+    debugName: 'rankHunksByPhi',
+  );
+}
+
+Map<String, double> _resolveFileCoupling(
+    List<DiffHunk> hunks, LogosGit? engine) {
+  final coupling = <String, double>{};
+  if (engine == null) return coupling;
+  final touchedFiles = <String>{for (final h in hunks) h.filePath};
+  if (touchedFiles.isEmpty) return coupling;
+  try {
+    final weights = <String, double>{for (final p in touchedFiles) p: 1.0};
+    final evidence = engine.gatherEvidence(
+      focusWeights: weights,
+      excludePaths: const {},
+    );
+    if (evidence != null) {
+      for (final s in evidence.ranked) {
+        if (touchedFiles.contains(s.path)) {
+          final inherited = s.support * s.integrity;
+          if (inherited > 0) coupling[s.path] = inherited;
+        }
+      }
+    } else {
+      final scores = engine.diffuseWeighted(weights);
+      for (final s in scores) {
+        if (touchedFiles.contains(s.path) && s.phi > 0) {
+          coupling[s.path] = s.phi;
+        }
+      }
+    }
+  } catch (_) {
+    // Graceful: engine errors never block the diff packer.
+  }
+  return coupling;
+}
+
+HunkDiffusionResult _rankHunksByPhiCore({
+  required List<DiffHunk> hunks,
+  required Map<String, double> fileCoupling,
+  EngramAssets? engramAssets,
 }) {
   final n = hunks.length;
   if (n == 0) {
@@ -565,23 +807,18 @@ HunkDiffusionResult rankHunksByPhi({
       ? rawTokens
       : [for (final ts in rawTokens) ts.difference(stopSet)];
 
-  // Cross-file coupling prior: ask logos how "hot" each touched file is
-  // when the source set is the whole touched-file set. Every touched file
-  // gets a φ; we use it as the weight-multiplier on cross-file hunk pairs.
-  final fileCoupling = <String, double>{};
-  final touchedFiles = <String>{for (final h in hunks) h.filePath};
-  if (logosEngine != null && touchedFiles.isNotEmpty) {
-    try {
-      final weights = <String, double>{for (final p in touchedFiles) p: 1.0};
-      final scores = logosEngine.diffuseWeighted(weights);
-      for (final s in scores) {
-        if (touchedFiles.contains(s.path) && s.phi > 0) {
-          fileCoupling[s.path] = s.phi;
-        }
-      }
-    } catch (_) {
-      // Graceful: engine errors never block the diff packer.
-    }
+  // Optional engram H_sym augmentation. Build the encoder from the
+  // already-transferred byte blobs (cheap inside this isolate) and
+  // encode every hunk to a K-vector. Returns a list aligned with
+  // `hunks` — entries stay null for hunks that couldn't be encoded
+  // (too few in-vocab sub-tokens to fit AR(2)); H_sym falls back to
+  // pure Jaccard for those.
+  List<HunkKVector?>? engramKVectors;
+  final engramEncoder = engramAssets?.buildEncoder();
+  if (engramEncoder != null) {
+    engramKVectors = [
+      for (var i = 0; i < n; i++) engramEncoder.encode(tokens[i]),
+    ];
   }
 
   // Top-K per node: sqrt(n) is the classical "enough-neighbours" heuristic
@@ -593,6 +830,7 @@ HunkDiffusionResult rankHunksByPhi({
     tokens: tokens,
     fileCouplingFromParent: fileCoupling,
     topK: topK,
+    engramKVectors: engramKVectors,
   );
 
   // Source mass ρ = log(1+bytes). Normalised to unit mass inside the
@@ -647,7 +885,14 @@ HunkDiffusionResult rankHunksByPhi({
   final rankings = <HunkRanking>[];
   for (var r = 0; r < indexed.length; r++) {
     final id = indexed[r];
-    rankings.add(HunkRanking(hunk: hunks[id], phi: blended[id], rank: r));
+    final kv = engramKVectors?[id];
+    rankings.add(HunkRanking(
+      hunk: hunks[id],
+      phi: blended[id],
+      rank: r,
+      wellName: kv?.well?.name,
+      wellDistance: kv?.well?.rawDistance,
+    ));
   }
   return HunkDiffusionResult(
     rankings: rankings,
@@ -655,9 +900,7 @@ HunkDiffusionResult rankHunksByPhi({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Prompt packing — emit full hunk bodies greedily under a byte budget.
-// ─────────────────────────────────────────────────────────────────────────
 
 class HunkPackResult {
   HunkPackResult({
@@ -674,7 +917,6 @@ class HunkPackResult {
 /// bodies; hunks that don't fit the remaining budget are skipped rather
 /// than truncated (a partial hunk is worse than no hunk — it breaks
 /// git-apply and confuses the model).
-///
 /// The output is wrapped with a `<logos_packed_diff>` tag carrying
 /// honest metadata: how many hunks admitted vs skipped, and the skipped
 /// hunk paths (so the AI knows the model saw a filtered view, not the
@@ -689,6 +931,23 @@ HunkPackResult packHunksUnderBudget({
 
   final admitted = <DiffHunk>[];
   final skipped = <DiffHunk>[];
+  // Cache ranking metadata per-hunk so we can annotate the emitted
+  // diff with φ + well labels without re-walking `rankings`.
+  final byHunk = <DiffHunk, HunkRanking>{
+    for (final r in rankings) r.hunk: r,
+  };
+  // Any engram-derived labels? If not we skip the metadata annotation
+  // overhead entirely (keeps behaviour identical to the pre-engram
+  // builds when assets aren't loaded).
+  final anyWells = rankings.any((r) => r.wellName != null);
+  // Budget cost of an in-diff annotation line, in characters. Grows
+  // with each emitted hunk — approximately `<!-- engram well=NAME
+  // phi=0.NN -->\n` which is ~40-50 chars per hunk.
+  int hunkAnnotationCost(HunkRanking r) {
+    if (r.wellName == null) return 0;
+    return '<!-- engram well=${r.wellName} phi=${r.phi.toStringAsFixed(3)} -->\n'
+        .length;
+  }
 
   // Group admitted hunks by parent file so the emitted body reads like a
   // normal diff: one header per file, its admitted hunks in order.
@@ -703,7 +962,9 @@ HunkPackResult packHunksUnderBudget({
   for (final r in rankings) {
     final h = r.hunk;
     final needsHeader = !perFile.containsKey(h.filePath);
-    final cost = h.bytes + (needsHeader ? headerCost(h.filePath) : 0);
+    final cost = h.bytes +
+        (needsHeader ? headerCost(h.filePath) : 0) +
+        (anyWells ? hunkAnnotationCost(r) : 0);
     if (cost > remaining) {
       skipped.add(h);
       continue;
@@ -722,13 +983,24 @@ HunkPackResult packHunksUnderBudget({
   // the normal diff reading shape so the model doesn't have to re-sort.
   final fileOrder = perFile.keys.toList()..sort();
   final buf = StringBuffer();
-  buf.writeln('<logos_packed_diff admitted=${admitted.length} skipped=${skipped.length}>');
+  buf.writeln(
+      '<logos_packed_diff admitted=${admitted.length} skipped=${skipped.length}>');
   for (final fp in fileOrder) {
     final group = perFile[fp]!..sort((a, b) => a.hunkIndex.compareTo(b.hunkIndex));
     buf.writeln('diff --git a/$fp b/$fp');
     buf.writeln('--- a/$fp');
     buf.writeln('+++ b/$fp');
     for (final h in group) {
+      final ranking = byHunk[h];
+      // Annotate with the nearest Alexandria well and φ — a feature-
+      // cluster hint for the LLM. Wrapped in an HTML-style comment so
+      // most diff renderers just show it inline; `git apply` ignores
+      // lines between hunks, so the output stays applicable when
+      // emitted for that purpose.
+      if (ranking != null && ranking.wellName != null) {
+        buf.writeln(
+            '<!-- engram well=${ranking.wellName} phi=${ranking.phi.toStringAsFixed(3)} -->');
+      }
       buf.write(h.body);
     }
   }

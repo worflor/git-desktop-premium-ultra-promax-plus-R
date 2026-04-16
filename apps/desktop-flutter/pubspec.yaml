@@ -43,6 +43,17 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # Alexandria engram — 225 GloVe-300 seeded semantic wells used by
+    # logos_hunks.dart's engram-backed H_sym axis. Stripped of sum_raw
+    # to halve the bundle size; see tools/export_engram_assets.py.
+    # The companion `alexandria.manifest.json` ships in the assets
+    # directory for diagnostic purposes but is NOT bundled — runtime
+    # only needs the .endb binary.
+    - assets/engram/alexandria.endb
+    # Quantised GloVe-300 vocabulary (int16 with global scale=6.0).
+    # ~11MB. Looked up via engram_glove.dart for per-sub-token vectors.
+    - assets/engram/glove300.bin
   fonts:
     - family: DM Sans
       fonts:
@@ -80,4 +91,6 @@ flutter:
   shaders:
     - shaders/cellshade.frag
     - shaders/iridescent.frag
+    - shaders/dark_iridescent.frag
+    - shaders/loverboy_bg.frag
     - shaders/glass.frag

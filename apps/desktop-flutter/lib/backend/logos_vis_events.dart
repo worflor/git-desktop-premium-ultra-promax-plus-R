@@ -1,0 +1,294 @@
+// logos_vis_events.dart — transparency stream for the relevance engine.
+//
+// The logos pipeline runs in hundreds of milliseconds and is invisible
+// to the user. This file exposes a narrow event stream so the review-
+// commit loading UI can narrate what's happening geometrically:
+// engine resolving → diff sources igniting → heat kernel diffusing
+// through the file graph → wells revealing themselves → hunks ranking
+// → context packed → transmitted.
+//
+// The stream is **observational**. Emitters publish events; nobody
+// blocks on subscribers. A missing subscriber means the events are
+// dropped (no pressure on the pipeline). The UI canvas subscribes
+// only while it's visible; backlogged events before it subscribes
+// are gone — the UI instead derives its opening state from whatever
+// event arrives next plus the cumulative snapshot on the session.
+//
+// Sessions are scoped by the review request. A user can kick off
+// multiple reviews; only the most-recent session's events matter.
+// We identify each with an integer [sessionId] allocated on begin.
+// Stale events from a superseded session are ignored by the canvas.
+
+import 'dart:async';
+
+/// Base class for every event the relevance pipeline publishes during
+/// a review build. Sealed-ish — callers match on the concrete subtype.
+abstract class LogosVisEvent {
+  const LogosVisEvent(this.sessionId);
+
+  /// Identifies which pipeline invocation this event belongs to. The
+  /// canvas ignores events from stale sessions so a user spamming the
+  /// Review button doesn't cross-pollute the animation.
+  final int sessionId;
+}
+
+/// Engine resolution started. The canvas renders the "terrain
+/// materialising" frame while this is the latest event.
+class LogosVisEngineResolving extends LogosVisEvent {
+  const LogosVisEngineResolving(super.sessionId, {required this.repoPath});
+  final String repoPath;
+}
+
+/// Engine ready — either from cache or freshly built. The canvas
+/// crystallises the topology dots at this point.
+class LogosVisEngineReady extends LogosVisEvent {
+  const LogosVisEngineReady(
+    super.sessionId, {
+    required this.nodeCount,
+    required this.cached,
+  });
+  final int nodeCount;
+
+  /// True when the resolver returned a cached engine (HEAD unchanged);
+  /// false when it rebuilt. Canvas uses this to pick the resolution
+  /// timing (cached = snap to ready, fresh = linger on "warming").
+  final bool cached;
+}
+
+/// Per-file engram index progress. Fires periodically during the
+/// parallel encode phase.
+class LogosVisEngramIndex extends LogosVisEvent {
+  const LogosVisEngramIndex(
+    super.sessionId, {
+    required this.cacheHits,
+    required this.encoded,
+    required this.totalPaths,
+  });
+  final int cacheHits;
+  final int encoded;
+  final int totalPaths;
+}
+
+/// Diff source weights computed. Canvas ignites the source files.
+class LogosVisDiffSources extends LogosVisEvent {
+  const LogosVisDiffSources(
+    super.sessionId, {
+    required this.weights,
+    required this.churn,
+  });
+
+  /// path → source weight (log1p-scaled churn) from the diff probe.
+  final Map<String, double> weights;
+
+  /// Total adds + dels. Used for the header stat.
+  final int churn;
+}
+
+/// Brainstorm-reshaped seed map. Fired by muse after phase 1 returns
+/// and the reseeded diffusion is about to kick off. The canvas reads
+/// this as a second ignition pulse — the original diff-anchored
+/// sources stay lit, but a fresh wavefront rolls out carrying the
+/// blended seed weights so the two phases read as one continuous
+/// animation (no jump cut between the initial diffusion and the
+/// reseed).
+class LogosVisReseedSources extends LogosVisEvent {
+  const LogosVisReseedSources(
+    super.sessionId, {
+    required this.weights,
+    required this.brainstormIdeas,
+    required this.semanticHits,
+    required this.wellExpansionFiles,
+  });
+
+  /// Updated path → seed weight map after brainstorm anchors are
+  /// blended in. Includes the original diff sources (still at 1.0)
+  /// plus every brainstorm-surfaced path.
+  final Map<String, double> weights;
+
+  /// Total ideas from the brainstorm pass — for the footer stat line.
+  final int brainstormIdeas;
+
+  /// Number of K-space KNN hits across all ideas.
+  final int semanticHits;
+
+  /// Number of files pulled in via well expansion.
+  final int wellExpansionFiles;
+}
+
+/// Heat-kernel diffusion complete. Carries the score map + dominant
+/// well mapping so the canvas can paint the final state: neighbours
+/// ranked, wells visible.
+class LogosVisDiffusionComplete extends LogosVisEvent {
+  const LogosVisDiffusionComplete(
+    super.sessionId, {
+    required this.phi,
+    required this.wellByPath,
+  });
+
+  /// path → final φ score after 3-temperature geometric-mean blend.
+  final Map<String, double> phi;
+
+  /// path → dominant well name (from the K-table's wellOf). Only
+  /// files with a K-vector appear; others are absent (no well tint).
+  final Map<String, String> wellByPath;
+}
+
+/// Context plan emitted. The canvas tier-colours the top-K admitted
+/// files at their φ positions.
+class LogosVisContextPlan extends LogosVisEvent {
+  const LogosVisContextPlan(
+    super.sessionId, {
+    required this.admittedFull,
+    required this.admittedSignature,
+    required this.admittedBreadcrumb,
+  });
+
+  /// Paths admitted at FULL tier.
+  final List<String> admittedFull;
+
+  /// Paths admitted at SIGNATURE tier.
+  final List<String> admittedSignature;
+
+  /// Paths admitted at BREADCRUMB tier.
+  final List<String> admittedBreadcrumb;
+}
+
+/// Hunk ranking complete. The canvas footer fills with bars.
+class LogosVisHunksRanked extends LogosVisEvent {
+  const LogosVisHunksRanked(
+    super.sessionId, {
+    required this.rankings,
+    required this.admitted,
+    required this.skipped,
+    required this.budgetFraction,
+  });
+
+  /// φ scores in descending order (for bar heights).
+  final List<double> rankings;
+
+  /// Number of hunks admitted to the prompt.
+  final int admitted;
+
+  /// Number of hunks that overflowed the budget.
+  final int skipped;
+
+  /// How full the prompt budget is, in [0, 1]. Feeds the packed-bar
+  /// indicator at the bottom of the final frame.
+  final double budgetFraction;
+}
+
+/// Context sealed and sent to the model. Canvas renders the beam.
+class LogosVisTransmit extends LogosVisEvent {
+  const LogosVisTransmit(super.sessionId);
+}
+
+/// Pipeline completed (first token received or request finished).
+/// Canvas fades out; the review body takes over.
+class LogosVisComplete extends LogosVisEvent {
+  const LogosVisComplete(super.sessionId);
+}
+
+/// Broadcast singleton. Publishers call `emit(event)`; subscribers
+/// listen on [stream]. Broadcast so multiple UIs (tests, diagnostics,
+/// the canvas) can share the feed.
+/// ─── Session scoping via Zone ─────────────────────────────────────────
+/// The review pipeline threads through many functions across multiple
+/// files — threading a session id as a parameter to every emitter
+/// would add noise everywhere. Instead callers wrap their invocation
+/// in [runInSession] (which uses `runZoned`) and downstream emitters
+/// read the session id from the current Zone via [currentSession].
+/// Dart's Future machinery propagates Zone.current across `await`,
+/// so every async leg of the pipeline inherits the session id
+/// without a single parameter change. If an emitter fires outside a
+/// session (e.g. tests, or code paths not wrapped), [emitInSession]
+/// silently drops — no session, no subscriber confusion.
+class LogosVisBus {
+  LogosVisBus._();
+  static final LogosVisBus instance = LogosVisBus._();
+
+  static const Symbol _zoneSessionKey = #logosVisSession;
+
+  final StreamController<LogosVisEvent> _controller =
+      StreamController<LogosVisEvent>.broadcast(sync: false);
+
+  int _nextSessionId = 1;
+
+  /// Out-of-band signal from the canvas back into the pipeline: when
+  /// a user grabs one of the source spokes (or a neighbour) and pulls
+  /// it, the peak pull magnitude is accumulated here keyed by file
+  /// path. Muse's reseed diffusion reads + consumes these values
+  /// before blending the brainstorm anchors, so a user yanking a
+  /// file during "dreaming" actually biases which files the engine
+  /// pulls into the synthesis context.
+  /// The value is a unit-ish scalar (normalised pull relative to
+  /// canvas size); consumers clamp + map to their own weight range.
+  /// Cleared by `consumeUserSpokeBoosts()` — fresh run starts clean.
+  final Map<String, double> _userSpokeBoosts = <String, double>{};
+
+  /// Record a user-applied pull on [path]. Subsequent calls for the
+  /// same path keep the *maximum* magnitude — a user who yanks then
+  /// eases off still expresses their strongest intent.
+  void recordUserSpokeBoost(String path, double magnitude) {
+    if (magnitude <= 0) return;
+    final prev = _userSpokeBoosts[path];
+    if (prev == null || magnitude > prev) {
+      _userSpokeBoosts[path] = magnitude;
+    }
+  }
+
+  /// Drain the accumulated per-path boosts. Called by the muse
+  /// pipeline right before the reseed diffuse so each run reads a
+  /// clean snapshot and the next run starts empty.
+  Map<String, double> consumeUserSpokeBoosts() {
+    if (_userSpokeBoosts.isEmpty) return const {};
+    final snapshot = Map<String, double>.from(_userSpokeBoosts);
+    _userSpokeBoosts.clear();
+    return snapshot;
+  }
+
+  /// Allocate a fresh session id + wrap [body] in a zone that exposes
+  /// it to downstream emitters. Canvas subscribers observe events
+  /// tagged with this id and ignore events from older sessions.
+  /// Returns whatever [body] returned. If [body] throws the zone is
+  /// closed normally.
+  Future<T> runInSession<T>(Future<T> Function(int sessionId) body) async {
+    final sessionId = _nextSessionId++;
+    return runZoned(
+      () => body(sessionId),
+      zoneValues: {_zoneSessionKey: sessionId},
+    );
+  }
+
+  /// The active session id, or null if the caller isn't inside a
+  /// [runInSession] scope. Emitters use this to decide whether to
+  /// publish.
+  int? get currentSession {
+    final v = Zone.current[_zoneSessionKey];
+    return v is int ? v : null;
+  }
+
+  /// Stream of all emitted events. Canvas subscribes here and filters
+  /// by its tracked session id.
+  Stream<LogosVisEvent> get stream => _controller.stream;
+
+  /// Emit unconditionally. Prefer [emitInSession] unless the caller
+  /// has an explicit session id (e.g. an isolate helper that received
+  /// it via message passing).
+  void emit(LogosVisEvent event) {
+    if (_controller.isClosed) return;
+    _controller.add(event);
+  }
+
+  /// Construct and emit an event using the ambient session id.
+  /// Silently drops if there's no active session (caller wasn't
+  /// inside [runInSession]). [builder] receives the session id and
+  /// returns the concrete event.
+  /// Typical call site:
+  ///   LogosVisBus.instance.emitInSession((sid) =>
+  ///     LogosVisEngineResolving(sid, repoPath: path));
+  void emitInSession(LogosVisEvent Function(int sessionId) builder) {
+    final id = currentSession;
+    if (id == null) return;
+    emit(builder(id));
+  }
+}

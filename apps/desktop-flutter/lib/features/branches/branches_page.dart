@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as pathlib;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,16 +19,29 @@ import '../../ui/status_view.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/git.dart';
+import '../../backend/ai.dart';
 import '../../backend/gh.dart';
 import '../../backend/git_result.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
 import '../../backend/logos_git.dart';
+import '../../backend/pr_shape.dart';
+import '../../backend/desk_pr.dart';
+import '../../backend/desk_pr_diff.dart';
+import '../../app/ai_settings_state.dart';
+import '../../app/preferences_state.dart';
+import '../../app/desk_pr_state.dart';
+import '../../app/desk_issue_state.dart';
+import '../../app/app_identity.dart';
+import '../../app/worktree_state.dart';
+import '../../app/desk_drop_payload.dart';
 import '../../app/repository_state.dart';
+import '../../app/repository_xray_state.dart';
 import '../../app/file_coupling_state.dart';
+import '../../app/symbol_frequency_state.dart';
 import '../../app/logos_git_state.dart';
 import '../diff/diff_models.dart';
-import '../diff/diff_shell.dart' show DiffLineView;
+import '../diff/diff_shell.dart' show DiffLineView, DiffShell;
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
 
@@ -41,6 +55,214 @@ class BranchesPage extends StatefulWidget {
 /// surface different metadata about the same conceptual space — your
 /// repo's worklines.
 enum _BranchesLens { branches, prs, issues }
+
+/// Result of the pre-flight `git merge-tree` probe used by the
+/// merge-into-desk dialog. `mergeable` is true only when git reported
+/// a clean merge; `conflictingPaths` lists the files that would
+/// conflict (empty when mergeable or when the probe itself couldn't
+/// resolve).
+class _MergePreflight {
+  final bool mergeable;
+  final List<String> conflictingPaths;
+
+  /// False when the preflight command itself could not run (git < 2.38,
+  /// process error, etc.). Callers should surface a notice rather than
+  /// treating the absence of conflict paths as a clean result.
+  final bool available;
+  const _MergePreflight({
+    required this.mergeable,
+    required this.conflictingPaths,
+    this.available = true,
+  });
+}
+
+/// Indeterminate-progress dialog for in-flight PR AI review. Intentionally
+/// minimal — the work is a single awaited backend call, no streaming
+/// surface here. Dismiss-on-tap is disabled upstream so a stray click
+/// doesn't orphan the provider subprocess.
+class _AiReviewProgressDialog extends StatelessWidget {
+  const _AiReviewProgressDialog();
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return AlertDialog(
+      backgroundColor: t.surface1,
+      content: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: t.accentBright,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Text('Running AI review…',
+              style: TextStyle(color: t.textNormal, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Read-only display of an AI review result on a PR. Simpler shape than
+/// the Changes page's inline pane (which doubles as a commit-draft
+/// feedback loop); here the reviewer's intent is "one-shot critique on
+/// a PR I haven't checked out", so a dialog with verdict + findings
+/// suffices. Copy-to-clipboard for the full report is the single
+/// extraction affordance.
+class _PrAiReviewDialog extends StatelessWidget {
+  final AiCommitReviewData review;
+  final PullRequestSummary pr;
+  const _PrAiReviewDialog({required this.review, required this.pr});
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final verdict = review.verdict.trim().toLowerCase();
+    final verdictColor = verdict == 'ship'
+        ? t.stateAdded
+        : verdict == 'block'
+            ? t.stateDeleted
+            : t.textNormal;
+    return AlertDialog(
+      backgroundColor: t.surface1,
+      title: Row(
+        children: [
+          Text(
+            review.verdict.toUpperCase(),
+            style: TextStyle(
+                color: verdictColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 2,
+                fontFamily: 'JetBrainsMono'),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '${review.score}',
+            style: TextStyle(
+                color: verdictColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                fontFamily: 'JetBrainsMono'),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'PR #${pr.number}',
+              style: TextStyle(color: t.textMuted, fontSize: 10),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (review.summary.trim().isNotEmpty) ...[
+                Text(review.summary,
+                    style: TextStyle(color: t.textNormal, fontSize: 12)),
+                const SizedBox(height: 12),
+              ],
+              if (review.findings.isNotEmpty) ...[
+                Text('FINDINGS',
+                    style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.4)),
+                const SizedBox(height: 6),
+                for (final f in review.findings)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${f.severity.toUpperCase()} · ${f.origin}',
+                          style: TextStyle(
+                              color: t.accentBright,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              fontFamily: 'JetBrainsMono'),
+                        ),
+                        if (f.filePath != null && f.filePath!.isNotEmpty)
+                          Text(f.filePath!,
+                              style: TextStyle(
+                                  color: t.textMuted,
+                                  fontSize: 10,
+                                  fontFamily: 'JetBrainsMono')),
+                        const SizedBox(height: 2),
+                        Text(f.title,
+                            style: TextStyle(
+                                color: t.textNormal,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600)),
+                        if (f.evidence.trim().isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(f.evidence,
+                                style: TextStyle(
+                                    color: t.textMuted, fontSize: 11)),
+                          ),
+                      ],
+                    ),
+                  ),
+              ],
+              if (review.observations.isNotEmpty) ...[
+                Text('OBSERVATIONS',
+                    style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.4)),
+                const SizedBox(height: 6),
+                for (final o in review.observations)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(o.title,
+                            style: TextStyle(
+                                color: t.textNormal,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600)),
+                        if (o.detail.trim().isNotEmpty)
+                          Text(o.detail,
+                              style:
+                                  TextStyle(color: t.textMuted, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Clipboard.setData(ClipboardData(
+                text:
+                    '${review.verdict} · ${review.score}\n\n${review.summary}'));
+          },
+          child: Text('Copy', style: TextStyle(color: t.textMuted)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+}
 
 class _BranchesPageState extends State<BranchesPage> {
   final Stopwatch _mountedAt = Stopwatch()..start();
@@ -161,6 +383,75 @@ class _BranchesPageState extends State<BranchesPage> {
   final Map<int, FileSignals> _prFileSignals = {};
   final Set<int> _prFileSignalsLoading = <int>{};
 
+  // Per-PR Logos diffusion footprint + derived signals (coherence,
+  // stability, metabolism risk, field alignment). The molecular framing
+  // made structural: PRs aren't queue entries, they're magnets dropped
+  // into a field. See pr_shape.dart for the math.
+  //
+  // Lazily populated on expand AND eagerly for any PR that has detail
+  // cached (so the orbital list-ordering has data to sort by). Cleared
+  // alongside `_prDetails` derivations.
+  final Map<int, PrShape> _prShapes = {};
+  final Set<int> _prShapesLoading = <int>{};
+  // Fingerprint of the file list the cached shape was computed against.
+  // When a PR branch accumulates new commits the file list shifts
+  // (paths added/removed, per-file adds/dels churn), and the cached
+  // shape's φ vector no longer matches what the UI is rendering — the
+  // header would keep showing the old coherence forever because
+  // `_ensurePrShapeComputed` early-returned on `containsKey`. Keying
+  // by file-list fingerprint invalidates just that PR without blowing
+  // up every shape on the page.
+  final Map<int, int> _prShapeFileFingerprints = {};
+  // Branches whose local diffs have been (or are being) materialised.
+  // Prevents the post-frame prefetch from re-issuing the same git
+  // diff every rebuild.
+  final Set<String> _localDeskDiffsLoading = <String>{};
+
+  /// Numbers of PRs surfaced from local desk metadata (DeskPrState),
+  /// not GitHub. Drives the "local" sigil on the row + routes detail
+  /// fetch through the local-diff path instead of `gh pr view`.
+  /// Derived on access from [DeskPrState.all] plus the current remote
+  /// PR list. Previously cached as an instance field and assigned
+  /// directly inside `_buildPullRequestsBody` — that mutation ran
+  /// during the build phase, which Flutter asserts against in debug
+  /// and risks cross-frame staleness in release. Reading fresh each
+  /// access keeps the truth local to the call site; the underlying
+  /// set is small (tens of entries at most) so the cost is nil.
+  Set<int> get _localPrNumbers {
+    final deskPrs = context.read<DeskPrState>().all;
+    // Same dedupe as `_buildPullRequestsBody` uses when materialising
+    // the local summaries: when a branch already shows up in the remote
+    // PR list, the remote wins and the desk PR hides from the row
+    // list, so it must also be absent from the "is local" set.
+    final remoteBranches = <String>{
+      for (final p in (_prs ?? const <PullRequestSummary>[])) p.headRef,
+    };
+    return <int>{
+      for (final dp in deskPrs)
+        if (!remoteBranches.contains(dp.headRef)) dp.toSummary().number,
+    };
+  }
+
+  /// Numbers of issues surfaced from local desk metadata
+  /// (DeskIssueState), not GitHub. Issues have no branch join so
+  /// there's no remote-vs-local dedupe — the full desk issue set maps
+  /// straight through. Derived on access for the same reason as
+  /// [_localPrNumbers].
+  Set<int> get _localIssueNumbers {
+    final deskIssues = context.read<DeskIssueState>().all;
+    return <int>{for (final di in deskIssues) di.toSummary().number};
+  }
+
+  // Cached pairwise PR cosine map. cosines[a][b] = cos(φ_a, φ_b) when
+  // both shapes exist; absence = unknown. Rebuilt from `_prShapes` on
+  // first read after invalidation.
+  Map<int, Map<int, double>>? _cachedCosineMap;
+  // Activity field (rolling-recent-commit aggregate φ). One snapshot
+  // per (repo, HEAD); shared across all PR shape computations so
+  // alignments are mutually consistent. Recomputed on engine refresh.
+  ActivityField? _activityField;
+  String? _activityFieldRepoKey;
+
   // TOUCHED-SINCE-YOU-LOOKED — local timestamp per PR-id of when the
   // viewer last opened that PR's detail. Persisted to SharedPreferences
   // as ISO-string-keyed JSON. The row gets a small unread dot when
@@ -177,9 +468,8 @@ class _BranchesPageState extends State<BranchesPage> {
       final out = <int, DateTime>{};
       for (final e in j.entries) {
         final n = int.tryParse(e.key);
-        final ts = e.value is String
-            ? DateTime.tryParse(e.value as String)
-            : null;
+        final ts =
+            e.value is String ? DateTime.tryParse(e.value as String) : null;
         if (n != null && ts != null) out[n] = ts;
       }
       if (mounted) setState(() => _prLastSeen = out);
@@ -396,6 +686,113 @@ class _BranchesPageState extends State<BranchesPage> {
     await context.read<RepositoryState>().refreshStatus();
   }
 
+  /// Right-click menu on a branch row. V1 surfaces just Rename…
+  /// (delete + checkout stay on the card itself); extend here when more
+  /// branch-level actions need a hidden surface.
+  void _showBranchContextMenu(
+    BuildContext ctx,
+    Offset globalPos,
+    BranchInfo branch,
+    String repoPath,
+  ) {
+    final items = <AppContextMenuItem>[
+      AppContextMenuItem(
+        icon: Icons.drive_file_rename_outline,
+        label: 'Rename…',
+        onTap: () => _showRenameBranchDialog(repoPath, branch.name),
+      ),
+    ];
+    showAppContextMenu(ctx, globalPos, [items]);
+  }
+
+  /// Rename dialog. Validates that the new name isn't empty, isn't the
+  /// same as the old name, and doesn't contain path-illegal characters
+  /// before handing off to `git branch -m`. Git itself will reject
+  /// collisions against existing refs, and we surface the stderr verbatim
+  /// so the user sees the specific failure.
+  Future<void> _showRenameBranchDialog(String repoPath, String oldName) async {
+    final ctrl = TextEditingController(text: oldName);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final t = ctx.tokens;
+        return AlertDialog(
+          backgroundColor: t.surface1,
+          title: Text('Rename branch',
+              style: TextStyle(color: t.textStrong, fontSize: 14)),
+          content: SizedBox(
+            width: 320,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(oldName,
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 11,
+                      fontFamily: 'JetBrainsMono',
+                    )),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: ctrl,
+                  autofocus: true,
+                  style: TextStyle(
+                      color: t.textNormal,
+                      fontSize: 12,
+                      fontFamily: 'JetBrainsMono'),
+                  decoration: InputDecoration(
+                    labelText: 'New name',
+                    labelStyle: TextStyle(color: t.textMuted),
+                    border: const OutlineInputBorder(),
+                  ),
+                  onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
+              child: const Text('Rename'),
+            ),
+          ],
+        );
+      },
+    );
+    if (newName == null || newName.isEmpty || newName == oldName) return;
+    // Validate the candidate name before invoking git branch -m. git
+    // check-ref-format --branch is the authoritative check — it rejects
+    // names with path-illegal characters (.., ~, ^, :, ?, *, [, spaces,
+    // etc.) and gives a clean exit code without touching any ref.
+    final checkRef = await Process.run(
+      'git',
+      ['check-ref-format', '--branch', newName],
+      workingDirectory: repoPath,
+    );
+    if (checkRef.exitCode != 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("'$newName' is not a valid branch name.")),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    final r = await renameBranch(repoPath, oldName, newName);
+    if (!mounted) return;
+    if (!r.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Rename failed: ${r.error}")),
+      );
+      return;
+    }
+    await _load(repoPath);
+  }
+
   /// Deletes [name] in [repo]. Returns the outcome so the caller (the
   /// branch row) can morph its trash button into a force-confirm
   /// affordance instead of bubbling git's "not fully merged" stderr
@@ -446,8 +843,6 @@ class _BranchesPageState extends State<BranchesPage> {
     }
     await _load(repo);
   }
-
-  // ── Lens activation / fetch ─────────────────────────────────────────
 
   /// Switch lens. Lazily fires a fetch the first time PRs/Issues are
   /// shown; subsequent switches are instant against the cache.
@@ -559,15 +954,39 @@ class _BranchesPageState extends State<BranchesPage> {
     String repoPath,
   ) {
     final unread = _isUnread(pr);
+    final isLocal = _localPrNumbers.contains(pr.number);
+    // Enumerate desks that are valid merge targets for this PR:
+    //   • not the currently-active worktree (merging into yourself is
+    //     a no-op and would fight the user's own UI context)
+    //   • not locked (git refuses touching a locked worktree)
+    //   • not already on the PR's head branch (nothing to merge)
+    // Remote PRs are excluded from desk targets for v1 — their head
+    // isn't fetched locally until `Merge into new desk…` materialises
+    // it. Local PRs already have their head branch available to any
+    // other desk in the same repo, so merges resolve cleanly.
+    final activePath = context.read<RepositoryState>().activePath;
+    final deskTargets = isLocal
+        ? context
+            .read<WorktreeState>()
+            .desks
+            .where((d) =>
+                d.path.isNotEmpty &&
+                d.path != activePath &&
+                !d.isLocked &&
+                d.branch != null &&
+                d.branch != pr.headRef)
+            .toList()
+        : const <WorktreeData>[];
     final sections = <List<AppContextMenuItem>>[
       [
-        // ⭐ Unique to this app: take the PR's cached diff, open it in
-        // the patch preview so the user sees CONFLICTS-WITH-YOU /
-        // WILL FIGHT / resonance against their CURRENT working tree
-        // BEFORE they commit to `gh pr checkout`. Pre-flight for any PR.
+        // Apply to active changes — overlays the PR's diff onto the
+        // current worktree (staged or unstaged per the preview dialog's
+        // choice). No commit, no branch switch. The preview surfaces
+        // CONFLICTS-WITH-YOU / WILL FIGHT / resonance so the reviewer
+        // sees the collision landscape BEFORE touching the tree.
         AppContextMenuItem(
           icon: Icons.science_outlined,
-          label: 'Apply locally (preview)…',
+          label: 'Apply to active changes…',
           onTap: () async {
             var detail = _prDetails[pr.number];
             if (detail == null || detail.diff.isEmpty) {
@@ -590,10 +1009,40 @@ class _BranchesPageState extends State<BranchesPage> {
             );
           },
         ),
+        // Merge into [desk] — one entry per eligible desk. Runs a real
+        // `git merge` (method picker via the existing _MergeMenuAnchor
+        // popup) inside the chosen desk's worktree, creating a real
+        // merge commit in its branch's history. Local PRs only for
+        // v1; remote PRs go through "Merge into new desk…" which
+        // materialises the head first.
+        for (final desk in deskTargets)
+          AppContextMenuItem(
+            icon: Icons.call_merge_outlined,
+            label: 'Merge into ${desk.branch}…',
+            onTap: () => _showMergeIntoDeskMenu(pr, desk),
+          ),
         AppContextMenuItem(
           icon: Icons.download_done_outlined,
           label: 'Checkout this PR',
           onTap: () => _checkoutPr(repoPath, pr.number),
+        ),
+        // Merge into new desk — materialises the PR as its own
+        // worktree. For remote PRs this is the only path from "I see
+        // a PR in the list" to "I can review it in a real filesystem
+        // surface"; for local PRs it would duplicate an existing desk,
+        // so hidden there.
+        if (!isLocal)
+          AppContextMenuItem(
+            icon: Icons.view_quilt_outlined,
+            label: 'Merge into new desk…',
+            onTap: () => _openPrAsDesk(repoPath, pr),
+          ),
+      ],
+      [
+        AppContextMenuItem(
+          icon: Icons.link,
+          label: 'Link to issue…',
+          onTap: () => _showLinkToIssuePicker(repoPath, pr, isLocal),
         ),
       ],
       [
@@ -629,6 +1078,24 @@ class _BranchesPageState extends State<BranchesPage> {
             );
           },
         ),
+        // Run AI review on the PR's diff, without checking it out.
+        // Backend's reviewCommit accepts a rawDiffOverride that skips
+        // the working-tree derivation, so the same Logos + context +
+        // prompt pipeline runs against a PR as runs against a local
+        // commit draft. Result renders in a simple dialog.
+        AppContextMenuItem(
+          icon: Icons.auto_awesome_outlined,
+          label: 'Review PR',
+          onTap: () => _runPrAiReview(repoPath, pr),
+        ),
+        // Open in browser — `gh pr view --web` for remote PRs. Local
+        // PRs have no URL so the option is hidden rather than disabled.
+        if (!isLocal)
+          AppContextMenuItem(
+            icon: Icons.open_in_new,
+            label: 'Open in browser',
+            onTap: () => _openPrInBrowser(repoPath, pr.number),
+          ),
       ],
       [
         AppContextMenuItem(
@@ -642,6 +1109,451 @@ class _BranchesPageState extends State<BranchesPage> {
       ],
     ];
     showAppContextMenu(context, globalPos, sections);
+  }
+
+  /// Materialise a remote PR as a local worktree (a "desk"). Fetches
+  /// the PR's head into a local ref `pr-<n>`, then routes through
+  /// WorktreeState.addDesk to create the worktree at
+  /// `.manifold/worktrees/pr-<n>` and switch the active path. The
+  /// reviewer is now in the actual code with full filesystem + IDE.
+  Future<void> _openPrAsDesk(String repoPath, PullRequestSummary pr) async {
+    final localRef = 'pr-${pr.number}';
+    final remoteRes = await primaryRemoteName(repoPath);
+    final remote = remoteRes.ok ? remoteRes.data : null;
+    if (remote == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text(
+            "Couldn't fetch PR: no remote configured.",
+          )),
+        );
+      }
+      return;
+    }
+    // If the local ref already exists (desk was closed but ref was kept,
+    // or the PR was previously opened), warn before force-overwriting.
+    // The reflog preserves the old tip, but the user has no UI path to
+    // it, so any local commits would be silently unreachable.
+    final refCheck = await Process.run(
+      'git',
+      ['rev-parse', '--verify', localRef],
+      workingDirectory: repoPath,
+    );
+    if (refCheck.exitCode == 0) {
+      if (!mounted) return;
+      final t = context.tokens;
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: t.surface1,
+          content: Text(
+            '$localRef already exists locally. Updating it will replace any '
+            'local commits on that branch with the latest from GitHub.',
+            style: TextStyle(color: t.textNormal, fontSize: 12),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Update'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    if (!mounted) return;
+    final fetchRes = await Process.run(
+      'git',
+      // '+' forces the local ref to update even if non-fast-forward
+      // (force-pushed PR or ref exists from a previously closed desk).
+      ['fetch', remote, '+pull/${pr.number}/head:$localRef'],
+      workingDirectory: repoPath,
+    );
+    if (fetchRes.exitCode != 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(
+                  "Couldn't fetch PR: ${(fetchRes.stderr as String).trim()}")),
+        );
+      }
+      return;
+    }
+    // The fetch above can take several seconds on slow networks. If the
+    // widget got disposed while waiting, context.read on a deactivated
+    // element throws `Looking up a deactivated widget's ancestor is
+    // unsafe`. Gate both the state call and the snackbar on mounted.
+    if (!mounted) return;
+    final err = await context.read<WorktreeState>().addDesk(localRef);
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't open as desk: $err")),
+      );
+    }
+  }
+
+  /// Open the PR in the user's default browser. Uses `gh pr view --web`
+  /// which handles the URL resolution for any remote (origin / fork
+  /// / etc) the gh CLI knows about.
+  Future<void> _openPrInBrowser(String repoPath, int prNumber) async {
+    final res = await Process.run(
+      'gh',
+      ['pr', 'view', '$prNumber', '--web'],
+      workingDirectory: repoPath,
+    );
+    if (res.exitCode != 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                "Couldn't open in browser: ${(res.stderr as String).trim()}")),
+      );
+    }
+  }
+
+  /// Show a unified picker over LOCAL + REMOTE issues. The link action
+  /// branches by source — see `_handleIssueLinkToggle` for the matrix.
+  /// The picker is **sticky**: toggling a link doesn't close the dialog.
+  /// Check glyphs update in place so a user who wants to link 3 issues
+  /// to a PR does it in one open. Relevance is computed from "how many
+  /// of this PR's files does the issue body mention" — the top 3 hits
+  /// surface in a "RELEVANT" section above the full filter, so common
+  /// cases resolve without typing.
+  Future<void> _showLinkToIssuePicker(
+      String repoPath, PullRequestSummary pr, bool prIsLocal) async {
+    final remoteIssues = _issues ?? const <IssueSummary>[];
+    final localIssues = context.read<DeskIssueState>().all;
+    final prPaths = _prDetails[pr.number]?.files.map((f) => f.path).toList() ??
+        const <String>[];
+    // Remote-remote linking isn't persistable locally — filter those
+    // candidates out of the list entirely when the PR itself is
+    // remote, instead of showing them and surfacing a "you can't link
+    // this here" banner at click time.
+    final includeRemoteIssues = prIsLocal;
+    final entries = <_LinkCandidate>[
+      if (includeRemoteIssues)
+        for (final i in remoteIssues)
+          _LinkCandidate(
+            id: i.number,
+            title: i.title,
+            isRemote: true,
+            isLinked: _isIssueLinkedToPr(pr, prIsLocal, i.number, true),
+            relevance: _scoreRelevance(
+              prPaths,
+              _issueDetails[i.number]?.body ?? i.title,
+            ),
+          ),
+      for (final i in localIssues)
+        _LinkCandidate(
+          id: i.issueId,
+          title: i.title,
+          isRemote: false,
+          isLinked: _isIssueLinkedToPr(pr, prIsLocal, i.issueId, false),
+          relevance: _scoreRelevance(prPaths, '${i.title}\n${i.body}'),
+        ),
+    ];
+    // Empty state moves INTO the picker (rendered as an inline notice)
+    // instead of a bottom-of-screen snackbar — no banner ever.
+    final emptyMessage = entries.isNotEmpty
+        ? null
+        : (prIsLocal
+            ? 'No issues yet. Open one upstream, or use "+ new local issue" in the issues lens.'
+            : 'Remote PRs can only link to local issues. Create one with "+ new local issue".');
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => _StickyLinkPicker(
+        title: 'Link PR #${pr.number} to issue(s)',
+        candidates: entries,
+        emptyMessage: emptyMessage,
+        onToggle: (candidate) async {
+          // Return the post-toggle linked state so the dialog can
+          // reflect it instantly. When the backend call fails, revert
+          // by returning the pre-toggle state — the dialog's local
+          // `isLinked` stays consistent with persistence.
+          final prev = candidate.isLinked;
+          final err = await _handleIssueLinkToggle(
+            repoPath,
+            pr,
+            prIsLocal,
+            candidate,
+          );
+          return err == null ? !prev : prev;
+        },
+      ),
+    );
+  }
+
+  /// Reverse picker: from an issue row, pick PR(s) that address this
+  /// issue. Same sticky + ranked shape, candidates on the PR side.
+  Future<void> _showLinkToPrPickerFromIssue(
+      String repoPath, IssueSummary issue, bool issueIsLocal) async {
+    final remotePrs = (_prs ?? const <PullRequestSummary>[])
+        .where((p) => p.state == 'OPEN')
+        .toList();
+    final localPrs = context.read<DeskPrState>().all;
+    // Issue body drives relevance — rank PRs by how many of the issue's
+    // mentioned file paths each PR actually touches.
+    final issueBody = issueIsLocal
+        ? (context.read<DeskIssueState>().issueFor(issue.number)?.body ??
+            issue.title)
+        : (_issueDetails[issue.number]?.body ?? issue.title);
+    // Remote issues can only bind to LOCAL PRs (the remote forge owns
+    // its own PR-issue graph). Filter remote PRs out instead of
+    // surfacing a click-time banner.
+    final includeRemotePrs = issueIsLocal;
+    final entries = <_LinkCandidate>[
+      if (includeRemotePrs)
+        for (final p in remotePrs)
+          _LinkCandidate(
+            id: p.number,
+            title: p.title,
+            isRemote: true,
+            isLinked: _isPrLinkedToIssue(
+                issue, issueIsLocal, p.number, true, p.headRef),
+            relevance: _scoreRelevance(
+              _prDetails[p.number]?.files.map((f) => f.path).toList() ??
+                  const [],
+              issueBody,
+            ),
+          ),
+      for (final dp in localPrs)
+        _LinkCandidate(
+          id: dp.deskId,
+          title: dp.title,
+          isRemote: false,
+          isLinked: _isPrLinkedToIssue(
+              issue, issueIsLocal, dp.deskId, false, dp.headRef),
+          relevance: _scoreRelevance(
+            _prDetails[dp.deskId]?.files.map((f) => f.path).toList() ??
+                const [],
+            issueBody,
+          ),
+        ),
+    ];
+    final emptyMessage = entries.isNotEmpty
+        ? null
+        : (issueIsLocal
+            ? 'No PRs yet. Open one upstream, or promote a desk to PR.'
+            : 'Remote issues can only link to local PRs. Promote a desk to PR first.');
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => _StickyLinkPicker(
+        title: 'Link issue #${issue.number} to PR(s)',
+        candidates: entries,
+        emptyMessage: emptyMessage,
+        // Custom chip labels — we're listing PRs, so `L/R` still means
+        // local desk vs remote forge. Same vocabulary.
+        onToggle: (candidate) async {
+          final prev = candidate.isLinked;
+          final err = await _togglePrLinkOnIssue(
+            repoPath,
+            issue,
+            issueIsLocal,
+            candidate,
+          );
+          return err == null ? !prev : prev;
+        },
+      ),
+    );
+  }
+
+  /// Tokenise a body for relevance scoring. Extracts path-like tokens
+  /// (anything with a slash + a file-extension-ish tail) and plain
+  /// word tokens. Used to score issue bodies against PR file paths
+  /// (and vice versa) so the picker can surface "obviously relevant"
+  /// candidates without asking the user to type.
+  static final RegExp _pathLikeRegex =
+      RegExp(r'[A-Za-z0-9_.\-/]+\.[A-Za-z0-9]{1,6}');
+  static final RegExp _wordRegex = RegExp(r'[A-Za-z][A-Za-z0-9_]{2,}');
+
+  double _scoreRelevance(List<String> paths, String body) {
+    if (paths.isEmpty || body.trim().isEmpty) return 0;
+    final bodyLower = body.toLowerCase();
+    final mentionedPaths =
+        _pathLikeRegex.allMatches(bodyLower).map((m) => m.group(0)!).toSet();
+    final bodyTokens =
+        _wordRegex.allMatches(bodyLower).map((m) => m.group(0)!).toSet();
+
+    var score = 0.0;
+    for (final p in paths) {
+      final lower = p.toLowerCase();
+      // Exact path match — strongest signal.
+      if (mentionedPaths.contains(lower)) {
+        score += 1.0;
+        continue;
+      }
+      // Basename match — file referenced by name alone.
+      final slash = lower.lastIndexOf('/');
+      final basename = slash < 0 ? lower : lower.substring(slash + 1);
+      final dot = basename.lastIndexOf('.');
+      final stem = dot < 0 ? basename : basename.substring(0, dot);
+      if (bodyTokens.contains(stem)) {
+        score += 0.5;
+        continue;
+      }
+      // Directory-segment match — weak but surfaces "the auth module."
+      final segments = lower.split('/').where((s) => s.length >= 3);
+      for (final seg in segments) {
+        if (bodyTokens.contains(seg)) {
+          score += 0.15;
+          break;
+        }
+      }
+    }
+    // Normalize by path count so PRs with many files don't dominate.
+    return (score / paths.length).clamp(0.0, 1.0);
+  }
+
+  bool _isPrLinkedToIssue(
+    IssueSummary issue,
+    bool issueIsLocal,
+    int prId,
+    bool prIsRemote,
+    String prBranch,
+  ) {
+    // Local issue side: `addressedBy` carries either branch names (for
+    // local PRs) or `pr#N` strings (for remote PRs).
+    if (issueIsLocal) {
+      final di = context.read<DeskIssueState>().issueFor(issue.number);
+      if (di == null) return false;
+      return prIsRemote
+          ? di.addressedBy.contains('pr#$prId')
+          : di.addressedBy.contains(prBranch);
+    }
+    // Remote issue side: only local PRs can carry a link (via
+    // DeskPr.linkedIssues). Remote PR ↔ remote issue is a forge
+    // concern, not a Manifold one.
+    if (prIsRemote) return false;
+    final dp = context.read<DeskPrState>().prFor(prBranch);
+    if (dp == null) return false;
+    return dp.linkedIssues.contains(issue.number);
+  }
+
+  Future<String?> _togglePrLinkOnIssue(
+    String repoPath,
+    IssueSummary issue,
+    bool issueIsLocal,
+    _LinkCandidate candidate,
+  ) async {
+    // Resolve the PR's branch so we can write `addressedBy` entries.
+    String? prBranch;
+    if (candidate.isRemote) {
+      final remote = (_prs ?? const <PullRequestSummary>[])
+          .cast<PullRequestSummary?>()
+          .firstWhere((p) => p?.number == candidate.id, orElse: () => null);
+      prBranch = remote?.headRef;
+    } else {
+      final local = context
+          .read<DeskPrState>()
+          .all
+          .cast<DeskPr?>()
+          .firstWhere((d) => d?.deskId == candidate.id, orElse: () => null);
+      prBranch = local?.headRef;
+    }
+    if (prBranch == null) return 'PR not found';
+
+    if (issueIsLocal) {
+      // Write to the local issue's addressedBy (either branch name or
+      // pr#N convention). Mirror on the LOCAL PR side when applicable.
+      final addressedKey = candidate.isRemote ? 'pr#${candidate.id}' : prBranch;
+      final err = await context.read<DeskIssueState>().toggleAddressedBy(
+            repoPath: repoPath,
+            id: issue.number,
+            branch: addressedKey,
+          );
+      if (err == null && !candidate.isRemote) {
+        await context.read<DeskPrState>().toggleLinkedIssue(
+              repoPath: repoPath,
+              branch: prBranch,
+              issueId: issue.number,
+              isRemote: false,
+            );
+      }
+      return err;
+    } else {
+      // Remote issue: only LOCAL PRs can persist the link. Remote PR
+      // candidates are filtered upstream in
+      // `_showLinkToPrPickerFromIssue`; this defensive bail replaces
+      // the old click-time banner.
+      if (candidate.isRemote) {
+        return 'remote-remote link not supported';
+      }
+      return context.read<DeskPrState>().toggleLinkedIssue(
+            repoPath: repoPath,
+            branch: prBranch,
+            issueId: issue.number,
+            isRemote: true,
+          );
+    }
+  }
+
+  bool _isIssueLinkedToPr(
+      PullRequestSummary pr, bool prIsLocal, int issueId, bool issueIsRemote) {
+    if (prIsLocal) {
+      final dp = context.read<DeskPrState>().prFor(pr.headRef);
+      if (dp == null) return false;
+      return issueIsRemote
+          ? dp.linkedRemoteIssues.contains(issueId)
+          : dp.linkedIssues.contains(issueId);
+    } else {
+      // Remote PR: only LOCAL issues can carry the back-reference (via
+      // `addressedBy` with the `pr#N` convention). Remote issue
+      // linking from a remote PR isn't represented locally.
+      if (issueIsRemote) return false;
+      final di = context.read<DeskIssueState>().issueFor(issueId);
+      if (di == null) return false;
+      return di.addressedBy.contains('pr#${pr.number}');
+    }
+  }
+
+  Future<String?> _handleIssueLinkToggle(
+    String repoPath,
+    PullRequestSummary pr,
+    bool prIsLocal,
+    _LinkCandidate candidate,
+  ) async {
+    String? err;
+    if (prIsLocal) {
+      // LOCAL PR side: toggle the link on the PR's metadata.
+      err = await context.read<DeskPrState>().toggleLinkedIssue(
+            repoPath: repoPath,
+            branch: pr.headRef,
+            issueId: candidate.id,
+            isRemote: candidate.isRemote,
+          );
+      // For LOCAL PR + LOCAL issue, also write the symmetric
+      // back-reference on the issue side.
+      if (err == null && !candidate.isRemote) {
+        await context.read<DeskIssueState>().toggleAddressedBy(
+              repoPath: repoPath,
+              id: candidate.id,
+              branch: pr.headRef,
+            );
+      }
+    } else {
+      // REMOTE PR side: linking is only meaningful for LOCAL issues.
+      // Remote candidates are filtered out upstream in
+      // `_showLinkToIssuePicker` so this branch only ever sees local
+      // issues; a defensive bail-out here replaces the old snackbar.
+      if (candidate.isRemote) {
+        return 'remote-remote link not supported';
+      }
+      err = await context.read<DeskIssueState>().toggleAddressedBy(
+            repoPath: repoPath,
+            id: candidate.id,
+            branch: 'pr#${pr.number}',
+          );
+    }
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't toggle link: $err")),
+      );
+    }
+    return err;
   }
 
   /// Patch-loop entry point. Opens a tiny menu next to the `+ patch`
@@ -688,8 +1600,7 @@ class _BranchesPageState extends State<BranchesPage> {
           return;
         }
         if (!mounted) return;
-        await _openPatchPreview(repoPath, text,
-            sourceLabel: 'clipboard.patch');
+        await _openPatchPreview(repoPath, text, sourceLabel: 'clipboard.patch');
       }
     } catch (e) {
       DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -739,7 +1650,8 @@ class _BranchesPageState extends State<BranchesPage> {
     for (final entry in parsed.entries) {
       var adds = 0, dels = 0;
       for (final l in entry.value) {
-        if (l.kind == LineKind.added) adds++;
+        if (l.kind == LineKind.added)
+          adds++;
         else if (l.kind == LineKind.deleted) dels++;
       }
       prFiles.add(PrFile(path: entry.key, additions: adds, deletions: dels));
@@ -758,8 +1670,7 @@ class _BranchesPageState extends State<BranchesPage> {
     // CONFLICTS-WITH-YOU — intersect patch paths with uncommitted paths.
     final status = context.read<RepositoryState>().status;
     final dirty = <String>{
-      for (final f in status?.files ?? const <RepositoryStatusFile>[])
-        f.path,
+      for (final f in status?.files ?? const <RepositoryStatusFile>[]) f.path,
     };
     final patchPaths = prFiles.map((f) => f.path).toSet();
     final conflictingPaths = patchPaths.intersection(dirty);
@@ -781,8 +1692,8 @@ class _BranchesPageState extends State<BranchesPage> {
       fightShared[pr.number] = shared;
       fightOrder.add(pr.number);
     }
-    fightOrder.sort((a, b) =>
-        fightShared[b]!.length.compareTo(fightShared[a]!.length));
+    fightOrder.sort(
+        (a, b) => fightShared[b]!.length.compareTo(fightShared[a]!.length));
 
     final couplingMatrix =
         context.read<FileCouplingState>().matrixFor(repoPath);
@@ -793,6 +1704,7 @@ class _BranchesPageState extends State<BranchesPage> {
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.55),
       builder: (ctx) => _PatchPreviewDialog(
+        repoPath: repoPath,
         sourceLabel: sourceLabel,
         rawPatch: rawPatch,
         prFiles: prFiles,
@@ -806,7 +1718,11 @@ class _BranchesPageState extends State<BranchesPage> {
         couplingMatrix: couplingMatrix,
         auroraSource: auroraSource,
         filePillsWrap: _filePillsWrap,
-        onApply: ({required bool threeWay, required bool reverse}) async {
+        onApply: ({
+          required String rawPatch,
+          required bool threeWay,
+          required bool reverse,
+        }) async {
           final r = await applyPatch(
             repoPath,
             rawPatch,
@@ -834,6 +1750,12 @@ class _BranchesPageState extends State<BranchesPage> {
         _prChecksLoading.contains(prNumber)) {
       return;
     }
+    // Local desk PRs aren't on a forge — there are no remote CI checks
+    // to fetch. Cache an empty list so the row stops spinning.
+    if (_localPrNumbers.contains(prNumber)) {
+      setState(() => _prChecks[prNumber] = const []);
+      return;
+    }
     setState(() => _prChecksLoading.add(prNumber));
     final r = await listChecks(repoPath, prNumber);
     if (!mounted) return;
@@ -851,8 +1773,6 @@ class _BranchesPageState extends State<BranchesPage> {
     });
   }
 
-  // ── Locally-derived signals (the workline graph) ────────────────────
-
   /// Files in [prFiles] that the user currently has uncommitted work in
   /// (staged or unstaged). Pure local computation — answers "will
   /// merging this PR collide with my work?" before the merge button is
@@ -863,10 +1783,8 @@ class _BranchesPageState extends State<BranchesPage> {
     RepositoryStatus? status,
   ) {
     if (status == null || prFiles.isEmpty) return const {};
-    final dirty = status.files
-        .where((f) => f.staged.isNotEmpty || f.unstaged.isNotEmpty)
-        .map((f) => f.path)
-        .toSet();
+    final dirty =
+        status.files.where((f) => f.hasAnyChange).map((f) => f.path).toSet();
     if (dirty.isEmpty) return const {};
     final out = <String>{};
     for (final f in prFiles) {
@@ -949,7 +1867,241 @@ class _BranchesPageState extends State<BranchesPage> {
   /// the next time they're asked.
   void _invalidatePrDerivations() {
     _cachedCollisionMap = null;
+    _cachedCosineMap = null;
     _prDetailsRev++;
+  }
+
+  /// Drop everything keyed on the LogosGit engine — PR shapes (which
+  /// hold engine-indexed φ vectors) and the activity field snapshot.
+  /// Called when the engine is rebuilt (HEAD moved, repo switched) so
+  /// stale shapes don't get cosine'd against a fresh field with
+  /// mismatched node ordering.
+  void _invalidateLogosDerivations() {
+    _prShapes.clear();
+    _prShapeFileFingerprints.clear();
+    _prShapesLoading.clear();
+    _cachedCosineMap = null;
+    _activityField = null;
+    _activityFieldRepoKey = null;
+  }
+
+  /// Order-independent fingerprint of a PR's file list. Captures path,
+  /// per-file additions, and per-file deletions — any change to the
+  /// commits composing the PR shifts at least one of these.
+  /// Uses additive folding (not XOR) seeded with the file count.
+  /// XOR is its own inverse: two files whose `Object.hash * spread`
+  /// contributions happen to be equal cancel to zero, producing the same
+  /// fingerprint as an empty list or any other cancelling pair — exactly
+  /// the stale-shape bug this fingerprint is meant to prevent. Addition
+  /// is commutative (preserves order-independence) and cannot cancel;
+  /// the `files.length` seed ensures an empty list is never congruent
+  /// to a non-empty one whose contributions sum to zero.
+  int _prFilesFingerprint(List<PrFile> files) {
+    var h = files.length;
+    for (final f in files) {
+      h += Object.hash(f.path, f.additions, f.deletions) * 0x1F1F1F1F;
+    }
+    return h;
+  }
+
+  /// Stable generation numbers for engine instances.
+  /// `identityHashCode` is not guaranteed collision-free across the VM
+  /// lifetime: a GC'd engine and a freshly allocated replacement can share
+  /// the same identity hash, causing `_ensureActivityField` to serve a
+  /// stale snapshot for the new engine. `Expando` uses true object
+  /// identity (weak reference, auto-cleaned on GC) and the monotonic
+  /// counter ensures each engine gets a unique tag regardless of address reuse.
+  static final Expando<int> _engineGenMap = Expando();
+  static int _engineGenNext = 0;
+
+  /// Field key for the activity-field snapshot. Combines repo path with
+  /// a per-engine generation number that is unique for the VM lifetime.
+  String _engineFieldKey(String repoPath, LogosGit engine) {
+    _engineGenMap[engine] ??= _engineGenNext++;
+    return '$repoPath#${_engineGenMap[engine]}';
+  }
+
+  /// Snapshot the activity field for [repoPath] using the supplied
+  /// engine. Idempotent — returns the cached snapshot when the engine
+  /// identity matches the prior snapshot's key. Expensive (one full
+  /// Chebyshev pass over the recency-decayed weights), so the caller
+  /// should expect to amortise it across many PR-shape computations.
+  /// On engine identity change (HEAD moved, repo switched), purges all
+  /// derived PR shapes — they hold engine-indexed φ vectors that lose
+  /// meaning under the new node ordering. This is the single chokepoint
+  /// for "engine changed → magnetic state stale," which is why every
+  /// shape compute routes through here first.
+  ActivityField? _ensureActivityField(String repoPath, LogosGit engine) {
+    final key = _engineFieldKey(repoPath, engine);
+    if (_activityField != null && _activityFieldRepoKey == key) {
+      return _activityField;
+    }
+    if (_activityFieldRepoKey != null) {
+      _invalidateLogosDerivations();
+    }
+    final field = PrShapeComputer.computeField(engine: engine);
+    _activityField = field;
+    _activityFieldRepoKey = key;
+    return field;
+  }
+
+  /// Compute (or retrieve cached) [PrShape] for a single PR. Returns
+  /// the shape; updates `_prShapes` as a side effect so the next
+  /// rebuild can read it synchronously. No-op when the engine isn't
+  /// resolved yet — PR shape will be computed on the next
+  /// [_warmPrShapesForVisibleDetails] sweep once the engine arrives.
+  Future<void> _ensurePrShapeComputed(
+    String repoPath,
+    int prNumber,
+    PullRequestDetail detail,
+  ) async {
+    // Content-addressed cache: if the file list shifted (new commits on
+    // the branch since the shape was last computed), recompute. The old
+    // `containsKey` short-circuit froze the header at stale values
+    // forever — observed as `resonance 0.00` sticking around after new
+    // commits added coupled files to the PR.
+    final fingerprint = _prFilesFingerprint(detail.files);
+    if (_prShapeFileFingerprints[prNumber] == fingerprint) return;
+    if (_prShapesLoading.contains(prNumber)) return;
+
+    final engine = context.read<LogosGitState>().engineFor(repoPath);
+    if (engine == null) {
+      // Engine not yet resolved — kick a load so the next pass succeeds.
+      // Don't await; the caller doesn't need to block on cold-start
+      // diffusion plumbing for a UI rebuild path.
+      unawaited(context.read<LogosGitState>().loadForRepo(repoPath));
+      return;
+    }
+
+    _prShapesLoading.add(prNumber);
+    if (mounted) setState(() {});
+
+    try {
+      // Yield once so the synchronous Chebyshev burst doesn't block the
+      // current frame — diffusion is ~0.5-2ms per PR but stacking it
+      // across N PRs in one tick can hitch on cold caches.
+      await Future<void>.delayed(Duration.zero);
+      final field = _ensureActivityField(repoPath, engine);
+      final shape = PrShapeComputer.compute(
+        engine: engine,
+        prFiles: detail.files,
+        field: field,
+      );
+      if (shape != null) {
+        _prShapes[prNumber] = shape;
+        _prShapeFileFingerprints[prNumber] = fingerprint;
+        // Pairwise cosine map invalidates whenever a new shape lands —
+        // cheap to recompute (O(P²)) at realistic open-PR counts.
+        _cachedCosineMap = null;
+      } else {
+        // Failed compute (engine cold, no in-graph files) — drop any
+        // stale entry so the next call retries rather than silently
+        // reusing an out-of-date shape.
+        _prShapes.remove(prNumber);
+        _prShapeFileFingerprints.remove(prNumber);
+      }
+    } finally {
+      _prShapesLoading.remove(prNumber);
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// Bulk-fetch local desk PR details so their rows have files +
+  /// diff loaded for the magnetic-field / row chrome. Idempotent —
+  /// skips PRs whose detail is already cached or in flight.
+  Future<void> _prefetchLocalDeskPrDetails(
+      String repoPath, List<DeskPr> deskPrs) async {
+    for (final dp in deskPrs) {
+      if (_prDetails.containsKey(dp.deskId)) continue;
+      if (_localDeskDiffsLoading.contains(dp.headRef)) continue;
+      _localDeskDiffsLoading.add(dp.headRef);
+      // Fire-and-forget; per-PR setState lands when the diff resolves.
+      unawaited(_loadLocalDeskPrDetail(repoPath, dp));
+    }
+  }
+
+  Future<void> _loadLocalDeskPrDetail(String repoPath, DeskPr pr) async {
+    try {
+      final r = await fetchLocalDeskPrDetail(repoPath: repoPath, pr: pr);
+      if (!mounted) return;
+      if (r.ok && r.data != null) {
+        final files = r.data!.files;
+        final adds = files.fold<int>(0, (a, f) => a + f.additions);
+        final dels = files.fold<int>(0, (a, f) => a + f.deletions);
+        setState(() {
+          _prDetails[pr.deskId] = r.data!;
+          if (files.isNotEmpty && !_activeFileByPr.containsKey(pr.deskId)) {
+            _activeFileByPr[pr.deskId] = files.first.path;
+          }
+          _invalidatePrDerivations();
+        });
+        // Persist the diff metrics back into refs/manifold/desks/<branch>
+        // so the row's metric line ("+N -M, K files") reads truthfully
+        // before the user expands. Quiet — the store skips the commit
+        // when nothing changed, so this is cheap on the steady state.
+        unawaited(context.read<DeskPrState>().refreshDiffStats(
+              repoPath: repoPath,
+              branch: pr.headRef,
+              additions: adds,
+              deletions: dels,
+              changedFiles: files.length,
+            ));
+        // Same as remote: kick the magnetic-shape compute so the row's
+        // rail / orbital ordering / WILL-FIGHT cosines all light up
+        // identically for local PRs.
+        unawaited(_ensurePrShapeComputed(repoPath, pr.deskId, r.data!));
+      }
+    } finally {
+      _localDeskDiffsLoading.remove(pr.headRef);
+    }
+  }
+
+  /// Warm shapes for every PR whose detail is already cached. Called
+  /// after a bulk detail-prefetch lands so the orbital ordering and
+  /// rail-color treatments have data to render against.
+  void _warmPrShapesForVisibleDetails(String repoPath) {
+    final engine = context.read<LogosGitState>().engineFor(repoPath);
+    if (engine == null) {
+      unawaited(context.read<LogosGitState>().loadForRepo(repoPath));
+      return;
+    }
+    for (final entry in _prDetails.entries) {
+      if (_prShapesLoading.contains(entry.key)) continue;
+      // Intentionally no `_prShapes.containsKey` pre-filter: the
+      // fingerprint check inside _ensurePrShapeComputed is now
+      // authoritative, so pre-filtering here would re-introduce the
+      // staleness. The internal early-return is O(files) and cheap.
+      unawaited(_ensurePrShapeComputed(repoPath, entry.key, entry.value));
+    }
+  }
+
+  /// Pairwise PR cosine map — orbital partnership matrix. Replaces the
+  /// binary file-overlap heuristic in [_prCollisionMap] with a real
+  /// geometric similarity. Cosines are non-negative (heat-kernel φ is
+  /// non-negative) so the values live in [0, 1]: 1 = identical
+  /// neighborhood reach, 0 = fully orthogonal footprints.
+  /// Sparse — only includes pairs where BOTH PRs have a computed
+  /// shape; unloaded PRs simply omit. Caller falls back to file-overlap
+  /// when an entry is missing.
+  Map<int, Map<int, double>> _prCosineMap() {
+    if (_cachedCosineMap != null) return _cachedCosineMap!;
+    final map = <int, Map<int, double>>{};
+    final entries = _prShapes.entries.toList();
+    for (var i = 0; i < entries.length; i++) {
+      final aNum = entries[i].key;
+      final aPhi = entries[i].value.phi;
+      for (var j = i + 1; j < entries.length; j++) {
+        final bNum = entries[j].key;
+        final bPhi = entries[j].value.phi;
+        if (aPhi.length != bPhi.length) continue;
+        final c = PrShapeComputer.cosine(aPhi, bPhi);
+        if (c <= 0) continue;
+        (map[aNum] ??= <int, double>{})[bNum] = c;
+        (map[bNum] ??= <int, double>{})[aNum] = c;
+      }
+    }
+    _cachedCosineMap = map;
+    return map;
   }
 
   /// True when this PR's branch is the working tree's current head —
@@ -1041,9 +2193,8 @@ class _BranchesPageState extends State<BranchesPage> {
   ///   * 'commented'
   String _myReviewStateFor(PullRequestSummary pr) {
     if (_viewerLogin.isEmpty) return '';
-    final mine = pr.reviewers
-        .firstWhere((r) => r.login == _viewerLogin,
-            orElse: () => const PrReviewer(login: '', state: ''));
+    final mine = pr.reviewers.firstWhere((r) => r.login == _viewerLogin,
+        orElse: () => const PrReviewer(login: '', state: ''));
     if (mine.login.isEmpty) return '';
     final state = mine.state;
     if (state == 'PENDING') return 'pending';
@@ -1082,8 +2233,7 @@ class _BranchesPageState extends State<BranchesPage> {
         c.conclusion == 'failure' ||
         c.conclusion == 'timed_out' ||
         c.conclusion == 'action_required');
-    final hasApprovedReview =
-        pr.reviewers.any((r) => r.state == 'APPROVED');
+    final hasApprovedReview = pr.reviewers.any((r) => r.state == 'APPROVED');
     return hasFailingCheck || !hasApprovedReview;
   }
 
@@ -1103,8 +2253,6 @@ class _BranchesPageState extends State<BranchesPage> {
     return out;
   }
 
-  // ── Filtering / search pipelines ────────────────────────────────────
-
   bool _prMatchesMine(PullRequestSummary pr) {
     if (_viewerLogin.isEmpty) return false;
     if (pr.authorLogin == _viewerLogin) return true;
@@ -1120,8 +2268,8 @@ class _BranchesPageState extends State<BranchesPage> {
       // PRs awaiting your review specifically. Match either an explicit
       // review-request on you, or a "REVIEW_REQUIRED" decision when the
       // viewer is also a reviewer.
-      final youOnDeck = pr.reviewers.any(
-          (r) => r.login == _viewerLogin && r.state == 'PENDING');
+      final youOnDeck = pr.reviewers
+          .any((r) => r.login == _viewerLogin && r.state == 'PENDING');
       if (!youOnDeck) return false;
     }
     if (_prSearch.isNotEmpty) {
@@ -1157,8 +2305,6 @@ class _BranchesPageState extends State<BranchesPage> {
     return true;
   }
 
-  // ── Detail loading ──────────────────────────────────────────────────
-
   /// Two modes:
   ///   * full=true (default; user expanded a PR) — fetches body, files,
   ///     comments AND `gh pr diff`. The diff alone can be megabytes
@@ -1179,6 +2325,29 @@ class _BranchesPageState extends State<BranchesPage> {
     // If we've cached metadata-only and the caller wants the full
     // version, drop the cache so we re-fetch with the diff this time.
     if (cached != null && (!full || cached.diff.isNotEmpty)) return;
+    // Local desk PR? Route through the local diff fetch instead of
+    // `gh pr view` (which would 404). Metadata + thread come from
+    // DeskPrState; the diff comes from `git diff baseRef..headRef`.
+    if (_localPrNumbers.contains(prNumber)) {
+      final dp = context.read<DeskPrState>().all.firstWhere(
+            (p) => p.deskId == prNumber,
+            orElse: () => DeskPr(
+              deskId: prNumber,
+              title: '',
+              body: '',
+              headRef: '',
+              baseRef: 'main',
+              state: 'OPEN',
+              isDraft: true,
+              authorIdentity: '',
+              createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
+            ),
+          );
+      if (dp.headRef.isEmpty) return;
+      await _loadLocalDeskPrDetail(repoPath, dp);
+      return;
+    }
     setState(() => _prDetailsLoading.add(prNumber));
     final r = await pullRequestDetail(repoPath, prNumber, includeDiff: full);
     if (!mounted) return;
@@ -1193,20 +2362,25 @@ class _BranchesPageState extends State<BranchesPage> {
         _invalidatePrDerivations();
       }
     });
+    // Detail just landed — kick the geometric shape compute so the
+    // orbital ordering, rail tinting, and pairwise cosine map have
+    // data to render against on the next rebuild. Fire-and-forget; the
+    // shape itself triggers a setState when it lands.
+    if (r.ok && mounted) {
+      unawaited(_ensurePrShapeComputed(repoPath, prNumber, r.data!));
+    }
   }
 
   /// One git scan per file → both authors AND thermal heat.
   /// Capped to the top-12 most-changed files so sprawling PRs don't
   /// issue 100+ git logs.
-  Future<void> _ensurePrFileSignalsLoaded(
-      String repoPath, int prNumber) async {
+  Future<void> _ensurePrFileSignalsLoaded(String repoPath, int prNumber) async {
     if (_prFileSignals.containsKey(prNumber) ||
         _prFileSignalsLoading.contains(prNumber)) return;
     final detail = _prDetails[prNumber];
     if (detail == null || detail.files.isEmpty) return;
-    final paths = ([...detail.files]
-          ..sort((a, b) =>
-              (b.additions + b.deletions).compareTo(a.additions + a.deletions)))
+    final paths = ([...detail.files]..sort((a, b) =>
+            (b.additions + b.deletions).compareTo(a.additions + a.deletions)))
         .take(12)
         .map((f) => f.path)
         .toList();
@@ -1225,6 +2399,16 @@ class _BranchesPageState extends State<BranchesPage> {
         _issueDetailsLoading.contains(issueNumber)) {
       return;
     }
+    // Local issue: detail (body, comments, labels, assignees) lives in
+    // refs/manifold/issues/<id>'s issue.json blob — already cached in
+    // DeskIssueState. Adapt and stash so the row's expanded view reads
+    // identically to a remote issue's detail.
+    if (_localIssueNumbers.contains(issueNumber)) {
+      final di = context.read<DeskIssueState>().issueFor(issueNumber);
+      if (di == null) return;
+      setState(() => _issueDetails[issueNumber] = di.toDetail());
+      return;
+    }
     setState(() => _issueDetailsLoading.add(issueNumber));
     final r = await issueDetail(repoPath, issueNumber);
     if (!mounted) return;
@@ -1235,8 +2419,6 @@ class _BranchesPageState extends State<BranchesPage> {
       }
     });
   }
-
-  // ── Action handlers ─────────────────────────────────────────────────
 
   Future<void> _runPrAction(
     String repoPath,
@@ -1328,7 +2510,8 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _checkoutPr(String repoPath, int number) async {
-    await _runPrAction(repoPath, number, () => checkoutPullRequest(repoPath, number),
+    await _runPrAction(
+        repoPath, number, () => checkoutPullRequest(repoPath, number),
         refreshDetail: false);
     if (!mounted) return;
     // Spatial migration cue: pull a fresh branches list so the new
@@ -1338,8 +2521,6 @@ class _BranchesPageState extends State<BranchesPage> {
     if (!mounted) return;
     await context.read<RepositoryState>().refreshStatus();
   }
-
-  // ── Keyboard navigation ─────────────────────────────────────────────
 
   KeyEventResult _onLensKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -1377,8 +2558,7 @@ class _BranchesPageState extends State<BranchesPage> {
             ((_focusedPrIndex ?? -1) + 1).clamp(0, visible.length - 1));
         return KeyEventResult.handled;
       }
-      if (key == LogicalKeyboardKey.keyK ||
-          key == LogicalKeyboardKey.arrowUp) {
+      if (key == LogicalKeyboardKey.keyK || key == LogicalKeyboardKey.arrowUp) {
         setState(() => _focusedPrIndex =
             ((_focusedPrIndex ?? visible.length) - 1)
                 .clamp(0, visible.length - 1));
@@ -1416,6 +2596,20 @@ class _BranchesPageState extends State<BranchesPage> {
                   body: '(requested changes from Manifold)'));
           return KeyEventResult.handled;
         }
+        // Ctrl/Cmd+L: open the sticky link picker for this PR. Single
+        // keybinding for both directions — the dispatch depends on
+        // which row is focused. Chosen as the "link" mnemonic; doesn't
+        // collide with other branches-lens shortcuts.
+        if (key == LogicalKeyboardKey.keyL &&
+            (HardwareKeyboard.instance.isControlPressed ||
+                HardwareKeyboard.instance.isMetaPressed)) {
+          _showLinkToIssuePicker(
+            repoPath,
+            pr,
+            _localPrNumbers.contains(pr.number),
+          );
+          return KeyEventResult.handled;
+        }
       }
     } else if (_lens == _BranchesLens.issues && _issues != null) {
       final visible = _issues!.where(_issueMatchesFilters).toList();
@@ -1426,8 +2620,7 @@ class _BranchesPageState extends State<BranchesPage> {
             ((_focusedIssueIndex ?? -1) + 1).clamp(0, visible.length - 1));
         return KeyEventResult.handled;
       }
-      if (key == LogicalKeyboardKey.keyK ||
-          key == LogicalKeyboardKey.arrowUp) {
+      if (key == LogicalKeyboardKey.keyK || key == LogicalKeyboardKey.arrowUp) {
         setState(() => _focusedIssueIndex =
             ((_focusedIssueIndex ?? visible.length) - 1)
                 .clamp(0, visible.length - 1));
@@ -1443,6 +2636,17 @@ class _BranchesPageState extends State<BranchesPage> {
           if (_expandedIssueNumber != null) {
             _ensureIssueDetailLoaded(repoPath, issue.number);
           }
+          return KeyEventResult.handled;
+        }
+        // Ctrl/Cmd+L: reverse-direction link picker from the issue side.
+        if (key == LogicalKeyboardKey.keyL &&
+            (HardwareKeyboard.instance.isControlPressed ||
+                HardwareKeyboard.instance.isMetaPressed)) {
+          _showLinkToPrPickerFromIssue(
+            repoPath,
+            issue,
+            _localIssueNumbers.contains(issue.number),
+          );
           return KeyEventResult.handled;
         }
       }
@@ -1494,6 +2698,12 @@ class _BranchesPageState extends State<BranchesPage> {
       _prDetails.clear();
       _prDetailsLoading.clear();
       _invalidatePrDerivations();
+      // PR shape data is φ-indexed into the outgoing repo's LogosGit
+      // engine — same PR number in a different repo would re-use that
+      // stale shape until the next `_ensureActivityField` call flips
+      // it. Drop it explicitly so the new repo starts with no shape
+      // ghosts bleeding into orbital sort / rail tint / WILL FIGHT.
+      _invalidateLogosDerivations();
       _hoveredPrNumber.value = null;
       _issueDetails.clear();
       _issueDetailsLoading.clear();
@@ -1538,103 +2748,101 @@ class _BranchesPageState extends State<BranchesPage> {
       onKeyEvent: _onLensKey,
       child: Stack(children: [
         Column(children: [
-      // Lens ribbon — three modes share this tab.
-      _LensRibbon(
-        active: _lens,
-        branchCount: _branches.length,
-        prCount: _prs?.length,
-        issueCount: _issues?.length,
-        refreshing: _loading || _prsLoading || _issuesLoading,
-        onChanged: (lens) => _switchLens(lens, repoPath),
-        onRefresh: () => _refreshActiveLens(repoPath),
-        onToggleHelp: () =>
-            setState(() => _showKeyboardHelp = !_showKeyboardHelp),
-        onImportPatch: () => _importPatch(repoPath),
-      ),
-      // Filter row — appears only on PR/Issue lenses; pills latch on
-      // click. Search box on the same line.
-      if (_lens == _BranchesLens.prs)
-        _FilterRow(
-          searchCtrl: _prSearchCtrl,
-          searchHint: 'filter pull requests…',
-          onSearchChanged: (v) => setState(() => _prSearch = v),
-          pills: [
-            (
-              'MINE',
-              _prs == null
-                  ? null
-                  : _prs!.where(_prMatchesMine).length,
-              _prFilters.contains('MINE'),
-            ),
-            ('DRAFTS', null, _prFilters.contains('DRAFTS')),
-            (
-              'REVIEW NEEDED',
-              null,
-              _prFilters.contains('REVIEW NEEDED'),
-            ),
-          ],
-          onTogglePill: (label) {
-            setState(() {
-              if (_prFilters.contains(label)) {
-                _prFilters.remove(label);
-              } else {
-                _prFilters.add(label);
-              }
-              _focusedPrIndex = null;
-            });
-          },
-        ),
-      if (_lens == _BranchesLens.issues)
-        _FilterRow(
-          searchCtrl: _issueSearchCtrl,
-          searchHint: 'filter issues…',
-          onSearchChanged: (v) => setState(() => _issueSearch = v),
-          pills: [
-            ('MINE', null, _issueFilters.contains('MINE')),
-            ('UNASSIGNED', null, _issueFilters.contains('UNASSIGNED')),
-            ('BUGS', null, _issueFilters.contains('BUGS')),
-          ],
-          onTogglePill: (label) {
-            setState(() {
-              if (_issueFilters.contains(label)) {
-                _issueFilters.remove(label);
-              } else {
-                _issueFilters.add(label);
-              }
-              _focusedIssueIndex = null;
-            });
-          },
-        ),
-
-      if (_lens == _BranchesLens.branches && _error != null)
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text(_error!,
-              style: TextStyle(color: t.stateConflicted, fontSize: 11)),
-        ),
-
-      // Body — switched by lens. AnimatedSwitcher fades between lenses
-      // using the active theme's motion shader (snappy / fluid /
-      // elastic), so the transition feels native to each theme. The
-      // morph between specific row identities (branches that have PRs
-      // → PR rows in place) is a v2 enrichment; for v1 a clean fade
-      // already sells the lens metaphor while keeping the per-lens
-      // surfaces unrelated in code.
-      Expanded(
-        child: AnimatedSwitcher(
-          duration: context.motion(context.surfaceShader.duration),
-          switchInCurve: context.surfaceShader.safeCurve,
-          switchOutCurve: context.surfaceShader.safeCurve,
-          child: KeyedSubtree(
-            key: ValueKey(_lens),
-            child: switch (_lens) {
-              _BranchesLens.branches => _buildBranchesBody(t, repoPath),
-              _BranchesLens.prs => _buildPullRequestsBody(t, repoPath),
-              _BranchesLens.issues => _buildIssuesBody(t, repoPath),
-            },
+          // Lens ribbon — three modes share this tab.
+          _LensRibbon(
+            active: _lens,
+            branchCount: _branches.length,
+            prCount: _prs?.length,
+            issueCount: _issues?.length,
+            refreshing: _loading || _prsLoading || _issuesLoading,
+            onChanged: (lens) => _switchLens(lens, repoPath),
+            onRefresh: () => _refreshActiveLens(repoPath),
+            onToggleHelp: () =>
+                setState(() => _showKeyboardHelp = !_showKeyboardHelp),
+            onImportPatch: () => _importPatch(repoPath),
           ),
-        ),
-      ),
+          // Filter row — appears only on PR/Issue lenses; pills latch on
+          // click. Search box on the same line.
+          if (_lens == _BranchesLens.prs)
+            _FilterRow(
+              searchCtrl: _prSearchCtrl,
+              searchHint: 'filter pull requests…',
+              onSearchChanged: (v) => setState(() => _prSearch = v),
+              pills: [
+                (
+                  'MINE',
+                  _prs == null ? null : _prs!.where(_prMatchesMine).length,
+                  _prFilters.contains('MINE'),
+                ),
+                ('DRAFTS', null, _prFilters.contains('DRAFTS')),
+                (
+                  'REVIEW NEEDED',
+                  null,
+                  _prFilters.contains('REVIEW NEEDED'),
+                ),
+              ],
+              onTogglePill: (label) {
+                setState(() {
+                  if (_prFilters.contains(label)) {
+                    _prFilters.remove(label);
+                  } else {
+                    _prFilters.add(label);
+                  }
+                  _focusedPrIndex = null;
+                });
+              },
+            ),
+          if (_lens == _BranchesLens.issues)
+            _FilterRow(
+              searchCtrl: _issueSearchCtrl,
+              searchHint: 'filter issues…',
+              onSearchChanged: (v) => setState(() => _issueSearch = v),
+              pills: [
+                ('MINE', null, _issueFilters.contains('MINE')),
+                ('UNASSIGNED', null, _issueFilters.contains('UNASSIGNED')),
+                ('BUGS', null, _issueFilters.contains('BUGS')),
+              ],
+              onTogglePill: (label) {
+                setState(() {
+                  if (_issueFilters.contains(label)) {
+                    _issueFilters.remove(label);
+                  } else {
+                    _issueFilters.add(label);
+                  }
+                  _focusedIssueIndex = null;
+                });
+              },
+            ),
+
+          if (_lens == _BranchesLens.branches && _error != null)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(_error!,
+                  style: TextStyle(color: t.stateConflicted, fontSize: 11)),
+            ),
+
+          // Body — switched by lens. AnimatedSwitcher fades between lenses
+          // using the active theme's motion shader (snappy / fluid /
+          // elastic), so the transition feels native to each theme. The
+          // morph between specific row identities (branches that have PRs
+          // → PR rows in place) is a v2 enrichment; for v1 a clean fade
+          // already sells the lens metaphor while keeping the per-lens
+          // surfaces unrelated in code.
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: context.motion(context.surfaceShader.duration),
+              switchInCurve: context.surfaceShader.safeCurve,
+              switchOutCurve: context.surfaceShader.safeCurve,
+              child: KeyedSubtree(
+                key: ValueKey(_lens),
+                child: switch (_lens) {
+                  _BranchesLens.branches => _buildBranchesBody(t, repoPath),
+                  _BranchesLens.prs => _buildPullRequestsBody(t, repoPath),
+                  _BranchesLens.issues => _buildIssuesBody(t, repoPath),
+                },
+              ),
+            ),
+          ),
         ]),
         // Keyboard help overlay — translucent veneer that slides over
         // the lens body. Dismisses on any pointer-down or `?` toggle.
@@ -1650,193 +2858,246 @@ class _BranchesPageState extends State<BranchesPage> {
 
   Widget _buildBranchesBody(AppTokens t, String repoPath) {
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Left: branch list + tags
-        Expanded(
-            child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Branch list (the lens ribbon already says "BRANCHES" —
-            // a second "Repository Branches" header here was redundant
-            // chrome).
-            ...(_branches.map((b) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: _BranchCard(
-                    branch: b,
-                    tokens: t,
-                    actionRunning: _actionRunning,
-                    onCheckout:
-                        b.current ? null : () => _checkout(repoPath, b.name),
-                    onDelete: b.current
-                        ? null
-                        : ({bool force = false}) =>
-                            _deleteBranch(repoPath, b.name, force: force),
-                  ),
-                ))),
+      // Left: branch list + tags
+      Expanded(
+          child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // Branch list (the lens ribbon already says "BRANCHES" —
+          // a second "Repository Branches" header here was redundant
+          // chrome).
+          ...(_branches.map((b) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: _BranchCard(
+                  branch: b,
+                  tokens: t,
+                  actionRunning: _actionRunning,
+                  onCheckout:
+                      b.current ? null : () => _checkout(repoPath, b.name),
+                  onDelete: b.current
+                      ? null
+                      : ({bool force = false}) =>
+                          _deleteBranch(repoPath, b.name, force: force),
+                  onSecondaryTap: (pos) =>
+                      _showBranchContextMenu(context, pos, b, repoPath),
+                ),
+              ))),
 
-            // Tags section
-            if (_tags.isNotEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(0, 20, 0, 12),
-                child: Row(children: [
-                  Expanded(
-                      child: Divider(
-                          color: t.chromeBorder.withValues(alpha: 0.15),
-                          height: 1,
-                          thickness: 1)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Row(children: [
-                      AppIcon(name: 'tag', size: 12, color: t.textMuted),
-                      const SizedBox(width: 6),
-                      Text('Tags',
+          // Tags section
+          if (_tags.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(0, 20, 0, 12),
+              child: Row(children: [
+                Expanded(
+                    child: Divider(
+                        color: t.chromeBorder.withValues(alpha: 0.15),
+                        height: 1,
+                        thickness: 1)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Row(children: [
+                    AppIcon(name: 'tag', size: 12, color: t.textMuted),
+                    const SizedBox(width: 6),
+                    Text('Tags',
+                        style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.08)),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: t.chromeBorder.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text('${_tags.length}',
                           style: TextStyle(
                               color: t.textMuted,
                               fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 0.08)),
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: t.chromeBorder.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text('${_tags.length}',
-                            style: TextStyle(
-                                color: t.textMuted,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600)),
-                      ),
-                    ]),
-                  ),
-                  Expanded(
-                      child: Divider(
-                          color: t.chromeBorder.withValues(alpha: 0.15),
-                          height: 1,
-                          thickness: 1)),
-                ]),
-              ),
-              ...(_tags.map((tag) => Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: _TagCard(
-                      tag: tag,
-                      tokens: t,
-                      hovered: _hoveredTag == tag.name,
-                      actionRunning: _actionRunning,
-                      onHoverChange: (v) =>
-                          setState(() => _hoveredTag = v ? tag.name : null),
-                      onDelete: () => _deleteTag(repoPath, tag.name),
+                              fontWeight: FontWeight.w600)),
                     ),
-                  ))),
-            ],
-            if (_tags.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Center(
-                    child: Text('No tags yet',
-                        style: TextStyle(color: t.textMuted, fontSize: 11))),
-              ),
-          ]),
-        )),
-
-        // Right: Create Branch sidebar (240px)
-        MaterialSurface(
-          tone: AppMaterialTone.surface1,
-          radius: 0,
-          border: Border(
-            left: BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
-          ),
-          elevated: false,
-          width: 240,
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Create New Branch',
-                        style: TextStyle(
-                            color: t.textStrong,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 12),
-                    // Branch name input
-                    Focus(
-                      onKeyEvent: (node, event) {
-                        if (event is KeyDownEvent &&
-                            event.logicalKey == LogicalKeyboardKey.enter) {
-                          _createBranch(repoPath);
-                          return KeyEventResult.handled;
-                        }
-                        return KeyEventResult.ignored;
-                      },
-                      child: AppTextField(
-                        controller: _newBranchCtrl,
-                        height: 34,
-                        fontSize: 12,
-                        hintText: 'Branch name (e.g. feature/auth)',
-                        onChanged: (_) => setState(() {}),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    // Create button
-                    SizedBox(
-                      height: 26,
-                      child: _ChromeButton(
-                        label: 'Create branch from HEAD',
-                        enabled: !(_newBranchCtrl.text.trim().isEmpty ||
-                            _actionRunning),
-                        onPressed: (_newBranchCtrl.text.trim().isEmpty ||
-                                _actionRunning)
-                            ? null
-                            : () => _createBranch(repoPath),
-                      ),
-                    ),
-                    // Action error
-                    if (_actionError != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: t.stateConflicted.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(
-                                context.surfaceShader.geometry.pillRadius),
-                            border: Border.all(
-                                color: t.stateConflicted.withValues(alpha: 0.2)),
-                          ),
-                          child: Text(_actionError!,
-                              style: TextStyle(
-                                  color: t.stateConflicted, fontSize: 11)),
-                        ),
-                      ),
                   ]),
+                ),
+                Expanded(
+                    child: Divider(
+                        color: t.chromeBorder.withValues(alpha: 0.15),
+                        height: 1,
+                        thickness: 1)),
+              ]),
             ),
-          ]),
+            ...(_tags.map((tag) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: _TagCard(
+                    tag: tag,
+                    tokens: t,
+                    hovered: _hoveredTag == tag.name,
+                    actionRunning: _actionRunning,
+                    onHoverChange: (v) =>
+                        setState(() => _hoveredTag = v ? tag.name : null),
+                    onDelete: () => _deleteTag(repoPath, tag.name),
+                  ),
+                ))),
+          ],
+          if (_tags.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Center(
+                  child: Text('No tags yet',
+                      style: TextStyle(color: t.textMuted, fontSize: 11))),
+            ),
+        ]),
+      )),
+
+      // Right: Create Branch sidebar (240px)
+      MaterialSurface(
+        tone: AppMaterialTone.surface1,
+        radius: 0,
+        border: Border(
+          left: BorderSide(color: t.chromeBorder.withValues(alpha: 0.15)),
         ),
-      ]);
+        elevated: false,
+        width: 240,
+        child:
+            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Create New Branch',
+                      style: TextStyle(
+                          color: t.textStrong,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 12),
+                  // Branch name input
+                  Focus(
+                    onKeyEvent: (node, event) {
+                      if (event is KeyDownEvent &&
+                          event.logicalKey == LogicalKeyboardKey.enter) {
+                        _createBranch(repoPath);
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: AppTextField(
+                      controller: _newBranchCtrl,
+                      height: 34,
+                      fontSize: 12,
+                      hintText: 'Branch name (e.g. feature/auth)',
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Create button
+                  SizedBox(
+                    height: 26,
+                    child: _ChromeButton(
+                      label: 'Create branch from HEAD',
+                      enabled: !(_newBranchCtrl.text.trim().isEmpty ||
+                          _actionRunning),
+                      onPressed:
+                          (_newBranchCtrl.text.trim().isEmpty || _actionRunning)
+                              ? null
+                              : () => _createBranch(repoPath),
+                    ),
+                  ),
+                  // Action error
+                  if (_actionError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: t.stateConflicted.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(
+                              context.surfaceShader.geometry.pillRadius),
+                          border: Border.all(
+                              color: t.stateConflicted.withValues(alpha: 0.2)),
+                        ),
+                        child: Text(_actionError!,
+                            style: TextStyle(
+                                color: t.stateConflicted, fontSize: 11)),
+                      ),
+                    ),
+                ]),
+          ),
+        ]),
+      ),
+    ]);
   }
 
-  // ── PRs lens body ───────────────────────────────────────────────────
-
   Widget _buildPullRequestsBody(AppTokens t, String repoPath) {
+    // Watch the engine state — when LogosGit warms, this body rebuilds,
+    // and the post-frame sweep below picks up any cached PR details
+    // whose shapes haven't computed yet. The interplay is the only
+    // safe way to bridge "engine is async" with "shapes need engine":
+    // we don't block on cold-start, but we don't drop the signal
+    // either.
+    context.watch<LogosGitState>();
+    final deskPrs = context.watch<DeskPrState>().all;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _warmPrShapesForVisibleDetails(repoPath);
+      // Lazily fetch detail for any local desk PR that hasn't been
+      // expanded yet — same role as _prefetchPrDetails for remote PRs,
+      // but the data source is `git diff baseRef..headRef`.
+      _prefetchLocalDeskPrDetails(repoPath, deskPrs);
+    });
     final status = _ghStatus;
-    if (_prsLoading && (_prs == null || _prs!.isEmpty)) {
+    if (_prsLoading && (_prs == null || _prs!.isEmpty) && deskPrs.isEmpty) {
       return _LensLoadingNotice(label: 'Reading pull requests…');
     }
-    if (status != null && !status.usable) {
-      return _GhMissingNotice(status: status);
+    // Remote PRs first — same data and lifecycle as before. Local desk
+    // PRs are mixed in as PullRequestSummary adapters so the row
+    // renderer treats both interchangeably. When a branch has both
+    // (desk promoted + pushed + remote PR opened), the remote wins —
+    // it's the source of truth for collaboration; the local metadata
+    // remains accessible via git refs but is hidden from the list to
+    // avoid duplicate rows for the same branch.
+    final remoteList = _prs ?? const <PullRequestSummary>[];
+    final remoteBranches = remoteList.map((p) => p.headRef).toSet();
+    final viewerLogin = _viewerLogin.isNotEmpty
+        ? _viewerLogin
+        : context.read<AppIdentityState>().identity.shortName;
+    final localSummaries = <PullRequestSummary>[];
+    for (final dp in deskPrs) {
+      if (remoteBranches.contains(dp.headRef)) continue;
+      // Reauthor the summary with the effective viewer login so the
+      // MINE filter sees the user as the author of their own local PRs.
+      final s = dp.toSummary();
+      localSummaries.add(PullRequestSummary(
+        number: s.number,
+        title: s.title,
+        headRef: s.headRef,
+        baseRef: s.baseRef,
+        state: s.state,
+        isDraft: s.isDraft,
+        authorLogin: viewerLogin,
+        conversationCount: s.conversationCount,
+        updatedAt: s.updatedAt,
+        additions: s.additions,
+        deletions: s.deletions,
+        changedFiles: s.changedFiles,
+        mergeable: s.mergeable,
+        reviewers: s.reviewers,
+        labels: s.labels,
+        assignees: s.assignees,
+        reviewDecision: s.reviewDecision,
+      ));
     }
-    final allPrs = _prs ?? const <PullRequestSummary>[];
+    final allPrs = [...remoteList, ...localSummaries];
     if (allPrs.isEmpty) {
       return _LensEmptyNotice(
         primary: 'No open pull requests',
-        secondary: _prsError ?? 'Open one from a branch and it lands here.',
+        secondary: _prsError ?? 'Open one from a branch, or promote a desk.',
       );
     }
+    // (The dedupe'd set is also exposed as the `_localPrNumbers`
+    // getter — same value, derived fresh on access so reads from
+    // async event handlers always see the current DeskPrState.)
     final prs = allPrs.where(_prMatchesFilters).toList();
     final mainColumn = prs.isEmpty
         ? _LensEmptyNotice(
@@ -1853,7 +3114,12 @@ class _BranchesPageState extends State<BranchesPage> {
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: _bucketedPrChildren(repoPath, prs, t),
+              children: _bucketedPrChildren(
+                repoPath,
+                prs,
+                t,
+                {for (final s in localSummaries) s.number},
+              ),
             ),
           );
     // Issues sidebar — same structural slot as the branches view's
@@ -2021,14 +3287,15 @@ class _BranchesPageState extends State<BranchesPage> {
     String repoPath,
     List<PullRequestSummary> prs,
     AppTokens t,
+    Set<int> localNumbers,
   ) {
     if (prs.length < 4) {
       return [
-        for (var i = 0; i < prs.length; i++) _buildPrRow(repoPath, prs, i),
+        for (var i = 0; i < prs.length; i++)
+          _buildPrRow(repoPath, prs, i, localNumbers),
       ];
     }
-    final sorted = [...prs]
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final sorted = [...prs]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     final now = DateTime.now();
     final fresh = <PullRequestSummary>[];
     final week = <PullRequestSummary>[];
@@ -2041,8 +3308,7 @@ class _BranchesPageState extends State<BranchesPage> {
       // PRs that simply haven't been touched lately as equal to PRs
       // that are *blocked*. STALLED separates "actually rotting" from
       // "old but progressing." Manager's most-wanted signal.
-      final hasPendingReviewer =
-          pr.reviewers.any((r) => r.state == 'PENDING');
+      final hasPendingReviewer = pr.reviewers.any((r) => r.state == 'PENDING');
       if (age.inHours < 24) {
         fresh.add(pr);
       } else if (age.inDays < 7) {
@@ -2053,6 +3319,51 @@ class _BranchesPageState extends State<BranchesPage> {
         older.add(pr);
       }
     }
+    // Within each time-bucket, re-order by orbital position: PRs aligned
+    // with the recent-activity field rise toward the top; orthogonal
+    // ones fall to the bottom. Adjacent ties broken by mutual cosine
+    // (orbital partners stay neighbors). Falls back to time-order for
+    // any PR whose shape hasn't computed yet — list never thrashes
+    // under cold-start.
+    void orbitSort(List<PullRequestSummary> bucket) {
+      if (bucket.length < 2) return;
+      final cosines = _prCosineMap();
+      // Stable primary sort: alignment desc (nulls last → time-order).
+      bucket.sort((a, b) {
+        final sa = _prShapes[a.number]?.fieldAlignment;
+        final sb = _prShapes[b.number]?.fieldAlignment;
+        if (sa == null && sb == null) {
+          // Both unknown — preserve incoming time order.
+          return 0;
+        }
+        if (sa == null) return 1;
+        if (sb == null) return -1;
+        return sb.compareTo(sa);
+      });
+      // Local greedy pass: for adjacent positions, swap if the next-
+      // next is a stronger orbital partner of the current. One-pass
+      // comb — improves clustering at zero risk of unbounded shuffling.
+      for (var i = 0; i + 2 < bucket.length; i++) {
+        final cur = bucket[i].number;
+        final nxt = bucket[i + 1].number;
+        final far = bucket[i + 2].number;
+        final cNxt = cosines[cur]?[nxt] ?? 0;
+        final cFar = cosines[cur]?[far] ?? 0;
+        if (cFar > cNxt + 0.05) {
+          // Far is meaningfully closer to cur than nxt is — swap them
+          // so cur's orbital partner sits next to it.
+          final tmp = bucket[i + 1];
+          bucket[i + 1] = bucket[i + 2];
+          bucket[i + 2] = tmp;
+        }
+      }
+    }
+
+    orbitSort(fresh);
+    orbitSort(week);
+    orbitSort(stalled);
+    orbitSort(older);
+
     final out = <Widget>[];
     void emitBucket(String label, List<PullRequestSummary> bucket,
         {bool tone = false}) {
@@ -2066,9 +3377,10 @@ class _BranchesPageState extends State<BranchesPage> {
         // Resolve original index via reference identity so action
         // handlers still target the right entry in `prs`.
         final origIdx = prs.indexOf(bucket[i]);
-        out.add(_buildPrRow(repoPath, prs, origIdx));
+        out.add(_buildPrRow(repoPath, prs, origIdx, localNumbers));
       }
     }
+
     emitBucket('FRESH', fresh);
     emitBucket('THIS WEEK', week);
     emitBucket('STALLED', stalled, tone: true);
@@ -2076,136 +3388,705 @@ class _BranchesPageState extends State<BranchesPage> {
     return out;
   }
 
-  Widget _buildPrRow(
-      String repoPath, List<PullRequestSummary> prs, int i) {
+  Widget _buildPrRow(String repoPath, List<PullRequestSummary> prs, int i,
+      Set<int> localNumbers) {
     final pr = prs[i];
-        final expanded = _expandedPrNumber == pr.number;
-        final matrix = context
-            .watch<FileCouplingState>()
-            .matrixFor(repoPath);
-        // Local-only signals: working-tree status (for conflict pill)
-        // and issues this PR closes (for the LINKS section).
-        final repoStatus = context.watch<RepositoryState>().status;
-        final detail = _prDetails[pr.number];
-        final conflicts = detail == null
-            ? const <String>{}
-            : _conflictingPaths(detail.files, repoStatus);
-        final closesIssues = _issuesReferencedBy(pr.number);
-        // Heavy-PR-day signals — derived locally, no extra fetch.
-        final collisions =
-            _prCollisionMap()[pr.number] ?? const <int>{};
-        final isCheckedOut = _isCheckedOut(pr, repoStatus);
-        final awaitingMyReview = _awaitingMyReview(pr);
-        // Author-queue badge: how many other open PRs share this
-        // author. Visualized inline next to their name so a reviewer
-        // sees "this contributor is overloaded" instantly.
-        final authorQueueCount = (_prs ?? const <PullRequestSummary>[])
-            .where((p) => p.authorLogin == pr.authorLogin)
-            .length;
-        return _PullRequestRow(
-          pr: pr,
-          viewerLogin: _viewerLogin,
-          expanded: expanded,
-          focused: _focusedPrIndex == i,
-          checks: _prChecks[pr.number],
-          checksLoading: _prChecksLoading.contains(pr.number),
-          detail: detail,
-          detailLoading: _prDetailsLoading.contains(pr.number),
-          activeFilePath: _activeFileByPr[pr.number],
-          actionInFlight: _actionInFlight.contains(pr.number),
-          couplingMatrix: matrix,
-          conflictingPaths: conflicts,
-          closesIssues: closesIssues,
-          collidesWithPrs: collisions,
-          collisionTitles: {
-            for (final n in collisions)
-              n: (_prs ?? const <PullRequestSummary>[])
-                      .firstWhere(
-                        (p) => p.number == n,
-                        orElse: () => pr,
-                      )
-                      .title,
-          },
-          collisionSharedFiles: {
-            for (final n in collisions) n: _sharedFiles(pr.number, n),
-          },
-          isCheckedOut: isCheckedOut,
-          awaitingMyReview: awaitingMyReview,
-          authorQueueCount: authorQueueCount,
-          tail: _conversationTail(pr),
-          myReviewState: _myReviewStateFor(pr),
-          reviewerQueueDepth: _reviewerQueueDepth(),
-          hasOverrideScar: _hasOverrideScar(pr),
-          fileSignals: _prFileSignals[pr.number],
-          fileSignalsLoading: _prFileSignalsLoading.contains(pr.number),
-          isUnread: _isUnread(pr),
-          filePillsWrap: _filePillsWrap,
-          onToggleFilePillsWrap: _toggleFilePillsWrap,
-          auroraSourceFile: _auroraSourceFile,
-          hoveredPrNotifier: _hoveredPrNumber,
-          onJumpToPr: (otherNumber) {
-            setState(() {
-              _expandedPrNumber = otherNumber;
-              _focusedPrIndex =
-                  prs.indexWhere((p) => p.number == otherNumber);
-            });
-            _ensurePrDetailLoaded(repoPath, otherNumber);
-            _ensureChecksLoaded(repoPath, otherNumber);
-          },
-          onJumpToIssue: (issueNumber) {
-            // Cross-lens jump: switch to ISSUES, expand the linked one.
-            setState(() {
-              _lens = _BranchesLens.issues;
-              _expandedIssueNumber = issueNumber;
-              _expandedPrNumber = null;
-            });
-            _ensureIssueDetailLoaded(repoPath, issueNumber);
-          },
-          onTap: () {
-            setState(() {
-              _expandedPrNumber = expanded ? null : pr.number;
-              _focusedPrIndex = i;
-            });
-            if (!expanded) {
-              _ensureChecksLoaded(repoPath, pr.number);
-              _ensurePrDetailLoaded(repoPath, pr.number)
-                  .then((_) => _ensurePrFileSignalsLoaded(
-                      repoPath, pr.number));
-              _markPrSeen(pr.number);
-            }
-          },
-          onSelectFile: (path) =>
-              setState(() => _activeFileByPr[pr.number] = path),
-          onSubmitReview: (event, body) => _runPrAction(
+    final isLocalPr = localNumbers.contains(pr.number);
+    final expanded = _expandedPrNumber == pr.number;
+    final matrix = context.watch<FileCouplingState>().matrixFor(repoPath);
+    // Local-only signals: working-tree status (for conflict pill)
+    // and issues this PR closes (for the LINKS section).
+    final repoStatus = context.watch<RepositoryState>().status;
+    final detail = _prDetails[pr.number];
+    final conflicts = detail == null
+        ? const <String>{}
+        : _conflictingPaths(detail.files, repoStatus);
+    final closesIssues = _issuesReferencedBy(pr.number);
+    // Heavy-PR-day signals — derived locally, no extra fetch.
+    final collisions = _prCollisionMap()[pr.number] ?? const <int>{};
+    final isCheckedOut = _isCheckedOut(pr, repoStatus);
+    final awaitingMyReview = _awaitingMyReview(pr);
+    // Author-queue badge: how many other open PRs share this
+    // author. Visualized inline next to their name so a reviewer
+    // sees "this contributor is overloaded" instantly.
+    final authorQueueCount = (_prs ?? const <PullRequestSummary>[])
+        .where((p) => p.authorLogin == pr.authorLogin)
+        .length;
+    return _PullRequestRow(
+      pr: pr,
+      viewerLogin: _viewerLogin,
+      expanded: expanded,
+      focused: _focusedPrIndex == i,
+      checks: _prChecks[pr.number],
+      checksLoading: _prChecksLoading.contains(pr.number),
+      detail: detail,
+      detailLoading: _prDetailsLoading.contains(pr.number),
+      activeFilePath: _activeFileByPr[pr.number],
+      actionInFlight: _actionInFlight.contains(pr.number),
+      couplingMatrix: matrix,
+      conflictingPaths: conflicts,
+      closesIssues: closesIssues,
+      collidesWithPrs: collisions,
+      collisionTitles: {
+        for (final n in collisions)
+          n: (_prs ?? const <PullRequestSummary>[])
+              .firstWhere(
+                (p) => p.number == n,
+                orElse: () => pr,
+              )
+              .title,
+      },
+      collisionSharedFiles: {
+        for (final n in collisions) n: _sharedFiles(pr.number, n),
+      },
+      isCheckedOut: isCheckedOut,
+      awaitingMyReview: awaitingMyReview,
+      authorQueueCount: authorQueueCount,
+      tail: _conversationTail(pr),
+      myReviewState: _myReviewStateFor(pr),
+      reviewerQueueDepth: _reviewerQueueDepth(),
+      hasOverrideScar: _hasOverrideScar(pr),
+      fileSignals: _prFileSignals[pr.number],
+      fileSignalsLoading: _prFileSignalsLoading.contains(pr.number),
+      shape: _prShapes[pr.number],
+      cosines: _prCosineMap()[pr.number],
+      isLocal: isLocalPr,
+      isUnread: _isUnread(pr),
+      filePillsWrap: _filePillsWrap,
+      onToggleFilePillsWrap: _toggleFilePillsWrap,
+      auroraSourceFile: _auroraSourceFile,
+      hoveredPrNotifier: _hoveredPrNumber,
+      onJumpToPr: (otherNumber) {
+        setState(() {
+          _expandedPrNumber = otherNumber;
+          _focusedPrIndex = prs.indexWhere((p) => p.number == otherNumber);
+        });
+        _ensurePrDetailLoaded(repoPath, otherNumber);
+        _ensureChecksLoaded(repoPath, otherNumber);
+      },
+      onJumpToIssue: (issueNumber) {
+        // Cross-lens jump: switch to ISSUES, expand the linked one.
+        setState(() {
+          _lens = _BranchesLens.issues;
+          _expandedIssueNumber = issueNumber;
+          _expandedPrNumber = null;
+        });
+        _ensureIssueDetailLoaded(repoPath, issueNumber);
+      },
+      onTap: () {
+        setState(() {
+          _expandedPrNumber = expanded ? null : pr.number;
+          _focusedPrIndex = i;
+        });
+        if (!expanded) {
+          _ensureChecksLoaded(repoPath, pr.number);
+          _ensurePrDetailLoaded(repoPath, pr.number)
+              .then((_) => _ensurePrFileSignalsLoaded(repoPath, pr.number));
+          _markPrSeen(pr.number);
+        }
+      },
+      onSelectFile: (path) => setState(() => _activeFileByPr[pr.number] = path),
+      onSubmitReview: isLocalPr
+          ? (event, body) =>
+              _submitLocalReview(repoPath, pr.headRef, event, body)
+          : (event, body) => _runPrAction(
               repoPath,
               pr.number,
               () => submitPrReview(repoPath, pr.number,
                   event: event, body: body)),
-          onCheckout: () => _checkoutPr(repoPath, pr.number),
-          onMerge: (method, deleteBranch) => _runPrAction(
+      onCheckout: isLocalPr
+          ? () => _checkoutLocalPr(pr.headRef)
+          : () => _checkoutPr(repoPath, pr.number),
+      onOpenAsDesk: isLocalPr ? null : () => _openPrAsDesk(repoPath, pr),
+      onMerge: isLocalPr
+          ? (method, deleteBranch) {
+              final mainPath = _mainWorktreePath();
+              if (mainPath == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                      content: Text(
+                    'Could not resolve the main worktree path.',
+                  )),
+                );
+                return;
+              }
+              _mergeLocalPr(
+                mergeRepoPath: mainPath,
+                branch: pr.headRef,
+                baseRef: pr.baseRef,
+                method: method,
+                squashSubject: 'Merge: ${pr.title} (#${pr.number})',
+              );
+            }
+          : (method, deleteBranch) => _runPrAction(
               repoPath,
               pr.number,
               () => mergePullRequest(repoPath, pr.number,
                   method: method, deleteBranch: deleteBranch)),
-          onSecondaryTap: (pos) => _showPrContextMenu(context, pos, pr, repoPath),
-        );
+      onSecondaryTap: (pos) => _showPrContextMenu(context, pos, pr, repoPath),
+    );
   }
 
-  // ── Issues lens body ────────────────────────────────────────────────
+  /// Map a GitHub-style review event ('APPROVE' / 'REQUEST_CHANGES'
+  /// / 'COMMENT') to a DeskPr verdict.
+  String _verdictFromEvent(String event) {
+    switch (event.toUpperCase()) {
+      case 'APPROVE':
+        return 'APPROVED';
+      case 'REQUEST_CHANGES':
+        return 'CHANGES_REQUESTED';
+      default:
+        return 'COMMENTED';
+    }
+  }
+
+  Future<void> _submitLocalReview(
+      String repoPath, String branch, String event, String body) async {
+    final err = await context.read<DeskPrState>().addReview(
+          repoPath: repoPath,
+          branch: branch,
+          verdict: _verdictFromEvent(event),
+          body: body,
+        );
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't submit review: $err")),
+      );
+    }
+  }
+
+  /// Run AI review on the PR's current diff without checking it out.
+  /// Pulls the detail (cached or freshly fetched), resolves the user's
+  /// review-model category, and hands the raw diff to `reviewCommit`
+  /// via its `rawDiffOverride` path. Result renders in a read-only
+  /// dialog with verdict + findings — simpler than the Changes page's
+  /// inline pane, since PR review is a one-shot operation from this
+  /// surface (no commit-draft feedback loop).
+  Future<void> _runPrAiReview(String repoPath, PullRequestSummary pr) async {
+    var detail = _prDetails[pr.number];
+    if (detail == null || detail.diff.isEmpty) {
+      await _ensurePrDetailLoaded(repoPath, pr.number);
+      if (!mounted) return;
+      detail = _prDetails[pr.number];
+    }
+    if (detail == null || detail.diff.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not load PR diff.')),
+      );
+      return;
+    }
+    final aiSettings = context.read<AiSettingsState>();
+    final preferences = context.read<PreferencesState>();
+    final categories = aiSettings.runtimeModelCategories;
+    if (categories.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Review AI is not available yet.')),
+      );
+      return;
+    }
+    final selectedCategory = categories
+            .where((c) =>
+                c.id == aiSettings.reviewCommitModelCategoryId &&
+                c.models.isNotEmpty)
+            .firstOrNull ??
+        categories.where((c) => c.models.isNotEmpty).firstOrNull;
+    if (selectedCategory == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No review model is configured.')),
+      );
+      return;
+    }
+    final selectedModel = selectedCategory.models
+            .where((m) =>
+                m.value == aiSettings.modelSelections[selectedCategory.id])
+            .firstOrNull ??
+        selectedCategory.models.first;
+    // Open a progress dialog so the user knows the review is running;
+    // it pops automatically when the future resolves. Barrier dismiss
+    // is off — cancelling mid-inference doesn't stop the CLI subprocess
+    // and would orphan the result.
+    // Semantic priors for the manifest above the packed diff. Best
+    // effort: null until the background indices warm, in which case the
+    // manifest simply skips IDF-ranking and coupling sections (themes +
+    // moves from logos φ and engram wells still emit).
+    final prCouplingMatrix =
+        context.read<FileCouplingState>().matrixFor(repoPath);
+    final prSymbolIndex =
+        context.read<SymbolFrequencyState>().indexFor(repoPath);
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const _AiReviewProgressDialog(),
+    );
+    final result = await reviewCommit(
+      repositoryPath: repoPath,
+      modelValue: selectedModel.value,
+      modelCategoryLabel: aiSettings.labelForCategory(
+          selectedCategory.id, selectedCategory.label),
+      scopeLabel: 'PR #${pr.number}: ${pr.title}',
+      includeStaged: false,
+      includeUnstaged: false,
+      scopedPaths: detail.files.map((f) => f.path).toList(),
+      customPrompt: aiSettings.reviewCommitPrompt,
+      guardrailStage: preferences.guardrailStage,
+      doubleCheckEnabled: aiSettings.reviewCommitDoubleCheckEnabled,
+      readOnly: preferences.aiReadOnlyDefault,
+      rawDiffOverride: detail.diff,
+      diffBranchName: pr.headRef,
+      symbolIndex: prSymbolIndex,
+      couplingMatrix: prCouplingMatrix,
+    );
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // close progress
+    if (!result.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Review failed: ${result.error}')),
+      );
+      return;
+    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => _PrAiReviewDialog(review: result.data!, pr: pr),
+    );
+  }
+
+  /// Side-effect-free conflict probe via `git merge-tree --write-tree
+  /// --name-only`. Returns whether the merge would be clean plus the
+  /// list of conflicting paths (empty when mergeable). Exit 1 with
+  /// paths = conflicts; exit 0 with no paths = clean; anything else =
+  /// treat as unknown (empty list) — the real merge will surface the
+  /// underlying error with a clearer git message.
+  Future<_MergePreflight> _probeMergeConflicts(
+    String repoPath, {
+    required String baseRef,
+    required String headRef,
+  }) async {
+    try {
+      final r = await Process.run(
+        'git',
+        ['merge-tree', '--write-tree', '--name-only', baseRef, headRef],
+        workingDirectory: repoPath,
+      );
+      if (r.exitCode == 0) {
+        return const _MergePreflight(mergeable: true, conflictingPaths: []);
+      }
+      if (r.exitCode == 1) {
+        // Output: tree SHA on line 1, conflicting paths thereafter.
+        final lines = (r.stdout as String).split('\n');
+        final paths = <String>[
+          for (var i = 1; i < lines.length; i++)
+            if (lines[i].trim().isNotEmpty) lines[i].trim(),
+        ];
+        return _MergePreflight(mergeable: false, conflictingPaths: paths);
+      }
+      // Any other exit code means merge-tree --write-tree isn't supported
+      // (git < 2.38) or failed for an unrelated reason. Mark unavailable
+      // so the dialog can surface a notice instead of silently omitting
+      // the conflict check.
+      return const _MergePreflight(
+          mergeable: false, conflictingPaths: [], available: false);
+    } catch (_) {
+      return const _MergePreflight(
+          mergeable: false, conflictingPaths: [], available: false);
+    }
+  }
+
+  /// Method picker for "Merge into [desk]". Opens a dialog with the
+  /// target desk + PR context, a merge-method selector (merge commit /
+  /// squash / rebase), and a delete-branch toggle. Pre-flights with a
+  /// dirty-target block — git refuses merge in a dirty worktree and
+  /// the surrounding snackbar is kinder than a raw git error snapshot.
+  /// On method pick, dispatches to the generalised [_mergeLocalPr]
+  /// with `mergeRepoPath = desk.path` and `baseRef = desk.branch`
+  /// (the desk we're merging INTO). Squash subject threads the PR
+  /// title through for a legible merge commit.
+  Future<void> _showMergeIntoDeskMenu(
+      PullRequestSummary pr, WorktreeData desk) async {
+    if (desk.dirtyFileCount > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('${desk.branch ?? 'desk'} has ${desk.dirtyFileCount} '
+                'uncommitted change${desk.dirtyFileCount == 1 ? '' : 's'} — '
+                'commit or stash first.')),
+      );
+      return;
+    }
+    if (desk.branch == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Target desk has no branch.')),
+      );
+      return;
+    }
+    // Pre-flight conflict probe via `git merge-tree --write-tree` —
+    // side-effect-free, gives us the set of files that would conflict
+    // before we burn any working-tree state. Runs in the target desk's
+    // worktree so ref resolution matches what the real merge will see.
+    final preflight = await _probeMergeConflicts(
+      desk.path,
+      baseRef: desk.branch!,
+      headRef: pr.headRef,
+    );
+    if (!mounted) return;
+    // Local PR head branches are checked out in a desk worktree — git
+    // refuses branch -d on a branch checked out elsewhere. The dialog
+    // does not expose a delete-branch option; the desk must be closed
+    // first and the branch deleted separately.
+    final method = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final t = ctx.tokens;
+        return AlertDialog(
+          backgroundColor: t.surface1,
+          title: Text(
+            'Merge PR #${pr.number} into ${desk.branch}',
+            style: TextStyle(color: t.textStrong, fontSize: 14),
+          ),
+          content: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                pr.title,
+                style: TextStyle(color: t.textNormal, fontSize: 12),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${pr.headRef} → ${desk.branch}',
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 10,
+                  fontFamily: 'JetBrainsMono',
+                ),
+              ),
+              if (!preflight.available) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'Conflict check unavailable — git 2.38+ required',
+                  style: TextStyle(color: t.textMuted, fontSize: 10),
+                ),
+              ],
+              if (preflight.conflictingPaths.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: t.stateConflicted.withValues(alpha: 0.08),
+                    border: Border.all(
+                        color: t.stateConflicted.withValues(alpha: 0.35)),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'WILL CONFLICT · '
+                        '${preflight.conflictingPaths.length} '
+                        'file${preflight.conflictingPaths.length == 1 ? '' : 's'}',
+                        style: TextStyle(
+                          color: t.stateConflicted,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      for (final p in preflight.conflictingPaths.take(6))
+                        Text(
+                          p,
+                          style: TextStyle(
+                            color: t.textNormal,
+                            fontSize: 10,
+                            fontFamily: 'JetBrainsMono',
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      if (preflight.conflictingPaths.length > 6)
+                        Text(
+                          '+${preflight.conflictingPaths.length - 6} more',
+                          style: TextStyle(color: t.textMuted, fontSize: 10),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop('rebase'),
+              child: const Text('Rebase'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop('squash'),
+              child: const Text('Squash'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop('merge'),
+              child: const Text('Merge commit'),
+            ),
+          ],
+        );
+      },
+    );
+    if (method == null || !mounted) return;
+    await _mergeLocalPr(
+      mergeRepoPath: desk.path,
+      branch: pr.headRef,
+      baseRef: desk.branch!,
+      method: method,
+      squashSubject: 'Merge: ${pr.title} (#${pr.number})',
+    );
+  }
+
+  /// Resolve the main worktree's path (the desk with `isMain == true`)
+  /// for the currently-loaded repo. Returns null when WorktreeState
+  /// hasn't populated yet or the repo has no main entry.
+  /// Callers MUST handle null with an explicit user-visible error —
+  /// silently falling back to the active path used to send a merge
+  /// into whatever desk the user happened to be sitting on, which is
+  /// destructive. Mirrors the explicit-null pattern used by
+  /// `_applyDeskToMainFlow` in workspace_shell.dart.
+  String? _mainWorktreePath() {
+    final desks = context.read<WorktreeState>().desks;
+    for (final d in desks) {
+      if (d.isMain && d.path.isNotEmpty) return d.path;
+    }
+    return null;
+  }
+
+  Future<void> _checkoutLocalPr(String branch) async {
+    // For a local PR, "checkout" means switch the active path to the
+    // desk's worktree (the same action the desk-tab tap performs).
+    final wt = context.read<WorktreeState>().desks.firstWhere(
+          (d) => d.branch == branch,
+          orElse: () => const WorktreeData(
+            path: '',
+            head: '',
+            branch: null,
+            isMain: false,
+            isDetached: false,
+            isLocked: false,
+            dirtyFileCount: 0,
+          ),
+        );
+    if (wt.path.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("No desk found for branch $branch")),
+      );
+      return;
+    }
+    await context
+        .read<RepositoryState>()
+        .setActivePath(wt.path, addToRecents: false);
+  }
+
+  /// Perform a local PR merge in a chosen worktree.
+  /// [mergeRepoPath] is the worktree the merge runs in — the caller
+  /// decides whether that's the main worktree (the original local-PR
+  /// → base-branch flow) or a specific desk ("Merge into [desk]" flow).
+  /// [branch] is the PR's head ref. [baseRef] is the branch we're
+  /// merging INTO — typically the target worktree's branch.
+  /// [squashSubject] threads a nicer commit message through the squash
+  /// path. When null, falls back to the historical `Merge local PR
+  /// ($branch)` subject so existing call sites are unchanged.
+  /// On success updates DeskPrState (PR → MERGED) and refreshes the
+  /// active repo status. Every path is guarded against the widget
+  /// being disposed mid-merge — the sequence awaits several git
+  /// subprocesses in the rebase branch and we don't want to touch
+  /// `context` after a deactivation.
+  Future<void> _mergeLocalPr({
+    required String mergeRepoPath,
+    required String branch,
+    required String baseRef,
+    required String method,
+    String? squashSubject,
+  }) async {
+    // Mirror the dirty-target guard that _showMergeIntoDeskMenu applies
+    // before opening its dialog. The PR-row's onMerge callback dispatches
+    // here without the preflight, so we do it centrally so all callers
+    // are covered. git refuses to merge into a dirty worktree anyway, but
+    // a pre-check surfaces a cleaner message than a raw stderr dump.
+    final targetDesk = context.read<WorktreeState>().desks.firstWhere(
+          (d) => d.path == mergeRepoPath,
+          orElse: () => const WorktreeData(
+            path: '',
+            head: '',
+            branch: null,
+            isMain: false,
+            isDetached: false,
+            isLocked: false,
+            dirtyFileCount: 0,
+          ),
+        );
+    if (targetDesk.dirtyFileCount > 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(
+            '${targetDesk.branch ?? 'target'} has ${targetDesk.dirtyFileCount} '
+            'uncommitted change${targetDesk.dirtyFileCount == 1 ? '' : 's'} — '
+            'commit or stash first.',
+          )),
+        );
+      }
+      return;
+    }
+    if (baseRef == branch) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(
+            "PR base and head are the same branch ($branch) — nothing to merge.",
+          )),
+        );
+      }
+      return;
+    }
+    // Conflict preflight — run merge-tree before touching the worktree.
+    // _showMergeIntoDeskMenu embeds this in its dialog before the user
+    // even picks a method. This call site (PR row → main merge) selects
+    // the method first, so we probe here and ask for confirmation when
+    // conflicts are found. git will refuse to apply conflicting merges
+    // anyway; the dialog just surfaces the specific files upfront instead
+    // of dumping raw stderr after the attempt.
+    final preflight = await _probeMergeConflicts(
+      mergeRepoPath,
+      baseRef: baseRef,
+      headRef: branch,
+    );
+    if (!mounted) return;
+    if (preflight.conflictingPaths.isNotEmpty) {
+      final t = context.tokens;
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: t.surface1,
+          title: Text(
+            'Conflicts detected',
+            style: TextStyle(color: t.textStrong, fontSize: 14),
+          ),
+          content: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${preflight.conflictingPaths.length} '
+                'file${preflight.conflictingPaths.length == 1 ? '' : 's'} '
+                'will conflict. Resolve them after merging, or cancel.',
+                style: TextStyle(color: t.textNormal, fontSize: 12),
+              ),
+              const SizedBox(height: 8),
+              for (final p in preflight.conflictingPaths.take(6))
+                Text(p,
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: 10,
+                      fontFamily: 'JetBrainsMono',
+                    )),
+              if (preflight.conflictingPaths.length > 6)
+                Text(
+                  '+${preflight.conflictingPaths.length - 6} more',
+                  style: TextStyle(color: t.textMuted, fontSize: 10),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Merge anyway'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
+    // The git engine — `applyBranchToBase` — lives in backend/git.dart
+    // so this widget, the desk context menu, and any future caller
+    // share one implementation. This wrapper handles the UI side:
+    // surfacing errors as snackbars, then (on success) updating the
+    // DeskPr metadata + repository status so the row reflects MERGED.
+    final mergeMethod = switch (method.toLowerCase()) {
+      'rebase' => BranchMergeMethod.rebase,
+      'squash' => BranchMergeMethod.squash,
+      _ => BranchMergeMethod.mergeCommit,
+    };
+    final result = await applyBranchToBase(
+      mainRepoPath: mergeRepoPath,
+      branch: branch,
+      baseRef: baseRef,
+      method: mergeMethod,
+      // Local PR head branches are always checked out in a desk worktree.
+      // git refuses branch -d on a branch checked out elsewhere; the desk
+      // must be closed before the branch can be removed. Never true here.
+      deleteBranch: false,
+      squashSubject: squashSubject,
+    );
+    if (!mounted) return;
+    if (!result.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? 'Merge failed')),
+      );
+      return;
+    }
+    // `mergeRepoPath` may be the main worktree or a desk worktree.
+    // DeskPrState.setStateFor resolves PR records via
+    // refs/manifold/desks/*, which live in the shared .git directory and
+    // are therefore reachable from any worktree path. This works correctly
+    // today because all worktrees in a repo share the same object store
+    // and ref namespace — if that invariant ever breaks (detached .git
+    // configurations), the audit trail would need to be written via the
+    // main worktree path instead.
+    await context.read<DeskPrState>().setStateFor(
+          repoPath: mergeRepoPath,
+          branch: branch,
+          state: 'MERGED',
+        );
+    if (mounted) {
+      await context.read<RepositoryState>().refreshStatus();
+    }
+  }
 
   Widget _buildIssuesBody(AppTokens t, String repoPath) {
     final status = _ghStatus;
-    if (_issuesLoading && (_issues == null || _issues!.isEmpty)) {
+    final deskIssues = context.watch<DeskIssueState>().all;
+    // Also watch DeskPrState so issue rows rebuild when a desk is promoted
+    // to a local PR or linked issues are edited from the PRs lens.
+    // Without this, `_buildIssueRow` reads DeskPrState.all via .read and
+    // serves stale "addressed by" cross-links until an unrelated signal
+    // triggers a rebuild.
+    context.watch<DeskPrState>();
+    if (_issuesLoading &&
+        (_issues == null || _issues!.isEmpty) &&
+        deskIssues.isEmpty) {
       return _LensLoadingNotice(label: 'Reading issues…');
     }
-    if (status != null && !status.usable) {
-      return _GhMissingNotice(status: status);
-    }
-    final allIssues = _issues ?? const <IssueSummary>[];
+    // Mix local desk issues into the list. Issues don't have a branch
+    // join key like PRs do, so there's no dedupe — local + remote
+    // coexist freely, distinguished by the LOCAL chip on the row.
+    final remoteList = _issues ?? const <IssueSummary>[];
+    final localSummaries = <IssueSummary>[
+      for (final di in deskIssues) di.toSummary(),
+    ];
+    // The `_localIssueNumbers` getter derives the "is local" set fresh
+    // on each access so async event handlers see the current
+    // DeskIssueState without a build-time cache to stale out of sync.
+    final allIssues = [...remoteList, ...localSummaries];
     if (allIssues.isEmpty) {
-      return _LensEmptyNotice(
-        primary: 'No open issues',
-        secondary: _issuesError ?? 'Track work and bugs without leaving the app.',
+      return _IssuesEmptyState(
+        message: _issuesError ?? 'Open one upstream, or open a local one.',
+        onCreateLocal: () => _showCreateLocalIssueDialog(repoPath),
       );
     }
     final issues = allIssues.where(_issueMatchesFilters).toList();
@@ -2223,6 +4104,16 @@ class _BranchesPageState extends State<BranchesPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Quiet "+ local issue" affordance at the top of the list.
+          // Doesn't add chrome for users who never use local issues —
+          // the glyph is small and uses the same accent as the rest
+          // of the lens so it reads as native.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+            child: _NewLocalIssueAction(
+              onTap: () => _showCreateLocalIssueDialog(repoPath),
+            ),
+          ),
           for (var i = 0; i < issues.length; i++)
             _buildIssueRow(repoPath, issues, i),
         ],
@@ -2230,10 +4121,35 @@ class _BranchesPageState extends State<BranchesPage> {
     );
   }
 
-  Widget _buildIssueRow(
-      String repoPath, List<IssueSummary> issues, int i) {
+  Future<void> _showCreateLocalIssueDialog(String repoPath) async {
+    final titleCtrl = TextEditingController();
+    final bodyCtrl = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => _CreateLocalIssueDialog(
+        titleCtrl: titleCtrl,
+        bodyCtrl: bodyCtrl,
+      ),
+    );
+    if (result != true || !mounted) return;
+    final title = titleCtrl.text.trim();
+    if (title.isEmpty) return;
+    final err = await context.read<DeskIssueState>().create(
+          repoPath: repoPath,
+          title: title,
+          body: bodyCtrl.text.trim(),
+        );
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't create issue: $err")),
+      );
+    }
+  }
+
+  Widget _buildIssueRow(String repoPath, List<IssueSummary> issues, int i) {
     final issue = issues[i];
     final expanded = _expandedIssueNumber == issue.number;
+    final isLocal = _localIssueNumbers.contains(issue.number);
     // Compute backlinks once per build (cheap; iterates cached PR
     // bodies). When a PR's body says `closes #N`, surface it here as
     // "← addressed by PR #M". Click jumps cross-lens.
@@ -2242,6 +4158,28 @@ class _BranchesPageState extends State<BranchesPage> {
     final addressingPrs = (_prs ?? const <PullRequestSummary>[])
         .where((p) => addressingPrNumbers.contains(p.number))
         .toList();
+    // For local issues, also surface their explicit cross-references
+    // from refs/manifold/issues/<id>.json's addressedBy field. Map
+    // those branch names back to known PRs (local or remote).
+    if (isLocal) {
+      final localIssue = context.read<DeskIssueState>().issueFor(issue.number);
+      if (localIssue != null) {
+        final remoteByBranch = {
+          for (final p in (_prs ?? const <PullRequestSummary>[])) p.headRef: p,
+        };
+        final localByBranch = {
+          for (final dp in context.read<DeskPrState>().all)
+            dp.headRef: dp.toSummary(),
+        };
+        for (final branch in localIssue.addressedBy) {
+          final hit = remoteByBranch[branch] ?? localByBranch[branch];
+          if (hit != null &&
+              !addressingPrs.any((p) => p.number == hit.number)) {
+            addressingPrs.add(hit);
+          }
+        }
+      }
+    }
     return _IssueRow(
       issue: issue,
       viewerLogin: _viewerLogin,
@@ -2251,6 +4189,7 @@ class _BranchesPageState extends State<BranchesPage> {
       detailLoading: _issueDetailsLoading.contains(issue.number),
       actionInFlight: _actionInFlight.contains(issue.number),
       addressingPrs: addressingPrs,
+      isLocal: isLocal,
       onJumpToPr: (prNumber) {
         setState(() {
           _lens = _BranchesLens.prs;
@@ -2269,21 +4208,94 @@ class _BranchesPageState extends State<BranchesPage> {
           _ensureIssueDetailLoaded(repoPath, issue.number);
         }
       },
-      onAssignSelf: () => _runIssueAction(repoPath, issue.number,
-          () => assignSelfToIssue(repoPath, issue.number)),
-      onClose: () => _runIssueAction(
-          repoPath, issue.number, () => closeIssue(repoPath, issue.number)),
-      onComment: (body) => _runIssueAction(repoPath, issue.number,
-          () => commentOnIssue(repoPath, issue.number, body)),
-      onAddLabel: (label) => _runIssueAction(repoPath, issue.number,
-          () => addIssueLabel(repoPath, issue.number, label)),
+      onAssignSelf: isLocal
+          // Local issues don't carry GitHub assignee semantics; the
+          // app's identity is implicitly "self" by being the only
+          // identity in the system. No-op rather than error.
+          ? () {}
+          : () => _runIssueAction(repoPath, issue.number,
+              () => assignSelfToIssue(repoPath, issue.number)),
+      onClose: isLocal
+          ? () => _closeLocalIssue(repoPath, issue.number)
+          : () => _runIssueAction(
+              repoPath, issue.number, () => closeIssue(repoPath, issue.number)),
+      onComment: isLocal
+          ? (body) => _commentOnLocalIssue(repoPath, issue.number, body)
+          : (body) => _runIssueAction(repoPath, issue.number,
+              () => commentOnIssue(repoPath, issue.number, body)),
+      onAddLabel: isLocal
+          ? (label) => _addLabelToLocalIssue(repoPath, issue.number, label)
+          : (label) => _runIssueAction(repoPath, issue.number,
+              () => addIssueLabel(repoPath, issue.number, label)),
+      onSecondaryTap: (pos) =>
+          _showIssueContextMenu(context, pos, issue, isLocal, repoPath),
     );
+  }
+
+  void _showIssueContextMenu(
+    BuildContext context,
+    Offset pos,
+    IssueSummary issue,
+    bool isLocal,
+    String repoPath,
+  ) {
+    showAppContextMenu(context, pos, [
+      [
+        AppContextMenuItem(
+          icon: Icons.link,
+          label: 'Link to PR…',
+          onTap: () => _showLinkToPrPickerFromIssue(repoPath, issue, isLocal),
+        ),
+      ],
+    ]);
+  }
+
+  Future<void> _commentOnLocalIssue(
+      String repoPath, int id, String body) async {
+    final err = await context.read<DeskIssueState>().addComment(
+          repoPath: repoPath,
+          id: id,
+          body: body,
+        );
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't post comment: $err")),
+      );
+    }
+  }
+
+  Future<void> _closeLocalIssue(String repoPath, int id) async {
+    final err = await context.read<DeskIssueState>().setStateFor(
+          repoPath: repoPath,
+          id: id,
+          state: 'CLOSED',
+        );
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't close issue: $err")),
+      );
+    }
+  }
+
+  Future<void> _addLabelToLocalIssue(
+      String repoPath, int id, String label) async {
+    final issue = context.read<DeskIssueState>().issueFor(id);
+    if (issue == null) return;
+    if (issue.labels.contains(label)) return;
+    final err = await context.read<DeskIssueState>().editMeta(
+      repoPath: repoPath,
+      id: id,
+      labels: [...issue.labels, label],
+    );
+    if (err != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't add label: $err")),
+      );
+    }
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // Lens ribbon
-// ────────────────────────────────────────────────────────────────────────
 
 class _LensRibbon extends StatelessWidget {
   final _BranchesLens active;
@@ -2349,8 +4361,8 @@ class _LensRibbon extends StatelessWidget {
                 behavior: HitTestBehavior.opaque,
                 onTap: onToggleHelp,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   child: Text('?',
                       style: TextStyle(
                         color: t.textMuted,
@@ -2368,8 +4380,8 @@ class _LensRibbon extends StatelessWidget {
                   behavior: HitTestBehavior.opaque,
                   onTap: onImportPatch,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                     child: Text('+ patch',
                         style: TextStyle(
                           color: t.textMuted,
@@ -2389,9 +4401,7 @@ class _LensRibbon extends StatelessWidget {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // Filter row — pills + search box, sits under the lens ribbon
-// ────────────────────────────────────────────────────────────────────────
 
 /// (label, optional active-count, isActive)
 typedef _FilterPill = (String, int?, bool);
@@ -2571,9 +4581,7 @@ class _FilterPillWidgetState extends State<_FilterPillWidget> {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // Keyboard help overlay
-// ────────────────────────────────────────────────────────────────────────
 
 class _KeyboardHelpOverlay extends StatelessWidget {
   final VoidCallback onDismiss;
@@ -2706,9 +4714,8 @@ class _LensRibbonSegmentState extends State<_LensRibbonSegment> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final accent = t.accentBright;
-    final color = widget.isActive
-        ? accent
-        : (_hovered ? t.textStrong : t.textNormal);
+    final color =
+        widget.isActive ? accent : (_hovered ? t.textStrong : t.textNormal);
     final shader = context.surfaceShader;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
@@ -2733,9 +4740,8 @@ class _LensRibbonSegmentState extends State<_LensRibbonSegment> {
                     style: TextStyle(
                       color: color,
                       fontSize: 11,
-                      fontWeight: widget.isActive
-                          ? FontWeight.w700
-                          : FontWeight.w600,
+                      fontWeight:
+                          widget.isActive ? FontWeight.w700 : FontWeight.w600,
                       letterSpacing: 1.2,
                     ),
                     child: Text(widget.label),
@@ -2840,9 +4846,7 @@ class _RefreshGlyphState extends State<_RefreshGlyph>
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // PR row — collapsed metric line + expanded workplace
-// ────────────────────────────────────────────────────────────────────────
 
 class _PullRequestRow extends StatefulWidget {
   final PullRequestSummary pr;
@@ -2856,68 +4860,104 @@ class _PullRequestRow extends StatefulWidget {
   final String? activeFilePath;
   final bool actionInFlight;
   final FileCouplingMatrix? couplingMatrix;
+
   /// Files in the PR that the user currently has uncommitted changes
   /// in. Empty when no overlap. Drives the `⚠ touches N of yours` pill
   /// and the CONFLICTS-WITH-YOU expanded section.
   final Set<String> conflictingPaths;
+
   /// Issue numbers this PR's body says it closes/fixes/refs. Drives
   /// the LINKS section. Click an entry → cross-lens jump to issues.
   final Set<int> closesIssues;
   final ValueChanged<int> onJumpToIssue;
+
   /// Other open PRs whose changed files overlap this one. Visualized
   /// as a second hazard strip (orange tone) — distinct from the
   /// red personal-conflict strip — so a maintainer sees inter-PR
   /// merge order risk at a glance.
   final Set<int> collidesWithPrs;
+
   /// Title of each colliding PR (for the WILL FIGHT inline list and
   /// the strip's tooltip).
   final Map<int, String> collisionTitles;
+
   /// Shared file paths per colliding PR pair — drives "you'll fight
   /// #138 over 3 files" enumeration in the expanded view.
   final Map<int, Set<String>> collisionSharedFiles;
+
   /// Lens-level hovered PR notifier. When the value matches another
   /// row's number AND that row collides with this one, this row
   /// renders a sibling-highlight wash. Lets the user *see* the
   /// collision graph by sweeping the mouse across the list.
   final ValueNotifier<int?> hoveredPrNotifier;
+
   /// Jump cross-row — focus + expand a PR by number. Used by the
   /// inline WILL FIGHT chip clicks.
   final ValueChanged<int> onJumpToPr;
+
   /// True when the working tree is checked out on this PR's branch.
   /// Promotes the row's left rail to accentBright so "you're on this
   /// one right now" lights up without any new label.
   final bool isCheckedOut;
+
   /// True when the viewer is a pending reviewer on this PR. Subtle
   /// row-bg accent wash — atmospheric, not a label.
   final bool awaitingMyReview;
+
   /// How many other open PRs the same author has in flight. Surfaced
   /// inline next to their name when ≥ 2 — "this contributor is
   /// overloaded" signal for reviewers.
   final int authorQueueCount;
+
   /// Last action on this PR, synthesized from cached comments +
   /// reviews + checks. Drives the conversation-tail glyph at the end
   /// of the metric line so a glance answers "what's current?".
   final TailEvent? tail;
+
   /// Viewer's own review state. One of:
   /// '' (n/a) | 'pending' | 'approved' | 'changes_requested' |
   /// 'commented'. Renders a distinctive "you ✓" / "your review pending"
   /// pill so engagement vs fresh items separate visually.
   final String myReviewState;
+
   /// `@reviewer → N` map: how many open PRs each reviewer is pending
   /// on across the whole list. Used by `_PrHeader` to surface the
   /// most-loaded reviewer assigned to this PR as `← @reviewer (N)`,
   /// mirroring the author-queue badge.
   final Map<String, int> reviewerQueueDepth;
+
   /// True when this PR is MERGED and either had failing checks or no
   /// approved review at merge time. Renders an `⚠ MERGED RED` strip on
   /// the row — incident-mode signal for "who pushed this through?".
   final bool hasOverrideScar;
+
   /// One-scan-two-signals from local git history: per-author commit
   /// counts (drives PEOPLE section) AND per-file thermal heat (drives
   /// the ember glow on file pills). Null = not yet loaded; empty =
   /// loaded but no signal.
   final FileSignals? fileSignals;
   final bool fileSignalsLoading;
+
+  /// True when this PR was surfaced from local desk metadata
+  /// (refs/manifold/desks/*) rather than fetched from a remote forge.
+  /// Drives the small "local" sigil on the row header so the user
+  /// can tell which is which without changing any other chrome.
+  final bool isLocal;
+
+  /// Geometric / magnetic signature of this PR. Null while the engine
+  /// is cold or the PR's files don't land in-graph. When present,
+  /// drives the rail-color blend (field orientation), the metabolism-
+  /// risk ember temperature, the coherence dot tint, and the per-axis
+  /// stacked micro-bar.
+  final PrShape? shape;
+
+  /// `prNumber → cosine(φ_self, φ_other)` for every other open PR
+  /// whose shape has been computed. Continuous geometric upgrade of
+  /// [collidesWithPrs] — orbital partnership, not binary file overlap.
+  /// Null when shapes aren't loaded; the row falls back to the
+  /// boolean collision strip in that case.
+  final Map<int, double>? cosines;
+
   /// True when `pr.updatedAt` has advanced past the viewer's last
   /// expansion of this PR. Drives the unread dot on the row header.
   final bool isUnread;
@@ -2925,12 +4965,18 @@ class _PullRequestRow extends StatefulWidget {
   final VoidCallback onToggleFilePillsWrap;
   final ValueNotifier<String?> auroraSourceFile;
   final VoidCallback onTap;
+
   /// Right-click on the collapsed row surface. Fires with the global
   /// pointer position so the caller can anchor a context menu to it.
   final ValueChanged<Offset>? onSecondaryTap;
   final ValueChanged<String> onSelectFile;
   final void Function(String event, String body) onSubmitReview;
   final VoidCallback onCheckout;
+
+  /// Optional `open as desk` action surfaced on the PR's action
+  /// toolbar (and the row's right-click menu). Null for local PRs
+  /// (which are already a desk).
+  final VoidCallback? onOpenAsDesk;
   final void Function(String method, bool deleteBranch) onMerge;
 
   const _PullRequestRow({
@@ -2962,6 +5008,9 @@ class _PullRequestRow extends StatefulWidget {
     required this.hasOverrideScar,
     required this.fileSignals,
     required this.fileSignalsLoading,
+    this.isLocal = false,
+    this.shape,
+    this.cosines,
     required this.isUnread,
     required this.filePillsWrap,
     required this.onToggleFilePillsWrap,
@@ -2972,6 +5021,7 @@ class _PullRequestRow extends StatefulWidget {
     required this.onSubmitReview,
     required this.onCheckout,
     required this.onMerge,
+    this.onOpenAsDesk,
   });
 
   @override
@@ -3004,9 +5054,14 @@ class _PullRequestRowState extends State<_PullRequestRow> {
     final t = context.tokens;
     final shader = context.surfaceShader;
     final state = _stateColor(t);
-    final railAlpha = widget.expanded || widget.focused
-        ? 1.0
-        : (_hovered ? 0.85 : 0.55);
+    final railAlpha =
+        widget.expanded || widget.focused ? 1.0 : (_hovered ? 0.85 : 0.55);
+    // Remote PRs are draggable — drop them on the desk strip in the
+    // topbar to materialise a worktree for IDE-native review. Local
+    // PRs already have their own desk so dragging them is a no-op;
+    // skip the wrapper for them. Use LongPressDraggable so normal
+    // tap-to-expand and inner scrolling aren't thrown off.
+    final draggable = !widget.isLocal;
     // The toggle GestureDetector wraps ONLY the header + metric line.
     // Wrapping the whole row (including the expanded content) put the
     // diff renderer's per-line GestureDetectors and the action toolbar
@@ -3024,12 +5079,39 @@ class _PullRequestRowState extends State<_PullRequestRow> {
     //   reads as "current focus."
     // - Awaiting review = a subtle accent wash on the row bg so things
     //   waiting on YOU pop without a label.
-    final railColor =
-        widget.isCheckedOut ? t.accentBright : state;
+    //
+    // When a magnetic shape is available AND the PR isn't checked out
+    // (which would otherwise own the rail), tint the rail by the PR's
+    // orbital orientation: aligned-with-field PRs lean toward
+    // accentBright (consonant, easy review); orthogonal PRs lean
+    // toward stateConflicted (in unfamiliar territory, deserve
+    // attention). Lerp by alignment magnitude so the gradient is
+    // continuous, not stepped — the field signal flows through the
+    // chrome instead of being labeled.
+    Color baseRail = widget.isCheckedOut ? t.accentBright : state;
+    final align = widget.shape?.fieldAlignment;
+    if (!widget.isCheckedOut && align != null) {
+      // Pull toward accentBright as alignment → 1, toward
+      // stateConflicted as alignment → 0. Bound the pull at 0.55 so
+      // the state color (open/draft/merged) still anchors identity —
+      // the orbit is a modulation, not a replacement.
+      final pull = (align - 0.5).clamp(-0.5, 0.5) * 1.1; // ∈ [-0.55, 0.55]
+      final towardAligned = pull > 0 ? pull : 0.0;
+      final towardOrthogonal = pull < 0 ? -pull : 0.0;
+      var blended = baseRail;
+      if (towardAligned > 0) {
+        blended = Color.lerp(blended, t.accentBright, towardAligned) ?? blended;
+      } else if (towardOrthogonal > 0) {
+        blended =
+            Color.lerp(blended, t.stateConflicted, towardOrthogonal) ?? blended;
+      }
+      baseRail = blended;
+    }
+    final railColor = baseRail;
     final reviewWash = widget.awaitingMyReview
         ? t.accentBright.withValues(alpha: 0.08)
         : t.accentBright.withValues(alpha: 0);
-    return ValueListenableBuilder<int?>(
+    final body = ValueListenableBuilder<int?>(
       valueListenable: widget.hoveredPrNotifier,
       builder: (context, hovered, _) {
         // Sibling-highlight: another row is hovered AND it collides
@@ -3054,6 +5136,19 @@ class _PullRequestRowState extends State<_PullRequestRow> {
           isSiblingOfHover,
         );
       },
+    );
+    if (!draggable) return body;
+    return LongPressDraggable<DeskDropPayload>(
+      data: DeskDropPayload.remotePr(
+        number: widget.pr.number,
+        title: widget.pr.title,
+      ),
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: _DeskDragFeedback(
+        label: '#${widget.pr.number} ${widget.pr.title}',
+        tokens: t,
+      ),
+      child: body,
     );
   }
 
@@ -3128,14 +5223,11 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                     // branch is currently checked out — "you're on
                     // this PR right now" without a label.
                     color: railColor.withValues(
-                        alpha: widget.isCheckedOut
-                            ? 1.0
-                            : railAlpha),
-                    width: widget.focused ||
-                            widget.expanded ||
-                            widget.isCheckedOut
-                        ? 4
-                        : 3,
+                        alpha: widget.isCheckedOut ? 1.0 : railAlpha),
+                    width:
+                        widget.focused || widget.expanded || widget.isCheckedOut
+                            ? 4
+                            : 3,
                   ),
                 ),
               ),
@@ -3149,8 +5241,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                       onTap: widget.onTap,
                       onSecondaryTapDown: widget.onSecondaryTap == null
                           ? null
-                          : (d) =>
-                              widget.onSecondaryTap!(d.globalPosition),
+                          : (d) => widget.onSecondaryTap!(d.globalPosition),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -3161,6 +5252,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                             authorQueueCount: widget.authorQueueCount,
                             isCheckedOut: widget.isCheckedOut,
                             isUnread: widget.isUnread,
+                            isLocal: widget.isLocal,
                             reviewerQueueDepth: widget.reviewerQueueDepth,
                           ),
                           const SizedBox(height: 4),
@@ -3205,13 +5297,15 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                             onJumpToPr: widget.onJumpToPr,
                             fileSignals: widget.fileSignals,
                             fileSignalsLoading: widget.fileSignalsLoading,
+                            shape: widget.shape,
+                            cosines: widget.cosines,
                             filePillsWrap: widget.filePillsWrap,
                             auroraSourceFile: widget.auroraSourceFile,
-                            onToggleFilePillsWrap:
-                                widget.onToggleFilePillsWrap,
+                            onToggleFilePillsWrap: widget.onToggleFilePillsWrap,
                             onSelectFile: widget.onSelectFile,
                             onSubmitReview: widget.onSubmitReview,
                             onCheckout: widget.onCheckout,
+                            onOpenAsDesk: widget.onOpenAsDesk,
                             onMerge: widget.onMerge,
                           )
                         : const SizedBox.shrink(),
@@ -3285,15 +5379,27 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                   // Name the PRs + count of shared files per pair, so
                   // the tooltip is *actionable* — you know exactly
                   // who you'll fight, not just that you'll fight.
-                  tooltip: widget.collidesWithPrs
-                      .map((n) {
-                        final shared = widget.collisionSharedFiles[n] ??
-                            const <String>{};
-                        return '#$n  '
-                            '(${shared.length} '
-                            'file${shared.length == 1 ? '' : 's'})';
-                      })
-                      .join('\n'),
+                  tooltip: widget.collidesWithPrs.map((n) {
+                    final shared =
+                        widget.collisionSharedFiles[n] ?? const <String>{};
+                    return '#$n  '
+                        '(${shared.length} '
+                        'file${shared.length == 1 ? '' : 's'})';
+                  }).join('\n'),
+                  // Jump to the collision partner with the most shared
+                  // files — that's the pair the reviewer most needs to
+                  // look at. Degenerate tiebreak is insertion order
+                  // (Set<int> is LinkedHashSet in Dart), which matches
+                  // the tooltip's rendering order.
+                  onTap: () {
+                    final sorted = widget.collidesWithPrs.toList()
+                      ..sort((a, b) {
+                        final sa = widget.collisionSharedFiles[a]?.length ?? 0;
+                        final sb = widget.collisionSharedFiles[b]?.length ?? 0;
+                        return sb.compareTo(sa);
+                      });
+                    widget.onJumpToPr(sorted.first);
+                  },
                 ),
               ),
             // Right-edge workline connector tab — angled slab carrying
@@ -3310,8 +5416,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                   count: closesCount,
                   direction: _WorklineDirection.outgoing,
                   color: t.accentBright,
-                  onTap: () =>
-                      widget.onJumpToIssue(widget.closesIssues.first),
+                  onTap: () => widget.onJumpToIssue(widget.closesIssues.first),
                 ),
               ),
           ],
@@ -3325,15 +5430,23 @@ class _PrHeader extends StatelessWidget {
   final PullRequestSummary pr;
   final Color stateColor;
   final String label;
+
   /// Number of OPEN PRs the same author has in flight (this PR + others).
   /// Renders as `(N)` after the @login when ≥ 2.
   final int authorQueueCount;
+
   /// Renders a small `▶` glyph before the # when this PR's branch is the
   /// working tree's current head.
   final bool isCheckedOut;
+
   /// Renders a small unread-dot before the # when the PR has had
   /// activity since the viewer last expanded its detail.
   final bool isUnread;
+
+  /// Renders a small `LOCAL` chip next to the state pill when this PR
+  /// came from refs/manifold/desks/* rather than a remote forge.
+  final bool isLocal;
+
   /// Per-reviewer queue depth across all open PRs. Used to surface
   /// "your reviewer is buried" — when the most-loaded PENDING
   /// reviewer assigned here has ≥ 3 other open requests, append
@@ -3348,6 +5461,7 @@ class _PrHeader extends StatelessWidget {
     required this.isCheckedOut,
     required this.isUnread,
     required this.reviewerQueueDepth,
+    this.isLocal = false,
   });
 
   @override
@@ -3460,8 +5574,7 @@ class _PrHeader extends StatelessWidget {
                             // "your reviewer is at risk" reads as
                             // mild alarm, not the same flavor as
                             // "this author is busy."
-                            color:
-                                t.stateConflicted.withValues(alpha: 0.85),
+                            color: t.stateConflicted.withValues(alpha: 0.85),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -3475,6 +5588,30 @@ class _PrHeader extends StatelessWidget {
             ],
           ),
         ),
+        if (isLocal)
+          Container(
+            margin: const EdgeInsets.only(left: 8, top: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: t.chromeAccent.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(
+                  context.surfaceShader.geometry.badgeRadius),
+              border: Border.all(
+                color: t.chromeAccent.withValues(alpha: 0.35),
+                width: 0.5,
+              ),
+            ),
+            child: Text(
+              'LOCAL',
+              style: TextStyle(
+                color: t.chromeAccent,
+                fontSize: 9,
+                fontFamily: 'JetBrainsMono',
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.6,
+              ),
+            ),
+          ),
         Container(
           margin: const EdgeInsets.only(left: 8, top: 1),
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -3506,6 +5643,7 @@ class _PrHeader extends StatelessWidget {
 class _BucketDivider extends StatelessWidget {
   final String label;
   final int count;
+
   /// When true, the divider's label + rule render in the alarm
   /// (`stateConflicted`) tone — used for STALLED so the rotting
   /// pile reads at a glance as "needs attention," distinct from
@@ -3577,8 +5715,7 @@ class _MyReviewPill extends StatelessWidget {
     final (label, color) = switch (state) {
       'pending' => ('your review pending', t.accentBright),
       'approved' => ('you ✓', t.accentBright),
-      'changes_requested' =>
-        ('you ✗ requested changes', t.stateConflicted),
+      'changes_requested' => ('you ✗ requested changes', t.stateConflicted),
       'commented' => ('you commented', t.textNormal),
       _ => ('you', t.textMuted),
     };
@@ -3586,8 +5723,8 @@ class _MyReviewPill extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.badgeRadius),
+        borderRadius:
+            BorderRadius.circular(context.surfaceShader.geometry.badgeRadius),
         border: Border.all(color: color.withValues(alpha: 0.5), width: 1),
       ),
       child: Text(
@@ -3638,8 +5775,7 @@ class _ConversationTailPill extends StatelessWidget {
     // forth (≥ 2 — a single comment doesn't make a conversation).
     // Reads as `💬 alice · 4h · 3` — last beat + total beats. One
     // block, two pieces of information.
-    final convSuffix =
-        conversationCount >= 2 ? ' · $conversationCount' : '';
+    final convSuffix = conversationCount >= 2 ? ' · $conversationCount' : '';
     return Tooltip(
       message: switch (ev.kind) {
         'comment' => conversationCount >= 2
@@ -3703,25 +5839,50 @@ class _ConversationTailPill extends StatelessWidget {
 class _HazardStrip extends StatelessWidget {
   final Color color;
   final String tooltip;
-  const _HazardStrip({required this.color, required this.tooltip});
+
+  /// When provided, the strip becomes tappable. For the collision
+  /// variant this jumps to the first conflicting PR so the signal is
+  /// actionable, not just informational. 3 px visual is hard to hit,
+  /// so the gesture detector expands the hit area to ~10 px without
+  /// enlarging the glow — the atmospheric aesthetic stays; only the
+  /// cursor cues discoverability.
+  final VoidCallback? onTap;
+  const _HazardStrip({
+    required this.color,
+    required this.tooltip,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Container(
-        height: 3,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.all(Radius.circular(
-              context.surfaceShader.geometry.tinyRadius)),
-          gradient: LinearGradient(
-            colors: [
-              color.withValues(alpha: 0.0),
-              color.withValues(alpha: 0.65),
-              color.withValues(alpha: 0.0),
-            ],
-            stops: const [0.0, 0.5, 1.0],
-          ),
+    final strip = Container(
+      height: 3,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.all(
+            Radius.circular(context.surfaceShader.geometry.tinyRadius)),
+        gradient: LinearGradient(
+          colors: [
+            color.withValues(alpha: 0.0),
+            color.withValues(alpha: 0.65),
+            color.withValues(alpha: 0.0),
+          ],
+          stops: const [0.0, 0.5, 1.0],
+        ),
+      ),
+    );
+    final body = Tooltip(message: tooltip, child: strip);
+    if (onTap == null) return body;
+    // Expand the hit target vertically without disturbing the strip's
+    // visual position. The SizedBox pads invisibly; the strip anchors
+    // to the bottom via Align so the gradient still hugs the row edge.
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: SizedBox(
+          height: 10,
+          child: Align(alignment: Alignment.bottomCenter, child: body),
         ),
       ),
     );
@@ -3768,8 +5929,10 @@ class _DiffSparkline extends StatelessWidget {
     final hasFiles = files.isNotEmpty;
     final tooltipLines = hasFiles
         ? files.map((f) => '${f.path}  +${f.additions} -${f.deletions}')
-        : ['${pr.changedFiles} '
-            'file${pr.changedFiles == 1 ? '' : 's'}'];
+        : [
+            '${pr.changedFiles} '
+                'file${pr.changedFiles == 1 ? '' : 's'}'
+          ];
     return Tooltip(
       message: tooltipLines.join('\n'),
       child: Row(
@@ -3808,8 +5971,7 @@ class _DiffSparkline extends StatelessWidget {
           // exact counts, the bar's the at-a-glance.
           Text('+${pr.additions}', style: mono.copyWith(color: addedColor)),
           const SizedBox(width: 2),
-          Text('-${pr.deletions}',
-              style: mono.copyWith(color: deletedColor)),
+          Text('-${pr.deletions}', style: mono.copyWith(color: deletedColor)),
         ],
       ),
     );
@@ -3853,8 +6015,7 @@ class _DiffSparkPainter extends CustomPainter {
       paint.color = addedColor;
       canvas.drawRect(Rect.fromLTWH(x, 0, w, addH), paint);
       paint.color = deletedColor;
-      canvas.drawRect(
-          Rect.fromLTWH(x, addH, w, size.height - addH), paint);
+      canvas.drawRect(Rect.fromLTWH(x, addH, w, size.height - addH), paint);
       x += w;
       // 1px gap between segments so individual files read as
       // distinct rather than fusing into one stripe.
@@ -3931,14 +6092,11 @@ class _WorklineConnectorState extends State<_WorklineConnector> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final shader = context.surfaceShader;
-    final fg =
-        _hovered ? t.textStrong : widget.color.withValues(alpha: 0.95);
+    final fg = _hovered ? t.textStrong : widget.color.withValues(alpha: 0.95);
     final bg = _hovered
         ? widget.color.withValues(alpha: 0.32)
         : widget.color.withValues(alpha: 0.18);
-    final glyph = widget.direction == _WorklineDirection.outgoing
-        ? '→'
-        : '←';
+    final glyph = widget.direction == _WorklineDirection.outgoing ? '→' : '←';
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -4016,21 +6174,26 @@ class _WorklineConnectorState extends State<_WorklineConnector> {
 class _PrMetricLine extends StatelessWidget {
   final PullRequestSummary pr;
   final List<CheckSummary>? checks;
+
   /// Per-file change list when detail is loaded. Drives the diff
   /// sparkline (each segment = one file). Empty list when detail
   /// isn't cached yet — sparkline renders a single proportional bar.
   final List<PrFile> files;
+
   /// Number of files in the PR overlapping the user's dirty work.
   /// Surfaced atmospherically as a hazard strip across the row's
   /// bottom edge, rendered by the parent — not a text pill here.
   /// Kept on the metric-line API so callers stay symmetric.
   final int conflictCount;
+
   /// Surfaced as a right-edge connector tab on the row, not as a
   /// text pill — see `_WorklineConnector`.
   final int closesIssueCount;
+
   /// Last action on this PR. Renders as the rightmost segment of
   /// the metric line — the "what's currently true" answer.
   final TailEvent? tail;
+
   /// Viewer's own review state — empty when n/a. Renders as a
   /// distinct pill so engagement separates from fresh items.
   final String myReviewState;
@@ -4057,9 +6220,7 @@ class _PrMetricLine extends StatelessWidget {
     final blocks = <Widget>[];
     if (checks != null && checks!.isNotEmpty) {
       blocks.add(Tooltip(
-        message: checks!
-            .map((c) => '${_checkGlyph(c)}  ${c.name}')
-            .join('\n'),
+        message: checks!.map((c) => '${_checkGlyph(c)}  ${c.name}').join('\n'),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -4130,8 +6291,8 @@ class _PrMetricLine extends StatelessWidget {
     // tail IS the latest beat of the conversation. The count rides
     // along inside the tail pill (only when ≥ 1).
     if (pr.mergeable == 'CONFLICTING') {
-      blocks.add(Text('conflicts',
-          style: mono.copyWith(color: t.stateDeleted)));
+      blocks
+          .add(Text('conflicts', style: mono.copyWith(color: t.stateDeleted)));
     }
     // MY-REVIEW-STATE pill — distinct from anonymous reviewer dots.
     // Lights up when *I* have engaged with this PR, separating
@@ -4256,16 +6417,33 @@ class _PrExpanded extends StatelessWidget {
   final ValueChanged<int> onJumpToPr;
   final FileSignals? fileSignals;
   final bool fileSignalsLoading;
+
+  /// Geometric / magnetic signature — drives the orientation glyph in
+  /// the FILES header and the stability-tinted coherence dots. Null
+  /// while the engine is cold.
+  final PrShape? shape;
+
+  /// Pairwise cosine similarity to other PRs whose shapes are loaded.
+  /// `cosines[n]` = cos(φ_self, φ_n). Drives the WILL FIGHT row tint
+  /// (orbital partnership, not just file overlap).
+  final Map<int, double>? cosines;
+
   /// File-pills layout: false = horizontal scroll, true = wrap.
   /// Persisted at the page level via SharedPreferences.
   final bool filePillsWrap;
   final VoidCallback onToggleFilePillsWrap;
+
   /// Lens-level "currently hovered file" notifier — drives the
   /// resonance aurora across pills.
   final ValueNotifier<String?> auroraSourceFile;
   final ValueChanged<String> onSelectFile;
   final void Function(String event, String body) onSubmitReview;
   final VoidCallback onCheckout;
+
+  /// Optional — when set, the action toolbar gets an `open as desk`
+  /// button before `checkout`. Null for local PRs (which already have
+  /// their own desk by definition).
+  final VoidCallback? onOpenAsDesk;
   final void Function(String method, bool deleteBranch) onMerge;
 
   const _PrExpanded({
@@ -4286,6 +6464,8 @@ class _PrExpanded extends StatelessWidget {
     required this.onJumpToPr,
     required this.fileSignals,
     required this.fileSignalsLoading,
+    this.shape,
+    this.cosines,
     required this.filePillsWrap,
     required this.onToggleFilePillsWrap,
     required this.auroraSourceFile,
@@ -4293,7 +6473,40 @@ class _PrExpanded extends StatelessWidget {
     required this.onSubmitReview,
     required this.onCheckout,
     required this.onMerge,
+    this.onOpenAsDesk,
   });
+
+  /// True when at least one geometric orbital partner exists for this
+  /// PR (cosine > 0.15 with another PR whose shape is loaded), even if
+  /// no file-overlap collision was reported. Lets the WILL FIGHT
+  /// section surface coupling-neighborhood interference that the file-
+  /// intersection heuristic alone misses.
+  bool _hasOrbitalPartners() {
+    final c = cosines;
+    if (c == null) return false;
+    return c.values.any((v) => v > 0.15);
+  }
+
+  /// Union of file-overlap collisions and orbital partners (cos ≥ 0.15),
+  /// ordered by cosine desc when known, then by number ascending.
+  List<int> _orderedRelatedPrs() {
+    final all = <int>{...collidesWithPrs};
+    final c = cosines;
+    if (c != null) {
+      for (final entry in c.entries) {
+        if (entry.value >= 0.15) all.add(entry.key);
+      }
+    }
+    final list = all.toList();
+    list.sort((a, b) {
+      final ca = c?[a] ?? 0;
+      final cb = c?[b] ?? 0;
+      final byCos = cb.compareTo(ca);
+      if (byCos != 0) return byCos;
+      return a.compareTo(b);
+    });
+    return list;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -4315,11 +6528,17 @@ class _PrExpanded extends StatelessWidget {
           // count, click → focus jumps to that PR. The reviewer/
           // maintainer sees the full merge-order risk surface and can
           // act on it without leaving the row.
-          if (collidesWithPrs.isNotEmpty) ...[
+          //
+          // When magnetic shapes are loaded for the related PRs, the
+          // section also surfaces orbital-partner pairs (high cosine
+          // even without textual overlap) — pure-geometric coupling
+          // that file-set intersection alone misses.
+          if (collidesWithPrs.isNotEmpty || _hasOrbitalPartners()) ...[
             _WillFightSection(
               prTitles: collisionTitles,
               sharedFiles: collisionSharedFiles,
-              orderedNumbers: collidesWithPrs.toList()..sort(),
+              orderedNumbers: _orderedRelatedPrs(),
+              cosines: cosines,
               onJumpToPr: onJumpToPr,
             ),
             const SizedBox(height: 14),
@@ -4345,6 +6564,7 @@ class _PrExpanded extends StatelessWidget {
             matrix: couplingMatrix,
             isWrapped: filePillsWrap,
             onToggleWrap: onToggleFilePillsWrap,
+            shape: shape,
           ),
           const SizedBox(height: 6),
           if (detail == null && detailLoading)
@@ -4375,6 +6595,24 @@ class _PrExpanded extends StatelessWidget {
                       : context.read<LogosGitState>().engineFor(repo);
                 }(),
               ),
+              // Keystone paths = repo-wide load-bearing files (the
+              // bridge species in Xray's hotspot set). When a PR
+              // touches one, surface it on the pill so the reviewer
+              // learns the PR is editing something disproportionately
+              // coupled without opening Xray separately. Watched so
+              // a late-arriving xray fills in without requiring the
+              // user to re-expand the PR row.
+              keystonePaths: () {
+                final repo = context.read<RepositoryState>().activePath;
+                if (repo == null) return const <String>{};
+                final snapshot =
+                    context.watch<RepositoryXrayState>().snapshotFor(repo);
+                if (snapshot == null) return const <String>{};
+                return <String>{
+                  for (final h in snapshot.hotspots)
+                    if (h.isKeystone) h.path,
+                };
+              }(),
               auroraSource: auroraSourceFile,
               couplingMatrix: couplingMatrix,
               onSelect: onSelectFile,
@@ -4387,23 +6625,34 @@ class _PrExpanded extends StatelessWidget {
             // identity matches exactly. Defaults to the first file
             // when no pill is selected yet.
             Builder(builder: (ctx) {
-              final activePath =
-                  activeFilePath ?? detail!.files.first.path;
-              final clusters = _computeClusters(detail!.files, couplingMatrix);
-              final activeFile = detail!.files.firstWhere(
-                (f) => f.path == activePath,
-                orElse: () => detail!.files.first,
-              );
-              return _DiffView(
-                // Key on file path so State (incl. expand toggle) is
-                // recreated per file — each file judges its own
-                // length independently.
-                key: ValueKey(activePath),
-                diffByFile: detail!.diffByFile,
-                activeFilePath: activePath,
-                clusterId: clusters[activePath],
-                additions: activeFile.additions,
-                deletions: activeFile.deletions,
+              final activePath = activeFilePath ?? detail!.files.first.path;
+              // Hand the active file's pre-sliced raw diff straight to
+              // DiffShell — the canonical review surface — so PR
+              // reviewers get the same affordances the Changes and
+              // History diffs have (hunk nav, search, blame, themed
+              // chrome) without a second renderer drifting out of
+              // parity. Staging is off: PR diffs aren't stageable from
+              // this surface. Repo path is passed so blame can resolve
+              // locally when the PR's head has been fetched; missing
+              // commits degrade gracefully to "no blame" inside Shell.
+              //
+              // Bounded height keeps the diff in a stable lane so the
+              // surrounding review form, checks, and WILL FIGHT
+              // partners stay visible while the reviewer scrolls the
+              // diff internally. Keyed on the active path so internal
+              // scroll + search state resets cleanly per file switch.
+              final repo = context.read<RepositoryState>().activePath;
+              return SizedBox(
+                height: 520,
+                child: DiffShell(
+                  key: ValueKey(activePath),
+                  filePath: activePath,
+                  tokens: t,
+                  diffContent: detail!.rawDiffByFile[activePath],
+                  repositoryPath: repo,
+                  showFileHeader: true,
+                  enableStaging: false,
+                ),
               );
             }),
           ],
@@ -4452,6 +6701,7 @@ class _PrExpanded extends StatelessWidget {
           _PrActionToolbar(
             mergeable: pr.mergeable == 'MERGEABLE',
             onCheckout: onCheckout,
+            onOpenAsDesk: onOpenAsDesk,
             onMerge: onMerge,
             stateOpen: pr.state == 'OPEN',
             canExportPatch: detail != null && detail!.diff.isNotEmpty,
@@ -4614,8 +6864,7 @@ class _PersonRow extends StatelessWidget {
               color: entry.isReviewer ? t.textNormal : t.textMuted,
               fontSize: 11,
               fontFamily: 'JetBrainsMono',
-              fontWeight:
-                  entry.isReviewer ? FontWeight.w600 : FontWeight.w400,
+              fontWeight: entry.isReviewer ? FontWeight.w600 : FontWeight.w400,
             ),
           ),
           const SizedBox(width: 8),
@@ -4644,8 +6893,7 @@ class _PersonRow extends StatelessWidget {
                   '${entry.commits == 1 ? '' : 's'} on these files '
                   'in the last year',
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                 decoration: BoxDecoration(
                   color: t.chromeBorder.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(
@@ -4680,12 +6928,18 @@ class _WillFightSection extends StatelessWidget {
   final Map<int, String> prTitles;
   final Map<int, Set<String>> sharedFiles;
   final List<int> orderedNumbers;
+
+  /// Pairwise φ-cosine to each related PR. When present, each row
+  /// tints by its cosine — high values are orbital partners (touching
+  /// the same coupling neighborhood, irrespective of textual overlap).
+  final Map<int, double>? cosines;
   final ValueChanged<int> onJumpToPr;
   const _WillFightSection({
     required this.prTitles,
     required this.sharedFiles,
     required this.orderedNumbers,
     required this.onJumpToPr,
+    this.cosines,
   });
 
   @override
@@ -4695,8 +6949,8 @@ class _WillFightSection extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
         color: t.stateConflicted.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.pillRadius),
+        borderRadius:
+            BorderRadius.circular(context.surfaceShader.geometry.pillRadius),
         border: Border(
           left: BorderSide(
             color: t.stateConflicted.withValues(alpha: 0.7),
@@ -4722,17 +6976,9 @@ class _WillFightSection extends StatelessWidget {
               number: n,
               title: prTitles[n] ?? '',
               shared: sharedFiles[n] ?? const <String>{},
+              cosine: cosines?[n],
               onTap: () => onJumpToPr(n),
             ),
-          const SizedBox(height: 4),
-          Text(
-            'merging in the wrong order will force one of these to rebase',
-            style: TextStyle(
-              color: t.textMuted,
-              fontSize: 10,
-              fontStyle: FontStyle.italic,
-            ),
-          ),
         ],
       ),
     );
@@ -4743,12 +6989,17 @@ class _WillFightRow extends StatefulWidget {
   final int number;
   final String title;
   final Set<String> shared;
+
+  /// Pairwise φ-cosine to this related PR. Null when shapes haven't
+  /// loaded — falls back to flat conflict tint.
+  final double? cosine;
   final VoidCallback onTap;
   const _WillFightRow({
     required this.number,
     required this.title,
     required this.shared,
     required this.onTap,
+    this.cosine,
   });
   @override
   State<_WillFightRow> createState() => _WillFightRowState();
@@ -4760,6 +7011,14 @@ class _WillFightRowState extends State<_WillFightRow> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final shader = context.surfaceShader;
+    final cos = widget.cosine;
+    // Cosine-driven background tint: stronger orbital partnership =
+    // stronger conflict tint (since they're pulling on the same
+    // neighborhood, merge-order matters MORE, not less). Cosine is
+    // bounded [0, 1]; map to alpha ∈ [0.04, 0.18] so even high-cos
+    // pairs read as a wash, not a band.
+    final restAlpha = cos == null ? 0.0 : (0.04 + cos.clamp(0.0, 1.0) * 0.14);
+    final hoverAlpha = cos == null ? 0.10 : (restAlpha + 0.06).clamp(0.0, 0.24);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -4772,13 +7031,16 @@ class _WillFightRowState extends State<_WillFightRow> {
           curve: shader.safeCurve,
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
           decoration: BoxDecoration(
-            color: _hovered
-                ? t.stateConflicted.withValues(alpha: 0.1)
-                : t.stateConflicted.withValues(alpha: 0),
+            color: t.stateConflicted
+                .withValues(alpha: _hovered ? hoverAlpha : restAlpha),
             borderRadius: BorderRadius.circular(shader.geometry.badgeRadius),
           ),
           child: Tooltip(
-            message: widget.shared.join('\n'),
+            message: widget.shared.isEmpty
+                ? (cos == null
+                    ? '#${widget.number}'
+                    : 'orbital partner — cos ${cos.toStringAsFixed(2)}')
+                : widget.shared.join('\n'),
             child: Row(
               children: [
                 Text(
@@ -4804,9 +7066,28 @@ class _WillFightRowState extends State<_WillFightRow> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                if (cos != null)
+                  // Orbital cosine micro-badge — tabular so values
+                  // line up vertically across rows. The continuous
+                  // signal sits next to the discrete one.
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Text(
+                      cos.toStringAsFixed(2),
+                      style: TextStyle(
+                        color: t.stateConflicted.withValues(alpha: 0.85),
+                        fontSize: 10,
+                        fontFamily: 'JetBrainsMono',
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
                 Text(
-                  '${widget.shared.length} '
-                  'file${widget.shared.length == 1 ? '' : 's'}',
+                  widget.shared.isEmpty
+                      ? 'orbit'
+                      : '${widget.shared.length} '
+                          'file${widget.shared.length == 1 ? '' : 's'}',
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
@@ -4838,8 +7119,8 @@ class _ConflictsWithYouSection extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
         color: t.stateDeleted.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.pillRadius),
+        borderRadius:
+            BorderRadius.circular(context.surfaceShader.geometry.pillRadius),
         border: Border(
           left: BorderSide(
             color: t.stateDeleted.withValues(alpha: 0.7),
@@ -4951,8 +7232,7 @@ class _IssueLinkChipState extends State<_IssueLinkChip> {
         child: AnimatedContainer(
           duration: context.motion(shader.duration),
           curve: shader.safeCurve,
-          padding:
-              const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
             color: _hovered
                 ? t.accentBright.withValues(alpha: 0.18)
@@ -5022,15 +7302,13 @@ class _PrLinkChipState extends State<_PrLinkChip> {
         child: AnimatedContainer(
           duration: context.motion(shader.duration),
           curve: shader.safeCurve,
-          padding:
-              const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
             color: _hovered
                 ? state.withValues(alpha: 0.18)
                 : state.withValues(alpha: 0.08),
             borderRadius: BorderRadius.circular(shader.geometry.pillRadius),
-            border:
-                Border.all(color: state.withValues(alpha: 0.45), width: 1),
+            border: Border.all(color: state.withValues(alpha: 0.45), width: 1),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -5106,7 +7384,6 @@ Map<String, int> _computeClusters(
 ///   • **fallback**: max-pairwise Jaccard from the raw coupling matrix.
 ///     Same behaviour as before — graceful degradation when the engine
 ///     hasn't finished its first build.
-///
 /// In both cases we cap suggestions at [maxSuggestions] to keep the
 /// strip readable.
 Set<String> _resonanceForecast(
@@ -5145,8 +7422,9 @@ Set<String> _resonanceForecast(
   if (matrix == null) return const {};
   final scored = <String, double>{};
   for (final f in files) {
-    final neighbors = matrix.jaccard[f.path] ?? const <String, double>{};
-    for (final entry in neighbors.entries) {
+    // CSR-native row iteration — yields each neighbour's (path,
+    // score) without materialising the legacy nested-map view.
+    for (final entry in matrix.jaccardEntriesOf(f.path)) {
       if (entry.value < threshold) continue;
       if (inPr.contains(entry.key)) continue;
       // Take the max score for any (PR file → neighbor) pair so a
@@ -5171,33 +7449,52 @@ class _FilesSectionHeader extends StatelessWidget {
   final FileCouplingMatrix? matrix;
   final bool isWrapped;
   final VoidCallback onToggleWrap;
+
+  /// Magnetic shape — when present, the coherence dots tint by
+  /// stability and a single orbital-orientation glyph appears next to
+  /// the resonance label.
+  final PrShape? shape;
   const _FilesSectionHeader({
     required this.files,
     required this.matrix,
     required this.isWrapped,
     required this.onToggleWrap,
+    this.shape,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    // Prefer LogosGit multi-axis coherence when the engine is warm — it
-    // factors coupling AND frequency AND directory proximity AND
-    // volatility, not just Jaccard. Graceful fallback to single-axis
-    // matrix.coherenceFor() when the engine hasn't finished its first
-    // build, so UI never stalls.
+    // Prefer the magnetic shape's coherence (engine.coherence over the
+    // PR's source files, computed once per shape) so the dots stay
+    // exactly consistent with what the orbital ordering reads. Falls
+    // through to the co-change matrix (via engine.stats or the injected
+    // matrix prop) when shape is cold — same semantics as PrShape uses
+    // internally. Avoids the engine.coherence sparsified-graph path,
+    // which drops to 0 for weak-but-real couplings pruned by top-K.
     final paths = files.map((f) => f.path);
     final repoPath = context.read<RepositoryState>().activePath;
     final engine = repoPath == null
         ? null
         : context.watch<LogosGitState>().engineFor(repoPath);
-    final hasSignal =
-        files.length >= 2 && (matrix != null || engine != null);
-    final coherence = !hasSignal
-        ? null
-        : (engine != null
-            ? engine.coherence(paths)
-            : matrix!.coherenceFor(paths));
+    final fallbackMatrix = engine?.stats.coupling ?? matrix;
+    final coherence = shape?.coherence ??
+        (fallbackMatrix == null || files.length < 2
+            ? null
+            : fallbackMatrix.coherenceFor(paths));
+    final stability = shape?.stability;
+    final orientation = shape?.orientation;
+    final align = shape?.fieldAlignment;
+
+    // Stability modulates the dot color: high stability = full
+    // accentBright; low = pulled toward textFaint. Lerp factor uses
+    // (1 - stability) so the visual reads "this many dots, this dim."
+    final dotActive = stability == null
+        ? t.accentBright
+        : Color.lerp(
+                t.accentBright, t.textFaint, (1 - stability).clamp(0.0, 1.0)) ??
+            t.accentBright;
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -5230,6 +7527,29 @@ class _FilesSectionHeader extends StatelessWidget {
           ),
         ),
         const Spacer(),
+        if (orientation != null) ...[
+          // Single-glyph orbital orientation marker. The same field-
+          // signal that tints the row's left rail rendered as a tiny
+          // textual sigil here so the user can decode rail color when
+          // it's ambiguous (or learn what the rail color means).
+          Tooltip(
+            message: align == null
+                ? _orientationLabel(orientation)
+                : '${_orientationLabel(orientation)} · cos ${align.toStringAsFixed(2)}',
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                _orientationGlyph(orientation),
+                style: TextStyle(
+                  color: _orientationColor(t, orientation),
+                  fontSize: 11,
+                  fontFamily: 'JetBrainsMono',
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+        ],
         if (coherence != null) ...[
           // Five filled-vs-empty dots based on coherence quintile —
           // same dot vocabulary as the check-status indicators so the
@@ -5241,7 +7561,7 @@ class _FilesSectionHeader extends StatelessWidget {
                 coherence > (i / 5) ? '●' : '○',
                 style: TextStyle(
                   color: coherence > (i / 5)
-                      ? t.accentBright
+                      ? dotActive
                       : t.textMuted.withValues(alpha: 0.6),
                   fontSize: 10,
                   fontFamily: 'JetBrainsMono',
@@ -5264,6 +7584,39 @@ class _FilesSectionHeader extends StatelessWidget {
       ],
     );
   }
+
+  static String _orientationGlyph(FieldOrientation o) {
+    switch (o) {
+      case FieldOrientation.withField:
+        return '↑'; // aligned with the recent-activity field
+      case FieldOrientation.adjacent:
+        return '↗'; // partial alignment
+      case FieldOrientation.orthogonal:
+        return '⊥'; // independent of the field
+    }
+  }
+
+  static String _orientationLabel(FieldOrientation o) {
+    switch (o) {
+      case FieldOrientation.withField:
+        return 'aligned';
+      case FieldOrientation.adjacent:
+        return 'adjacent';
+      case FieldOrientation.orthogonal:
+        return 'orthogonal';
+    }
+  }
+
+  static Color _orientationColor(AppTokens t, FieldOrientation o) {
+    switch (o) {
+      case FieldOrientation.withField:
+        return t.accentBright;
+      case FieldOrientation.adjacent:
+        return t.textNormal;
+      case FieldOrientation.orthogonal:
+        return t.textMuted;
+    }
+  }
 }
 
 class _FilePillStrip extends StatelessWidget {
@@ -5272,9 +7625,19 @@ class _FilePillStrip extends StatelessWidget {
   final Map<String, int> clusterByPath;
   final Map<String, double> heatByPath;
   final Set<String> ghostPaths;
+
+  /// Paths that Repo X-Ray has flagged as repo-wide keystones. Each
+  /// matching file gets a small leading marker on its pill — the
+  /// reviewer sees at a glance that this PR is editing something
+  /// disproportionately load-bearing without needing to open Xray.
+  /// Empty set = no xray data (cold), which is fine; pills render
+  /// exactly as before.
+  final Set<String> keystonePaths;
+
   /// Lens-level "currently hovered file" notifier — drives the
   /// resonance aurora across pills.
   final ValueNotifier<String?> auroraSource;
+
   /// Coupling matrix used to compute neighbor brightness on hover.
   final FileCouplingMatrix? couplingMatrix;
   final ValueChanged<String> onSelect;
@@ -5285,6 +7648,7 @@ class _FilePillStrip extends StatelessWidget {
     required this.clusterByPath,
     required this.heatByPath,
     required this.ghostPaths,
+    required this.keystonePaths,
     required this.auroraSource,
     required this.couplingMatrix,
     required this.onSelect,
@@ -5312,6 +7676,7 @@ class _FilePillStrip extends StatelessWidget {
           clusterByPath: clusterByPath,
           heat: heatByPath[f.path] ?? 0,
           coherence: coherence,
+          isKeystone: keystonePaths.contains(f.path),
           auroraSource: auroraSource,
           couplingMatrix: couplingMatrix,
           onTap: () => onSelect(f.path),
@@ -5409,38 +7774,50 @@ class _DashedBorderPainter extends CustomPainter {
 class _FilePill extends StatefulWidget {
   final PrFile file;
   final bool isActive;
+
   /// Path of the currently-selected file in the strip. Used to paint a
   /// quiet, persistent coupling aura over neighbors of the selection
   /// so the cascade stays visible after a click, not just on hover.
   final String activePath;
+
   /// Cluster id from the coupling matrix. Null = isolated file (no
   /// stripe). Pills sharing a cluster share their stripe color, the
   /// same identity used by the changes-panel rail — files that move
   /// together visually belong together.
   final int? clusterId;
+
   /// Full path → cluster-id map for the strip. Used to resolve the
   /// cluster colors of the SELECTION and HOVER source files so the
   /// cascade tint can blend AWAY from this pill's local identity
   /// TOWARD whichever anchor is energizing it — the visual analog of
   /// "the signal is flowing from there into here."
   final Map<String, int> clusterByPath;
+
   /// Thermal heat 0..1 — exponentially-decayed commit density on this
   /// file. Drives an ember glow on the pill: hot files have a bright
   /// orange-tinted left edge; cold files are silent. Tells the
   /// reviewer "the team currently lives in this file" without any
   /// label.
   final double heat;
+
   /// PR-level coherence 0..1 — average pairwise Jaccard across all
   /// files in the strip. Modulates cascade intensity: a sparse PR
   /// (low coherence) amplifies the cascade so rare coupling reads,
   /// a dense PR damps it so the strip doesn't melt into uniform glow.
   final double coherence;
+
   /// Lens-level currently-hovered file (RESONANCE AURORA source).
   /// When non-null AND the matrix says this pill's file has a
   /// coupling Jaccard ≥ 0.4 with the source, we paint a halo
   /// proportional to the coupling.
   final ValueNotifier<String?> auroraSource;
   final FileCouplingMatrix? couplingMatrix;
+
+  /// True when Repo X-Ray flags this file as a keystone (quiet file
+  /// that holds clusters together — high pull, low touch count).
+  /// Renders as a small leading ✦ glyph before the filename. Pure
+  /// visual marker; tooltip explains the meaning on hover.
+  final bool isKeystone;
   final VoidCallback onTap;
   const _FilePill({
     required this.file,
@@ -5452,6 +7829,7 @@ class _FilePill extends StatefulWidget {
     required this.coherence,
     required this.auroraSource,
     required this.couplingMatrix,
+    required this.isKeystone,
     required this.onTap,
   });
   @override
@@ -5506,7 +7884,6 @@ class _FilePillState extends State<_FilePill> {
             ? null
             : t.clusterStripeColor(widget.clusterByPath[source]);
 
-        // ─── PILL CHROME — anchored signal system ───────────────────
         //
         // Both coupling cascades (selection-anchored AND hover-anchored)
         // light BOTH chrome channels (fill + border) so the reader can
@@ -5520,7 +7897,6 @@ class _FilePillState extends State<_FilePill> {
         // happen to coincide.
         //
         //   STATE                  CHANNELS              ENCODING
-        //   ─────────────────────────────────────────────────────────
         //   cluster identity       Left stripe           static color
         //   heat (commit density)  Left ember            static gradient
         //   selected pill          Fill + border α↑      accent, promoted α
@@ -5551,8 +7927,7 @@ class _FilePillState extends State<_FilePill> {
         // strongly-coupled neighbor visually IS "what the anchor looks
         // like" attenuated by graph distance.
         final hoverCascade = 1.0 - widget.coherence * 0.4;
-        final selectionCascade =
-            hoverCascade * (0.55 - widget.coherence * 0.2);
+        final selectionCascade = hoverCascade * (0.55 - widget.coherence * 0.2);
         final hoverFillPeak = selectedFillAlpha * hoverCascade;
         final hoverBorderPeak =
             (selectedBorderAlpha - restingBorderAlpha) * hoverCascade;
@@ -5566,7 +7941,6 @@ class _FilePillState extends State<_FilePill> {
         final liveHoverFill = _hovered ? hoverFillBump * heatBoost : 0.0;
         final liveHoverBorder = _hovered ? hoverBorderBump * heatBoost : 0.0;
 
-        // ─── COLOR MIXING ───────────────────────────────────────────
         // The cascade tint of a non-selected pill blends the cluster
         // colors of its two anchors (selection + hover) weighted by
         // each anchor's cascade contribution. The pill's body bleeds
@@ -5588,7 +7962,6 @@ class _FilePillState extends State<_FilePill> {
           return Color.lerp(hSrc, sSrc, mix) ?? sFallback;
         }
 
-        // ─── Channel composition ───────────────────────────────────
         // FILL: selection wash + both cascades + hover bump.
         final fillTouched =
             widget.isActive || aurora > 0 || selAura > 0 || _hovered;
@@ -5604,12 +7977,11 @@ class _FilePillState extends State<_FilePill> {
         // BORDER: resting/selected base + both cascades + hover bump.
         final borderTouched =
             widget.isActive || aurora > 0 || selAura > 0 || _hovered;
-        final borderAlpha = (widget.isActive
-                ? selectedBorderAlpha
-                : restingBorderAlpha) +
-            aurora * hoverBorderPeak +
-            selAura * selectionBorderPeak +
-            liveHoverBorder;
+        final borderAlpha =
+            (widget.isActive ? selectedBorderAlpha : restingBorderAlpha) +
+                aurora * hoverBorderPeak +
+                selAura * selectionBorderPeak +
+                liveHoverBorder;
         final borderColor = (widget.isActive
                 ? accent
                 : borderTouched
@@ -5623,18 +7995,15 @@ class _FilePillState extends State<_FilePill> {
         // colors (selection + hover): bridges visibly carry BOTH
         // identities, not a weighted compromise. Distinct SHAPE so
         // intersection is unambiguous even when alphas coincide.
-        final bridge = (aurora > 0 && selAura > 0)
-            ? math.sqrt(aurora * selAura)
-            : 0.0;
+        final bridge =
+            (aurora > 0 && selAura > 0) ? math.sqrt(aurora * selAura) : 0.0;
         // Both auroras inherit the Jaccard 0.4 floor when nonzero, so
         // the minimum visible bridge is 0.4. A simple "is nonzero" gate
         // is the honest threshold — any earlier "0.04" looked meaningful
         // but was unreachable.
         final showBridge = bridge > 0;
-        final bridgeBlend = Color.lerp(
-                hoverSrcColor ?? clusterColor ?? accent,
-                selSrcColor ?? clusterColor ?? accent,
-                0.5) ??
+        final bridgeBlend = Color.lerp(hoverSrcColor ?? clusterColor ?? accent,
+                selSrcColor ?? clusterColor ?? accent, 0.5) ??
             (clusterColor ?? accent);
         final bridgeColor =
             bridgeBlend.withValues(alpha: bridge * bridgeRingMax);
@@ -5681,8 +8050,7 @@ class _FilePillState extends State<_FilePill> {
                           margin: const EdgeInsets.all(2),
                           decoration: BoxDecoration(
                             border: Border.all(color: bridgeColor),
-                            borderRadius:
-                                BorderRadius.circular(pillRadius - 2),
+                            borderRadius: BorderRadius.circular(pillRadius - 2),
                           ),
                         ),
                       ),
@@ -5692,81 +8060,109 @@ class _FilePillState extends State<_FilePill> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-              // Left cluster stripe — same palette as the changes-panel
-              // rail. Always reserves the slot so pill widths stay
-              // aligned whether or not a file is in a cluster.
-              // Above the stripe sits an ember-glow proportional to
-              // thermal heat: hot files (recent commit density) get
-              // an orange wash that bleeds into the pill's leading
-              // edge, cold files are silent. The team's current
-              // battlefield surfaces visually with no label.
-              Stack(
-                children: [
-                  Container(
-                    width: 3,
-                    margin: const EdgeInsets.only(right: 6),
-                    color: clusterColor ?? Colors.transparent,
-                  ),
-                  if (widget.heat > 0.05)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: Container(
-                          margin: const EdgeInsets.only(right: 6),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.centerLeft,
-                              end: Alignment.centerRight,
-                              colors: [
-                                t.stateConflicted
-                                    .withValues(alpha: widget.heat * 0.9),
-                                t.stateConflicted
-                                    .withValues(alpha: widget.heat * 0.3),
-                              ],
+                        // Left cluster stripe — same palette as the changes-panel
+                        // rail. Always reserves the slot so pill widths stay
+                        // aligned whether or not a file is in a cluster.
+                        // Above the stripe sits an ember-glow proportional to
+                        // thermal heat: hot files (recent commit density) get
+                        // an orange wash that bleeds into the pill's leading
+                        // edge, cold files are silent. The team's current
+                        // battlefield surfaces visually with no label.
+                        Stack(
+                          children: [
+                            Container(
+                              width: 3,
+                              margin: const EdgeInsets.only(right: 6),
+                              color: clusterColor ?? Colors.transparent,
+                            ),
+                            if (widget.heat > 0.05)
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  child: Container(
+                                    margin: const EdgeInsets.only(right: 6),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.centerLeft,
+                                        end: Alignment.centerRight,
+                                        colors: [
+                                          t.stateConflicted.withValues(
+                                              alpha: widget.heat * 0.9),
+                                          t.stateConflicted.withValues(
+                                              alpha: widget.heat * 0.3),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        if (widget.isActive)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: Container(
+                              width: 5,
+                              height: 5,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: accent,
+                              ),
                             ),
                           ),
+                        // Keystone marker — four-point star for "load-bearing".
+                        // Sits before the filename so eyes lock onto it first;
+                        // active-dot has visual priority (it claims its own
+                        // leading slot), keystone rides right after. Tooltip
+                        // explains the metaphor without painting labels on the
+                        // pill itself.
+                        if (widget.isKeystone)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Tooltip(
+                              message: 'keystone — repo-wide bridge file',
+                              child: Text(
+                                '✦',
+                                style: TextStyle(
+                                  color: accent.withValues(alpha: 0.9),
+                                  fontSize: 9.5,
+                                  fontFamily: 'JetBrainsMono',
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                        Text(
+                          filename,
+                          style: TextStyle(
+                            color:
+                                widget.isActive ? t.textStrong : t.textNormal,
+                            fontSize: 10.5,
+                            fontFamily: 'JetBrainsMono',
+                            fontWeight: widget.isActive
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
                         ),
-                      ),
-                    ),
-                ],
-              ),
-              if (widget.isActive)
-                Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: Container(
-                    width: 5,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: accent,
-                    ),
-                  ),
-                ),
-              Text(
-                filename,
-                style: TextStyle(
-                  color: widget.isActive ? t.textStrong : t.textNormal,
-                  fontSize: 10.5,
-                  fontFamily: 'JetBrainsMono',
-                  fontWeight:
-                      widget.isActive ? FontWeight.w700 : FontWeight.w500,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text('+${widget.file.additions}',
-                  style: TextStyle(
-                    color: t.stateAdded.withValues(alpha: 0.85),
-                    fontSize: 9,
-                    fontFamily: 'JetBrainsMono',
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  )),
-              const SizedBox(width: 3),
-              Text('-${widget.file.deletions}',
-                  style: TextStyle(
-                    color: t.stateDeleted.withValues(alpha: 0.85),
-                    fontSize: 9,
-                    fontFamily: 'JetBrainsMono',
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  )),
+                        const SizedBox(width: 8),
+                        Text('+${widget.file.additions}',
+                            style: TextStyle(
+                              color: t.stateAdded.withValues(alpha: 0.85),
+                              fontSize: 9,
+                              fontFamily: 'JetBrainsMono',
+                              fontFeatures: const [
+                                FontFeature.tabularFigures()
+                              ],
+                            )),
+                        const SizedBox(width: 3),
+                        Text('-${widget.file.deletions}',
+                            style: TextStyle(
+                              color: t.stateDeleted.withValues(alpha: 0.85),
+                              fontSize: 9,
+                              fontFamily: 'JetBrainsMono',
+                              fontFeatures: const [
+                                FontFeature.tabularFigures()
+                              ],
+                            )),
                       ],
                     ),
                   ),
@@ -5776,250 +8172,6 @@ class _FilePillState extends State<_FilePill> {
           ),
         );
       },
-    );
-  }
-}
-
-/// Recycles the canonical diff renderer from the changes panel rather
-/// than rolling our own. [DiffLineView] is the same widget the changes
-/// panel paints each line through. Staging affordances are off here —
-/// PR diffs aren't stageable from this surface.
-///
-/// Critically, takes a **pre-parsed** map of file → ParsedLines instead
-/// of raw diff text. Parsing happens once in [pullRequestDetail] when
-/// the future resolves; rebuilding this widget is now an O(filtered
-/// list) lookup, not an O(n) regex pass over the full multi-file patch.
-/// Without this, every parent setState (AnimatedSize tween, prefetch
-/// progress notification, sibling hover) would re-run the parser on
-/// the main thread and freeze the app.
-///
-/// Visual chrome borrows from `_MultiDiffTimelineStrip` in the changes
-/// panel: a sticky file header above the lines (path + +/- stats +
-/// cluster rail) so the diff feels like a section of the wider review
-/// surface, not a floating block. The header carries the same color
-/// identity as the file pill above it, so eye-tracking works: the
-/// pill the user clicked is now the rail-tinted band at the top of
-/// what's underneath it.
-class _DiffView extends StatefulWidget {
-  final Map<String, List<ParsedLine>> diffByFile;
-  final String activeFilePath;
-  /// Cluster id from the coupling matrix (same one that tints the
-  /// active file pill). Null = isolated; rail goes neutral.
-  final int? clusterId;
-  /// +/- stats for the active file, surfaced in the header strip.
-  final int additions;
-  final int deletions;
-
-  const _DiffView({
-    super.key,
-    required this.diffByFile,
-    required this.activeFilePath,
-    required this.clusterId,
-    required this.additions,
-    required this.deletions,
-  });
-
-  @override
-  State<_DiffView> createState() => _DiffViewState();
-}
-
-class _DiffViewState extends State<_DiffView> {
-  // Per-file expand state. Resets on file switch via the parent's key.
-  bool _expanded = false;
-  // Match the review pane's collapse heuristic
-  // (`_CollapsibleCodeBlock`) but scaled for diffs, which are denser
-  // and longer than evidence snippets:
-  //   * visible when collapsed: 30 lines (~540 px at the 18px row
-  //     contract DiffLineView expects)
-  //   * trigger collapse only when hiding >= 20 lines (toggle UI is
-  //     worth ~that many to justify)
-  static const int _collapsedLines = 30;
-  static const int _minHiddenToCollapse = 20;
-
-  // Forward-compat shims so the rest of the build reads the original
-  // field names.
-  Map<String, List<ParsedLine>> get diffByFile => widget.diffByFile;
-  String get activeFilePath => widget.activeFilePath;
-  int? get clusterId => widget.clusterId;
-  int get additions => widget.additions;
-  int get deletions => widget.deletions;
-
-  @override
-  void didUpdateWidget(covariant _DiffView old) {
-    super.didUpdateWidget(old);
-    // If the active file changed, drop the expand state — each file
-    // judges its own length independently. (Belt-and-suspenders; the
-    // parent should also key us on activeFilePath, but resetting
-    // here means a same-key rebuild with a different path stays
-    // honest.)
-    if (old.activeFilePath != widget.activeFilePath) {
-      _expanded = false;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final lines = diffByFile[activeFilePath] ?? const <ParsedLine>[];
-    if (lines.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: t.bg0,
-          borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.pillRadius),
-          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.3)),
-        ),
-        child: Text('no diff for this file',
-            style: TextStyle(color: t.textMuted, fontSize: 11)),
-      );
-    }
-    const lineHeight = 18.0;
-    final clusterColor = t.clusterStripeColor(clusterId);
-    final hiddenLines = lines.length - _collapsedLines;
-    final isLong = hiddenLines >= _minHiddenToCollapse;
-    return RepaintBoundary(
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: t.bg0,
-          borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.pillRadius),
-          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.3)),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // File header strip — modelled on `_MultiDiffTimelineStrip`
-            // in changes_page. Cluster rail on the left (same palette
-            // as the file pill above), file path mono, `+N -N` mono
-            // tabular figures aligned right. Sits inside the diff
-            // surface so the eye reads "I'm looking at THIS file" as a
-            // single visual unit with the lines below.
-            Container(
-              padding: const EdgeInsets.fromLTRB(0, 0, 10, 0),
-              decoration: BoxDecoration(
-                color: t.surface1.withValues(alpha: 0.5),
-                border: Border(
-                  bottom: BorderSide(
-                    color: t.chromeBorder.withValues(alpha: 0.35),
-                  ),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 3,
-                    height: 22,
-                    color: clusterColor ?? Colors.transparent,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Text(
-                        activeFilePath,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: t.textNormal,
-                          fontSize: 11,
-                          fontFamily: 'JetBrainsMono',
-                          letterSpacing: 0.1,
-                        ),
-                      ),
-                    ),
-                  ),
-                  Text('+$additions',
-                      style: TextStyle(
-                        color: t.stateAdded,
-                        fontSize: 10,
-                        fontFamily: 'JetBrainsMono',
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      )),
-                  const SizedBox(width: 4),
-                  Text('-$deletions',
-                      style: TextStyle(
-                        color: t.stateDeleted,
-                        fontSize: 10,
-                        fontFamily: 'JetBrainsMono',
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      )),
-                ],
-              ),
-            ),
-            // Diff lines — each forced to 18px height so DiffLineView's
-            // CrossAxisAlignment.stretch row has bounded extent (its
-            // contract — `itemExtent: 18` in the changes panel; this
-            // SizedBox is the equivalent contract here).
-            //
-            // Long-diff auto-collapse: when collapsed, simply build
-            // *fewer children* via `take(_collapsedLines)`. Earlier
-            // attempt used `ConstrainedBox + ClipRect` around a Column
-            // of all N children — wrong, because ClipRect only clips
-            // rendered output, not the layout pass. The Column's
-            // intrinsic height (N × 18 px) still overflowed the
-            // constraint and tripped the overflow assertion. Building
-            // fewer children means the Column genuinely is short.
-            for (final line in (isLong && !_expanded
-                    ? lines.take(_collapsedLines)
-                    : lines))
-              SizedBox(
-                height: lineHeight,
-                child: DiffLineView(
-                  line: line,
-                  tokens: t,
-                  blameEntry: null,
-                  hovered: false,
-                  onGutterEnter: null,
-                  onGutterExit: () {},
-                  searchTerm: '',
-                  useAnimatedTextMode: false,
-                ),
-              ),
-            // Footer toggle — same shape as the review pane's
-            // collapsible block: full-width row with a thin top
-            // divider, mono caret + count, click toggles.
-            if (isLong)
-              MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => setState(() => _expanded = !_expanded),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    decoration: BoxDecoration(
-                      color: t.surface1.withValues(alpha: 0.4),
-                      border: Border(
-                        top: BorderSide(
-                          color: t.chromeBorder.withValues(alpha: 0.2),
-                        ),
-                      ),
-                    ),
-                    child: Center(
-                      child: Text(
-                        _expanded
-                            ? '▲ collapse'
-                            : '▼ $hiddenLines more lines',
-                        style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 10,
-                          fontFamily: 'JetBrainsMono',
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -6047,14 +8199,12 @@ class _ReviewFormState extends State<_ReviewForm> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
             color: t.bg0,
             borderRadius: BorderRadius.circular(
                 context.surfaceShader.geometry.pillRadius),
-            border:
-                Border.all(color: t.chromeBorder.withValues(alpha: 0.3)),
+            border: Border.all(color: t.chromeBorder.withValues(alpha: 0.3)),
           ),
           child: TextField(
             controller: _ctrl,
@@ -6141,9 +8291,7 @@ class _ActionButtonState extends State<_ActionButton> {
     final (fg, bg, border) = switch (widget.tone) {
       _ActionTone.primary => (
           _hovered ? t.bg0 : t.accentBright,
-          _hovered
-              ? t.accentBright
-              : t.accentBright.withValues(alpha: 0.12),
+          _hovered ? t.accentBright : t.accentBright.withValues(alpha: 0.12),
           t.accentBright.withValues(alpha: 0.6),
         ),
       _ActionTone.warning => (
@@ -6155,9 +8303,7 @@ class _ActionButtonState extends State<_ActionButton> {
         ),
       _ActionTone.danger => (
           _hovered ? t.bg0 : t.stateDeleted,
-          _hovered
-              ? t.stateDeleted
-              : t.stateDeleted.withValues(alpha: 0.1),
+          _hovered ? t.stateDeleted : t.stateDeleted.withValues(alpha: 0.1),
           t.stateDeleted.withValues(alpha: 0.55),
         ),
       _ActionTone.neutral => (
@@ -6185,8 +8331,7 @@ class _ActionButtonState extends State<_ActionButton> {
           child: AnimatedContainer(
             duration: context.motion(shader.duration),
             curve: shader.safeCurve,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: bg,
               borderRadius: BorderRadius.circular(shader.geometry.pillRadius),
@@ -6214,6 +8359,11 @@ class _PrActionToolbar extends StatefulWidget {
   final bool stateOpen;
   final bool canExportPatch;
   final VoidCallback onCheckout;
+
+  /// Materialise the PR as a worktree/desk. When non-null, renders an
+  /// `open as desk` button before `checkout`. Hidden for local PRs
+  /// (which already have their own desk by definition).
+  final VoidCallback? onOpenAsDesk;
   final VoidCallback? onExportPatch;
   final void Function(String method, bool deleteBranch) onMerge;
   const _PrActionToolbar({
@@ -6223,6 +8373,7 @@ class _PrActionToolbar extends StatefulWidget {
     required this.onMerge,
     this.canExportPatch = false,
     this.onExportPatch,
+    this.onOpenAsDesk,
   });
   @override
   State<_PrActionToolbar> createState() => _PrActionToolbarState();
@@ -6233,28 +8384,40 @@ class _PrActionToolbarState extends State<_PrActionToolbar> {
 
   @override
   Widget build(BuildContext context) {
+    // Wrap instead of Row — when the narrower expanded-row constraint
+    // (happens on smaller windows / when the issues sidebar is open)
+    // can't fit every action in a single line, the buttons wrap to a
+    // second row instead of overflowing. Right-aligned via `alignment`
+    // so the first row still feels like a trailing action bar.
     return Padding(
       padding: const EdgeInsets.only(top: 4),
-      child: Row(
+      child: Wrap(
+        alignment: WrapAlignment.end,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 6,
         children: [
-          const Spacer(),
-          if (widget.canExportPatch && widget.onExportPatch != null) ...[
+          if (widget.canExportPatch && widget.onExportPatch != null)
             _ActionButton(
               label: '↓ patch',
               onTap: widget.onExportPatch!,
             ),
-            const SizedBox(width: 8),
-          ],
+          if (widget.onOpenAsDesk != null)
+            // Promoted from the right-click menu so the killer
+            // parallelism move (review a PR in its own worktree, with
+            // full filesystem + IDE) reads as primary.
+            _ActionButton(
+              label: '⊞ open as desk',
+              onTap: widget.onOpenAsDesk!,
+            ),
           _ActionButton(label: '[c] checkout', onTap: widget.onCheckout),
-          if (widget.stateOpen) ...[
-            const SizedBox(width: 8),
+          if (widget.stateOpen)
             // Merge button + popover. The popover positions itself
             // above the button via Overlay so it doesn't push the row.
             _MergeMenuAnchor(
               enabled: widget.mergeable,
               onPick: widget.onMerge,
             ),
-          ],
         ],
       ),
     );
@@ -6329,27 +8492,23 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
                           _MergeMenuRow(
                               label: 'squash & merge',
                               onTap: () {
-                                widget.onPick(
-                                    'squash', _deleteBranchAfter);
+                                widget.onPick('squash', _deleteBranchAfter);
                                 _close();
                               }),
                           _MergeMenuRow(
                               label: 'rebase & merge',
                               onTap: () {
-                                widget.onPick(
-                                    'rebase', _deleteBranchAfter);
+                                widget.onPick('rebase', _deleteBranchAfter);
                                 _close();
                               }),
                           Container(
                               height: 1,
-                              margin: const EdgeInsets.symmetric(
-                                  vertical: 4),
-                              color: t.chromeBorder
-                                  .withValues(alpha: 0.25)),
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              color: t.chromeBorder.withValues(alpha: 0.25)),
                           GestureDetector(
                             behavior: HitTestBehavior.opaque,
-                            onTap: () => setLocal(() =>
-                                _deleteBranchAfter = !_deleteBranchAfter),
+                            onTap: () => setLocal(
+                                () => _deleteBranchAfter = !_deleteBranchAfter),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 12, vertical: 6),
@@ -6371,8 +8530,7 @@ class _MergeMenuAnchorState extends State<_MergeMenuAnchor> {
                                 const SizedBox(width: 8),
                                 Text('delete branch after',
                                     style: TextStyle(
-                                        color: t.textNormal,
-                                        fontSize: 10.5)),
+                                        color: t.textNormal, fontSize: 10.5)),
                               ]),
                             ),
                           ),
@@ -6435,8 +8593,7 @@ class _MergeMenuRowState extends State<_MergeMenuRow> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           color: _hovered
               ? t.accentBright.withValues(alpha: 0.1)
               : t.accentBright.withValues(alpha: 0),
@@ -6521,10 +8678,8 @@ class _CommentBlock extends StatelessWidget {
   static String _scrub(String body) {
     var s = body;
     s = s.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
-    s = s.replaceAll(
-        RegExp(r'</?details[^>]*>', caseSensitive: false), '');
-    s = s.replaceAll(
-        RegExp(r'</?summary[^>]*>', caseSensitive: false), '');
+    s = s.replaceAll(RegExp(r'</?details[^>]*>', caseSensitive: false), '');
+    s = s.replaceAll(RegExp(r'</?summary[^>]*>', caseSensitive: false), '');
     return s.trim();
   }
 
@@ -6663,9 +8818,7 @@ class _CommentBlock extends StatelessWidget {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // Issue row — collapsed metric line + expanded thread/actions
-// ────────────────────────────────────────────────────────────────────────
 
 class _IssueRow extends StatefulWidget {
   final IssueSummary issue;
@@ -6675,12 +8828,23 @@ class _IssueRow extends StatefulWidget {
   final IssueDetail? detail;
   final bool detailLoading;
   final bool actionInFlight;
+
   /// PRs whose body says they close/fix/ref this issue. Derived locally
   /// from cached PR bodies — no extra calls. Renders inline as
   /// "← addressed by #M" chips that jump cross-lens on click.
   final List<PullRequestSummary> addressingPrs;
+
+  /// True when this issue lives in refs/manifold/issues/* rather than
+  /// being fetched from a remote forge. Drives the small `LOCAL` chip
+  /// in the row header so the user can tell which is which.
+  final bool isLocal;
   final ValueChanged<int> onJumpToPr;
   final VoidCallback onTap;
+
+  /// Right-click handler — global pointer position so the caller can
+  /// anchor a context menu (matches `_PullRequestRow.onSecondaryTap`).
+  /// Null = no context menu on this row.
+  final ValueChanged<Offset>? onSecondaryTap;
   final VoidCallback onAssignSelf;
   final VoidCallback onClose;
   final ValueChanged<String> onComment;
@@ -6701,6 +8865,8 @@ class _IssueRow extends StatefulWidget {
     required this.onClose,
     required this.onComment,
     required this.onAddLabel,
+    this.isLocal = false,
+    this.onSecondaryTap,
   });
   @override
   State<_IssueRow> createState() => _IssueRowState();
@@ -6735,8 +8901,7 @@ class _IssueRowState extends State<_IssueRow> {
     final t = context.tokens;
     final shader = context.surfaceShader;
     final rail = _railColor(t);
-    final isAssignedToMe =
-        widget.issue.assignees.contains(widget.viewerLogin);
+    final isAssignedToMe = widget.issue.assignees.contains(widget.viewerLogin);
     final isOpen = widget.issue.state == 'OPEN';
     // Same scoping as PR row: toggle GestureDetector wraps only the
     // header Row, leaving the expanded thread + reply field + action
@@ -6767,272 +8932,300 @@ class _IssueRowState extends State<_IssueRow> {
                 ),
               ),
             AnimatedContainer(
-        duration: context.motion(shader.duration),
-        curve: shader.safeCurve,
-        padding: EdgeInsets.fromLTRB(
-            12, 10, addressingCount > 0 ? 26 : 12, 10),
-        decoration: BoxDecoration(
-          color: widget.expanded
-              ? t.surface1.withValues(alpha: 0.7)
-              : (_hovered || widget.focused
-                  ? t.surface1.withValues(alpha: 0.45)
-                  : t.surface1.withValues(alpha: 0)),
-          borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.cardRadius),
-          border: Border(
-            left: BorderSide(
-              color: rail.withValues(
-                  alpha: widget.expanded || widget.focused ? 1.0 : 0.55),
-              width: widget.focused || widget.expanded ? 4 : 3,
-            ),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: widget.onTap,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(top: 1, right: 10),
-                      child: Text(
-                        '#${widget.issue.number}',
-                      style: TextStyle(
-                        color: t.textStrong,
-                        fontSize: 12,
-                        fontFamily: 'JetBrainsMono',
-                        fontWeight: FontWeight.w700,
-                        fontFeatures: const [
-                          FontFeature.tabularFigures()
-                        ],
-                        letterSpacing: 0.3,
-                      ),
-                    ),
+              duration: context.motion(shader.duration),
+              curve: shader.safeCurve,
+              padding: EdgeInsets.fromLTRB(
+                  12, 10, addressingCount > 0 ? 26 : 12, 10),
+              decoration: BoxDecoration(
+                color: widget.expanded
+                    ? t.surface1.withValues(alpha: 0.7)
+                    : (_hovered || widget.focused
+                        ? t.surface1.withValues(alpha: 0.45)
+                        : t.surface1.withValues(alpha: 0)),
+                borderRadius: BorderRadius.circular(
+                    context.surfaceShader.geometry.cardRadius),
+                border: Border(
+                  left: BorderSide(
+                    color: rail.withValues(
+                        alpha: widget.expanded || widget.focused ? 1.0 : 0.55),
+                    width: widget.focused || widget.expanded ? 4 : 3,
                   ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.issue.title.toUpperCase(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: t.textStrong,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.4,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          [
-                            ...widget.issue.labels,
-                            '@${widget.issue.authorLogin}',
-                            if (widget.issue.assignees.isNotEmpty)
-                              'assigned: ${widget.issue.assignees.map((a) => '@$a').join(', ')}',
-                          ].join(' · '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: t.textMuted,
-                            fontSize: 10.5,
-                            fontFamily: 'JetBrainsMono',
-                            letterSpacing: 0.1,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          '${widget.issue.commentCount} conv · '
-                          '${_relativeTime(widget.issue.updatedAt)}',
-                          style: TextStyle(
-                            color: t.textMuted.withValues(alpha: 0.8),
-                            fontSize: 10,
-                            fontFamily: 'JetBrainsMono',
-                            fontFeatures: const [
-                              FontFeature.tabularFigures()
-                            ],
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    margin: const EdgeInsets.only(left: 8, top: 1),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: rail.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(
-                          context.surfaceShader.geometry.badgeRadius),
-                    ),
-                    child: Text(
-                      widget.issue.state,
-                      style: TextStyle(
-                        color: rail,
-                        fontSize: 9,
-                        fontFamily: 'JetBrainsMono',
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.6,
-                      ),
-                    ),
-                  ),
-                ],
                 ),
               ),
-            ),
-            if (widget.actionInFlight)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: _ActionProgressBar(color: t.accentBright),
-                ),
-              AnimatedSize(
-                duration: context.motion(shader.duration),
-                curve: shader.safeCurve,
-                alignment: Alignment.topCenter,
-                child: !widget.expanded
-                    ? const SizedBox.shrink()
-                    : Padding(
-                        padding: const EdgeInsets.only(top: 14),
-                        child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
-                          children: [
-                            if (widget.detail == null &&
-                                widget.detailLoading)
-                              Text('reading thread…',
-                                  style: TextStyle(
-                                      color: t.textMuted,
-                                      fontSize: 11,
-                                      fontStyle: FontStyle.italic))
-                            else if (widget.detail == null)
-                              Text('no detail available',
-                                  style: TextStyle(
-                                      color: t.textMuted, fontSize: 11))
-                            else ...[
-                              // ADDRESSED BY — workline backlinks. PRs
-                              // whose body says they close/ref this
-                              // issue. Click → cross-lens jump. Lands
-                              // FIRST so the reader sees "this is being
-                              // worked on" before reading the body.
-                              if (widget.addressingPrs.isNotEmpty) ...[
-                                _SectionLabel('ADDRESSED BY'),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: [
-                                    for (final p in widget.addressingPrs)
-                                      _PrLinkChip(
-                                        pr: p,
-                                        onTap: () =>
-                                            widget.onJumpToPr(p.number),
-                                      ),
-                                  ],
-                                ),
-                                const SizedBox(height: 14),
-                              ],
-                              if (widget.detail!.body.isNotEmpty) ...[
-                                _SectionLabel('DESCRIPTION'),
-                                const SizedBox(height: 6),
-                                _CommentBlock(
-                                  comment: GhComment(
-                                    authorLogin: widget.issue.authorLogin,
-                                    body: widget.detail!.body,
-                                    createdAt: widget.issue.updatedAt,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                              ],
-                              if (widget.detail!.comments.isNotEmpty) ...[
-                                _SectionLabel('THREAD'),
-                                const SizedBox(height: 6),
-                                for (final c in widget.detail!.comments)
-                                  _CommentBlock(comment: c),
-                                const SizedBox(height: 8),
-                              ],
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: t.bg0,
-                                  borderRadius: BorderRadius.circular(
-                                      context.surfaceShader.geometry.pillRadius),
-                                  border: Border.all(
-                                      color: t.chromeBorder
-                                          .withValues(alpha: 0.3)),
-                                ),
-                                child: TextField(
-                                  controller: _replyCtrl,
-                                  maxLines: 2,
-                                  // Reply body is prose, not code —
-                                  // drop the JetBrainsMono override
-                                  // and let the theme's typography
-                                  // pick the family.
-                                  style: TextStyle(
-                                      color: t.textNormal, fontSize: 11),
-                                  decoration: InputDecoration(
-                                    isDense: true,
-                                    border: InputBorder.none,
-                                    hintText: 'reply…',
-                                    hintStyle: TextStyle(
-                                      color: t.textMuted
-                                          .withValues(alpha: 0.6),
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: widget.onTap,
+                      onSecondaryTapDown: widget.onSecondaryTap == null
+                          ? null
+                          : (d) => widget.onSecondaryTap!(d.globalPosition),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 1, right: 10),
+                            child: Text(
+                              '#${widget.issue.number}',
+                              style: TextStyle(
+                                color: t.textStrong,
+                                fontSize: 12,
+                                fontFamily: 'JetBrainsMono',
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures()
+                                ],
+                                letterSpacing: 0.3,
                               ),
-                              const SizedBox(height: 10),
-                            ],
-                            // Action gravity — issue toolbar.
-                            Row(
+                            ),
+                          ),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Spacer(),
-                                if (!isAssignedToMe && isOpen)
-                                  Padding(
-                                    padding:
-                                        const EdgeInsets.only(right: 8),
-                                    child: _ActionButton(
-                                      label: 'assign me',
-                                      onTap: widget.onAssignSelf,
-                                    ),
+                                Text(
+                                  widget.issue.title.toUpperCase(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: t.textStrong,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.4,
                                   ),
-                                if (isOpen)
-                                  Padding(
-                                    padding:
-                                        const EdgeInsets.only(right: 8),
-                                    child: _ActionButton(
-                                      label: 'close',
-                                      tone: _ActionTone.danger,
-                                      onTap: widget.onClose,
-                                    ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  [
+                                    ...widget.issue.labels,
+                                    '@${widget.issue.authorLogin}',
+                                    if (widget.issue.assignees.isNotEmpty)
+                                      'assigned: ${widget.issue.assignees.map((a) => '@$a').join(', ')}',
+                                  ].join(' · '),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: t.textMuted,
+                                    fontSize: 10.5,
+                                    fontFamily: 'JetBrainsMono',
+                                    letterSpacing: 0.1,
                                   ),
-                                _ActionButton(
-                                  label: '↩ post',
-                                  tone: _ActionTone.primary,
-                                  onTap: () {
-                                    final body = _replyCtrl.text.trim();
-                                    if (body.isEmpty) return;
-                                    widget.onComment(body);
-                                    _replyCtrl.clear();
-                                  },
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  '${widget.issue.commentCount} conv · '
+                                  '${_relativeTime(widget.issue.updatedAt)}',
+                                  style: TextStyle(
+                                    color: t.textMuted.withValues(alpha: 0.8),
+                                    fontSize: 10,
+                                    fontFamily: 'JetBrainsMono',
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures()
+                                    ],
+                                    letterSpacing: 0.2,
+                                  ),
                                 ),
                               ],
                             ),
-                          ],
-                        ),
+                          ),
+                          if (widget.isLocal)
+                            Container(
+                              margin: const EdgeInsets.only(left: 8, top: 1),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: t.chromeAccent.withValues(alpha: 0.10),
+                                borderRadius: BorderRadius.circular(
+                                    context.surfaceShader.geometry.badgeRadius),
+                                border: Border.all(
+                                  color: t.chromeAccent.withValues(alpha: 0.35),
+                                  width: 0.5,
+                                ),
+                              ),
+                              child: Text(
+                                'LOCAL',
+                                style: TextStyle(
+                                  color: t.chromeAccent,
+                                  fontSize: 9,
+                                  fontFamily: 'JetBrainsMono',
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ),
+                          Container(
+                            margin: const EdgeInsets.only(left: 8, top: 1),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: rail.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(
+                                  context.surfaceShader.geometry.badgeRadius),
+                            ),
+                            child: Text(
+                              widget.issue.state,
+                              style: TextStyle(
+                                color: rail,
+                                fontSize: 9,
+                                fontFamily: 'JetBrainsMono',
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.6,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
+                    ),
+                  ),
+                  if (widget.actionInFlight)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: _ActionProgressBar(color: t.accentBright),
+                    ),
+                  AnimatedSize(
+                    duration: context.motion(shader.duration),
+                    curve: shader.safeCurve,
+                    alignment: Alignment.topCenter,
+                    child: !widget.expanded
+                        ? const SizedBox.shrink()
+                        : Padding(
+                            padding: const EdgeInsets.only(top: 14),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (widget.detail == null &&
+                                    widget.detailLoading)
+                                  Text('reading thread…',
+                                      style: TextStyle(
+                                          color: t.textMuted,
+                                          fontSize: 11,
+                                          fontStyle: FontStyle.italic))
+                                else if (widget.detail == null)
+                                  Text('no detail available',
+                                      style: TextStyle(
+                                          color: t.textMuted, fontSize: 11))
+                                else ...[
+                                  // ADDRESSED BY — workline backlinks. PRs
+                                  // whose body says they close/ref this
+                                  // issue. Click → cross-lens jump. Lands
+                                  // FIRST so the reader sees "this is being
+                                  // worked on" before reading the body.
+                                  if (widget.addressingPrs.isNotEmpty) ...[
+                                    _SectionLabel('ADDRESSED BY'),
+                                    const SizedBox(height: 6),
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 6,
+                                      children: [
+                                        for (final p in widget.addressingPrs)
+                                          _PrLinkChip(
+                                            pr: p,
+                                            onTap: () =>
+                                                widget.onJumpToPr(p.number),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 14),
+                                  ],
+                                  if (widget.detail!.body.isNotEmpty) ...[
+                                    _SectionLabel('DESCRIPTION'),
+                                    const SizedBox(height: 6),
+                                    _CommentBlock(
+                                      comment: GhComment(
+                                        authorLogin: widget.issue.authorLogin,
+                                        body: widget.detail!.body,
+                                        createdAt: widget.issue.updatedAt,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                  ],
+                                  if (widget.detail!.comments.isNotEmpty) ...[
+                                    _SectionLabel('THREAD'),
+                                    const SizedBox(height: 6),
+                                    for (final c in widget.detail!.comments)
+                                      _CommentBlock(comment: c),
+                                    const SizedBox(height: 8),
+                                  ],
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 8),
+                                    decoration: BoxDecoration(
+                                      color: t.bg0,
+                                      borderRadius: BorderRadius.circular(
+                                          context.surfaceShader.geometry
+                                              .pillRadius),
+                                      border: Border.all(
+                                          color: t.chromeBorder
+                                              .withValues(alpha: 0.3)),
+                                    ),
+                                    child: TextField(
+                                      controller: _replyCtrl,
+                                      maxLines: 2,
+                                      // Reply body is prose, not code —
+                                      // drop the JetBrainsMono override
+                                      // and let the theme's typography
+                                      // pick the family.
+                                      style: TextStyle(
+                                          color: t.textNormal, fontSize: 11),
+                                      decoration: InputDecoration(
+                                        isDense: true,
+                                        border: InputBorder.none,
+                                        hintText: 'reply…',
+                                        hintStyle: TextStyle(
+                                          color: t.textMuted
+                                              .withValues(alpha: 0.6),
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                ],
+                                // Action gravity — issue toolbar.
+                                Row(
+                                  children: [
+                                    const Spacer(),
+                                    if (!isAssignedToMe && isOpen)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(right: 8),
+                                        child: _ActionButton(
+                                          label: 'assign me',
+                                          onTap: widget.onAssignSelf,
+                                        ),
+                                      ),
+                                    if (isOpen)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(right: 8),
+                                        child: _ActionButton(
+                                          label: 'close',
+                                          tone: _ActionTone.danger,
+                                          onTap: widget.onClose,
+                                        ),
+                                      ),
+                                    _ActionButton(
+                                      label: '↩ post',
+                                      tone: _ActionTone.primary,
+                                      onTap: () {
+                                        final body = _replyCtrl.text.trim();
+                                        if (body.isEmpty) return;
+                                        widget.onComment(body);
+                                        _replyCtrl.clear();
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
+            ),
           ],
         ),
       ),
@@ -7040,9 +9233,7 @@ class _IssueRowState extends State<_IssueRow> {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // Shared glyph helpers
-// ────────────────────────────────────────────────────────────────────────
 
 String _checkGlyph(CheckSummary c) {
   switch (c.conclusion) {
@@ -7119,9 +9310,7 @@ Color _reviewerColor(AppTokens t, String state) {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // Empty / loading / gh-missing notices
-// ────────────────────────────────────────────────────────────────────────
 
 class _LensLoadingNotice extends StatelessWidget {
   final String label;
@@ -7186,9 +9375,8 @@ class _GhMissingNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final headline = status.installed
-        ? 'gh CLI not authenticated'
-        : 'gh CLI not installed';
+    final headline =
+        status.installed ? 'gh CLI not authenticated' : 'gh CLI not installed';
     final hint = status.installed
         ? 'Run `gh auth login` in a terminal, then refresh this lens.'
         : 'Install from cli.github.com, then `gh auth login`.';
@@ -7220,9 +9408,7 @@ class _GhMissingNotice extends StatelessWidget {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // Helpers
-// ────────────────────────────────────────────────────────────────────────
 
 String _relativeTime(DateTime t) {
   final delta = DateTime.now().difference(t);
@@ -7269,16 +9455,21 @@ class _BranchCard extends StatefulWidget {
   final AppTokens tokens;
   final bool actionRunning;
   final VoidCallback? onCheckout;
+
   /// Returns the outcome so the card can morph its trash button into
   /// a force-confirm affordance for unmerged branches, or render an
   /// inline error next to the row instead of in a distant panel.
   final Future<_DeleteBranchOutcome> Function({bool force})? onDelete;
+
+  /// Right-click → rename via a dialog. Null disables the affordance.
+  final ValueChanged<Offset>? onSecondaryTap;
   const _BranchCard(
       {required this.branch,
       required this.tokens,
       required this.actionRunning,
       this.onCheckout,
-      this.onDelete});
+      this.onDelete,
+      this.onSecondaryTap});
   @override
   State<_BranchCard> createState() => _BranchCardState();
 }
@@ -7343,176 +9534,196 @@ class _BranchCardState extends State<_BranchCard> {
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final b = widget.branch;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) {
-        setState(() => _hovered = false);
-        // Pointer leaving the row resets the armed state — prevents
-        // a stray "force-armed" trash button from sitting around for
-        // the user to re-trigger by accident.
-        _disarm();
-      },
-      child: AnimatedContainer(
-        duration: context.motion(context.surfaceShader.duration),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: b.current
-              ? t.accentBright.withValues(alpha: 0.06)
-              : (_hovered ? t.itemHoverBg : t.surface1),
-          borderRadius:
-              BorderRadius.circular(context.surfaceShader.geometry.radius),
-          border: Border.all(
-            color: b.current
-                ? t.accentBright.withValues(alpha: 0.2)
-                : t.chromeBorder.withValues(alpha: 0.08),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-          // Branch icon or checkmark
-          b.current
-              ? AppIcon(name: 'check', size: 12, color: t.accentBright)
-              : AppIcon(name: 'git-branch', size: 12, color: t.textMuted),
-          const SizedBox(width: 8),
-          // Name + tracking
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                Row(children: [
-                  Flexible(
-                    child: Text(
-                      b.name,
-                      style: TextStyle(
-                        color: b.current ? t.textStrong : t.textNormal,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+    // Wrap the row in a Draggable so the user can drag it onto the
+    // desk strip in the topbar to materialize a new worktree. Uses
+    // LongPressDraggable to avoid fighting the list's scroll gesture
+    // on touch; on desktop mouse drag works identically.
+    return LongPressDraggable<DeskDropPayload>(
+      data: DeskDropPayload.branch(b.name),
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: _DeskDragFeedback(label: b.name, tokens: t),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onSecondaryTapDown: widget.onSecondaryTap == null
+            ? null
+            : (d) => widget.onSecondaryTap!(d.globalPosition),
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) {
+            setState(() => _hovered = false);
+            // Pointer leaving the row resets the armed state — prevents
+            // a stray "force-armed" trash button from sitting around for
+            // the user to re-trigger by accident.
+            _disarm();
+          },
+          child: AnimatedContainer(
+            duration: context.motion(context.surfaceShader.duration),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: b.current
+                  ? t.accentBright.withValues(alpha: 0.06)
+                  : (_hovered ? t.itemHoverBg : t.surface1),
+              borderRadius:
+                  BorderRadius.circular(context.surfaceShader.geometry.radius),
+              border: Border.all(
+                color: b.current
+                    ? t.accentBright.withValues(alpha: 0.2)
+                    : t.chromeBorder.withValues(alpha: 0.08),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                  // Branch icon or checkmark
+                  b.current
+                      ? AppIcon(name: 'check', size: 12, color: t.accentBright)
+                      : AppIcon(
+                          name: 'git-branch', size: 12, color: t.textMuted),
+                  const SizedBox(width: 8),
+                  // Name + tracking
+                  Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                        Row(children: [
+                          Flexible(
+                            child: Text(
+                              b.name,
+                              style: TextStyle(
+                                color: b.current ? t.textStrong : t.textNormal,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (b.current) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: t.accentBright,
+                                borderRadius: BorderRadius.circular(
+                                    context.surfaceShader.geometry.pillRadius),
+                              ),
+                              child: Text('HEAD',
+                                  style: TextStyle(
+                                      color: t.surface0,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.02)),
+                            ),
+                          ],
+                        ]),
+                        if (b.upstream != null) ...[
+                          const SizedBox(height: 4),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 20),
+                            child: Text(
+                              '→ tracking: ${b.upstream}',
+                              style: TextStyle(
+                                  color: t.textMuted,
+                                  fontSize: 11,
+                                  fontFamily: 'JetBrainsMono'),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ])),
+                  // Ahead/behind indicators
+                  if (b.ahead > 0)
+                    Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Text('${b.ahead}↑',
+                            style:
+                                TextStyle(color: t.stateAdded, fontSize: 10))),
+                  if (b.behind > 0)
+                    Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Text('${b.behind}↓',
+                            style: TextStyle(
+                                color: t.stateModified, fontSize: 10))),
+                  // Checkout button (invisible but present for current branch — keeps layout stable)
+                  const SizedBox(width: 8),
+                  if (!b.current) ...[
+                    if (widget.onDelete != null)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: _armedForForce
+                            // Armed: trash morphed into "Force?" pill — the
+                            // destructive escalation is visible and on-row,
+                            // not hidden in an error popup elsewhere.
+                            ? _ForceDeletePill(
+                                tokens: t,
+                                enabled: !widget.actionRunning,
+                                onTap: () => _handleDelete(force: true),
+                              )
+                            : _BranchIconAction(
+                                icon: 'trash',
+                                enabled: !widget.actionRunning,
+                                onTap: () => _handleDelete(),
+                              ),
                       ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (b.current) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: t.accentBright,
-                        borderRadius: BorderRadius.circular(
-                            context.surfaceShader.geometry.pillRadius),
+                    SizedBox(
+                      width: 80,
+                      height: 24,
+                      child: _ChromeButton(
+                        label: 'Checkout',
+                        compact: true,
+                        enabled: !widget.actionRunning,
+                        onPressed:
+                            widget.actionRunning ? null : widget.onCheckout,
                       ),
-                      child: Text('HEAD',
-                          style: TextStyle(
-                              color: t.surface0,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.02)),
                     ),
                   ],
                 ]),
-                if (b.upstream != null) ...[
-                  const SizedBox(height: 4),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 20),
-                    child: Text(
-                      '→ tracking: ${b.upstream}',
-                      style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 11,
-                          fontFamily: 'JetBrainsMono'),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ])),
-          // Ahead/behind indicators
-          if (b.ahead > 0)
-            Padding(
-                padding: const EdgeInsets.only(left: 4),
-                child: Text('${b.ahead}↑',
-                    style: TextStyle(color: t.stateAdded, fontSize: 10))),
-          if (b.behind > 0)
-            Padding(
-                padding: const EdgeInsets.only(left: 4),
-                child: Text('${b.behind}↓',
-                    style: TextStyle(color: t.stateModified, fontSize: 10))),
-          // Checkout button (invisible but present for current branch — keeps layout stable)
-          const SizedBox(width: 8),
-          if (!b.current) ...[
-            if (widget.onDelete != null)
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: _armedForForce
-                    // Armed: trash morphed into "Force?" pill — the
-                    // destructive escalation is visible and on-row,
-                    // not hidden in an error popup elsewhere.
-                    ? _ForceDeletePill(
-                        tokens: t,
-                        enabled: !widget.actionRunning,
-                        onTap: () => _handleDelete(force: true),
-                      )
-                    : _BranchIconAction(
-                        icon: 'trash',
-                        enabled: !widget.actionRunning,
-                        onTap: () => _handleDelete(),
-                      ),
-              ),
-            SizedBox(
-              width: 80,
-              height: 24,
-              child: _ChromeButton(
-                label: 'Checkout',
-                compact: true,
-                enabled: !widget.actionRunning,
-                onPressed: widget.actionRunning ? null : widget.onCheckout,
-              ),
-            ),
-          ],
-        ]),
-            // Inline error / status under the row instead of in the
-            // far-away create-branch panel. Concise — git's hint lines
-            // and stderr noise are stripped upstream. Wrapped in a
-            // themed danger-tinted container that matches the rest of
-            // the app's inline-error pattern.
-            //
-            // AnimatedSize tweens the row's height when the error
-            // appears or disappears, so the row doesn't snap-jump —
-            // matches the surrounding hover/state animations and
-            // respects the theme's motion tier.
-            AnimatedSize(
-              duration: context.motion(context.surfaceShader.duration),
-              curve: context.surfaceShader.safeCurve,
-              alignment: Alignment.topCenter,
-              child: _inlineError == null
-                  ? const SizedBox(width: double.infinity)
-                  : Padding(
-                padding: const EdgeInsets.only(top: 6, left: 20),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: t.stateConflicted.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(
-                        context.surfaceShader.geometry.badgeRadius),
-                    border: Border.all(
-                      color: t.stateConflicted.withValues(alpha: 0.25),
-                    ),
-                  ),
-                  child: Text(
-                    _inlineError!,
-                    style: TextStyle(
-                      color: t.stateConflicted,
-                      fontSize: 11,
-                    ),
-                  ),
+                // Inline error / status under the row instead of in the
+                // far-away create-branch panel. Concise — git's hint lines
+                // and stderr noise are stripped upstream. Wrapped in a
+                // themed danger-tinted container that matches the rest of
+                // the app's inline-error pattern.
+                //
+                // AnimatedSize tweens the row's height when the error
+                // appears or disappears, so the row doesn't snap-jump —
+                // matches the surrounding hover/state animations and
+                // respects the theme's motion tier.
+                AnimatedSize(
+                  duration: context.motion(context.surfaceShader.duration),
+                  curve: context.surfaceShader.safeCurve,
+                  alignment: Alignment.topCenter,
+                  child: _inlineError == null
+                      ? const SizedBox(width: double.infinity)
+                      : Padding(
+                          padding: const EdgeInsets.only(top: 6, left: 20),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: t.stateConflicted.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(
+                                  context.surfaceShader.geometry.badgeRadius),
+                              border: Border.all(
+                                color:
+                                    t.stateConflicted.withValues(alpha: 0.25),
+                              ),
+                            ),
+                            child: Text(
+                              _inlineError!,
+                              style: TextStyle(
+                                color: t.stateConflicted,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ),
                 ),
-              ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -7548,10 +9759,8 @@ class _ForceDeletePill extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
             color: t.stateDeleted.withValues(alpha: 0.18),
-            borderRadius:
-                BorderRadius.circular(shader.geometry.badgeRadius),
-            border: Border.all(
-                color: t.stateDeleted.withValues(alpha: 0.55)),
+            borderRadius: BorderRadius.circular(shader.geometry.badgeRadius),
+            border: Border.all(color: t.stateDeleted.withValues(alpha: 0.55)),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             AppIcon(name: 'trash', size: 11, color: t.stateDeleted),
@@ -7646,7 +9855,8 @@ class _TagCard extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                 child: Text('✕',
                     style: TextStyle(
-                        color: t.textMuted.withValues(alpha: 0.6), fontSize: 10)),
+                        color: t.textMuted.withValues(alpha: 0.6),
+                        fontSize: 10)),
               ),
             ),
         ]),
@@ -7792,13 +10002,11 @@ class _BranchIconActionState extends State<_BranchIconAction> {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
 // Patch preview overlay — a dialog that renders any unified-diff source
 // (an imported .patch/.diff file, a clipboard paste, an AI-generated
 // merge resolution, …) using the same DiffLineView we use for PRs.
 // Carries a dry-run "cleanly applies?" badge up front so the user never
 // blindly apply()s a busted patch.
-// ────────────────────────────────────────────────────────────────────────
 
 /// Public opener so features outside branches_page (changes page, etc.)
 /// can reuse this surface without depending on private state methods.
@@ -7806,7 +10014,6 @@ class _BranchIconActionState extends State<_BranchIconAction> {
 /// badge, and shows the preview. PR-specific signals (CONFLICTS-WITH-YOU,
 /// WILL FIGHT) are off by default — they only make sense when the caller
 /// is the PR lens with its own PR/repo-state context.
-///
 /// On successful apply, [onApplied] is invoked so the caller can refresh
 /// any dependent state (e.g. working-tree status after a merge resolve).
 Future<void> showPatchPreviewDialog(
@@ -7815,11 +10022,13 @@ Future<void> showPatchPreviewDialog(
   required String rawPatch,
   required String sourceLabel,
   bool filePillsWrap = true,
+
   /// When true, apply routes through `git apply --cached` — the patch
   /// shapes the INDEX, the working tree stays untouched. Hides the
   /// 3-way and reverse controls since they're meaningless for staging.
   /// Used by NL partial-staging ("shape this commit in English").
   bool stageMode = false,
+
   /// The set of paths the CALLER expected this patch to touch. When the
   /// parsed patch paths are a proper subset, the dialog renders a loud
   /// reconciliation banner so the user can't miss that some files were
@@ -7827,6 +10036,7 @@ Future<void> showPatchPreviewDialog(
   /// (default) to skip the check (e.g. imported external patches where
   /// "expected" is meaningless).
   Set<String> expectedPaths = const {},
+
   /// In-place refinement for shape previews. Invoked with the user's
   /// refinement sentence; the caller should dismiss this dialog, re-run
   /// the AI with the original-sentence + refinement bundled, and open a
@@ -7855,7 +10065,8 @@ Future<void> showPatchPreviewDialog(
   for (final entry in parsed.entries) {
     var adds = 0, dels = 0;
     for (final l in entry.value) {
-      if (l.kind == LineKind.added) adds++;
+      if (l.kind == LineKind.added)
+        adds++;
       else if (l.kind == LineKind.deleted) dels++;
     }
     prFiles.add(PrFile(path: entry.key, additions: adds, deletions: dels));
@@ -7870,14 +10081,14 @@ Future<void> showPatchPreviewDialog(
   );
   if (!context.mounted) return;
 
-  final couplingMatrix =
-      context.read<FileCouplingState>().matrixFor(repoPath);
+  final couplingMatrix = context.read<FileCouplingState>().matrixFor(repoPath);
   final auroraSource = ValueNotifier<String?>(null);
 
   await showDialog<void>(
     context: context,
     barrierColor: Colors.black.withValues(alpha: 0.55),
     builder: (ctx) => _PatchPreviewDialog(
+      repoPath: repoPath,
       sourceLabel: sourceLabel,
       rawPatch: rawPatch,
       prFiles: prFiles,
@@ -7894,7 +10105,11 @@ Future<void> showPatchPreviewDialog(
       stageMode: stageMode,
       expectedPaths: expectedPaths,
       onRefine: onRefine,
-      onApply: ({required bool threeWay, required bool reverse}) async {
+      onApply: ({
+        required String rawPatch,
+        required bool threeWay,
+        required bool reverse,
+      }) async {
         final r = await applyPatch(
           repoPath,
           rawPatch,
@@ -8001,8 +10216,7 @@ class _PatchSourceRowState extends State<_PatchSourceRow> {
         child: AnimatedContainer(
           duration: context.motion(shader.duration),
           curve: shader.safeCurve,
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           decoration: BoxDecoration(
             color: _hover
                 ? t.accentBright.withValues(alpha: 0.08)
@@ -8034,6 +10248,7 @@ class _PatchSourceRowState extends State<_PatchSourceRow> {
 }
 
 class _PatchPreviewDialog extends StatefulWidget {
+  final String repoPath;
   final String sourceLabel;
   final String rawPatch;
   final List<PrFile> prFiles;
@@ -8047,20 +10262,24 @@ class _PatchPreviewDialog extends StatefulWidget {
   final FileCouplingMatrix? couplingMatrix;
   final ValueNotifier<String?> auroraSource;
   final bool filePillsWrap;
+
   /// When true, this preview is for a patch that will shape the INDEX,
   /// not the working tree. Changes: apply label ("stage" not "apply"),
   /// hides 3-way + reverse (nonsense for staging).
   final bool stageMode;
+
   /// Paths the caller EXPECTED the patch to touch. If the parsed patch
   /// paths are a proper subset, a reconciliation banner appears. Empty
   /// = skip the check.
   final Set<String> expectedPaths;
   final Future<GitResult<void>> Function({
+    required String rawPatch,
     required bool threeWay,
     required bool reverse,
   }) onApply;
 
   const _PatchPreviewDialog({
+    required this.repoPath,
     required this.sourceLabel,
     required this.rawPatch,
     required this.prFiles,
@@ -8098,13 +10317,51 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
   bool _applied = false;
   bool _reverseArmed = false;
 
+  // Mutable patch state — starts as the widget's initial values. The
+  // AI resolve flow rewrites these when it returns a cleaner patch, so
+  // the dialog re-renders with new file list, new badge, new apply
+  // payload without needing to be dismissed and reopened.
+  late String _rawPatch;
+  late List<PrFile> _prFiles;
+  late Map<String, List<ParsedLine>> _filesByPath;
+  late bool _dryRunOk;
+  late String? _dryRunError;
+  bool _resolving = false;
+  String? _resolveError;
+
+  /// The ORIGINAL patch's file set, captured once at dialog open.
+  /// The dropped-paths check compares against this, NOT the last
+  /// resolve's output, so a chain of multiple AI resolve attempts
+  /// can't progressively hide files that were dropped early on.
+  late final Set<String> _originalPatchPaths;
+
+  /// True once an AI resolve has completed at least once. Gates the
+  /// resolve-specific banner — without this flag the banner would
+  /// flash for any caller that opened the dialog with a subset of
+  /// the paths in [_originalPatchPaths], which isn't what we want.
+  bool _hasResolved = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _rawPatch = widget.rawPatch;
+    _prFiles = widget.prFiles;
+    _filesByPath = widget.filesByPath;
+    _dryRunOk = widget.dryRunOk;
+    _dryRunError = widget.dryRunError;
+    _originalPatchPaths = widget.filesByPath.keys.toSet();
+  }
+
   Future<void> _doApply({required bool threeWay}) async {
     setState(() {
       _applying = true;
       _applyError = null;
     });
-    final r =
-        await widget.onApply(threeWay: threeWay, reverse: _reverseArmed);
+    final r = await widget.onApply(
+      rawPatch: _rawPatch,
+      threeWay: threeWay,
+      reverse: _reverseArmed,
+    );
     if (!mounted) return;
     setState(() {
       _applying = false;
@@ -8119,22 +10376,257 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
   (int, int) _countsFor(List<ParsedLine> lines) {
     var adds = 0, dels = 0;
     for (final l in lines) {
-      if (l.kind == LineKind.added) adds++;
+      if (l.kind == LineKind.added)
+        adds++;
       else if (l.kind == LineKind.deleted) dels++;
     }
     return (adds, dels);
+  }
+
+  //
+  // When `git apply --check` fails, the user can hand the failing
+  // patch + the current state of the conflicting files to an LLM.
+  // The model rewrites the patch so it applies cohesively against
+  // the current target. We swap the result into the dialog's state,
+  // re-run dry-run, and let the user apply normally. If the model
+  // returns something that also fails, we show the new error and
+  // keep the old patch around so the user can retry.
+
+  /// Parse `git apply` stderr for the paths that failed to apply.
+  /// stderr lines look like:
+  ///   `error: patch failed: path/to/file.dart:29`
+  ///   `error: path/to/file.dart: patch does not apply`
+  /// Uses the known sentinels ("patch failed: ", ": patch does not
+  /// apply") to bound the path slice so we correctly handle paths
+  /// containing spaces or embedded colons — a regex with `\S+?` would
+  /// truncate at the first whitespace or colon.
+  Set<String> _failingPathsFromStderr(String err) {
+    const failedPrefix = 'error: patch failed: ';
+    const notAppliedSuffix = ': patch does not apply';
+    const errorPrefix = 'error: ';
+    final out = <String>{};
+    for (final raw in err.split('\n')) {
+      final line = raw.trim();
+      if (line.startsWith(failedPrefix)) {
+        // "<path>:<linenum>" — the trailing `:<linenum>` is always
+        // at the last colon because linenums are digits only and
+        // paths can't end in a colon-integer suffix.
+        final rest = line.substring(failedPrefix.length);
+        final lastColon = rest.lastIndexOf(':');
+        if (lastColon <= 0) continue;
+        final tail = rest.substring(lastColon + 1);
+        if (RegExp(r'^\d+$').hasMatch(tail)) {
+          out.add(rest.substring(0, lastColon));
+        }
+        continue;
+      }
+      if (line.startsWith(errorPrefix) && line.endsWith(notAppliedSuffix)) {
+        final path = line.substring(
+            errorPrefix.length, line.length - notAppliedSuffix.length);
+        if (path.isNotEmpty) out.add(path);
+      }
+    }
+    return out;
+  }
+
+  String _buildPatchResolutionPrompt(
+    String raw,
+    String err,
+    List<({String path, String content})> files,
+  ) {
+    final buf = StringBuffer();
+    buf.writeln(
+        'A unified diff failed to apply against a git repository with `git apply --check`.');
+    buf.writeln(
+        'Rewrite the patch so it applies cleanly against the current target state.');
+    buf.writeln();
+    buf.writeln('Rules:');
+    buf.writeln(
+        '  1. Output ONE unified diff that preserves the original intent of every hunk.');
+    buf.writeln(
+        '  2. For failing hunks, integrate the change in a situationally cohesive way that');
+    buf.writeln(
+        '     aligns with the contextual surroundings already present on the target.');
+    buf.writeln(
+        '  3. Keep non-failing hunks verbatim (file paths, line numbers, context all unchanged).');
+    buf.writeln(
+        '  4. New files stay new. Deleted files stay deleted. No reordering of file blocks.');
+    buf.writeln(
+        '  5. Output format: raw unified diff only. No code fences, no prose, no commentary.');
+    buf.writeln();
+    buf.writeln('Original patch:');
+    buf.writeln('--- begin patch ---');
+    buf.writeln(raw);
+    buf.writeln('--- end patch ---');
+    buf.writeln();
+    buf.writeln('`git apply --check` stderr:');
+    buf.writeln('--- begin stderr ---');
+    buf.writeln(err);
+    buf.writeln('--- end stderr ---');
+    buf.writeln();
+    buf.writeln('Current target-side contents of the failing files:');
+    buf.writeln();
+    for (final f in files) {
+      buf.writeln('--- file: ${f.path} ---');
+      buf.writeln(f.content);
+      buf.writeln('--- end: ${f.path} ---');
+      buf.writeln();
+    }
+    buf.writeln(
+        'Output the rewritten unified diff that applies cleanly over the target.');
+    return buf.toString();
+  }
+
+  Future<void> _resolveWithAi(String categoryId) async {
+    if (_resolving) return;
+    final aiSettings = context.read<AiSettingsState>();
+    final modelValue = aiSettings.modelSelections[categoryId] ?? '';
+    if (modelValue.isEmpty) {
+      setState(() => _resolveError =
+          'no model configured for "${aiSettings.labelForCategory(categoryId, categoryId)}"');
+      return;
+    }
+
+    final err = _dryRunError ?? '';
+    final failingPaths = _failingPathsFromStderr(err);
+    // If we couldn't parse anything, include every path the patch
+    // touches — better to send too much context than none.
+    final pathsToInclude =
+        failingPaths.isEmpty ? _filesByPath.keys.toSet() : failingPaths;
+
+    setState(() {
+      _resolving = true;
+      _resolveError = null;
+    });
+
+    try {
+      // Canonical repo root — used to verify every read stays inside
+      // the repository. Patch headers from an imported `.patch` file
+      // are attacker-controlled; a path like `../../.ssh/id_rsa`
+      // would otherwise let a malicious patch exfiltrate arbitrary
+      // files through the LLM prompt. Containment check below makes
+      // the read a no-op for any path that escapes the repo.
+      final repoRoot = pathlib.canonicalize(widget.repoPath);
+      // Per-file size ceiling for the prompt context. A patch may
+      // legitimately reference a multi-MB generated file; reading it
+      // all into memory to feed the LLM would OOM on any reasonable
+      // input. 512KB covers source code with room to spare; anything
+      // larger is almost certainly binary or minified and wouldn't
+      // help the model anyway.
+      const maxBytes = 512 * 1024;
+      final snapshots = <({String path, String content})>[];
+      for (final p in pathsToInclude) {
+        if (isSensitivePath(p)) continue;
+        try {
+          final abs = p.startsWith('/') || p.contains(':')
+              ? p
+              : pathlib.join(widget.repoPath, p);
+          final canonical = pathlib.canonicalize(abs);
+          // Reject anything outside the repo root — no silent skip, no
+          // disk read, no prompt inclusion. `pathlib.isWithin` returns
+          // false when the target equals the root, so we allow equality
+          // as well (a patch against the repo root is legal).
+          if (canonical != repoRoot && !pathlib.isWithin(repoRoot, canonical)) {
+            continue;
+          }
+          final file = File(canonical);
+          // Stat first. `length()` is cheap and doesn't load the
+          // file; skipping oversized files here prevents `readAsString`
+          // from ever allocating a giant buffer.
+          final size = await file.length();
+          if (size > maxBytes) continue;
+          snapshots.add((path: p, content: await file.readAsString()));
+        } catch (_) {
+          // File missing on target (legit new-file hunk) or unreadable.
+          // The LLM will see the path listed in the original patch but
+          // no target-side content — that's the signal for "new file".
+        }
+      }
+
+      final prompt = _buildPatchResolutionPrompt(_rawPatch, err, snapshots);
+      final secretHit = detectLikelySecretInPrompt(prompt);
+      if (secretHit != null) {
+        if (!mounted) return;
+        setState(() => _resolveError =
+            'blocked — a failing file looks like it contains a $secretHit');
+        return;
+      }
+
+      final r = await generatePatch(
+        repositoryPath: widget.repoPath,
+        modelValue: modelValue,
+        prompt: prompt,
+        commandLabelPrefix: 'ai.patch_resolve',
+      );
+      if (!mounted) return;
+      if (!r.ok) {
+        setState(() => _resolveError = r.error ?? 'resolution failed');
+        return;
+      }
+
+      final newPatch = r.data!.patch;
+      // Re-parse and re-check the rewritten patch.
+      final lines = newPatch.length < 32 * 1024
+          ? parseUnifiedDiff(newPatch)
+          : await compute(parseUnifiedDiff, newPatch);
+      final parsed = <String, List<ParsedLine>>{};
+      for (final l in lines) {
+        final key = l.filePath;
+        if (key == null) continue;
+        (parsed[key] ??= <ParsedLine>[]).add(l);
+      }
+      if (parsed.isEmpty) {
+        if (!mounted) return;
+        setState(() =>
+            _resolveError = 'model returned an empty or unparseable patch');
+        return;
+      }
+      final newPrFiles = <PrFile>[];
+      for (final entry in parsed.entries) {
+        var adds = 0, dels = 0;
+        for (final l in entry.value) {
+          if (l.kind == LineKind.added)
+            adds++;
+          else if (l.kind == LineKind.deleted) dels++;
+        }
+        newPrFiles
+            .add(PrFile(path: entry.key, additions: adds, deletions: dels));
+      }
+
+      final check = await applyPatch(
+        widget.repoPath,
+        newPatch,
+        cached: widget.stageMode,
+        dryRun: true,
+        telemetryLabel: 'git.patch_resolve_check',
+      );
+      if (!mounted) return;
+
+      setState(() {
+        _rawPatch = newPatch;
+        _filesByPath = parsed;
+        _prFiles = newPrFiles;
+        _dryRunOk = check.ok;
+        _dryRunError =
+            check.ok ? null : (check.error ?? 'apply --check failed');
+        _expanded = null;
+        _hasResolved = true;
+      });
+    } finally {
+      if (mounted) setState(() => _resolving = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final shader = context.surfaceShader;
-    final files = widget.filesByPath.keys.toList()..sort();
-    final totalAdds = widget.prFiles.fold<int>(0, (s, f) => s + f.additions);
-    final totalDels = widget.prFiles.fold<int>(0, (s, f) => s + f.deletions);
-    final clusters = _computeClusters(widget.prFiles, widget.couplingMatrix);
+    final files = _filesByPath.keys.toList()..sort();
+    final totalAdds = _prFiles.fold<int>(0, (s, f) => s + f.additions);
+    final totalDels = _prFiles.fold<int>(0, (s, f) => s + f.deletions);
+    final clusters = _computeClusters(_prFiles, widget.couplingMatrix);
     final ghosts = _resonanceForecast(
-      widget.prFiles,
+      _prFiles,
       widget.couplingMatrix,
       engine: () {
         final repo = context.read<RepositoryState>().activePath;
@@ -8185,8 +10677,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                     ),
                     const Spacer(),
                     _ApplyBadge(
-                      ok: widget.dryRunOk,
-                      error: widget.dryRunError,
+                      ok: _dryRunOk,
+                      error: _dryRunError,
                     ),
                     const SizedBox(width: 6),
                     MouseRegion(
@@ -8211,8 +10703,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                 ),
               ),
               Container(
-                  height: 1,
-                  color: t.chromeBorder.withValues(alpha: 0.18)),
+                  height: 1, color: t.chromeBorder.withValues(alpha: 0.18)),
 
               // Body
               Expanded(
@@ -8229,9 +10720,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       // a patch that silently omitted 2 of 12 files.
                       if (widget.expectedPaths.isNotEmpty)
                         Builder(builder: (ctx) {
-                          final got = widget.filesByPath.keys.toSet();
-                          final missing =
-                              widget.expectedPaths.difference(got);
+                          final got = _filesByPath.keys.toSet();
+                          final missing = widget.expectedPaths.difference(got);
                           if (missing.isEmpty) {
                             return const SizedBox.shrink();
                           }
@@ -8240,6 +10730,28 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                             child: _DroppedPathsBanner(
                               missing: missing.toList()..sort(),
                               total: widget.expectedPaths.length,
+                            ),
+                          );
+                        }),
+                      // AI RESOLVE DROP — same trust-failure guard as
+                      // the expectedPaths banner, scoped to the
+                      // patch-resolve flow. Compares against the
+                      // ORIGINAL patch's paths (captured in initState),
+                      // not the last resolve's output — a chain of
+                      // resolves can't progressively hide files
+                      // dropped by earlier attempts.
+                      if (_hasResolved)
+                        Builder(builder: (ctx) {
+                          final got = _filesByPath.keys.toSet();
+                          final missing = _originalPatchPaths.difference(got);
+                          if (missing.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _DroppedPathsBanner(
+                              missing: missing.toList()..sort(),
+                              total: _originalPatchPaths.length,
                             ),
                           );
                         }),
@@ -8261,18 +10773,22 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       ],
                       // FILES header — same "resonance" strip we use in PRs.
                       _FilesSectionHeader(
-                        files: widget.prFiles,
+                        files: _prFiles,
                         matrix: widget.couplingMatrix,
                         isWrapped: widget.filePillsWrap,
                         onToggleWrap: () {},
                       ),
                       const SizedBox(height: 6),
                       _FilePillStrip(
-                        files: widget.prFiles,
+                        files: _prFiles,
                         activePath: _expanded ?? '',
                         clusterByPath: clusters,
                         heatByPath: const {},
                         ghostPaths: ghosts,
+                        // Patch-preview dialog runs outside the main
+                        // repo-state scope — don't attempt an xray
+                        // lookup here; pills render as before.
+                        keystonePaths: const {},
                         auroraSource: widget.auroraSource,
                         couplingMatrix: widget.couplingMatrix,
                         wrapped: widget.filePillsWrap,
@@ -8286,11 +10802,11 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       for (final path in files)
                         _PatchFileBlock(
                           path: path,
-                          lines: widget.filesByPath[path]!,
+                          lines: _filesByPath[path]!,
                           expanded: _expanded == path,
                           onToggle: () => setState(() =>
                               _expanded = _expanded == path ? null : path),
-                          counts: _countsFor(widget.filesByPath[path]!),
+                          counts: _countsFor(_filesByPath[path]!),
                         ),
                     ],
                   ),
@@ -8299,8 +10815,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
 
               // Footer
               Container(
-                  height: 1,
-                  color: t.chromeBorder.withValues(alpha: 0.18)),
+                  height: 1, color: t.chromeBorder.withValues(alpha: 0.18)),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 10, 14, 12),
                 child: Row(
@@ -8332,9 +10847,29 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                               fontSize: 11,
                               fontFamily: 'JetBrainsMono',
                             )),
+                      )
+                    else if (_resolveError != null)
+                      Flexible(
+                        child: Text(_resolveError!,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: t.stateConflicted,
+                              fontSize: 11,
+                              fontFamily: 'JetBrainsMono',
+                            )),
                       ),
                     const Spacer(),
                     if (!_applied) ...[
+                      // AI resolve — only appears when the patch won't
+                      // apply cleanly. Rewrites the failing hunks against
+                      // the current target state so the apply succeeds.
+                      if (!_dryRunOk) ...[
+                        _PatchResolveSplitButton(
+                          busy: _resolving,
+                          onAction: _resolveWithAi,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       // Reverse + 3-way only make sense for patches that
                       // touch the working tree. In stage mode the patch
                       // shapes the index only — undo via `git restore
@@ -8342,8 +10877,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       if (!widget.stageMode) ...[
                         _ReverseToggle(
                           armed: _reverseArmed,
-                          onTap: () => setState(
-                              () => _reverseArmed = !_reverseArmed),
+                          onTap: () =>
+                              setState(() => _reverseArmed = !_reverseArmed),
                         ),
                         const SizedBox(width: 8),
                         _ActionButton(
@@ -8358,12 +10893,11 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                         label: _applying
                             ? (widget.stageMode ? 'staging…' : 'applying…')
                             : (widget.stageMode ? 'stage' : 'apply'),
-                        tone: widget.dryRunOk
+                        tone: _dryRunOk
                             ? _ActionTone.primary
                             : _ActionTone.neutral,
-                        onTap: _applying
-                            ? () {}
-                            : () => _doApply(threeWay: false),
+                        onTap:
+                            _applying ? () {} : () => _doApply(threeWay: false),
                       ),
                     ] else
                       _ActionButton(
@@ -8378,9 +10912,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
               // re-parse. Feeds the refinement back into the caller so
               // it can re-prompt the AI with the original sentence +
               // delta and replace this dialog.
-              if (widget.stageMode &&
-                  widget.onRefine != null &&
-                  !_applied)
+              if (widget.stageMode && widget.onRefine != null && !_applied)
                 _RefineBar(
                   onSubmit: (text) async {
                     final trimmed = text.trim();
@@ -8507,16 +11039,14 @@ class _ReverseToggleState extends State<_ReverseToggle> {
           child: AnimatedContainer(
             duration: context.motion(shader.duration),
             curve: shader.safeCurve,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: widget.armed
                   ? t.stateConflicted.withValues(alpha: 0.12)
                   : (_hover
                       ? t.chromeBorder.withValues(alpha: 0.15)
                       : t.chromeBorder.withValues(alpha: 0)),
-              borderRadius:
-                  BorderRadius.circular(shader.geometry.badgeRadius),
+              borderRadius: BorderRadius.circular(shader.geometry.badgeRadius),
               border: Border.all(
                 color: widget.armed
                     ? t.stateConflicted.withValues(alpha: 0.5)
@@ -8559,8 +11089,8 @@ class _DroppedPathsBanner extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: t.stateConflicted.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(
-            context.surfaceShader.geometry.pillRadius),
+        borderRadius:
+            BorderRadius.circular(context.surfaceShader.geometry.pillRadius),
         border: Border(
           left: BorderSide(
             color: t.stateConflicted.withValues(alpha: 0.8),
@@ -8616,6 +11146,288 @@ class _DroppedPathsBanner extends StatelessWidget {
   }
 }
 
+/// Split button wired into the patch preview dialog. Main click runs
+/// AI resolution with the user's default model category; chevron opens
+/// a menu of the other configured categories. Matches the shape of the
+/// merge-resolve split button in changes_page but is local here so the
+/// two flows don't cross-import.
+class _PatchResolveSplitButton extends StatefulWidget {
+  final bool busy;
+  final ValueChanged<String> onAction;
+  const _PatchResolveSplitButton({
+    required this.busy,
+    required this.onAction,
+  });
+  @override
+  State<_PatchResolveSplitButton> createState() =>
+      _PatchResolveSplitButtonState();
+}
+
+class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
+  final LayerLink _link = LayerLink();
+  OverlayEntry? _entry;
+  bool _hoverMain = false;
+  bool _hoverChev = false;
+
+  String _defaultCategoryId(AiSettingsState ai) {
+    if ((ai.modelSelections['fast'] ?? '').isNotEmpty) return 'fast';
+    final first = ai.modelSelections.entries.firstWhere(
+      (e) => e.value.isNotEmpty,
+      orElse: () => const MapEntry('', ''),
+    );
+    return first.key;
+  }
+
+  String _modelDisplay(String modelValue) {
+    if (modelValue.isEmpty) return '';
+    final i = modelValue.indexOf(':');
+    if (i < 0 || i >= modelValue.length - 1) return modelValue;
+    return modelValue.substring(i + 1);
+  }
+
+  void _openMenu(String currentDefault) {
+    final overlay = Overlay.of(context);
+    final ai = context.read<AiSettingsState>();
+    final t = context.tokens;
+    final alt = ai.modelSelections.entries
+        .where((e) => e.value.isNotEmpty && e.key != currentDefault)
+        .toList();
+    if (alt.isEmpty) return;
+    _entry = OverlayEntry(builder: (ctx) {
+      return Stack(children: [
+        Positioned.fill(
+          child: Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (_) => _closeMenu(),
+          ),
+        ),
+        Positioned(
+          child: CompositedTransformFollower(
+            link: _link,
+            followerAnchor: Alignment.topRight,
+            targetAnchor: Alignment.bottomRight,
+            offset: const Offset(0, 6),
+            child: MaterialSurface(
+              tone: AppMaterialTone.surface1,
+              radius: ctx.surfaceShader.geometry.cardRadius,
+              elevated: true,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: IntrinsicWidth(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                      child: Text('OR WITH',
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 9,
+                            letterSpacing: 1.4,
+                            fontFamily: 'JetBrainsMono',
+                            fontWeight: FontWeight.w800,
+                          )),
+                    ),
+                    for (final e in alt)
+                      _PatchResolveMenuRow(
+                        label: ai.labelForCategory(e.key, e.key),
+                        modelDisplay: _modelDisplay(e.value),
+                        onTap: () {
+                          _closeMenu();
+                          widget.onAction(e.key);
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ]);
+    });
+    overlay.insert(_entry!);
+  }
+
+  void _closeMenu() {
+    _entry?.remove();
+    _entry = null;
+  }
+
+  @override
+  void dispose() {
+    _entry?.remove();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final shader = context.surfaceShader;
+    final ai = context.watch<AiSettingsState>();
+    final defaultCategory = _defaultCategoryId(ai);
+    if (defaultCategory.isEmpty) {
+      return Text('no AI model configured',
+          style: TextStyle(
+            color: t.textMuted,
+            fontSize: 10.5,
+            fontFamily: 'JetBrainsMono',
+            fontStyle: FontStyle.italic,
+          ));
+    }
+    final label = ai.labelForCategory(defaultCategory, defaultCategory);
+    final modelValue = ai.modelSelections[defaultCategory] ?? '';
+    final modelDisplay = _modelDisplay(modelValue);
+    return CompositedTransformTarget(
+      link: _link,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hoverMain = true),
+            onExit: (_) => setState(() => _hoverMain = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap:
+                  widget.busy ? null : () => widget.onAction(defaultCategory),
+              child: Tooltip(
+                message: modelDisplay.isEmpty
+                    ? 'apply with patch from $label'
+                    : 'apply with patch from $label  ·  $modelDisplay',
+                child: AnimatedContainer(
+                  duration: context.motion(shader.duration),
+                  curve: shader.safeCurve,
+                  padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+                  decoration: BoxDecoration(
+                    color: widget.busy
+                        ? t.accentBright.withValues(alpha: 0.08)
+                        : (_hoverMain
+                            ? t.accentBright.withValues(alpha: 0.14)
+                            : t.accentBright.withValues(alpha: 0.08)),
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(shader.geometry.badgeRadius),
+                      bottomLeft: Radius.circular(shader.geometry.badgeRadius),
+                    ),
+                    border: Border.all(
+                      color: t.accentBright.withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: Text(
+                    widget.busy
+                        ? 'patching…'
+                        : '✦  apply with patch from $label',
+                    style: TextStyle(
+                      color: t.accentBright,
+                      fontSize: 11,
+                      fontFamily: 'JetBrainsMono',
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onEnter: (_) => setState(() => _hoverChev = true),
+            onExit: (_) => setState(() => _hoverChev = false),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.busy ? null : () => _openMenu(defaultCategory),
+              child: Tooltip(
+                message: 'or with another model',
+                child: AnimatedContainer(
+                  duration: context.motion(shader.duration),
+                  curve: shader.safeCurve,
+                  padding: const EdgeInsets.fromLTRB(6, 7, 8, 7),
+                  decoration: BoxDecoration(
+                    color: _hoverChev
+                        ? t.accentBright.withValues(alpha: 0.16)
+                        : t.accentBright.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.only(
+                      topRight: Radius.circular(shader.geometry.badgeRadius),
+                      bottomRight: Radius.circular(shader.geometry.badgeRadius),
+                    ),
+                    border: Border.all(
+                        color: t.accentBright.withValues(alpha: 0.45)),
+                  ),
+                  child: Text('▾',
+                      style: TextStyle(
+                        color: t.accentBright,
+                        fontSize: 10,
+                        fontFamily: 'JetBrainsMono',
+                        fontWeight: FontWeight.w800,
+                      )),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PatchResolveMenuRow extends StatefulWidget {
+  final String label;
+  final String modelDisplay;
+  final VoidCallback onTap;
+  const _PatchResolveMenuRow({
+    required this.label,
+    required this.modelDisplay,
+    required this.onTap,
+  });
+  @override
+  State<_PatchResolveMenuRow> createState() => _PatchResolveMenuRowState();
+}
+
+class _PatchResolveMenuRowState extends State<_PatchResolveMenuRow> {
+  bool _hover = false;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final shader = context.surfaceShader;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: context.motion(shader.duration),
+          curve: shader.safeCurve,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: _hover
+                ? t.accentBright.withValues(alpha: 0.08)
+                : Colors.transparent,
+          ),
+          child: Row(
+            children: [
+              Text(widget.label,
+                  style: TextStyle(
+                    color: t.textNormal,
+                    fontSize: 12,
+                    fontFamily: 'JetBrainsMono',
+                    fontWeight: FontWeight.w600,
+                  )),
+              const SizedBox(width: 14),
+              Text(widget.modelDisplay,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontFamily: 'JetBrainsMono',
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ApplyBadge extends StatelessWidget {
   final bool ok;
   final String? error;
@@ -8633,8 +11445,8 @@ class _ApplyBadge extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
           color: c.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(
-              context.surfaceShader.geometry.tinyRadius),
+          borderRadius:
+              BorderRadius.circular(context.surfaceShader.geometry.tinyRadius),
           border: Border.all(color: c.withValues(alpha: 0.45)),
         ),
         child: Row(
@@ -8694,8 +11506,7 @@ class _PatchFileBlock extends StatelessWidget {
               behavior: HitTestBehavior.opaque,
               onTap: onToggle,
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                    vertical: 6, horizontal: 6),
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
                 child: Row(
                   children: [
                     Text(expanded ? '▾' : '▸',
@@ -8778,6 +11589,630 @@ class _PatchFileBlock extends StatelessWidget {
                 : const SizedBox.shrink(),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// Local-issue affordances — empty state, top-of-list action, dialog
+
+class _IssuesEmptyState extends StatelessWidget {
+  final String message;
+  final VoidCallback onCreateLocal;
+  const _IssuesEmptyState({
+    required this.message,
+    required this.onCreateLocal,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'No open issues',
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.4,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: t.textMuted, fontSize: 11),
+            ),
+            const SizedBox(height: 14),
+            _NewLocalIssueAction(onTap: onCreateLocal),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NewLocalIssueAction extends StatefulWidget {
+  final VoidCallback onTap;
+  const _NewLocalIssueAction({required this.onTap});
+
+  @override
+  State<_NewLocalIssueAction> createState() => _NewLocalIssueActionState();
+}
+
+class _NewLocalIssueActionState extends State<_NewLocalIssueAction> {
+  bool _hovered = false;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? t.chromeAccent.withValues(alpha: 0.10)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(
+                context.surfaceShader.geometry.badgeRadius),
+            border: Border.all(
+              color: t.chromeAccent.withValues(alpha: _hovered ? 0.45 : 0.25),
+              width: 0.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '+',
+                style: TextStyle(
+                  color: t.chromeAccent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  height: 1,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'new local issue',
+                style: TextStyle(
+                  color: t.chromeAccent,
+                  fontSize: 10.5,
+                  fontFamily: 'JetBrainsMono',
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Chip shown under the user's cursor while dragging a branch or PR
+/// toward the desk strip. Keeps the feedback compact so it doesn't
+/// obscure the drop target.
+class _DeskDragFeedback extends StatelessWidget {
+  final String label;
+  final AppTokens tokens;
+  const _DeskDragFeedback({required this.label, required this.tokens});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: t.accentBright.withValues(alpha: 0.18),
+          border: Border.all(color: t.accentBright, width: 1),
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: [
+            BoxShadow(
+              color: t.shadowElev.withValues(alpha: 0.35),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('⊞',
+                style: TextStyle(
+                  color: t.accentBright,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  height: 1,
+                )),
+            const SizedBox(width: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 240),
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: t.accentBright,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'JetBrainsMono',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Mutable candidate for the sticky link picker. Both `relevance`
+/// and `isLinked` live on the instance so the dialog can update in
+/// place after each toggle without rebuilding the whole candidate
+/// list from scratch.
+class _LinkCandidate {
+  final int id;
+  final String title;
+  final bool isRemote;
+  final double relevance;
+  bool isLinked;
+  _LinkCandidate({
+    required this.id,
+    required this.title,
+    required this.isRemote,
+    required this.isLinked,
+    required this.relevance,
+  });
+}
+
+/// Sticky linking picker — works for both PR → issue and issue → PR.
+/// Toggling a candidate does NOT close the dialog; the check glyph
+/// flips in place so the user can link 3 issues to a PR (or 3 PRs to
+/// an issue) in one open. A "RELEVANT" section surfaces the top 3
+/// candidates by file-overlap scoring when any have meaningful
+/// relevance, so the common case resolves without typing.
+class _StickyLinkPicker extends StatefulWidget {
+  final String title;
+  final List<_LinkCandidate> candidates;
+
+  /// Invoked on every toggle. Returns the authoritative post-toggle
+  /// `isLinked` state (so the picker reconciles with persistence on
+  /// error). Async so callers can await the metadata write.
+  final Future<bool> Function(_LinkCandidate) onToggle;
+
+  /// Optional inline notice when [candidates] is empty. Rendered in
+  /// place of the list so the user never gets a bottom-of-screen
+  /// banner for a condition the picker is already showing them.
+  final String? emptyMessage;
+  const _StickyLinkPicker({
+    required this.title,
+    required this.candidates,
+    required this.onToggle,
+    this.emptyMessage,
+  });
+  @override
+  State<_StickyLinkPicker> createState() => _StickyLinkPickerState();
+}
+
+class _StickyLinkPickerState extends State<_StickyLinkPicker> {
+  String _filter = '';
+  final Set<int> _busy = <int>{};
+
+  static const double _relevanceThreshold = 0.1;
+  static const int _relevantMaxShown = 3;
+
+  Future<void> _toggle(_LinkCandidate c) async {
+    if (_busy.contains(c.id)) return;
+    setState(() => _busy.add(c.id));
+    try {
+      final now = await widget.onToggle(c);
+      if (!mounted) return;
+      setState(() {
+        c.isLinked = now;
+      });
+    } finally {
+      if (mounted) setState(() => _busy.remove(c.id));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final lower = _filter.toLowerCase();
+
+    // "Relevant" section: top-N unlinked candidates above the
+    // relevance threshold. Only shown when there are real hits; empty
+    // section is hidden so the picker doesn't look broken on repos
+    // where issue bodies don't mention file paths.
+    final relevant = widget.candidates
+        .where((c) => !c.isLinked && c.relevance >= _relevanceThreshold)
+        .toList()
+      ..sort((a, b) => b.relevance.compareTo(a.relevance));
+    final relevantTop =
+        relevant.take(_relevantMaxShown).toList(growable: false);
+    final relevantIds = relevantTop.map((c) => c.id).toSet();
+
+    // "All" section: everything else (filtered by text when active).
+    final allFiltered =
+        widget.candidates.where((c) => !relevantIds.contains(c.id)).where((c) {
+      if (lower.isEmpty) return true;
+      return c.title.toLowerCase().contains(lower) ||
+          '#${c.id}'.contains(lower);
+    }).toList()
+          ..sort((a, b) {
+            // Linked first, then most-recent IDs (approximates recency).
+            if (a.isLinked != b.isLinked) return a.isLinked ? -1 : 1;
+            return b.id.compareTo(a.id);
+          });
+
+    return Dialog(
+      backgroundColor: t.surface2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: t.chromeBorder, width: 1),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 560),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                widget.title,
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                autofocus: true,
+                onChanged: (v) => setState(() => _filter = v),
+                style: TextStyle(color: t.textNormal, fontSize: 12),
+                decoration: InputDecoration(
+                  hintText: 'filter…',
+                  hintStyle: TextStyle(
+                      color: t.textMuted.withValues(alpha: 0.6), fontSize: 12),
+                  isDense: true,
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide(color: t.chromeBorder),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Flexible(
+                child: widget.candidates.isEmpty
+                    // No candidates at all — show the caller-supplied
+                    // notice (e.g. "no issues yet, create one via…").
+                    // Handled inline so we never fire a bottom-screen
+                    // banner for this condition.
+                    ? Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          widget.emptyMessage ?? 'Nothing to link yet.',
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 11,
+                            height: 1.4,
+                          ),
+                        ),
+                      )
+                    : (relevantTop.isEmpty && allFiltered.isEmpty)
+                        ? Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(
+                              'Nothing matches.',
+                              style:
+                                  TextStyle(color: t.textMuted, fontSize: 11),
+                            ),
+                          )
+                        : ListView(
+                            shrinkWrap: true,
+                            children: [
+                              if (relevantTop.isNotEmpty) ...[
+                                _StickyLinkSectionLabel(
+                                  label: 'RELEVANT',
+                                  tokens: t,
+                                ),
+                                for (final c in relevantTop)
+                                  _LinkCandidateRow(
+                                    candidate: c,
+                                    isBusy: _busy.contains(c.id),
+                                    showRelevance: true,
+                                    onTap: () => _toggle(c),
+                                  ),
+                                const SizedBox(height: 6),
+                                _StickyLinkSectionLabel(
+                                  label: 'ALL',
+                                  tokens: t,
+                                ),
+                              ],
+                              for (final c in allFiltered)
+                                _LinkCandidateRow(
+                                  candidate: c,
+                                  isBusy: _busy.contains(c.id),
+                                  showRelevance: false,
+                                  onTap: () => _toggle(c),
+                                ),
+                            ],
+                          ),
+              ),
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text('done',
+                      style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StickyLinkSectionLabel extends StatelessWidget {
+  final String label;
+  final AppTokens tokens;
+  const _StickyLinkSectionLabel({required this.label, required this.tokens});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: tokens.textMuted.withValues(alpha: 0.85),
+          fontSize: 8.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.4,
+        ),
+      ),
+    );
+  }
+}
+
+class _LinkCandidateRow extends StatefulWidget {
+  final _LinkCandidate candidate;
+  final bool isBusy;
+  final bool showRelevance;
+  final VoidCallback onTap;
+  const _LinkCandidateRow({
+    required this.candidate,
+    required this.isBusy,
+    required this.showRelevance,
+    required this.onTap,
+  });
+  @override
+  State<_LinkCandidateRow> createState() => _LinkCandidateRowState();
+}
+
+class _LinkCandidateRowState extends State<_LinkCandidateRow> {
+  bool _hovered = false;
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final c = widget.candidate;
+    return MouseRegion(
+      cursor: widget.isBusy ? MouseCursor.defer : SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.isBusy ? null : widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 80),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: BoxDecoration(
+            color: _hovered ? t.itemHoverBg : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 16,
+                child: widget.isBusy
+                    ? SizedBox(
+                        width: 10,
+                        height: 10,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.3,
+                          color: t.accentBright.withValues(alpha: 0.7),
+                        ),
+                      )
+                    : Text(
+                        c.isLinked ? '✓' : '○',
+                        style: TextStyle(
+                          color: c.isLinked
+                              ? t.accentBright
+                              : t.textMuted.withValues(alpha: 0.5),
+                          fontSize: 11,
+                          fontFamily: 'JetBrainsMono',
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: c.isRemote
+                      ? t.textMuted.withValues(alpha: 0.10)
+                      : t.chromeAccent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(
+                  c.isRemote ? 'R' : 'L',
+                  style: TextStyle(
+                    color: c.isRemote ? t.textMuted : t.chromeAccent,
+                    fontSize: 9,
+                    fontFamily: 'JetBrainsMono',
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '#${c.id}',
+                style: TextStyle(
+                  color: t.textNormal,
+                  fontSize: 11,
+                  fontFamily: 'JetBrainsMono',
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  c.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: t.textNormal,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              if (widget.showRelevance) ...[
+                const SizedBox(width: 6),
+                // Tiny up-arrow + score — tells the user "this was
+                // suggested because of file overlap," visible but not
+                // pushy. Same accentBright vocabulary as the rest of
+                // the magnetic-field signals.
+                Text(
+                  '↑${(c.relevance).toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: t.accentBright.withValues(alpha: 0.85),
+                    fontSize: 9,
+                    fontFamily: 'JetBrainsMono',
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CreateLocalIssueDialog extends StatelessWidget {
+  final TextEditingController titleCtrl;
+  final TextEditingController bodyCtrl;
+  const _CreateLocalIssueDialog({
+    required this.titleCtrl,
+    required this.bodyCtrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Dialog(
+      backgroundColor: t.surface2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: t.chromeBorder, width: 1),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'New local issue',
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: titleCtrl,
+                autofocus: true,
+                style: TextStyle(color: t.textNormal, fontSize: 12),
+                decoration: InputDecoration(
+                  hintText: 'title',
+                  hintStyle: TextStyle(
+                      color: t.textMuted.withValues(alpha: 0.6), fontSize: 12),
+                  isDense: true,
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide(color: t.chromeBorder),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: bodyCtrl,
+                style: TextStyle(color: t.textNormal, fontSize: 11),
+                minLines: 4,
+                maxLines: 10,
+                decoration: InputDecoration(
+                  hintText: 'body (markdown)',
+                  hintStyle: TextStyle(
+                      color: t.textMuted.withValues(alpha: 0.6), fontSize: 11),
+                  isDense: true,
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide(color: t.chromeBorder),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(false),
+                    child: Text('cancel',
+                        style: TextStyle(color: t.textMuted, fontSize: 11)),
+                  ),
+                  const SizedBox(width: 6),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(true),
+                    child: Text('create',
+                        style: TextStyle(
+                            color: t.chromeAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

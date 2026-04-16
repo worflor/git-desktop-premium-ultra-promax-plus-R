@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // engram_fit.dart — Whisper Engram AR(2) oscillator fit (real specialization)
 //
 // Direct port of Engram's `fit_pair` kernel: five dot products + a 2×2
@@ -18,7 +17,6 @@
 //
 // This file is real-only (we only need the 1D specialization). Complex
 // generalization would be a direct port; we don't need it for now.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -137,7 +135,6 @@ class EngramFit {
   /// Half-life of the signal in samples, derived from the fit. Returns
   /// null when the fit doesn't decay (sustained or divergent orbit) or
   /// degenerated to the linear fallback.
-  ///
   /// k_½ where |λ|^k = 0.5, i.e. k_½ = −ln(2) / ln|λ|.
   double? get halfLifeSamples {
     if (isLinearFallback) return null;
@@ -154,13 +151,11 @@ class EngramFit {
   /// |λ| = r = √G and angular frequency ω₀ = arccos(K / 2r). The
   /// period in samples is 2π/ω₀ — the "natural rhythm" of the
   /// underlying signal.
-  ///
   /// Returns null when:
   ///   • the fit degenerated to linear fallback
   ///   • the roots are real (over-damped — no oscillation)
   ///   • |K / 2r| ≥ 1 (numerical edge: would be acos out-of-domain)
   ///   • the period is degenerate (ω₀ ≈ 0 → infinite period)
-  ///
   /// Used by callers that want to reason about the *cadence* of a
   /// signal, not just its decay. Example: commit-rate AR(2) fits
   /// expose this as the repo's "natural commit rhythm" in samples
@@ -180,11 +175,9 @@ class EngramFit {
 }
 
 /// Fit an AR(2) oscillator to a real-valued 1D time series.
-///
 /// Minimises Σ (z[n] − (K·z[n-1] − G·z[n-2]))². Returns the fit
 /// parameters plus an RMS. Singular/short inputs return
 /// [EngramFit.linear].
-///
 /// Accepts a [List<double>] or a [Float64List]; the latter avoids boxing.
 EngramFit engramFit(List<double> z) {
   final t = z.length;
@@ -251,9 +244,7 @@ EngramFit engramFitF64(Float64List z) => engramFit(z);
 /// Shared helper: build the sequence of consecutive-commit file-set
 /// Jaccard similarities. The "trajectory" every downstream Engram
 /// integration is asking about.
-///
 ///   sim[i] = |C_i ∩ C_{i+1}| / |C_i ∪ C_{i+1}|
-///
 /// `commitFileSets` is ordered oldest→newest; output length is N-1.
 /// Empty/single-commit inputs return an empty list. Extracted to a
 /// single location so the half-life derivation, branch-orbit fit, and
@@ -276,9 +267,7 @@ List<double> consecutiveJaccardSeries(List<Set<String>> commitFileSets) {
   return sims;
 }
 
-// ═════════════════════════════════════════════════════════════════════════
 // BRANCH ORBIT — user-facing classification of a commit sequence
-// ═════════════════════════════════════════════════════════════════════════
 //
 // Reuses the AR(2) fit to ask a question developers actually have:
 //   "Is this branch *converging* (commits narrowing on a theme), or
@@ -379,7 +368,6 @@ class BranchOrbit {
 /// Compute a [BranchOrbit] from an ordered list of per-commit file
 /// sets. `commitFileSets[0]` should be the *oldest* commit, last is
 /// the tip — this matches how the tagger already iterates chains.
-///
 /// Returns [BranchOrbit.insufficient] for < 6 commits (AR(2) needs a
 /// handful of samples to mean anything).
 BranchOrbit computeBranchOrbit(List<Set<String>> commitFileSets) {

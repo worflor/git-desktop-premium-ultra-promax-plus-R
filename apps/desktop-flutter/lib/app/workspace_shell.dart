@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -16,10 +17,17 @@ import '../ui/animated_icons.dart';
 import '../ui/control_chrome.dart';
 import '../ui/interaction_feedback.dart';
 import '../ui/material_surface.dart';
+import '../ui/context_menu.dart';
 import '../ui/morph_text.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart';
 import '../diagnostics/diagnostics_state.dart';
+import '../backend/desk_issue.dart';
+import '../backend/remote_issue_provider.dart' show IssueSummary;
+import 'desk_drop_payload.dart';
+import 'desk_issue_state.dart';
+import 'desk_pr_state.dart';
+import 'remote_issue_cache_state.dart';
 import 'hyper_reactivity.dart';
 import 'repository_state.dart';
 import 'repository_xray_state.dart';
@@ -106,6 +114,8 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                       mode: _mode,
                       selectedCommitHash: _selectedCommitHash,
                       onOpenXray: () => setState(() => _panel = _Panel.xray),
+                      onOpenChanges: () =>
+                          _selectMode(_WorkspaceMode.changes),
                     ),
                   ),
                 ),
@@ -163,7 +173,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
               ignoring: _panel != _Panel.settings && _panel != _Panel.search,
               child: Stack(
                 children: [
-                  // ── Dim backdrop: opacity-only, static position ──────
                   Positioned.fill(
                     child: AnimatedOpacity(
                       duration: context.surfaceShader.duration,
@@ -181,7 +190,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                       ),
                     ),
                   ),
-                  // ── Panel body: fade + slide via AnimatedSwitcher ────
                   Positioned.fill(
                     child: AnimatedSwitcher(
                       duration: context.surfaceShader.duration,
@@ -275,6 +283,18 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
       return KeyEventResult.handled;
     }
 
+    // `?` (shift + slash) → global keyboard cheatsheet. Covers the
+    // workspace-level bindings (page switch, panels, search, g-prefix
+    // chords) so the shortcuts are discoverable without reading code.
+    // Page-local bindings (j/k nav on the branches lens, etc.) still
+    // live in that page's own overlay when relevant.
+    if (key == LogicalKeyboardKey.question ||
+        (key == LogicalKeyboardKey.slash &&
+            HardwareKeyboard.instance.isShiftPressed)) {
+      _showGlobalKeyboardCheatsheet();
+      return KeyEventResult.handled;
+    }
+
     final profile = context.read<ThemeState>().keybindingProfile;
     if (profile == KeybindingProfile.compact) {
       if (key == LogicalKeyboardKey.digit1) {
@@ -335,6 +355,94 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     }
 
     return KeyEventResult.ignored;
+  }
+
+  void _showGlobalKeyboardCheatsheet() {
+    final profile = context.read<ThemeState>().keybindingProfile;
+    final isCompact = profile == KeybindingProfile.compact;
+    final rows = <(String, String)>[
+      if (isCompact) ...[
+        ('1', 'Changes'),
+        ('2', 'History'),
+        ('3', 'Branches'),
+        ('4', 'Xray panel'),
+        ('5', 'Settings panel'),
+      ] else ...[
+        ('g c', 'Changes'),
+        ('g h', 'History'),
+        ('g b', 'Branches'),
+        ('g s', 'Xray panel'),
+        ('g ,', 'Settings panel'),
+        ('g g', 'Re-arm g-prefix (second g)'),
+      ],
+      ('/', 'Search panel'),
+      ('esc', 'Close panel / overlay'),
+      ('?', 'This cheatsheet'),
+    ];
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        final t = ctx.tokens;
+        return AlertDialog(
+          backgroundColor: t.surface1,
+          title: Text('Keyboard',
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: 13,
+                letterSpacing: 1.4,
+                fontWeight: FontWeight.w800,
+              )),
+          content: SizedBox(
+            width: 360,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final r in rows)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 80,
+                          child: Text(
+                            r.$1,
+                            style: TextStyle(
+                              color: t.accentBright,
+                              fontSize: 11,
+                              fontFamily: 'JetBrainsMono',
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            r.$2,
+                            style: TextStyle(
+                                color: t.textNormal, fontSize: 11),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 10),
+                Text(
+                  isCompact
+                      ? 'Using compact profile · switch in Settings'
+                      : 'Using classic profile · switch in Settings',
+                  style: TextStyle(color: t.textMuted, fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('Close', style: TextStyle(color: t.textMuted)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   bool _isEditableTargetFocused() {
@@ -665,7 +773,6 @@ class _XrayModeBtn extends StatelessWidget {
   }
 }
 
-// ── Desk row: active branch pill + other open worktrees ─────────────────────
 
 /// The desk row lives in the second line of the topbar. The first position
 /// is the active desk (rendered as `_BranchPill` — keeps the dropdown
@@ -693,7 +800,37 @@ class _DeskRow extends StatelessWidget {
       return d.path.replaceAll('\\', '/').toLowerCase() != activeNormalized;
     }).toList();
 
-    return Row(
+    // Wrap the whole desk row in a DragTarget so dragging a branch row
+    // (from BRANCHES) or a PR row (from PRS) and dropping it anywhere
+    // across the strip materialises a new desk. The drop-affordance
+    // lights up the strip itself, so the user sees "drop here" without
+    // having to aim for a specific spot — the entire row is fair game.
+    return DragTarget<DeskDropPayload>(
+      onWillAcceptWithDetails: (_) => activeRepoPath != null,
+      onAcceptWithDetails: (details) =>
+          _handleDeskDrop(context, details.data, worktreeState),
+      builder: (ctx, candidates, _) {
+        final hasCandidate = candidates.isNotEmpty;
+        final t = ctx.tokens;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+          decoration: BoxDecoration(
+            // Soft accent wash when something is dragged over — fades
+            // in/out so the affordance is obvious without being loud.
+            color: hasCandidate
+                ? t.accentBright.withValues(alpha: 0.10)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: hasCandidate
+                  ? t.accentBright.withValues(alpha: 0.55)
+                  : Colors.transparent,
+              width: 1,
+            ),
+          ),
+          child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         _BranchPill(
@@ -713,10 +850,545 @@ class _DeskRow extends StatelessWidget {
             onClose: desk.isMain
                 ? null
                 : () => _closeDeskFlow(context, desk, worktreeState),
+            onSecondaryTap: (pos) => _showDeskContextMenu(
+                context, pos, desk, repoState, worktreeState),
+          ),
+        ],
+        if (hasCandidate) ...[
+          const SizedBox(width: 6),
+          // Ghost placeholder showing where the new desk will land.
+          Container(
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: t.accentBright.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: t.accentBright.withValues(alpha: 0.5),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('+',
+                    style: TextStyle(
+                      color: t.accentBright,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      height: 1,
+                    )),
+                const SizedBox(width: 6),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 200),
+                  child: Text(
+                    candidates.first?.label ?? 'new desk',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: t.accentBright,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ],
+          ),
+        );
+      },
     );
+  }
+
+  Future<void> _handleDeskDrop(
+    BuildContext context,
+    DeskDropPayload payload,
+    WorktreeState worktreeState,
+  ) async {
+    if (activeRepoPath == null) return;
+    if (payload.isBranch) {
+      final existing = worktreeState.desks.firstWhere(
+        (d) => d.branch == payload.branchName,
+        orElse: () => const WorktreeData(
+          path: '', head: '', isMain: false,
+          isDetached: false, isLocked: false,
+        ),
+      );
+      if (existing.path.isNotEmpty) {
+        // Already has a desk — just switch to it.
+        await context
+            .read<RepositoryState>()
+            .setActivePath(existing.path, addToRecents: false);
+        return;
+      }
+      final err = await worktreeState.addDesk(payload.branchName!);
+      if (err != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't open as desk: $err")),
+        );
+      }
+    } else if (payload.isRemotePr) {
+      final prN = payload.remotePrNumber!;
+      final localRef = 'pr-$prN';
+      final existing = worktreeState.desks.firstWhere(
+        (d) => d.branch == localRef,
+        orElse: () => const WorktreeData(
+          path: '', head: '', isMain: false,
+          isDetached: false, isLocked: false,
+        ),
+      );
+      if (existing.path.isNotEmpty) {
+        await context
+            .read<RepositoryState>()
+            .setActivePath(existing.path, addToRecents: false);
+        return;
+      }
+      final remoteRes = await primaryRemoteName(activeRepoPath!);
+      final remote = remoteRes.ok ? remoteRes.data : null;
+      if (remote == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text(
+              "Couldn't fetch PR: no remote configured.",
+            )),
+          );
+        }
+        return;
+      }
+      // If the local ref already exists without a live worktree, confirm
+      // before force-overwriting — any local commits on that branch would
+      // become unreachable with no UI path to the reflog.
+      final refCheck = await Process.run(
+        'git', ['rev-parse', '--verify', localRef],
+        workingDirectory: activeRepoPath!,
+      );
+      if (refCheck.exitCode == 0 && context.mounted) {
+        final t = context.tokens;
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: t.surface1,
+            content: Text(
+              '$localRef already exists locally. Updating it will replace any '
+              'local commits on that branch with the latest from GitHub.',
+              style: TextStyle(color: t.textNormal, fontSize: 12),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Update'),
+              ),
+            ],
+          ),
+        );
+        if (ok != true) return;
+      }
+      if (!context.mounted) return;
+      final fetchRes = await Process.run(
+        'git',
+        // '+' forces the local ref to update even if non-fast-forward
+        // (force-pushed PR or ref exists from a previously closed desk).
+        ['fetch', remote, '+pull/$prN/head:$localRef'],
+        workingDirectory: activeRepoPath!,
+      );
+      if (fetchRes.exitCode != 0) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(
+                "Couldn't fetch PR: ${(fetchRes.stderr as String).trim()}")),
+          );
+        }
+        return;
+      }
+      final err = await worktreeState.addDesk(localRef);
+      if (err != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't open as desk: $err")),
+        );
+      }
+    }
+  }
+
+  void _showDeskContextMenu(
+    BuildContext context,
+    Offset pos,
+    WorktreeData desk,
+    RepositoryState repoState,
+    WorktreeState worktreeState,
+  ) {
+    final deskPrState = context.read<DeskPrState>();
+    final branch = desk.branch;
+    final hasPr = branch != null && deskPrState.prFor(branch) != null;
+    final canPromote = branch != null && !desk.isDetached && !hasPr;
+    // Resolve main worktree path so we can exclude it from "Apply to
+    // main" even in the edge case where a desk's path resolves to the
+    // main worktree but isMain is false (unusual rebuilt state).
+    // Without this guard, applyBranchToBase would merge a branch into
+    // itself and the PR lifecycle would still transition to MERGED.
+    String? mainPath;
+    for (final d in worktreeState.desks) {
+      if (d.isMain) { mainPath = d.path; break; }
+    }
+    final canApply = branch != null &&
+        !desk.isDetached &&
+        !desk.isMain &&
+        desk.path != mainPath;
+    showAppContextMenu(context, pos, [
+      [
+        if (canPromote)
+          AppContextMenuItem(
+            icon: Icons.rocket_launch_outlined,
+            label: 'Promote desk to PR',
+            onTap: () => _promoteDeskFlow(
+                context, desk, repoState, deskPrState),
+          ),
+        if (canApply)
+          AppContextMenuItem(
+            icon: Icons.call_merge,
+            label: 'Apply to main',
+            onTap: () => _applyDeskToMainFlow(
+                context, desk, repoState, deskPrState, worktreeState),
+          ),
+        // Menu counterpart of the drag-to-changes gesture. Lossy:
+        // flattens the desk's commits + WIP into one unstaged pile
+        // on whatever worktree is currently active. Source desk is
+        // untouched. Gated on "not my own desk" — imprinting onto
+        // yourself is a no-op. Label names the destination branch so
+        // the user sees "where this goes" before clicking.
+        if (desk.path != repoState.activePath)
+          AppContextMenuItem(
+            icon: Icons.layers_outlined,
+            label: 'Imprint on ${repoState.status?.branch ?? 'current'}',
+            onTap: () => _imprintDeskFlow(context, desk, repoState),
+          ),
+        if (hasPr)
+          AppContextMenuItem(
+            icon: Icons.edit_outlined,
+            label: 'Edit local PR',
+            onTap: () => _editLocalPrFlow(
+                context, desk, branch, repoState, deskPrState),
+          ),
+        if (hasPr)
+          AppContextMenuItem(
+            icon: Icons.delete_outline,
+            label: 'Discard local PR',
+            destructive: true,
+            onTap: () async {
+              final repo = repoState.activePath;
+              if (repo == null) return;
+              await deskPrState.abandon(repoPath: repo, branch: branch);
+            },
+          ),
+      ],
+      if (!desk.isMain)
+        [
+          AppContextMenuItem(
+            icon: Icons.close,
+            label: 'Close desk',
+            destructive: true,
+            onTap: () => _closeDeskFlow(context, desk, worktreeState),
+          ),
+        ],
+    ]);
+  }
+
+  Future<void> _promoteDeskFlow(
+    BuildContext context,
+    WorktreeData desk,
+    RepositoryState repoState,
+    DeskPrState deskPrState,
+  ) async {
+    final repo = repoState.activePath;
+    final branch = desk.branch;
+    if (repo == null || branch == null) return;
+    final err = await deskPrState.promote(
+      repoPath: repo,
+      branch: branch,
+      title: branch,
+    );
+    if (err != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't promote: $err")),
+      );
+    }
+  }
+
+  /// "Apply to main" routes through the same PR plumbing the branches
+  /// page uses for its PR-row merge — desks are glorified PRs, so the
+  /// audit trail and lifecycle transitions are identical.
+  /// Steps:
+  ///   1. Refuse if the desk has uncommitted edits (mirrors the branches
+  ///      page's `dirtyFileCount > 0` guard).
+  ///   2. Auto-promote the desk to a PR if it isn't one yet, so the
+  ///      MERGED state has a record to land on.
+  ///   3. Run the shared `applyBranchToBase` engine (rebase strategy by
+  ///      default — linear history, matches GitHub's "Rebase and merge"
+  ///      button) against the *main* worktree, which is found via the
+  ///      WorktreeState's known desks.
+  ///   4. Mark the PR as MERGED via DeskPrState (the existing audit
+  ///      trail in `refs/manifold/desks/...` records the transition).
+  ///   5. Refresh the worktree list so ahead/behind chrome catches up.
+  Future<void> _applyDeskToMainFlow(
+    BuildContext context,
+    WorktreeData desk,
+    RepositoryState repoState,
+    DeskPrState deskPrState,
+    WorktreeState worktreeState,
+  ) async {
+    final branch = desk.branch;
+    if (branch == null) return;
+
+    if (desk.dirtyFileCount > 0) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(
+            "Commit or shelve the desk's changes before applying.",
+          )),
+        );
+      }
+      return;
+    }
+
+    // Locate the main worktree path — that's where the merge happens.
+    String? mainRepoPath;
+    for (final d in worktreeState.desks) {
+      if (d.isMain) {
+        mainRepoPath = d.path;
+        break;
+      }
+    }
+    if (mainRepoPath == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(
+            'Could not resolve the main worktree path.',
+          )),
+        );
+      }
+      return;
+    }
+
+    // Auto-promote if no PR record exists yet — every apply lands a
+    // metadata trail. baseRef is resolved by promote() against the
+    // repo's actual default branch (origin/HEAD → main → master); if a
+    // PR already exists with a different base, honour it.
+    final existing = deskPrState.prFor(branch);
+    if (existing == null) {
+      final err = await deskPrState.promote(
+        repoPath: mainRepoPath,
+        branch: branch,
+        title: branch,
+      );
+      if (err != null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Couldn't promote desk: $err")),
+          );
+        }
+        return;
+      }
+    }
+    final baseRef = deskPrState.prFor(branch)?.baseRef;
+    if (baseRef == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(
+            "Couldn't determine the base branch for this desk.",
+          )),
+        );
+      }
+      return;
+    }
+    if (baseRef == branch) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(
+            "PR base and head are the same branch ($branch) — nothing to apply.",
+          )),
+        );
+      }
+      return;
+    }
+
+    final result = await applyBranchToBase(
+      mainRepoPath: mainRepoPath,
+      branch: branch,
+      baseRef: baseRef,
+      method: BranchMergeMethod.rebase,
+      deleteBranch: false, // desk worktree still references the branch
+    );
+    if (!context.mounted) return;
+    if (!result.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error ?? 'Apply failed')),
+      );
+      return;
+    }
+    await deskPrState.setStateFor(
+      repoPath: mainRepoPath,
+      branch: branch,
+      state: 'MERGED',
+    );
+    await worktreeState.refreshFor(mainRepoPath);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Applied $branch to $baseRef')),
+      );
+    }
+  }
+
+  /// "Imprint here": the menu counterpart to drag-dropping a desk onto
+  /// the Changes page. Takes `git diff <activeBranch>` from inside the
+  /// desk — folding ahead-commits + WIP into one unified patch — and
+  /// pipes that through the shared patch-preview dialog so the user
+  /// can inspect and apply as uncommitted work on the current tree.
+  /// Lossy: commit boundaries are flattened. Source desk untouched.
+  Future<void> _imprintDeskFlow(
+    BuildContext context,
+    WorktreeData desk,
+    RepositoryState repoState,
+  ) async {
+    final repoPath = repoState.activePath;
+    if (repoPath == null) return;
+    if (desk.path == repoPath) return; // can't imprint onto self
+    final targetRef = repoState.status?.branch ?? 'HEAD';
+    final result = await getDeskDumpDiff(desk.path, targetRef);
+    if (!context.mounted) return;
+    if (!result.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Diff failed: ${result.error}')),
+      );
+      return;
+    }
+    final diff = result.data ?? '';
+    if (diff.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nothing to imprint — desk is already at parity.'),
+        ),
+      );
+      return;
+    }
+    final label = desk.branch ??
+        (desk.isDetached ? desk.head.substring(0, 7) : 'desk');
+    await showPatchPreviewDialog(
+      context,
+      repoPath: repoPath,
+      rawPatch: diff,
+      sourceLabel: 'desk $label',
+      onApplied: () async {
+        if (!context.mounted) return;
+        await repoState.refreshStatus();
+      },
+    );
+  }
+
+  Future<void> _editLocalPrFlow(
+    BuildContext context,
+    WorktreeData desk,
+    String branch,
+    RepositoryState repoState,
+    DeskPrState deskPrState,
+  ) async {
+    final repo = repoState.activePath;
+    if (repo == null) return;
+    final pr = deskPrState.prFor(branch);
+    if (pr == null) return;
+    final titleCtrl = TextEditingController(text: pr.title);
+    final bodyCtrl = TextEditingController(text: pr.body);
+    var isDraft = pr.isDraft;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final t = Theme.of(ctx);
+        return StatefulBuilder(builder: (ctx, setSt) {
+          return Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('Edit local PR',
+                        style: t.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: titleCtrl,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'title',
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: bodyCtrl,
+                      minLines: 4,
+                      maxLines: 10,
+                      decoration: const InputDecoration(
+                        labelText: 'body',
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: isDraft,
+                          onChanged: (v) =>
+                              setSt(() => isDraft = v ?? false),
+                        ),
+                        const Text('draft'),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(false),
+                          child: const Text('cancel'),
+                        ),
+                        const SizedBox(width: 6),
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(true),
+                          child: const Text('save'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        });
+      },
+    );
+    if (result != true) return;
+    final err = await deskPrState.editMeta(
+      repoPath: repo,
+      branch: branch,
+      title: titleCtrl.text.trim(),
+      body: bodyCtrl.text,
+      isDraft: isDraft,
+    );
+    if (err != null && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Couldn't save: $err")),
+      );
+    }
   }
 
   Future<void> _closeDeskFlow(
@@ -747,11 +1419,15 @@ class _DeskTab extends StatefulWidget {
   final WorktreeData desk;
   final VoidCallback onTap;
   final VoidCallback? onClose;
+  /// Right-click handler. Called with the global pointer position so
+  /// the caller can anchor a context menu to the cursor.
+  final ValueChanged<Offset>? onSecondaryTap;
 
   const _DeskTab({
     required this.desk,
     required this.onTap,
     required this.onClose,
+    this.onSecondaryTap,
   });
 
   @override
@@ -772,12 +1448,43 @@ class _DeskTabState extends State<_DeskTab> {
         ? t.accentBright.withValues(alpha: 0.85)
         : t.chromeBorder.withValues(alpha: 0.5);
 
-    return MouseRegion(
+    // Watch the desk-PR state so the tab can carry a "has local PR"
+    // glyph without polling — the context-menu options change shape
+    // alongside it.
+    final hasLocalPr = widget.desk.branch != null &&
+        context.watch<DeskPrState>().prFor(widget.desk.branch!) != null;
+    // Per-desk activity probes — already-cached on WorktreeState so
+    // this is a synchronous lookup with no I/O on the build path.
+    // Drives the dirty / ahead / behind / last-touched chrome that
+    // makes the desk row a status map at a glance.
+    final activity = context.watch<WorktreeState>().activityFor(widget.desk.path);
+    final dirtyN = widget.desk.dirtyFileCount;
+    final aheadN = activity?.ahead ?? 0;
+    final behindN = activity?.behind ?? 0;
+
+    return Tooltip(
+      message: _composeTooltip(
+        branch: label,
+        dirty: dirtyN,
+        ahead: aheadN,
+        behind: behindN,
+        lastActivity: activity?.lastActivity,
+        hasLocalPr: hasLocalPr,
+      ),
+      waitDuration: const Duration(milliseconds: 400),
+      child: LongPressDraggable<DeskDropPayload>(
+      data: DeskDropPayload.desk(path: d.path, label: label),
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: _DeskTabDragFeedback(label: label, tokens: t),
+      child: MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
+        onSecondaryTapDown: widget.onSecondaryTap == null
+            ? null
+            : (d) => widget.onSecondaryTap!(d.globalPosition),
         child: AnimatedContainer(
           duration: context.motion(const Duration(milliseconds: 80)),
           height: 26,
@@ -844,10 +1551,204 @@ class _DeskTabState extends State<_DeskTab> {
                   fontWeight: FontWeight.w600,
                 ),
               ),
+              if (hasLocalPr) ...[
+                const SizedBox(width: 6),
+                // "Local PR" sigil. Same accentBright as other "live"
+                // indicators so the eye groups them as the same kind
+                // of signal (this desk has metadata, the PR list will
+                // show it).
+                Container(
+                  width: 4,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: t.accentBright.withValues(alpha: 0.85),
+                  ),
+                ),
+              ],
+              if (dirtyN > 0) ...[
+                const SizedBox(width: 6),
+                // Dirty count — the number of modified-or-staged files
+                // in this worktree. Tabular figures so it doesn't jitter
+                // when the count crosses a digit boundary. Read at a
+                // glance: "this desk has work waiting on you."
+                Text(
+                  '$dirtyN',
+                  style: TextStyle(
+                    color: t.accentBright,
+                    fontSize: 9.5,
+                    fontFamily: 'JetBrainsMono',
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+              if (aheadN > 0) ...[
+                const SizedBox(width: 6),
+                // Ahead-of-base — green up-chevron with count. Same
+                // accentBright as the rest of the live signals so they
+                // feel like one family of "this desk is alive."
+                _DeskTrendGlyph(
+                  glyph: '↑',
+                  count: aheadN,
+                  color: t.stateAdded,
+                ),
+              ],
+              if (behindN > 0) ...[
+                const SizedBox(width: 4),
+                // Behind-of-base — warm down-chevron. Always shown when
+                // non-zero because "you're behind" is the kind of state
+                // where surprise is bad — better quiet awareness than
+                // discovery on a failed merge.
+                _DeskTrendGlyph(
+                  glyph: '↓',
+                  count: behindN,
+                  color: t.stateConflicted,
+                ),
+              ],
             ],
           ),
         ),
       ),
+    ),
+    ),
+    );
+  }
+
+  /// Compose the hover-peek text. Reads as a one-line status sentence
+  /// instead of a label list so the tooltip pops into the eye as
+  /// "what's going on here" not "data fields about this desk."
+  String _composeTooltip({
+    required String branch,
+    required int dirty,
+    required int ahead,
+    required int behind,
+    required DateTime? lastActivity,
+    required bool hasLocalPr,
+  }) {
+    final parts = <String>[branch];
+    if (dirty > 0) parts.add('$dirty modified');
+    if (ahead > 0) parts.add('$ahead ahead');
+    if (behind > 0) parts.add('$behind behind');
+    if (hasLocalPr) parts.add('local PR');
+    final head = parts.join(' · ');
+    if (lastActivity == null) return head;
+    final age = DateTime.now().difference(lastActivity);
+    String rel;
+    if (age.inMinutes < 1) {
+      rel = 'just now';
+    } else if (age.inMinutes < 60) {
+      rel = '${age.inMinutes}m ago';
+    } else if (age.inHours < 24) {
+      rel = '${age.inHours}h ago';
+    } else if (age.inDays < 30) {
+      rel = '${age.inDays}d ago';
+    } else {
+      rel = '${(age.inDays / 30).floor()}mo ago';
+    }
+    return '$head\nlast touched $rel';
+  }
+}
+
+/// Drag feedback chip shown while the user is dragging a desk tab to
+/// "dump" its diff somewhere else (currently: the Changes page). Same
+/// visual family as the branch/PR drag chip in branches_page.dart but
+/// owned here so workspace_shell doesn't need a cross-feature import.
+class _DeskTabDragFeedback extends StatelessWidget {
+  final String label;
+  final AppTokens tokens;
+  const _DeskTabDragFeedback({required this.label, required this.tokens});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: t.accentBright.withValues(alpha: 0.18),
+          border: Border.all(color: t.accentBright, width: 1),
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: [
+            BoxShadow(
+              color: t.shadowElev.withValues(alpha: 0.35),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '⇢',
+              style: TextStyle(
+                color: t.accentBright,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                height: 1,
+              ),
+            ),
+            const SizedBox(width: 6),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 240),
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: t.textStrong,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact trend glyph + count. Used for ahead/behind in the desk
+/// tab so the row-level status reads as a single visual family
+/// instead of three loose pieces.
+class _DeskTrendGlyph extends StatelessWidget {
+  final String glyph;
+  final int count;
+  final Color color;
+  const _DeskTrendGlyph({
+    required this.glyph,
+    required this.count,
+    required this.color,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          glyph,
+          style: TextStyle(
+            color: color,
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+            height: 1,
+          ),
+        ),
+        const SizedBox(width: 1),
+        Text(
+          '$count',
+          style: TextStyle(
+            color: color,
+            fontSize: 9.5,
+            fontFamily: 'JetBrainsMono',
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -895,7 +1796,6 @@ class _CloseDeskDialog extends StatelessWidget {
   }
 }
 
-// ── Branch pill + emerging panel ─────────────────────────────────────────────
 
 class _BranchPill extends StatefulWidget {
   final String branch;
@@ -967,6 +1867,25 @@ class _BranchPillState extends State<_BranchPill> {
         .map((d) => d.branch!)
         .toSet();
 
+    final issueState = context.read<DeskIssueState>();
+    final openIssues = issueState.all.where((i) => i.state == 'OPEN').toList();
+
+    // Remote issues from the global cache — no gh call needed at open time.
+    final remoteCache = context.read<RemoteIssueCacheState>();
+    final remoteIssues = remoteCache.all;
+
+    // Build branch → remote-issue-numbers map from local desk PRs so the
+    // side panel can filter remote issues when hovering a branch row.
+    // DeskPr.linkedRemoteIssues records which remote issues a branch's PR
+    // addresses — the exact join we need for hover filtering.
+    final deskPrs = context.read<DeskPrState>().all;
+    final branchRemoteIssues = <String, Set<int>>{};
+    for (final pr in deskPrs) {
+      if (pr.linkedRemoteIssues.isNotEmpty) {
+        branchRemoteIssues[pr.headRef] = pr.linkedRemoteIssues.toSet();
+      }
+    }
+
     _overlay = OverlayEntry(builder: (_) {
       return _BranchPanelOverlay(
         // Panel starts at pill's top — pill fades out, panel morphs in.
@@ -981,6 +1900,9 @@ class _BranchPillState extends State<_BranchPill> {
         loading: _loading,
         switching: _switching,
         currentBranch: widget.branch,
+        issues: openIssues,
+        remoteIssues: remoteIssues,
+        branchRemoteIssues: branchRemoteIssues,
         onDismiss: _close,
         onCheckout: _checkout,
         onOpenAsDesk: (branchName) async {
@@ -1012,6 +1934,26 @@ class _BranchPillState extends State<_BranchPill> {
           _close();
           widget.onNavigate();
         },
+        onCreateIssue: widget.repoPath == null
+            ? null
+            : ({
+                required String title,
+                required String body,
+                required bool promoteRemote,
+              }) async {
+                final err = await issueState.createMaybeRemote(
+                  repoPath: widget.repoPath!,
+                  title: title,
+                  body: body,
+                  promoteRemote: promoteRemote,
+                );
+                if (err == null && promoteRemote) {
+                  // ignore: unawaited_futures
+                  remoteCache.refreshFor(widget.repoPath!);
+                }
+                if (err == null && mounted) _close();
+                return err;
+              },
       );
     });
 
@@ -1026,6 +1968,7 @@ class _BranchPillState extends State<_BranchPill> {
     if (!mounted) return;
     _close();
   }
+
 
   @override
   void dispose() {
@@ -1109,7 +2052,6 @@ class _BranchPillState extends State<_BranchPill> {
 /// without leaving a gap against the next desk tab.
 const double _kBranchPillMaxWidth = 280;
 
-// ── Panel overlay ─────────────────────────────────────────────────────────────
 
 class _BranchPanelOverlay extends StatefulWidget {
   final double top;
@@ -1120,12 +2062,23 @@ class _BranchPanelOverlay extends StatefulWidget {
   final bool loading;
   final bool switching;
   final String currentBranch;
+  final List<DeskIssue> issues;
+  /// Remote issues from [RemoteIssueCacheState].
+  final List<IssueSummary> remoteIssues;
+  /// Maps desk-PR head branches to the remote issue numbers they address.
+  final Map<String, Set<int>> branchRemoteIssues;
   final VoidCallback onDismiss;
   final ValueChanged<String> onCheckout;
   final ValueChanged<String>? onOpenAsDesk;
   final ValueChanged<String>? onCreateDeskFromHead;
   final Set<String> branchesOpenAsDesks;
   final VoidCallback onNavigate;
+  /// Submit a new issue. Returns an error string or null on success.
+  final Future<String?> Function({
+    required String title,
+    required String body,
+    required bool promoteRemote,
+  })? onCreateIssue;
 
   const _BranchPanelOverlay({
     required this.top,
@@ -1136,12 +2089,16 @@ class _BranchPanelOverlay extends StatefulWidget {
     required this.loading,
     required this.switching,
     required this.currentBranch,
+    this.issues = const [],
+    this.remoteIssues = const [],
+    this.branchRemoteIssues = const {},
     required this.onDismiss,
     required this.onCheckout,
     this.onOpenAsDesk,
     this.onCreateDeskFromHead,
     this.branchesOpenAsDesks = const {},
     required this.onNavigate,
+    this.onCreateIssue,
   });
 
   @override
@@ -1153,6 +2110,7 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
   late final AnimationController _ctrl;
   late final Animation<double> _reveal;
   late final Animation<double> _fade;
+  String? _hoveredBranch;
 
   @override
   void initState() {
@@ -1212,92 +2170,110 @@ class _BranchPanelOverlayState extends State<_BranchPanelOverlay>
                 ),
                 child: Material(
                   color: Colors.transparent,
-                  child: Container(
-                    width: widget.minWidth,
-                    decoration: BoxDecoration(
-                      color: Color.alphaBlend(t.inputBg, t.bg0),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: borderColor),
-                      // offset.dy > blurRadius → shadow only goes downward
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black
-                              .withValues(alpha: t.isDark ? 0.45 : 0.18),
-                          blurRadius: 10,
-                          offset: const Offset(0, 12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: widget.minWidth,
+                        decoration: BoxDecoration(
+                          color: Color.alphaBlend(t.inputBg, t.bg0),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: borderColor),
+                          // offset.dy > blurRadius → shadow only goes downward
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black
+                                  .withValues(alpha: t.isDark ? 0.45 : 0.18),
+                              blurRadius: 10,
+                              offset: const Offset(0, 12),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // ── Pill header — tapping here closes the panel ──
-                        GestureDetector(
-                          onTap: widget.onDismiss,
-                          child: MouseRegion(
-                            cursor: SystemMouseCursors.click,
-                            child: SizedBox(
-                              height: widget.pillHeight,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    AppIcon(
-                                        name: 'git-branch',
-                                        size: 11,
-                                        color: t.accentBright),
-                                    const SizedBox(width: 5),
-                                    Flexible(
-                                      child: ThemeMorphText(
-                                        widget.currentBranch,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        softWrap: false,
-                                        style: TextStyle(
-                                          color: t.textNormal,
-                                          fontSize: 10.5,
-                                          fontWeight: FontWeight.w600,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            GestureDetector(
+                              onTap: widget.onDismiss,
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: SizedBox(
+                                  height: widget.pillHeight,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        AppIcon(
+                                            name: 'git-branch',
+                                            size: 11,
+                                            color: t.accentBright),
+                                        const SizedBox(width: 5),
+                                        Flexible(
+                                          child: ThemeMorphText(
+                                            widget.currentBranch,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            softWrap: false,
+                                            style: TextStyle(
+                                              color: t.textNormal,
+                                              fontSize: 10.5,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
                                         ),
-                                      ),
+                                        const SizedBox(width: 4),
+                                        // Chevron pointing down (open state)
+                                        Transform.rotate(
+                                          angle: math.pi / 2,
+                                          child: AppIcon(
+                                              name: 'chevron-right',
+                                              size: 10,
+                                              color: t.textMuted),
+                                        ),
+                                      ],
                                     ),
-                                    const SizedBox(width: 4),
-                                    // Chevron pointing down (open state)
-                                    Transform.rotate(
-                                      angle: math.pi / 2,
-                                      child: AppIcon(
-                                          name: 'chevron-right',
-                                          size: 10,
-                                          color: t.textMuted),
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
+                            // Divider between pill header and branch list
+                            Container(
+                              height: 1,
+                              color: borderColor.withValues(alpha: 0.5),
+                            ),
+                            _PanelBody(
+                              branches: widget.branches,
+                              loading: widget.loading,
+                              switching: widget.switching,
+                              currentBranch: widget.currentBranch,
+                              onCheckout: widget.onCheckout,
+                              onOpenAsDesk: widget.onOpenAsDesk,
+                              onCreateDeskFromHead: widget.onCreateDeskFromHead,
+                              branchesOpenAsDesks: widget.branchesOpenAsDesks,
+                              onNavigate: widget.onNavigate,
+                              onBranchHover: (b) =>
+                                  setState(() => _hoveredBranch = b),
+                              t: t,
+                            ),
+                          ],
                         ),
-                        // Divider between pill header and branch list
-                        Container(
-                          height: 1,
-                          color: borderColor.withValues(alpha: 0.5),
-                        ),
-                        // ── Branch list ──────────────────────────────────
-                        _PanelBody(
-                          branches: widget.branches,
-                          loading: widget.loading,
-                          switching: widget.switching,
-                          currentBranch: widget.currentBranch,
-                          onCheckout: widget.onCheckout,
-                          onOpenAsDesk: widget.onOpenAsDesk,
-                          onCreateDeskFromHead: widget.onCreateDeskFromHead,
-                          branchesOpenAsDesks: widget.branchesOpenAsDesks,
-                          onNavigate: widget.onNavigate,
-                          t: t,
-                        ),
-                      ],
-                    ),
+                      ),
+                      // ── Issues side panel — always present so the popout
+                      // functions as the issue hub (list, filter, create).
+                      const SizedBox(width: 6),
+                      _IssuesSidePanel(
+                        localIssues: widget.issues,
+                        remoteIssues: widget.remoteIssues,
+                        branchRemoteIssues: widget.branchRemoteIssues,
+                        hoveredBranch: _hoveredBranch,
+                        borderColor: borderColor,
+                        onCreateIssue: widget.onCreateIssue,
+                        t: t,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1320,6 +2296,8 @@ class _PanelBody extends StatelessWidget {
   /// Create a new branch from HEAD and open it on a new desk, in one motion.
   final ValueChanged<String>? onCreateDeskFromHead;
   final VoidCallback onNavigate;
+  /// Called with branch name on row hover-enter, null on hover-exit.
+  final ValueChanged<String?>? onBranchHover;
   final AppTokens t;
 
   const _PanelBody({
@@ -1332,6 +2310,7 @@ class _PanelBody extends StatelessWidget {
     this.branchesOpenAsDesks = const {},
     this.onCreateDeskFromHead,
     required this.onNavigate,
+    this.onBranchHover,
     required this.t,
   });
 
@@ -1377,6 +2356,8 @@ class _PanelBody extends StatelessWidget {
                 ? null
                 : () => onOpenAsDesk!(branch.name),
             alreadyOpenAsDesk: branchesOpenAsDesks.contains(branch.name),
+            onHoverChanged: (hovered) =>
+                onBranchHover?.call(hovered ? branch.name : null),
           ),
         const SizedBox(height: 4),
         Container(
@@ -1392,6 +2373,7 @@ class _PanelBody extends StatelessWidget {
   }
 }
 
+
 class _BranchRow extends StatefulWidget {
   final BranchInfo branch;
   final bool isCurrent;
@@ -1404,6 +2386,8 @@ class _BranchRow extends StatefulWidget {
   /// True when this branch is already open as a separate desk — the desk
   /// action then "jumps" instead of creating a new one.
   final bool alreadyOpenAsDesk;
+  /// Reports hover state changes to parent (true = entered, false = exited).
+  final ValueChanged<bool>? onHoverChanged;
 
   const _BranchRow({
     required this.branch,
@@ -1413,6 +2397,7 @@ class _BranchRow extends StatefulWidget {
     required this.onTap,
     this.onOpenAsDesk,
     this.alreadyOpenAsDesk = false,
+    this.onHoverChanged,
   });
 
   @override
@@ -1431,8 +2416,14 @@ class _BranchRowState extends State<_BranchRow> {
     return MouseRegion(
       cursor:
           canSwitch ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      onEnter: (_) {
+        setState(() => _hovered = true);
+        widget.onHoverChanged?.call(true);
+      },
+      onExit: (_) {
+        setState(() => _hovered = false);
+        widget.onHoverChanged?.call(false);
+      },
       child: GestureDetector(
         onTap: canSwitch ? widget.onTap : null,
         child: AnimatedContainer(
@@ -1516,7 +2507,7 @@ class _BranchRowState extends State<_BranchRow> {
                   )
                 else if (_hovered)
                   Tooltip(
-                    message: 'Open on a side desk',
+                    message: 'Open on a new desk',
                     child: GestureDetector(
                       onTap: widget.onOpenAsDesk,
                       child: Text(
@@ -1636,7 +2627,7 @@ class _NewDeskRowState extends State<_NewDeskRow> {
           child: Row(
             children: [
               Text(
-                '+ Side desk',
+                '+ new desk',
                 style: TextStyle(
                   color: _hovered ? t.textNormal : t.textMuted,
                   fontSize: 11,
@@ -1713,6 +2704,632 @@ class _NavRowState extends State<_NavRow> {
   }
 }
 
+
+const double _kIssuesPanelWidth = 172.0;
+
+/// Unified item for the side panel — wraps either a local [DeskIssue] or a
+/// pure-remote [IssueSummary] (one that has no local counterpart yet).
+class _SidePanelIssue {
+  final int displayId;
+  final String title;
+  final String state;
+  /// True when backed by a local DeskIssue (has git storage).
+  final bool isLocal;
+  /// True when the issue exists on GitHub (local+promoted counts here too).
+  final bool isRemote;
+
+  const _SidePanelIssue({
+    required this.displayId,
+    required this.title,
+    required this.state,
+    required this.isLocal,
+    required this.isRemote,
+  });
+
+  bool get isOpen => state == 'OPEN';
+}
+
+/// Side panel attached to the branch picker overlay.
+/// Shows a deduplicated list of open issues from both local storage
+/// ([localIssues]) and the GitHub cache ([remoteIssues]). A local issue
+/// with [DeskIssue.remoteNumber] set is considered the canonical record and
+/// suppresses the matching remote entry.
+/// Hover filter:
+///   • Local issues → `addressedBy.contains(hoveredBranch)`
+///   • Remote-only  → `branchRemoteIssues[hoveredBranch]?.contains(number)`
+class _IssuesSidePanel extends StatefulWidget {
+  final List<DeskIssue> localIssues;
+  final List<IssueSummary> remoteIssues;
+  final Map<String, Set<int>> branchRemoteIssues;
+  final String? hoveredBranch;
+  final Color borderColor;
+  final Future<String?> Function({
+    required String title,
+    required String body,
+    required bool promoteRemote,
+  })? onCreateIssue;
+  final AppTokens t;
+
+  const _IssuesSidePanel({
+    required this.localIssues,
+    required this.remoteIssues,
+    required this.branchRemoteIssues,
+    required this.hoveredBranch,
+    required this.borderColor,
+    required this.onCreateIssue,
+    required this.t,
+  });
+
+  @override
+  State<_IssuesSidePanel> createState() => _IssuesSidePanelState();
+}
+
+class _IssuesSidePanelState extends State<_IssuesSidePanel> {
+  bool _composing = false;
+  bool _promoteRemote = false;
+  bool _submitting = false;
+  String? _error;
+  final _titleCtrl = TextEditingController();
+  final _bodyCtrl = TextEditingController();
+  final _titleFocus = FocusNode();
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _bodyCtrl.dispose();
+    _titleFocus.dispose();
+    super.dispose();
+  }
+
+  void _openCompose() {
+    setState(() {
+      _composing = true;
+      _error = null;
+    });
+    // Focus after the frame so the field is mounted.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _titleFocus.requestFocus();
+    });
+  }
+
+  void _cancelCompose() {
+    setState(() {
+      _composing = false;
+      _error = null;
+      _promoteRemote = false;
+      _titleCtrl.clear();
+      _bodyCtrl.clear();
+    });
+  }
+
+  Future<void> _submit() async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty || widget.onCreateIssue == null) return;
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    final err = await widget.onCreateIssue!(
+      title: title,
+      body: _bodyCtrl.text.trim(),
+      promoteRemote: _promoteRemote,
+    );
+    if (!mounted) return;
+    if (err != null) {
+      setState(() {
+        _submitting = false;
+        _error = err;
+      });
+    } else {
+      // Reset form state so the widget is not frozen if the parent is slow
+      // to close the overlay (e.g. due to a rebuild race).
+      setState(() {
+        _submitting = false;
+        _composing = false;
+      });
+    }
+  }
+
+  List<_SidePanelIssue> _buildItems() {
+    // Build a fast lookup map so the hover-filter pass never does a linear
+    // scan and can't throw StateError on a missing id.
+    final localById = {for (final i in widget.localIssues) i.issueId: i};
+
+    // Remote issue numbers already represented locally (promoted / imported).
+    final promotedNumbers = widget.localIssues
+        .where((i) => i.remoteNumber != null)
+        .map((i) => i.remoteNumber!)
+        .toSet();
+
+    final items = <_SidePanelIssue>[
+      for (final i in widget.localIssues)
+        _SidePanelIssue(
+          displayId: i.issueId,
+          title: i.title,
+          state: i.state,
+          isLocal: true,
+          isRemote: i.remoteNumber != null,
+        ),
+      for (final r in widget.remoteIssues)
+        if (!promotedNumbers.contains(r.number))
+          _SidePanelIssue(
+            displayId: r.number,
+            title: r.title,
+            state: r.state,
+            isLocal: false,
+            isRemote: true,
+          ),
+    ];
+
+    if (widget.hoveredBranch == null) return items;
+
+    final linked = widget.branchRemoteIssues[widget.hoveredBranch] ?? const {};
+    return items.where((item) {
+      if (item.isLocal) {
+        final local = localById[item.displayId];
+        if (local == null) return false; // shouldn't happen, but safe
+        return local.addressedBy.contains(widget.hoveredBranch) ||
+            (local.remoteNumber != null && linked.contains(local.remoteNumber));
+      }
+      // Pure-remote: check via DeskPr linkage.
+      return linked.contains(item.displayId);
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    final items = _buildItems();
+
+    return Container(
+      width: _kIssuesPanelWidth,
+      decoration: BoxDecoration(
+        color: Color.alphaBlend(t.inputBg, t.bg0),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: widget.borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: t.isDark ? 0.45 : 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header with inline "+ new" affordance.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 7, 6, 5),
+            child: Row(
+              children: [
+                Text(
+                  'issues',
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${items.length}',
+                  style: TextStyle(
+                    color: t.textMuted.withValues(alpha: 0.55),
+                    fontSize: 9,
+                  ),
+                ),
+                if (widget.onCreateIssue != null) ...[
+                  const SizedBox(width: 6),
+                  _CompactIconButton(
+                    icon: _composing ? 'x' : 'plus',
+                    tooltip: _composing ? 'cancel' : 'new issue',
+                    onTap: _composing ? _cancelCompose : _openCompose,
+                    t: t,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Container(
+            height: 1,
+            color: widget.borderColor.withValues(alpha: 0.5),
+          ),
+          if (_composing)
+            _IssueComposeForm(
+              titleCtrl: _titleCtrl,
+              bodyCtrl: _bodyCtrl,
+              titleFocus: _titleFocus,
+              promoteRemote: _promoteRemote,
+              submitting: _submitting,
+              error: _error,
+              onPromoteToggle: (v) => setState(() => _promoteRemote = v),
+              onSubmit: _submit,
+              t: t,
+            ),
+          if (!_composing && items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Text(
+                widget.hoveredBranch != null ? 'none linked' : 'no open issues',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.45),
+                  fontSize: 9.5,
+                ),
+              ),
+            ),
+          if (!_composing)
+            for (final item in items.take(8))
+              _SidePanelIssueRow(item: item, t: t),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small icon button for header actions (+/x).
+class _CompactIconButton extends StatefulWidget {
+  final String icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  final AppTokens t;
+
+  const _CompactIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    required this.t,
+  });
+
+  @override
+  State<_CompactIconButton> createState() => _CompactIconButtonState();
+}
+
+class _CompactIconButtonState extends State<_CompactIconButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Tooltip(
+        message: widget.tooltip,
+        waitDuration: const Duration(milliseconds: 400),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: Container(
+            width: 16,
+            height: 16,
+            decoration: BoxDecoration(
+              color: _hovered
+                  ? t.accentBright.withValues(alpha: 0.15)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(3),
+            ),
+            alignment: Alignment.center,
+            child: AppIcon(
+              name: widget.icon,
+              size: 10,
+              color: _hovered ? t.accentBright : t.textMuted,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Inline compose form for creating a new issue (local, optionally promoted).
+class _IssueComposeForm extends StatelessWidget {
+  final TextEditingController titleCtrl;
+  final TextEditingController bodyCtrl;
+  final FocusNode titleFocus;
+  final bool promoteRemote;
+  final bool submitting;
+  final String? error;
+  final ValueChanged<bool> onPromoteToggle;
+  final VoidCallback onSubmit;
+  final AppTokens t;
+
+  const _IssueComposeForm({
+    required this.titleCtrl,
+    required this.bodyCtrl,
+    required this.titleFocus,
+    required this.promoteRemote,
+    required this.submitting,
+    required this.error,
+    required this.onPromoteToggle,
+    required this.onSubmit,
+    required this.t,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: titleCtrl,
+            focusNode: titleFocus,
+            enabled: !submitting,
+            onSubmitted: (_) => onSubmit(),
+            style: TextStyle(color: t.textNormal, fontSize: 10.5),
+            decoration: InputDecoration(
+              hintText: 'title',
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              hintStyle: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 10.5,
+              ),
+              filled: true,
+              fillColor: t.inputBg,
+              border: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: t.inputBorder.withValues(alpha: 0.6),
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: t.inputBorder.withValues(alpha: 0.6),
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: t.inputFocusBorder),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: bodyCtrl,
+            enabled: !submitting,
+            minLines: 2,
+            maxLines: 4,
+            style: TextStyle(color: t.textNormal, fontSize: 10),
+            decoration: InputDecoration(
+              hintText: 'body (optional)',
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              hintStyle: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 10,
+              ),
+              filled: true,
+              fillColor: t.inputBg,
+              border: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: t.inputBorder.withValues(alpha: 0.6),
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderSide: BorderSide(
+                  color: t.inputBorder.withValues(alpha: 0.6),
+                ),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: t.inputFocusBorder),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              _RemoteToggle(
+                value: promoteRemote,
+                onChanged: submitting ? null : onPromoteToggle,
+                t: t,
+              ),
+              const Spacer(),
+              _SubmitButton(
+                label: promoteRemote ? 'create + push' : 'create',
+                busy: submitting,
+                onTap: onSubmit,
+                t: t,
+              ),
+            ],
+          ),
+          if (error != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              error!,
+              style: TextStyle(
+                color: t.danger,
+                fontSize: 9,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RemoteToggle extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final AppTokens t;
+
+  const _RemoteToggle({
+    required this.value,
+    required this.onChanged,
+    required this.t,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: onChanged == null
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onChanged == null ? null : () => onChanged!(!value),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: value ? t.accentBright : Colors.transparent,
+                border: Border.all(
+                  color: value
+                      ? t.accentBright
+                      : t.inputBorder.withValues(alpha: 0.7),
+                ),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              alignment: Alignment.center,
+              child: value
+                  ? AppIcon(name: 'check', size: 8, color: t.bg0)
+                  : null,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              'remote',
+              style: TextStyle(
+                color: value ? t.accentBright : t.textMuted,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SubmitButton extends StatefulWidget {
+  final String label;
+  final bool busy;
+  final VoidCallback onTap;
+  final AppTokens t;
+
+  const _SubmitButton({
+    required this.label,
+    required this.busy,
+    required this.onTap,
+    required this.t,
+  });
+
+  @override
+  State<_SubmitButton> createState() => _SubmitButtonState();
+}
+
+class _SubmitButtonState extends State<_SubmitButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    return MouseRegion(
+      cursor: widget.busy
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.busy ? null : widget.onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: widget.busy
+                ? t.accentBright.withValues(alpha: 0.35)
+                : _hovered
+                    ? t.accentBright
+                    : t.accentBright.withValues(alpha: 0.82),
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(
+            widget.busy ? '…' : widget.label,
+            style: TextStyle(
+              color: t.bg0,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SidePanelIssueRow extends StatelessWidget {
+  final _SidePanelIssue item;
+  final AppTokens t;
+
+  const _SidePanelIssueRow({required this.item, required this.t});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Container(
+              width: 5,
+              height: 5,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: item.isOpen
+                    ? t.accentBright.withValues(alpha: 0.85)
+                    : t.chromeBorder.withValues(alpha: 0.35),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '#${item.displayId} ${item.title}',
+              style: TextStyle(
+                color: t.textNormal,
+                fontSize: 10,
+                height: 1.3,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // Subtle indicator: remote-only issues get a faint cloud dot;
+          // promoted (local+remote) issues get nothing extra — they're first-class.
+          if (item.isRemote && !item.isLocal) ...[
+            const SizedBox(width: 4),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                '↑',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.4),
+                  fontSize: 8,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// Keeps all three pages alive so that in-progress work (like a running
 /// review) survives page switches, while cross-fading + sliding the new
 /// page in so rail navigation reads as motion, not a teleport. Direction
@@ -1724,11 +3341,13 @@ class _KeepAlivePages extends StatefulWidget {
   final _WorkspaceMode mode;
   final String? selectedCommitHash;
   final VoidCallback onOpenXray;
+  final VoidCallback onOpenChanges;
 
   const _KeepAlivePages({
     required this.mode,
     this.selectedCommitHash,
     required this.onOpenXray,
+    required this.onOpenChanges,
   });
 
   @override
@@ -1781,6 +3400,7 @@ class _KeepAlivePagesState extends State<_KeepAlivePages>
       HistoryPage(
         initialCommitHash: widget.selectedCommitHash,
         onOpenXray: widget.onOpenXray,
+        onOpenChanges: widget.onOpenChanges,
       ),
       const BranchesPage(),
     ];

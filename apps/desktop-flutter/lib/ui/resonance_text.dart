@@ -3,7 +3,6 @@ import 'package:flutter/widgets.dart';
 import 'tokens.dart';
 
 /// Lightweight inline rich text renderer for AI-generated output.
-///
 /// Parses markdown formatting (`**bold**`, `*italic*`, `` `code` ``),
 /// detects technical terms (PascalCase, CONSTANTS, file paths), and
 /// applies theme-aware accent styling. Drop-in replacement for [Text].
@@ -32,7 +31,6 @@ Widget resonanceText(
   );
 }
 
-// ── Code block handling ────────────────────────────────────────────────
 
 final _codeBlockRe = RegExp(r'```\w*\n?([\s\S]*?)```', multiLine: true);
 
@@ -85,7 +83,6 @@ Widget _buildWithCodeBlocks(String text, TextStyle base, AppTokens t) {
   );
 }
 
-// ── Pattern definitions (ordered by priority) ──────────────────────────
 
 enum _Cat { bold, italic, code, quoted, tech, camel, constant, filePath, entity, punct }
 
@@ -119,7 +116,6 @@ final _patterns = <(_Cat, RegExp)>[
 // Punctuation matched separately (single chars, very low priority).
 final _punctRe = RegExp(r'[—–:;|]');
 
-// ── Span builder ───────────────────────────────────────────────────────
 
 List<TextSpan> _scry(String text, TextStyle base, AppTokens t) {
   final hits = <_Hit>[];
@@ -232,7 +228,6 @@ TextStyle _styleFor(_Cat cat, TextStyle base, AppTokens t) {
   };
 }
 
-// ── Collapsible code block ─────────────────────────────────────────────
 
 /// Code blocks collapse when taller than ~8 lines. Tap to expand.
 class _CollapsibleCodeBlock extends StatefulWidget {
@@ -323,7 +318,6 @@ class _CollapsibleCodeBlockState extends State<_CollapsibleCodeBlock> {
   }
 }
 
-// ── Internal types ─────────────────────────────────────────────────────
 
 class _Hit {
   final int start;

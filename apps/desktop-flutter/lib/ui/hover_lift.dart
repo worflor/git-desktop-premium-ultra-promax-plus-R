@@ -4,15 +4,12 @@ import 'package:flutter/physics.dart';
 import 'motion.dart';
 
 /// Material-You style hover lift.
-///
 /// Wrap any surface/card and it will rise a few pixels toward the cursor
 /// on hover, settling back on exit, via a true spring simulation (mass +
 /// stiffness + damping). Idle = zero ticks — the controller only runs
 /// during the 150-300ms spring travel, then pauses.
-///
 /// Respects the Reduce Motion preference: when enabled, hover just swaps
 /// to the target value instantly with no animation.
-///
 /// Minimal API — the spring is tuned once globally; callers only pick how
 /// high to lift.
 class HoverLift extends StatefulWidget {

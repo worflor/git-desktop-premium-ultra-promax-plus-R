@@ -11,7 +11,6 @@ import '../../../ui/tokens.dart';
 /// Miniature of the real workspace, built from stateless widgets that
 /// consume [AppTokens] — so the preview reskins for free when the theme
 /// changes.
-///
 /// Lowkey interactive: file checkboxes toggle their staged state, the
 /// top-right icon row switches the "active" panel, and rows hover-lift.
 /// Nothing is wired to real repo state — it's just playful tactility so
@@ -145,7 +144,6 @@ class _WorkspacePreviewState extends State<WorkspacePreview> {
   }
 }
 
-// ── Top bar ────────────────────────────────────────────────────────────
 
 class _PreviewTopBar extends StatelessWidget {
   final AppTokens tokens;
@@ -319,7 +317,6 @@ class _TopIconButtonState extends State<_TopIconButton> {
   }
 }
 
-// ── Sidebar ────────────────────────────────────────────────────────────
 
 class _PreviewSidebar extends StatelessWidget {
   final AppTokens tokens;
@@ -451,7 +448,6 @@ class _SidebarItemState extends State<_SidebarItem> {
   }
 }
 
-// ── Changes panel (the headline mode) ─────────────────────────────────
 
 class _ChangesPanel extends StatelessWidget {
   final AppTokens tokens;
@@ -935,7 +931,6 @@ class _HoverScaleState extends State<_HoverScale> {
   }
 }
 
-// ── Diff panel ────────────────────────────────────────────────────────
 
 class _DiffPanel extends StatelessWidget {
   final AppTokens tokens;
@@ -1112,7 +1107,6 @@ class _DiffLine extends StatelessWidget {
   }
 }
 
-// ── Other panels (lighter placeholders that still feel thematic) ──────
 
 class _HistoryPanel extends StatelessWidget {
   final AppTokens tokens;

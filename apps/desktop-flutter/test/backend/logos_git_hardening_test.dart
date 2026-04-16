@@ -73,7 +73,7 @@ void main() {
     LogosGit buildSimpleEngine() {
       // 4-node ring: a-b, b-c, c-d, d-a — should have a well-bounded
       // spectrum. Use Jaccard so the engine reads it.
-      const matrix = FileCouplingMatrix(
+      final matrix = FileCouplingMatrix(
         jaccard: {
           'a': {'b': 0.7, 'd': 0.7},
           'b': {'a': 0.7, 'c': 0.7},
@@ -106,7 +106,7 @@ void main() {
 
   group('Per-axis attribution (diffuseWithAttribution)', () {
     LogosGit buildEngine() {
-      const matrix = FileCouplingMatrix(
+      final matrix = FileCouplingMatrix(
         jaccard: {
           'lib/a.dart': {'lib/b.dart': 0.6, 'lib/c.dart': 0.4},
           'lib/b.dart': {'lib/a.dart': 0.6, 'lib/c.dart': 0.5},
@@ -240,7 +240,7 @@ void main() {
 
   group('diffuseStability confidence primitive', () {
     LogosGit buildStableEngine() {
-      const matrix = FileCouplingMatrix(
+      final matrix = FileCouplingMatrix(
         jaccard: {
           'lib/a.dart': {'lib/b.dart': 0.8, 'lib/c.dart': 0.7, 'lib/d.dart': 0.6},
           'lib/b.dart': {'lib/a.dart': 0.8, 'lib/c.dart': 0.5},

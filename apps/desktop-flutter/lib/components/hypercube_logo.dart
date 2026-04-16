@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:provider/provider.dart';
 import '../app/preferences_state.dart';
 import '../app/hyper_reactivity.dart';
+import '../app/window_activity.dart';
 import '../ui/tokens.dart';
 import 'hypercube_logo_engine.dart';
 
@@ -41,6 +42,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     _engine = HypercubeLogoEngine();
     _appLifecycleState = WidgetsBinding.instance.lifecycleState;
     WidgetsBinding.instance.addObserver(this);
+    WindowActivity.instance.addListener(_syncTicker);
     _ticker = createTicker(_tick);
   }
 
@@ -104,8 +106,16 @@ class _HypercubeLogoState extends State<HypercubeLogo>
         _appLifecycleState ?? AppLifecycleState.resumed;
     final bool isFocused =
         lifecycleState == AppLifecycleState.resumed && _hasViewFocus;
-    final bool shouldRun =
-        _isTickerModeVisible && (_animateWhenUnfocused || isFocused);
+    // WindowActivity folds in the platform window-focus / minimize
+    // signal that AppLifecycleState misses on Windows (an unfocused but
+    // visible window stays `resumed`). Even when the user has opted
+    // into `animateWhenUnfocused`, pausing the ticker while the entire
+    // window is blurred / minimized is a pure CPU win: there's nothing
+    // on screen to see.
+    final bool windowAwake = WindowActivity.instance.awake;
+    final bool shouldRun = _isTickerModeVisible &&
+        windowAwake &&
+        (_animateWhenUnfocused || isFocused);
     if (shouldRun) {
       if (!_ticker.isActive) {
         _lastElapsed = null;
@@ -157,6 +167,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
 
   @override
   void dispose() {
+    WindowActivity.instance.removeListener(_syncTicker);
     _prefs?.removeListener(_onPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
     context.read<HyperReactivity>().deactivate();

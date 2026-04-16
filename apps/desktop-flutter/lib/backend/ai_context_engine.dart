@@ -1,6 +1,4 @@
-// ═════════════════════════════════════════════════════════════════════════
 // AI CONTEXT ENGINE — Logos-allocated, producer-driven context assembly
-// ═════════════════════════════════════════════════════════════════════════
 //
 // The general-purpose primitive every AI flow assembles its prompt context
 // through. Replaces ad-hoc hardcoded ratios (`0.20 × relevance`,
@@ -33,18 +31,20 @@
 
 import 'dart:async';
 
-import 'logos_git.dart' show AxisAttribution, LogosGit, RelevanceScore;
+import 'logos_git.dart'
+    show
+        AxisAttribution,
+        LogosEvidenceQueryResult,
+        LogosGit,
+        RelevanceScore;
 import 'logos_git_probe.dart' show DiffProbe;
 
-// ─────────────────────────────────────────────────────────────────────────
 // Inputs the engine passes around
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Result of one Logos diffusion pass: the probe (its stats drive budget
 /// allocation), the engine (for the tier knapsack), and the scored
 /// neighborhood (φ field). One source of truth across producers — no
 /// re-diffusion per section.
-///
 /// When [attribution] is non-null the diffusion was run per-axis, so
 /// callers can answer "*why* did file X surface?" by reading
 /// [AxisAttribution.dominantAxis] and [AxisAttribution.shareByAxis].
@@ -58,6 +58,7 @@ class LogosDiffusionResult {
     required this.scores,
     required this.resolvedT,
     this.attribution,
+    this.evidence,
   });
   final LogosGit engine;
   final DiffProbe probe;
@@ -69,6 +70,7 @@ class LogosDiffusionResult {
   /// the ~4× diffusion cost. When present, [scores] is sourced from
   /// [AxisAttribution.combined].
   final AxisAttribution? attribution;
+  final LogosEvidenceQueryResult? evidence;
 }
 
 /// Shared state every producer sees. Carries the seed inputs (repo +
@@ -87,7 +89,6 @@ class AiContextRequest {
 }
 
 /// One producer's contribution to the assembled context.
-///
 /// Metadata is type-erased at the engine boundary (`Object?`) because
 /// producers carry heterogeneous payloads. Callers should NOT do
 /// `section.metadata as MyType?` — instead use [metadataOfType] which
@@ -126,18 +127,14 @@ class AiContextSection {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // The producer interface
-// ─────────────────────────────────────────────────────────────────────────
 
 /// Abstract contributor to an assembled AI prompt context. Implementors
 /// fall into two budget modes (kept exclusive to keep allocation
 /// arithmetic simple):
-///
 ///   • Variable-pool — return non-null [urgency]; share of the
 ///     post-fixed budget is `urgency / Σ urgencies` (softmax-style
 ///     normalisation across the registered set).
-///
 ///   • Fixed-request — return null [urgency] and a positive
 ///     [fixedRequest]; that exact char count is reserved before the
 ///     variable pool is computed. Use for cheap, naturally-bounded
@@ -174,9 +171,7 @@ abstract class AiContextProducer {
   int get order => 100;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // The engine
-// ─────────────────────────────────────────────────────────────────────────
 
 /// A registered set of producers + the allocator that hands them their
 /// budgets. Stateless past construction; a single engine instance can
@@ -188,7 +183,6 @@ class AiContextEngine {
   /// Allocate budget to each producer using its declared urgency
   /// (variable pool) or fixed request, then run all producers in
   /// parallel. Returns a map keyed by producer id.
-  ///
   /// [totalBudgetChars] is the post-overhead, post-output-reservation
   /// budget the caller has carved out for context. The engine treats
   /// it as a hard ceiling for the variable pool *plus* the sum of
@@ -199,7 +193,6 @@ class AiContextEngine {
     AiContextRequest req,
     int totalBudgetChars,
   ) async {
-    // ── Phase 1: compute fixed requests ────────────────────────────────
     final fixedRequests = <String, int>{};
     var fixedSum = 0;
     for (final p in producers) {
@@ -210,7 +203,6 @@ class AiContextEngine {
       }
     }
 
-    // ── Phase 2: collect urgencies for variable-pool producers ─────────
     final urgencies = <String, double>{};
     var urgencySum = 0.0;
     for (final p in producers) {
@@ -221,7 +213,6 @@ class AiContextEngine {
       }
     }
 
-    // ── Phase 3: allocate ──────────────────────────────────────────────
     // Variable pool = whatever's left after fixed reservations.
     final variablePool = (totalBudgetChars - fixedSum).clamp(0, 1 << 30);
     final budgets = <String, int>{...fixedRequests};
@@ -265,7 +256,6 @@ class AiContextEngine {
       budgets.putIfAbsent(p.id, () => 0);
     }
 
-    // ── Phase 4: run all producers in parallel ────────────────────────
     final entries = await Future.wait(
       producers.map((p) async {
         final section = await p.produce(req, budgets[p.id]!);
@@ -280,11 +270,9 @@ class AiContextEngine {
   /// declared `order`. Returns both the body and the section map (for
   /// callers that still need per-section metadata, e.g. the
   /// relevance_neighborhood emission record for SSE feedback).
-  ///
   /// Empty bodies are silently dropped — a producer that returns ''
   /// emits no wrapper. Producers control their own [wrapperTag] and
   /// [order]; the caller no longer has to know either.
-  ///
   /// This is the entry point most callers should use. The bare
   /// [assemble] is for advanced flows that want to compose section
   /// bodies into something other than XML-tagged concatenation.

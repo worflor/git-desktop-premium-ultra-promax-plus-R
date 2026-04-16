@@ -13,12 +13,10 @@ import '../features/diff/diff_models.dart';
 /// `gh` rather than rolling our own GitHub API client because it
 /// already solves auth, refresh, and rate-limit handling — every user
 /// that has `gh auth login` finished gets PR/issue support for free.
-///
 /// Surfaces in the UI must handle the case where `gh` is missing or
 /// unauthenticated: call [ghStatus] once on first lens activation and
 /// branch the empty state on the result.
 
-// ── DTOs ──────────────────────────────────────────────────────────────
 
 /// Single reviewer-state pair on a PR. Aggregated from `reviewRequests`
 /// (people who've been asked but haven't reviewed yet) and `reviews`
@@ -173,20 +171,27 @@ class PullRequestDetail {
   /// rebuild. Key = file path (matches [PrFile.path]); value = the
   /// `ParsedLine`s that belong to that file in source order. Empty map
   /// if the diff is empty.
-  ///
   /// Parsing once in the backend (when the future resolves) instead of
-  /// in `_DiffView.build` is the root-cause fix for the diff-view
-  /// freeze: AnimatedSize tweens, prefetch progress notifications, and
-  /// any sibling setState would otherwise trigger O(n) regex parsing
-  /// of the full patch on the main thread per rebuild — easily 50-200
-  /// ms each, cumulating to multi-second freezes.
+  /// per diff-render is the root-cause fix for the diff-view freeze:
+  /// AnimatedSize tweens, prefetch progress notifications, and any
+  /// sibling setState would otherwise trigger O(n) regex parsing of
+  /// the full patch on the main thread per rebuild — easily 50–200 ms
+  /// each, cumulating to multi-second freezes.
   final Map<String, List<ParsedLine>> diffByFile;
+  /// Raw unified-diff text sliced per file, keyed identically to
+  /// [diffByFile]. Lets the PR review surface hand a single file's diff
+  /// straight to [DiffShell] (which accepts raw text) without having
+  /// to re-slice or re-parse on every rebuild. Computed once at detail
+  /// fetch alongside [diffByFile] via [sliceDiffByFile]. Empty map if
+  /// [diff] is empty.
+  final Map<String, String> rawDiffByFile;
   const PullRequestDetail({
     required this.body,
     required this.files,
     required this.comments,
     required this.diff,
     required this.diffByFile,
+    required this.rawDiffByFile,
   });
 }
 
@@ -290,11 +295,9 @@ class GhStatus {
   bool get usable => installed && authenticated;
 }
 
-// ── Public API ────────────────────────────────────────────────────────
 
 /// One-shot probe — is `gh` on PATH, and is the user logged in?
 /// Cheap to call; cache the result on the lens-state side.
-///
 /// Both probes run in parallel because they're independent — the auth
 /// check spawns even if version returns first, and we make the install
 /// vs auth distinction from the two results. ~50ms saving in the
@@ -601,6 +604,7 @@ Future<GitResult<PullRequestDetail>> pullRequestDetail(
       comments: mergedComments,
       diff: rawDiff,
       diffByFile: byFile,
+      rawDiffByFile: sliceDiffByFile(rawDiff),
     ));
   } catch (e) {
     return GitResult.err('Failed to parse gh pr view: $e');
@@ -730,6 +734,59 @@ Future<GitResult<void>> commentOnIssue(
   return const GitResult.ok(null);
 }
 
+/// Create a new GitHub issue. Returns the newly-created issue number.
+/// `gh issue create` outputs the issue URL to stdout — we parse the
+/// trailing `/issues/<n>` to extract the number.
+Future<GitResult<int>> createGhIssue(
+  String repoPath, {
+  required String title,
+  String body = '',
+  List<String> labels = const [],
+  List<String> assignees = const [],
+}) async {
+  final args = ['issue', 'create', '--title', title, '--body', body];
+  for (final l in labels) { args.addAll(['--label', l]); }
+  for (final a in assignees) { args.addAll(['--assignee', a]); }
+  final r = await _gh(repoPath, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  final out = r.stdout.toString().trim();
+  // Match the issue number anywhere in the output. `gh` normally emits
+  // just the URL, but extra lines or trailing CR on Windows shouldn't
+  // break the parse.
+  final match = RegExp(r'/issues/(\d+)').firstMatch(out);
+  if (match == null) return GitResult.err('unexpected output: $out');
+  return GitResult.ok(int.parse(match.group(1)!));
+}
+
+/// Edit an existing GitHub issue's title, body, or labels.
+/// Only sends flags for fields that are non-null / non-empty.
+Future<GitResult<void>> editGhIssue(
+  String repoPath,
+  int number, {
+  String? title,
+  String? body,
+  List<String> addLabels = const [],
+  List<String> removeLabels = const [],
+}) async {
+  final args = ['issue', 'edit', '$number'];
+  if (title != null) args.addAll(['--title', title]);
+  if (body != null) args.addAll(['--body', body]);
+  for (final l in addLabels) { args.addAll(['--add-label', l]); }
+  for (final l in removeLabels) { args.addAll(['--remove-label', l]); }
+  // Nothing to edit — avoid a no-op CLI call.
+  if (args.length == 3) return const GitResult.ok(null);
+  final r = await _gh(repoPath, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+/// Reopen a closed GitHub issue.
+Future<GitResult<void>> reopenGhIssue(String repoPath, int number) async {
+  final r = await _gh(repoPath, ['issue', 'reopen', '$number']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
 Future<GitResult<void>> commentOnPullRequest(
     String repoPath, int number, String body) async {
   if (body.trim().isEmpty) return const GitResult.ok(null);
@@ -769,7 +826,6 @@ Future<GitResult<List<CheckSummary>>> listChecks(
   }
 }
 
-// ── Internal ──────────────────────────────────────────────────────────
 
 Future<ProcessResult> _gh(String repo, List<String> args) async {
   final commandLabel = 'gh.${args.isNotEmpty ? args.first : 'unknown'}';

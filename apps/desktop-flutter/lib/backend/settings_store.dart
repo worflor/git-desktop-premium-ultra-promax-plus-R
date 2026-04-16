@@ -18,6 +18,15 @@ class AppSettingsSnapshot {
   final bool utilityDrawerDefaultExpanded;
   final int utilityDrawerHeightPx;
   final bool reduceMotion;
+  /// Global motion-rate scalar in [0.0, 2.0]. Multiplies animation
+  /// frequency — 0.0 stops motion entirely (same as reduceMotion=true),
+  /// 1.0 is normal speed, 2.0 runs animations at twice their authored Hz.
+  /// Durations are scaled reciprocally: `duration / motionRate`.
+  /// [reduceMotion] is retained for migration of older on-disk settings;
+  /// when motionRate is absent, it's derived as `reduceMotion ? 0.0 : 1.0`.
+  /// On fresh writes both fields are persisted so downgrades still work
+  /// (older code reads `reduceMotion = motionRate <= 0.0`).
+  final double motionRate;
   /// Last-known phase (0..1) of the reduce-motion toggle's pulse wave.
   /// Persisted so the bump resumes from where it was frozen on the
   /// previous session instead of snapping back to zero on restart.
@@ -34,6 +43,12 @@ class AppSettingsSnapshot {
   final String commitStructure; // 'title_body' | 'title_only' | 'freeform'
   final String commitVoice;     // 'verb_led' | 'descriptive' | 'narrative'
   final String commitCoverage;  // 'essentials' | 'balanced' | 'everything'
+  /// Logos XY pad — the 2D puck that describes how the user conceives
+  /// "related". X ∈ [0,1] is FOLDER (0) ↔ HISTORY (1); Y ∈ [0,1] is
+  /// FAR (0) ↔ NEAR (1). Defaults to 0.5/0.5 = balanced, matching the
+  /// information-theoretic default weights inside Logos itself.
+  final double logosPadX;
+  final double logosPadY;
   /// User-customizable short name for the app, set during onboarding.
   /// The full identity is reconstructed from this single field.
   final String appShortName;
@@ -67,6 +82,7 @@ class AppSettingsSnapshot {
     required this.utilityDrawerDefaultExpanded,
     required this.utilityDrawerHeightPx,
     required this.reduceMotion,
+    required this.motionRate,
     required this.reduceMotionPhase,
     required this.stashCabinetDefaultExpanded,
     required this.instantBlameHover,
@@ -75,6 +91,8 @@ class AppSettingsSnapshot {
     required this.commitStructure,
     required this.commitVoice,
     required this.commitCoverage,
+    required this.logosPadX,
+    required this.logosPadY,
     required this.appShortName,
     required this.onboardingComplete,
     required this.bondExperimentEnabled,
@@ -96,6 +114,7 @@ class AppSettingsSnapshot {
         'utilityDrawerDefaultExpanded': utilityDrawerDefaultExpanded,
         'utilityDrawerHeightPx': utilityDrawerHeightPx,
         'reduceMotion': reduceMotion,
+        'motionRate': motionRate,
         'reduceMotionPhase': reduceMotionPhase,
         'stashCabinetDefaultExpanded': stashCabinetDefaultExpanded,
         'instantBlameHover': instantBlameHover,
@@ -104,6 +123,8 @@ class AppSettingsSnapshot {
         'commitStructure': commitStructure,
         'commitVoice': commitVoice,
         'commitCoverage': commitCoverage,
+        'logosPadX': logosPadX,
+        'logosPadY': logosPadY,
         'appShortName': appShortName,
         'onboardingComplete': onboardingComplete,
         'bondExperimentEnabled': bondExperimentEnabled,
@@ -125,6 +146,7 @@ class AppSettingsSnapshot {
         utilityDrawerDefaultExpanded: false,
         utilityDrawerHeightPx: 180,
         reduceMotion: false,
+        motionRate: 1.0,
         reduceMotionPhase: 0.0,
         stashCabinetDefaultExpanded: false,
         instantBlameHover: false,
@@ -133,6 +155,8 @@ class AppSettingsSnapshot {
         commitStructure: 'title_body',
         commitVoice: 'verb_led',
         commitCoverage: 'balanced',
+        logosPadX: 0.5,
+        logosPadY: 0.5,
         appShortName: 'Manifold',
         onboardingComplete: false,
         // On the bond branch the experiment ships on by default —
@@ -199,6 +223,16 @@ class AppSettingsSnapshot {
         json['reduceMotion'],
         defaults.reduceMotion,
       ),
+      // motionRate migration: if the new field is present, use it. Else
+      // fall back to the legacy bool — reduceMotion=true ⇒ rate=0.0 (no
+      // motion), reduceMotion=false ⇒ rate=1.0 (normal). New writes
+      // always emit both fields so a downgrade still behaves correctly.
+      motionRate: json.containsKey('motionRate')
+          ? SettingsStore._doubleOr(json['motionRate'], defaults.motionRate)
+              .clamp(0.0, 2.0)
+          : (SettingsStore._boolOr(json['reduceMotion'], defaults.reduceMotion)
+              ? 0.0
+              : 1.0),
       reduceMotionPhase: SettingsStore._doubleOr(
         json['reduceMotionPhase'],
         defaults.reduceMotionPhase,
@@ -239,6 +273,14 @@ class AppSettingsSnapshot {
           defaults.commitCoverage,
         ),
       ),
+      logosPadX: SettingsStore._doubleOr(
+        json['logosPadX'],
+        defaults.logosPadX,
+      ).clamp(0.0, 1.0),
+      logosPadY: SettingsStore._doubleOr(
+        json['logosPadY'],
+        defaults.logosPadY,
+      ).clamp(0.0, 1.0),
       appShortName: SettingsStore._normalizeAppShortName(
         SettingsStore._stringOr(json['appShortName'], defaults.appShortName),
       ),
@@ -272,6 +314,7 @@ class AppSettingsSnapshot {
     bool? utilityDrawerDefaultExpanded,
     int? utilityDrawerHeightPx,
     bool? reduceMotion,
+    double? motionRate,
     double? reduceMotionPhase,
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
@@ -280,6 +323,8 @@ class AppSettingsSnapshot {
     String? commitStructure,
     String? commitVoice,
     String? commitCoverage,
+    double? logosPadX,
+    double? logosPadY,
     String? appShortName,
     bool? onboardingComplete,
     bool? bondExperimentEnabled,
@@ -305,6 +350,7 @@ class AppSettingsSnapshot {
       utilityDrawerHeightPx:
           utilityDrawerHeightPx ?? this.utilityDrawerHeightPx,
       reduceMotion: reduceMotion ?? this.reduceMotion,
+      motionRate: motionRate ?? this.motionRate,
       reduceMotionPhase: reduceMotionPhase ?? this.reduceMotionPhase,
       stashCabinetDefaultExpanded:
           stashCabinetDefaultExpanded ?? this.stashCabinetDefaultExpanded,
@@ -314,6 +360,8 @@ class AppSettingsSnapshot {
       commitStructure: commitStructure ?? this.commitStructure,
       commitVoice: commitVoice ?? this.commitVoice,
       commitCoverage: commitCoverage ?? this.commitCoverage,
+      logosPadX: logosPadX ?? this.logosPadX,
+      logosPadY: logosPadY ?? this.logosPadY,
       appShortName: appShortName ?? this.appShortName,
       onboardingComplete: onboardingComplete ?? this.onboardingComplete,
       bondExperimentEnabled:

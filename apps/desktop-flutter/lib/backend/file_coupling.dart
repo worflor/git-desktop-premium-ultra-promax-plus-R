@@ -1,9 +1,14 @@
 import 'dart:convert' show LineSplitter;
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'package:path/path.dart' as p;
 
 import 'engram_fit.dart';
 import 'git.dart';
 import 'git_result.dart';
+import 'logos_git_integrity.dart';
 
 /// Separator token planted into `git log` custom formats so downstream
 /// parsers can identify commit boundaries without regex. Chosen to be
@@ -11,35 +16,232 @@ import 'git_result.dart';
 /// git-ref-legal character). Shared across every call site that parses
 /// `--format=${logCommitSeparator}%H` output.
 const String logCommitSeparator = '__C__';
+const String _logMetaSep = '\u001f';
 
 /// Co-change coupling: files appearing in the same commit over and over are
 /// *semantically* related. This is the truth git already holds — we just have
 /// to read it out and cluster the current change set by it.
-///
 /// Built once per repo (keyed by HEAD hash) and reused across every render.
+/// The symbol axis is layered on top per change-set — same shape as the
+/// jaccard storage but computed from identifier overlap in the current
+/// working tree rather than from git history. See [computeSymbolCoupling].
+/// ─── Storage geometry ──────────────────────────────────────────────────
+/// The matrix is a sparse symmetric `nFiles × nFiles` floating-point
+/// table. Two of them — historical jaccard and current symbol overlap.
+/// The hot accessors are `score(a, b)` (called per edge in graph
+/// builds), `coherenceFor(paths)` (called per commit during tag
+/// profile builds), and row iteration (called per node in graph
+/// candidate discovery).
+/// **Internal storage is CSR (compressed sparse row).** Path strings
+/// are interned to integer ids once at construction. Each row's
+/// non-zero entries live in a contiguous `(colIdx, value)` slice
+/// sorted by column id. Lookups are binary search over a small slice
+/// — typically O(log 50). Memory is roughly 12 bytes per non-zero
+/// (int32 colIdx + f64 value), versus ~64+ bytes per nested-map
+/// entry. For a 1000-file repo with avg degree 50, the matrix
+/// shrinks from ~6MB of map overhead to ~600KB of typed-array data.
+/// **The public API is preserved.** `jaccard` and `symbol` are
+/// available as Map getters that lazily materialise from the CSR
+/// — for callers that haven't migrated to the new accessors, they
+/// see the old shape unchanged. New callers should prefer
+/// [containsPath], [jaccardKeysOf], and the existing
+/// [score]/[coherenceFor] methods, all of which talk to the CSR
+/// directly without materialising any maps.
 class FileCouplingMatrix {
-  /// Jaccard coefficient keyed by (path → other path → score in 0..1).
-  /// Symmetric: jaccard[A][B] == jaccard[B][A].
-  final Map<String, Map<String, double>> jaccard;
+  /// Path at row id. Sorted alphabetically for determinism + so the
+  /// CSR colIdx slices are stably ordered for binary search.
+  final List<String> paths;
+  final Map<String, int> _pathToId;
+
+  /// `_jRowPtr[i+1] - _jRowPtr[i]` is the non-zero count for row i.
+  final Int32List _jRowPtr;
+
+  /// Column ids for each row's non-zero entries, sorted ascending so
+  /// the per-row slice supports binary search.
+  final Int32List _jColIdx;
+
+  /// Jaccard coefficient values, parallel to [_jColIdx].
+  final Float64List _jValues;
+
+  final Int32List _sRowPtr;
+  final Int32List _sColIdx;
+  final Float64List _sValues;
+
   final String headHash;
   final int commitsAnalyzed;
 
-  const FileCouplingMatrix({
-    required this.jaccard,
+  Map<String, Map<String, double>>? _jaccardMapView;
+  Map<String, Map<String, double>>? _symbolMapView;
+
+  FileCouplingMatrix._({
+    required this.paths,
+    required Map<String, int> pathToId,
     required this.headHash,
     required this.commitsAnalyzed,
-  });
+    required Int32List jRowPtr,
+    required Int32List jColIdx,
+    required Float64List jValues,
+    required Int32List sRowPtr,
+    required Int32List sColIdx,
+    required Float64List sValues,
+  })  : _pathToId = pathToId,
+        _jRowPtr = jRowPtr,
+        _jColIdx = jColIdx,
+        _jValues = jValues,
+        _sRowPtr = sRowPtr,
+        _sColIdx = sColIdx,
+        _sValues = sValues;
 
-  /// Co-change score for an ordered pair. Storage is upper-triangle (lex)
-  /// so we check both directions.
+  /// Public constructor — accepts the legacy nested-map shape and
+  /// converts to CSR internally. Builders that already produce the
+  /// nested map (`computeFileCoupling`) don't need to change. Tests
+  /// that hand-built matrices via map literals continue to work after
+  /// dropping the `const` keyword (CSR storage can't be const).
+  factory FileCouplingMatrix({
+    required Map<String, Map<String, double>> jaccard,
+    required String headHash,
+    required int commitsAnalyzed,
+    Map<String, Map<String, double>> symbol = const {},
+  }) {
+    // Union of every path that appears in either jaccard or symbol.
+    // Sorted for determinism so colIdx ordering is reproducible.
+    final pathSet = <String>{};
+    for (final entry in jaccard.entries) {
+      pathSet.add(entry.key);
+      pathSet.addAll(entry.value.keys);
+    }
+    for (final entry in symbol.entries) {
+      pathSet.add(entry.key);
+      pathSet.addAll(entry.value.keys);
+    }
+    final paths = pathSet.toList()..sort();
+    final pathToId = <String, int>{};
+    for (var i = 0; i < paths.length; i++) {
+      pathToId[paths[i]] = i;
+    }
+
+    final j = _buildSymmetricCsr(jaccard, pathToId, paths.length);
+    final s = _buildSymmetricCsr(symbol, pathToId, paths.length);
+
+    return FileCouplingMatrix._(
+      paths: List<String>.unmodifiable(paths),
+      pathToId: pathToId,
+      headHash: headHash,
+      commitsAnalyzed: commitsAnalyzed,
+      jRowPtr: j.rowPtr,
+      jColIdx: j.colIdx,
+      jValues: j.values,
+      sRowPtr: s.rowPtr,
+      sColIdx: s.colIdx,
+      sValues: s.values,
+    );
+  }
+
+  /// Coupling score for a pair — maximum of historical co-change and
+  /// structural symbol overlap. The two axes are independent evidence;
+  /// neither suppresses the other. New files have zero history, so symbol
+  /// carries them. Old files use whichever axis is stronger.
+  /// Implementation is two binary searches over the CSR row slices:
+  /// O(log k) where k is the source row's degree. For typical k≈50 in
+  /// real repos this is ~6 comparisons per lookup — comfortably faster
+  /// than two nested-map hashmap accesses.
+  /// CSR storage is upper-triangle (only `(min(i,j), max(i,j))` edges
+  /// are materialised). The lookup canonicalises the pair before the
+  /// binary search.
   double score(String a, String b) {
     if (a == b) return 1.0;
-    return jaccard[a]?[b] ?? jaccard[b]?[a] ?? 0.0;
+    final i = _pathToId[a];
+    final j = _pathToId[b];
+    if (i == null || j == null) return 0.0;
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    final hist = _csrLookup(_jRowPtr, _jColIdx, _jValues, lo, hi);
+    final sym = _csrLookup(_sRowPtr, _sColIdx, _sValues, lo, hi);
+    return hist > sym ? hist : sym;
+  }
+
+  /// Return a copy with symbol overlap data merged in. Called once per
+  /// change-set update; the rest of the pipeline consumes the merged matrix
+  /// transparently through [score].
+  /// The new matrix shares the jaccard CSR (immutable) but builds a
+  /// fresh symbol CSR over the union of the existing path set and any
+  /// new paths in [sym]. New paths get appended to the path id space.
+  FileCouplingMatrix withSymbol(Map<String, Map<String, double>> sym) {
+    // Fast path: no new paths in symbol → reuse the existing path id
+    // space directly without rebuilding the union.
+    var hasNewPaths = false;
+    for (final entry in sym.entries) {
+      if (!_pathToId.containsKey(entry.key)) {
+        hasNewPaths = true;
+        break;
+      }
+      for (final neighbour in entry.value.keys) {
+        if (!_pathToId.containsKey(neighbour)) {
+          hasNewPaths = true;
+          break;
+        }
+      }
+      if (hasNewPaths) break;
+    }
+    if (!hasNewPaths) {
+      final newSym = _buildSymmetricCsr(sym, _pathToId, paths.length);
+      return FileCouplingMatrix._(
+        paths: paths,
+        pathToId: _pathToId,
+        headHash: headHash,
+        commitsAnalyzed: commitsAnalyzed,
+        jRowPtr: _jRowPtr,
+        jColIdx: _jColIdx,
+        jValues: _jValues,
+        sRowPtr: newSym.rowPtr,
+        sColIdx: newSym.colIdx,
+        sValues: newSym.values,
+      );
+    }
+    // Slow path: new paths in [sym] expand the universe. We do NOT
+    // materialise `jaccard` back to a map and re-feed the constructor
+    // — that's a CSR → Map → CSR round-trip, expensive enough to be
+    // its own performance regression. Instead we rebuild the path id
+    // space, remap the existing jaccard CSR's column indices into the
+    // new id space directly (no intermediate map), and build the
+    // symbol CSR fresh against the expanded path set.
+    final pathSet = <String>{...paths};
+    for (final entry in sym.entries) {
+      pathSet.add(entry.key);
+      pathSet.addAll(entry.value.keys);
+    }
+    final newPaths = pathSet.toList()..sort();
+    final newPathToId = <String, int>{};
+    for (var i = 0; i < newPaths.length; i++) {
+      newPathToId[newPaths[i]] = i;
+    }
+    // Old-id → new-id permutation. The existing CSR holds edges keyed
+    // by old ids; this maps them into the new sorted id space without
+    // touching the values.
+    final oldToNew = Int32List(paths.length);
+    for (var i = 0; i < paths.length; i++) {
+      oldToNew[i] = newPathToId[paths[i]]!;
+    }
+    final remappedJaccard = _remapCsr(
+      _jRowPtr, _jColIdx, _jValues, oldToNew, newPaths.length,
+    );
+    final newSym = _buildSymmetricCsr(sym, newPathToId, newPaths.length);
+    return FileCouplingMatrix._(
+      paths: List<String>.unmodifiable(newPaths),
+      pathToId: newPathToId,
+      headHash: headHash,
+      commitsAnalyzed: commitsAnalyzed,
+      jRowPtr: remappedJaccard.rowPtr,
+      jColIdx: remappedJaccard.colIdx,
+      jValues: remappedJaccard.values,
+      sRowPtr: newSym.rowPtr,
+      sColIdx: newSym.colIdx,
+      sValues: newSym.values,
+    );
   }
 
   /// Coherence of a *set* of files: the mean of all pairwise scores.
   /// Returns 1.0 for ≤1 files (trivially coherent — nothing to compare).
-  ///
   /// Confidence gating: a brand-new repo with a handful of commits will
   /// produce *false-confident* Jaccard scores — every pair appears
   /// together because every commit touched every file once. We gate
@@ -47,7 +249,6 @@ class FileCouplingMatrix {
   /// max-uncertainty prior (0.5) when there isn't enough data to trust
   /// the signal. Matches the BornMixer's confidence-gate philosophy
   /// applied at the coherence level.
-  ///
   /// Threshold of 50 commits chosen so that typical refactor churn
   /// inside a feature branch (a few dozen commits) doesn't produce
   /// spurious "tight coupling" reports before the history is
@@ -56,28 +257,384 @@ class FileCouplingMatrix {
     final list = paths.toList();
     if (list.length < 2) return 1.0;
     if (commitsAnalyzed < 50) return 0.5;
+    // Resolve every input path to its row id once, so the inner
+    // double-loop's lookup goes int→int instead of string→int per
+    // pair (k ids vs k×k string lookups for k inputs).
+    final ids = List<int>.filled(list.length, -1, growable: false);
+    for (var i = 0; i < list.length; i++) {
+      ids[i] = _pathToId[list[i]] ?? -1;
+    }
     double sum = 0.0;
     int pairs = 0;
     for (var i = 0; i < list.length; i++) {
+      final ai = ids[i];
       for (var j = i + 1; j < list.length; j++) {
-        sum += score(list[i], list[j]);
+        if (list[i] == list[j]) {
+          sum += 1.0;
+          pairs++;
+          continue;
+        }
+        final bj = ids[j];
+        double s;
+        if (ai < 0 || bj < 0) {
+          s = 0.0;
+        } else {
+          final lo = ai < bj ? ai : bj;
+          final hi = ai < bj ? bj : ai;
+          final hist = _csrLookup(_jRowPtr, _jColIdx, _jValues, lo, hi);
+          final sym = _csrLookup(_sRowPtr, _sColIdx, _sValues, lo, hi);
+          s = hist > sym ? hist : sym;
+        }
+        sum += s;
         pairs++;
       }
     }
     return pairs == 0 ? 1.0 : sum / pairs;
   }
 
-  static const empty = FileCouplingMatrix(
-    jaccard: {},
+
+  /// O(1) check for whether [path] is tracked in the matrix.
+  /// Replaces `matrix.jaccard.containsKey(path)`.
+  bool containsPath(String path) => _pathToId.containsKey(path);
+
+  /// Iterate the jaccard neighbours of [path] as (path, score) entries.
+  /// Replaces `matrix.jaccard[path]?.entries` / `matrix.jaccard[path]?.keys`.
+  /// Skips zero entries (CSR stores them as absent rather than 0.0).
+  Iterable<MapEntry<String, double>> jaccardEntriesOf(String path) sync* {
+    final i = _pathToId[path];
+    if (i == null) return;
+    final lo = _jRowPtr[i];
+    final hi = _jRowPtr[i + 1];
+    for (var k = lo; k < hi; k++) {
+      yield MapEntry(paths[_jColIdx[k]], _jValues[k]);
+    }
+  }
+
+  /// Just the keys — a frequent shape in graph-builder loops where
+  /// the score is irrelevant and only neighbour identity matters.
+  Iterable<String> jaccardKeysOf(String path) sync* {
+    final i = _pathToId[path];
+    if (i == null) return;
+    final lo = _jRowPtr[i];
+    final hi = _jRowPtr[i + 1];
+    for (var k = lo; k < hi; k++) {
+      yield paths[_jColIdx[k]];
+    }
+  }
+
+  /// CSR-native lookup of the jaccard component ONLY (no symbol max).
+  /// Used by callers that want to read the historical co-change
+  /// component independent of the per-changeset symbol axis — e.g.
+  /// the semantic manifest's coupling pair report. Same algorithmic
+  /// shape as [score] but skips the symbol lookup.
+  double jaccardScoreOf(String a, String b) {
+    if (a == b) return 1.0;
+    final i = _pathToId[a];
+    final j = _pathToId[b];
+    if (i == null || j == null) return 0.0;
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    return _csrLookup(_jRowPtr, _jColIdx, _jValues, lo, hi);
+  }
+
+
+  /// Backward-compatible nested-map view of the jaccard CSR. **Lazy**:
+  /// the first read materialises the full Map<String, Map<String, double>>
+  /// once and caches it. Cold-path callers (formatting, serialisation,
+  /// rare `.entries` walks) keep working unchanged. Hot-path callers
+  /// should migrate to [jaccardEntriesOf] / [jaccardKeysOf] /
+  /// [containsPath] to stay on the CSR fast path.
+  Map<String, Map<String, double>> get jaccard =>
+      _jaccardMapView ??= _materialiseMap(_jRowPtr, _jColIdx, _jValues);
+
+  /// Backward-compatible nested-map view of the symbol CSR. Same lazy
+  /// pattern as [jaccard].
+  Map<String, Map<String, double>> get symbol =>
+      _symbolMapView ??= _materialiseMap(_sRowPtr, _sColIdx, _sValues);
+
+  Map<String, Map<String, double>> _materialiseMap(
+    Int32List rowPtr,
+    Int32List colIdx,
+    Float64List values,
+  ) {
+    final out = <String, Map<String, double>>{};
+    for (var i = 0; i < paths.length; i++) {
+      final lo = rowPtr[i];
+      final hi = rowPtr[i + 1];
+      // Always create a row entry (even if empty) so callers that
+      // probe `containsKey(path)` against the materialised map see
+      // the same answer as `containsPath(path)`.
+      final row = <String, double>{};
+      for (var k = lo; k < hi; k++) {
+        row[paths[colIdx[k]]] = values[k];
+      }
+      out[paths[i]] = row;
+    }
+    return out;
+  }
+
+  /// Cached empty matrix. Replaces the previous `const empty` field —
+  /// CSR storage requires typed lists which can't be const, but this
+  /// singleton is lifetime-scoped and trivially shareable.
+  static final FileCouplingMatrix empty = FileCouplingMatrix(
+    jaccard: const {},
     headHash: '',
     commitsAnalyzed: 0,
   );
+
+  /// Binary-search lookup of `(i, j)` in a CSR matrix. Returns the
+  /// stored value or 0.0 if absent.
+  static double _csrLookup(
+    Int32List rowPtr,
+    Int32List colIdx,
+    Float64List values,
+    int i,
+    int j,
+  ) {
+    var lo = rowPtr[i];
+    var hi = rowPtr[i + 1];
+    while (lo < hi) {
+      final mid = (lo + hi) >>> 1;
+      final c = colIdx[mid];
+      if (c < j) {
+        lo = mid + 1;
+      } else if (c > j) {
+        hi = mid;
+      } else {
+        return values[mid];
+      }
+    }
+    return 0.0;
+  }
+}
+
+/// Translate an existing upper-triangle CSR matrix into a new path id
+/// space defined by [oldToNew], without round-tripping through the
+/// nested-map representation.
+/// Used by [FileCouplingMatrix.withSymbol]'s slow path when a new
+/// symbol overlay introduces previously-unseen paths. The path id
+/// space expands and shifts (we keep paths lex-sorted), so every
+/// edge `(oldI, oldJ)` needs to land at `(min(newI, newJ), max(newI,
+/// newJ))` in the new CSR.
+/// Cost is `O(nnz)` two-pass over the existing edges plus per-row
+/// insertion sorts on the rows that grew. No string interning, no
+/// hashmap lookups, no Map<String, Map<String, double>> allocation.
+_CsrTriple _remapCsr(
+  Int32List oldRowPtr,
+  Int32List oldColIdx,
+  Float64List oldValues,
+  Int32List oldToNew,
+  int nNewFiles,
+) {
+  if (nNewFiles == 0 || oldColIdx.isEmpty) {
+    return _CsrTriple(
+      Int32List(nNewFiles + 1),
+      Int32List(0),
+      Float64List(0),
+    );
+  }
+
+  // Pass 1: count entries per new lo-row. Each old edge becomes a
+  // new edge at `(min(newI, newJ), max(newI, newJ))` — count it on
+  // the lo side only since storage is upper-triangle.
+  final newRowCount = Int32List(nNewFiles);
+  for (var oldI = 0; oldI < oldToNew.length; oldI++) {
+    final newI = oldToNew[oldI];
+    final lo = oldRowPtr[oldI];
+    final hi = oldRowPtr[oldI + 1];
+    for (var k = lo; k < hi; k++) {
+      final newJ = oldToNew[oldColIdx[k]];
+      final newLo = newI < newJ ? newI : newJ;
+      newRowCount[newLo]++;
+    }
+  }
+
+  // Build new rowPtr (cumulative).
+  final newRowPtr = Int32List(nNewFiles + 1);
+  var cum = 0;
+  for (var i = 0; i < nNewFiles; i++) {
+    newRowPtr[i] = cum;
+    cum += newRowCount[i];
+  }
+  newRowPtr[nNewFiles] = cum;
+
+  final newColIdx = Int32List(cum);
+  final newValues = Float64List(cum);
+
+  // Pass 2: scatter every edge into its new lo-row. Reuse newRowCount
+  // as the per-row write cursor.
+  newRowCount.fillRange(0, nNewFiles, 0);
+  for (var oldI = 0; oldI < oldToNew.length; oldI++) {
+    final newI = oldToNew[oldI];
+    final lo = oldRowPtr[oldI];
+    final hi = oldRowPtr[oldI + 1];
+    for (var k = lo; k < hi; k++) {
+      final newJ = oldToNew[oldColIdx[k]];
+      final newLo = newI < newJ ? newI : newJ;
+      final newHi = newI < newJ ? newJ : newI;
+      final w = newRowPtr[newLo] + newRowCount[newLo]++;
+      newColIdx[w] = newHi;
+      newValues[w] = oldValues[k];
+    }
+  }
+
+  // Pass 3: sort each new row by colIdx. Same insertion-sort pattern
+  // as `_buildSymmetricCsr`: short rows in real repos make insertion
+  // sort win on cache locality vs more general sorts.
+  for (var i = 0; i < nNewFiles; i++) {
+    final lo = newRowPtr[i];
+    final hi = newRowPtr[i + 1];
+    if (hi - lo < 2) continue;
+    for (var k = lo + 1; k < hi; k++) {
+      final ck = newColIdx[k];
+      final vk = newValues[k];
+      var m = k - 1;
+      while (m >= lo && newColIdx[m] > ck) {
+        newColIdx[m + 1] = newColIdx[m];
+        newValues[m + 1] = newValues[m];
+        m--;
+      }
+      newColIdx[m + 1] = ck;
+      newValues[m + 1] = vk;
+    }
+  }
+
+  return _CsrTriple(newRowPtr, newColIdx, newValues);
+}
+
+/// Internal CSR triple. Used only inside [FileCouplingMatrix]
+/// construction; the matrix immediately decomposes the record into
+/// its three named final fields.
+class _CsrTriple {
+  final Int32List rowPtr;
+  final Int32List colIdx;
+  final Float64List values;
+  const _CsrTriple(this.rowPtr, this.colIdx, this.values);
+}
+
+/// Convert a nested-map sparse matrix to upper-triangle CSR storage.
+/// Each logical edge is stored exactly once — at row `min(i, j)`,
+/// column `max(i, j)`. Lookups canonicalise the pair via the same
+/// min/max rule before doing a binary search on the row's slice.
+/// This matches the legacy nested-map storage semantics: the
+/// materialised view via [FileCouplingMatrix.jaccard] yields each
+/// edge exactly once, indexed by the lex-smaller endpoint, so
+/// callers that explicitly add both endpoints (centrality counters
+/// in `commit_tagger.dart`, build-loop "iterate from both endpoints,
+/// one will find the other" patterns in `logos_git.dart`) see the
+/// same shape they always have.
+/// Steps:
+///   1. Tally each lo-row's non-zero count to build rowPtr (only
+///      the smaller of each pair gets a row entry).
+///   2. Allocate colIdx + values, scatter entries into their lo-row,
+///      then per-row sort by colIdx so binary search works.
+/// Output rowPtr has length nFiles+1; values + colIdx have length
+/// equal to the unique edge count.
+_CsrTriple _buildSymmetricCsr(
+  Map<String, Map<String, double>> map,
+  Map<String, int> pathToId,
+  int nFiles,
+) {
+  if (map.isEmpty || nFiles == 0) {
+    return _CsrTriple(
+      Int32List(nFiles + 1),
+      Int32List(0),
+      Float64List(0),
+    );
+  }
+
+  // Pass 1: count per-row entries. We only count an edge once, at
+  // its lo-endpoint; (b, a, v) duplicates of (a, b, v) are detected
+  // via the visited-set and skipped.
+  final rowCount = Int32List(nFiles);
+  final visited = <int>{}; // encoded lo * nFiles + hi
+  void noteEdge(int i, int j) {
+    if (i == j) return;
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    if (!visited.add(lo * nFiles + hi)) return;
+    rowCount[lo]++;
+  }
+
+  for (final entry in map.entries) {
+    final i = pathToId[entry.key];
+    if (i == null) continue;
+    for (final inner in entry.value.entries) {
+      final j = pathToId[inner.key];
+      if (j == null || j == i) continue;
+      if (inner.value <= 0) continue;
+      noteEdge(i, j);
+    }
+  }
+
+  // Build rowPtr (cumulative).
+  final rowPtr = Int32List(nFiles + 1);
+  var cum = 0;
+  for (var i = 0; i < nFiles; i++) {
+    rowPtr[i] = cum;
+    cum += rowCount[i];
+  }
+  rowPtr[nFiles] = cum;
+
+  final colIdx = Int32List(cum);
+  final values = Float64List(cum);
+
+  // Pass 2: scatter entries into the lo-row only.
+  rowCount.fillRange(0, nFiles, 0);
+  visited.clear();
+
+  void scatter(int i, int j, double v) {
+    if (i == j) return;
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    if (!visited.add(lo * nFiles + hi)) return;
+    final wi = rowPtr[lo] + rowCount[lo]++;
+    colIdx[wi] = hi;
+    values[wi] = v;
+  }
+
+  for (final entry in map.entries) {
+    final i = pathToId[entry.key];
+    if (i == null) continue;
+    for (final inner in entry.value.entries) {
+      final j = pathToId[inner.key];
+      if (j == null || j == i) continue;
+      if (inner.value <= 0) continue;
+      scatter(i, j, inner.value);
+    }
+  }
+
+  // Pass 3: sort each row's slice by colIdx so binary search works.
+  // Per-row sort: small N; use a simple co-sort of (colIdx, values).
+  for (var i = 0; i < nFiles; i++) {
+    final lo = rowPtr[i];
+    final hi = rowPtr[i + 1];
+    final n = hi - lo;
+    if (n < 2) continue;
+    // Insertion sort — tight loops, friendly to short rows (typical
+    // degree ≪ 64). For pathologically high-degree rows we'd want
+    // quicksort, but the constant factor on insertion sort wins
+    // below ~30 entries which dominates real repos.
+    for (var k = lo + 1; k < hi; k++) {
+      final ck = colIdx[k];
+      final vk = values[k];
+      var m = k - 1;
+      while (m >= lo && colIdx[m] > ck) {
+        colIdx[m + 1] = colIdx[m];
+        values[m + 1] = values[m];
+        m--;
+      }
+      colIdx[m + 1] = ck;
+      values[m + 1] = vk;
+    }
+  }
+
+  return _CsrTriple(rowPtr, colIdx, values);
 }
 
 /// Compute co-change matrix for a repo from the last [commitLimit] commits.
 /// Single git-log pass — the format embeds HEAD hash in the first commit
 /// separator, so we don't need a separate `rev-parse HEAD` round-trip.
-///
 /// Skips commits with > [largeCommitCutoff] files (merges/imports/vendor
 /// bumps); they're noise for co-change signal and would dominate pair counts.
 Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
@@ -99,7 +656,7 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
     '-n', '$commitLimit',
     '--no-merges',
     '--name-only',
-    '--format=$logCommitSeparator%H',
+    '--format=$logCommitSeparator%H%x1f%an%x1f%s',
   ]);
   if (logProbe.exitCode != 0) {
     return GitResult.err(logProbe.stderr.toString().trim());
@@ -110,57 +667,84 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   // extract HEAD from the first one and commit hashes are otherwise ignored.
   final stdout = logProbe.stdout.toString();
   String headHash = '';
-  final commits = <List<String>>[];
-  List<String>? current;
+  final commits = <_CouplingCommit>[];
+  List<String>? currentFiles;
+  String currentAuthor = '';
+  String currentSubject = '';
   final sepLen = logCommitSeparator.length;
 
   for (final rawLine in const LineSplitter().convert(stdout)) {
     if (rawLine.startsWith(logCommitSeparator)) {
-      if (current != null &&
-          current.isNotEmpty &&
-          current.length <= largeCommitCutoff) {
-        commits.add(current);
+      if (currentFiles != null &&
+          currentFiles.isNotEmpty &&
+          currentFiles.length <= largeCommitCutoff) {
+        commits.add(_CouplingCommit(
+          author: currentAuthor,
+          subject: currentSubject,
+          files: currentFiles,
+        ));
       }
-      current = <String>[];
+      currentFiles = <String>[];
       if (headHash.isEmpty) {
-        headHash = rawLine.substring(sepLen).trim();
+        final firstSep = rawLine.indexOf(_logMetaSep, sepLen);
+        headHash = firstSep == -1
+            ? rawLine.substring(sepLen).trim()
+            : rawLine.substring(sepLen, firstSep).trim();
       }
+      final meta = rawLine.substring(sepLen).split(_logMetaSep);
+      currentAuthor = meta.length >= 2 ? meta[1].trim() : '';
+      currentSubject = meta.length >= 3
+          ? meta.sublist(2).join(_logMetaSep).trim()
+          : '';
       continue;
     }
-    if (current == null) continue;
+    if (currentFiles == null) continue;
     final trimmed = rawLine.trim();
     if (trimmed.isEmpty) continue;
-    current.add(trimmed.replaceAll('\\', '/'));
+    currentFiles.add(trimmed.replaceAll('\\', '/'));
   }
-  if (current != null &&
-      current.isNotEmpty &&
-      current.length <= largeCommitCutoff) {
-    commits.add(current);
+  if (currentFiles != null &&
+      currentFiles.isNotEmpty &&
+      currentFiles.length <= largeCommitCutoff) {
+    commits.add(_CouplingCommit(
+      author: currentAuthor,
+      subject: currentSubject,
+      files: currentFiles,
+    ));
   }
 
   // Resolve the effective half-life. Null caller → derive it from the
   // signal via [deriveEngramHalfLife]; a number → use it verbatim.
   final double effectiveHalfLife = halfLifeCommits == null
-      ? _deriveAdaptiveHalfLife(commits)
+      ? _deriveAdaptiveHalfLife([for (final c in commits) c.files])
       : halfLifeCommits;
   // Commits are in reverse-chrono order — index 0 is the most recent.
-  // Per-commit weight w_i = 2^(-i / halfLife). At halfLife=200,
-  // w_0 = 1.0, w_200 = 0.5, w_400 = 0.25, w_1000 ≈ 0.03. Weighted
-  // Jaccard preserves [0, 1] range because the inclusion-exclusion
-  // identity |A∩B| / |A∪B| = co / (Na + Nb - co) is linear in the
-  // underlying counts: substituting weighted sums keeps it sound.
-  double commitWeight(int rank) {
+  // Weight is evaluated on the semantic clock, not raw ordinal rank:
+  // w(age) = 2^(-age / halfLife). This prevents long runs of ritual
+  // churn from smuggling temporal structure back into the co-change
+  // signal when meaningful commits are sparse.
+  double commitWeight(double semanticAge) {
     if (effectiveHalfLife <= 0) return 1.0;
-    return math.pow(0.5, rank / effectiveHalfLife).toDouble();
+    return math.pow(0.5, semanticAge / effectiveHalfLife).toDouble();
   }
 
   // One pass: per-file weighted commit "count" + per-pair weighted co-
   // count. Only upper-triangle (a < b lexicographic) — halves inserts.
   final fileCommits = <String, double>{};
   final pairCount = <String, Map<String, double>>{};
+  var semanticAge = 0.0;
   for (var rank = 0; rank < commits.length; rank++) {
-    final files = commits[rank];
-    final w = commitWeight(rank);
+    final commit = commits[rank];
+    final files = commit.files;
+    final m = inferCommitMeaningfulness(
+      author: commit.author,
+      subject: commit.subject,
+      paths: files.toSet(),
+    );
+    final step = m.weight.clamp(0.0, 1.0);
+    final w = commitWeight(semanticAge) * step;
+    semanticAge += step;
+    if (w <= 0) continue;
     for (final f in files) {
       fileCommits[f] = (fileCommits[f] ?? 0) + w;
     }
@@ -199,18 +783,27 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
   return GitResult.ok(FileCouplingMatrix(
     jaccard: jaccard,
     headHash: headHash,
-    commitsAnalyzed: commits.length,
+    commitsAnalyzed: semanticAge > 0 ? math.max(1, semanticAge.round()) : 0,
   ));
 }
 
+class _CouplingCommit {
+  final String author;
+  final String subject;
+  final List<String> files;
+  const _CouplingCommit({
+    required this.author,
+    required this.subject,
+    required this.files,
+  });
+}
+
 /// Half-life clamp band. Half-life is measured in commits.
-///
 /// The floor [_halfLifeMin] is the point where the exponential kernel
 /// concentrates ~99% of its mass inside the most recent ~7·halfLife
 /// commits (7·ln(2) ≈ 4.85, so 2⁻⁷ ≈ 1%). Below 50 the tail becomes
 /// sparse enough that a single unusual recent commit dominates the
 /// Jaccard signal. Empirically the minimum sustainable window.
-///
 /// The ceiling [_halfLifeMax] is the reciprocal concern on big
 /// monorepos — beyond this, files that co-changed a year ago still
 /// carry near-equal weight to yesterday's edit, and the matrix
@@ -236,7 +829,6 @@ double _fallbackHalfLife(int commitCount) =>
 /// Derive an adaptive half-life (in commits) from the shape of the
 /// history itself. Implements the Whisper Engram principle: block size
 /// is a property of the data, not a parameter anyone chose.
-///
 /// Algorithm:
 ///   1. Build the consecutive-commit Jaccard series via the shared
 ///      helper [consecutiveJaccardSeries]. This is the "trajectory" of
@@ -249,7 +841,6 @@ double _fallbackHalfLife(int commitCount) =>
 ///   4. Clamp to the production band; fall back to a size-proportional
 ///      heuristic when the fit degenerates (short / non-orbital /
 ///      divergent).
-///
 /// Public so the derivation can be exercised in isolation by tests.
 double deriveEngramHalfLife(List<List<String>> commitFileLists) {
   final n = commitFileLists.length;
@@ -294,7 +885,6 @@ enum FileSortGuide {
 }
 
 /// Result of agglomerative clustering on the current change set.
-///
 /// Files with a coupling score ≥ [threshold] to any current peer end up in
 /// the same cluster (single-link). Files with no qualifying peer get
 /// [clusterIdIsolated] (-1) — rendered as a muted stripe so they read as
@@ -323,7 +913,6 @@ class FileClusters {
 }
 
 /// Single-link clustering over the current change set.
-///
 /// Scales cleanly from 1 file to 10,000+ by:
 ///   * enumerating only above-threshold pairs (no O(n²) score scan),
 ///   * using Union-Find for merges (near-linear in pair count),
@@ -335,10 +924,13 @@ FileClusters clusterFiles(
   FileCouplingMatrix matrix, {
   double threshold = 0.25,
   FileSortGuide sortGuide = FileSortGuide.relatedProximity,
-  // Per-path impact weight for [FileSortGuide.impact]. Callers supply
-  // change-weight signals from their diff stats (hunks, lines). Missing
-  // entries score 0.
-  Map<String, double>? impactScores,
+  // Per-path diff signal used by [FileSortGuide.impact]. The sort
+  // computes effective impact from these AND the coupling matrix —
+  // a file whose change is "explained" by a co-changing peer in the
+  // same diff gets its impact attenuated proportionally, so
+  // source+generated pairs and lockfile+manifest pairs don't double-
+  // count. Missing entries score 0.
+  Map<String, FileImpactSignal>? impactSignals,
   // Paths currently in a merge-conflict state. Regardless of sortGuide
   // these float to the very top of the list — unresolvable conflicts
   // block every commit, so the user must see them first.
@@ -378,20 +970,21 @@ FileClusters clusterFiles(
     return lo * n + hi;
   }
 
-  // -- 1. Historical pairs: sparse iteration over the jaccard matrix.
+  // -- 1. Historical pairs: sparse iteration over the jaccard CSR.
   //    For each current file, walk its neighbour row; only add pairs where
-  //    the neighbour is also in the current change set.
+  //    the neighbour is also in the current change set. Uses the CSR-
+  //    native row iterator so we don't materialise the legacy nested
+  //    map view just to read this row's entries.
   for (var i = 0; i < n; i++) {
     final a = currentPaths[i];
-    final row = matrix.jaccard[a];
-    if (row == null) continue;
-    row.forEach((b, s) {
-      if (s < threshold) return;
-      final j = pathIndex[b];
-      if (j == null || i == j) return;
+    for (final entry in matrix.jaccardEntriesOf(a)) {
+      final s = entry.value;
+      if (s < threshold) continue;
+      final j = pathIndex[entry.key];
+      if (j == null || i == j) continue;
       final key = encode(i, j);
       if (seen.add(key)) candidates.add(_PairScore(s, i, j));
-    });
+    }
   }
 
   // -- 2. Path-affinity pairs for new/untracked files (and for pairs the
@@ -414,8 +1007,8 @@ FileClusters clusterFiles(
         final j = idxs[jj];
         final a = currentPaths[i];
         final b = currentPaths[j];
-        final aTracked = matrix.jaccard.containsKey(a);
-        final bTracked = matrix.jaccard.containsKey(b);
+        final aTracked = matrix.containsPath(a);
+        final bTracked = matrix.containsPath(b);
         if (aTracked && bTracked) continue; // history-only for that case
         final s = pathAffinity(a, b);
         if (s < threshold) continue;
@@ -455,17 +1048,45 @@ FileClusters clusterFiles(
     if (includedPaths == null || includedPaths.isEmpty) return true;
     return members.any((i) => includedPaths.contains(currentPaths[i]));
   }
+  // Precompute every per-cluster sort key ONCE before the comparator
+  // runs. The comparator then does only integer/reference compares —
+  // no string allocation, no double parsing, no map lookups in the
+  // hot loop. Sort calls the comparator O(n log n) times; doing
+  // O(n) upfront work turns each step into constant-time integer
+  // arithmetic.
+  //
+  // Fields, in comparator order:
+  //   hasInc  — 0 if cluster has any included file, 1 otherwise
+  //   coh100  — coherence × 100, rounded to int (kills float jitter)
+  //   size    — member count (used DESC via negation)
+  //   minPath — lex-min path, for the final stable tiebreak
+  final clusterSortKeys = <List<int>, _ClusterSortKey>{
+    for (final c in realClusters)
+      c: _ClusterSortKey(
+        hasInc: _clusterHasIncluded(c) ? 0 : 1,
+        coh100: (_meanClusterCoherence(c, currentPaths, matrix) * 100)
+            .round(),
+        size: c.length,
+        minPath: c
+            .map((i) => currentPaths[i])
+            .reduce((a, b) => a.compareTo(b) < 0 ? a : b),
+      ),
+  };
   realClusters.sort((x, y) {
-    // Primary: clusters with any included files sort above fully-excluded
-    // clusters. A fully-unchecked cluster is context, not a concern.
-    final xIn = _clusterHasIncluded(x) ? 0 : 1;
-    final yIn = _clusterHasIncluded(y) ? 0 : 1;
-    if (xIn != yIn) return xIn - yIn;
-    // Secondary: bigger clusters first.
-    final s = y.length.compareTo(x.length);
-    if (s != 0) return s;
-    // Tertiary: stable alphabetical by first member.
-    return currentPaths[x.first].compareTo(currentPaths[y.first]);
+    final kx = clusterSortKeys[x]!;
+    final ky = clusterSortKeys[y]!;
+    // Primary: included clusters first (design choice — "the work
+    // the user is doing comes first" beats "how tightly coupled
+    // this unrelated cluster is").
+    if (kx.hasInc != ky.hasInc) return kx.hasInc - ky.hasInc;
+    // Secondary: coherence DESC via integer compare on the rounded
+    // ×100 form. No allocations, no floating-point flicker.
+    if (kx.coh100 != ky.coh100) return ky.coh100 - kx.coh100;
+    // Tertiary: bigger clusters first.
+    if (kx.size != ky.size) return ky.size - kx.size;
+    // Quaternary: lex-min path for stable alphabetical tiebreak,
+    // independent of Union-Find traversal.
+    return kx.minPath.compareTo(ky.minPath);
   });
   isolatedIdx.sort((x, y) => currentPaths[x].compareTo(currentPaths[y]));
 
@@ -485,11 +1106,20 @@ FileClusters clusterFiles(
   final orderedPaths = <String>[];
   switch (sortGuide) {
     case FileSortGuide.relatedProximity:
-      // Grouped: clusters first (largest-with-included → smallest →
-      // excluded-only → isolated). Inside each cluster, split by
-      // inclusion and nearest-neighbour-chain each subgroup — so the
-      // "files I'm actually committing" sit above the surrounding
-      // context, each sub-chain still locally tight.
+      // Grouped: clusters in (included-first, coherence DESC, size DESC,
+      // alpha ASC) order. Inside each cluster, split by inclusion and
+      // nearest-neighbour-chain each subgroup — so the "files I'm
+      // actually committing" sit above the surrounding context, each
+      // sub-chain still locally tight.
+      //
+      // The junction between the two sub-chains (last included, first
+      // excluded) is ALSO coupling-optimized: when the excluded chain
+      // would be more tightly bound to the included tail by its end
+      // than by its head, we reverse it so the strongest pair sits at
+      // the seam. This keeps "here's the stuff I'm committing, and
+      // here's the most-related context" reading as one continuous
+      // gradient of coupling rather than a size-sorted list glued to
+      // another size-sorted list.
       for (final cluster in realClusters) {
         final included = <int>[];
         final excluded = <int>[];
@@ -501,11 +1131,33 @@ FileClusters clusterFiles(
             excluded.add(idx);
           }
         }
-        final chain = <int>[
-          ..._seriateCluster(included, currentPaths, matrix),
-          ..._seriateCluster(excluded, currentPaths, matrix),
-        ];
-        for (final idx in chain) {
+        final incChain =
+            _seriateCluster(included, currentPaths, matrix).toList();
+        final excChain =
+            _seriateCluster(excluded, currentPaths, matrix).toList();
+        if (incChain.isNotEmpty && excChain.length >= 2) {
+          final tail = incChain.last;
+          final headScore = combinedCouplingScore(
+              currentPaths[tail], currentPaths[excChain.first], matrix);
+          final rearScore = combinedCouplingScore(
+              currentPaths[tail], currentPaths[excChain.last], matrix);
+          if (rearScore > headScore) {
+            // In-place two-pointer reverse — no intermediate list.
+            var lo = 0;
+            var hi = excChain.length - 1;
+            while (lo < hi) {
+              final tmp = excChain[lo];
+              excChain[lo] = excChain[hi];
+              excChain[hi] = tmp;
+              lo++;
+              hi--;
+            }
+          }
+        }
+        for (final idx in incChain) {
+          orderedPaths.add(currentPaths[idx]);
+        }
+        for (final idx in excChain) {
           orderedPaths.add(currentPaths[idx]);
         }
       }
@@ -527,24 +1179,88 @@ FileClusters clusterFiles(
         orderedPaths.add(currentPaths[idx]);
       }
     case FileSortGuide.alphabetical:
-      // Natural, case-insensitive sort. Matches how humans read file
-      // names: migration-2.sql before migration-10.sql, README.md and
-      // readme.md sort together, not flipped apart by capital codepoints.
+      // Natural, case-insensitive sort by BASENAME (the visible
+      // filename column), falling back to the full path as tiebreak
+      // for same-named files in different directories.
+      //
+      // Sorting by full path made `apps/foo/zzz.dart` land before
+      // `lib/aaa.dart` because the comparison starts on the directory
+      // segments — which reads as "broken alphabetical" in a list
+      // that shows filenames prominently and directories as subtitle.
       orderedPaths.addAll(
-        List<String>.from(currentPaths)..sort(_naturalCompare),
+        List<String>.from(currentPaths)
+          ..sort((a, b) {
+            final c = _naturalCompare(_basenameOf(a), _basenameOf(b));
+            if (c != 0) return c;
+            return _naturalCompare(a, b);
+          }),
       );
     case FileSortGuide.impact:
-      // Rank by caller-supplied change weight (weighted for binaries,
-      // new files, and del-heaviness before reaching us), desc. Missing
-      // entries score 0 and drop to the bottom; tiebreak is a natural
-      // compare so equal-weight files still read humanely.
+      // Effective impact = raw line-churn × (1 − entanglement), where
+      // entanglement is the maximum Jaccard between this file and any
+      // other file in the CURRENT diff. Derived entirely from
+      // physical signals — no hardcoded filename lists, no magic
+      // suffix patterns, no language- or platform-specific rules.
+      //
+      // Intuition: if a file's change is fully "explained" by its
+      // co-change with another file in the same diff (Jaccard → 1),
+      // the pair contributes one unit of information, not two.
+      // Source+generated companions and lockfile+manifest pairs
+      // naturally attenuate each other without us having to know
+      // what they are. A file with no peer in the diff keeps its
+      // full impact — the attenuation only fires when there's
+      // actually a co-change partner participating.
+      //
+      // Binaries contribute 0 (we don't have file-size data to
+      // score them honestly; a magic baseline would lie). They
+      // sink to the bottom on ties, ordered alphabetically.
+      //
+      // Tiebreaks in order: included-above-excluded (parity with
+      // relatedProximity's "work first, context after"), then
+      // natural compare by BASENAME (the visible filename column),
+      // then full path as final stabilizer.
+      // Precompute effectiveImpact for every path ONCE. Without this
+      // the sort comparator re-derives entanglement (an O(|Jaccard
+      // row|) lookup) on every comparison, turning an O(n log n)
+      // sort into O(n² log n). Upfront cost: O(n²) over n paths —
+      // same as the inherent cost of building the full entanglement
+      // map, but paid once. Also eliminates the repeated basename
+      // substring allocation that a naïve sort comparator would
+      // otherwise do per comparison.
+      final signals = impactSignals ?? const <String, FileImpactSignal>{};
+      final pathSet = currentPaths.toSet();
+      final effective = <String, double>{};
+      final basenames = <String, String>{};
+      for (final p in currentPaths) {
+        final s = signals[p];
+        final raw = (s == null || s.binary) ? 0.0 : (s.adds + s.dels).toDouble();
+        var maxJ = 0.0;
+        if (raw > 0) {
+          // CSR-native row walk for the impact attenuation. Same
+          // semantics as the old `matrix.jaccard[p]?.forEach`, but
+          // doesn't trigger lazy nested-map materialisation.
+          for (final entry in matrix.jaccardEntriesOf(p)) {
+            final peer = entry.key;
+            if (peer == p) continue;
+            if (!pathSet.contains(peer)) continue;
+            final j = entry.value;
+            if (j > maxJ) maxJ = j;
+          }
+        }
+        effective[p] = raw * (1 - maxJ);
+        basenames[p] = _basenameOf(p);
+      }
       final ranked = List<String>.from(currentPaths);
-      final weights = impactScores ?? const <String, double>{};
       ranked.sort((a, b) {
-        final sa = weights[a] ?? 0.0;
-        final sb = weights[b] ?? 0.0;
+        final sa = effective[a] ?? 0.0;
+        final sb = effective[b] ?? 0.0;
         final c = sb.compareTo(sa);
         if (c != 0) return c;
+        final aIn = includedPaths == null || includedPaths.contains(a);
+        final bIn = includedPaths == null || includedPaths.contains(b);
+        if (aIn != bIn) return aIn ? -1 : 1;
+        final bc = _naturalCompare(basenames[a]!, basenames[b]!);
+        if (bc != 0) return bc;
         return _naturalCompare(a, b);
       });
       orderedPaths.addAll(ranked);
@@ -591,12 +1307,10 @@ FileClusters clusterFiles(
 }
 
 /// Natural, case-insensitive path comparator.
-///
 /// Walks both strings in lockstep, comparing digit runs *numerically*
 /// and non-digit runs *case-insensitively*. So `migration-10.sql` sorts
 /// after `migration-2.sql`, and `README.md` doesn't leapfrog `src/` just
 /// because uppercase codepoints are lower in ASCII.
-///
 /// Falls back to the raw `compareTo` as a final tiebreaker so the sort
 /// is deterministic even for strings that differ only in case.
 int _naturalCompare(String a, String b) {
@@ -649,6 +1363,39 @@ int _naturalCompare(String a, String b) {
   return 0;
 }
 
+/// Last path segment, handling both forward and back slashes. Walks
+/// from the end and bails at the first separator — zero allocation
+/// when the path has no separator, single `substring` otherwise.
+/// Called in tight sort comparators, so the "no `replaceAll` scan on
+/// every invocation" shape matters.
+String _basenameOf(String path) {
+  for (var i = path.length - 1; i >= 0; i--) {
+    final c = path.codeUnitAt(i);
+    if (c == 0x2F /* / */ || c == 0x5C /* \ */) {
+      return path.substring(i + 1);
+    }
+  }
+  return path;
+}
+
+/// Per-path raw diff signal consumed by [FileSortGuide.impact].
+/// The sort uses this + the coupling matrix to derive effective
+/// impact without any hardcoded filename rules — the attenuation
+/// emerges from co-change physics, not a filetype whitelist.
+/// Kept minimal on purpose: `adds` and `dels` are literal numstat
+/// counts, `binary` tells the scorer "we can't count lines here."
+/// No language-specific fields; no platform conventions baked in.
+class FileImpactSignal {
+  final int adds;
+  final int dels;
+  final bool binary;
+  const FileImpactSignal({
+    required this.adds,
+    required this.dels,
+    this.binary = false,
+  });
+}
+
 bool _isDigit(int codeUnit) => codeUnit >= 0x30 && codeUnit <= 0x39;
 
 int _toLower(int codeUnit) {
@@ -666,12 +1413,10 @@ String _stripLeadingZeros(String digits) {
 
 /// Seriate a cluster's members so that adjacent files in the returned
 /// order have the strongest pairwise coupling possible.
-///
 /// Greedy nearest-neighbour chain:
 ///   1. Seed with the highest-scoring pair in the cluster.
 ///   2. Extend from either end by the unplaced member with the strongest
 ///      coupling to that endpoint.
-///
 /// O(n²) per cluster — trivial for real change sets. Ties break on lex
 /// order of the path so the output stays deterministic across runs and
 /// files that truly have no coupling signal degrade gracefully to
@@ -681,78 +1426,161 @@ List<int> _seriateCluster(
   List<String> paths,
   FileCouplingMatrix matrix,
 ) {
-  if (members.length <= 2) return members;
+  final n = members.length;
+  if (n <= 2) return members;
 
-  double score(int i, int j) =>
-      combinedCouplingScore(paths[i], paths[j], matrix);
+  // One pair-score computation per pair — cache into a flat O(n²)
+  // matrix. The hub-degree loop, seed-pair loop, and chain-extension
+  // loop all read from this. Without caching, each phase redundantly
+  // calls `combinedCouplingScore` on the same pairs. With n=20
+  // typical, that's 400 cached scores vs. ~1200 redundant calls.
+  //
+  // Indexed by dense position within `members`, not the original
+  // `paths` index — the cluster is local, the matrix is local, and
+  // the symmetry `pair[i][j] == pair[j][i]` lets us walk only the
+  // upper triangle.
+  final pair = List<Float64List>.generate(n, (_) => Float64List(n));
+  for (var i = 0; i < n; i++) {
+    for (var j = i + 1; j < n; j++) {
+      final s = combinedCouplingScore(paths[members[i]], paths[members[j]], matrix);
+      pair[i][j] = s;
+      pair[j][i] = s;
+    }
+  }
 
-  // Pick the best starting pair. Alphabetical tiebreak so equal-scoring
-  // pairs pick a stable seed.
-  double bestPairScore = -1;
-  int seedA = members[0];
-  int seedB = members[1];
-  for (var i = 0; i < members.length; i++) {
-    for (var j = i + 1; j < members.length; j++) {
-      final s = score(members[i], members[j]);
-      if (s > bestPairScore ||
-          (s == bestPairScore &&
+  // Precompute each member's hub degree (total coupling to the rest
+  // of the cluster) in one linear pass over the cached matrix.
+  final hubDegree = Float64List(n);
+  for (var i = 0; i < n; i++) {
+    var s = 0.0;
+    for (var j = 0; j < n; j++) {
+      if (i != j) s += pair[i][j];
+    }
+    hubDegree[i] = s;
+  }
+
+  // Precompute each member's parent directory so the sibling-tiebreak
+  // in the chain-extension loop is a cheap string equality test, not
+  // a replaceAll + lastIndexOf + substring on every comparison.
+  final parentDir = List<String?>.generate(n, (i) {
+    final p = paths[members[i]];
+    for (var k = p.length - 1; k >= 0; k--) {
+      final c = p.codeUnitAt(k);
+      if (c == 0x2F /* / */ || c == 0x5C /* \ */) return p.substring(0, k);
+    }
+    return null;
+  });
+
+  // Pick the best starting pair: `pair_score + 0.1 × min(hub)`.
+  // Weighting the WEAKER endpoint prevents a single hub from dragging
+  // an otherwise-weak pair to the top; both sides must pull their
+  // weight. Alphabetical tiebreak for stability.
+  var bestPairScore = -1.0;
+  var seedA = 0;
+  var seedB = 1;
+  for (var i = 0; i < n; i++) {
+    for (var j = i + 1; j < n; j++) {
+      final composite =
+          pair[i][j] + 0.1 * math.min(hubDegree[i], hubDegree[j]);
+      if (composite > bestPairScore ||
+          (composite == bestPairScore &&
               _lexBefore(
                 paths[members[i]],
                 paths[members[j]],
-                paths[seedA],
-                paths[seedB],
+                paths[members[seedA]],
+                paths[members[seedB]],
               ))) {
-        bestPairScore = s;
-        seedA = members[i];
-        seedB = members[j];
+        bestPairScore = composite;
+        seedA = i;
+        seedB = j;
       }
     }
   }
 
-  // Orient the seed so the lex-smaller endpoint starts, for stable output.
-  if (paths[seedB].compareTo(paths[seedA]) < 0) {
-    final t = seedA;
-    seedA = seedB;
-    seedB = t;
+  // Orient the seed so the higher-degree hub lands at index 0 (the
+  // "backbone" file sits at the top of the cluster). Tiebreak
+  // alphabetical.
+  {
+    final dA = hubDegree[seedA];
+    final dB = hubDegree[seedB];
+    if (dB > dA ||
+        (dB == dA &&
+            paths[members[seedB]].compareTo(paths[members[seedA]]) < 0)) {
+      final t = seedA;
+      seedA = seedB;
+      seedB = t;
+    }
   }
 
   final chain = <int>[seedA, seedB];
-  final remaining = members.where((m) => m != seedA && m != seedB).toList();
+  // Track remaining by a visited bitset so removal is O(1) and we
+  // never reshuffle a growing/shrinking list.
+  final visited = List<bool>.filled(n, false);
+  visited[seedA] = true;
+  visited[seedB] = true;
 
-  while (remaining.isNotEmpty) {
-    int bestIdx = 0;
-    bool bestPrepend = false;
-    double bestScore = -1;
+  for (var step = 2; step < n; step++) {
+    final frontIdx = chain.first;
+    final backIdx = chain.last;
+    var bestPos = -1;
+    var bestPrepend = false;
+    var bestScore = -1.0;
+    var bestSiblingBoost = -1;
     String? bestTiebreak;
-    for (var i = 0; i < remaining.length; i++) {
-      final candidate = remaining[i];
-      final frontScore = score(candidate, chain.first);
-      final backScore = score(candidate, chain.last);
-      // Prefer the stronger side; on a tie prefer appending (keeps growth
-      // toward the lex-larger tail — cosmetic stability).
+    for (var k = 0; k < n; k++) {
+      if (visited[k]) continue;
+      final frontScore = pair[k][frontIdx];
+      final backScore = pair[k][backIdx];
       final prepend = frontScore > backScore;
       final localScore = prepend ? frontScore : backScore;
-      final localTiebreak = paths[candidate];
+      final anchorDir = prepend ? parentDir[frontIdx] : parentDir[backIdx];
+      final sibling =
+          (parentDir[k] != null && parentDir[k] == anchorDir) ? 1 : 0;
+      final kPath = paths[members[k]];
       final betterScore = localScore > bestScore;
       final equalScore = localScore == bestScore;
+      final betterSibling = equalScore && sibling > bestSiblingBoost;
       final lexBreak = equalScore &&
-          (bestTiebreak == null || localTiebreak.compareTo(bestTiebreak) < 0);
-      if (betterScore || lexBreak) {
+          sibling == bestSiblingBoost &&
+          (bestTiebreak == null || kPath.compareTo(bestTiebreak) < 0);
+      if (betterScore || betterSibling || lexBreak) {
         bestScore = localScore;
-        bestIdx = i;
+        bestPos = k;
         bestPrepend = prepend;
-        bestTiebreak = localTiebreak;
+        bestSiblingBoost = sibling;
+        bestTiebreak = kPath;
       }
     }
-    final picked = remaining.removeAt(bestIdx);
+    visited[bestPos] = true;
     if (bestPrepend) {
-      chain.insert(0, picked);
+      chain.insert(0, bestPos);
     } else {
-      chain.add(picked);
+      chain.add(bestPos);
     }
   }
 
-  return chain;
+  // Map dense indices back to the caller's path indices.
+  return [for (final i in chain) members[i]];
+}
+
+/// Mean pairwise coupling among a cluster's members — used by
+/// `clusterFiles` to order clusters by tightness instead of raw size.
+/// Returns 0 for 0- or 1-member clusters (no pairs to average).
+double _meanClusterCoherence(
+  List<int> members,
+  List<String> paths,
+  FileCouplingMatrix matrix,
+) {
+  if (members.length < 2) return 0;
+  var sum = 0.0;
+  var pairs = 0;
+  for (var i = 0; i < members.length; i++) {
+    for (var j = i + 1; j < members.length; j++) {
+      sum += combinedCouplingScore(paths[members[i]], paths[members[j]], matrix);
+      pairs++;
+    }
+  }
+  return pairs == 0 ? 0 : sum / pairs;
 }
 
 /// Compare two pairs of paths for a stable tiebreak when seed-pair scores
@@ -768,6 +1596,21 @@ class _PairScore {
   final int a;
   final int b;
   const _PairScore(this.score, this.a, this.b);
+}
+
+/// Precomputed sort key for a cluster — populated once outside the
+/// comparator so the actual sort step is pure integer arithmetic.
+class _ClusterSortKey {
+  final int hasInc;
+  final int coh100;
+  final int size;
+  final String minPath;
+  const _ClusterSortKey({
+    required this.hasInc,
+    required this.coh100,
+    required this.size,
+    required this.minPath,
+  });
 }
 
 class _UnionFind {
@@ -802,7 +1645,6 @@ class _UnionFind {
 
 /// Language-agnostic path-structure signal. Returns 0..1 based on how much
 /// of the directory path and filename stem two paths share.
-///
 /// Used as a fallback coupling signal for files with no git history yet
 /// (new/untracked files). No regex matching on language-specific patterns —
 /// just string overlap, so it works for any filesystem layout.
@@ -828,13 +1670,18 @@ double pathAffinity(String a, String b) {
   final aStem = _stripExt(aSegs.last);
   final bStem = _stripExt(bSegs.last);
   var common = 0;
-  final minStem = math.min(aStem.length, bStem.length);
-  for (var i = 0; i < minStem; i++) {
+  final minLen = math.min(aStem.length, bStem.length);
+  for (var i = 0; i < minLen; i++) {
     if (aStem[i] != bStem[i]) break;
     common++;
   }
-  final maxStem = math.max(aStem.length, bStem.length);
-  final stemScore = maxStem > 0 ? common / maxStem : 0.0;
+  // Dice coefficient: 2·common / (|a| + |b|). Symmetric and penalises
+  // neither party for having a longer name — unlike common/max, which
+  // under-scores pairs like `file_coupling` vs `file_constellation`
+  // because the shared prefix (`file_co`) is measured against the longer
+  // stem's full length rather than the combined mass.
+  final totalStem = aStem.length + bStem.length;
+  final stemScore = totalStem > 0 ? (2.0 * common) / totalStem : 0.0;
 
   // Require BOTH some dir overlap AND some name overlap to couple by path.
   // This prevents unrelated files in a flat directory from being grouped
@@ -847,23 +1694,288 @@ String _stripExt(String filename) {
   return dot > 0 ? filename.substring(0, dot) : filename;
 }
 
-/// Blend historical co-change with path-structure affinity.
-///
-/// If both files appear in git history we trust the historical Jaccard —
-/// files that have previously co-evolved are strongly coupled.
-/// If either file has no history (new/untracked), fall back to path
-/// affinity so structurally-related but unstaged siblings still cluster.
-double combinedCouplingScore(String a, String b, FileCouplingMatrix m) {
-  final hist = m.score(a, b);
-  final aTracked = m.jaccard.containsKey(a);
-  final bTracked = m.jaccard.containsKey(b);
-  if (aTracked && bTracked) {
-    // Both tracked: trust history. Path affinity used only as a tiebreaker
-    // when history shows non-zero but low coupling.
-    if (hist > 0) return hist;
-    return 0.0;
+// SYMBOL-OVERLAP COUPLING — structural axis for new / untracked files
+//
+// Co-change history is a lagging signal: it can only score files that have
+// appeared together in at least one prior commit. A brand-new file has zero
+// Jaccard against everything, so the historical axis is blind to it.
+//
+// Symbol overlap is a leading signal: it scores files by shared identifier
+// usage right now, before any commit exists. A file that uses FileClusters
+// and FileCouplingMatrix is structurally coupled to file_coupling.dart
+// regardless of whether that relationship has ever appeared in git log.
+//
+//
+// Scoring is IDF-weighted Jaccard over identifier sets. The IDF weights
+// come from a CORPUS-WIDE document-frequency index built once per repo
+// ([SymbolFrequencyIndex] — scanned from every tracked file, cached by
+// HEAD hash). This makes the filter self-learning and language-agnostic:
+//   • `def` appears in every Python file → df is huge → idf ≈ 0 → ignored
+//   • `func` appears in every Go file → same
+//   • `FileCouplingMatrix` appears in 2 files repo-wide → idf is high
+//   • the repo *teaches* the filter what's noise vs signal
+//
+// No hardcoded language keywords. No per-language stop-word lists. The
+// math is the filter. The only fallback (when the corpus index hasn't
+// been built yet) is change-set-local IDF plus a tiny universal
+// C-family keyword set — enough to keep cold-start sane without biasing.
+//
+//   idf(id) = ln(1 + N / (1 + df(id)))   [corpus available]
+//   idf(id) = 1 / df_local(id)           [change-set fallback]
+//
+//   overlap(a, b) = Σ idf(id) for id in a∩b
+//                   Σ idf(id) for id in a∪b
+
+/// Max file size we'll read for symbol extraction. Avoids tokenising
+/// multi-megabyte generated files or binary blobs with a source extension.
+const int _symMaxBytes = 256 * 1024; // 256 KB
+
+/// Hard cap on files scanned when building the corpus frequency index.
+/// Beyond this, a uniform random sample is taken — at 2000 files the
+/// df estimates are already well-converged for any reasonable codebase.
+const int _symCorpusSampleCap = 2000;
+
+/// Minimal, language-neutral cold-start filter. Only universal
+/// C-family keywords that the IDF corpus would downweight anyway if it
+/// were warm. Deliberately short — the corpus index is the real filter.
+/// Single-/two-character tokens are already excluded by the identifier
+/// regex (`{2,}` suffix), so nothing here is shorter than 3 chars.
+const Set<String> _symColdStartFilter = {
+  'for', 'while', 'return', 'class', 'struct', 'enum', 'union',
+  'true', 'false', 'null', 'nil', 'None', 'undefined',
+  'new', 'this', 'self', 'super', 'super_',
+  'public', 'private', 'protected', 'static', 'const', 'final',
+  'let', 'var', 'val', 'mut',
+  'import', 'export', 'from', 'package', 'using', 'module',
+  'void', 'int', 'bool', 'string', 'float',
+  'def', 'fun', 'func', 'fn', 'sub', 'lambda',
+  'try', 'catch', 'throw', 'throws', 'except', 'finally',
+  'async', 'await', 'yield',
+};
+
+/// Extract meaningful identifier tokens from [content].
+/// Language-agnostic: matches any C-family identifier (3+ chars,
+/// alphanumeric + underscore). Works for Dart, Python, Go, Rust, JS,
+/// TS, Java, C, C++, Kotlin, Swift, Ruby, etc.
+Set<String> _extractSymbols(String content) {
+  final out = <String>{};
+  final pattern = RegExp(r'\b([A-Za-z_][A-Za-z0-9_]{2,})\b');
+  for (final m in pattern.allMatches(content)) {
+    final id = m.group(1)!;
+    if (!_symColdStartFilter.contains(id)) out.add(id);
   }
-  // At least one file is new / untracked / moved — path signal takes over.
+  return out;
+}
+
+/// Read [path] (relative to [repoRoot]) and extract its symbol set.
+/// Returns empty on I/O error, missing file, or oversize file.
+Set<String> _symbolsForFile(String repoRoot, String path) {
+  try {
+    final file = File(p.join(repoRoot, p.joinAll(path.split('/'))));
+    if (!file.existsSync()) return const {};
+    if (file.lengthSync() > _symMaxBytes) return const {};
+    return _extractSymbols(file.readAsStringSync());
+  } catch (_) {
+    return const {};
+  }
+}
+
+/// Corpus-wide identifier document-frequency index.
+/// Built once per repo (keyed by HEAD hash) by scanning every tracked
+/// file's identifier set. Replaces hardcoded language-specific stop-word
+/// lists: any identifier that appears in most of the repo's files ends up
+/// with near-zero IDF weight automatically, whether that's `def` in a
+/// Python project or `public` in a Java project. The repo teaches the
+/// filter what's noise.
+/// Computed asynchronously in the background (see
+/// `computeSymbolFrequencyIndex`); change-set coupling falls back to
+/// local IDF when the index isn't ready yet.
+class SymbolFrequencyIndex {
+  /// identifier → number of documents containing it (1 ≤ df ≤ totalDocuments).
+  final Map<String, int> documentFrequency;
+
+  /// Total distinct documents scanned (denominator for IDF).
+  final int totalDocuments;
+
+  /// HEAD hash at the time of indexing. Callers invalidate when HEAD moves.
+  final String headHash;
+
+  const SymbolFrequencyIndex({
+    required this.documentFrequency,
+    required this.totalDocuments,
+    required this.headHash,
+  });
+
+  /// Inverse-document-frequency weight for [term].
+  /// Uses the smoothed form `ln(1 + N / (1 + df))`. Bounded below by 0
+  /// (terms appearing in every document) and above by `ln(1 + N)` (terms
+  /// never seen in the corpus — could be new symbols in the change set).
+  /// A term in 50% of the corpus gets roughly `ln(1 + 2) ≈ 1.1`; a term
+  /// in 1% gets `ln(1 + 100) ≈ 4.6`. Rare terms dominate, common terms
+  /// vanish — the self-learning stop-word filter.
+  double idf(String term) {
+    if (totalDocuments <= 0) return 1.0;
+    final df = documentFrequency[term] ?? 0;
+    return math.log(1 + totalDocuments / (1 + df));
+  }
+
+  bool get isEmpty => totalDocuments == 0;
+  bool get isNotEmpty => totalDocuments > 0;
+
+  static const empty = SymbolFrequencyIndex(
+    documentFrequency: {},
+    totalDocuments: 0,
+    headHash: '',
+  );
+}
+
+/// Build a [SymbolFrequencyIndex] for the repo at [repoRoot].
+/// Uses `git ls-files` to enumerate tracked files. When the corpus
+/// exceeds [maxFiles], a uniform random sample is taken — df estimates
+/// converge fast, so 2000 files is plenty for any codebase.
+/// [sampleSeed] gives deterministic sampling for tests; leave null in
+/// production (wall-clock seeded).
+Future<GitResult<SymbolFrequencyIndex>> computeSymbolFrequencyIndex(
+  String repoRoot, {
+  int maxFiles = _symCorpusSampleCap,
+  int? sampleSeed,
+}) async {
+  final lsProbe = await runGitProbe(repoRoot, ['ls-files']);
+  if (lsProbe.exitCode != 0) {
+    return GitResult.err(lsProbe.stderr.toString().trim());
+  }
+
+  final headProbe = await runGitProbe(repoRoot, ['rev-parse', 'HEAD']);
+  final headHash =
+      headProbe.exitCode == 0 ? headProbe.stdout.toString().trim() : '';
+
+  final allPaths = const LineSplitter()
+      .convert(lsProbe.stdout.toString())
+      .where((l) => l.isNotEmpty)
+      .toList();
+
+  // Uniform random sample when the repo is large. Deterministic when
+  // [sampleSeed] is set. We pick files, not bytes — a tiny file counts
+  // the same as a big one for df estimation, which is what we want.
+  List<String> scan;
+  if (allPaths.length > maxFiles) {
+    final rng = math.Random(sampleSeed ?? DateTime.now().millisecondsSinceEpoch);
+    final shuffled = [...allPaths]..shuffle(rng);
+    scan = shuffled.take(maxFiles).toList();
+  } else {
+    scan = allPaths;
+  }
+
+  final df = <String, int>{};
+  var totalDocs = 0;
+  for (final path in scan) {
+    final syms = _symbolsForFile(repoRoot, path);
+    if (syms.isEmpty) continue;
+    totalDocs++;
+    for (final sym in syms) {
+      df[sym] = (df[sym] ?? 0) + 1;
+    }
+  }
+
+  return GitResult.ok(
+    SymbolFrequencyIndex(
+      documentFrequency: df,
+      totalDocuments: totalDocs,
+      headHash: headHash,
+    ),
+  );
+}
+
+/// Compute pairwise symbol-overlap coupling for [paths].
+/// Returns an upper-triangle map (same convention as [FileCouplingMatrix.jaccard])
+/// of IDF-weighted Jaccard scores. Only pairs with a non-zero score are
+/// stored.
+/// When [corpus] is provided and non-empty, uses corpus-wide IDF (the
+/// self-learning, language-agnostic filter). Otherwise falls back to
+/// change-set-local IDF — the local `1 / df_local` form is a good
+/// proxy when n is small but can overweight rare language keywords in
+/// tiny change sets; prefer passing a warm corpus when available.
+Map<String, Map<String, double>> computeSymbolCoupling(
+  List<String> paths,
+  String repoRoot, {
+  SymbolFrequencyIndex? corpus,
+}) {
+  if (paths.length < 2) return const {};
+
+  // Read identifier sets for every file in the change set.
+  final symSets = <String, Set<String>>{};
+  for (final path in paths) {
+    final syms = _symbolsForFile(repoRoot, path);
+    if (syms.isNotEmpty) symSets[path] = syms;
+  }
+  if (symSets.length < 2) return const {};
+
+  // Resolve an IDF function once — corpus if warm, local fallback if not.
+  final bool useCorpus = corpus != null && corpus.isNotEmpty;
+  double Function(String) idfOf;
+  if (useCorpus) {
+    idfOf = corpus.idf;
+  } else {
+    final localDf = <String, int>{};
+    for (final syms in symSets.values) {
+      for (final id in syms) {
+        localDf[id] = (localDf[id] ?? 0) + 1;
+      }
+    }
+    idfOf = (id) => 1.0 / (localDf[id] ?? 1);
+  }
+
+  // IDF-weighted Jaccard for each pair (upper triangle only).
+  final result = <String, Map<String, double>>{};
+  final fileList = symSets.keys.toList();
+  for (var i = 0; i < fileList.length; i++) {
+    for (var j = i + 1; j < fileList.length; j++) {
+      final a = fileList[i];
+      final b = fileList[j];
+      final symsA = symSets[a]!;
+      final symsB = symSets[b]!;
+
+      var numerator = 0.0;
+      var denominator = 0.0;
+
+      // Walk the union; intersection contributes to both.
+      for (final id in symsA) {
+        final w = idfOf(id);
+        denominator += w;
+        if (symsB.contains(id)) numerator += w;
+      }
+      for (final id in symsB) {
+        if (!symsA.contains(id)) denominator += idfOf(id);
+      }
+
+      if (numerator == 0 || denominator == 0) continue;
+      final score = numerator / denominator;
+
+      // Upper-triangle: lex order for consistency with jaccard storage.
+      final lo = a.compareTo(b) < 0 ? a : b;
+      final hi = a.compareTo(b) < 0 ? b : a;
+      (result[lo] ??= {})[hi] = score;
+    }
+  }
+  return result;
+}
+
+
+/// Coupling score used by clustering and seriation.
+/// Reads the blended score from the matrix (historical Jaccard + symbol
+/// overlap, whichever is stronger). Falls back to path-structure affinity
+/// only when the matrix has no signal at all for the pair — typically two
+/// files that are both new AND share no identifiers.
+/// If BOTH files are present in the co-change history (jaccard map), a
+/// score of 0.0 is meaningful: they've been tracked and they don't
+/// co-change. pathAffinity must NOT fire in that case — it would
+/// manufacture coupling that contradicts the historical record and corrupt
+/// clustering for pairs that deliberately don't co-change.
+double combinedCouplingScore(String a, String b, FileCouplingMatrix m) {
+  final s = m.score(a, b);
+  if (s > 0) return s;
+  // Both files are tracked with no co-change history → trust the history.
+  if (m.containsPath(a) && m.containsPath(b)) return 0.0;
   return pathAffinity(a, b);
 }
 
@@ -876,4 +1988,76 @@ const int kFileClusterPaletteSize = 4;
 double couplingConfidence(FileCouplingMatrix matrix) {
   if (matrix.commitsAnalyzed <= 0) return 0;
   return math.min(1.0, matrix.commitsAnalyzed / 200.0);
+}
+
+/// A single "you might have forgotten this" signal: an unselected changed
+/// file whose coupling to the current selection is strong enough that
+/// committing without it is likely a bug or a split the user didn't mean
+/// to make.
+class CouplingNudge {
+  /// The unselected file the user is being nudged about.
+  final String path;
+
+  /// Mean `combinedCouplingScore` against the selection. 0..1.
+  final double score;
+
+  /// The selected peer with the tightest coupling — used to render the
+  /// "because this file goes with X" affordance.
+  final String anchor;
+
+  const CouplingNudge({
+    required this.path,
+    required this.score,
+    required this.anchor,
+  });
+}
+
+/// Rank unselected files by how tightly they couple to the current
+/// selection. A nudge fires when the mean coupling to the selection
+/// reaches [threshold] — the same default used by [clusterFiles], so a
+/// nudge aligns with what the clustering engine would have grouped.
+/// Returns at most [limit] nudges, sorted by descending score. Empty when:
+///   * [selected] is empty (nothing to couple *to*),
+///   * [matrix] has fewer commits than the confidence gate in
+///     [FileCouplingMatrix.coherenceFor] (we'd be surfacing noise), or
+///   * no unselected file clears the threshold.
+/// Cost: O(|selected| · |unselected|) combined-coupling lookups. Selection
+/// sizes are small in practice (≤ tens); the whole call is microseconds.
+List<CouplingNudge> suggestMissingPeers({
+  required Iterable<String> selected,
+  required Iterable<String> allChanged,
+  required FileCouplingMatrix matrix,
+  double threshold = 0.25,
+  int limit = 5,
+}) {
+  final selectedList = selected.toList(growable: false);
+  if (selectedList.isEmpty) return const [];
+  // Gate on the same commit-count confidence bar [coherenceFor] uses —
+  // under 50 commits the Jaccard rows are too noisy to nudge from.
+  if (matrix.commitsAnalyzed < 50) return const [];
+
+  final selectedSet = selectedList.toSet();
+  final nudges = <CouplingNudge>[];
+  for (final p in allChanged) {
+    if (selectedSet.contains(p)) continue;
+    double sum = 0.0;
+    double best = 0.0;
+    String bestAnchor = selectedList.first;
+    for (final s in selectedList) {
+      final c = combinedCouplingScore(p, s, matrix);
+      sum += c;
+      if (c > best) {
+        best = c;
+        bestAnchor = s;
+      }
+    }
+    final mean = sum / selectedList.length;
+    if (mean < threshold) continue;
+    nudges.add(CouplingNudge(path: p, score: mean, anchor: bestAnchor));
+  }
+  nudges.sort((a, b) => b.score.compareTo(a.score));
+  if (nudges.length > limit) {
+    return nudges.sublist(0, limit);
+  }
+  return nudges;
 }

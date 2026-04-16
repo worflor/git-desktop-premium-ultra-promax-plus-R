@@ -11,7 +11,6 @@ import '../onboarding_flow.dart';
 import '../onboarding_state.dart';
 import '../widgets/workspace_preview.dart';
 
-// ── Row layout constants ──────────────────────────────────────────────
 //
 // The picker pins these so that switching themes never reflows the list.
 // Without pinning, each theme's typography (fontFamily + fontScale +

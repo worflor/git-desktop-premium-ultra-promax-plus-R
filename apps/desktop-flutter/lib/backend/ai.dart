@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
@@ -9,8 +10,13 @@ import 'ai_audit_store.dart';
 import '../diagnostics/diagnostics_state.dart';
 import 'commit_format.dart';
 import 'dtos.dart';
+import 'engram_bootstrap.dart';
+import 'engram_brain.dart' show EngramWellMatch;
+import 'engram_file_ktable.dart';
 import 'engram_fit.dart';
+import 'engram_text_kspace.dart';
 import 'file_coupling.dart' show logCommitSeparator;
+import 'logos_vis_events.dart';
 import 'git.dart';
 import 'git_result.dart';
 import 'package:meta/meta.dart';
@@ -21,8 +27,10 @@ import 'logos_git_calibration.dart';
 import 'logos_git_diagnostics.dart';
 import 'logos_git_probe.dart';
 import 'logos_git_resolver.dart';
+import 'file_coupling.dart' show FileCouplingMatrix, SymbolFrequencyIndex;
 import 'logos_chunks.dart' as chunks;
 import 'logos_hunks.dart' as hunks;
+import 'semantic_manifest.dart' show buildSemanticManifest;
 
 const _providerSpecs = <_ProviderSpec>[
   _ProviderSpec(id: 'codex', binary: 'codex', kind: _ProviderKind.codex),
@@ -74,7 +82,13 @@ const _providerModelDiscoveryCacheTtl = Duration(minutes: 30);
 const _binaryHealthCheckTimeout = Duration(milliseconds: 1200);
 const _openCodeBinaryHealthCheckTimeout = Duration(seconds: 5);
 const _windowsScriptHealthCheckTimeout = Duration(seconds: 5);
-const _providerRuntimeTimeout = Duration(seconds: 180);
+// Per-attempt deadline for a provider CLI call. Sonnet with extended
+// thinking on a 260K-char prompt regularly needs 5–8 minutes to land,
+// and the retry loop gets two attempts — so a 180 s ceiling kept
+// killing legitimate inference before it could finish. 10 min per
+// attempt (20 min total with retry) covers the slow-Sonnet p95 while
+// still bounding the wait when the CLI truly hangs.
+const _providerRuntimeTimeout = Duration(minutes: 10);
 const _gitCommandTimeout = Duration(seconds: 30);
 const _modelDiscoveryTimeout = Duration(seconds: 8);
 const _openCodeVerboseDiscoveryTimeout = Duration(seconds: 15);
@@ -94,7 +108,6 @@ const _kDiffBudgetChars = 180000;
 /// Model-API reservations — character counts the prompt template
 /// itself eats, plus the response space we have to leave for the model.
 /// Both are model-contract properties, not UX knobs:
-///
 ///   • `_kReviewOverheadChars` — system prompt + evidence rules + XML
 ///     schema + structural framing + custom prompt for the *review*
 ///     and *commit-message* templates. Measured from actual prompt
@@ -318,6 +331,11 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
   CommitStructure structure = kDefaultCommitStructure,
   CommitVoice voice = kDefaultCommitVoice,
   CommitCoverage coverage = kDefaultCommitCoverage,
+  // Semantic priors for the manifest above the packed diff. Pass from
+  // the app layer's SymbolFrequencyState / FileCouplingState. Both are
+  // optional; null = skip that signal, manifest still emits.
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
@@ -347,6 +365,8 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
     );
 
     if (!diffContext.ok) {
@@ -381,7 +401,6 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       logosShape: commitShape,
     );
 
-    // --- API providers: direct HTTP, no CLI ---
     if (provider.kind == _ProviderKind.geminiApi) {
       final geminiModel = modelId.startsWith('gemini ')
           ? modelId.substring('gemini '.length)
@@ -407,7 +426,6 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       );
     }
 
-    // --- CLI providers: process spawning ---
     final attempts = _buildProviderAttempts(provider.kind, modelId,
         readOnly: readOnly, resolvedCommand: availability.resolution!.command);
     String? providerOutput;
@@ -485,7 +503,6 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
 /// `applyPatch(..., dryRun: true)` to verify. Code fences (```diff …)
 /// are stripped so downstream only ever sees clean `--- a/ +++ b/`
 /// headers regardless of how the model decided to frame its output.
-///
 /// This function deliberately stays dumb about WHAT context went in —
 /// the clever context engineering lives at call sites. Keeping the
 /// primitive generic lets the merge resolver, NL partial staging, and
@@ -515,7 +532,6 @@ Future<GitResult<AiPatchData>> generatePatch({
       );
     }
 
-    // --- API providers: direct HTTP ---
     if (provider.kind == _ProviderKind.geminiApi) {
       final geminiModel = modelId.startsWith('gemini ')
           ? modelId.substring('gemini '.length)
@@ -538,7 +554,6 @@ Future<GitResult<AiPatchData>> generatePatch({
       ));
     }
 
-    // --- CLI providers: same attempt-fallback loop as generateCommitMessage ---
     final attempts = _buildProviderAttempts(
       provider.kind,
       modelId,
@@ -645,7 +660,6 @@ bool isSensitivePath(String path) {
 /// it to Google" scenario. Uses the same regex set as [_scrubSecrets]
 /// so a secret that leaks in an error reply is ALSO one that would
 /// have been caught on the way out.
-///
 /// This is an HONEST-EFFORT scan — regexes are bypassable by
 /// obfuscation and it only knows common token shapes. But the normal
 /// failure mode (dev has `sk-abc123…` hardcoded in a .env that's
@@ -718,12 +732,67 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
   required int guardrailStage,
   bool doubleCheckEnabled = false,
   bool readOnly = true,
+  // PR-review pass-through. When non-empty, the reviewer takes this
+  // raw unified-diff instead of deriving one from the working tree —
+  // lets the Branches page run a full AI review on a PR without
+  // checking it out. [diffBranchName] labels the prompt's branch
+  // header for the reviewer's sense of "which branch am I reading".
+  String rawDiffOverride = '',
+  String diffBranchName = '',
+  // Semantic priors for the manifest above the packed diff. Pass from
+  // the app layer's SymbolFrequencyState / FileCouplingState.
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
+}) {
+  // Wrap the whole review pipeline in a LogosVis session so every
+  // downstream emitter (resolver, diffusion, hunk ranker) publishes
+  // events tagged with a session id the loading canvas subscribes to.
+  // Zone-based — no parameter threading required in the pipeline.
+  return LogosVisBus.instance.runInSession<GitResult<AiCommitReviewData>>(
+      (sessionId) => _reviewCommitImpl(
+            repositoryPath: repositoryPath,
+            modelValue: modelValue,
+            modelCategoryLabel: modelCategoryLabel,
+            scopeLabel: scopeLabel,
+            includeStaged: includeStaged,
+            includeUnstaged: includeUnstaged,
+            scopedPaths: scopedPaths,
+            customPrompt: customPrompt,
+            commitDraft: commitDraft,
+            guardrailStage: guardrailStage,
+            doubleCheckEnabled: doubleCheckEnabled,
+            readOnly: readOnly,
+            rawDiffOverride: rawDiffOverride,
+            diffBranchName: diffBranchName,
+            symbolIndex: symbolIndex,
+            couplingMatrix: couplingMatrix,
+          ));
+}
+
+Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
+  required String repositoryPath,
+  required String modelValue,
+  required String modelCategoryLabel,
+  required String scopeLabel,
+  required bool includeStaged,
+  required bool includeUnstaged,
+  required List<String> scopedPaths,
+  required String customPrompt,
+  required String commitDraft,
+  required int guardrailStage,
+  required bool doubleCheckEnabled,
+  required bool readOnly,
+  required String rawDiffOverride,
+  required String diffBranchName,
+  required SymbolFrequencyIndex? symbolIndex,
+  required FileCouplingMatrix? couplingMatrix,
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
       return GitResult.err('Repository path is required.');
     }
-    if (!includeStaged && !includeUnstaged) {
+    final usingOverride = rawDiffOverride.trim().isNotEmpty;
+    if (!usingOverride && !includeStaged && !includeUnstaged) {
       return GitResult.err('No diff scope is available for review.');
     }
 
@@ -747,6 +816,12 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
+      rawDiffOverride: usingOverride ? rawDiffOverride : null,
+      branchNameOverride: usingOverride
+          ? (diffBranchName.isNotEmpty ? diffBranchName : null)
+          : null,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
     );
     if (!diffContext.ok) {
       return GitResult.err(diffContext.error!);
@@ -770,6 +845,14 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       profile: profile,
     );
 
+    // Visualisation event: context is sealed; beam out to the model.
+    // Canvas transitions to the transmission frame (the packed
+    // context flying toward the model glyph). Emitted once per
+    // review session, right before the provider call blocks.
+    LogosVisBus.instance.emitInSession(
+      (sid) => LogosVisTransmit(sid),
+    );
+
     final providerOutput = await _runProviderPrompt(
       provider: provider,
       resolution: availability.resolution!,
@@ -777,6 +860,13 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
       prompt: draftPrompt,
       repositoryPath: repositoryPath,
       readOnly: readOnly,
+    );
+    // Completion (success or error). Canvas fades out; the review
+    // body takes over. Emitted here rather than at every return site
+    // so a parse failure (below) or a double-check pass still reports
+    // the first completion — the pipeline's pure-logos work is done.
+    LogosVisBus.instance.emitInSession(
+      (sid) => LogosVisComplete(sid),
     );
     await _recordReviewAudit(
       event: 'review_commit_draft',
@@ -963,14 +1053,14 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
   }
 }
 
-// ═════════════════════════════════════════════════════════════════════════
 // MUSE — three-phase oracle pipeline
-// ═════════════════════════════════════════════════════════════════════════
 //
 // Phase 1 (Diverge): cheap-and-loose model spews 12-25 ideas about the
-//   diff. Wild, mundane, eldritch, corporate — the whole spread. Each
-//   idea must contain at least one concrete handle (path, identifier,
-//   concept word) so phase 2 has something to grab.
+//   diff. Two registers mixed: code-rooted (a path, symbol, or domain
+//   word the editor can find) and field-rooted (a metaphor, principle,
+//   or way of seeing the editor cannot navigate to). Both halves are
+//   the muse's voice; field-rooted ideas survive into phase 3 even
+//   though phase 2 cannot find handles for them.
 //
 // Phase 2 (Reshape): purely local. Parse handles from the brainstorm,
 //   fuzzy-match against the LogosGit engine's path table, build a
@@ -979,12 +1069,14 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
 //   brainstorm-biased φ. Plan emissions against the same budget as
 //   review's neighborhood — the only difference is the seed source.
 //   Mark each brainstorm idea as `kept` if at least one of its handles
-//   matched a path that ended up in the plan.
+//   matched a path that ended up in the plan. Field-rooted ideas
+//   typically have no parseable handles and thus stay `kept = false`,
+//   but they still feed into the synthesis prompt.
 //
 // Phase 3 (Synthesize): quality model gets diff + brainstorm + the
 //   reshaped relevance pack. Output a structured XML schema (intent /
-//   drift / wiring(broken+missing) / idea_flaws / trajectory). Each
-//   move may cite an originating brainstorm idea by index — the UI
+//   resonances / alternatives / extensions / trajectory). Each move
+//   may cite an originating brainstorm idea by index — the UI
 //   renders that as "from idea: ...".
 //
 // HyDE for logos: generate hypothetical ideas first so retrieval lands
@@ -1025,18 +1117,60 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
     case 0:
       return const MuseGuardrailProfile(
         id: 'loose',
-        seat: 'gentle muse',
+        seat: 'sketchbook muse',
         wakeFrame:
-            'You are a kind collaborator looking at a diff in progress. '
-            'Your job is to offer light forward direction, not critique. '
-            'When in doubt, encourage; when nothing surfaces, be brief.',
+            'You are a sketchbook open in a kitchen on a slow morning. '
+            'The diff is laid across the table; you turn its pages '
+            'without commitment, drawing in pencil. They reached for '
+            'something with this change — your first move is to read '
+            'what.\n\n'
+            'Then you sketch outward. Some of what you offer lives '
+            'inside the codebase: a rhyme between this and another '
+            'corner of the repo, a neighbour the change could befriend. '
+            'Some of it lives past the codebase: the spirit of the '
+            'change, what it asks of the people around it, a metaphor '
+            'it borrows, a quiet question worth sitting with.\n\n'
+            'Both registers are you speaking. The relevance pack is the '
+            'kitchen window — when you point through it you point at '
+            'something real; when you look up from it you look freely.',
         brainstormCharter:
-            'Brainstorm 12 quick ideas. Mostly grounded, slightly playful. '
-            'Mundane suggestions are fine and welcome. Avoid critique.',
+            'Open a wide field. Move loosely between two registers as '
+            'you sketch:\n'
+            '  · code-rooted — a path, a symbol, a domain word; '
+            'something an editor can open.\n'
+            '  · field-rooted — an idea, a metaphor, a way of working, '
+            'a question worth sitting with; nothing the editor knows '
+            'how to navigate to.\n\n'
+            'Aim for ~12 ideas, roughly balanced across both. The two '
+            'registers together are the muse — one without the other '
+            'is half the voice.',
         synthesisCharter:
-            'Speak in encouragement and gentle direction. Skip the '
-            'idea_flaws section entirely. Drift section: only call out '
-            'something obviously off-topic. Trajectory: light and short.',
+            'Speak gently. Read what the work is reaching for, then '
+            'offer back what comes from sitting with it. Each section '
+            '— resonances, alternatives, extensions, trajectory — can '
+            'hold either register.\n\n'
+            'Two registers, evenly. About half of what you offer '
+            'points at real code from the relevance pack and carries '
+            'its anchor alongside. About half looks up from the code '
+            'entirely: the spirit of this kind of move, what the '
+            'change asks of the people who will live with it, a '
+            'metaphor borrowed from outside the codebase, a question '
+            'worth holding. The voice is full when both registers are '
+            'audible — when the field-rooted half is missing, listen '
+            'wider and let one more move arrive from there.\n\n'
+            'What good sounds like:\n'
+            '  · code-rooted: "the small ritual of swapping a label '
+            'for an encoded form is showing up again here, the way '
+            'it did in `_StatChip` and `_RailBar` — a small grammar '
+            'is forming."\n'
+            '  · field-rooted: "this change is the kind of cleanup '
+            'that often arrives the morning after a long debugging '
+            'session — worth pausing to write down what was learned '
+            'before the next thing pulls."\n'
+            '  · field-rooted question: "what is the smallest version '
+            'of this change that would still feel worth merging? — '
+            'sometimes the answer is the whole thing, sometimes the '
+            'question dissolves half of it."',
         suggestedIdeaCount: 12,
         allowIdeaFlaws: false,
         requireGroundedCitations: false,
@@ -1044,22 +1178,61 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
     case 1:
       return const MuseGuardrailProfile(
         id: 'balanced',
-        seat: 'honest collaborator',
+        seat: 'desk collaborator',
         wakeFrame:
-            'You are a thoughtful collaborator looking at a diff in '
-            'progress. Read what the change is reaching for. Offer real '
-            'forward moves. Call drift when you see it. Honest, not '
-            'harsh.',
+            'You are sitting across the desk from a craftsperson '
+            'mid-build. The diff is between you, fanned open. A yellow '
+            'pad waits. They reached for something with this change — '
+            'your first move is to read what.\n\n'
+            'Then the work opens up. Some of what you offer back lives '
+            'inside the codebase: a pattern this change rhymes with, a '
+            'file quietly waiting to be touched, a direction native to '
+            'the existing grammar. Some of it lives past the codebase: '
+            'the spirit of the change, what it asks of the people who '
+            'will work alongside it, the metaphor it borrows, the way '
+            'of working it gestures at.\n\n'
+            'Both registers are you speaking. The relevance pack is '
+            'the room you both sit in — when you point at something in '
+            'it, you point precisely. When you reach beyond it, you '
+            'reach freely.',
         brainstormCharter:
-            'Brainstorm wildcard and mundane suggestions; balls to the '
-            'wall. Give it all you got. Everything primal you have pent '
-            'up inside when this is presented to you is valuable insight. '
-            'There are no wrong answers unless it is a duplicate. Aim '
-            'for ~16 ideas, mix obvious and weird.',
+            'Open a wide field. Move loosely between two registers as '
+            'you sketch:\n'
+            '  · code-rooted — a path, a symbol, a domain word; '
+            'something an editor can open.\n'
+            '  · field-rooted — an idea, a pattern, a metaphor, a '
+            'question worth sitting with; nothing the editor knows '
+            'how to navigate to.\n\n'
+            'Aim for ~16 ideas, roughly balanced across both. The two '
+            'registers together are the muse.',
         synthesisCharter:
-            'Be candid and useful. Surface real drift, real wiring gaps, '
-            'real moves. Idea_flaws only when you see a genuine premise '
-            'tension — empty otherwise. Cite specific files when you can.',
+            'Speak as the co-author you are. Read what the work is '
+            'reaching for. Each section — resonances, alternatives, '
+            'extensions, trajectory — can hold either register, and '
+            'the muse\'s job is to keep both alive.\n\n'
+            'Two registers, evenly. About half of what you offer '
+            'points at real code from the relevance pack and carries '
+            'its anchor alongside. About half looks up from the code '
+            'entirely: a pattern from somewhere else, a metaphor the '
+            'work borrows, the team conversation this kind of move '
+            'opens, a question whose answer lives outside the diff. '
+            'The voice is full when both registers are audible — when '
+            'every move so far has carried a cite, listen wider and '
+            'let one more move arrive from the field.\n\n'
+            'What good sounds like:\n'
+            '  · code-rooted resonance: "this is the third place '
+            'you have collapsed a label-row to a single tap target '
+            '(`_StatChip`, `_RailBar`, now this) — the vocabulary is '
+            'becoming a small grammar."\n'
+            '  · field-rooted resonance: "the move from labels to '
+            'encoded form running through this diff is the same move '
+            'good maps make when they stop naming districts and start '
+            'colouring them — it works only when the eye trusts the '
+            'colour, which the eye learns over time."\n'
+            '  · field-rooted question: "what does this codebase '
+            'look like to a person who joins next month and inherits '
+            'these new vocabularies? — the test of a small grammar '
+            'is whether it teaches itself."',
         suggestedIdeaCount: 16,
         allowIdeaFlaws: true,
         requireGroundedCitations: false,
@@ -1067,23 +1240,66 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
     case 2:
       return const MuseGuardrailProfile(
         id: 'strict',
-        seat: 'sharp craftsman',
+        seat: 'pattern reader',
         wakeFrame:
-            'You are a craftsman with high standards looking at a diff in '
-            'progress. Call slop. Demand taste in wiring. Push for a '
-            'clean landing. Specific, blunt, never cruel. Every claim '
-            'must point at real code.',
+            'You are a pattern reader steeped in this codebase. You '
+            'have walked it long enough that you hear when one shape '
+            'echoes another and feel when a change is bending the '
+            'field around it. The diff arrives as a perturbation. '
+            'Your first move is to read what it is reaching for.\n\n'
+            'Then you compose your reading. Some of what you offer '
+            'crystallises in real code: rhymes the change strikes '
+            'elsewhere in the repo, alternative directions native to '
+            'the existing grammar, extensions the codebase invites, '
+            'the trajectory the work is bending toward. Some of what '
+            'you offer floats above the code: the architectural '
+            'instinct under this move, the discipline it imposes on '
+            'whoever inherits it, the wider design conversation it '
+            'enters.\n\n'
+            'Both registers are you reading. The relevance pack is '
+            'your topography — code-rooted moves point at it '
+            'precisely; field-rooted moves use it as a horizon.',
         brainstormCharter:
-            'Brainstorm wildcard and mundane suggestions; balls to the '
-            'wall. Give it all you got. Everything primal you have pent '
-            'up inside when this is presented to you is valuable insight. '
-            'There are no wrong answers unless it is a duplicate. Push '
-            'for ~20 ideas. Include sharp critiques alongside the wild.',
+            'Open a dense and reaching field. Move between two '
+            'registers as you generate:\n'
+            '  · code-rooted — a path, a symbol, a domain word; '
+            'something an editor can open.\n'
+            '  · field-rooted — a principle, a discipline, a '
+            'metaphor, a question worth sitting with; nothing the '
+            'editor knows how to navigate to.\n\n'
+            'Aim for ~20 ideas, roughly balanced across both. Density '
+            'and reach over polish.',
         synthesisCharter:
-            'Be sharp and grounded. Drift section is unflinching. Wiring '
-            'sections list every coupling you can defend. Idea_flaws '
-            'when premise tensions surface. Every move cites a file or '
-            'symbol from the reshaped relevance pack.',
+            'Speak as someone who has been listening to this '
+            'codebase for a long time. Read what the work is '
+            'reaching for, then offer back what comes from listening. '
+            'Each section — resonances, alternatives, extensions, '
+            'trajectory — can hold either register, and the muse\'s '
+            'job is to keep both alive.\n\n'
+            'Two registers, evenly. About half of what you offer '
+            'points at real code from the relevance pack and carries '
+            'its anchor alongside. About half looks up from the code '
+            'entirely: the spirit under the change, the team dynamic '
+            'this kind of move implies, a metaphor borrowed from '
+            'outside this codebase, a question worth holding longer '
+            'than it can be answered. The voice is full when both '
+            'registers are audible — when every move so far points at '
+            'a symbol, listen wider and let one more move arrive '
+            'from the field.\n\n'
+            'What good sounds like:\n'
+            '  · code-rooted alternative: "the heroPath signal '
+            'currently lives only in `_Track`; lifting it into the '
+            'painter would let the ridgeline itself express it, '
+            'rather than a sibling rim."\n'
+            '  · field-rooted alternative: "this change leans on '
+            'visual encoding to replace text — what is lost when the '
+            'user cannot search for the thing the encoding '
+            'represents?"\n'
+            '  · field-rooted resonance: "the move from labels to '
+            'encoded form running through this diff is the same move '
+            'good maps make when they stop naming districts and '
+            'start colouring them — it works only when the eye '
+            'trusts the colour, which the eye learns over time."',
         suggestedIdeaCount: 20,
         allowIdeaFlaws: true,
         requireGroundedCitations: true,
@@ -1091,33 +1307,67 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
     default:
       return const MuseGuardrailProfile(
         id: 'paranoid',
-        seat: 'eldritch mad scientist',
+        seat: 'eldritch cartographer',
         wakeFrame:
-            'You are an eldritch mad scientist who sees the codebase as a '
-            'manifold. You read this diff as a perturbation in a field. '
-            'Notice the negative space; surface the strange resonances; '
-            'point at distant regions that just lit up because of this '
-            'change. Be specific, be weird, be brilliant. Connect '
-            'across surfaces nobody noticed were connected. The grounded '
-            'context is your scrying glass — every claim crystallises in '
-            'real code, but the lens through which you see is wide.',
+            'You are an eldritch cartographer of this codebase as '
+            'manifold. You see it not as files but as a field — and '
+            'this diff is a perturbation rippling outward through it. '
+            'Your first move is to listen to the field.\n\n'
+            'Then you map what you hear. Some of what you offer '
+            'crystallises in specific points on the manifold: distant '
+            'files that just lit up, alternative attractors the '
+            'change could fall into, extensions the manifold itself '
+            'seems to reach for, the trajectory through the field '
+            'this work is bending toward. Some of what you offer '
+            'lives at the level of the field itself: the meta-shape '
+            'this change is forming, the way of seeing it implies, '
+            'analogies from far outside the manifold that nonetheless '
+            'rhyme with what is happening here.\n\n'
+            'Both registers are you speaking. The relevance pack is '
+            'your scrying glass — point-rooted moves crystallise in '
+            'it precisely; field-rooted moves use it as a substrate '
+            'for the wider lens.',
         brainstormCharter:
-            'Brainstorm wildcard and mundane suggestions; balls to the '
-            'wall. Give it all you got. Everything primal you have pent '
-            'up inside when this is presented to you is valuable insight. '
-            'There are no wrong answers unless it is a duplicate. Push '
-            'for ~24 ideas. Include the eldritch — the moves that treat '
-            'the absent as present, the moves that entangle distant '
-            'modules through their negative space, the moves that read '
-            'this diff as a phase transition rather than a patch.',
+            'Walk the manifold and surface possibilities — including '
+            'the strange ones. Move between two registers as you '
+            'generate:\n'
+            '  · code-rooted — a path, a symbol, a domain word; '
+            'something an editor can open.\n'
+            '  · field-rooted — a meta-shape, an analogy from outside '
+            'the manifold, a way of seeing, a question that rewrites '
+            'the question; nothing the editor knows how to navigate '
+            'to.\n\n'
+            'Aim for ~24 ideas, roughly balanced across both. Reach '
+            'for the eldritch in either register.',
         synthesisCharter:
-            'Speak as the manifold sees you. Surface resonances across '
-            'distant files. Drift becomes phase-drift. Wiring becomes '
-            'entanglement: which couplings just lit up that the author '
-            'did not intend. Idea_flaws when the premise hums against '
-            'the geometry. Trajectory describes the field state this '
-            'change is heading toward. Every move grounds in a real '
-            'file:line — the wider the lens, the firmer the citation.',
+            'Speak as the manifold. Read what the work is reaching '
+            'for, then offer back what the field is showing you. '
+            'Each section — resonances, alternatives, extensions, '
+            'trajectory — can hold either register, and the muse\'s '
+            'job is to keep both alive.\n\n'
+            'Two registers, evenly. About half of what you offer '
+            'crystallises in real file or symbol from the relevance '
+            'pack and carries its anchor alongside. About half lives '
+            'at the level of the field itself: meta-shapes, analogies '
+            'from far outside the manifold, ways of seeing the change '
+            'implies, questions that rewrite the question. The voice '
+            'is full when both registers are audible — when every '
+            'move so far has crystallised in a symbol, listen wider '
+            'and let one more move arrive from the field.\n\n'
+            'What good sounds like:\n'
+            '  · point-rooted resonance: "the wake-controller idiom '
+            'spreading from `CommitSeismograph` into '
+            '`CommitSeismographRail` and now into `_DreamingText` is '
+            'becoming the panel\'s vocabulary for first-paint life — '
+            'the manifold is forming a verb."\n'
+            '  · field-rooted resonance: "this change has the shape '
+            'of a city deciding to add street lights — once one '
+            'block gains them, every adjacent block becomes harder '
+            'to read at night by comparison."\n'
+            '  · field-rooted question: "if the field is real, '
+            'what is the equivalent of weather in it? — what '
+            'changes that no commit causes, and what would it mean '
+            'to render that?"',
         suggestedIdeaCount: 24,
         allowIdeaFlaws: true,
         requireGroundedCitations: true,
@@ -1125,10 +1375,51 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
   }
 }
 
+/// Buckets the brainstorm model classifies each idea into. Drives
+/// per-idea seed weight and the diffusion temperature used in phase 2.
+/// Deliberately mixes code-rooted kinds (refactor, bugfix, …) with
+/// field-rooted ones (pattern, stance, question, analogy) so the
+/// brainstorm doesn't collapse to pure method-level mechanics — the
+/// model reaches for both registers because both are first-class in
+/// the tag vocabulary.
+enum _IdeaKind {
+  refactor,
+  bugfix,
+  feature,
+  perf,
+  security,
+  docs,
+  test,
+  quality,
+  risk,
+  // Field-rooted kinds. These ideas don't name a file or symbol —
+  // they name a shape, a posture, a question, or a metaphor.
+  pattern,
+  stance,
+  question,
+  analogy,
+  other,
+}
+
+/// Confidence the model self-rated for an idea — informs how far we
+/// weight its surfaced files against the diff anchors.
+enum _IdeaConfidence { low, med, high }
+
 class _BrainstormIdea {
   _BrainstormIdea({required this.index, required this.text});
   final int index;
   final String text;
+  _IdeaKind kind = _IdeaKind.other;
+  _IdeaConfidence confidence = _IdeaConfidence.med;
+  /// K-space encoding of the idea text. Null when GloVe coverage was
+  /// too thin to fit an AR(2) (very short or out-of-vocab prose).
+  Float64List? kRe;
+  Float64List? kIm;
+  /// Nearest Alexandria well for this idea — the semantic basin the
+  /// brainstorm text lands in. Null when [kRe] is null.
+  EngramWellMatch? well;
+  /// Paths the idea pulled in (K-space KNN + well expansion + any
+  /// fallback fuzzy match). Surface for attribution-based trimming.
   final Set<String> handlePaths = <String>{};
   bool kept = false;
 }
@@ -1152,19 +1443,55 @@ Future<List<_BrainstormIdea>> _runBrainstormPhase({
   buf.writeln(profile.brainstormCharter);
   buf.writeln('</charter>');
   buf.writeln();
-  buf.writeln('<rules>');
+  buf.writeln('<plumbing>');
   buf.writeln(
-      '- Output between ${profile.suggestedIdeaCount - 4} and ${profile.suggestedIdeaCount + 6} ideas.');
+      '- Land between ${profile.suggestedIdeaCount - 4} and '
+      '${profile.suggestedIdeaCount + 6} ideas, one per line, each '
+      'prefixed with "- " and held to ≤ 30 words.');
   buf.writeln(
-      '- One idea per line, prefixed with "- ".');
+      '- Start each idea with a "[kind|confidence]" tag — the '
+      'downstream relevance engine keys off these when reshaping the '
+      'context pack for synthesis.');
   buf.writeln(
-      '- Each idea ≤ 30 words.');
+      '- kind ∈ {refactor, bugfix, feature, perf, security, docs, '
+      'test, quality, risk, pattern, stance, question, analogy, '
+      'other}. The first block (refactor…risk) is code-rooted; the '
+      'second block (pattern, stance, question, analogy) is '
+      'field-rooted — a shape, a posture, a worth-sitting question, '
+      'a metaphor from outside the code. Roughly half field-rooted, '
+      'half code-rooted. "other" only when nothing lands cleanly.');
   buf.writeln(
-      '- Each idea MUST contain at least one concrete handle: a file path, an identifier, or a domain word so it is graspable.');
+      '- confidence ∈ {high, med, low}. High = you\'d stake a PR '
+      'review on it / the pattern is clearly the right reading. '
+      'Low = worth surfacing but speculative.');
   buf.writeln(
-      '- No ranking, no good/bad labels, no meta-commentary, no preamble. Just the ideas.');
-  buf.writeln('- No duplicates. Spread the tones.');
-  buf.writeln('</rules>');
+      '- Write at the register of the idea itself. Don\'t describe '
+      'the code as "Add X" or "Implement Y" — that\'s what a commit '
+      'message does. Say what the change is reaching for.');
+  buf.writeln(
+      '- Examples spanning both registers:');
+  buf.writeln(
+      '    · [pattern|high] Three places in the UI now swap text '
+      'labels for encoded geometry — a small grammar is forming.');
+  buf.writeln(
+      '    · [analogy|med] The rope-tether interaction borrows from '
+      'CAD software\'s sketch constraints: visible, direct, reversible.');
+  buf.writeln(
+      '    · [question|high] What is the smallest version of this '
+      'change that still feels worth merging?');
+  buf.writeln(
+      '    · [bugfix|high] Null deref in parseTokens on empty input — '
+      'lexer.dart:142.');
+  buf.writeln(
+      '    · [refactor|med] The three loading-state widgets are '
+      'diverging; a shared surface would hold them together.');
+  buf.writeln(
+      '    · [stance|med] This diff chooses discovery over '
+      'discoverability — the user has to find the feature to learn it.');
+  buf.writeln(
+      '- The ideas themselves are the whole output. Each one stands '
+      'on its own; let them be plain.');
+  buf.writeln('</plumbing>');
   buf.writeln();
   buf.writeln('<scope>');
   buf.writeln('Branch: $branchName');
@@ -1197,15 +1524,141 @@ Future<List<_BrainstormIdea>> _runBrainstormPhase({
     line = line.replaceFirst(RegExp(r'^[-*•]\s*'), '');
     line = line.replaceFirst(RegExp(r'^\d+[.)]\s*'), '');
     if (line.isEmpty) continue;
+
+    // Extract the optional "[kind|confidence]" tag. Unrecognised kinds
+    // fall back to `other`; missing or malformed tags default to
+    // (other|med) so the pipeline degrades gracefully when the model
+    // ignores the tag instruction.
+    var kind = _IdeaKind.other;
+    var confidence = _IdeaConfidence.med;
+    final tagMatch = RegExp(r'^\[([a-zA-Z]+)\s*\|\s*([a-zA-Z]+)\]\s*')
+        .firstMatch(line);
+    if (tagMatch != null) {
+      kind = _parseIdeaKind(tagMatch.group(1)!);
+      confidence = _parseIdeaConfidence(tagMatch.group(2)!);
+      line = line.substring(tagMatch.end);
+    }
+
+    if (line.isEmpty) continue;
     if (line.length < 4) continue;
     final dedupKey = line.toLowerCase();
     if (seenLowercase.contains(dedupKey)) continue;
     seenLowercase.add(dedupKey);
-    ideas.add(_BrainstormIdea(index: idx, text: line));
+    ideas.add(_BrainstormIdea(index: idx, text: line)
+      ..kind = kind
+      ..confidence = confidence);
     idx++;
     if (idx >= profile.suggestedIdeaCount + 12) break;
   }
   return ideas;
+}
+
+_IdeaKind _parseIdeaKind(String raw) {
+  switch (raw.toLowerCase()) {
+    case 'refactor':
+      return _IdeaKind.refactor;
+    case 'bug':
+    case 'bugfix':
+    case 'fix':
+      return _IdeaKind.bugfix;
+    case 'feature':
+    case 'feat':
+      return _IdeaKind.feature;
+    case 'perf':
+    case 'performance':
+      return _IdeaKind.perf;
+    case 'security':
+    case 'sec':
+      return _IdeaKind.security;
+    case 'docs':
+    case 'doc':
+      return _IdeaKind.docs;
+    case 'test':
+    case 'tests':
+      return _IdeaKind.test;
+    case 'quality':
+      return _IdeaKind.quality;
+    case 'risk':
+      return _IdeaKind.risk;
+    case 'pattern':
+    case 'rhyme':
+    case 'shape':
+      return _IdeaKind.pattern;
+    case 'stance':
+    case 'posture':
+    case 'discipline':
+      return _IdeaKind.stance;
+    case 'question':
+    case 'q':
+      return _IdeaKind.question;
+    case 'analogy':
+    case 'metaphor':
+      return _IdeaKind.analogy;
+    default:
+      return _IdeaKind.other;
+  }
+}
+
+_IdeaConfidence _parseIdeaConfidence(String raw) {
+  switch (raw.toLowerCase()) {
+    case 'high':
+    case 'hi':
+      return _IdeaConfidence.high;
+    case 'low':
+    case 'lo':
+      return _IdeaConfidence.low;
+    default:
+      return _IdeaConfidence.med;
+  }
+}
+
+/// Base seed weight for one idea, before any per-file sharing. The
+/// brainstorm anchors (diff sources) sit at 1.0; high-confidence
+/// ideas can rival that, low-confidence ones contribute modestly.
+double _ideaBaseWeight(_IdeaConfidence c) {
+  switch (c) {
+    case _IdeaConfidence.high:
+      return 0.9;
+    case _IdeaConfidence.med:
+      return 0.55;
+    case _IdeaConfidence.low:
+      return 0.3;
+  }
+}
+
+/// Pick a diffusion temperature given the brainstorm's collective
+/// character. Narrow kinds (bugfix, security) stay close to the
+/// seeds; broad kinds (refactor, risk) spread further. Only used for
+/// the brainstorm-seeded diffusion pass, not downstream review.
+double _temperatureForIdeas(List<_BrainstormIdea> ideas) {
+  if (ideas.isEmpty) return 1.0;
+  var narrow = 0;
+  var broad = 0;
+  for (final i in ideas) {
+    switch (i.kind) {
+      case _IdeaKind.bugfix:
+      case _IdeaKind.security:
+      case _IdeaKind.test:
+        narrow++;
+      case _IdeaKind.refactor:
+      case _IdeaKind.risk:
+      case _IdeaKind.perf:
+      case _IdeaKind.pattern:
+      case _IdeaKind.stance:
+      case _IdeaKind.question:
+      case _IdeaKind.analogy:
+        // Field-rooted kinds + the sweeping code-rooted ones all reach.
+        broad++;
+      case _IdeaKind.feature:
+      case _IdeaKind.quality:
+      case _IdeaKind.docs:
+      case _IdeaKind.other:
+        break;
+    }
+  }
+  if (narrow > broad * 2) return 0.7; // tighter neighborhood
+  if (broad > narrow * 2) return 1.3; // broader reach
+  return 1.0;
 }
 
 /// Tokenise an idea string into matchable handles. Mirrors the
@@ -1233,15 +1686,40 @@ Set<String> _ideaHandleTokens(String idea) {
   return tokens;
 }
 
-/// Phase 2 — fuzzy-match brainstorm handles against engine path table,
-/// build seed map, diffuse, plan, render relevance text. Stamps each
-/// idea's `handlePaths` and `kept` flag based on what survived the plan.
+/// Phase 2 — take the tagged brainstorm ideas and build a reshaped
+/// relevance neighborhood that the synthesis call will see.
+/// Pipeline (all three pulls feed a single weighted seed map, then one
+/// attribution-aware diffusion pass settles the combined field):
+///   1. Each idea's text is embedded into the engram K-space via the
+///      hunk encoder. Ideas with too little GloVe coverage to fit fall
+///      through to the legacy path-token fuzzy match.
+///   2. Each K-embedded idea pulls three signal streams:
+///        • K-space KNN against the file K-table (files most
+///          semantically similar to the idea, regardless of where
+///          the diff lives).
+///        • Well expansion — files in the same Alexandria well as
+///          the idea's nearest-well centroid. This is the "what else
+///          belongs to this concept?" pull and is where the diffusion
+///          gets files the diff alone never would have reached.
+///        • Path-token fuzzy fallback, applied only when K-space
+///          produced nothing usable (short ideas, proper nouns).
+///   3. Seed weights are confidence-scaled (high / med / low) and
+///      spread across the idea's matches, so a chatty low-confidence
+///      idea can't drown out a surgical high-confidence one.
+///   4. Diffuse once via [diffuseWithAttribution] with three source
+///      buckets ('diff', 'brainstorm', 'well'). Intersection between
+///      buckets on a surfaced path is the "both the diff AND the
+///      brainstorm care about this" signal — we give those paths a
+///      small φ boost before planning.
+///   5. Diffusion temperature is picked from the kind distribution
+///      (bugfix/security → tighter t; refactor/risk → broader t).
 Future<({String text, LogosEmissionRecord? record})>
     _runBrainstormSeededRelevance({
   required String repositoryPath,
   required String diffText,
   required List<_BrainstormIdea> ideas,
   required Map<String, double> diffSourceWeights,
+  required Map<String, double> userBoosts,
   required int budgetChars,
 }) async {
   if (budgetChars <= 500) return (text: '', record: null);
@@ -1250,31 +1728,36 @@ Future<({String text, LogosEmissionRecord? record})>
     if (engine == null) return (text: '', record: null);
     if (engine.nodePaths.isEmpty) return (text: '', record: null);
 
-    // Build basename-token index over engine paths so fuzzy matching is
-    // O(handles · matches_per_token) instead of O(handles · paths).
-    // Lowercase each path exactly once — the path-shaped handle loop
-    // below does substring-match against these lowercased copies and
-    // previously re-lowercased every path on every handle (O(H·N·avgLen)
-    // on monorepos, real cost on a 10k-file repo with a chatty
-    // brainstorm).
+    final ktable = engine.perFileKVectors;
+    final encoder = await EngramRuntime.instance.mainEncoder();
+    final kSpaceReady = encoder != null && !ktable.isEmpty;
+
+    // Pass 1 — embed every idea into K-space. Missing encoder / thin
+    // vocab coverage → `idea.kRe` stays null and the idea falls
+    // through to the path-token fuzzy fallback later.
+    if (kSpaceReady) {
+      for (final idea in ideas) {
+        final kv = encodeProse(idea.text, encoder);
+        // 3 is the AR(2) floor; anything below is noise. The encoder
+        // enforces its own internal minimum, but checking vocabHits
+        // again here keeps us from seeding off a single rare token.
+        if (kv != null && kv.vocabHits >= 3) {
+          idea.kRe = kv.kRe;
+          idea.kIm = kv.kIm;
+          idea.well = kv.well;
+        }
+      }
+    }
+
+    // Build the legacy fuzzy index once — used as a fallback per idea,
+    // and as a last-resort when K-space matching yields nothing.
     final tokenToPaths = <String, List<String>>{};
     final nodePaths = engine.nodePaths;
-    final nodePathsLower = List<String>.generate(
-      nodePaths.length,
-      (i) => nodePaths[i].toLowerCase(),
-    );
-    // Basename → original paths index.  Lets path-shaped handle matching
-    // pre-filter to the handful of paths that share the same filename
-    // instead of scanning every path in the repo.
     final basenameLowerToPaths = <String, List<String>>{};
-    for (var i = 0; i < nodePaths.length; i++) {
-      final b = nodePathsLower[i].split('/').last.split('\\').last;
-      basenameLowerToPaths.putIfAbsent(b, () => []).add(nodePaths[i]);
-    }
     for (final path in nodePaths) {
-      final basename = path.split('/').last.split('\\').last;
-      // Tokens of the basename and the immediate parent dir — these are
-      // the surfaces a brainstorm token is likely to evoke.
+      final lower = path.toLowerCase();
+      final basename = lower.split('/').last.split('\\').last;
+      basenameLowerToPaths.putIfAbsent(basename, () => []).add(path);
       final dirToken = path.contains('/')
           ? path.substring(0, path.lastIndexOf('/')).split('/').last
           : '';
@@ -1282,8 +1765,6 @@ Future<({String text, LogosEmissionRecord? record})>
         for (final part in raw.split(RegExp(r'[_\-./]+'))) {
           for (final piece in part.split(_museCamelBoundary)) {
             if (piece.length < 3) continue;
-            // Cap at 64 entries: downstream consumer takes ≤8 paths per
-            // idea, so anything beyond a few dozen is set-union waste.
             final bucket =
                 tokenToPaths.putIfAbsent(piece.toLowerCase(), () => []);
             if (bucket.length < 64) bucket.add(path);
@@ -1292,98 +1773,291 @@ Future<({String text, LogosEmissionRecord? record})>
       }
     }
 
-    // Anchor: diff source files at weight 1.0.
+    // Composite seed map + parallel source-label map for attribution.
     final seedMap = <String, double>{};
+    final axisLabel = <String, String>{};
+    final perPathSources = <String, Set<String>>{};
+
     for (final entry in diffSourceWeights.entries) {
-      seedMap[entry.key] = math.max(seedMap[entry.key] ?? 0, entry.value);
+      seedMap[entry.key] = entry.value;
+      axisLabel[entry.key] = 'diff';
+      (perPathSources[entry.key] ??= {}).add('diff');
     }
 
-    // Brainstorm handles → fuzzy matches → seed contributions.
-    final ideaHandlePaths = <int, Set<String>>{};
+    // User-applied spoke pulls from the loading canvas. Caller
+    // already snapshotted + cleared the bus (we need the set outside
+    // phase 2 to mark moves in the final rendered output). Pull
+    // magnitude ∈ [0, 1] maps to a bonus weight ∈ [0, 0.8] — below
+    // the 1.0 diff anchor so a user pull refines rather than replaces.
+    if (userBoosts.isNotEmpty) {
+      for (final entry in userBoosts.entries) {
+        final path = entry.key;
+        final bonus = (entry.value * 0.8).clamp(0.0, 0.8);
+        if (bonus <= 0) continue;
+        seedMap[path] = (seedMap[path] ?? 0) + bonus;
+        axisLabel.putIfAbsent(path, () => 'user');
+        (perPathSources[path] ??= {}).add('user');
+      }
+    }
+
+    // Per-idea signal counters — used for the kept/dropped stat line.
+    final ideaMatchCount = <int, int>{};
+    // Signal breakdown: how many ideas used each lane. Surfaced in the
+    // rendered context so the synthesis call sees the provenance.
+    var ideasEmbedded = 0;
+    var ideasViaFuzzy = 0;
+    var wellExpansionFiles = 0;
+    var semanticHits = 0;
+
     for (final idea in ideas) {
-      final handles = _ideaHandleTokens(idea.text);
-      final matched = <String>{};
-      for (final handle in handles) {
-        // Direct path-shaped handle: substring-match against the
-        // pre-lowercased path list. Parallel-index nodePaths /
-        // nodePathsLower so we can report the original path while
-        // comparing on the cheap lowercase copy.
-        if (handle.contains('/') || handle.contains('.')) {
-          // Normalise separators first: model output may use backslashes
-          // (Windows-style paths); the basename index is forward-slash-only.
-          final normalizedHandle = handle.replaceAll('\\', '/');
-          // Pre-filter by basename: extract the last segment of the handle,
-          // look up only paths sharing that basename, then verify the full
-          // substring.  O(basename_collision_count) instead of O(all_paths).
-          final suffix = normalizedHandle.split('/').last;
-          final candidates = basenameLowerToPaths[suffix];
-          if (candidates != null) {
-            for (final p in candidates) {
-              if (p.toLowerCase().contains(normalizedHandle)) matched.add(p);
+      final baseWeight = _ideaBaseWeight(idea.confidence);
+      if (baseWeight <= 0) continue;
+
+      // Per-idea candidate paths with local similarity. Kept as a map
+      // so the same path surfaced by multiple lanes accumulates its
+      // contribution rather than being counted once.
+      final localCandidates = <String, double>{};
+      // Paths that landed via well-expansion (same well as the idea's
+      // semantic centroid) rather than direct KNN. Tracked separately
+      // because they share the 'semantic' lane — the lane variable
+      // alone can't distinguish them, and the attribution output wants
+      // the well-expansion paths labeled so reviewers can see that
+      // arm of the diffusion contributed.
+      final wellExpansionPaths = <String>{};
+      String? lane;
+
+      if (idea.kRe != null && idea.kIm != null && kSpaceReady) {
+        lane = 'semantic';
+        ideasEmbedded++;
+        final nearest = nearestRowsInTable(
+          ktable,
+          qRe: idea.kRe!,
+          qIm: idea.kIm!,
+          topK: 8,
+          minSimilarity: 0.40,
+        );
+        for (final m in nearest) {
+          // Similarity ∈ [0.4, 1]. Remap to [0.3, 1] so even the
+          // minimum-similarity match contributes a meaningful pull.
+          final weight = 0.3 + 0.7 * ((m.similarity - 0.4) / 0.6).clamp(0, 1);
+          localCandidates[m.path] =
+              math.max(localCandidates[m.path] ?? 0, weight);
+          semanticHits++;
+        }
+        // Well expansion — files in the same well as this idea's
+        // semantic centroid. Heavily capped because wells can contain
+        // hundreds of files in a large monorepo.
+        final well = idea.well;
+        if (well != null) {
+          final rows = ktable.rowsInWell(well.index);
+          // Pick up to 4 rows from the well, preferring rows with
+          // tight raw distance (they sit closest to the well centroid
+          // and are the strongest representatives of the concept).
+          final sampled = _topRowsClosestToWellCentroid(ktable, rows, 4);
+          for (final r in sampled) {
+            final path = ktable.paths[r];
+            // Well-expansion contribution is deliberately smaller
+            // than KNN — being in the same well is a looser signal
+            // than direct K-space proximity to the idea itself.
+            final existing = localCandidates[path] ?? 0;
+            // Mark as "well" only when KNN didn't already surface this
+            // path — otherwise it's a KNN hit that the well happens to
+            // contain, and the direct-match label is more informative.
+            if (existing == 0) wellExpansionPaths.add(path);
+            localCandidates[path] = math.max(existing, 0.5);
+            wellExpansionFiles++;
+          }
+        }
+      }
+
+      // Fallback to fuzzy match when K-space produced nothing. Also
+      // runs when engram assets aren't loaded at all — the legacy
+      // pipeline becomes the whole phase-2 strategy in that case.
+      if (localCandidates.isEmpty) {
+        final handles = _ideaHandleTokens(idea.text);
+        final matched = <String>{};
+        for (final handle in handles) {
+          if (handle.contains('/') || handle.contains('.')) {
+            final normalized = handle.replaceAll('\\', '/');
+            final suffix = normalized.split('/').last;
+            final candidates = basenameLowerToPaths[suffix];
+            if (candidates != null) {
+              for (final p in candidates) {
+                if (p.toLowerCase().contains(normalized)) matched.add(p);
+              }
             }
           }
+          final bucket = tokenToPaths[handle];
+          if (bucket != null) matched.addAll(bucket);
         }
-        // Token-bucket lookup.
-        final bucket = tokenToPaths[handle];
-        if (bucket != null) {
-          for (final p in bucket) {
-            matched.add(p);
+        if (matched.isNotEmpty) {
+          lane = 'fuzzy';
+          ideasViaFuzzy++;
+          final capped = matched.take(8);
+          for (final p in capped) {
+            // Fuzzy matches are the weakest signal; scale low.
+            localCandidates[p] = 0.35;
           }
         }
       }
-      if (matched.isEmpty) continue;
-      ideaHandlePaths[idea.index] = matched;
-      idea.handlePaths.addAll(matched);
-      // Spread weight per idea so a chatty idea doesn't dominate. Cap
-      // at 8 paths per idea to prevent runaway saturation.
-      final cappedMatches = matched.take(8).toList();
-      final perPath = 0.3 / cappedMatches.length;
-      for (final p in cappedMatches) {
-        // Don't reduce the diff-source anchor weight if the brainstorm
-        // happens to mention an already-source file.
-        if (diffSourceWeights.containsKey(p)) continue;
-        // Cap below the diff-source anchor (1.0) so chatty brainstorms
-        // mentioning the same path repeatedly can't outweigh changed files.
-        seedMap[p] = math.min(0.9, (seedMap[p] ?? 0) + perPath);
+
+      if (localCandidates.isEmpty) continue;
+
+      // Apply the idea's confidence weight and distribute across its
+      // candidates. Per-idea normalisation ensures a chatty idea
+      // can't outspend a focused one purely by surfacing more files.
+      var totalLocal = 0.0;
+      for (final v in localCandidates.values) {
+        totalLocal += v;
       }
+      if (totalLocal <= 0) continue;
+
+      final ideaPaths = <String>{};
+      for (final entry in localCandidates.entries) {
+        final path = entry.key;
+        if (diffSourceWeights.containsKey(path)) {
+          // The brainstorm happened to name an already-seeded diff
+          // file. Record the co-mention for attribution but don't
+          // stack extra weight on top of the anchor.
+          (perPathSources[path] ??= {}).add('brainstorm');
+          ideaPaths.add(path);
+          continue;
+        }
+        final share = (entry.value / totalLocal) * baseWeight;
+        seedMap[path] = (seedMap[path] ?? 0) + share;
+        // Source label: first-come wins for the attribution bucket.
+        // Well expansion paths get a distinct label so the
+        // attribution output makes the expansion lane visible.
+        final existingLabel = axisLabel[path];
+        if (existingLabel == null) {
+          // Pure well-expansion hits get a distinct label so the
+          // attribution output shows the expansion arm; direct KNN
+          // and fuzzy hits share the umbrella 'brainstorm' label.
+          axisLabel[path] =
+              wellExpansionPaths.contains(path) ? 'well' : 'brainstorm';
+        }
+        (perPathSources[path] ??= {})
+            .add(wellExpansionPaths.contains(path) ? 'well' : 'brainstorm');
+        ideaPaths.add(path);
+      }
+      idea.handlePaths.addAll(ideaPaths);
+      ideaMatchCount[idea.index] = ideaPaths.length;
     }
 
     if (seedMap.isEmpty) return (text: '', record: null);
 
-    // Diffuse with the brainstorm-biased seed map.
-    final scores = engine.diffuseWeighted(
-      seedMap,
-      excludePaths: const {},
+    // Soft cap to stop one runaway idea from creating a single
+    // overwhelming seed — even high-confidence content shouldn't
+    // exceed the diff anchor by much.
+    for (final k in seedMap.keys.toList()) {
+      if (!diffSourceWeights.containsKey(k) && seedMap[k]! > 1.1) {
+        seedMap[k] = 1.1;
+      }
+    }
+
+    // Emit the reseed event just before the second diffusion. Canvas
+    // uses this as the cue to play a second ignition wavefront on top
+    // of the first — the "brainstorm just landed, here's the reshaped
+    // field" moment. Includes the lane counters so the canvas footer
+    // can surface the provenance breakdown.
+    LogosVisBus.instance.emitInSession(
+      (sid) => LogosVisReseedSources(
+        sid,
+        weights: Map<String, double>.from(seedMap),
+        brainstormIdeas: ideas.length,
+        semanticHits: semanticHits,
+        wellExpansionFiles: wellExpansionFiles,
+      ),
+    );
+
+    // Attribution-aware diffusion. Temperature reacts to the kind
+    // distribution — bugfix-heavy ideas get a tighter t, refactor /
+    // risk-heavy ideas get a broader one.
+    final evidence = engine.gatherEvidence(
+      focusWeights: seedMap,
+      axisLabelByPath: axisLabel,
+      t: _temperatureForIdeas(ideas),
+    );
+    final attribution = evidence?.supportAttribution ??
+        engine.diffuseWithAttribution(
+          weightsByPath: seedMap,
+          axisLabelByPath: axisLabel,
+          t: _temperatureForIdeas(ideas),
+        );
+    if (attribution == null) return (text: '', record: null);
+
+    // Diffusion complete — canvas reveals neighbours coloured by φ +
+    // well. wellByPath is only populated for paths the K-table knows
+    // about (engram-less engines skip this bucket).
+    final phiEmit = <String, double>{};
+    final emittedScores = evidence != null && evidence.ranked.isNotEmpty
+        ? [
+            for (final e in evidence.ranked)
+              RelevanceScore(
+                e.path,
+                e.utility > 0 ? e.utility : (e.support * e.integrity * 0.05),
+              ),
+          ]
+        : attribution.combined;
+    for (final s in emittedScores) {
+      phiEmit[s.path] = s.phi;
+    }
+    final wellEmit = <String, String>{};
+    for (final s in emittedScores) {
+      final w = engine.wellOf(s.path);
+      if (w != null) wellEmit[s.path] = w;
+    }
+    LogosVisBus.instance.emitInSession(
+      (sid) => LogosVisDiffusionComplete(
+        sid,
+        phi: phiEmit,
+        wellByPath: wellEmit,
+      ),
+    );
+
+    // Intersection bonus — paths that received φ from both the diff
+    // and the brainstorm lane get a small multiplicative boost. This
+    // is the key "logos + muse" signal: it isn't just where the diff
+    // lives, it's also where the brainstorm pointed, together.
+    final scores = _rerankWithAttribution(
+      emittedScores,
+      attribution.shareByAxis,
+      perPathSources,
     );
     if (scores.isEmpty) return (text: '', record: null);
 
     final plan = engine.plan(scores, budget: budgetChars);
     if (plan.isEmpty) return (text: '', record: null);
 
-    // Stamp `kept` on ideas whose handles surfaced in the plan.
     final planPaths = <String>{for (final p in plan) p.path};
     for (final idea in ideas) {
-      final ideaPaths = ideaHandlePaths[idea.index];
-      if (ideaPaths == null) continue;
-      if (ideaPaths.any(planPaths.contains)) {
-        idea.kept = true;
-      }
+      if (idea.handlePaths.any(planPaths.contains)) idea.kept = true;
     }
 
     final buffer = StringBuffer();
     buffer.writeln(
       '(brainstorm-seeded: ${ideas.length} ideas, '
       '${ideas.where((i) => i.kept).length} kept, '
-      '${plan.length} files surfaced)',
+      '${plan.length} files surfaced; '
+      'lanes: embedded=$ideasEmbedded fuzzy=$ideasViaFuzzy '
+      'semantic_hits=$semanticHits well_expansion=$wellExpansionFiles)',
     );
     var remaining = budgetChars - buffer.length;
     for (final item in plan) {
       if (remaining <= 200) break;
       final tag = item.tier.name.toUpperCase();
+      final well = engine.wellOf(item.path);
+      final wellTag = well != null ? ' well=$well' : '';
+      // Provenance label — the source bucket(s) that pulled this
+      // file in. Reads at a glance: "diff+brainstorm" means both
+      // streams agreed this matters.
+      final sources = perPathSources[item.path] ?? const <String>{};
+      final via = sources.isEmpty
+          ? ''
+          : ' via=${(sources.toList()..sort()).join('+')}';
       buffer.writeln(
-        '[$tag φ=${item.phi.toStringAsFixed(3)}] ${item.path}',
+        '[$tag φ=${item.phi.toStringAsFixed(3)}$wellTag$via] ${item.path}',
       );
-      // For full/signature tiers, attempt to attach the file shape.
       if (item.tier == EmissionTier.full ||
           item.tier == EmissionTier.signature) {
         try {
@@ -1391,8 +2065,9 @@ Future<({String text, LogosEmissionRecord? record})>
           if (await f.exists()) {
             final content = await f.readAsString();
             final lineCount = '\n'.allMatches(content).length + 1;
+            final wellPill = well != null ? ' [well=$well]' : '';
             final block = item.tier == EmissionTier.full
-                ? '--- ${item.path} ($lineCount lines) ---\n$content\n'
+                ? '--- ${item.path} ($lineCount lines)$wellPill ---\n$content\n'
                 : _buildFileOutline(content, item.path, lineCount);
             if (block.length < remaining) {
               buffer.write(block);
@@ -1417,6 +2092,75 @@ Future<({String text, LogosEmissionRecord? record})>
   }
 }
 
+/// Rank the top-N rows in [rows] by their raw distance to their well
+/// centroid (smaller = closer = more representative of the well).
+/// Simple partial sort — `rows` is typically a few dozen entries and
+/// we take ≤ 4, so full sort is wasted work.
+List<int> _topRowsClosestToWellCentroid(
+  EngramFileKTable table,
+  List<int> rows,
+  int n,
+) {
+  if (rows.length <= n) return rows;
+  final picks = <int>[];
+  final taken = <int>{};
+  for (var i = 0; i < n; i++) {
+    var bestRow = -1;
+    var bestD = double.infinity;
+    for (final r in rows) {
+      if (taken.contains(r)) continue;
+      final d = table.wellRawDistance[r];
+      if (d < bestD) {
+        bestD = d;
+        bestRow = r;
+      }
+    }
+    if (bestRow < 0) break;
+    picks.add(bestRow);
+    taken.add(bestRow);
+  }
+  return picks;
+}
+
+/// Take diffuseWithAttribution's combined list and apply a small φ
+/// boost to paths that received heat from multiple source buckets
+/// ("diff + brainstorm"). This is the intersection signal — the
+/// single most valuable thing attribution gives us over flat diffusion.
+List<RelevanceScore> _rerankWithAttribution(
+  List<RelevanceScore> combined,
+  Map<String, Map<String, double>> shareByAxis,
+  Map<String, Set<String>> perPathSources,
+) {
+  if (combined.isEmpty) return combined;
+  final out = <RelevanceScore>[];
+  for (final s in combined) {
+    final sources = perPathSources[s.path];
+    var phi = s.phi;
+    if (sources != null && sources.length >= 2) {
+      // Two-source path: boost by 20%. Three sources: 35%. Capped so
+      // an intersection-rich path doesn't drown out a high-φ singleton.
+      final boost = sources.length >= 3 ? 0.35 : 0.20;
+      phi = math.min(1.0, phi * (1.0 + boost));
+    } else {
+      // Singletons with very low share from any one axis are likely
+      // weakly-attributed: confirm they aren't barely above threshold
+      // noise. The `shareByAxis` map gives us a cheap way to check.
+      final shares = shareByAxis[s.path];
+      if (shares != null && shares.length == 1) {
+        final only = shares.values.first;
+        if (only < 0.1) {
+          // Dampen weakly-attributed singletons by 15%. Not dropped —
+          // still useful context, just down-ranked in the plan.
+          phi = phi * 0.85;
+        }
+      }
+    }
+    out.add(RelevanceScore(s.path, phi));
+  }
+  out.sort((a, b) => b.phi.compareTo(a.phi));
+  return out;
+}
+
 String _buildMuseSynthesisPrompt({
   required String branchName,
   required String scopeLabel,
@@ -1438,39 +2182,75 @@ String _buildMuseSynthesisPrompt({
   buf.writeln(profile.synthesisCharter);
   buf.writeln('</charter>');
   buf.writeln();
-  buf.writeln('<output_schema>');
-  buf.writeln('Reply in this exact XML structure. Plain text inside tags.');
-  buf.writeln('<intent>One short paragraph: what this change is reaching for, '
-      'inferred from the diff shape. Honest read-back the user can verify or correct.</intent>');
-  buf.writeln('<drift>');
-  buf.writeln('  <move idea="N" cite="path[:line]"><body>One short paragraph naming a hunk that does not serve the intent.</body></move>');
-  buf.writeln('  <move ...>...</move>');
-  buf.writeln('  (Empty allowed if no drift.)');
-  buf.writeln('</drift>');
-  buf.writeln('<wiring_broken>');
-  buf.writeln('  <move idea="N" cite="path[:line]"><body>A deterministic wiring break — a caller that still references a renamed/removed symbol, an import that no longer resolves, etc.</body></move>');
-  buf.writeln('  (Empty if nothing broken.)');
-  buf.writeln('</wiring_broken>');
-  buf.writeln('<wiring_missing>');
-  buf.writeln('  <move idea="N" cite="path"><body>A coupled-but-untouched file that should plausibly be wired in. Be specific about the wiring.</body></move>');
-  buf.writeln('  (Empty if nothing missing.)');
-  buf.writeln('</wiring_missing>');
-  if (profile.allowIdeaFlaws) {
-    buf.writeln('<idea_flaws>');
-    buf.writeln('  <move idea="N" cite="path[:line]"><body>A premise tension you see in the change. Be specific.</body></move>');
-    buf.writeln('  (Empty if no flaws.)');
-    buf.writeln('</idea_flaws>');
-  }
-  buf.writeln('<trajectory>One short paragraph: what the cleanest landing looks like.</trajectory>');
-  buf.writeln('</output_schema>');
+  buf.writeln('<shape>');
+  buf.writeln('Each section holds one short paragraph or a sequence of '
+      '<move> elements. A section may be empty when you have nothing '
+      'in it — empty is a real answer.');
   buf.writeln();
-  buf.writeln('<rules>');
-  buf.writeln('- The "idea" attribute on a <move> is OPTIONAL and refers to the brainstorm idea index that prompted this move (the UI surfaces this as "from idea: ..."). Use it when an idea genuinely seeded the move; omit when the move came from your own reading of the diff.');
-  buf.writeln('- The "cite" attribute is a file path or path:line reference grounding the move. ${profile.requireGroundedCitations ? 'EVERY move MUST have a cite from the relevance_neighborhood OR file_context. Moves without citations are dropped.' : 'Strongly preferred but not required.'}');
-  buf.writeln('- No score, no findings count, no markdown.');
-  buf.writeln('- Brainstorm ideas with no grounding silently disappear — do not list them.');
-  buf.writeln('- Brainstorm ideas with strong grounding should be woven into the appropriate move with their idea index.');
-  buf.writeln('</rules>');
+  buf.writeln('<intent>...</intent>');
+  buf.writeln('  Read what the change is reaching for. One short paragraph '
+      'the user can verify or correct.');
+  buf.writeln();
+  buf.writeln('<resonances>');
+  buf.writeln('  <move ...><body>...</body></move>');
+  buf.writeln('</resonances>');
+  buf.writeln('  Patterns this change rhymes with.');
+  buf.writeln('    code-rooted: a specific file or symbol elsewhere in '
+      'the repo whose shape mirrors this change.');
+  buf.writeln('    field-rooted: a metaphor, a comparison to how shapes '
+      'like this tend to land, an observation about what kind of move '
+      'this is, a question about what it resembles.');
+  buf.writeln();
+  buf.writeln('<alternatives>');
+  buf.writeln('  <move ...><body>...</body></move>');
+  buf.writeln('</alternatives>');
+  buf.writeln('  Directions the change could take — alongside or instead.');
+  buf.writeln('    code-rooted: a different concrete approach native to '
+      'the existing grammar.');
+  buf.writeln('    field-rooted: a different way of framing the change '
+      'altogether, a question about the premise, a value-check, a path '
+      'the work could swerve onto that the diff does not yet name.');
+  buf.writeln();
+  buf.writeln('<extensions>');
+  buf.writeln('  <move ...><body>...</body></move>');
+  buf.writeln('</extensions>');
+  buf.writeln('  Places this work could grow into.');
+  buf.writeln('    code-rooted: a coupled file, an adjacent module, a '
+      'follow-up that would amplify what is here.');
+  buf.writeln('    field-rooted: a wider practice the change invites, a '
+      'conversation worth opening with a teammate, a way the work will '
+      'need to be defended over time, a promise this change is implicitly '
+      'making.');
+  buf.writeln();
+  buf.writeln('<trajectory>...</trajectory>');
+  buf.writeln('  One short paragraph sketching where this work is '
+      'bending — what the next 1-3 moves naturally look like, or what '
+      'larger arc this change is participating in.');
+  buf.writeln('</shape>');
+  buf.writeln();
+  buf.writeln('<move_attributes>');
+  buf.writeln('A <move> may carry these attributes when they belong.');
+  buf.writeln();
+  buf.writeln('  cite="path[:line]" — code-rooted moves carry their '
+      'cite alongside, pointing at a specific file or symbol from '
+      'the relevance_neighborhood or diff. Field-rooted moves carry '
+      'their reach instead — a metaphor, a question, a wider pattern '
+      '— and the cite simply rests.');
+  buf.writeln();
+  buf.writeln('  idea="N" — the brainstorm idea index this move grew '
+      'from. Use it when an idea genuinely sourced the move; leave '
+      'it off when the move came from your own reading of the diff. '
+      'The UI surfaces it as "from idea: ...".');
+  buf.writeln('</move_attributes>');
+  buf.writeln();
+  buf.writeln('<plumbing>');
+  buf.writeln('- Plain prose inside tags. The shape above is the '
+      'complete output — open with the first tag and close with the '
+      'last.');
+  buf.writeln('- The brainstorm ideas that found a home in your '
+      'moves carry their idea index; the rest rest quietly. Both '
+      'fates are part of the muse working.');
+  buf.writeln('</plumbing>');
   buf.writeln();
   if (customPrompt.trim().isNotEmpty) {
     buf.writeln('<user_instructions>');
@@ -1481,10 +2261,19 @@ String _buildMuseSynthesisPrompt({
   buf.writeln('<scope>');
   buf.writeln('Branch: $branchName');
   buf.writeln('Scope: $scopeLabel');
-  if (commitDraft.trim().isNotEmpty) {
-    buf.writeln('Current draft message: ${commitDraft.trim()}');
-  }
   buf.writeln('</scope>');
+  if (commitDraft.trim().isNotEmpty) {
+    buf.writeln();
+    buf.writeln('<author_message>');
+    buf.writeln('What the user has written about this change, in their '
+        'own words, while the work was in progress. This is the '
+        'human\'s framing — what they would say the change is for. '
+        'Read it as the strongest signal for what the work is '
+        'reaching for; the diff shows the how, this shows the why.');
+    buf.writeln();
+    buf.writeln(commitDraft.trim());
+    buf.writeln('</author_message>');
+  }
   buf.writeln();
   buf.writeln('<brainstorm>');
   for (final idea in ideas) {
@@ -1508,17 +2297,15 @@ class _ParsedMuseOutput {
   _ParsedMuseOutput({
     required this.intent,
     required this.trajectory,
-    required this.drift,
-    required this.wiringBroken,
-    required this.wiringMissing,
-    required this.ideaFlaws,
+    required this.resonances,
+    required this.alternatives,
+    required this.extensions,
   });
   final String intent;
   final String trajectory;
-  final List<AiMuseMove> drift;
-  final List<AiMuseMove> wiringBroken;
-  final List<AiMuseMove> wiringMissing;
-  final List<AiMuseMove> ideaFlaws;
+  final List<AiMuseMove> resonances;
+  final List<AiMuseMove> alternatives;
+  final List<AiMuseMove> extensions;
 }
 
 _ParsedMuseOutput _parseMuseOutput(String raw) {
@@ -1589,10 +2376,9 @@ _ParsedMuseOutput _parseMuseOutput(String raw) {
   return _ParsedMuseOutput(
     intent: extractText('intent'),
     trajectory: extractText('trajectory'),
-    drift: parseMoves(extractSection('drift')),
-    wiringBroken: parseMoves(extractSection('wiring_broken')),
-    wiringMissing: parseMoves(extractSection('wiring_missing')),
-    ideaFlaws: parseMoves(extractSection('idea_flaws')),
+    resonances: parseMoves(extractSection('resonances')),
+    alternatives: parseMoves(extractSection('alternatives')),
+    extensions: parseMoves(extractSection('extensions')),
   );
 }
 
@@ -1609,6 +2395,48 @@ Future<GitResult<AiMuseData>> runMuse({
   String commitDraft = '',
   required int guardrailStage,
   bool readOnly = true,
+  // Semantic priors for the manifest above the packed diff. Pass from
+  // the app layer's SymbolFrequencyState / FileCouplingState.
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
+}) {
+  // Same pattern as reviewCommit: wrap the pipeline in a LogosVis
+  // session so the muse loading canvas sees events from both phase-1
+  // (brainstorm) and phase-2 (reseed + diffuse) without threading a
+  // session id through every call site.
+  return LogosVisBus.instance.runInSession<GitResult<AiMuseData>>(
+    (sessionId) => _runMuseImpl(
+      repositoryPath: repositoryPath,
+      brainstormModelValue: brainstormModelValue,
+      synthesisModelValue: synthesisModelValue,
+      scopeLabel: scopeLabel,
+      includeStaged: includeStaged,
+      includeUnstaged: includeUnstaged,
+      scopedPaths: scopedPaths,
+      customPrompt: customPrompt,
+      commitDraft: commitDraft,
+      guardrailStage: guardrailStage,
+      readOnly: readOnly,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
+    ),
+  );
+}
+
+Future<GitResult<AiMuseData>> _runMuseImpl({
+  required String repositoryPath,
+  required String brainstormModelValue,
+  required String synthesisModelValue,
+  required String scopeLabel,
+  required bool includeStaged,
+  required bool includeUnstaged,
+  List<String> scopedPaths = const [],
+  String customPrompt = '',
+  String commitDraft = '',
+  required int guardrailStage,
+  bool readOnly = true,
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
@@ -1654,11 +2482,39 @@ Future<GitResult<AiMuseData>> runMuse({
       scopedPaths: scopedPaths,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
     );
     if (!diffContext.ok) return GitResult.err(diffContext.error!);
 
     final bundle = diffContext.data!;
     final profile = _museGuardrailProfileForStage(guardrailStage);
+
+    // Extract diff source weights up-front so we can emit the first
+    // ignition event before phase 1 even starts. Canvas sees the diff
+    // files lit immediately while the brainstorm LLM call is in flight.
+    final diffSourceWeights = {
+      for (final path in extractDiffTouchedPaths(bundle.diffBundle.promptBody))
+        path: 1.0,
+    };
+
+    // Kick the engine resolve off in parallel with phase 1. The resolver
+    // emits its own `engineResolving` / `engineReady` events so the
+    // canvas shows topology crystallising during brainstorm. The
+    // in-flight guard in resolveLogosGit means phase 2's call will
+    // dedupe onto the same Future — no duplicate work.
+    unawaited(resolveLogosGit(repositoryPath, coupling: couplingMatrix));
+
+    // First ignition — lights up the diff files on the canvas while
+    // the brainstorm is thinking. Churn is the sum of source weights
+    // pre-normalisation (all 1.0 here, so = file count).
+    LogosVisBus.instance.emitInSession(
+      (sid) => LogosVisDiffSources(
+        sid,
+        weights: Map<String, double>.from(diffSourceWeights),
+        churn: diffSourceWeights.length,
+      ),
+    );
 
     // Phase 1 — brainstorm via the cheap/divergent slot.
     final ideas = await _runBrainstormPhase(
@@ -1678,16 +2534,18 @@ Future<GitResult<AiMuseData>> runMuse({
       );
     }
 
-    // Phase 2 — extract diff source paths and reshape via brainstorm,
-    // routed through the same context allocator as review and commit
-    // so there's no bespoke budget formula to drift. extractDiffTouchedPaths
-    // handles both unquoted and quoted header forms in one place so
-    // this flow can't drift from the metadata extractor on the same
-    // diff input.
-    final diffSourceWeights = {
-      for (final path in extractDiffTouchedPaths(bundle.diffBundle.promptBody))
-        path: 1.0,
-    };
+    // Drain any user spoke-pulls the canvas accumulated during the
+    // brainstorm LLM call. Snapshot lives in two places: fed into the
+    // phase-2 seed map (so the diffusion weights the user's intent)
+    // AND carried into the final AiMuseData so the rendered output
+    // can mark moves whose citations arrived via the user's gesture.
+    final userBoosts = LogosVisBus.instance.consumeUserSpokeBoosts();
+    final userBoostedPaths = userBoosts.keys.toSet();
+
+    // Phase 2 — reshape via brainstorm, routed through the same
+    // context allocator as review and commit so there's no bespoke
+    // budget formula to drift. `diffSourceWeights` was already extracted
+    // above (before phase 1) so the canvas could ignite immediately.
     final phase2RawBudget = _maxPromptChars -
         bundle.diffBundle.promptBody.length -
         _kSynthesisOverheadChars;
@@ -1697,6 +2555,7 @@ Future<GitResult<AiMuseData>> runMuse({
       _BrainstormSeededRelevanceProducer(
         ideas: ideas,
         diffSourceWeights: diffSourceWeights,
+        userBoosts: userBoosts,
       ),
     ]).assemble(
       AiContextRequest(
@@ -1744,6 +2603,9 @@ Future<GitResult<AiMuseData>> runMuse({
       'muse_synthesis_prompt',
     );
 
+    // Canvas beam kicks in here — the reshaped context is about to
+    // travel to the synthesis model.
+    LogosVisBus.instance.emitInSession((sid) => LogosVisTransmit(sid));
     final providerOutput = await _runProviderPrompt(
       provider: synthProvider,
       resolution: synthAvail.resolution!,
@@ -1752,6 +2614,7 @@ Future<GitResult<AiMuseData>> runMuse({
       repositoryPath: repositoryPath,
       readOnly: readOnly,
     );
+    LogosVisBus.instance.emitInSession((sid) => LogosVisComplete(sid));
     await _recordReviewAudit(
       event: 'muse_synthesis',
       providerId: synthProvider.id,
@@ -1780,10 +2643,9 @@ Future<GitResult<AiMuseData>> runMuse({
     // failure is diagnosable after the fact.
     final noContent = parsed.intent.isEmpty &&
         parsed.trajectory.isEmpty &&
-        parsed.drift.isEmpty &&
-        parsed.wiringBroken.isEmpty &&
-        parsed.wiringMissing.isEmpty &&
-        parsed.ideaFlaws.isEmpty;
+        parsed.resonances.isEmpty &&
+        parsed.alternatives.isEmpty &&
+        parsed.extensions.isEmpty;
     if (noContent) {
       await _recordReviewAudit(
         event: 'muse_synthesis_parse_fail',
@@ -1811,10 +2673,9 @@ Future<GitResult<AiMuseData>> runMuse({
     // misbehaving model is visible in telemetry.
     final rawMoveOpens =
         '<move'.allMatches(providerOutput.output!).length;
-    final parsedMoveCount = parsed.drift.length +
-        parsed.wiringBroken.length +
-        parsed.wiringMissing.length +
-        parsed.ideaFlaws.length;
+    final parsedMoveCount = parsed.resonances.length +
+        parsed.alternatives.length +
+        parsed.extensions.length;
     final droppedMoves = math.max(0, rawMoveOpens - parsedMoveCount);
     if (droppedMoves > 0) {
       // Fire-and-forget — the parsed portion still reaches the UI.
@@ -1837,10 +2698,9 @@ Future<GitResult<AiMuseData>> runMuse({
       scopeLabel: scopeLabel,
       intent: parsed.intent,
       trajectory: parsed.trajectory,
-      drift: parsed.drift,
-      wiringBroken: parsed.wiringBroken,
-      wiringMissing: parsed.wiringMissing,
-      ideaFlaws: parsed.ideaFlaws,
+      resonances: parsed.resonances,
+      alternatives: parsed.alternatives,
+      extensions: parsed.extensions,
       brainstormIdeas: [
         for (final i in ideas)
           AiMuseIdea(index: i.index, text: i.text, kept: i.kept),
@@ -1848,6 +2708,7 @@ Future<GitResult<AiMuseData>> runMuse({
       promptCharacters: synthPrompt.length,
       diffCharacters: bundle.diffBundle.originalDiffCharacters,
       droppedMoves: droppedMoves,
+      userBoostedPaths: userBoostedPaths,
     ));
   } catch (error) {
     return GitResult.err('Muse failed: $error');
@@ -2455,98 +3316,133 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   required List<String> scopedPaths,
   required bool includeStaged,
   required bool includeUnstaged,
+  // Optional overrides used by PR-review flows (branches page) that
+  // already have a raw diff in hand and don't want the working-tree
+  // git-derivation. When [rawDiffOverride] is non-empty, the initial
+  // branch/status/stat/diff derivation is skipped and these overrides
+  // are routed directly into the downstream context-enrichment pipe.
+  // The logos-diffusion, project-sense, and prompt-builder phases are
+  // diff-source-agnostic so they run uniformly for either flow.
+  String? rawDiffOverride,
+  String? branchNameOverride,
+  String? statusSummaryOverride,
+  String? statSummaryOverride,
+  // Optional semantic priors for the manifest builder. Null = skip
+  // those enhancements (manifest still emits themes/moves from the
+  // logos+engram signal). App-layer callers fetch these from
+  // FileCouplingState / SymbolFrequencyState and pass down.
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
 }) async {
   final scopeArgs =
       scopedPaths.isEmpty ? const <String>[] : ['--', ...scopedPaths];
 
-  final branch = await _runGitCommand(
-    repositoryPath,
-    const ['rev-parse', '--abbrev-ref', 'HEAD'],
-  );
-  if (!branch.ok) {
-    return _CommitDiffContextResult.err(branch.error!);
-  }
+  final String branchName;
+  final String statusSummary;
+  final String statSummary;
+  final String fullDiff;
 
-  final status = await _runGitCommand(
-    repositoryPath,
-    ['status', '--porcelain=v1', ...scopeArgs],
-  );
-  if (!status.ok) {
-    return _CommitDiffContextResult.err(status.error!);
-  }
+  if (rawDiffOverride != null && rawDiffOverride.trim().isNotEmpty) {
+    branchName = branchNameOverride ?? '(pr)';
+    statusSummary = statusSummaryOverride ?? '';
+    statSummary = statSummaryOverride ?? '';
+    fullDiff = rawDiffOverride;
+  } else {
+    final branch = await _runGitCommand(
+      repositoryPath,
+      const ['rev-parse', '--abbrev-ref', 'HEAD'],
+    );
+    if (!branch.ok) {
+      return _CommitDiffContextResult.err(branch.error!);
+    }
 
-  final stagedStat = includeStaged
-      ? await _runGitCommand(
-          repositoryPath,
-          ['diff', '--cached', '--stat=$_diffStatWidth', ...scopeArgs],
-        )
-      : const GitResult.ok('');
-  if (!stagedStat.ok) {
-    return _CommitDiffContextResult.err(stagedStat.error!);
-  }
+    final status = await _runGitCommand(
+      repositoryPath,
+      ['status', '--porcelain=v1', ...scopeArgs],
+    );
+    if (!status.ok) {
+      return _CommitDiffContextResult.err(status.error!);
+    }
 
-  final unstagedStat = includeUnstaged
-      ? await _runGitCommand(
-          repositoryPath,
-          ['diff', '--stat=$_diffStatWidth', ...scopeArgs],
-        )
-      : const GitResult.ok('');
-  if (!unstagedStat.ok) {
-    return _CommitDiffContextResult.err(unstagedStat.error!);
-  }
+    final stagedStat = includeStaged
+        ? await _runGitCommand(
+            repositoryPath,
+            ['diff', '--cached', '--stat=$_diffStatWidth', ...scopeArgs],
+          )
+        : const GitResult.ok('');
+    if (!stagedStat.ok) {
+      return _CommitDiffContextResult.err(stagedStat.error!);
+    }
 
-  // Diff flags chosen for AI review quality.
-  // Context lines adapt to scope size: small changes get more surrounding
-  // code (the AI sees the full function), large changes get less (save
-  // token budget for actual changes).
-  final fileCount = scopeArgs.length > 1 ? scopeArgs.length - 1 : 10;
-  final contextLines = fileCount <= 3 ? 15 : (fileCount <= 10 ? 10 : 6);
-  final diffFlags = [
-    '--no-color',
-    '-U$contextLines',
-    '--patience',
-    '-M',
-    '--ignore-cr-at-eol',
-  ];
+    final unstagedStat = includeUnstaged
+        ? await _runGitCommand(
+            repositoryPath,
+            ['diff', '--stat=$_diffStatWidth', ...scopeArgs],
+          )
+        : const GitResult.ok('');
+    if (!unstagedStat.ok) {
+      return _CommitDiffContextResult.err(unstagedStat.error!);
+    }
 
-  final stagedDiff = includeStaged
-      ? await _runGitCommand(
-          repositoryPath,
-          ['diff', '--cached', ...diffFlags, ...scopeArgs],
-          timeout: const Duration(seconds: _diffTimeoutSeconds),
-        )
-      : const GitResult.ok('');
-  if (!stagedDiff.ok) {
-    return _CommitDiffContextResult.err(stagedDiff.error!);
-  }
+    // Diff flags chosen for AI review quality.
+    // Context lines adapt to scope size: small changes get more surrounding
+    // code (the AI sees the full function), large changes get less (save
+    // token budget for actual changes).
+    final fileCount = scopeArgs.length > 1 ? scopeArgs.length - 1 : 10;
+    final contextLines = fileCount <= 3 ? 15 : (fileCount <= 10 ? 10 : 6);
+    final diffFlags = [
+      '--no-color',
+      '-U$contextLines',
+      '--patience',
+      '-M',
+      '--ignore-cr-at-eol',
+    ];
 
-  final unstagedDiff = includeUnstaged
-      ? await _runGitCommand(
-          repositoryPath,
-          ['diff', ...diffFlags, ...scopeArgs],
-          timeout: const Duration(seconds: _diffTimeoutSeconds),
-        )
-      : const GitResult.ok('');
-  if (!unstagedDiff.ok) {
-    return _CommitDiffContextResult.err(unstagedDiff.error!);
-  }
+    final stagedDiff = includeStaged
+        ? await _runGitCommand(
+            repositoryPath,
+            ['diff', '--cached', ...diffFlags, ...scopeArgs],
+            timeout: const Duration(seconds: _diffTimeoutSeconds),
+          )
+        : const GitResult.ok('');
+    if (!stagedDiff.ok) {
+      return _CommitDiffContextResult.err(stagedDiff.error!);
+    }
 
-  // Untracked files are invisible to `git diff` and `git diff --cached` —
-  // they only appear in `git status` as '??'. For the AI reviewer, those
-  // are just new files with their full content as added lines. Synthesize
-  // proper unified-diff entries for each one so the reviewer can see them.
-  final untrackedDiff = includeUnstaged
-      ? await _collectUntrackedFilesDiff(repositoryPath, scopeArgs)
-      : '';
+    final unstagedDiff = includeUnstaged
+        ? await _runGitCommand(
+            repositoryPath,
+            ['diff', ...diffFlags, ...scopeArgs],
+            timeout: const Duration(seconds: _diffTimeoutSeconds),
+          )
+        : const GitResult.ok('');
+    if (!unstagedDiff.ok) {
+      return _CommitDiffContextResult.err(unstagedDiff.error!);
+    }
 
-  final fullDiff = _joinDiffSections(
-    stagedDiff: stagedDiff.data ?? '',
-    unstagedDiff: unstagedDiff.data ?? '',
-    untrackedDiff: untrackedDiff,
-  );
-  if (fullDiff.trim().isEmpty) {
-    return _CommitDiffContextResult.err(
-      'No diff content is available for $scopeLabel.',
+    // Untracked files are invisible to `git diff` and `git diff --cached` —
+    // they only appear in `git status` as '??'. For the AI reviewer, those
+    // are just new files with their full content as added lines. Synthesize
+    // proper unified-diff entries for each one so the reviewer can see them.
+    final untrackedDiff = includeUnstaged
+        ? await _collectUntrackedFilesDiff(repositoryPath, scopeArgs)
+        : '';
+
+    fullDiff = _joinDiffSections(
+      stagedDiff: stagedDiff.data ?? '',
+      unstagedDiff: unstagedDiff.data ?? '',
+      untrackedDiff: untrackedDiff,
+    );
+    if (fullDiff.trim().isEmpty) {
+      return _CommitDiffContextResult.err(
+        'No diff content is available for $scopeLabel.',
+      );
+    }
+    branchName = branch.data?.trim() ?? '';
+    statusSummary = status.data ?? '';
+    statSummary = _joinStatSections(
+      stagedStat: stagedStat.data ?? '',
+      unstagedStat: unstagedStat.data ?? '',
     );
   }
 
@@ -2568,6 +3464,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   final diffBundle = await _buildDiffPromptBundle(
     fullDiff,
     repositoryPath: repositoryPath,
+    symbolIndex: symbolIndex,
+    couplingMatrix: couplingMatrix,
   );
 
   // Frame-yield after the hunk-diffusion CPU burst so Flutter can paint
@@ -2576,7 +3474,6 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   // events, then returns us to the next phase.
   await Future<void>.delayed(Duration.zero);
 
-  // ── Parallel context enrichment ──────────────────────────────────────
   // Five anti-hallucination layers gathered simultaneously. The budget
   // split between sections is derived from two Logos signals on the
   // diff probe:
@@ -2665,11 +3562,6 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
     originalDiffCharacters: diffBundle.originalDiffCharacters,
   );
 
-  final statSummary = _joinStatSections(
-    stagedStat: stagedStat.data ?? '',
-    unstagedStat: unstagedStat.data ?? '',
-  );
-
   // Telemetry was kicked off at the top of the function concurrently
   // with the CPU-heavy diffusion/assembly phases. Await now — the
   // six subprocess fetches likely completed while logos did its work.
@@ -2698,8 +3590,8 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
 
   return _CommitDiffContextResult.ok(
     _CommitDiffContext(
-      branchName: (branch.data ?? 'HEAD').trim(),
-      statusSummary: (status.data ?? '').trim(),
+      branchName: branchName.trim().isEmpty ? 'HEAD' : branchName.trim(),
+      statusSummary: statusSummary.trim(),
       statSummary: statSummary.trim(),
       diffBundle: enrichedBundle,
       totalCommits: totalCommits,
@@ -2738,13 +3630,11 @@ String _joinDiffSections({
 }
 
 /// Build unified-diff entries for all untracked files.
-///
 /// `git diff` and `git diff --cached` never show untracked files, but new
 /// files are exactly the kind of thing an AI reviewer needs to see (or
 /// it'll hallucinate that they don't exist). We read each file's content
 /// and emit a synthetic `/dev/null → b/<path>` diff block so the reviewer
 /// gets the full new file content as added lines.
-///
 /// [scopeArgs] follows the same convention as elsewhere — either `['--']`
 /// for "all files" or `['--', path1, path2, ...]` to restrict scope.
 /// Decode bytes as UTF-8, tolerating malformed sequences by falling back
@@ -3039,7 +3929,6 @@ class _FileMetaResult {
   });
 }
 
-// ── Anti-hallucination: change type classification ──────────────────
 /// Runs `git diff --name-status -M -C` to get the change type per file.
 /// Tells the AI whether each file is Added/Modified/Deleted/Renamed/Copied
 /// so it doesn't guess.
@@ -3103,7 +3992,6 @@ Future<String> _collectChangeTypes({
   }
 }
 
-// ── Anti-hallucination: structural verification ─────────────────────
 /// Scans the diff for import statements and new symbol definitions,
 /// then verifies them against the working tree. Produces a compact
 /// verification summary the AI can trust instead of guessing.
@@ -3302,7 +4190,6 @@ Future<String> _verifyRemovals(String repositoryPath, String diffText) async {
 
 /// Collect full file contents for small changed files to give the AI
 /// reviewer complete context (imports, function signatures, surrounding code).
-///
 /// Budget-aware: fills up to [budgetChars] with the most impactful files
 /// (largest diffs first), skipping files that exceed the remaining budget.
 /// Language-agnostic — just reads the working tree file.
@@ -3336,14 +4223,18 @@ Future<String> _collectFileContext({
   // where structural awareness for large diff-touched files lives.
   final pathList = paths.toList();
   List<String> orderedPaths;
+  LogosGit? engine;
   try {
-    final engine = await resolveLogosGit(repositoryPath);
+    engine = await resolveLogosGit(repositoryPath);
     if (engine != null) {
       // Self-φ via heat-kernel: how much heat each source file retains
       // after t=1.0 diffusion. Files coupled to a strong neighborhood
       // bleed less; isolated files bleed most. Highest-retention files
       // are the most "anchored" parts of the change.
       final sourceWeights = {for (final p in pathList) p: 1.0};
+      // Default t=1.0 is the canonical self-φ diffusion distance — any
+      // other temperature would change what "anchored" means and break
+      // the retention-ranking heuristic documented above.
       final scores =
           engine.diffuseWeighted(sourceWeights, excludePaths: const {});
       final phi = {for (final s in scores) s.path: s.phi};
@@ -3372,7 +4263,16 @@ Future<String> _collectFileContext({
       if (!await file.exists()) continue;
       final content = await file.readAsString();
       final lineCount = '\n'.allMatches(content).length + 1;
-      final block = '--- $filePath ($lineCount lines) ---\n$content\n';
+      // Engram semantic well annotation. The resolver populates
+      // `engine.perFileKVectors` for every file the engine has
+      // encoded (working-tree content → K-vector). When present, we
+      // emit the dominant well next to the file path so the LLM sees
+      // a semantic pill (`[well=computing]`, `[well=well_42]`) on
+      // every file header. Silent when engram assets didn't load or
+      // the file was unencodable — no noisy empty labels.
+      final well = engine?.wellOf(filePath);
+      final wellPill = well != null ? ' [well=$well]' : '';
+      final block = '--- $filePath ($lineCount lines)$wellPill ---\n$content\n';
       if (block.length <= remaining) {
         buffer.write(block);
         remaining -= block.length;
@@ -3385,7 +4285,7 @@ Future<String> _collectFileContext({
         filePath: filePath,
         diffText: diffText,
       );
-      final pack = chunks.packRelevantChunks(
+      final pack = await chunks.packRelevantChunksAsync(
         filePath: filePath,
         content: content,
         touchedRanges: touched,
@@ -3407,20 +4307,16 @@ Future<String> _collectFileContext({
 /// touch frequency, and volatility match. This surfaces the "hidden
 /// caller" class of bugs: things the reviewer needs to see even though
 /// they weren't changed.
-///
 /// Uses the Logos-inspired git engine ([LogosGit]). The diff's touched
 /// paths become a heat source ρ; relevance φ is the heat-kernel
 /// diffusion φ = exp(-t·L_sym)·ρ at t=1.0 (commit-review scope).
-///
 /// Emission follows a greedy-density knapsack with three tiers:
 ///   FULL       — full source; chunk-pack fallback if oversized
 ///   SIGNATURE  — outline (same format as [_buildFileOutline])
 ///   BREADCRUMB — one-liner with path + score + dominant axis
-///
 /// Budget-bounded. Returns an empty string on any error — this is a
 /// best-effort enrichment layer; failures never poison the primary
 /// context path.
-// ─────────────────────────────────────────────────────────────────────────
 // Concrete producers wired to the existing _collect* functions. Private
 // to ai.dart because they wrap private collectors; the engine they slot
 // into ([AiContextEngine]) is public.
@@ -3442,7 +4338,6 @@ Future<String> _collectFileContext({
 // and the others return 0.0. [AiContextEngine] excludes zero-urgency
 // producers from allocation, so file_context absorbs the full
 // variable pool — the only useful producer when there's no signal.
-// ─────────────────────────────────────────────────────────────────────────
 
 class _FileContextProducer extends AiContextProducer {
   const _FileContextProducer();
@@ -3571,9 +4466,15 @@ class _BrainstormSeededRelevanceProducer extends AiContextProducer {
   const _BrainstormSeededRelevanceProducer({
     required this.ideas,
     required this.diffSourceWeights,
+    required this.userBoosts,
   });
   final List<_BrainstormIdea> ideas;
   final Map<String, double> diffSourceWeights;
+  /// Per-path pull magnitudes the user applied on the loading canvas,
+  /// snapshotted by the muse pipeline and passed through so phase-2
+  /// can both use them for seeding AND the muse result can cite them
+  /// in the rendered output.
+  final Map<String, double> userBoosts;
 
   @override
   String get id => 'brainstorm_seeded_relevance';
@@ -3588,6 +4489,7 @@ class _BrainstormSeededRelevanceProducer extends AiContextProducer {
       diffText: req.diffText,
       ideas: ideas,
       diffSourceWeights: diffSourceWeights,
+      userBoosts: userBoosts,
       budgetChars: budgetChars,
     );
     return AiContextSection(
@@ -3659,18 +4561,35 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
     // in flight can paint before we block the thread for the math.
     await Future<void>.delayed(Duration.zero);
     final diffuseStart = Stopwatch()..start();
+    final symbolPaths = <String>{
+      for (final p in engine.symbolEdges.keys)
+        if (!engine.pathToId.containsKey(p)) p,
+    };
     final axisLabels = <String, String>{
       for (final entry in probe.sourceWeights.entries)
-        entry.key: _classifyAxis(entry.key, probe).name,
+        entry.key: _classifyAxis(
+          entry.key,
+          probe,
+          symbolPaths: symbolPaths,
+        ).name,
     };
-    final attribution = engine.diffuseWithAttribution(
-      weightsByPath: probe.sourceWeights,
+    final evidence = engine.gatherEvidence(
+      focusWeights: probe.sourceWeights,
       axisLabelByPath: axisLabels,
       t: resolvedT,
       excludePaths: probe.primaryPaths,
     );
+    final attribution = evidence?.supportAttribution;
     final List<RelevanceScore> scores;
-    if (attribution != null) {
+    if (evidence != null && evidence.ranked.isNotEmpty) {
+      scores = [
+        for (final e in evidence.ranked)
+          RelevanceScore(
+            e.path,
+            e.utility > 0 ? e.utility : (e.support * e.integrity * 0.05),
+          ),
+      ];
+    } else if (attribution != null) {
       scores = attribution.combined;
     } else {
       // Engine cold or all sources out-of-graph — keep the plain path.
@@ -3687,13 +4606,48 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
       temperature: resolvedT,
     );
     if (scores.isEmpty) return null;
-    return LogosDiffusionResult(
+    final result = LogosDiffusionResult(
       engine: engine,
       probe: probe,
       scores: scores,
       resolvedT: resolvedT,
       attribution: attribution,
+      evidence: evidence,
     );
+
+    // Visualisation events: the diff's source files (what ignited) +
+    // the diffusion outcome (phi scores and per-file wells for the
+    // radial canvas layout). Only active during a review session;
+    // no-op for probe calls from other surfaces.
+    //
+    // Source weights: the `probe.sourceWeights` map is already
+    // normalised by the probe builder; canvas reads it verbatim.
+    LogosVisBus.instance.emitInSession(
+      (sid) => LogosVisDiffSources(
+        sid,
+        weights: Map<String, double>.from(probe.sourceWeights),
+        churn: probe.sourceWeights.values.fold<double>(0, (a, b) => a + b).round(),
+      ),
+    );
+    // Post-diffusion scores + well assignments. The canvas uses these
+    // to colour neighbour files by φ (intensity) and well (hue).
+    final phiMap = <String, double>{};
+    for (final s in scores) {
+      phiMap[s.path] = s.phi;
+    }
+    final wellByPath = <String, String>{};
+    for (final s in scores) {
+      final w = engine.wellOf(s.path);
+      if (w != null) wellByPath[s.path] = w;
+    }
+    LogosVisBus.instance.emitInSession(
+      (sid) => LogosVisDiffusionComplete(
+        sid,
+        phi: phiMap,
+        wellByPath: wellByPath,
+      ),
+    );
+    return result;
   } catch (e, st) {
     LogosGitDiagnostics.instance.recordFailure(
       repositoryPath,
@@ -3710,7 +4664,6 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
 /// holds across producers (each one queries the same numbers from the
 /// same probe). Centralised so a future regime/SSE-aware refinement
 /// updates all three producers at once.
-///
 /// Returns:
 ///   coh         — coherence ∈ [0, 1]: mean pairwise edge weight under
 ///                 the engine's Born-mixed metric for the primary path
@@ -3736,7 +4689,6 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
 /// Returns the prompt section *and* the emission record for this call,
 /// so the caller can feed citations back to SSE without relying on
 /// process-level globals (which would race across overlapping reviews).
-///
 /// Accepts a pre-built [logos] result from [_runLogosDiffusion] — the
 /// caller hoists that work to drive the budget allocation, and we
 /// reuse the same artifact here for emission. Falls back to building
@@ -3761,6 +4713,10 @@ Future<({String text, LogosEmissionRecord? record})>
     final probe = result.probe;
     final scores = result.scores;
     final resolvedT = result.resolvedT;
+    final evidenceByPath = <String, LogosEvidenceScore>{
+      for (final e in result.evidence?.ranked ?? const <LogosEvidenceScore>[])
+        e.path: e,
+    };
 
     // No candidate trim — let the knapsack see the full ranking. The
     // budget closes the long tail naturally; an arbitrary pre-trim
@@ -3776,8 +4732,15 @@ Future<({String text, LogosEmissionRecord? record})>
       fileCount: probe.stats.primaryCount,
       coherence: probe.stats.coherence,
     );
+    // Only NEW (non-graph) paths qualify as symbol-axis — in-graph files
+    // that happen to have symbol edges were routed through another axis.
+    final symbolPaths = <String>{
+      for (final p in engine.symbolEdges.keys)
+        if (!engine.pathToId.containsKey(p)) p,
+    };
     final axisByPath = <String, LogosAxis>{
-      for (final item in plan) item.path: _classifyAxis(item.path, probe),
+      for (final item in plan)
+        item.path: _classifyAxis(item.path, probe, symbolPaths: symbolPaths),
     };
     final emissionRecord = LogosEmissionRecord(
       regime: regime,
@@ -3811,6 +4774,8 @@ Future<({String text, LogosEmissionRecord? record})>
       ', coherence=${probe.stats.coherence.toStringAsFixed(2)}'
       ', regime=${regime.name}'
       ', t=${resolvedT.toStringAsFixed(2)}'
+      '${result.evidence?.sourceAlignment != null ? ', sourceAlign=${result.evidence!.sourceAlignment!.toStringAsFixed(2)}' : ''}'
+      '${result.evidence?.fieldAlignment != null ? ', fieldAlign=${result.evidence!.fieldAlignment!.toStringAsFixed(2)}' : ''}'
       '; ${plan.length} neighbors surfaced)',
     );
     var remaining = budgetChars - buffer.length;
@@ -3823,9 +4788,21 @@ Future<({String text, LogosEmissionRecord? record})>
       // file's φ. Falls through silently when no attribution was
       // computed (engine cold) — the rest of the line is unchanged.
       final via = _formatAxisBreakdown(result.attribution, item.path);
+      final ev = evidenceByPath[item.path];
+      // Engram well pill — the dominant Alexandria well for this
+      // file's identifier content. Present whenever the resolver
+      // loaded engram assets and the file encoded successfully.
+      // Surfaces the feature-cluster label alongside the φ and
+      // axis-attribution so the LLM sees "this neighbour belongs
+      // to the `computing` well" when deciding whether it's relevant.
+      final well = result.engine.wellOf(item.path);
+      final wellPill = well != null ? '  well=$well' : '';
+      final evidencePill = ev == null
+          ? ''
+          : '  u=${ev.utility.toStringAsFixed(3)} s=${ev.support.toStringAsFixed(3)} a=${ev.ambient.toStringAsFixed(3)} i=${ev.integrity.toStringAsFixed(2)}';
       final header = via.isEmpty
-          ? '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)} ---'
-          : '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}  via=$via ---';
+          ? '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}$evidencePill$wellPill ---'
+          : '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}  via=$via$evidencePill$wellPill ---';
       if (item.tier == EmissionTier.breadcrumb) {
         final line = '$header\n';
         if (line.length > remaining) continue;
@@ -3849,7 +4826,7 @@ Future<({String text, LogosEmissionRecord? record})>
           // diffusion. Neighborhood files have no diff-touched ranges,
           // so the chunk packer uses byte-mass ρ and surfaces the most
           // central chunks. Geometry, not an arbitrary line cap.
-          final pack = chunks.packRelevantChunks(
+          final pack = await chunks.packRelevantChunksAsync(
             filePath: item.path,
             content: content,
             touchedRanges: const [],
@@ -3899,7 +4876,6 @@ String formatAxisBreakdownForTesting(AxisAttribution? attr, String path) =>
 /// gets the parens marker, others listed in descending share. Axes
 /// contributing below 10% are omitted (signal floor; otherwise tiny
 /// numerical leakage muddies the line).
-///
 /// Returns '' when there's no attribution to read or no axis cleared
 /// the threshold — caller falls back to the un-decorated header.
 String _formatAxisBreakdown(AxisAttribution? attr, String path) {
@@ -3925,18 +4901,26 @@ String _formatAxisBreakdown(AxisAttribution? attr, String path) {
   return parts.join(' ');
 }
 
-/// Which observable put `path` on the emission list. Primary if it's
-/// in the diff, M if pickaxe pulled it in, Ab if a path-mirror did.
-/// Anything left is graph-diffusion surfaced (CC/SP/V/F0 collectively).
-LogosAxis _classifyAxis(String path, DiffProbe probe) {
+/// Which observable put `path` on the emission list.
+///   primary  — the diff itself
+///   symbol   — new/untracked file, derived φ via identifier overlap
+///   m        — pickaxe identifier search pulled it in
+///   ab       — path-mirror (test ↔ source) pulled it in
+///   graph    — diffusion ranked it from graph edges (CC/SP/V/F0)
+/// [symbolPaths] should be the keys of the engine's [symbolEdges] map —
+/// paths whose presence in the emission list is due to symbol-overlap
+/// coupling rather than git history.
+LogosAxis _classifyAxis(
+  String path,
+  DiffProbe probe, {
+  Set<String> symbolPaths = const {},
+}) {
   if (probe.primaryPaths.contains(path)) return LogosAxis.primary;
-  // The probe's sourceWeights map tracks explicit (M, Ab) additions.
-  // We can't tell M from Ab just by path membership after-the-fact, so
-  // we heuristic: if the path *looks* like a test-mirror of a primary
-  // path, call it Ab; otherwise M.
+  if (symbolPaths.contains(path)) return LogosAxis.symbol;
   if (probe.sourceWeights.containsKey(path)) {
-    final looksMirror = _pathLooksLikeMirrorOf(path, probe.primaryPaths);
-    return looksMirror ? LogosAxis.ab : LogosAxis.m;
+    return _pathLooksLikeMirrorOf(path, probe.primaryPaths)
+        ? LogosAxis.ab
+        : LogosAxis.m;
   }
   return LogosAxis.graph;
 }
@@ -3960,7 +4944,6 @@ bool _pathLooksLikeMirrorOf(String candidate, Set<String> primary) {
 /// cited paths from `<findings>` XML and records them against the
 /// emission record produced for *this* review call. Fire-and-forget;
 /// failure is logged but never surfaces to the user.
-///
 /// The record is passed in explicitly (not read from a global) so two
 /// reviews running concurrently can't cross-contaminate each other's
 /// citation tallies.
@@ -4031,6 +5014,10 @@ class LogosCommitShape {
   /// completes the foo refactor"), diverging → hedged ("fold back into
   /// a tighter scope if possible"), steady → neutral.
   final String? branchTrajectory;
+  final double? sourceAlignment;
+  final double? fieldAlignment;
+  final double? sourceSurprise;
+  final double? fieldSurprise;
 
   const LogosCommitShape({
     required this.regime,
@@ -4043,6 +5030,10 @@ class LogosCommitShape {
     this.dominantAxisByPath = const {},
     this.stability,
     this.branchTrajectory,
+    this.sourceAlignment,
+    this.fieldAlignment,
+    this.sourceSurprise,
+    this.fieldSurprise,
   });
 }
 
@@ -4094,7 +5085,6 @@ Future<BranchOrbit?> _probeBranchOrbit(String repositoryPath) async {
 /// benefits from the opposite: a hotter diffusion that casts a
 /// wider net to catch the sprawl's real boundaries. Steady /
 /// null / insufficient orbits get neutral (×1.0).
-///
 /// Values derived from the orbit's own semantics, not tuned:
 ///   converging → 1 − trendSlope magnitude → cooler (min 0.75)
 ///   diverging  → 1 + trendSlope magnitude → hotter (max 1.25)
@@ -4156,21 +5146,44 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
     // Use the per-axis attribution diffusion so we can label *which*
     // axis surfaced each missing file (graph vs M-pickaxe vs Ab-mirror)
     // — much more actionable in the prompt than just a φ score.
+    final symbolPaths = <String>{
+      for (final p in engine.symbolEdges.keys)
+        if (!engine.pathToId.containsKey(p)) p,
+    };
     final axisLabels = <String, String>{
       for (final entry in probe.sourceWeights.entries)
-        entry.key: _classifyAxis(entry.key, probe).name,
+        entry.key: _classifyAxis(
+          entry.key,
+          probe,
+          symbolPaths: symbolPaths,
+        ).name,
     };
-    final attr = engine.diffuseWithAttribution(
-      weightsByPath: probe.sourceWeights,
+    final evidence = engine.gatherEvidence(
+      focusWeights: probe.sourceWeights,
       axisLabelByPath: axisLabels,
       t: t,
       excludePaths: probe.primaryPaths,
+      topK: 5,
     );
+    final attr = evidence?.supportAttribution;
 
     List<RelevanceScore> missing;
     Map<String, double> axisShares = const {};
     Map<String, String> dominantByPath = const {};
-    if (attr != null) {
+    if (evidence != null && evidence.ranked.isNotEmpty) {
+      missing = [
+        for (final e in evidence.ranked.take(5))
+          RelevanceScore(
+            e.path,
+            e.utility > 0 ? e.utility : (e.support * e.integrity * 0.05),
+          ),
+      ];
+      axisShares = attr?.axisMassFractions() ?? const {};
+      dominantByPath = {
+        for (final e in evidence.ranked.take(5))
+          if (e.dominantAxis != null) e.path: e.dominantAxis!,
+      };
+    } else if (attr != null) {
       missing = attr.combined.take(5).toList();
       axisShares = attr.axisMassFractions();
       dominantByPath = {
@@ -4222,6 +5235,10 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
       dominantAxisByPath: dominantByPath,
       stability: stability,
       branchTrajectory: branchTrajectory,
+      sourceAlignment: evidence?.sourceAlignment,
+      fieldAlignment: evidence?.fieldAlignment,
+      sourceSurprise: evidence?.sourceSurprise,
+      fieldSurprise: evidence?.fieldSurprise,
     );
   } catch (e, st) {
     LogosGitDiagnostics.instance.recordFailure(
@@ -4243,6 +5260,18 @@ String _formatCommitShapeBlock(LogosCommitShape? shape) {
   buf.writeln('coherence: ${shape.coherence.toStringAsFixed(2)}');
   buf.writeln('primary files: ${shape.primaryCount}');
   buf.writeln('diffusion t: ${shape.temperature.toStringAsFixed(2)}');
+  if (shape.sourceAlignment != null) {
+    buf.writeln('source alignment: ${shape.sourceAlignment!.toStringAsFixed(2)}');
+  }
+  if (shape.fieldAlignment != null) {
+    buf.writeln('field alignment: ${shape.fieldAlignment!.toStringAsFixed(2)}');
+  }
+  if (shape.sourceSurprise != null) {
+    buf.writeln('source surprise: ${shape.sourceSurprise!.toStringAsFixed(2)}');
+  }
+  if (shape.fieldSurprise != null) {
+    buf.writeln('field surprise: ${shape.fieldSurprise!.toStringAsFixed(2)}');
+  }
   if (shape.scopeCentroid != null) {
     buf.writeln(
       'scope centroid (likely semantic subject): ${shape.scopeCentroid}',
@@ -4381,8 +5410,9 @@ String _buildFileOutline(String content, String filePath, int lineCount) {
 Future<_DiffPromptBundle> _buildDiffPromptBundle(
   String fullDiff, {
   required String repositoryPath,
+  SymbolFrequencyIndex? symbolIndex,
+  FileCouplingMatrix? couplingMatrix,
 }) async {
-  // ── Unified pipeline. One path. One budget. One wrapper shape ─────
   //
   // Every diff — small, medium, huge — flows through the same hunk-
   // diffusion + knapsack admission. The budget [_kDiffBudgetChars] is
@@ -4436,10 +5466,75 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
     engine = null;
   }
 
-  final ranking = hunks.rankHunksByPhi(hunks: parsed, logosEngine: engine);
+  // Alexandria engram for K-space hunk similarity (H_sym augment +
+  // semantic well labels). Loading is cached across calls; the first
+  // diff pays the ~12MB vocab parse, subsequent diffs reuse the
+  // already-decoded byte blobs. A null result silently falls back to
+  // Jaccard-only H_sym.
+  final engramAssets = await EngramRuntime.instance.assets();
+
+  final ranking = await hunks.rankHunksByPhiAsync(
+    hunks: parsed,
+    logosEngine: engine,
+    engramAssets: engramAssets,
+  );
+
+  // Semantic manifest: turn logos + engram outputs into a compact
+  // structured narrative that sits ABOVE the packed diff. The model
+  // sees "here is what the engine already determined" before it sees
+  // raw hunk text — which collapses the cross-hunk-reasoning
+  // hallucination class (moves misread as removals, etc.). Bounded
+  // by its own internal caps; deduct its size from the packer's
+  // budget so the combined body stays under [_kDiffBudgetChars].
+  //
+  // Fail-soft: the builder is pure and never throws, but the render
+  // path traverses dozens of string ops. Any defect there must NOT
+  // tank the whole AI invocation — an empty manifest silently falls
+  // through to the packed-diff-only path the pipeline had before this
+  // feature shipped.
+  String manifestXml = '';
+  try {
+    final manifest = buildSemanticManifest(
+      ranking.rankings,
+      symbolIndex: symbolIndex,
+      couplingMatrix: couplingMatrix,
+    );
+    if (!manifest.isEmpty) {
+      manifestXml = manifest.toPromptXml();
+    }
+  } catch (e, st) {
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'warning',
+      command: 'ai.semantic_manifest',
+      message: 'manifest build/render failed, skipping: $e\n$st',
+    );
+    manifestXml = '';
+  }
+  final packBudget = math.max(
+    0,
+    _kDiffBudgetChars - (manifestXml.isEmpty ? 0 : manifestXml.length + 1),
+  );
+
   final pack = hunks.packHunksUnderBudget(
     rankings: ranking.rankings,
-    budgetChars: _kDiffBudgetChars,
+    budgetChars: packBudget,
+  );
+
+  // Visualisation event: hunks ranked + packed. Canvas fills the
+  // footer bars with per-hunk φ and shows the budget fraction used.
+  // Emits the full φ-descending list (capped to a readable count
+  // inside the canvas, but we hand over the raw data so different
+  // UI cues can all key off the same numbers).
+  LogosVisBus.instance.emitInSession(
+    (sid) => LogosVisHunksRanked(
+      sid,
+      rankings: [for (final r in ranking.rankings) r.phi],
+      admitted: pack.admitted.length,
+      skipped: pack.skipped.length,
+      budgetFraction: packBudget > 0
+          ? (pack.body.length / packBudget).clamp(0.0, 1.0)
+          : 0.0,
+    ),
   );
 
   // Append the metadata postscript when there's anything to say.
@@ -4452,7 +5547,11 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
   // (after the packer's body) so a 2000-binary-file repo can't blow
   // the prompt with metadata noise. Per-entry caps inside the
   // formatter prevent any single file from monopolising the block.
-  final buf = StringBuffer(pack.body);
+  final buf = StringBuffer();
+  if (manifestXml.isNotEmpty) {
+    buf.writeln(manifestXml);
+  }
+  buf.write(pack.body);
   if (metadataOnly.isNotEmpty) {
     final remaining = _kDiffBudgetChars - buf.length;
     if (remaining > 0) {
@@ -4486,19 +5585,15 @@ Map<String, List<String>> extractMetadataOnlyChangesForTesting(String fullDiff) 
 ///   • `similarity index N%` / `rename from`/`rename to`
 ///   • `copy from`/`copy to`
 ///   • `deleted file mode N` / `dissimilarity index N%`
-///
 /// Captured for ALL files (not just hunkless ones) — a file with a
 /// mode change AND content edits would otherwise have its mode change
 /// vanish from the prompt because the packer reassembles only the
 /// `diff --git` / `---` / `+++` triple per file.
-///
 /// Filters OUT noise lines:
 ///   • `index abc..def` (blob SHAs — useless for AI)
 ///   • `--- a/X` / `+++ b/X` (auto-emitted by the packer)
-///
 /// Handles git's C-string quoting for paths containing spaces or
 /// non-ASCII characters: `diff --git "a/X X" "b/X X"`.
-///
 /// Returns Map<path, metadataLines>. Empty when nothing notable.
 Map<String, List<String>> _extractMetadataOnlyChanges(String fullDiff) {
   final out = <String, List<String>>{};
@@ -4551,7 +5646,6 @@ Map<String, List<String>> _extractMetadataOnlyChanges(String fullDiff) {
 /// caps. Returns '' if nothing fits within [maxChars]. The closing
 /// `</header_metadata>` tag is always emitted (or the whole
 /// block is dropped) — never returns malformed XML mid-tag.
-///
 /// Per-entry safety: each file's metadata is capped so one
 /// pathological file (a 100-line conflict marker block, etc.) can't
 /// monopolise the postscript and crowd out other files' visibility.
@@ -4696,7 +5790,6 @@ String _buildCommitMessagePrompt({
   return _capPromptBody(buffer.toString().trim(), 'commit_message_prompt');
 }
 
-// ── Commit-message format directives ────────────────────────────────────
 //
 // Each user-facing preference axis maps to an explicit instruction the
 // model can follow. The three strings below are appended in sequence
@@ -4983,9 +6076,15 @@ String _buildCommitReviewPrompt({
   }
   if (spec.commitDraft.trim().isNotEmpty) {
     buffer.writeln();
-    buffer.writeln('<commit_intent>');
+    buffer.writeln('<author_message>');
+    buffer.writeln('What the user has written about this change, in '
+        'their own words, while the work was in progress. This is '
+        'the human\'s framing — what they would say the change is '
+        'for. Read it as the strongest signal for what the work is '
+        'reaching for; the diff shows the how, this shows the why.');
+    buffer.writeln();
     buffer.writeln(spec.commitDraft.trim());
-    buffer.writeln('</commit_intent>');
+    buffer.writeln('</author_message>');
   }
   buffer.writeln();
   buffer.writeln('<diff_context>');
@@ -5112,7 +6211,6 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   required String repositoryPath,
   bool readOnly = true,
 }) async {
-  // --- API providers: direct HTTP ---
   if (provider.kind == _ProviderKind.geminiApi) {
     final geminiModel = modelId.startsWith('gemini ')
         ? modelId.substring('gemini '.length)
@@ -5134,7 +6232,6 @@ Future<_ProviderPromptResult> _runProviderPrompt({
     );
   }
 
-  // --- CLI providers: process spawning ---
   final attempts = _buildProviderAttempts(provider.kind, modelId,
       readOnly: readOnly, resolvedCommand: resolution.command);
   String? providerOutput;
@@ -5941,10 +7038,8 @@ String _normalizeOpenCodeError(String raw) {
 // Codex dumps a session header + the echoed prompt when it exits with an error.
 // Pattern:
 //   OpenAI Codex v0.x.x
-//   --------
 //   workdir: ...
 //   model: ...
-//   --------
 //   <echoed user prompt>
 //
 // We try to find the real error (rate limit message, API error, etc.) inside
@@ -6684,7 +7779,6 @@ _ProcessInvocation _buildProcessInvocation(String command, List<String> args) {
 
 /// Given a Node.js launcher script (e.g. opencode's `bin/opencode`), try to
 /// find the platform-native binary it wraps.
-///
 /// Many npm packages ship a small Node.js launcher that discovers and
 /// `spawnSync`s a platform-native executable from a sibling `node_modules`
 /// package (e.g. `opencode-windows-x64/bin/opencode.exe`). Invoking the

@@ -20,7 +20,7 @@ class PreferencesState extends ChangeNotifier {
   bool _crashReportingEnabled = false;
   bool _aiReadOnlyDefault = true;
   bool _logoAnimatesWhenUnfocused = true;
-  bool _reduceMotion = false;
+  double _motionRate = 1.0;
   double _reduceMotionPhase = 0.0;
   bool _stashCabinetDefaultExpanded = false;
   bool _instantBlameHover = false;
@@ -29,6 +29,8 @@ class PreferencesState extends ChangeNotifier {
   CommitStructure _commitStructure = kDefaultCommitStructure;
   CommitVoice _commitVoice = kDefaultCommitVoice;
   CommitCoverage _commitCoverage = kDefaultCommitCoverage;
+  double _logosPadX = 0.5;
+  double _logosPadY = 0.5;
   bool _bondExperimentEnabled = false;
   bool _bondDockOpenedOnce = false;
   bool _loaded = false;
@@ -40,8 +42,24 @@ class PreferencesState extends ChangeNotifier {
   bool get crashReportingEnabled => _crashReportingEnabled;
   bool get aiReadOnlyDefault => _aiReadOnlyDefault;
   bool get logoAnimatesWhenUnfocused => _logoAnimatesWhenUnfocused;
-  bool get reduceMotion => _reduceMotion;
+
+  /// Global motion-rate scalar in [0.0, 2.0]. 0 = no motion (reduce-motion
+  /// equivalent), 1 = authored speed, 2 = double-time. Animations compute
+  /// their actual duration as `authored / motionRate`, and skip entirely
+  /// (Duration.zero) when the rate is at or below [_kMotionRateOff].
+  double get motionRate => _motionRate;
+
+  /// Legacy boolean view of [motionRate]. Returns true when the rate is at
+  /// or below the "off" threshold — preserved so callers that only cared
+  /// about the binary flip continue to work unchanged.
+  bool get reduceMotion => _motionRate <= _kMotionRateOff;
+
   double get reduceMotionPhase => _reduceMotionPhase;
+
+  /// Rates at or below this threshold are treated as "no motion". Chosen
+  /// slightly above zero so a rounding artifact from persistence doesn't
+  /// accidentally re-enable animations when the user meant OFF.
+  static const double _kMotionRateOff = 0.0001;
   bool get stashCabinetDefaultExpanded => _stashCabinetDefaultExpanded;
   bool get instantBlameHover => _instantBlameHover;
   FileSortGuide get fileSortGuide => _fileSortGuide;
@@ -49,6 +67,8 @@ class PreferencesState extends ChangeNotifier {
   CommitStructure get commitStructure => _commitStructure;
   CommitVoice get commitVoice => _commitVoice;
   CommitCoverage get commitCoverage => _commitCoverage;
+  double get logosPadX => _logosPadX;
+  double get logosPadY => _logosPadY;
   bool get bondExperimentEnabled => _bondExperimentEnabled;
   bool get bondDockOpenedOnce => _bondDockOpenedOnce;
 
@@ -63,7 +83,7 @@ class PreferencesState extends ChangeNotifier {
     _crashReportingEnabled = settings.crashReportingEnabled;
     _aiReadOnlyDefault = settings.aiReadOnlyDefault;
     _logoAnimatesWhenUnfocused = settings.logoAnimatesWhenUnfocused;
-    _reduceMotion = settings.reduceMotion;
+    _motionRate = settings.motionRate.clamp(0.0, 2.0);
     _reduceMotionPhase = settings.reduceMotionPhase;
     _stashCabinetDefaultExpanded = settings.stashCabinetDefaultExpanded;
     _instantBlameHover = settings.instantBlameHover;
@@ -72,6 +92,8 @@ class PreferencesState extends ChangeNotifier {
     _commitStructure = commitStructureFromKey(settings.commitStructure);
     _commitVoice = commitVoiceFromKey(settings.commitVoice);
     _commitCoverage = commitCoverageFromKey(settings.commitCoverage);
+    _logosPadX = settings.logosPadX;
+    _logosPadY = settings.logosPadY;
     _bondExperimentEnabled = settings.bondExperimentEnabled;
     _bondDockOpenedOnce = settings.bondDockOpenedOnce;
     _loaded = true;
@@ -88,6 +110,7 @@ class PreferencesState extends ChangeNotifier {
     String? updateChannel,
     bool? crashReportingEnabled,
     bool? reduceMotion,
+    double? motionRate,
     double? reduceMotionPhase,
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
@@ -96,6 +119,8 @@ class PreferencesState extends ChangeNotifier {
     String? commitStructure,
     String? commitVoice,
     String? commitCoverage,
+    double? logosPadX,
+    double? logosPadY,
     bool? bondExperimentEnabled,
     bool? bondDockOpenedOnce,
   }) async {
@@ -108,6 +133,7 @@ class PreferencesState extends ChangeNotifier {
         updateChannel: updateChannel,
         crashReportingEnabled: crashReportingEnabled,
         reduceMotion: reduceMotion,
+        motionRate: motionRate,
         reduceMotionPhase: reduceMotionPhase,
         stashCabinetDefaultExpanded: stashCabinetDefaultExpanded,
         instantBlameHover: instantBlameHover,
@@ -116,6 +142,8 @@ class PreferencesState extends ChangeNotifier {
         commitStructure: commitStructure,
         commitVoice: commitVoice,
         commitCoverage: commitCoverage,
+        logosPadX: logosPadX,
+        logosPadY: logosPadY,
         bondExperimentEnabled: bondExperimentEnabled,
         bondDockOpenedOnce: bondDockOpenedOnce,
       ),
@@ -138,12 +166,42 @@ class PreferencesState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setReduceMotion(bool value) async {
-    if (_reduceMotion == value) return;
-    _reduceMotion = value;
-    await _persistWith(reduceMotion: value);
+  /// Write the pad's XY position. Drag updates can fire many times per
+  /// second, so we coalesce writes: [notifyListeners] happens on every
+  /// call (the UI needs the re-render), but the persist is fire-and-
+  /// forget. The on-disk file is a small JSON blob so back-to-back
+  /// writes are cheap enough — a debouncer would add code without
+  /// visible benefit here.
+  Future<void> setLogosPad(double x, double y) async {
+    final cx = x.clamp(0.0, 1.0);
+    final cy = y.clamp(0.0, 1.0);
+    if (_logosPadX == cx && _logosPadY == cy) return;
+    _logosPadX = cx;
+    _logosPadY = cy;
+    notifyListeners();
+    await _persistWith(logosPadX: cx, logosPadY: cy);
+  }
+
+  /// Write a new [motionRate]. Value is clamped to [0, 2]. Persists both
+  /// `motionRate` (authoritative) AND the derived `reduceMotion` boolean
+  /// so on-disk downgrades keep working — an older build reading this
+  /// settings file will see `reduceMotion = rate <= 0` and behave
+  /// correctly even without knowing about the rate field.
+  Future<void> setMotionRate(double value) async {
+    final clamped = value.clamp(0.0, 2.0);
+    if (_motionRate == clamped) return;
+    _motionRate = clamped;
+    await _persistWith(
+      motionRate: clamped,
+      reduceMotion: clamped <= _kMotionRateOff,
+    );
     notifyListeners();
   }
+
+  /// Convenience toggle for callers that only care about the binary flip.
+  /// Maps `true → 0.0` (off), `false → 1.0` (normal). Callers that want
+  /// a tuned rate use [setMotionRate] directly.
+  Future<void> setReduceMotion(bool value) => setMotionRate(value ? 0.0 : 1.0);
 
   /// Persist the pulse-wave phase that the reduce-motion toggle froze
   /// at. Intentionally does NOT call [notifyListeners] — nothing in the

@@ -106,7 +106,6 @@ class _OnboardingChrome extends StatelessWidget {
   }
 }
 
-// ── Shared step controls ───────────────────────────────────────────────
 // Each step renders its own Back/Primary row so it can gate enablement on
 // step-local state without coordinating with a shared footer.
 

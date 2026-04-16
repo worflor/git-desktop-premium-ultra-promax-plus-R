@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-// ── SVG icon strings (ported from iconRegistry.tsx) ─────────────────────────
 
 const _icons = <String, String>{
   'app-logo':

@@ -131,7 +131,6 @@ class HypercubeLogoEngine {
   /// fully settled in reduced mode. The pose itself is already frozen —
   /// widgets just wait for residual motion to die out before stopping
   /// the ticker.
-  ///
   /// Never true while:
   ///   * dragging — the user is actively moving the cube
   ///   * materializing — the implode/explode sequence needs frames
@@ -199,7 +198,6 @@ class HypercubeLogoEngine {
   }
 
   /// Reduce-motion step.
-  ///
   /// Freezes the pose exactly where the engine was at toggle time:
   ///   * `time` does not advance → projection-pipeline breathing locked.
   ///   * `transition` does not advance → the state lerp stops at its
@@ -270,14 +268,12 @@ class HypercubeLogoEngine {
   }
 
   /// Flip the engine into / out of reduce-motion mode.
-  ///
   /// When entering, the pose freezes exactly where it is — no target
   /// pose, no teleport. When [randomizeOnEnter] is true the engine
   /// *first* picks a random pose (current + target indices and a random
   /// mid-transition fraction), then freezes. Use this on fresh launches
   /// where reduce-motion was already on — the alternative is every cold
   /// start showing the same initial pose, which reads as mechanical.
-  ///
   /// When exiting, cycling resumes from wherever the pose was held.
   void setReduced(bool value, {bool randomizeOnEnter = false}) {
     if (_reduced == value) return;

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../backend/dtos.dart';
+import '../../backend/file_lifecycle.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import 'commit_seismograph_layout.dart';
@@ -29,6 +30,15 @@ class CommitSeismograph extends StatefulWidget {
   /// to the file-count / +/- chips above the seismograph.
   final VoidCallback onOpenAllFiles;
 
+  /// Per-file lifecycle classification (promotion × decay) derived
+  /// from the engine's whole-repo touch history. When provided, the
+  /// seismograph paints subtle accents on leaf segments — a top
+  /// underline whose color encodes promotion (canonical = bright
+  /// accent, reinforced = muted accent) and a thin baseline marker
+  /// for stale files. The two channels are independent; a file can
+  /// be canonical AND stale (deep infrastructure that hasn't moved).
+  final Map<String, FileLifecycle>? lifecycles;
+
   const CommitSeismograph({
     super.key,
     required this.detail,
@@ -37,6 +47,7 @@ class CommitSeismograph extends StatefulWidget {
     required this.repoPath,
     required this.onOpenFile,
     required this.onOpenAllFiles,
+    this.lifecycles,
   });
 
   @override
@@ -335,6 +346,7 @@ class _CommitSeismographState extends State<CommitSeismograph>
                           segLabelHeight: segLabelHeight,
                           minLabelSegmentPx: minLabelSegmentPx,
                           dirtyPaths: widget.dirtyPaths,
+                          lifecycles: widget.lifecycles,
                           wake: _wakeCtrl,
                           filterText: _filterText.toLowerCase(),
                           onDrillTo: (p) {
@@ -397,7 +409,6 @@ double _measureHeight(String text, TextStyle s) {
   return tp.height;
 }
 
-// ── Breadcrumb ──────────────────────────────────────────────────────────────
 
 class _Breadcrumb extends StatelessWidget {
   final List<String> focusPath;
@@ -462,7 +473,6 @@ class _Breadcrumb extends StatelessWidget {
   }
 }
 
-// ── Body: stacked tracks ─────────────────────────────────────────────────────
 
 class _SeismographBody extends StatelessWidget {
   final AppTokens tokens;
@@ -475,6 +485,7 @@ class _SeismographBody extends StatelessWidget {
   final double segLabelHeight;
   final double minLabelSegmentPx;
   final Set<String> dirtyPaths;
+  final Map<String, FileLifecycle>? lifecycles;
   final ValueChanged<List<String>> onDrillTo;
   final ValueChanged<List<String>> onOpenLeaf;
   final ValueChanged<_HoverInfo?> onHover;
@@ -492,6 +503,7 @@ class _SeismographBody extends StatelessWidget {
     required this.segLabelHeight,
     required this.minLabelSegmentPx,
     required this.dirtyPaths,
+    required this.lifecycles,
     required this.onDrillTo,
     required this.onOpenLeaf,
     required this.onHover,
@@ -537,6 +549,7 @@ class _SeismographBody extends StatelessWidget {
             minLabelSegmentPx: minLabelSegmentPx,
             heroPath: heroPath,
             dirtyPaths: dirtyPaths,
+            lifecycles: lifecycles,
             onDrillTo: onDrillTo,
             onOpenLeaf: onOpenLeaf,
             onHover: onHover,
@@ -586,7 +599,6 @@ class _GridPainter extends CustomPainter {
       old.headerWidth != headerWidth;
 }
 
-// ── Track header ─────────────────────────────────────────────────────────────
 
 class _TrackHeader extends StatefulWidget {
   final SeismographTrack track;
@@ -686,7 +698,6 @@ class _TrackHeaderState extends State<_TrackHeader> {
   }
 }
 
-// ── Track body: ridgeline of segment bars ───────────────────────────────────
 
 class _Track extends StatelessWidget {
   final SeismographTrack track;
@@ -698,6 +709,7 @@ class _Track extends StatelessWidget {
   final double minLabelSegmentPx;
   final List<String>? heroPath;
   final Set<String> dirtyPaths;
+  final Map<String, FileLifecycle>? lifecycles;
   final ValueChanged<List<String>> onDrillTo;
   final ValueChanged<List<String>> onOpenLeaf;
   final ValueChanged<_HoverInfo?> onHover;
@@ -714,6 +726,7 @@ class _Track extends StatelessWidget {
     required this.minLabelSegmentPx,
     required this.heroPath,
     required this.dirtyPaths,
+    required this.lifecycles,
     required this.onDrillTo,
     required this.onOpenLeaf,
     required this.onHover,
@@ -773,6 +786,9 @@ class _Track extends StatelessWidget {
               isHero: seg.isLeaf &&
                   heroPath != null &&
                   listEquals(seg.path, heroPath),
+              lifecycle: (seg.isLeaf && lifecycles != null)
+                  ? lifecycles![seg.path.join('/')]
+                  : null,
               dimmed: !_matchesFilter(seg),
               wake: wake,
               wakeProgressFor: _trackWakeProgress,
@@ -892,7 +908,6 @@ class _RidgelinePainter extends CustomPainter {
       old.wakeProgress != wakeProgress;
 }
 
-// ── Segment ──────────────────────────────────────────────────────────────────
 
 class _Segment extends StatefulWidget {
   final SeismographTrack track;
@@ -905,6 +920,7 @@ class _Segment extends StatefulWidget {
   final bool isDirty;
   final bool isHero;
   final bool dimmed;
+  final FileLifecycle? lifecycle;
   final VoidCallback? onTap;
   final ValueChanged<bool> onHover;
   final Animation<double> wake;
@@ -921,6 +937,7 @@ class _Segment extends StatefulWidget {
     required this.isDirty,
     required this.isHero,
     required this.dimmed,
+    required this.lifecycle,
     required this.onTap,
     required this.onHover,
     required this.wake,
@@ -1118,6 +1135,46 @@ class _SegmentState extends State<_Segment> {
                     left: 0, right: 1,
                     bottom: barHeight - 1.5, height: 1.5,
                     child: ColoredBox(color: t.accentBright),
+                  ),
+                // Lifecycle promotion rim — canonical files (top
+                // 10 % of touch counts) get a thin top accent line;
+                // reinforced files get a fainter one. Read as "this
+                // file is structurally important to the repo." Only
+                // rendered for leaf segments, never for folds.
+                if (!widget.isHero &&
+                    seg.isLeaf &&
+                    widget.lifecycle != null &&
+                    widget.lifecycle!.promotion != FilePromotion.candidate &&
+                    barHeight > 1.5)
+                  Positioned(
+                    left: 0, right: 1,
+                    bottom: barHeight - 1.0, height: 1.0,
+                    child: ColoredBox(
+                      color: t.accentBright.withValues(
+                        alpha: widget.lifecycle!.promotion ==
+                                FilePromotion.canonical
+                            ? 0.6
+                            : 0.3,
+                      ),
+                    ),
+                  ),
+                // Lifecycle decay marker — stale files get a single
+                // dot in the top-right, like a weathering mark. The
+                // file is remembered structurally but hasn't moved
+                // recently. Subtle; reads as patina, not warning.
+                if (seg.isLeaf &&
+                    widget.lifecycle != null &&
+                    widget.lifecycle!.decay == FileDecay.stale &&
+                    barHeight > 4)
+                  Positioned(
+                    right: 2, top: labelBandPx + 1,
+                    child: Container(
+                      width: 2.5, height: 2.5,
+                      decoration: BoxDecoration(
+                        color: t.textFaint.withValues(alpha: 0.55),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
                   ),
                 // Conflict surfaces around the bar's edge as a rim.
                 if (notch != null && notch.label == 'U' && barHeight > 0)
@@ -1334,7 +1391,6 @@ class _SplitBar extends StatelessWidget {
   }
 }
 
-// ── Single-file fallback ─────────────────────────────────────────────────────
 
 class _SingleFileRow extends StatelessWidget {
   final SeismographSegment segment;
@@ -1398,7 +1454,6 @@ class _SingleFileRow extends StatelessWidget {
   }
 }
 
-// ── Diff-mode rail ───────────────────────────────────────────────────────────
 
 /// Compact horizontal seismograph used as a navigator while the user is
 /// viewing a diff. One bar per file in the commit, height ∝ churn share,
@@ -1675,7 +1730,6 @@ class _RailBarState extends State<_RailBar> {
   }
 }
 
-// ── Filter bar ───────────────────────────────────────────────────────────────
 
 class _FilterBar extends StatelessWidget {
   final AppTokens tokens;

@@ -13,7 +13,6 @@ import 'tokens.dart';
 /// in/out. Stable text is idle — zero ticks until the string actually
 /// changes. Duration + curve come from `context.surfaceShader` so each
 /// theme gets its own cadence. Reduce-motion short-circuits to instant.
-///
 /// Not suitable for body text, diff content, or anything you're *reading*
 /// — reserve for single-line labels that read as events when they change.
 class ThemeMorphText extends StatefulWidget {
@@ -233,7 +232,6 @@ class _ThemeMorphTextState extends State<ThemeMorphText>
   }
 }
 
-// ── LCS-based per-char ops ─────────────────────────────────────────────
 
 class _MorphOp {
   final int fromIdx; // -1 when char is new
@@ -282,7 +280,6 @@ List<_MorphOp> _computeOps(String from, String to) {
   return ops.reversed.toList();
 }
 
-// ── Cached per-glyph layout ────────────────────────────────────────────
 
 class _LaidOut {
   final List<Offset> positions;
@@ -353,7 +350,6 @@ class _LaidOut {
   }
 }
 
-// ── Painter ────────────────────────────────────────────────────────────
 
 /// Precomputed pearl-shimmer hue lookup for `ThemeTextEffect.iridescent`.
 /// 64 entries (power of 2 so phase-to-index can use a bit mask).
@@ -429,7 +425,6 @@ class _MorphPainter extends CustomPainter {
     // of re-walking every glyph each time. Big win on long strings.
     _cachedBbox = _computeBboxUncached();
 
-    // ── Single pass: each glyph paints with its per-op tint ─────────
     // No particles, no external overlays. The text itself is the thing
     // that changes color — each glyph picks up the theme-specific tint
     // based on its role in the op (keep / insert / remove) and the
@@ -528,7 +523,6 @@ class _MorphPainter extends CustomPainter {
     final rect = pos & glyph.size;
     final revealedWidth = rect.width * revealed;
 
-    // ── Drawn body ─────────────────────────────────────────────────
     // Clip to the revealed portion and paint the glyph in a warm off-
     // white (feels like pressed chalk, not LCD-white). Hard clip = no
     // blur, no ghost edge.
@@ -539,7 +533,6 @@ class _MorphPainter extends CustomPainter {
         const Color(0xE6F5F5F0), 1.0, 0);
     canvas.restore();
 
-    // ── Leading tip ────────────────────────────────────────────────
     // A 3-px-wide vertical slice at the reveal edge, painted as the
     // glyph itself at PURE white. The tip lights up only the glyph's
     // own pixels (via srcATop inside _paintGlyph) — no blur, no screen
@@ -562,7 +555,6 @@ class _MorphPainter extends CustomPainter {
   /// Paint a glyph with optional fade, tint, scale, and chromatic
   /// aberration. Everything stays intrinsic to the glyph — no external
   /// particles, just the character being manipulated.
-  ///
   /// [scale] scales the glyph about its own center.
   /// [aberration] is a pixel offset amount for CRT-style red/blue ghost
   /// copies (0 disables). The glyph is painted three times: red ghost

@@ -937,11 +937,11 @@ class _SettingsPageState extends State<SettingsPage> {
               const _SettingsSubtitle('Behavioural Dynamics'),
               const SizedBox(height: 12),
               _ReduceMotionToggle(
-                value: preferences.reduceMotion,
+                value: preferences.motionRate,
                 onChanged: (value) {
                   unawaited(context
                       .read<PreferencesState>()
-                      .setReduceMotion(value));
+                      .setMotionRate(value));
                 },
               ),
               const SizedBox(height: 10),
@@ -1020,6 +1020,16 @@ class _SettingsPageState extends State<SettingsPage> {
                   unawaited(context
                       .read<PreferencesState>()
                       .setBondExperimentEnabled(value));
+                },
+              ),
+              const SizedBox(height: 16),
+              _LogosDynamicsStage(
+                padX: preferences.logosPadX,
+                padY: preferences.logosPadY,
+                onChanged: (x, y) {
+                  unawaited(context
+                      .read<PreferencesState>()
+                      .setLogosPad(x, y));
                 },
               ),
               const _SettingsGap(),
@@ -2606,7 +2616,7 @@ class _ModelSlotsGrid extends StatelessWidget {
 }
 
 /// Compact model slot tile — label editable inline, dropdown below, provider pill on the right.
-class _CompactModelSlot extends StatelessWidget {
+class _CompactModelSlot extends StatefulWidget {
   final AiModelCategoryData category;
   final TextEditingController controller;
   final String selectedValue;
@@ -2622,15 +2632,106 @@ class _CompactModelSlot extends StatelessWidget {
   });
 
   @override
+  State<_CompactModelSlot> createState() => _CompactModelSlotState();
+}
+
+class _CompactModelSlotState extends State<_CompactModelSlot> {
+  final Map<String, TextEditingController> _customControllers = {};
+
+  List<({String providerId, String providerLabel})> get _uniqueProviders {
+    final seen = <String>{};
+    final result = <({String providerId, String providerLabel})>[];
+    for (final model in widget.category.models) {
+      if (seen.add(model.providerId)) {
+        result.add((
+          providerId: model.providerId,
+          providerLabel: model.providerLabel,
+        ));
+      }
+    }
+    return result;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _syncControllers();
+  }
+
+  @override
+  void didUpdateWidget(_CompactModelSlot old) {
+    super.didUpdateWidget(old);
+    if (old.category.models != widget.category.models ||
+        old.selectedValue != widget.selectedValue) {
+      _syncControllers();
+    }
+  }
+
+  void _syncControllers() {
+    final providers = _uniqueProviders;
+    final providerIds = providers.map((p) => p.providerId).toSet();
+
+    for (final p in providers) {
+      _customControllers.putIfAbsent(p.providerId, () => TextEditingController());
+    }
+
+    for (final key in _customControllers.keys.where((k) => !providerIds.contains(k)).toList()) {
+      _customControllers.remove(key)!.dispose();
+    }
+
+    // Pre-fill when selected value is a custom entry for a known provider.
+    final sel = widget.selectedValue;
+    final colonIdx = sel.indexOf(':');
+    if (colonIdx > 0) {
+      final selProvider = sel.substring(0, colonIdx);
+      final selModel = sel.substring(colonIdx + 1);
+      final knownValues = widget.category.models.map((m) => m.value).toSet();
+      final ctrl = _customControllers[selProvider];
+      if (!knownValues.contains(sel) && ctrl != null && ctrl.text != selModel) {
+        ctrl.text = selModel;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final ctrl in _customControllers.values) {
+      ctrl.dispose();
+    }
+    super.dispose();
+  }
+
+  void _commitCustom(String providerId) {
+    if (widget.onModelChanged == null) return;
+    final text = _customControllers[providerId]?.text.trim() ?? '';
+    if (text.isEmpty) return;
+    widget.onModelChanged!('$providerId:$text');
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+
     AiModelOptionData? selectedModel;
-    for (final model in category.models) {
-      if (model.value == selectedValue) {
+    for (final model in widget.category.models) {
+      if (model.value == widget.selectedValue) {
         selectedModel = model;
         break;
       }
     }
+
+    // Resolve provider label even for custom selections.
+    String? resolvedProviderLabel = selectedModel?.providerLabel;
+    if (resolvedProviderLabel == null && widget.selectedValue.contains(':')) {
+      final selProvider = widget.selectedValue.split(':').first;
+      for (final model in widget.category.models) {
+        if (model.providerId == selProvider) {
+          resolvedProviderLabel = model.providerLabel;
+          break;
+        }
+      }
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -2646,40 +2747,35 @@ class _CompactModelSlot extends StatelessWidget {
             children: [
               Expanded(
                 child: _EditableSlotTitle(
-                  controller: controller,
-                  hintText: category.label,
-                  onChanged: onLabelChanged,
+                  controller: widget.controller,
+                  hintText: widget.category.label,
+                  onChanged: widget.onLabelChanged,
                 ),
               ),
               const SizedBox(width: 8),
-              if (selectedModel != null)
-                _ProviderPill(label: selectedModel.providerLabel),
+              if (resolvedProviderLabel != null)
+                _ProviderPill(label: resolvedProviderLabel),
             ],
           ),
           const SizedBox(height: 8),
-          // Model picker
-          if (category.models.isEmpty)
+          if (widget.category.models.isEmpty)
             Text(
               'No models detected for this slot.',
               style: TextStyle(color: t.textMuted, fontSize: 11),
             )
           else
-            AppDropdownField<String>(
-              value: selectedValue,
-              items: category.models
-                  .map(
-                    (model) => DropdownMenuItem<String>(
-                      value: model.value,
-                      child: Text(model.label),
-                    ),
-                  )
-                  .toList(),
-              onChanged: onModelChanged ?? (_) {},
+            _ModelPickerField(
+              value: widget.selectedValue,
+              models: widget.category.models,
+              providers: _uniqueProviders,
+              customControllers: _customControllers,
+              onChanged: widget.onModelChanged ?? (_) {},
+              onCustomSubmit: _commitCustom,
             ),
-          if (selectedModel != null) ...[
+          if (resolvedProviderLabel != null) ...[
             const SizedBox(height: 6),
             Text(
-              'via ${selectedModel.providerLabel.toLowerCase()}',
+              'via ${resolvedProviderLabel.toLowerCase()}',
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.65),
                 fontSize: 10,
@@ -2689,6 +2785,80 @@ class _CompactModelSlot extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// A single custom-model input row: mono provider label + text field.
+class _CustomModelRow extends StatelessWidget {
+  final String providerLabel;
+  final TextEditingController controller;
+  final VoidCallback onSubmit;
+
+  const _CustomModelRow({
+    required this.providerLabel,
+    required this.controller,
+    required this.onSubmit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      children: [
+        SizedBox(
+          width: 54,
+          child: Text(
+            providerLabel.toLowerCase(),
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.50),
+              fontSize: 10,
+              fontFamily: 'JetBrainsMono',
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: TextField(
+            controller: controller,
+            maxLines: 1,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 11,
+              fontFamily: 'JetBrainsMono',
+            ),
+            cursorColor: t.accentBright,
+            onSubmitted: (_) => onSubmit(),
+            decoration: InputDecoration(
+              isCollapsed: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide:
+                    BorderSide(color: t.chromeBorder.withValues(alpha: 0.22)),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide:
+                    BorderSide(color: t.chromeBorder.withValues(alpha: 0.22)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide:
+                    BorderSide(color: t.accentBright.withValues(alpha: 0.50)),
+              ),
+              hintText: 'custom model id',
+              hintStyle: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.30),
+                fontSize: 11,
+                fontFamily: 'JetBrainsMono',
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2715,6 +2885,254 @@ class _ProviderPill extends StatelessWidget {
           fontSize: 9,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
+// Custom overlay-based model picker — replaces AppDropdownField so that the
+// custom-model text inputs live inside the popup list itself.
+
+class _ModelPickerField extends StatefulWidget {
+  final String value;
+  final List<AiModelOptionData> models;
+  final List<({String providerId, String providerLabel})> providers;
+  final Map<String, TextEditingController> customControllers;
+  final ValueChanged<String?> onChanged;
+  final void Function(String providerId) onCustomSubmit;
+
+  const _ModelPickerField({
+    required this.value,
+    required this.models,
+    required this.providers,
+    required this.customControllers,
+    required this.onChanged,
+    required this.onCustomSubmit,
+  });
+
+  @override
+  State<_ModelPickerField> createState() => _ModelPickerFieldState();
+}
+
+class _ModelPickerFieldState extends State<_ModelPickerField> {
+  final _link = LayerLink();
+  final _triggerKey = GlobalKey();
+  OverlayEntry? _entry;
+
+  bool get _isOpen => _entry != null;
+
+  @override
+  void dispose() {
+    _closeOverlay();
+    super.dispose();
+  }
+
+  void _toggle() => _isOpen ? _closeOverlay() : _openOverlay();
+
+  void _openOverlay() {
+    if (_isOpen) return;
+    _entry = OverlayEntry(builder: _buildOverlayContent);
+    Overlay.of(context).insert(_entry!);
+    setState(() {});
+  }
+
+  void _closeOverlay() {
+    if (!_isOpen) return;
+    _entry!.remove();
+    _entry = null;
+    if (mounted) setState(() {});
+  }
+
+  void _select(String v) {
+    widget.onChanged(v);
+    _closeOverlay();
+  }
+
+  void _submitCustom(String providerId) {
+    widget.onCustomSubmit(providerId);
+    _closeOverlay();
+  }
+
+  Widget _buildOverlayContent(BuildContext ctx) {
+    final box = _triggerKey.currentContext?.findRenderObject() as RenderBox?;
+    final width = box?.size.width ?? 240.0;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: _closeOverlay,
+            behavior: HitTestBehavior.translucent,
+          ),
+        ),
+        CompositedTransformFollower(
+          link: _link,
+          showWhenUnlinked: false,
+          targetAnchor: Alignment.bottomLeft,
+          followerAnchor: Alignment.topLeft,
+          child: SizedBox(
+            width: width,
+            child: _ModelPickerOverlay(
+              models: widget.models,
+              selectedValue: widget.value,
+              providers: widget.providers,
+              customControllers: widget.customControllers,
+              onSelect: _select,
+              onCustomSubmit: _submitCustom,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+
+    // Display label for the trigger.
+    String label = widget.value;
+    for (final m in widget.models) {
+      if (m.value == widget.value) {
+        label = m.label;
+        break;
+      }
+    }
+    // Custom value: show just the model-id part.
+    if (label == widget.value &&
+        widget.value.contains(':') &&
+        !widget.models.any((m) => m.value == widget.value)) {
+      label = widget.value.split(':').last;
+    }
+
+    return CompositedTransformTarget(
+      link: _link,
+      child: AppInputShell(
+        key: _triggerKey,
+        focused: _isOpen,
+        child: GestureDetector(
+          onTap: _toggle,
+          behavior: HitTestBehavior.opaque,
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(color: t.textNormal, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Icon(
+                _isOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down,
+                color: t.textMuted,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelPickerOverlay extends StatelessWidget {
+  final List<AiModelOptionData> models;
+  final String selectedValue;
+  final List<({String providerId, String providerLabel})> providers;
+  final Map<String, TextEditingController> customControllers;
+  final ValueChanged<String> onSelect;
+  final void Function(String providerId) onCustomSubmit;
+
+  const _ModelPickerOverlay({
+    required this.models,
+    required this.selectedValue,
+    required this.providers,
+    required this.customControllers,
+    required this.onSelect,
+    required this.onCustomSubmit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Material(
+      color: t.bg1,
+      elevation: 4,
+      borderRadius: BorderRadius.circular(6),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 340),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Flexible(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                shrinkWrap: true,
+                children: [
+                  for (final model in models)
+                    _ModelPickerItem(
+                      model: model,
+                      selected: model.value == selectedValue,
+                      onTap: () => onSelect(model.value),
+                    ),
+                ],
+              ),
+            ),
+            if (providers.isNotEmpty) ...[
+              Divider(
+                height: 1,
+                thickness: 1,
+                color: t.chromeBorder.withValues(alpha: 0.12),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                child: Column(
+                  children: [
+                    for (var i = 0; i < providers.length; i++) ...[
+                      _CustomModelRow(
+                        providerLabel: providers[i].providerLabel,
+                        controller: customControllers[providers[i].providerId]!,
+                        onSubmit: () => onCustomSubmit(providers[i].providerId),
+                      ),
+                      if (i < providers.length - 1) const SizedBox(height: 4),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelPickerItem extends StatelessWidget {
+  final AiModelOptionData model;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ModelPickerItem({
+    required this.model,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        color: selected ? t.accentBright.withValues(alpha: 0.08) : null,
+        child: Text(
+          model.label,
+          style: TextStyle(
+            color: selected ? t.accentBright : t.textNormal,
+            fontSize: 12,
+          ),
         ),
       ),
     );
@@ -2948,7 +3366,6 @@ class _AiMuseIntegrationEditor extends StatelessWidget {
 
 /// The muse stage — a [1] → [2] visual that lets the user assign which
 /// AI category (slot) drives each phase of the oracle pipeline.
-///
 /// Phase 1 (brainstorm) is cheap and divergent — defaults to "fast".
 /// Phase 2 (synthesis) is rigorous and grounding-aware — defaults to
 /// the same category review uses, typically "quality". Either may be
@@ -3083,10 +3500,9 @@ class _MuseStage extends StatelessWidget {
   }
 }
 
-/// One numbered station inside the muse stage. Header row carries the
-/// [1]/[2] tag + phase title; body row is the slot dropdown + resolved
-/// model pill. Sharp borders, no rounding — matches the brutalist
-/// terminal vibe of the rest of the settings page.
+/// Numbered station inside the muse pipeline.
+/// Header row shows [1]/[2] and phase title. Body row has the model
+/// dropdown plus resolved model pill.
 class _MuseStation extends StatelessWidget {
   final AppTokens tokens;
   final String number;
@@ -3344,6 +3760,939 @@ class _SettingsGap extends StatelessWidget {
             stops: const [0.0, 0.15, 0.85, 1.0],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// Logos pad and grip are one control: interactive tuning + static status.
+
+class _LogosDynamicsStage extends StatelessWidget {
+  final double padX;
+  final double padY;
+  final void Function(double x, double y) onChanged;
+
+  const _LogosDynamicsStage({
+    required this.padX,
+    required this.padY,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (ctx, c) {
+      // Pad uses the remaining width; grip stays fixed at 128px.
+      const gripW = 128.0;
+      const gap = 12.0;
+      final totalW = c.maxWidth.clamp(420.0, 720.0).toDouble();
+      final padW = (totalW - gripW - gap).clamp(280.0, 600.0).toDouble();
+      final padH = (padW / 1.7).clamp(220.0, 360.0).toDouble();
+      // Use IntrinsicHeight so whichever child is taller sets the row height.
+      return SizedBox(
+        width: totalW,
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: padW,
+                height: padH,
+                child: _LogosPad(
+                  x: padX,
+                  y: padY,
+                  onChanged: onChanged,
+                ),
+              ),
+              const SizedBox(width: gap),
+              const SizedBox(
+                width: gripW,
+                child: _LogosGrip(),
+              ),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+}
+
+class _LogosPad extends StatefulWidget {
+  final double x;
+  final double y;
+  final void Function(double x, double y) onChanged;
+
+  const _LogosPad({
+    required this.x,
+    required this.y,
+    required this.onChanged,
+  });
+
+  @override
+  State<_LogosPad> createState() => _LogosPadState();
+}
+
+/// Trail point used for the puck history.
+/// Alpha is calculated from age at paint time, not stored state.
+class _TrailDot {
+  final double x;
+  final double y;
+  final DateTime at;
+  _TrailDot(this.x, this.y, this.at);
+}
+
+class _LogosPadState extends State<_LogosPad>
+    with SingleTickerProviderStateMixin {
+  // Ambient pulse drives the halo and field shimmer.
+  late final AnimationController _ambient;
+
+  // Keep a capped trail of puck positions while dragging.
+  final List<_TrailDot> _trail = [];
+  static const int _kTrailMax = 18;
+  static const Duration _kTrailFade = Duration(milliseconds: 520);
+
+  bool _hovered = false;
+
+  // Cursor parallax is normalized to [-1, 1] around the pad center.
+  Offset _targetParallax = Offset.zero;
+  Offset _currentParallax = Offset.zero;
+
+  // Scroll parallax adds a small Y shift based on scroll position.
+  ScrollPosition? _scrollPos;
+  double _scrollParallaxY = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _ambient = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    )..repeat();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final found = Scrollable.maybeOf(context)?.position;
+    if (!identical(found, _scrollPos)) {
+      _scrollPos?.removeListener(_onScroll);
+      _scrollPos = found;
+      _scrollPos?.addListener(_onScroll);
+      // Recompute scroll offset once layout is settled.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+    }
+  }
+
+  void _onScroll() {
+    if (!mounted) return;
+    final scroll = _scrollPos;
+    if (scroll == null) return;
+    final scrollableContext = Scrollable.maybeOf(context)?.context;
+    final scrollBox = scrollableContext?.findRenderObject() as RenderBox?;
+    final myBox = context.findRenderObject() as RenderBox?;
+    if (scrollBox == null || myBox == null) return;
+    final myCenter = myBox.localToGlobal(
+      Offset(myBox.size.width / 2, myBox.size.height / 2),
+      ancestor: scrollBox,
+    );
+    final viewportH = scrollBox.size.height;
+    // -1 when pad center sits at top edge, +1 at bottom edge of the
+    // viewport. Clamped so values past the visible window saturate
+    // rather than spiraling out.
+    final norm = ((myCenter.dy / viewportH) - 0.5) * 2;
+    final clamped = norm.clamp(-1.0, 1.0);
+    if ((clamped - _scrollParallaxY).abs() > 0.001) {
+      setState(() => _scrollParallaxY = clamped);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollPos?.removeListener(_onScroll);
+    _ambient.dispose();
+    super.dispose();
+  }
+
+  // Snap radius around center dampens small pointer movements.
+  static const double _kSnapRadius = 0.045;
+
+  void _emit(Offset pos, double w, double h) {
+    var nx = (pos.dx / w).clamp(0.0, 1.0);
+    var ny = (pos.dy / h).clamp(0.0, 1.0);
+    final dx = nx - 0.5;
+    final dy = ny - 0.5;
+    final dist = math.sqrt(dx * dx + dy * dy);
+    if (dist < _kSnapRadius) {
+      // Smoothstep keeps movement gradual near center.
+      final t = dist / _kSnapRadius;
+      final gain = t * t * (3 - 2 * t);
+      nx = 0.5 + dx * gain;
+      ny = 0.5 + dy * gain;
+    }
+    _trail.add(_TrailDot(nx, ny, DateTime.now()));
+    if (_trail.length > _kTrailMax) {
+      _trail.removeRange(0, _trail.length - _kTrailMax);
+    }
+    widget.onChanged(nx, ny);
+  }
+
+  void _onHover(Offset pos, double w, double h) {
+    _targetParallax = Offset(
+      ((pos.dx / w) - 0.5) * 2,
+      ((pos.dy / h) - 0.5) * 2,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return LayoutBuilder(builder: (ctx, c) {
+      final w = c.maxWidth;
+      final h = c.maxHeight;
+      return MouseRegion(
+        cursor: SystemMouseCursors.precise,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) {
+          _targetParallax = Offset.zero;
+          setState(() => _hovered = false);
+        },
+        onHover: (e) => _onHover(e.localPosition, w, h),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanUpdate: (d) {
+            _onHover(d.localPosition, w, h);
+            _emit(d.localPosition, w, h);
+          },
+          onPanStart: (d) {
+            _onHover(d.localPosition, w, h);
+            _emit(d.localPosition, w, h);
+          },
+          onTapDown: (d) {
+            _onHover(d.localPosition, w, h);
+            _emit(d.localPosition, w, h);
+          },
+          child: AnimatedBuilder(
+            animation: _ambient,
+            builder: (_, __) {
+              // Drop stale trail points while rendering.
+              final now = DateTime.now();
+              _trail.removeWhere(
+                (d) => now.difference(d.at) > _kTrailFade,
+              );
+              // Critically damped easing keeps the parallax smooth.
+              const easing = 0.18;
+              _currentParallax = Offset(
+                _currentParallax.dx +
+                    (_targetParallax.dx - _currentParallax.dx) * easing,
+                _currentParallax.dy +
+                    (_targetParallax.dy - _currentParallax.dy) * easing,
+              );
+              // Combine hover and scroll parallax; scroll effect is softer.
+              final combined = Offset(
+                _currentParallax.dx,
+                _currentParallax.dy + _scrollParallaxY * 0.55,
+              );
+              return CustomPaint(
+                painter: _LogosPadPainter(
+                  x: widget.x,
+                  y: widget.y,
+                  hovered: _hovered,
+                  ambient: _ambient.value,
+                  parallax: combined,
+                  trail: _trail,
+                  now: now,
+                  tokens: t,
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    });
+  }
+}
+
+/// Point in the pad for one file path.
+/// Relevance is based on distance from the puck.
+class _LogosNode {
+  final String path;
+  final double bx;
+  final double by;
+  const _LogosNode(this.path, this.bx, this.by);
+}
+
+// Nodes are real paths from this app/session.
+// Grouped by axis (folder/history x far/near).
+const List<_LogosNode> _kLogosNodes = [
+  // Folder × Far — directory roots, the architecture-level view.
+  _LogosNode('backend/', 0.12, 0.16),
+  _LogosNode('features/', 0.26, 0.10),
+  _LogosNode('ui/', 0.08, 0.30),
+  _LogosNode('app/', 0.30, 0.26),
+  // History × Far — repo-wide hubs git keeps revisiting.
+  _LogosNode('app/main.dart', 0.84, 0.14),
+  _LogosNode('app/repository_state.dart', 0.74, 0.24),
+  _LogosNode('ui/tokens.dart', 0.92, 0.28),
+  // Folder × Near — siblings of logos_git.dart in backend/.
+  _LogosNode('backend/logos_core.dart', 0.10, 0.78),
+  _LogosNode('backend/logos_chunks.dart', 0.22, 0.86),
+  _LogosNode('backend/logos_hunks.dart', 0.30, 0.72),
+  _LogosNode('backend/logos_git_stats.dart', 0.06, 0.66),
+  // History × Near — what moved alongside the pad work itself.
+  _LogosNode('features/settings/settings_page.dart', 0.86, 0.84),
+  _LogosNode('app/preferences_state.dart', 0.72, 0.74),
+  _LogosNode('backend/settings_store.dart', 0.92, 0.68),
+];
+
+class _LogosPadPainter extends CustomPainter {
+  final double x;
+  final double y;
+  final bool hovered;
+  final double ambient; // 0..1, driven by AnimationController
+  final Offset parallax; // -1..1 normalized cursor offset from center
+  final List<_TrailDot> trail;
+  final DateTime now;
+  final AppTokens tokens;
+
+  _LogosPadPainter({
+    required this.x,
+    required this.y,
+    required this.hovered,
+    required this.ambient,
+    required this.parallax,
+    required this.trail,
+    required this.now,
+    required this.tokens,
+  });
+
+  // Parallax offsets for depth layers, in pixels at full deflection.
+  static const double _depthFieldPx = -3.0;
+  static const double _depthGridPx = -2.0;
+  static const double _depthGlyphPx = 1.5;
+  static const double _depthNodePx = 4.0;
+  static const double _depthPuckPx = 7.5;
+
+  Offset _shift(double depthPx) =>
+      Offset(parallax.dx * depthPx, parallax.dy * depthPx);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final rect = Rect.fromLTWH(0, 0, w, h);
+    final rr = RRect.fromRectAndRadius(rect, const Radius.circular(10));
+    canvas.save();
+    canvas.clipRRect(rr);
+
+    // Each depth layer is translated independently.
+    void layer(double depthPx, void Function() draw) {
+      final s = _shift(depthPx);
+      canvas.save();
+      canvas.translate(s.dx, s.dy);
+      draw();
+      canvas.restore();
+    }
+
+    layer(_depthFieldPx, () => _paintField(canvas, w, h));
+    layer(_depthGridPx, () {
+      _paintGrid(canvas, w, h);
+      _paintAxisHints(canvas, w, h);
+    });
+    layer(_depthGlyphPx, () => _paintPictograms(canvas, w, h));
+    layer(_depthNodePx, () => _paintNodes(canvas, w, h));
+    layer(_depthNodePx, () => _paintTrail(canvas, w, h));
+    layer(_depthPuckPx, () {
+      _paintPuck(canvas, w, h);
+      _paintQuadrantWhisper(canvas, w, h);
+    });
+
+    canvas.restore();
+
+    // Border drawn outside the clip so it remains crisp.
+    final border = Paint()
+      ..color = tokens.chromeBorder.withValues(alpha: 0.28)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawRRect(rr, border);
+  }
+
+  //
+  /// Deterministic textured background.
+  ///
+  /// Stable hash keeps the dot field static between frames.
+  void _paintField(Canvas canvas, double w, double h) {
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()..color = tokens.surface0.withValues(alpha: 0.5),
+    );
+
+    // Static jittered dots create subtle texture without shimmer.
+    const step = 14.0;
+    final dotPaint = Paint()..style = PaintingStyle.fill;
+    int hash(int a, int b) {
+      // Deterministic hash avoids allocations and drift.
+      var n = (a * 73856093) ^ (b * 19349663);
+      n = (n ^ (n >> 13)) * 1274126177;
+      return n & 0x7fffffff;
+    }
+
+    for (double gy = step / 2; gy < h; gy += step) {
+      for (double gx = step / 2; gx < w; gx += step) {
+        final ix = (gx / step).floor();
+        final iy = (gy / step).floor();
+        final hRaw = hash(ix, iy);
+        // Jitter +/- 3px from grid position.
+        final jx = ((hRaw & 0xff) / 255.0 - 0.5) * 6;
+        final jy = (((hRaw >> 8) & 0xff) / 255.0 - 0.5) * 6;
+        // Vary alpha so the field has subtle topography.
+        final a = 0.04 + ((hRaw >> 16) & 0x3f) / 0x3f * 0.06;
+        dotPaint.color = tokens.textMuted.withValues(alpha: a);
+        canvas.drawCircle(Offset(gx + jx, gy + jy), 0.7, dotPaint);
+      }
+    }
+  }
+
+  void _paintGrid(Canvas canvas, double w, double h) {
+    final g = Paint()
+      ..color = tokens.chromeBorder.withValues(alpha: 0.14)
+      ..strokeWidth = 1;
+    // Dashed crosshair centered on both axes.
+    _drawDashedLine(canvas, Offset(w * 0.5, 16), Offset(w * 0.5, h - 16),
+        g, dashLen: 3, gapLen: 5);
+    _drawDashedLine(canvas, Offset(16, h * 0.5), Offset(w - 16, h * 0.5),
+        g, dashLen: 3, gapLen: 5);
+  }
+
+  void _drawDashedLine(Canvas canvas, Offset a, Offset b, Paint paint,
+      {required double dashLen, required double gapLen}) {
+    final dx = b.dx - a.dx;
+    final dy = b.dy - a.dy;
+    final len = math.sqrt(dx * dx + dy * dy);
+    final step = dashLen + gapLen;
+    final n = (len / step).floor();
+    final ux = dx / len;
+    final uy = dy / len;
+    for (int i = 0; i <= n; i++) {
+      final s = i * step;
+      final e = (s + dashLen).clamp(0.0, len);
+      canvas.drawLine(
+        Offset(a.dx + ux * s, a.dy + uy * s),
+        Offset(a.dx + ux * e, a.dy + uy * e),
+        paint,
+      );
+    }
+  }
+
+  // Corner glyphs for each quadrant; active corner is brighter.
+  void _paintPictograms(Canvas canvas, double w, double h) {
+    const inset = 20.0;
+    const glyphSize = 22.0;
+    final active = _LogosQuadrant.nearest(x, y);
+
+    _drawFolderStack(canvas, Offset(inset + glyphSize / 2, inset + glyphSize / 2),
+        glyphSize, active == _LogosQuadrant.moduleMap);
+    _drawHubSpoke(canvas,
+        Offset(w - inset - glyphSize / 2, inset + glyphSize / 2),
+        glyphSize, active == _LogosQuadrant.repoCenters);
+    _drawCluster(canvas,
+        Offset(inset + glyphSize / 2, h - inset - glyphSize / 2),
+        glyphSize, active == _LogosQuadrant.neighbors);
+    _drawPulseArrow(canvas,
+        Offset(w - inset - glyphSize / 2, h - inset - glyphSize / 2),
+        glyphSize, active == _LogosQuadrant.toTouch);
+  }
+
+  Color _glyphColor(bool active) => active
+      ? tokens.textNormal.withValues(alpha: 0.88)
+      : tokens.textMuted.withValues(alpha: 0.38);
+
+  /// Folder × Far — three nested squares (a tree collapsing inward).
+  void _drawFolderStack(Canvas canvas, Offset c, double size, bool active) {
+    final p = Paint()
+      ..color = _glyphColor(active)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    for (int i = 0; i < 3; i++) {
+      final s = size * (1 - i * 0.28);
+      final r = Rect.fromCenter(center: c, width: s, height: s);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(r, const Radius.circular(2)),
+        p,
+      );
+    }
+  }
+
+  /// History × Far — hub-and-spoke. Center node, 6 orbitals, soft lines.
+  void _drawHubSpoke(Canvas canvas, Offset c, double size, bool active) {
+    final col = _glyphColor(active);
+    final line = Paint()
+      ..color = col.withValues(alpha: col.a * 0.6)
+      ..strokeWidth = 1;
+    final dot = Paint()
+      ..color = col
+      ..style = PaintingStyle.fill;
+    const n = 6;
+    final r = size * 0.44;
+    for (int i = 0; i < n; i++) {
+      final a = (i / n) * 2 * math.pi;
+      final p = Offset(c.dx + math.cos(a) * r, c.dy + math.sin(a) * r);
+      canvas.drawLine(c, p, line);
+      canvas.drawCircle(p, 1.4, dot);
+    }
+    canvas.drawCircle(c, 2.2, dot);
+  }
+
+  /// Folder × Near — 3×3 dot grid. Adjacency as matter.
+  void _drawCluster(Canvas canvas, Offset c, double size, bool active) {
+    final dot = Paint()
+      ..color = _glyphColor(active)
+      ..style = PaintingStyle.fill;
+    final step = size * 0.32;
+    for (int i = -1; i <= 1; i++) {
+      for (int j = -1; j <= 1; j++) {
+        canvas.drawCircle(
+            c.translate(i * step, j * step), 1.5, dot);
+      }
+    }
+  }
+
+  /// History × Near — forward chevron wave. "What comes next."
+  void _drawPulseArrow(Canvas canvas, Offset c, double size, bool active) {
+    final col = _glyphColor(active);
+    final p = Paint()
+      ..color = col
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final r = size * 0.38;
+    // Three stacked chevrons → right-leaning motion signature.
+    for (int i = 0; i < 3; i++) {
+      final x0 = c.dx - r + i * (r * 0.45);
+      final path = Path()
+        ..moveTo(x0, c.dy - r * 0.55)
+        ..lineTo(x0 + r * 0.4, c.dy)
+        ..lineTo(x0, c.dy + r * 0.55);
+      final fade = p..color = col.withValues(alpha: col.a * (0.5 + i * 0.22));
+      canvas.drawPath(path, fade);
+    }
+  }
+
+  void _paintAxisHints(Canvas canvas, double w, double h) {
+    final col = tokens.textFaint.withValues(alpha: 0.35);
+    void word(String s, Offset c, {double rotate = 0}) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: s,
+          style: TextStyle(
+            color: col,
+            fontSize: 8,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      canvas.save();
+      canvas.translate(c.dx, c.dy);
+      if (rotate != 0) canvas.rotate(rotate);
+      tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+      canvas.restore();
+    }
+
+    word('FOLDER', Offset(w * 0.25, h - 10));
+    word('HISTORY', Offset(w * 0.75, h - 10));
+    word('FAR', Offset(12, h * 0.25), rotate: -math.pi / 2);
+    word('NEAR', Offset(12, h * 0.75), rotate: -math.pi / 2);
+  }
+
+  //
+  // Relevance = 1 / (1 + k·d²) — a soft Lorentzian that gives nearby
+  // nodes a strong pull while letting far ones fade gracefully.
+  // Relevance is 1/(1 + k*d²), so nearby nodes dominate smoothly.
+  // Top-3 labels are placed opposite the puck to avoid overlap.
+  void _paintNodes(Canvas canvas, double w, double h) {
+    final px = x * w;
+    final py = y * h;
+    final scored = <({_LogosNode n, double r, Offset pos})>[];
+    for (final n in _kLogosNodes) {
+      final nx = n.bx * w;
+      final ny = n.by * h;
+      final dx = (nx - px) / w;
+      final dy = (ny - py) / h;
+      final d2 = dx * dx + dy * dy;
+      // k=12 keeps nearby nodes readable while suppressing distant ones.
+      final rel = 1.0 / (1.0 + 12.0 * d2);
+      scored.add((n: n, r: rel, pos: Offset(nx, ny)));
+    }
+
+    // Draw low-relevance first so top-3 composite cleanly on top.
+    scored.sort((a, b) => a.r.compareTo(b.r));
+    final dot = Paint()..style = PaintingStyle.fill;
+    final ring = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    for (final s in scored) {
+      final r = 1.6 + 3.2 * s.r;
+      final alpha = (0.18 + 0.78 * s.r).clamp(0.0, 1.0);
+      final col = Color.lerp(
+        tokens.textMuted.withValues(alpha: alpha * 0.55),
+        tokens.accentBright.withValues(alpha: alpha),
+        s.r,
+      )!;
+      dot.color = col;
+      canvas.drawCircle(s.pos, r, dot);
+      // Use an extra ring for high-relevance nodes.
+      if (s.r > 0.35) {
+        ring.color = tokens.accentBright
+            .withValues(alpha: ((s.r - 0.35) / 0.65 * 0.55).clamp(0.0, 1.0));
+        canvas.drawCircle(s.pos, r + 3, ring);
+      }
+    }
+
+    // Label the top 3 nodes by relevance.
+    final topN = scored.sublist(scored.length - 3);
+    for (final s in topN) {
+      final labelAlpha = ((s.r - 0.18) / 0.5).clamp(0.0, 1.0);
+      if (labelAlpha <= 0) continue;
+      _drawNodeLabel(canvas, s.n.path, s.pos, Offset(px, py),
+          alpha: labelAlpha, w: w);
+    }
+  }
+
+  void _drawNodeLabel(
+    Canvas canvas,
+    String path,
+    Offset nodePos,
+    Offset puckPos, {
+    required double alpha,
+    required double w,
+  }) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: path,
+        style: TextStyle(
+          color: tokens.textStrong.withValues(alpha: alpha),
+          fontSize: 10.5,
+          height: 1,
+          letterSpacing: 0.1,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    // Place labels away from the puck and keep them readable.
+    final dx = nodePos.dx - puckPos.dx;
+    final dy = nodePos.dy - puckPos.dy;
+    final len = math.sqrt(dx * dx + dy * dy);
+    final ux = len > 0.5 ? dx / len : 1.0;
+    final uy = len > 0.5 ? dy / len : 0.0;
+    const off = 9.0;
+    double lx = nodePos.dx + ux * off;
+    double ly = nodePos.dy + uy * off - tp.height / 2;
+    // If label runs off the right edge, flip to the left of the node.
+    if (lx + tp.width > w - 6) lx = nodePos.dx - off - tp.width;
+    if (lx < 4) lx = 4;
+
+    // Soft backer to keep the label readable against field glow.
+    const pad = 3.0;
+    final bgRect = Rect.fromLTWH(
+        lx - pad, ly - pad, tp.width + pad * 2, tp.height + pad * 2);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(bgRect, const Radius.circular(3)),
+      Paint()
+        ..color = tokens.surface0.withValues(alpha: alpha * 0.7),
+    );
+    tp.paint(canvas, Offset(lx, ly));
+  }
+
+  // Render trail as a thin polyline with age-based alpha.
+  void _paintTrail(Canvas canvas, double w, double h) {
+    if (trail.length < 2) return;
+    final fadeMs = _LogosPadState._kTrailFade.inMilliseconds;
+    final p = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round;
+    for (int i = 1; i < trail.length; i++) {
+      final a = trail[i - 1];
+      final b = trail[i];
+      final ageMs = now.difference(b.at).inMilliseconds.toDouble();
+      final t = (1.0 - ageMs / fadeMs).clamp(0.0, 1.0);
+      if (t <= 0) continue;
+      p.color = tokens.accentBright.withValues(alpha: 0.42 * t);
+      canvas.drawLine(
+        Offset(a.x * w, a.y * h),
+        Offset(b.x * w, b.y * h),
+        p,
+      );
+    }
+  }
+
+  // Draw puck rings, directional ticks, and center dot.
+  void _paintPuck(Canvas canvas, double w, double h) {
+    final px = x * w;
+    final py = y * h;
+    final c = Offset(px, py);
+    final breathe = 0.5 + 0.5 * math.sin(ambient * 2 * math.pi);
+    final scale = hovered ? 1.12 : 1.0;
+    final ringOuter = (15.0 + 1.5 * breathe) * scale;
+    final ringInner = 7.5 * scale;
+    final coreR = (2.4 + 0.4 * breathe) * scale;
+
+    final accent = tokens.accentBright;
+
+    // Draw filled center and concentric outer strokes.
+    canvas.drawCircle(
+      c,
+      ringInner - 0.5,
+      Paint()..color = accent.withValues(alpha: 0.16),
+    );
+
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    stroke
+      ..strokeWidth = 1.0
+      ..color = accent.withValues(alpha: 0.85);
+    canvas.drawCircle(c, ringInner, stroke);
+
+    stroke
+      ..strokeWidth = 0.8
+      ..color = accent.withValues(alpha: 0.45);
+    canvas.drawCircle(c, ringOuter, stroke);
+
+    // Cardinal ticks at N/E/S/W of the outer ring.
+    final tickPaint = Paint()
+      ..color = accent.withValues(alpha: 0.7)
+      ..strokeWidth = 1.1
+      ..strokeCap = StrokeCap.round;
+    const tickLen = 3.5;
+    canvas.drawLine(
+        c.translate(0, -ringOuter), c.translate(0, -ringOuter - tickLen),
+        tickPaint);
+    canvas.drawLine(
+        c.translate(0, ringOuter), c.translate(0, ringOuter + tickLen),
+        tickPaint);
+    canvas.drawLine(
+        c.translate(-ringOuter, 0), c.translate(-ringOuter - tickLen, 0),
+        tickPaint);
+    canvas.drawLine(
+        c.translate(ringOuter, 0), c.translate(ringOuter + tickLen, 0),
+        tickPaint);
+
+    // Center dot — small and dense.
+    canvas.drawCircle(
+      c,
+      coreR,
+      Paint()..color = tokens.textStrong,
+    );
+  }
+
+  // Show a quadrant label only when the puck is meaningfully in a corner.
+  // Opacity scales with distance-from-center so the neutral center state
+  // stays label-free.
+  void _paintQuadrantWhisper(Canvas canvas, double w, double h) {
+    final dx = x - 0.5;
+    final dy = y - 0.5;
+    final distFromCenter = math.sqrt(dx * dx + dy * dy);
+    if (distFromCenter < 0.08) return;
+    // 0 at centre, 1 at corner (max dist = √0.5 ≈ 0.707).
+    final commitment = ((distFromCenter - 0.08) / 0.35).clamp(0.0, 1.0);
+    final q = _LogosQuadrant.nearest(x, y);
+    final tp = TextPainter(
+      text: TextSpan(
+        text: q.whisper,
+        style: TextStyle(
+          color: tokens.textStrong.withValues(alpha: 0.65 * commitment),
+          fontSize: 11,
+          letterSpacing: 0.8,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    // Place below the puck when puck is on upper half, above on lower.
+    final px = x * w;
+    final py = y * h;
+    final offY = y < 0.5 ? 28.0 : -28.0 - tp.height;
+    double tx = px - tp.width / 2;
+    final ty = py + offY;
+    if (tx < 10) tx = 10;
+    if (tx + tp.width > w - 10) tx = w - 10 - tp.width;
+    tp.paint(canvas, Offset(tx, ty));
+  }
+
+  @override
+  bool shouldRepaint(_LogosPadPainter old) =>
+      old.x != x ||
+      old.y != y ||
+      old.hovered != hovered ||
+      old.ambient != ambient ||
+      old.parallax != parallax ||
+      !identical(old.trail, trail) ||
+      old.trail.length != trail.length;
+}
+
+/// Quadrant labels for the pad; the label appears near the puck near each corner.
+enum _LogosQuadrant {
+  moduleMap,
+  repoCenters,
+  neighbors,
+  toTouch;
+
+  static _LogosQuadrant nearest(double x, double y) {
+    if (y < 0.5) {
+      return x < 0.5 ? _LogosQuadrant.moduleMap : _LogosQuadrant.repoCenters;
+    }
+    return x < 0.5 ? _LogosQuadrant.neighbors : _LogosQuadrant.toTouch;
+  }
+
+  String get whisper => switch (this) {
+        _LogosQuadrant.moduleMap => 'module map',
+        _LogosQuadrant.repoCenters => 'repo centers',
+        _LogosQuadrant.neighbors => 'neighbors',
+        _LogosQuadrant.toTouch => 'what to touch next',
+      };
+}
+
+/// Static info plate to the right of the pad.
+/// It's read-only and mirrors the active Logos configuration while the
+/// puck interaction updates continuously.
+class _LogosGrip extends StatelessWidget {
+  const _LogosGrip();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
+      decoration: BoxDecoration(
+        color: t.surface0.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: t.chromeBorder.withValues(alpha: 0.22),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Wordmark — small caps, wide tracking, stamped feel.
+          Text(
+            'LOGOS',
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 4.0,
+              height: 1,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'relevance engine',
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.7),
+              fontSize: 9,
+              letterSpacing: 1.6,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _GripDivider(t: t),
+          const SizedBox(height: 12),
+          // Static stat rows use a two-column layout so values stay
+          // stable and easy to compare.
+          _GripStat(label: 'method', value: 'heat-kernel', t: t),
+          _GripStat(label: 'graph', value: 'born-mix', t: t),
+          _GripStat(label: 'axes', value: '4', t: t),
+          const SizedBox(height: 10),
+          _GripDivider(t: t),
+          const SizedBox(height: 12),
+          _GripStat(label: 't', value: '1.0', t: t, mono: true),
+          _GripStat(label: 'k', value: '20', t: t, mono: true),
+          _GripStat(label: 'range', value: '0.3–3.0', t: t, mono: true),
+          const SizedBox(height: 14),
+          _GripDivider(t: t),
+          const SizedBox(height: 10),
+          Text(
+            'self-tuned\nno manual\nweights',
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.55),
+              fontSize: 9.5,
+              letterSpacing: 0.4,
+              height: 1.55,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GripDivider extends StatelessWidget {
+  final AppTokens t;
+  const _GripDivider({required this.t});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 1,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            t.chromeBorder.withValues(alpha: 0),
+            t.chromeBorder.withValues(alpha: 0.35),
+            t.chromeBorder.withValues(alpha: 0),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GripStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final AppTokens t;
+  final bool mono;
+  const _GripStat({
+    required this.label,
+    required this.value,
+    required this.t,
+    this.mono = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Keep value rows two-line to avoid wrapping.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label.toUpperCase(),
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.55),
+              fontSize: 8.5,
+              letterSpacing: 1.4,
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              color: t.textNormal,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              fontFamily: mono ? 'monospace' : null,
+              letterSpacing: mono ? 0 : 0.2,
+              height: 1.0,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -4240,11 +5589,9 @@ class _RecentSamplesList extends StatelessWidget {
 }
 
 /// Custom toggle for "Reduce motion."
-///
 /// Not a checkbox — the element *itself* demonstrates its effect. The
 /// dots show a traveling-Gaussian pulse whose forward velocity is
 /// modulated by a single envelope:
-///
 ///   * [_speed] is a 0..1 envelope. At 1 the wave advances at the base
 ///     frequency (≈ 0.556 Hz); at 0 it sits perfectly still. Toggling
 ///     the pref animates [_speed] across 520ms with easeOutCubic in
@@ -4253,24 +5600,19 @@ class _RecentSamplesList extends StatelessWidget {
 ///     `dt * baseHz * speed` each frame and stops itself once the
 ///     envelope has settled to zero (no point burning frames on a
 ///     frozen wave).
-///
 /// Going INTO reduced: the wave decelerates and the bump freezes
 /// wherever it lands — never a teleport, never a disappearing dot.
 /// Going OUT: the bump accelerates back up from its frozen position.
 /// The frequency badge reads `speed * baseHz` so the Hz number lerps
 /// honestly to 0.00 as the wave actually slows, not snapped at toggle
 /// time.
-///
 /// Keyboard: Space/Enter toggle while focused. Focus draws an accent
 /// ring. No tap-down scale on this control by design — see the build
 /// method.
-/// "Change sort guide" picker — three options, rendered as an interactive
-/// demo. Above the option row a small stage holds six "file tiles" (each
-/// with a stable identity: id / cluster color / letter / impact weight).
-/// Hover or focus any option and the tiles *rehearse* that ordering in
-/// real time, animating their positions without committing. Click to
-/// commit. Same energy as Reduce Motion — the element shows you what it
-/// does, so the label becomes a footnote.
+/// Interactive sort-guide picker with a live preview.
+/// Six demo tiles with stable identity (id, cluster color, letter,
+/// impact weight) animate into each ordering without committing.
+/// Hover/focus previews an option; click commits it.
 class _ChangeSortGuide extends StatefulWidget {
   final FileSortGuide value;
   final bool inverted;
@@ -4288,9 +5630,9 @@ class _ChangeSortGuide extends StatefulWidget {
   State<_ChangeSortGuide> createState() => _ChangeSortGuideState();
 }
 
-/// One demo tile in the rehearsal stage. Stable identity across re-sorts
-/// so the implicit AnimatedPositioned animates the *same* tile from old
-/// position → new position (not a spawn/fade swap).
+/// One demo tile in the preview.
+/// Stable identity across re-sorts so AnimatedPositioned animates the same
+/// tile from old position to new position (no spawn/fade swap).
 class _SortDemoTile {
   final int id;
   final int cluster;
@@ -4406,7 +5748,6 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
   }
 
   /// Return tile ids in the order they should appear for [guide].
-  ///
   /// Runs the mode's own sort on non-conflict tiles, applies invert if
   /// requested (by reversing the non-conflict list), then prepends any
   /// conflict tiles at position 0. Mirrors the production rule in
@@ -4517,12 +5858,10 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
             },
           ),
           const SizedBox(height: 12),
-          // ── The rehearsal stage — also the invert toggle ─────────
-          // The stage itself is the interaction surface: clicking
-          // anywhere on the rehearsal tiles flips the sort order.
-          // The tiles animate through to the inverted arrangement via
-          // the same AnimatedPositioned machinery, so the "game board"
-          // gesture and the invert mechanic are the same thing.
+          // The preview itself is the interaction surface: tapping any tile
+          // flips the sort-order inversion.
+          // The same AnimatedPositioned flow drives both preview and commit
+          // so the motion stays consistent.
           MouseRegion(
             cursor: SystemMouseCursors.click,
             child: GestureDetector(
@@ -4551,7 +5890,6 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
             ),
           ),
           const SizedBox(height: 10),
-          // ── Option row with a sliding selection pill ─────────────
           // The Row of labels is a STABLE subtree: its GestureDetector
           // + MouseRegion elements never rebuild on hover. Reactive
           // visuals (pill position + each label's color) live in
@@ -4718,15 +6056,10 @@ class _SortGuideBadge extends StatelessWidget {
   }
 }
 
-/// The rehearsal stage — a horizontal strip of demo tiles that physically
-/// translate to new x-positions when the effective sort order changes.
-/// Each tile's ValueKey is its id, so Flutter's element reconciliation
-/// keeps the *same* widget instance at each id and AnimatedPositioned
-/// tweens its new left offset smoothly.
-///
-/// Sized responsively via LayoutBuilder — tile width fills the available
-/// room up to a cap so the stage scales cleanly from a narrow settings
-/// column to a wide one without stretching tiles absurdly.
+/// Horizontal strip of demo tiles that animate to new x-positions when the
+/// effective sort order changes.
+/// Each tile's ValueKey is its id, so Flutter keeps the same widget
+/// instance per tile and AnimatedPositioned interpolates its new left offset.
 class _SortDemoStage extends StatelessWidget {
   final List<_SortDemoTile> tiles;
   final Map<int, int> positions;
@@ -4918,7 +6251,6 @@ class _SortDemoTileBody extends StatelessWidget {
 
 /// A transparent label that sits on top of the shared sliding selection
 /// pill. Hovering writes to [previewing]; tap commits the choice.
-///
 /// Crucial architectural detail: the `MouseRegion` + `GestureDetector`
 /// form a **stable** element tree — neither ever rebuilds on hover or
 /// press. Hover/press state travels through [ValueNotifier]s, and only
@@ -4928,7 +6260,6 @@ class _SortDemoTileBody extends StatelessWidget {
 /// lifecycle; the "first click gets eaten" bug was caused by an
 /// ancestor `setState` on `onEnter` swapping those recognizers before
 /// the tap could resolve.
-///
 /// `HitTestBehavior.opaque` on the GestureDetector makes the full chip
 /// bounds tappable, not just the text glyphs — so a click on whitespace
 /// near the label still commits.
@@ -5022,8 +6353,10 @@ class _SortOptionLabel extends StatelessWidget {
 }
 
 class _ReduceMotionToggle extends StatefulWidget {
-  final bool value;
-  final ValueChanged<bool> onChanged;
+  /// Current motion rate in [0, 2]. 0 = no motion (matches the legacy
+  /// reduce-motion=true behavior), 1 = authored speed, 2 = double-time.
+  final double value;
+  final ValueChanged<double> onChanged;
 
   const _ReduceMotionToggle({
     required this.value,
@@ -5036,41 +6369,65 @@ class _ReduceMotionToggle extends StatefulWidget {
 
 class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
     with TickerProviderStateMixin {
-  static const Duration _kEnvelopeDuration = Duration(milliseconds: 520);
-  // 1 cycle / 1.8 s ≈ 0.556 Hz. The base frequency at full speed.
-  static const double _kWaveHz = 1000.0 / 1800.0;
+  // 1 cycle / 1.8 s ≈ 0.556 Hz at rate 1.0. The live Hz readout and the
+  // pulse-wave phase advance both scale from this base by the current
+  // rate, so rate=2.0 shows ~1.11 Hz and the wave literally animates 2×
+  // as fast. The number on screen and the speed of the wave are the
+  // same quantity rendered in two different modalities.
+  static const double _kWaveHzBase = 1000.0 / 1800.0;
+  static const double _kMaxRate = 2.0;
+  static const Duration _kEnvelopeDuration = Duration(milliseconds: 280);
 
-  // Speed envelope drives both the Hz readout AND the phase advancement
-  // rate. Going INTO reduced: speed eases 1 → 0, the wave decelerates
-  // to a halt and the bump freezes wherever it lands. Going OUT: speed
-  // eases 0 → 1, the bump accelerates back up from its frozen position.
-  // The dots themselves never disappear — the wave is the same shape
-  // throughout, only its forward velocity changes.
-  late final AnimationController _speed;
+  // The wave IS the slider. Width matches the original 56px layout
+  // exactly so the 5 dots look identical to before the control became
+  // a scrub target. Drag precision is ~28px per unit rate — arrow
+  // keys (±0.1) are available for finer tuning.
+  static const double _kWaveWidth = 56.0;
+  static const double _kWaveHeight = 18.0;
+
+  // Live rate for the pulse animation. Eases toward widget.value on every
+  // external change, so a programmatic set from elsewhere (or a toggle
+  // tap) produces a smooth ramp instead of a snap. During an active
+  // horizontal drag the rate is updated immediately without easing —
+  // the wave tracks the finger in real time.
+  late final AnimationController _envelope;
+  double _rateFrom = 1.0;
+  double _rateTo = 1.0;
+  double get _liveRate {
+    final t = _envelope.value;
+    return _rateFrom + (_rateTo - _rateFrom) * t;
+  }
+
   late final Ticker _phaseTicker;
   final ValueNotifier<double> _phase = ValueNotifier(0.0);
   Duration _lastTick = Duration.zero;
   final FocusNode _focusNode = FocusNode(debugLabel: 'ReduceMotionToggle');
 
-  bool _hovered = false;
+  // Remembers the last non-zero rate so tap-to-toggle (the muscle-memory
+  // gesture from the old boolean toggle) can restore whatever speed the
+  // user had dialed in before going to zero.
+  double _lastPositiveRate = 1.0;
+
+  // Row-wide hover — the whole button is clickable (tap = toggle), so
+  // the whole row is the hover target. Matches the original bool toggle.
+  bool _rowHovered = false;
   bool _focused = false;
 
   @override
   void initState() {
     super.initState();
-    _speed = AnimationController(
+    _rateFrom = widget.value;
+    _rateTo = widget.value;
+    if (widget.value > 0) _lastPositiveRate = widget.value;
+    _envelope = AnimationController(
       vsync: this,
       duration: _kEnvelopeDuration,
-      value: widget.value ? 0.0 : 1.0,
+      value: 1.0, // start settled at the initial rate
     );
-    // Seed phase from the last-persisted position so the bump resumes
-    // from wherever it was frozen on the previous session. When reduce
-    // motion is OFF, the ticker starts immediately and phase advances
-    // from this seed forward; when ON, phase stays put until toggled.
     _phase.value =
         context.read<PreferencesState>().reduceMotionPhase.clamp(0.0, 1.0);
     _phaseTicker = createTicker(_onPhaseTick);
-    if (!widget.value) _phaseTicker.start();
+    if (widget.value > 0.0001) _phaseTicker.start();
     _focusNode.addListener(_onFocusChanged);
   }
 
@@ -5079,23 +6436,18 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
         ? 0.0
         : (elapsed - _lastTick).inMicroseconds / Duration.microsecondsPerSecond;
     _lastTick = elapsed;
-    final s = _speed.value;
-    // When the envelope has fully settled to zero, the wave has come to
-    // rest: stop consuming frames AND persist the frozen phase so the
-    // next session can resume the bump from this exact position. The
-    // ticker restarts from didUpdateWidget when the user toggles back
-    // to normal motion. Without the ticker.stop, it would idle forever
-    // computing a phase delta of 0 each frame.
-    if (s <= 0.0001 && !_speed.isAnimating) {
+    final rate = _liveRate;
+    // When the rate collapses to ~0 AND the envelope has settled, the
+    // wave has come to rest. Stop consuming frames AND persist the
+    // frozen phase so the next session resumes the bump from here.
+    if (rate <= 0.0001 && !_envelope.isAnimating) {
       _phaseTicker.stop();
       _lastTick = Duration.zero;
-      // Fire-and-forget; the setter debounces writes internally by
-      // skipping when the value hasn't changed.
       context.read<PreferencesState>().setReduceMotionPhase(_phase.value);
       return;
     }
-    if (s > 0) {
-      _phase.value = (_phase.value + dt * _kWaveHz * s) % 1.0;
+    if (rate > 0) {
+      _phase.value = (_phase.value + dt * _kWaveHzBase * rate) % 1.0;
     }
   }
 
@@ -5103,17 +6455,15 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
   void didUpdateWidget(covariant _ReduceMotionToggle old) {
     super.didUpdateWidget(old);
     if (widget.value == old.value) return;
-    // Symmetric easing in both directions — the wave decelerates into
-    // stillness, accelerates back out of it. No instant snap, no
-    // disappearing dots; the bump is always visible, only its forward
-    // velocity changes. The Hz readout reads `_speed * _kWaveHz`, so it
-    // honestly counts down to 0.00 as the wave actually slows.
-    _speed.animateTo(
-      widget.value ? 0.0 : 1.0,
-      duration: _kEnvelopeDuration,
-      curve: Curves.easeOutCubic,
-    );
-    if (!_phaseTicker.isActive) {
+    if (widget.value > 0.0001) _lastPositiveRate = widget.value;
+    // Ease from current live rate to the new target. During an active
+    // drag the setState loop overwrites these each frame; the tween
+    // duration is effectively inert because the value updates faster
+    // than the envelope completes.
+    _rateFrom = _liveRate;
+    _rateTo = widget.value;
+    _envelope.forward(from: 0);
+    if (!_phaseTicker.isActive && widget.value > 0.0001) {
       _lastTick = Duration.zero;
       _phaseTicker.start();
     }
@@ -5124,7 +6474,7 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
     _focusNode.removeListener(_onFocusChanged);
     _focusNode.dispose();
     _phaseTicker.dispose();
-    _speed.dispose();
+    _envelope.dispose();
     _phase.dispose();
     super.dispose();
   }
@@ -5134,119 +6484,166 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
     setState(() => _focused = _focusNode.hasFocus);
   }
 
-  void _toggle() {
-    widget.onChanged(!widget.value);
+  /// Tap toggles between OFF (rate=0) and the last non-zero rate. This
+  /// preserves the muscle-memory of the old boolean control — users who
+  /// just want "motion off" keep their one-tap workflow; users who want
+  /// to tune pull horizontally.
+  void _onTap() {
+    final next = widget.value > 0.0001 ? 0.0 : _lastPositiveRate;
+    widget.onChanged(next);
     _focusNode.requestFocus();
+  }
+
+  /// Horizontal drag across the wave maps cursor X to rate. 0 at the
+  /// left edge, [_kMaxRate] at the right. Updates fire live so the wave
+  /// speeds up / slows down in step with the finger — the speed of the
+  /// wave IS the feedback, no overlay required.
+  void _onDragStart(DragStartDetails d) {
+    _applyDragRate(d.localPosition.dx);
+    _focusNode.requestFocus();
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    _applyDragRate(d.localPosition.dx);
+  }
+
+  void _applyDragRate(double dx) {
+    final frac = (dx / _kWaveWidth).clamp(0.0, 1.0);
+    final rate = (frac * _kMaxRate).clamp(0.0, _kMaxRate);
+    if ((widget.value - rate).abs() < 0.005) return;
+    widget.onChanged(rate);
   }
 
   KeyEventResult _handleKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    if (event.logicalKey == LogicalKeyboardKey.space ||
-        event.logicalKey == LogicalKeyboardKey.enter ||
-        event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-      _toggle();
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.space ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      _onTap();
+      return KeyEventResult.handled;
+    }
+    // Arrow keys nudge by 0.1 in each direction — keyboard parity with
+    // the horizontal drag gesture, for accessibility.
+    if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowDown) {
+      widget.onChanged((widget.value - 0.1).clamp(0.0, _kMaxRate));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowUp) {
+      widget.onChanged((widget.value + 0.1).clamp(0.0, _kMaxRate));
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
 
+  String _subtitleForRate(double r) =>
+      r <= 0.0001 ? 'Still… like ice?' : 'Flow like water.';
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final reduced = widget.value;
+    final rate = widget.value;
+    final off = rate <= 0.0001;
 
+    // Border/fill mirror the original reduce-motion toggle exactly —
+    // hover of the whole row picks up the accent tint, off state dims
+    // the chrome. Focus ring renders when the keyboard accelerator
+    // (space/enter toggle, arrow nudges) has focus.
     final Color borderColor = _focused
         ? t.accentBright
-        : (reduced
+        : (off
             ? t.chromeBorder.withValues(alpha: 0.25)
-            : (_hovered
+            : (_rowHovered
                 ? t.accentBright.withValues(alpha: 0.5)
                 : t.inputBorder));
-
-    final Color fillColor = reduced
+    final Color fillColor = off
         ? t.surface1.withValues(alpha: 0.4)
-        : (_hovered ? t.accentBright.withValues(alpha: 0.06) : t.inputBg);
+        : (_rowHovered ? t.accentBright.withValues(alpha: 0.06) : t.inputBg);
 
     return Focus(
       focusNode: _focusNode,
       onKeyEvent: _handleKey,
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
+        onEnter: (_) => setState(() => _rowHovered = true),
+        onExit: (_) => setState(() => _rowHovered = false),
         child: GestureDetector(
+          // Whole-row tap toggles OFF ↔ last-positive rate — preserves the
+          // original single-click-to-reduce-motion muscle memory. Drag
+          // lives on the inner wave only, so tapping the label / badge
+          // still just toggles, but dragging across the 5 dots scrubs
+          // the rate. The gesture arena resolves the split automatically:
+          // no horizontal motion → tap; horizontal motion started over
+          // the wave → drag.
           behavior: HitTestBehavior.opaque,
-          onTap: _toggle,
-          // No press-scale here by design. Every other tappable in the
-          // app gets a subtle 0.985× bounce on tap-down, but THIS button
-          // is the one place where any tactile micro-motion would
-          // contradict the control's purpose — the user is asking for
-          // less motion, giving them a farewell bounce on the way in
-          // reads as the app not listening. The tap feels instant, the
-          // state change is the only feedback needed.
+          onTap: _onTap,
           child: AnimatedContainer(
-              duration: context.motion(const Duration(milliseconds: 200)),
-              curve: Curves.easeOutCubic,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: fillColor,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: borderColor,
-                  width: _focused ? 1.5 : 1,
-                ),
-                boxShadow: _focused
-                    ? [
-                        BoxShadow(
-                          color: t.accentBright.withValues(alpha: 0.18),
-                          blurRadius: 10,
-                        ),
-                      ]
-                    : null,
+            duration: context.motion(const Duration(milliseconds: 200)),
+            curve: Curves.easeOutCubic,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: fillColor,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: borderColor,
+                width: _focused ? 1.5 : 1,
               ),
-              child: Row(
-                children: [
-                  // Label first — it's what identifies the control.
-                  // The waveform (a live demonstration of the motion
-                  // state) sits to the right of the text so it reads
-                  // as "here's what motion looks like right now",
-                  // not as an icon prefixed onto a label.
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Reduce motion',
-                          style: TextStyle(
-                            color: t.textNormal,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
+              boxShadow: _focused
+                  ? [
+                      BoxShadow(
+                        color: t.accentBright.withValues(alpha: 0.18),
+                        blurRadius: 10,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Reduce motion',
+                        style: TextStyle(
+                          color: t.textNormal,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                         ),
-                        const SizedBox(height: 2),
-                        AnimatedDefaultTextStyle(
-                          duration:
-                              context.motion(const Duration(milliseconds: 180)),
-                          curve: Curves.easeOutCubic,
-                          style: TextStyle(
-                            color: t.textMuted,
-                            fontSize: 11,
-                            height: 1.35,
-                          ),
-                          child: Text(
-                            reduced
-                                ? 'Still… like ice?'
-                                : 'Flow like water.',
-                          ),
+                      ),
+                      const SizedBox(height: 2),
+                      AnimatedDefaultTextStyle(
+                        duration: context
+                            .motion(const Duration(milliseconds: 180)),
+                        curve: Curves.easeOutCubic,
+                        style: TextStyle(
+                          color: t.textMuted,
+                          fontSize: 11,
+                          height: 1.35,
                         ),
-                      ],
-                    ),
+                        child: Text(_subtitleForRate(rate)),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 56,
-                    height: 18,
+                ),
+                const SizedBox(width: 12),
+                // No onTap here — tap falls through to the outer
+                // row-level GestureDetector so the whole button keeps
+                // toggling. Only horizontal drag is captured so scrub
+                // works precisely on the wave area. Wave speed tracks
+                // live rate; no separate overlays, no baseline boost,
+                // no emphasis shift — the dots look exactly as they
+                // did when the control was a pure bool.
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onHorizontalDragStart: _onDragStart,
+                  onHorizontalDragUpdate: _onDragUpdate,
+                  child: SizedBox(
+                    width: _kWaveWidth,
+                    height: _kWaveHeight,
                     child: AnimatedBuilder(
                       animation: _phase,
                       builder: (context, _) => CustomPaint(
@@ -5258,18 +6655,21 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  _HzBadge(
-                    speed: _speed,
-                    hz: _kWaveHz,
-                    tokens: t,
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 10),
+                _HzBadge(
+                  envelope: _envelope,
+                  rateFrom: () => _rateFrom,
+                  rateTo: () => _rateTo,
+                  hzBase: _kWaveHzBase,
+                  tokens: t,
+                ),
+              ],
             ),
           ),
         ),
-      );
+      ),
+    );
   }
 }
 
@@ -5277,24 +6677,36 @@ class _ReduceMotionToggleState extends State<_ReduceMotionToggle>
 /// smoothly during the 520ms transition — 0.56 ↔ 0.00 is rendered
 /// honestly as the wave actually accelerates / decelerates, not snapped
 /// at toggle time.
+/// Live Hz readout. Interpolates the displayed rate between the previous
+/// and target values across the envelope tween so the digits lerp
+/// smoothly during a transition — a drag that moves the rate from 0.56
+/// to 1.34 shows the intermediate values ticking by, not a snap.
 class _HzBadge extends StatelessWidget {
-  final Animation<double> speed;
-  final double hz;
+  final Animation<double> envelope;
+  final double Function() rateFrom;
+  final double Function() rateTo;
+  final double hzBase;
   final AppTokens tokens;
 
   const _HzBadge({
-    required this.speed,
-    required this.hz,
+    required this.envelope,
+    required this.rateFrom,
+    required this.rateTo,
+    required this.hzBase,
     required this.tokens,
   });
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: speed,
+      animation: envelope,
       builder: (context, _) {
-        final live = speed.value * hz;
-        final fraction = speed.value;
+        final t = envelope.value;
+        final rate = rateFrom() + (rateTo() - rateFrom()) * t;
+        final live = rate * hzBase;
+        // Visual intensity tracks rate magnitude, clamped so >1 rates
+        // don't oversaturate the badge. 1.0 = full accent, 0 = muted.
+        final fraction = (rate / 2.0).clamp(0.0, 1.0);
         final fg = Color.lerp(tokens.textMuted, tokens.accentBright, fraction)!;
         final bg = Color.lerp(
           tokens.textMuted.withValues(alpha: 0.12),
@@ -5328,7 +6740,6 @@ class _HzBadge extends StatelessWidget {
 }
 
 /// Five-dot traveling Gaussian pulse.
-///
 /// Phase is the only input — the bump always paints at full magnitude.
 /// "Slowing down" is expressed by the parent advancing phase more slowly
 /// (or not at all when the speed envelope settles to zero), not by
@@ -5693,8 +7104,8 @@ class _InstantBlameMiniIndicator extends StatelessWidget {
           ),
           // Tooltip — present iff instant. When off, it's simply
           // absent (because the delay would have held it back).
-          // Scale-from-cursor materialization on toggle sells the
-          // "popped immediately into place" beat.
+          // It scales in from the cursor so the tooltip appears with instant
+          // mode timing.
           Positioned(
             top: 13,
             left: 10,
@@ -5893,19 +7304,7 @@ String _reviewGuideHint(int stage) {
       return 'Optional guidance for what the review should care about.';
   }
 }
-
-// ── Commit-message format stage ────────────────────────────────────────
-//
-// Three-axis preference for the shape of generated commit messages:
-//   * Structure — title+body / title only / freeform.
-//   * Voice     — verb-led / descriptive / narrative.
-//   * Coverage  — essentials / balanced / everything.
-//
-// Mirrors the visual language of the Change Sort Guide: a bordered
-// stage with a preview card up top and sliding-pill chip rows below.
-// Hover any control to peek the resulting message; click to commit.
-// All three axes feed a single pure function that assembles a sample
-// commit message — so users see the exact combination they'd get.
+/// Commit format controls with live preview.
 
 class _CommitFormatStage extends StatefulWidget {
   final CommitStructure structure;
@@ -5951,18 +7350,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
   CommitCoverage _effectiveCoverage(CommitCoverage? peek) =>
       peek ?? widget.coverage;
 
-  /// Sample-message assembler. The same scene plays out across every
-  /// preview: a fox is taught to refuse off-scent tokens, with amber as
-  /// scent-witness, drift as ambient air, and a gate thorn that marks
-  /// the refusals. Coverage controls how far into the scene the
-  /// narrator goes (headline / aftermath / deep environment). Voice
-  /// controls the grammar and pacing. Guardrail controls the narrator's
-  /// mental state: at loose the narrator can barely be bothered to
-  /// finish sentences; at paranoid the narrator notices the wrong
-  /// things (wood grain, fence-post angles, what amber "weighs" on
-  /// certain mornings) and spirals. Every cell of the 4 (beats) ×
-  /// 3 (voices) × 4 (stages) matrix is hand-written so the sample
-  /// genuinely shifts with each axis instead of word-swapping.
+  /// Build preview text for the selected structure, voice, and coverage.
   String _previewFor({
     required CommitStructure structure,
     required CommitVoice voice,
@@ -5988,14 +7376,8 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     }
   }
 
-  /// Walk the 27 (structure × voice × coverage) combinations for the
-  /// given [guardrailStage] and return the tallest rendered height at
-  /// [width] under [style]. The preview card uses this to reserve a
-  /// footprint that's the exact maximum for *this* stage — so chip
-  /// swaps never grow the card, but a loose-stage preview isn't stuck
-  /// at paranoid-stage height either. Moving the guardrail slider
-  /// resizes the card to fit the new stage's ceiling. Cheap — 27
-  /// TextPainter layouts, once per width- or stage-change.
+  /// Compute max preview height across all combinations for this stage.
+  /// Keeps the preview card height stable while stage options change.
   double _maxPreviewHeight({
     required double width,
     required TextStyle style,
@@ -6024,7 +7406,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     return tallest;
   }
 
-  /// Beat 1 of the scene: the headline. What was done with the cookie.
+  /// Headline text for each voice/stage combination.
   String _titleFor(CommitVoice voice, int stage) {
     switch (voice) {
       case CommitVoice.verbLed:
@@ -6066,8 +7448,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     }
   }
 
-  /// Beat 2 of the scene: what the fox actually does now. The body's
-  /// opening sentence; coverage tiers add suffixes after it.
+  /// Base body text for each voice/stage combination.
   String _baseFor(CommitVoice voice, int stage) {
     switch (voice) {
       case CommitVoice.verbLed:
@@ -6120,9 +7501,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     }
   }
 
-  /// Beat 3 of the scene: the aftermath. What the porch and backyard
-  /// look like after the refusals. Pulled in by the "balanced" coverage
-  /// tier and inherited by "everything".
+  /// Extra text for the "balanced" coverage tier (also included in "everything").
   String _balancedSuffixFor(CommitVoice voice, int stage) {
     switch (voice) {
       case CommitVoice.verbLed:
@@ -6172,11 +7551,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     }
   }
 
-  /// Beat 4 of the scene: the deep environment. Amber, drift, and the
-  /// gate thorn — the witnesses that keep the day's record. This is
-  /// where the schizo dial hits hardest: at paranoid the narrator
-  /// starts noticing things the fox would notice and nobody else
-  /// would. Pulled in only by the "everything" coverage tier.
+  /// Extra text for the "everything" coverage tier only.
   String _everythingSuffix(CommitVoice voice, int stage) {
     switch (voice) {
       case CommitVoice.verbLed:
@@ -6341,19 +7716,9 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
             ],
           ),
           const SizedBox(height: 10),
-          // Live preview card — FIXED height.
-          //
-          // The card reserves exactly as much height as the tallest of
-          // the 27 (structure × voice × coverage) variants needs at the
-          // current width, measured with a TextPainter for the current
-          // guardrail stage's vocabulary. Because the reserved height
-          // is the max, no variant can ever grow the card; swapping
-          // chips only changes the text inside, never the box. Chip
-          // rows below the card therefore never shift. No AnimatedSize,
-          // no ConstrainedBox minHeight — those were floor-only and let
-          // the card grow above the floor for the paranoid × narrative
-          // × everything variant, which is what caused the full-page
-          // jump the user saw.
+          // Fixed-height preview card.
+          // Pre-measure all format combinations once per width so chip
+          // swaps never change card height.
           LayoutBuilder(
             builder: (context, constraints) {
               const horizontalPad = 10.0;

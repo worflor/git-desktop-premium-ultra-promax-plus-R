@@ -61,7 +61,6 @@ class RepositoryState extends ChangeNotifier {
   }
 
   /// Opens a repository path as the active repo.
-  ///
   /// [addToRecents] controls whether the path is tracked in the recent
   /// repositories sidebar. Worktree ("desk") switches within the same repo
   /// pass `false` so individual desks don't clutter the project list —

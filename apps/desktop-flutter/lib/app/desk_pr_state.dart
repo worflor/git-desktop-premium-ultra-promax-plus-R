@@ -1,0 +1,320 @@
+// desk_pr_state.dart — provider for desk-PR metadata
+//
+// Mirrors WorktreeState's lifecycle: auto-refresh on
+// RepositoryState.activePath change. Reads/writes go through
+// DeskPrStore (refs/manifold/desks/<branch>) so the PR list is
+// always derived from git, never from a sidecar cache.
+
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+
+import '../backend/desk_pr.dart';
+import '../backend/desk_pr_diff.dart';
+import '../backend/desk_pr_store.dart';
+import '../backend/git.dart' as git;
+import '../backend/manifold_refs.dart';
+import 'app_identity.dart';
+import 'repository_state.dart';
+
+class DeskPrState extends ChangeNotifier {
+  final RepositoryState _repo;
+  final AppIdentityState _identity;
+  Map<String, DeskPr> _byBranch = const {};
+  bool _loading = false;
+  String? _error;
+  String? _loadedForRepo;
+  int _requestId = 0;
+
+  DeskPrState(this._repo, this._identity) {
+    _repo.addListener(_onRepoChanged);
+    if (_repo.activePath != null) {
+      refreshFor(_repo.activePath!);
+    }
+  }
+
+  @override
+  void dispose() {
+    _repo.removeListener(_onRepoChanged);
+    super.dispose();
+  }
+
+  Map<String, DeskPr> get byBranch => _byBranch;
+  List<DeskPr> get all => _byBranch.values.toList();
+  bool get loading => _loading;
+  String? get error => _error;
+  String? get loadedForRepo => _loadedForRepo;
+
+  DeskPr? prFor(String branch) => _byBranch[branch];
+
+  void _onRepoChanged() {
+    final active = _repo.activePath;
+    if (active == null) {
+      _byBranch = const {};
+      _loadedForRepo = null;
+      notifyListeners();
+      return;
+    }
+    refreshFor(active);
+  }
+
+  /// Resolve the main repo path so a desk and its sibling worktrees
+  /// share the same metadata refs. A desk path's `.git` is a worktree
+  /// pointer; the metadata refs live in the common dir.
+  Future<String?> _mainRepoOf(String anyPath) async {
+    try {
+      final r = await Process.run(
+        'git',
+        ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+        workingDirectory: anyPath,
+      );
+      if (r.exitCode != 0) return null;
+      final commonDir = (r.stdout as String).trim();
+      if (commonDir.isEmpty) return null;
+      return p.dirname(commonDir);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Resolve the repo's default branch name for use as a desk PR's
+  /// baseRef. Returns null only when the repo has no recognisable
+  /// default (fresh repo with no `main`/`master` and no remote HEAD) —
+  /// callers must surface a user-visible error in that case rather than
+  /// inventing a name.
+  Future<String?> _resolveBaseRef(String repoPath) async {
+    final r = await git.defaultBranchName(repoPath);
+    if (r.ok) return r.data;
+    return null;
+  }
+
+  ManifoldRefs _refsFor(String repoPath) {
+    final id = _identity.identity;
+    final author = id.shortName.isEmpty ? 'manifold' : id.shortName;
+    return ManifoldRefs(
+      repoPath: repoPath,
+      authorName: author,
+      authorEmail: '$author@manifold.local',
+    );
+  }
+
+  Future<void> refreshFor(String repoPath) async {
+    final id = ++_requestId;
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final main = await _mainRepoOf(repoPath) ?? repoPath;
+      final store = DeskPrStore(_refsFor(main));
+      final r = await store.listAll();
+      if (id != _requestId) return;
+      _loading = false;
+      if (r.ok) {
+        _byBranch = {
+          for (final pr in r.data!) pr.headRef: pr,
+        };
+        _loadedForRepo = main;
+        _error = null;
+      } else {
+        _byBranch = const {};
+        _error = r.error;
+      }
+    } catch (e) {
+      if (id != _requestId) return;
+      _loading = false;
+      _byBranch = const {};
+      _error = e.toString();
+    }
+    notifyListeners();
+  }
+
+  /// Promote a branch to a desk PR. Returns null on success, error
+  /// message on failure.
+  /// [baseRef] is optional: when omitted we resolve the repo's default
+  /// branch (origin/HEAD → fallback to `main`/`master`). Hardcoding
+  /// `'main'` here used to break the promote flow on `master`-style
+  /// repos; callers that already know the base (because a desk PR
+  /// already exists) should pass it explicitly to skip the lookup.
+  Future<String?> promote({
+    required String repoPath,
+    required String branch,
+    String? title,
+    String? body,
+    String? baseRef,
+    bool isDraft = true,
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final resolvedBase = baseRef ?? await _resolveBaseRef(main);
+    if (resolvedBase == null) {
+      return "Couldn't determine the repository's default branch — "
+          'pass a base ref explicitly.';
+    }
+    final store = DeskPrStore(_refsFor(main));
+    final r = await store.create(
+      branch: branch,
+      title: (title?.trim().isNotEmpty ?? false) ? title!.trim() : branch,
+      body: body ?? '',
+      baseRef: resolvedBase,
+      authorIdentity: _identity.identity.shortName,
+      isDraft: isDraft,
+    );
+    if (!r.ok) return r.error;
+    await refreshFor(main);
+    return null;
+  }
+
+  Future<String?> addComment({
+    required String repoPath,
+    required String branch,
+    required String body,
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final store = DeskPrStore(_refsFor(main));
+    final r = await store.addComment(
+      branch: branch,
+      author: _identity.identity.shortName,
+      body: body,
+    );
+    if (!r.ok) return r.error;
+    await refreshFor(main);
+    return null;
+  }
+
+  Future<String?> addReview({
+    required String repoPath,
+    required String branch,
+    required String verdict,
+    required String body,
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final store = DeskPrStore(_refsFor(main));
+    final r = await store.addReview(
+      branch: branch,
+      author: _identity.identity.shortName,
+      verdict: verdict,
+      body: body,
+    );
+    if (!r.ok) return r.error;
+    await refreshFor(main);
+    return null;
+  }
+
+  Future<String?> setStateFor({
+    required String repoPath,
+    required String branch,
+    required String state,
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final store = DeskPrStore(_refsFor(main));
+    final r = await store.setState(branch: branch, state: state);
+    if (!r.ok) return r.error;
+    await refreshFor(main);
+    return null;
+  }
+
+  Future<String?> editMeta({
+    required String repoPath,
+    required String branch,
+    String? title,
+    String? body,
+    bool? isDraft,
+    List<String>? labels,
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final store = DeskPrStore(_refsFor(main));
+    final r = await store.editMeta(
+      branch: branch,
+      title: title,
+      body: body,
+      isDraft: isDraft,
+      labels: labels,
+    );
+    if (!r.ok) return r.error;
+    await refreshFor(main);
+    return null;
+  }
+
+  /// Refresh a desk PR's persisted diff stats + mergeable flag from
+  /// freshly-computed numbers. Called by the local-diff fetcher after
+  /// `git diff baseRef..headRef` resolves so the row metrics tell the
+  /// truth on the very next rebuild.
+  Future<void> refreshDiffStats({
+    required String repoPath,
+    required String branch,
+    required int additions,
+    required int deletions,
+    required int changedFiles,
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final store = DeskPrStore(_refsFor(main));
+    final r = await store.refreshDiffStats(
+      branch: branch,
+      additions: additions,
+      deletions: deletions,
+      changedFiles: changedFiles,
+    );
+    if (r.ok) await refreshFor(main);
+  }
+
+  /// Recompute and persist diff stats for the desk PR on [branch] by
+  /// fetching the current baseRef..headRef diff. No-op when the branch
+  /// has no desk PR. The commit flow in the Changes page calls this on
+  /// success so the Branches row metrics update immediately — without
+  /// it, the row keeps painting the previous expand's cached numbers
+  /// until the user collapses and re-expands.
+  Future<void> recomputeDiffStats({
+    required String repoPath,
+    required String branch,
+  }) async {
+    final pr = _byBranch[branch];
+    if (pr == null) return;
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final r = await fetchLocalDeskPrDetail(repoPath: main, pr: pr);
+    if (!r.ok || r.data == null) return;
+    final files = r.data!.files;
+    final adds = files.fold<int>(0, (a, f) => a + f.additions);
+    final dels = files.fold<int>(0, (a, f) => a + f.deletions);
+    await refreshDiffStats(
+      repoPath: main,
+      branch: branch,
+      additions: adds,
+      deletions: dels,
+      changedFiles: files.length,
+    );
+  }
+
+  Future<String?> abandon({
+    required String repoPath,
+    required String branch,
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final store = DeskPrStore(_refsFor(main));
+    final r = await store.abandon(branch);
+    if (!r.ok) return r.error;
+    await refreshFor(main);
+    return null;
+  }
+
+  /// Toggle an issue link on this PR. [isRemote] picks which list it
+  /// lands in — local issues live in [DeskPr.linkedIssues], remote in
+  /// [DeskPr.linkedRemoteIssues].
+  Future<String?> toggleLinkedIssue({
+    required String repoPath,
+    required String branch,
+    required int issueId,
+    required bool isRemote,
+  }) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final store = DeskPrStore(_refsFor(main));
+    final r = await store.toggleLinkedIssue(
+      branch: branch,
+      issueId: issueId,
+      isRemote: isRemote,
+    );
+    if (!r.ok) return r.error;
+    await refreshFor(main);
+    return null;
+  }
+}

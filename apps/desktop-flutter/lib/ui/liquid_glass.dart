@@ -3,6 +3,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../app/window_activity.dart';
+
 /// Per-frame state consumed by the liquid-glass fragment shader.
 /// `time` is monotonic seconds; the shader uses sin/cos of it to drive
 /// continuous "breathing" drift so glass surfaces stay alive when the
@@ -22,7 +24,6 @@ class LiquidGlassPulse {
 /// Provides a `ValueListenable<LiquidGlassPulse>` to descendants. Glass
 /// surfaces opt in by reading `LiquidGlassProvider.of(context)` and
 /// wrapping their paint in an `AnimatedBuilder` against the listenable.
-///
 /// Cost is bounded: a single 30Hz Ticker drives `notifyListeners`, and
 /// only subscribed surfaces repaint. Themes without glass mode never
 /// touch this notifier so they pay nothing.
@@ -68,10 +69,38 @@ class _LiquidGlassProviderState extends State<LiquidGlassProvider>
   void initState() {
     super.initState();
     windowManager.addListener(this);
-    _ticker = createTicker(_onTick)..start();
+    _ticker = createTicker(_onTick);
+    if (WindowActivity.instance.awake) _ticker.start();
+    WindowActivity.instance.addListener(_syncAwake);
+  }
+
+  /// Ride [WindowActivity] so the 30Hz pulse — which fans out to every
+  /// glass surface in the tree — stops the instant the window loses
+  /// focus / gets minimized. This kills the perpetual repaint storm
+  /// across glass surfaces that the audit identified as a top idle-CPU
+  /// contributor, without any behavior change for the focused case.
+  void _syncAwake() {
+    if (!mounted) return;
+    final awake = WindowActivity.instance.awake;
+    if (awake && !_ticker.isActive) {
+      _lastTick = Duration.zero;
+      _accumulated = Duration.zero;
+      _ticker.start();
+    } else if (!awake && _ticker.isActive) {
+      _ticker.stop();
+    }
   }
 
   void _onTick(Duration elapsed) {
+    // Cold-start guard. `elapsed` is monotonic since the Ticker was
+    // CREATED, so after a stop/start cycle the first tick can deliver a
+    // multi-second delta, which would blow past [_tickInterval] on a
+    // single frame and publish a jarring time jump to every glass
+    // surface. Seed _lastTick on the first tick of a session and return.
+    if (_lastTick == Duration.zero) {
+      _lastTick = elapsed;
+      return;
+    }
     final delta = elapsed - _lastTick;
     _lastTick = elapsed;
     _accumulated += delta;
@@ -103,6 +132,7 @@ class _LiquidGlassProviderState extends State<LiquidGlassProvider>
 
   @override
   void dispose() {
+    WindowActivity.instance.removeListener(_syncAwake);
     _ticker.dispose();
     windowManager.removeListener(this);
     _pulse.dispose();

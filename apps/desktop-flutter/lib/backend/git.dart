@@ -8,10 +8,6 @@ import 'dtos.dart';
 import 'git_result.dart';
 import '../diagnostics/diagnostics_state.dart';
 
-// ── Result type ──────────────────────────────────────────────────────────────
-
-
-// ── Diff-header path extraction ─────────────────────────────────────────────
 // Git emits two header forms:
 //   unquoted: `diff --git a/path b/path`
 //   quoted:   `diff --git "a/path with spaces" "b/path with spaces"` (C-string
@@ -24,8 +20,7 @@ final RegExp _kDiffHeaderUnquoted =
     RegExp(r'^diff --git a/.+ b/(.+)$', multiLine: true);
 final RegExp _kDiffHeaderQuoted =
     RegExp(r'^diff --git "a/[^"]+" "b/([^"]+)"$', multiLine: true);
-final RegExp _kDiffHeaderUnquotedLine =
-    RegExp(r'^diff --git a/.+ b/(.+)$');
+final RegExp _kDiffHeaderUnquotedLine = RegExp(r'^diff --git a/.+ b/(.+)$');
 final RegExp _kDiffHeaderQuotedLine =
     RegExp(r'^diff --git "a/[^"]+" "b/([^"]+)"$');
 
@@ -52,8 +47,6 @@ String? diffHeaderPath(String line) {
   if (q != null) return q.group(1);
   return null;
 }
-
-// ── Git runner ───────────────────────────────────────────────────────────────
 
 Future<ProcessResult> _git(String workingDir, List<String> args) async {
   final commandLabel = args.isEmpty ? 'git' : 'git.${args.first}';
@@ -119,8 +112,6 @@ Future<ProcessResult> runGitProbe(String workingDir, List<String> args) {
   return _git(workingDir, args);
 }
 
-// ── Repository ───────────────────────────────────────────────────────────────
-
 Future<GitResult<String>> openRepository(String path) async {
   try {
     final r = await _git(path, ['rev-parse', '--git-dir']);
@@ -158,8 +149,8 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
       if (path.isEmpty) continue;
       files.add(RepositoryStatusFile(
           path: path,
-          staged: staged == ' ' ? '' : staged,
-          unstaged: unstaged == ' ' ? '' : unstaged));
+          staged: canonicalGitStatusCode(staged, stagedSlot: true),
+          unstaged: canonicalGitStatusCode(unstaged, stagedSlot: false)));
     }
 
     int ahead = 0, behind = 0;
@@ -193,8 +184,7 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
 /// Format string used by both listCommitHistory and listFileHistory.
 /// Shape: hash, shortHash, parents, refs, subject, author, email, date.
 /// Keep in sync with `_parseCommitLogLines` below.
-const String _kCommitLogFormat =
-    '--format=%H%n%h%n%P%n%D%n%s%n%aN%n%aE%n%aI';
+const String _kCommitLogFormat = '--format=%H%n%h%n%P%n%D%n%s%n%aN%n%aE%n%aI';
 
 /// Parses 8-line commit records from `git log --format=_kCommitLogFormat`.
 /// Each commit occupies 8 consecutive non-empty lines; blank lines separate
@@ -208,11 +198,8 @@ List<CommitHistoryEntry> _parseCommitLogLines(List<String> lines) {
       i++;
       continue;
     }
-    final parents = lines[i + 2]
-        .trim()
-        .split(' ')
-        .where((s) => s.isNotEmpty)
-        .toList();
+    final parents =
+        lines[i + 2].trim().split(' ').where((s) => s.isNotEmpty).toList();
     entries.add(CommitHistoryEntry(
       commitHash: hash,
       shortHash: lines[i + 1].trim(),
@@ -244,16 +231,40 @@ Future<GitResult<List<CommitHistoryEntry>>> listCommitHistory(String repo,
   return GitResult.ok(_parseCommitLogLines(r.stdout.toString().split('\n')));
 }
 
+/// Commits reachable from [branch] that are NOT reachable from [excluding].
+/// Concretely: `git log <branch> ^<excluding>` — the diverged set, oldest
+/// at the end like every other history list. Used by the History page's
+/// hover-preview to show what commits would land if the user merged
+/// the hovered desk into the active worktree, without leaving the view.
+Future<GitResult<List<CommitHistoryEntry>>> listCommitsAhead(
+  String repo, {
+  required String branch,
+  required String excluding,
+  int limit = 200,
+}) async {
+  final args = [
+    'log',
+    _kCommitLogFormat,
+    '-n',
+    '$limit',
+    branch,
+    '^$excluding',
+  ];
+  final r = await _git(repo, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return GitResult.ok(_parseCommitLogLines(r.stdout.toString().split('\n')));
+}
+
 /// Bulk-fetches file stats for all commits in two parallel git log passes
 /// (--numstat and --name-status). Merges with already-loaded commit metadata
 /// to produce a full CommitDetailData per commit — body is left empty since
 /// it isn't needed for the file list view and the individual getCommitDetail
 /// path fills it in on demand.
 Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
-    String repo,
-    List<CommitHistoryEntry> commits, {
-    int limit = 200,
-    String? branch,
+  String repo,
+  List<CommitHistoryEntry> commits, {
+  int limit = 200,
+  String? branch,
 }) async {
   if (commits.isEmpty) return GitResult.ok({});
 
@@ -283,7 +294,8 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
         final adds = int.tryParse(parts[0]) ?? 0;
         final dels = int.tryParse(parts[1]) ?? 0;
         final path = parts[2].trim();
-        if (path.isNotEmpty) numstatByHash[cur]!.add(_BulkFileStat(path, adds, dels));
+        if (path.isNotEmpty)
+          numstatByHash[cur]!.add(_BulkFileStat(path, adds, dels));
       }
     }
   }
@@ -315,12 +327,14 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
   for (final c in commits) {
     final stats = numstatByHash[c.commitHash] ?? [];
     final types = changeTypesByHash[c.commitHash] ?? {};
-    final files = stats.map((s) => CommitFileStatData(
-          path: s.path,
-          additions: s.additions,
-          deletions: s.deletions,
-          changeType: types[s.path] ?? 'M',
-        )).toList();
+    final files = stats
+        .map((s) => CommitFileStatData(
+              path: s.path,
+              additions: s.additions,
+              deletions: s.deletions,
+              changeType: types[s.path] ?? 'M',
+            ))
+        .toList();
     out[c.commitHash] = CommitDetailData(
       commitHash: c.commitHash,
       shortHash: c.shortHash,
@@ -344,8 +358,6 @@ class _BulkFileStat {
   final int deletions;
   const _BulkFileStat(this.path, this.additions, this.deletions);
 }
-
-// ── Paper Trail (file history) ──────────────────────────────────────────────
 
 /// Wraps a history entry with the file path AS IT EXISTED at that commit.
 /// Critical for correctly fetching diffs/blame across renames: if the file
@@ -399,7 +411,10 @@ Future<GitResult<List<FileHistoryEntry>>> listFileHistoryWithPaths(
   int i = 0;
   while (i + 7 < raw.length) {
     final hash = raw[i].trim();
-    if (hash.isEmpty) { i++; continue; }
+    if (hash.isEmpty) {
+      i++;
+      continue;
+    }
     // Forward the 8 metadata lines + a blank separator to the shared parser.
     for (var j = 0; j < 8; j++) {
       metadataLines.add(i + j < raw.length ? raw[i + j] : '');
@@ -478,6 +493,124 @@ Future<GitResult<String>> getFileDiffAtRevision(
 }
 
 /// Full multi-file diff for a commit. Same fallback as the per-file
+/// Method picker for [applyBranchToBase]. Mirrors GitHub's three
+/// well-known PR-merge strategies; each maps to a different `git`
+/// command sequence inside the function.
+enum BranchMergeMethod {
+  /// `git merge --no-ff <branch>` — preserves both histories with an
+  /// explicit merge commit.
+  mergeCommit,
+
+  /// `git merge --squash <branch>` then `git commit -m <subject>` —
+  /// collapses every commit on the branch into one on the base.
+  squash,
+
+  /// `git rebase <base>` on the branch, then `git merge --ff-only` —
+  /// linear history, no merge commit.
+  rebase,
+}
+
+/// Apply [branch] onto [baseRef] inside [mainRepoPath], using the
+/// chosen [method]. Optionally deletes [branch] after a successful
+/// merge. The function performs only git operations (Process.run);
+/// callers handle UI feedback (snackbars) + state updates
+/// (DeskPrState, RepositoryState refresh) themselves.
+/// On any step failure, leaves the working tree as `git` itself does
+/// (rebase failures auto-`--abort`; merge conflicts leave conflict
+/// markers in the tree as usual). The returned [GitResult.error]
+/// carries the trimmed stderr from the failing step.
+/// Shared between the branches-page PR row, the desk context menu's
+/// "Apply to main", and any future caller — the engine that decides
+/// which `git` commands to run lives here, not in widget state.
+Future<GitResult<void>> applyBranchToBase({
+  required String mainRepoPath,
+  required String branch,
+  required String baseRef,
+  required BranchMergeMethod method,
+  bool deleteBranch = true,
+  String? squashSubject,
+}) async {
+  // Always start from the base. If we can't switch to it the rest of
+  // the pipeline is meaningless.
+  final checkoutBase = await _git(mainRepoPath, ['checkout', baseRef]);
+  if (checkoutBase.exitCode != 0) {
+    return GitResult.err(
+      'Could not switch to $baseRef: ${checkoutBase.stderr.toString().trim()}',
+    );
+  }
+
+  switch (method) {
+    case BranchMergeMethod.rebase:
+      // Step onto the branch, replay it on top of the base, step back,
+      // fast-forward the base. On rebase failure: abort + restore base.
+      final coBranch = await _git(mainRepoPath, ['checkout', branch]);
+      if (coBranch.exitCode != 0) {
+        return GitResult.err(
+          'Could not switch to $branch: ${coBranch.stderr.toString().trim()}',
+        );
+      }
+      final rebase = await _git(mainRepoPath, ['rebase', baseRef]);
+      if (rebase.exitCode != 0) {
+        await _git(mainRepoPath, ['rebase', '--abort']);
+        await _git(mainRepoPath, ['checkout', baseRef]);
+        return GitResult.err(
+          'Rebase failed: ${rebase.stderr.toString().trim()}',
+        );
+      }
+      await _git(mainRepoPath, ['checkout', baseRef]);
+      final ff = await _git(mainRepoPath, ['merge', '--ff-only', branch]);
+      if (ff.exitCode != 0) {
+        return GitResult.err(
+          'Fast-forward failed: ${ff.stderr.toString().trim()}',
+        );
+      }
+      break;
+
+    case BranchMergeMethod.squash:
+      final sq = await _git(mainRepoPath, ['merge', '--squash', branch]);
+      if (sq.exitCode != 0) {
+        return GitResult.err(
+          'Squash failed: ${sq.stderr.toString().trim()}',
+        );
+      }
+      // `--squash` stages the change but leaves it uncommitted; finalise
+      // with the supplied subject (or a sane default).
+      final subject = (squashSubject != null && squashSubject.trim().isNotEmpty)
+          ? squashSubject.trim()
+          : 'Merge local PR ($branch)';
+      final commit = await _git(mainRepoPath, ['commit', '-m', subject]);
+      if (commit.exitCode != 0) {
+        return GitResult.err(
+          'Squash commit failed: ${commit.stderr.toString().trim()}',
+        );
+      }
+      break;
+
+    case BranchMergeMethod.mergeCommit:
+      final mc = await _git(mainRepoPath, ['merge', '--no-ff', branch]);
+      if (mc.exitCode != 0) {
+        return GitResult.err(
+          'Merge failed: ${mc.stderr.toString().trim()}',
+        );
+      }
+      break;
+  }
+
+  if (deleteBranch) {
+    // Best-effort. `-d` (not `-D`) refuses if the branch isn't merged;
+    // after a successful merge it always succeeds. Surface the error
+    // string but don't fail the overall operation — the merge landed.
+    final del = await _git(mainRepoPath, ['branch', '-d', branch]);
+    if (del.exitCode != 0) {
+      return GitResult.err(
+        'Merged but could not delete $branch: '
+        '${del.stderr.toString().trim()}',
+      );
+    }
+  }
+  return GitResult.ok(null);
+}
+
 /// variant for root commits (`git diff <hash>~1..<hash>` fails when
 /// there's no parent → fall back to `git show`).
 Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
@@ -499,8 +632,6 @@ Future<GitResult<String>> getCommitDiff(String repo, String commitHash) async {
   return GitResult.ok(r2.stdout.toString());
 }
 
-// ── Commit detail ──────────────────────────────────────────────────────────
-
 Future<GitResult<CommitDetailData>> getCommitDetail(
     String repo, String hash) async {
   // Two calls: metadata + numstat, and name-status for change types
@@ -511,8 +642,7 @@ Future<GitResult<CommitDetailData>> getCommitDetail(
       '--format=%H%n%h%n%s%n%b%n---END-META---%n%aN%n%aE%n%aI',
       hash
     ]),
-    _git(repo,
-        ['diff-tree', '--no-commit-id', '-r', '--name-status', hash]),
+    _git(repo, ['diff-tree', '--no-commit-id', '-r', '--name-status', hash]),
   ]);
 
   final r = results[0];
@@ -597,6 +727,85 @@ Future<GitResult<String>> getFileDiff(String repo, String path,
   return GitResult.ok(r.stdout.toString());
 }
 
+/// Everything a desk has *added* relative to where it diverged from
+/// [targetRef], as a single unified diff. Run from inside the desk's
+/// worktree and compared against the **merge-base** of [targetRef] and
+/// the desk's HEAD, this folds:
+///   • commits the desk has made since branching from [targetRef],
+///   • uncommitted modifications to tracked files, AND
+///   • untracked files in the desk's working tree
+/// into one patch that, when applied to a [targetRef] worktree, brings
+/// the desk's contributions over without reverting anything [targetRef]
+/// has gained in the meantime. Returns an empty string when the desk
+/// has nothing beyond the divergence point (no own commits, no WIP,
+/// no new files).
+/// Diffing against [targetRef] directly was an earlier implementation
+/// and was wrong: when the desk was behind [targetRef], the resulting
+/// patch contained reversals of every [targetRef] commit the desk
+/// hadn't yet picked up. Imprinting that on a clean [targetRef]
+/// worktree wiped real work. Merge-base scoping is the only shape
+/// that captures "the desk's contribution" symmetrically across
+/// ahead / behind / diverged states.
+/// `git diff` ignores untracked files by default, so a separate
+/// `ls-files --others --exclude-standard` pass enumerates them and
+/// each is rendered as a synthetic `/dev/null → b/<path>` block. The
+/// same helper [getSelectionDiff] uses on the changes page; format is
+/// what `git apply` consumes for new-file creation.
+Future<GitResult<String>> getDeskDumpDiff(
+  String deskPath,
+  String targetRef, {
+  int contextLines = 3,
+}) async {
+  final base = await _git(
+    deskPath,
+    ['merge-base', targetRef, 'HEAD'],
+  );
+  if (base.exitCode != 0) {
+    // No common ancestor — unrelated histories. There is no meaningful
+    // "desk's contribution" to extract; surface the underlying error so
+    // the caller can show it instead of silently dumping a giant
+    // whole-tree diff.
+    return GitResult.err(base.stderr.toString().trim().isEmpty
+        ? 'No common history between desk and $targetRef.'
+        : base.stderr.toString().trim());
+  }
+  final mergeBase = base.stdout.toString().trim();
+
+  // Tracked changes since divergence (committed + WIP modifications).
+  final tracked = await _git(
+    deskPath,
+    ['diff', '-U$contextLines', mergeBase],
+  );
+  if (tracked.exitCode != 0) {
+    return GitResult.err(tracked.stderr.toString().trim());
+  }
+
+  // Untracked files — enumerate then synthesize new-file diffs.
+  // --exclude-standard honours .gitignore + .git/info/exclude + the
+  // user's global excludes, so ignored junk doesn't leak into the dump.
+  final untracked = await _git(
+    deskPath,
+    ['ls-files', '--others', '--exclude-standard'],
+  );
+  if (untracked.exitCode != 0) {
+    return GitResult.err(untracked.stderr.toString().trim());
+  }
+  final untrackedPaths = untracked.stdout
+      .toString()
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList();
+
+  final parts = <String>[];
+  final trackedOut = tracked.stdout.toString();
+  if (trackedOut.trim().isNotEmpty) parts.add(trackedOut);
+  for (final path in untrackedPaths) {
+    parts.add(await _buildSyntheticUntrackedDiff(deskPath, path));
+  }
+  return GitResult.ok(parts.where((p) => p.trim().isNotEmpty).join('\n'));
+}
+
 Future<GitResult<String>> getSelectionDiff(
   String repo,
   List<RepositoryStatusFile> files, {
@@ -612,11 +821,10 @@ Future<GitResult<String>> getSelectionDiff(
       .map((file) => file.path)
       .toList();
   final hasTrackedStaged = files.any(
-    (file) => !_isUntrackedMarker(file.staged) && file.staged.trim().isNotEmpty,
+    (file) => !file.isUntracked && file.hasStagedChange,
   );
   final hasTrackedUnstaged = files.any(
-    (file) =>
-        !_isUntrackedMarker(file.unstaged) && file.unstaged.trim().isNotEmpty,
+    (file) => !file.isUntracked && file.hasUnstagedChange,
   );
 
   if (trackedPaths.isNotEmpty && hasTrackedStaged) {
@@ -654,10 +862,7 @@ Future<GitResult<String>> getSelectionDiff(
   return GitResult.ok(parts.where((part) => part.trim().isNotEmpty).join('\n'));
 }
 
-bool _isUntrackedFile(RepositoryStatusFile file) =>
-    _isUntrackedMarker(file.staged) || _isUntrackedMarker(file.unstaged);
-
-bool _isUntrackedMarker(String code) => code.trim() == '?';
+bool _isUntrackedFile(RepositoryStatusFile file) => file.isUntracked;
 
 Future<String> _buildSyntheticUntrackedDiff(
     String repo, String relativePath) async {
@@ -752,6 +957,113 @@ Future<GitResult<void>> deleteBranch(String repo, String name,
   final r = await _git(repo, ['branch', force ? '-D' : '-d', name]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
+}
+
+/// Rename a local branch. `-M` to force-replace if [newName] already
+/// exists (git rejects otherwise). Returns the git stderr on failure
+/// so callers can surface the actual reason (ref collision, dirty
+/// working tree, etc.).
+Future<GitResult<void>> renameBranch(
+    String repo, String oldName, String newName,
+    {bool force = false}) async {
+  final r = await _git(repo, ['branch', force ? '-M' : '-m', oldName, newName]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+/// Cherry-pick a commit onto the current HEAD. Non-fast-forward; git
+/// leaves conflicts in the working tree on failure — caller should
+/// surface the stderr to the user so they can resolve or abort.
+Future<GitResult<void>> cherryPickCommit(String repo, String hash) async {
+  final r = await _git(repo, ['cherry-pick', hash]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+/// Revert a commit — creates a new commit that undoes [hash] against
+/// current HEAD. `--no-edit` skips the commit-message editor; the
+/// default "Revert '<subject>'" message is fine for UI-driven reverts.
+Future<GitResult<void>> revertCommit(String repo, String hash) async {
+  final r = await _git(repo, ['revert', '--no-edit', hash]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  return const GitResult.ok(null);
+}
+
+/// The primary remote's name. `origin` is the convention and wins when
+/// present; otherwise we take the first remote `git remote` lists
+/// (single-remote repos with non-conventional names — e.g. `upstream`
+/// after a fork — are common enough to need this). Returns null only
+/// when the repo has no remotes at all (fresh local-only repo).
+/// Cached at the call site, not here — callers in tight loops should
+/// resolve once and pass the result through, since this spawns a
+/// subprocess.
+Future<GitResult<String?>> primaryRemoteName(String repo) async {
+  final r = await _git(repo, ['remote']);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  final names = <String>[
+    for (final line in r.stdout.toString().split('\n'))
+      if (line.trim().isNotEmpty) line.trim(),
+  ];
+  if (names.isEmpty) return const GitResult.ok(null);
+  if (names.contains('origin')) return const GitResult.ok('origin');
+  return GitResult.ok(names.first);
+}
+
+/// The repo's default branch name — what `git symbolic-ref
+/// refs/remotes/<primary>/HEAD` points to, with a fallback scan for
+/// `main` or `master` when no remote HEAD is set. Returns null when
+/// the repo has no recognizable default (new repo, detached, nothing
+/// configured). The History page uses this to compute trunk-vs-branch
+/// lane assignment on the top timeline.
+Future<GitResult<String?>> defaultBranchName(String repo) async {
+  final remoteRes = await primaryRemoteName(repo);
+  final remote = remoteRes.ok ? (remoteRes.data ?? 'origin') : 'origin';
+  final viaRemote = await _git(
+      repo, ['symbolic-ref', '--short', 'refs/remotes/$remote/HEAD']);
+  if (viaRemote.exitCode == 0) {
+    final raw = viaRemote.stdout.toString().trim();
+    // Output form: "<remote>/main" — strip the remote prefix.
+    final slash = raw.indexOf('/');
+    if (slash > 0 && slash + 1 < raw.length) {
+      return GitResult.ok(raw.substring(slash + 1));
+    }
+  }
+  // Fallback: probe local + remote for conventional names. `main` wins
+  // when both exist (modern convention); `master` used as legacy
+  // fallback. `verify` avoids spawning a full `for-each-ref` walk.
+  for (final candidate in const ['main', 'master']) {
+    final check = await _git(
+        repo, ['rev-parse', '--verify', '--quiet', 'refs/heads/$candidate']);
+    if (check.exitCode == 0) return GitResult.ok(candidate);
+    final remoteRef = await _git(repo, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      'refs/remotes/$remote/$candidate',
+    ]);
+    if (remoteRef.exitCode == 0) return GitResult.ok(candidate);
+  }
+  return const GitResult.ok(null);
+}
+
+/// Hashes reachable from [ref], capped at [limit]. Returned as a Set
+/// for O(1) membership checks in UI rendering paths. Caller matches
+/// the [limit] against whatever history depth the surface is showing;
+/// passing a smaller limit than the surface renders means some of the
+/// on-screen commits will look "off-trunk" even when they're actually
+/// deeper ancestors — so size the limit to the surface, not a default.
+Future<GitResult<Set<String>>> ancestorHashes(
+  String repo,
+  String ref, {
+  required int limit,
+}) async {
+  final r = await _git(repo, ['rev-list', '-n', '$limit', ref]);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  final hashes = <String>{
+    for (final line in r.stdout.toString().split('\n'))
+      if (line.trim().isNotEmpty) line.trim(),
+  };
+  return GitResult.ok(hashes);
 }
 
 Future<GitResult<List<TagEntryData>>> listTags(String repo) async {
@@ -966,6 +1278,7 @@ Future<GitResult<Map<String, FileChangeWeight>>> fileChangeWeights(
 class FileSignals {
   /// Per-author commit count across the path union, sorted desc.
   final List<({String email, int commits})> authors;
+
   /// Per-path "heat" in 0..1 — exponentially-decayed commit density
   /// over the last [thermalWindowDays]. 0 = stone cold, 1 = on fire
   /// right now. Used to render the ember-glow on file pills.
@@ -979,7 +1292,6 @@ class FileSignals {
 /// each file is right now (exponentially-decayed commit density).
 /// Used by the PR detail surface for the PEOPLE section + per-file
 /// thermal glow. Pure local git; transferable to any host.
-///
 /// Cost: O(paths) git log invocations, each capped at [maxPerFile]
 /// commits. Cheap for typical PR file lists.
 Future<GitResult<FileSignals>> scanFileSignals(
@@ -1040,22 +1352,64 @@ Future<GitResult<FileSignals>> scanFileSignals(
   return GitResult.ok(FileSignals(authors: authors, heatByPath: heatByPath));
 }
 
-
 Future<GitResult<void>> stagePaths(String repo, List<String> paths) async {
-  final r = await _git(repo, ['add', '--', ...paths]);
+  if (paths.isEmpty) return const GitResult.ok(null);
+
+  // Pre-flight gitignore filter. `git add` refuses to add a path that
+  // matches a .gitignore rule AND isn't already tracked — it exits 1
+  // with the matching *pattern* in the error list ("paths ignored by
+  // one of your .gitignore files: .claude"). That's fine when the
+  // caller genuinely tried to stage a fresh ignored file, but it also
+  // fires on staged-deletion paths: a file previously untracked via
+  // `git rm --cached` is in the index as a deletion, in the UI's
+  // "included" list as a change to commit, and on disk as an ignored
+  // file. The deletion is already in the index — no `add` needed —
+  // but the UI layer doesn't know that, so the blanket add breaks.
+  //
+  // `git check-ignore` gives us the filter: exit 0 + stdout lists
+  // matching paths; exit 1 = no matches; exit 128 = fatal. We fail
+  // open on errors (treat as "nothing to filter") so a broken
+  // check-ignore never blocks a legitimate stage.
+  final ignoreCheck = await _git(repo, ['check-ignore', '--', ...paths]);
+  final ignored = <String>{};
+  if (ignoreCheck.exitCode == 0) {
+    for (final line in ignoreCheck.stdout.toString().split('\n')) {
+      final p = line.trim();
+      if (p.isNotEmpty) ignored.add(p);
+    }
+  }
+  final toAdd = ignored.isEmpty
+      ? paths
+      : paths.where((p) => !ignored.contains(p)).toList();
+  if (toAdd.isEmpty) return const GitResult.ok(null);
+
+  final r = await _git(repo, ['add', '--', ...toAdd]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
 
 Future<GitResult<void>> unstagePaths(String repo, List<String> paths) async {
-  final r = await _git(repo, ['restore', '--staged', '--', ...paths]);
+  if (paths.isEmpty) return const GitResult.ok(null);
+  final stagedProbe = await _git(
+      repo, ['diff', '--cached', '--name-only', '-z', '--', ...paths]);
+  if (stagedProbe.exitCode != 0) {
+    return GitResult.err(stagedProbe.stderr.toString().trim());
+  }
+  final stagedPaths = stagedProbe.stdout
+      .toString()
+      .split('\x00')
+      .map((path) => path.trim())
+      .where((path) => path.isNotEmpty)
+      .toList();
+  if (stagedPaths.isEmpty) return const GitResult.ok(null);
+
+  final r = await _git(repo, ['restore', '--staged', '--', ...stagedPaths]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return const GitResult.ok(null);
 }
 
 /// Discard all changes (staged AND unstaged) for a single file, matching
 /// the GitHub Desktop "Discard changes" behaviour:
-///
 ///   * **Untracked** (`?`) — nothing to restore from git's side; just
 ///     remove the file from disk. Git never knew about it.
 ///   * **Newly added in the index** (`A`, not yet in HEAD) — `git
@@ -1065,17 +1419,15 @@ Future<GitResult<void>> unstagePaths(String repo, List<String> paths) async {
 ///   * **Anything else** (modified, deleted, renamed, copied, conflict)
 ///     — `git checkout HEAD -- <path>` resets the path to its HEAD
 ///     state in one shot, wiping both staged and unstaged changes.
-///
 /// Irreversible. Caller is expected to confirm before invoking.
 Future<GitResult<void>> discardFile(
   String repo,
   RepositoryStatusFile file,
 ) async {
-  final isUntracked = file.staged.isEmpty && file.unstaged == '?';
-  if (isUntracked) {
+  if (file.isUntracked) {
     return _deleteFromDisk(repo, file.path);
   }
-  if (file.staged == 'A') {
+  if (file.isStagedAddition) {
     final unstage =
         await _git(repo, ['rm', '--cached', '--force', '--', file.path]);
     if (unstage.exitCode != 0) {
@@ -1111,10 +1463,8 @@ Future<GitResult<void>> addToGitignore(String repo, String pattern) async {
         .split('\n')
         .any((l) => l.trim() == trimmedPattern && trimmedPattern.isNotEmpty);
     if (alreadyPresent) return const GitResult.ok(null);
-    final needsLeadingNewline =
-        existing.isNotEmpty && !existing.endsWith('\n');
-    final next =
-        '$existing${needsLeadingNewline ? '\n' : ''}$trimmedPattern\n';
+    final needsLeadingNewline = existing.isNotEmpty && !existing.endsWith('\n');
+    final next = '$existing${needsLeadingNewline ? '\n' : ''}$trimmedPattern\n';
     await f.writeAsString(next);
     return const GitResult.ok(null);
   } catch (e) {
@@ -1124,7 +1474,6 @@ Future<GitResult<void>> addToGitignore(String repo, String pattern) async {
 
 /// Pipes a unified diff to `git apply`. Used for line-level staging AND
 /// for the patch-loop (external .patch files).
-///
 /// - `cached` writes to the index (--cached). Mutually exclusive with the
 ///   patch-loop options; setting `threeWay` or `dryRun` overrides implicit
 ///   cached semantics per git's own rules.
@@ -1154,8 +1503,7 @@ Future<GitResult<void>> applyPatch(
     if (dryRun) args.add('--check');
     if (threeWay) args.add('--3way');
     args.addAll(['--whitespace=nowarn', '-']);
-    final process =
-        await Process.start('git', args, workingDirectory: repo);
+    final process = await Process.start('git', args, workingDirectory: repo);
     process.stdin.write(patch);
     if (!patch.endsWith('\n')) process.stdin.writeln();
     await process.stdin.flush();
@@ -1173,7 +1521,9 @@ Future<GitResult<void>> applyPatch(
       errorCode: ok ? null : 'git.exit_$exit',
       message: ok ? null : stderrText,
     );
-    if (!ok) return GitResult.err(stderrText.isEmpty ? 'git apply exit $exit' : stderrText);
+    if (!ok)
+      return GitResult.err(
+          stderrText.isEmpty ? 'git apply exit $exit' : stderrText);
     return const GitResult.ok(null);
   } catch (e) {
     stopwatch.stop();
@@ -1191,7 +1541,6 @@ Future<GitResult<void>> applyPatch(
 /// Atomic per-file partial staging: resets the index entry for the file to
 /// HEAD, then applies the user's partial patch — so the index reflects
 /// exactly the set of lines the user has marked staged in the UI.
-///
 /// Reset failures are ignored (untracked files have no HEAD entry).
 /// An empty patch ends with the file fully unstaged — which is the
 /// correct outcome when the user has deselected every line.
@@ -1357,12 +1706,11 @@ Future<GitResult<void>> startInteractiveRebase(
   return GitResult.ok(null);
 }
 
-// ── Stash (Filing Cabinet) ──────────────────────────────────────────────────
-
 Future<GitResult<List<StashEntryData>>> listStashes(String repo) async {
   // Format: index, hash, date, message
   final r = await _git(repo, [
-    'stash', 'list',
+    'stash',
+    'list',
     '--format=%gd\x1f%H\x1f%ci\x1f%gs',
   ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
@@ -1378,7 +1726,9 @@ Future<GitResult<List<StashEntryData>>> listStashes(String repo) async {
     if (parts.length < 4) continue;
     // stash@{0} → 0
     final indexMatch = RegExp(r'\{(\d+)\}').firstMatch(parts[0]);
-    final index = indexMatch != null ? int.tryParse(indexMatch.group(1)!) ?? 0 : entries.length;
+    final index = indexMatch != null
+        ? int.tryParse(indexMatch.group(1)!) ?? 0
+        : entries.length;
     entries.add(StashEntryData(
       index: index,
       hash: parts[1],
@@ -1388,13 +1738,15 @@ Future<GitResult<List<StashEntryData>>> listStashes(String repo) async {
   }
   // Enrich with file counts (fast — only stat, no diff content).
   for (var i = 0; i < entries.length && i < 20; i++) {
-    final stat = await _git(repo, ['stash', 'show', '--stat', 'stash@{${entries[i].index}}']);
+    final stat = await _git(
+        repo, ['stash', 'show', '--stat', 'stash@{${entries[i].index}}']);
     if (stat.exitCode == 0) {
       final statLines = stat.stdout.toString().trim().split('\n');
       // Last line of --stat is the summary: " 3 files changed, ..."
       final summary = statLines.isNotEmpty ? statLines.last : '';
       final countMatch = RegExp(r'(\d+) files? changed').firstMatch(summary);
-      final count = countMatch != null ? int.tryParse(countMatch.group(1)!) ?? 0 : 0;
+      final count =
+          countMatch != null ? int.tryParse(countMatch.group(1)!) ?? 0 : 0;
       entries[i] = StashEntryData(
         index: entries[i].index,
         hash: entries[i].hash,
@@ -1458,8 +1810,7 @@ Future<GitResult<List<StashFileStat>>> stashFiles(
   String repo, {
   int index = 0,
 }) async {
-  final r = await _git(
-      repo, ['stash', 'show', '--numstat', 'stash@{$index}']);
+  final r = await _git(repo, ['stash', 'show', '--numstat', 'stash@{$index}']);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   final out = <StashFileStat>[];
   for (final raw in r.stdout.toString().split('\n')) {
@@ -1481,8 +1832,6 @@ Future<GitResult<List<StashFileStat>>> stashFiles(
   }
   return GitResult.ok(out);
 }
-
-// ── Parallel Desks (worktrees) ──────────────────────────────────────────────
 
 /// Parses `git worktree list --porcelain`. Each worktree is a block of
 /// key-value lines separated by a blank line. Keys: worktree, HEAD, branch,
@@ -1599,10 +1948,7 @@ Future<GitResult<String>> addWorktree(
       final excludeFile = File(p.join(absGitDir, 'info', 'exclude'));
       final existing =
           await excludeFile.exists() ? await excludeFile.readAsString() : '';
-      if (!existing
-          .split('\n')
-          .map((l) => l.trim())
-          .contains('.manifold/')) {
+      if (!existing.split('\n').map((l) => l.trim()).contains('.manifold/')) {
         await excludeFile.writeAsString(
           '${existing.trimRight()}\n.manifold/\n',
         );
@@ -1647,8 +1993,6 @@ Future<GitResult<void>> pruneWorktrees(String repo) async {
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(null);
 }
-
-// ── X-Ray ──────────────────────────────────────────────────────────────────
 
 Future<GitResult<String>> getRepositoryXrayFingerprint(String repo) {
   return computeRepositoryXrayFingerprint(repo, getRepositoryStatus, _git);

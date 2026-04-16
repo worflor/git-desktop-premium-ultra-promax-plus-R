@@ -8,7 +8,6 @@ import '../../backend/logos_git.dart';
 /// Tag kind — drives visual tone only, not the label. Labels themselves
 /// always come from the repo's own data (or a small set of universal
 /// descriptors for distribution extremes).
-///
 /// Three families:
 ///   * **Convention** — type / scope / chain / cluster. Labels are
 ///     learned from the repo's authors or its directory tree.
@@ -212,9 +211,7 @@ class RepositoryTagProfile {
   );
 }
 
-// ──────────────────────────────────────────────────────────────────────
 // Structural constants — pure topology, not taste.
-// ──────────────────────────────────────────────────────────────────────
 
 /// Minimum chain length: two consecutive commits is the smallest
 /// non-singleton. A structural definition, not a tunable.
@@ -260,9 +257,7 @@ double _medianAbsDeviation(List<double> values, double median) {
   return _medianSorted(deviations);
 }
 
-// ──────────────────────────────────────────────────────────────────────
 // Subject parser — extracts type+scope from any of the common shapes.
-// ──────────────────────────────────────────────────────────────────────
 
 final RegExp _convPattern = RegExp(
   r'^([A-Za-z][\w\-\.]*)(?:\(([^)]+)\))?!?\s*:\s*',
@@ -316,16 +311,12 @@ String? commonPrefixLabel(Iterable<String> paths) {
   return segment.isEmpty ? null : segment;
 }
 
-// ──────────────────────────────────────────────────────────────────────
 // Profile builder — does the heavy lifting once per history load.
-// ──────────────────────────────────────────────────────────────────────
 
-// ──────────────────────────────────────────────────────────────────────
 // Subject corpus — tokenizes commit subjects into a global word
 // frequency table and harvests the most-distinctive word for any
 // commit subset via log-odds against the corpus. The harvested word
 // becomes the bucket label; no seed vocabulary.
-// ──────────────────────────────────────────────────────────────────────
 
 /// Matches a "Key: Value" trailer line (Unicode letters + digits).
 final RegExp _kTrailerShapeRe = RegExp(
@@ -464,14 +455,12 @@ class _SubjectCorpus {
 
   /// Returns the most distinctive token for a set of bucket commits,
   /// or null when nothing stands above the long tail.
-  ///
   /// Two axes:
   ///   NPMI vs. the corpus marginal (always on).
   ///   Log-surprise vs. [expectedTokens] when provided — a distribution
   ///     from [LogosGit.projectTokenDistribution] over the bucket's
   ///     file-neighborhood. "Distinctive" then means the file graph
   ///     didn't predict this token here but it showed up anyway.
-  ///
   /// The two axes compose via the Born-amplitude pattern [BornMixer]
   /// uses elsewhere. A kneedle gate filters the winner when the
   /// top-to-tail split isn't sharp.
@@ -630,12 +619,10 @@ double _tanh(double x) {
   return (e2x - 1) / (e2x + 1);
 }
 
-// ──────────────────────────────────────────────────────────────────────
 // Self-discovery utilities — kneedle for prefix promotion, sigma-cutoff
 // for distribution extremes, autocorrelation for natural timescales.
 // All inspired by the engram codec's "let the data tell you the
 // threshold" pattern.
-// ──────────────────────────────────────────────────────────────────────
 
 /// Knee-of-the-curve detection (Kneedle). Sorts values descending,
 /// normalizes to [0,1] on both axes, finds the index where the curve
@@ -744,7 +731,6 @@ RepositoryTagProfile buildTagProfile({
 }) {
   if (commits.isEmpty) return RepositoryTagProfile.empty;
 
-  // ── 1. Prefix harvesting via kneedle ──────────────────────────────
   // The vocabulary is whatever appears at-or-above the natural knee
   // of the prefix-frequency curve. No fixed % floor; the data tells us
   // where shared-convention ends and long-tail begins.
@@ -757,14 +743,12 @@ RepositoryTagProfile buildTagProfile({
   }
   final prefixVocab = _harvestPrefixVocab(prefixCounts);
 
-  // ── 1b. Subject corpus for label harvesting ──────────────────────
   // Tokenizes every commit subject (post-prefix-strip) into a global
   // word frequency table. Per-bucket label discovery uses log-odds
   // against this corpus — the team's actual vocabulary becomes the
   // tag labels.
   final corpus = _SubjectCorpus.build(commits, detailsByHash);
 
-  // ── 2. Per-file centrality from the coupling graph ────────────────
   // Centrality = sum of jaccard scores to neighbors. Files in dense
   // subgraphs score high; isolated files score 0. The matrix is
   // upper-triangle (lex), so each edge appears once — we accumulate
@@ -772,9 +756,15 @@ RepositoryTagProfile buildTagProfile({
   // Pure topological derivation, zero taste.
   final fileCentrality = <String, double>{};
   if (coupling != null) {
-    for (final entry in coupling.jaccard.entries) {
-      final a = entry.key;
-      for (final neighbor in entry.value.entries) {
+    // CSR-native upper-triangle iteration: walk every known path's
+    // row directly via the CSR's `paths` and `jaccardEntriesOf`. Each
+    // edge appears once (storage is upper-triangle, indexed by the
+    // lex-smaller endpoint), so we accumulate both endpoints to give
+    // every file its full degree-weighted score — same invariant the
+    // legacy nested-map iteration relied on. Skips materialising the
+    // entire backward-compat map view.
+    for (final a in coupling.paths) {
+      for (final neighbor in coupling.jaccardEntriesOf(a)) {
         final b = neighbor.key;
         final v = neighbor.value;
         fileCentrality[a] = (fileCentrality[a] ?? 0.0) + v;
@@ -783,7 +773,6 @@ RepositoryTagProfile buildTagProfile({
     }
   }
 
-  // ── 3. Per-commit metric pass (size, coherence, ratio, hub) ──────
   // Walk in commits order; gather distributions; remember timestamps
   // and file sets per commit for the chain pass.
   final sizes = <double>[];
@@ -819,7 +808,6 @@ RepositoryTagProfile buildTagProfile({
     }
   }
 
-  // ── Sigma-cutoff gates (engram pattern) ──────────────────────────
   // Every "extreme" gate is derived from the distribution's own mean
   // + sigma. A heavy-tailed repo will have a wider gate than a
   // tight-clustered one. Field names retain the `P10/P90` legacy
@@ -842,7 +830,6 @@ RepositoryTagProfile buildTagProfile({
       if (e.value >= hubCentralityP90 && hubCentralityP90 > 0) e.key,
   };
 
-  // ── 4. Chain detection (per-author, neighbor-grounded) ───────────
   // Walk in CHRONOLOGICAL (oldest-first) order. For each author keep
   // the open chain; new commit by same author with file overlap with
   // the chain's running file-set joins; otherwise close + start new.
@@ -956,7 +943,6 @@ RepositoryTagProfile buildTagProfile({
     }
   }
 
-  // ── 4b. Author cadence baseline (Engram self-comparison) ──────────
   // For each author with enough chains of their own, compute their
   // median spectral radius and median absolute deviation (MAD —
   // robust to outliers, unlike stddev). Any chain whose radius is
@@ -977,7 +963,6 @@ RepositoryTagProfile buildTagProfile({
     }
   }
 
-  // ── 5. Echo detection ──────────────────────────────────────────
   // Lookback = autocorrelation length of the inter-commit file-
   // overlap signal (the series' own memory). Threshold = sigma-cutoff
   // above the mean overlap.
@@ -1032,7 +1017,6 @@ RepositoryTagProfile buildTagProfile({
     if (recentBuffer.length > echoLookback) recentBuffer.removeAt(0);
   }
 
-  // ── 6. Bucket-label harvesting ───────────────────────────────────
   // For every phenomenon kind that produces a tag from a SUBSET of
   // commits (axis extremes, direction, hub, echo, drift, merge), gather
   // the indices of the commits that fall in that bucket and harvest
@@ -1161,7 +1145,6 @@ RepositoryTagProfile buildTagProfile({
   tryHarvest(CommitTagKind.merge, bucketMergeIdx);
   tryHarvest(CommitTagKind.drift, bucketDriftIdx);
 
-  // ── 6b. Eldritch diffusion — labels borrow across the file graph ─
   // For every commit we already have an in-flight set of "own labels"
   // (type, scope, chain, cluster, plus the bucket labels it qualifies
   // for). Distribute those labels across the commit's files: each
@@ -1209,7 +1192,6 @@ RepositoryTagProfile buildTagProfile({
     return ownTokens;
   });
 
-  // ── 7. Provisional profile + label-frequency table ───────────────
   final provisional = RepositoryTagProfile(
     prefixVocab: prefixVocab,
     sizeP10: sizeP10,
@@ -1350,7 +1332,6 @@ bool _belongsToBucket(
 /// commit averages the diffused affinity across its files, subtracts
 /// the corpus baseline, and picks the strongest label not already in
 /// the commit's own labels — sigma-gated.
-///
 /// Returns a sparse map: only commits with a confident borrow appear.
 Map<String, ({String label, double score})> _computeBorrowedLabels(
   List<CommitHistoryEntry> commits,
@@ -1361,7 +1342,6 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
   final ownTokens = provisionalKinds();
   if (ownTokens.isEmpty) return const {};
 
-  // ── Phase 1: file → label → affinity + label co-occurrence ──────
   // Uniform-weight: every commit that touched a file deposits the
   // same fraction regardless of when — files keep their full history.
   // Also build the per-commit label-pair co-occurrence count: which
@@ -1409,7 +1389,6 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
   }
   if (fileAffinity.isEmpty || totalCommitsWithDetail == 0) return const {};
 
-  // ── Phase 1b: path-segment seeding (the team's directory ontology) ──
   // Each file's path segments ARE domain concepts the team has
   // organized code around. A file under `lib/features/auth/` is an
   // auth thing — that's the team's own taxonomy, made permanent in
@@ -1502,7 +1481,6 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
   // (Intentionally NOT dividing corpusBaseline by totalCommitsWithDetail
   // — kept raw so pGlobal is a clean proportion.)
 
-  // ── Unified per-commit doc/pair frequencies for co-PMI ──────────
   // labelDocFreq[L] = number of COMMITS where L is "present", where
   // present means: L is in the commit's own tokens OR L is a path
   // segment of any file the commit touches. Same denominator
@@ -1540,7 +1518,6 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
     }
   }
 
-  // ── Engram trajectory: temporal epochs (DISABLED) ────────────────
   // Earlier this pass dosed every file in an epoch with the epoch's
   // dominant label, then the diffusion smeared that across the
   // coupling graph. Result: borrowed pills converged to "the project's
@@ -1600,7 +1577,6 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
   // everywhere" — banal. Keep the structural diffusion clean.
   for (final _ in epochs) { /* intentionally inert */ }
 
-  // ── Phase 2: LogosGit attention ─────────────────────────────────
   // Born-mixes F0/CC/SP/V into per-pair edge probabilities, builds a
   // top-K adjacency, and runs Chebyshev heat-kernel diffusion.
   // engine.diffuse(source) returns φ for every file; we use φ as the
@@ -1857,9 +1833,7 @@ class _ChainBuilder {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────
 // Per-commit tagging
-// ──────────────────────────────────────────────────────────────────────
 
 const List<CommitTagKind> _kindPriority = [
   // Identity first.
@@ -1921,7 +1895,6 @@ List<CommitTag> tagCommit({
     return 1.0 - (f / profile.commitCount);
   }
 
-  // ── Type + scope (subject parse, vocab-filtered) ─────────────────
   final parsed = parseSubjectPrefix(commit.subject);
   String? typeLabel;
   String? scopeLabel;
@@ -1942,7 +1915,6 @@ List<CommitTag> tagCommit({
     }
   }
 
-  // ── Chain label > per-commit cluster ─────────────────────────────
   // Chain labels are neighbor-grounded — they survive across the
   // whole sequence. Per-commit cluster labels only run for solo
   // commits (no chain assignment).
@@ -1984,7 +1956,6 @@ List<CommitTag> tagCommit({
     ));
   }
 
-  // ── Drift — claimed scope vs actual identity disagreement ─────────
   // Smarter check: drift fires only when scope and identity share NO
   // path-segment AND neither is a substring of the other. Avoids false
   // positives like `feat(auth)` on a commit clustered to `auth_v2`,
@@ -1995,18 +1966,15 @@ List<CommitTag> tagCommit({
     emitIfLabeled(CommitTagKind.drift);
   }
 
-  // ── Structural: merge ─────────────────────────────────────────────
   if (commit.parentHashes.length > 1) {
     emitIfLabeled(CommitTagKind.merge);
   }
-  // ── Structural: rename (any file with git's 'R' changeType) ───────
   if (detail != null &&
       detail.files
           .any((f) => f.changeType == 'R' || f.changeType.startsWith('R'))) {
     emitIfLabeled(CommitTagKind.rename);
   }
 
-  // ── Detail-dependent: direction, hub, distribution ───────────────
   if (detail != null) {
     final size = (detail.additions + detail.deletions).toDouble();
     final ratio = detail.deletions / (detail.additions + 1);
@@ -2067,7 +2035,6 @@ List<CommitTag> tagCommit({
     }
   }
 
-  // ── Borrowed — label diffused from the commit's file neighbors ──
   // Score (NPMI × exp(co-PMI)) maps to pill confidence: opacity and
   // weight scale with signal strength. The only gate is NPMI > 0;
   // the renderer handles the rest visually.

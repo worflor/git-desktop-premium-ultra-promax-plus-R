@@ -1076,7 +1076,6 @@ class _OverviewInspector extends StatelessWidget {
             : 'mostly linear';
 
     return ListView(children: [
-      // ── Hero: commit count ──────────────────────────────────
       Row(
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
@@ -1103,7 +1102,6 @@ class _OverviewInspector extends StatelessWidget {
 
       const SizedBox(height: 14),
 
-      // ── Refs & topology ─────────────────────────────────────
       _InspectorRow(
         label: 'branches',
         value: rs.remoteBranchCount > 0
@@ -1132,7 +1130,6 @@ class _OverviewInspector extends StatelessWidget {
 
       const SizedBox(height: 10),
 
-      // ── History shape ──────────────────────────────────────
       _InspectorRow(
         label: 'shape',
         value: rs.mergeCommitCount == 0
@@ -1152,12 +1149,10 @@ class _OverviewInspector extends StatelessWidget {
 
       const SizedBox(height: 10),
 
-      // ── Head state ─────────────────────────────────────────
       _InspectorRow(label: 'branch', value: h.branch),
       const SizedBox(height: 5),
       _InspectorRow(label: 'head', value: h.headShortHash),
 
-      // ── Freshness footer ───────────────────────────────────
       const SizedBox(height: 14),
       Text(
         'probed ${_relativeTime(h.computedAt)}',
@@ -1658,7 +1653,6 @@ class _MetabolismLine extends StatelessWidget {
 /// Tiny zero-chrome line sparkline. Values assumed normalised to
 /// [0, 1]; zero and out-of-range inputs render as a flat baseline
 /// instead of crashing.
-///
 /// The [vitality] parameter (Engram spectral radius, clamped to [0, 1])
 /// modulates how *alive* the line looks:
 ///   * stroke width grows from ~0.8px (decaying repo) to ~2.2px
@@ -1667,7 +1661,6 @@ class _MetabolismLine extends StatelessWidget {
 ///   * a Gaussian-blurred glow is painted underneath with alpha = the
 ///     same vitality scalar — dying repos render as a flat line with
 ///     no halo, sustained orbits get a soft breath around them.
-///
 /// Both effects degrade to "the old look" when vitality is null — no
 /// behavioural change for callers that don't pass the signal.
 class _Sparkline extends StatelessWidget {
@@ -1763,7 +1756,6 @@ class _SparklinePainter extends CustomPainter {
       old.vitality != vitality;
 }
 
-// ── Territory: unified treemap of strata + hotspots ──────────────────────────
 //
 // Replaces the old Strata bars + Heat grid. Top-level directories become big
 // territory tiles sized by touch count; hot files/subdirs nest inside their
@@ -1771,7 +1763,6 @@ class _SparklinePainter extends CustomPainter {
 // as their own top-level tiles. Clicking any tile selects it — the inspector
 // on the right fills in with the corresponding stratum or hotspot details.
 
-// ── Parcel decoration alphas ──
 // Expressed as multipliers on the base `bgAlpha` (which itself comes
 // from the parcel's own role — region / child / orphan / selected).
 // Named so the relationships between normal, keystone, and selected
@@ -1877,7 +1868,6 @@ List<Rect> _regionsAroundObstacle(Rect fullArea, Rect? obstacle) {
 
 /// Squarified-treemap layout (Bruls, Huijbregts & van Wijk).
 /// Recurses for children so strata cells contain their hotspots.
-///
 /// Multi-region: when [bounds] has more than one rect, parcels are
 /// distributed across the regions by greedy area-share allocation
 /// (largest parcel first → region with the most remaining capacity),
@@ -2719,7 +2709,6 @@ class _CadenceRhythmBoard extends StatelessWidget {
         final barAreaH = h - burstDateH - reflogH;
         final maxBarH = (barAreaH - 20).clamp(10.0, double.infinity);
 
-        // ── Bucketing pass ────────────────────────────────────────
         // Sort bursts chronologically, then walk left-to-right
         // merging any whose positions would collide.
         final burstItems = [
@@ -2751,7 +2740,6 @@ class _CadenceRhythmBoard extends StatelessWidget {
                 .clamp(8.0, maxBarH);
 
         return Stack(clipBehavior: Clip.hardEdge, children: [
-          // ── Baseline ──────────────────────────────────────────
           Positioned(
             left: 12,
             right: 12,
@@ -2761,7 +2749,6 @@ class _CadenceRhythmBoard extends StatelessWidget {
                 Container(color: t.chromeBorder.withValues(alpha: 0.22)),
           ),
 
-          // ── Gap fills + day-count label ───────────────────────
           for (final item in cadence)
             if (item.kind == 'gap' &&
                 _cadenceDate(item) != null &&
@@ -2815,7 +2802,6 @@ class _CadenceRhythmBoard extends StatelessWidget {
               ),
             ],
 
-          // ── Pivot hairlines ────────────────────────────────────
           for (final pivot in pivots)
             if (DateTime.tryParse(pivot.authoredAt) != null)
               Positioned(
@@ -2830,7 +2816,6 @@ class _CadenceRhythmBoard extends StatelessWidget {
                 ),
               ),
 
-          // ── Burst bars + count labels + date labels ────────────
           //
           // One bar per bucket. Singleton buckets look identical to
           // the old single-day rendering. Merged buckets get a count
@@ -2897,7 +2882,6 @@ class _CadenceRhythmBoard extends StatelessWidget {
             ),
           ],
 
-          // ── Reflog markers (centered under their date column) ──
           // Same 44px-wide anchor as the burst date label above, so when a
           // reflog and burst share a day they stack in a clean column.
           for (final item in cadence)
@@ -2936,7 +2920,6 @@ class _CadenceRhythmBoard extends StatelessWidget {
                 ),
               ),
 
-          // ── Interactive tap areas ──────────────────────────────
           for (final pivot in pivots)
             if (DateTime.tryParse(pivot.authoredAt) != null)
               Positioned(
@@ -3040,7 +3023,6 @@ class _BurstBucket {
   }
 }
 
-// ── Pivot list (replaces horizontal scrolling strip) ──────────────────────────
 
 class _PivotList extends StatelessWidget {
   final List<RepositoryXrayPivotCommitData> pivots;
@@ -3179,7 +3161,6 @@ class _PivotList extends StatelessWidget {
   }
 }
 
-// ── Signal row (replaces grid tile) ──────────────────────────────────────────
 
 class _SignalRow extends StatelessWidget {
   final RepositoryXrayCardData card;

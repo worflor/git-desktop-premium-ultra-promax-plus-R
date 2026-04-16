@@ -1037,7 +1037,6 @@ class DiagnosticsState extends ChangeNotifier {
     };
   }
 
-  // ── Smart sample trimming ──────────────────────────────────────────
   // Keep all failures + heaviest outliers + recent context.
   // No arbitrary caps — the diagnostic value comes from the extremes
   // and the tail, not the middle.

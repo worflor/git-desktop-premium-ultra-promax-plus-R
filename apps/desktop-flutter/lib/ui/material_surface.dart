@@ -53,7 +53,6 @@ extension AppTokenSurfaceTones on AppTokens {
   /// intent (hairline vs. subtle vs. emphasized) instead of rolling
   /// bespoke alphas. Tuned against the 40+ scattered chromeBorder.withValues
   /// sites that drifted across 0.05–0.30.
-  ///
   /// faint (0.08)  — inner grid lines, near-invisible dividers
   /// subtle (0.14) — standard card chrome, default choice
   /// strong (0.28) — accent dividers, emphasis
@@ -358,6 +357,9 @@ class MaterialRuntimeCache {
       AppThemeId.quanta => 0.18,
       AppThemeId.redshift => 0.12,
       AppThemeId.halo => 0.18,
+      // Low glaze so the dark-iridescent texture and rim/ink carry
+      // the luminescence instead of the Kirby-style glaze wash.
+      AppThemeId.loverboy => 0.06,
       _ => 0.1,
     };
     return SurfaceMaterialRuntime(
@@ -590,6 +592,27 @@ class MaterialTexturePainter extends CustomPainter {
               ..blendMode = BlendMode.srcOver,
           );
         }
+      case ThemeTexture.darkIridescent:
+        // Same physics as iridescent but with the Loverboy shader —
+        // hue compressed to the pink–lavender–violet band, saturation
+        // raised for neon-wet shimmer on dark substrate.
+        final darkFragShader = ThemeShaders.darkIridescentShader(
+          width: size.width,
+          height: size.height,
+          intensity: intensity,
+          pearlBase: tokens.bg0.withValues(alpha: 1 - intensity * 0.65),
+          tiltX: pulse.tilt.dx,
+          tiltY: pulse.tilt.dy,
+          time: pulse.time,
+        );
+        if (darkFragShader != null) {
+          canvas.drawRect(
+            Offset.zero & size,
+            Paint()
+              ..shader = darkFragShader
+              ..blendMode = BlendMode.srcOver,
+          );
+        }
       case ThemeTexture.none:
         break;
     }
@@ -613,7 +636,6 @@ class MaterialTexturePainter extends CustomPainter {
 /// drift + window-tilt parallax actually drive repaints. Other texture
 /// kinds (grain, scanlines, pixels, halftone) get a plain CustomPaint
 /// with no pulse subscription — they pay zero cost.
-///
 /// Used both for per-surface texture passes inside `MaterialSurface`
 /// and for the app-root texture backdrop in `main.dart` so iridescent
 /// parallax behaves identically wherever the texture appears.
@@ -633,7 +655,8 @@ class MaterialTextureLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (shader.texture == ThemeTexture.iridescent) {
+    if (shader.texture == ThemeTexture.iridescent ||
+        shader.texture == ThemeTexture.darkIridescent) {
       final pulse = LiquidGlassProvider.of(context);
       return RepaintBoundary(
         child: ValueListenableBuilder<LiquidGlassPulse>(
@@ -665,7 +688,6 @@ class MaterialTextureLayer extends StatelessWidget {
 /// nacre surfaces to `LiquidGlassProvider` so the shader's time/tilt
 /// drift drives repaints. Other themes get a plain CustomPaint with no
 /// subscription — they pay zero cost.
-///
 /// `RepaintBoundary` isolates the per-frame glass repaint from the rest
 /// of the surface tree (text, borders, shadows). Without it, every
 /// pulse tick would invalidate the whole surface subtree.
@@ -755,14 +777,13 @@ class _SurfaceGlazePainter extends CustomPainter {
       // Corner radius scales with the surface radius but biased larger
       // so the meniscus reads as gloopier than the actual clip rect.
       final cornerR = math.max(radius * 1.6, 12.0);
+      final coolColor = tokens.accentBright;
       final fragShader = ThemeShaders.glassShader(
         width: size.width,
         height: size.height,
         tint: const Color(0x00000000),
         highlight: Colors.white,
-        // Cool dichroic — pearl-violet so Nacre's identity color shows
-        // up in the dichroic side wash, not just generic white.
-        highlightCool: tokens.accentBright,
+        highlightCool: coolColor,
         tiltX: pulse.tilt.dx,
         tiltY: pulse.tilt.dy,
         time: pulse.time,

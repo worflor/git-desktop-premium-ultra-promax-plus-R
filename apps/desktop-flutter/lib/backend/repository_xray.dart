@@ -34,7 +34,8 @@ Future<GitResult<String>> computeRepositoryXrayFingerprint(
   try {
     final statusResult = await statusLoader(repo);
     if (!statusResult.ok || statusResult.data == null) {
-      return GitResult.err(statusResult.error ?? 'Unable to read repository status.');
+      return GitResult.err(
+          statusResult.error ?? 'Unable to read repository status.');
     }
     final headResult = await probe(repo, ['rev-parse', 'HEAD']);
     if (headResult.exitCode != 0) {
@@ -68,10 +69,8 @@ String _fingerprintFor({
   var stagedCount = 0;
   var dirtyCount = 0;
   for (final f in files) {
-    // `staged` is a single char: ' ' means unstaged-only, anything else
-    // (M, A, D, R, C, T, U) is a staged mutation.
-    if (f.staged != ' ' && f.staged.isNotEmpty) stagedCount++;
-    if (f.unstaged != ' ' && f.unstaged.isNotEmpty) dirtyCount++;
+    if (f.hasStagedChange) stagedCount++;
+    if (f.hasUnstagedChange) dirtyCount++;
   }
   return '${repo.replaceAll('\\', '/')}|$branch|$headHash'
       '|${files.length}|s$stagedCount|u$dirtyCount';
@@ -93,7 +92,8 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
   try {
     final statusResult = await statusLoader(repo);
     if (!statusResult.ok || statusResult.data == null) {
-      return GitResult.err(statusResult.error ?? 'Unable to read repository status.');
+      return GitResult.err(
+          statusResult.error ?? 'Unable to read repository status.');
     }
     final status = statusResult.data!;
     final headResult = await cachedProbe.run(['rev-parse', 'HEAD']);
@@ -110,11 +110,19 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
 
     final futures = await Future.wait([
       cachedProbe.run(
-        ['for-each-ref', '--format=%(refname)\t%(objecttype)\t%(creatordate:short)\t%(subject)'],
+        [
+          'for-each-ref',
+          '--format=%(refname)\t%(objecttype)\t%(creatordate:short)\t%(subject)'
+        ],
       ),
       cachedProbe.run(['branch', '-a', '-vv']),
       cachedProbe.run(
-        ['log', '--all', '--date=short', '--pretty=format:%H\t%h\t%ad\t%an\t%s'],
+        [
+          'log',
+          '--all',
+          '--date=short',
+          '--pretty=format:%H\t%h\t%ad\t%an\t%s'
+        ],
       ),
       cachedProbe.run(
         [
@@ -131,8 +139,13 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       // each block starts with `__C__YYYY-MM-DD`, followed by the
       // file paths touched in that commit. Drives both co-change
       // (Jaccard pair walk) and the alive-mass age decay.
-      cachedProbe.run(
-          ['log', '--all', '--name-only', '--date=short', '--format=${_kCommitMarker}%ad']),
+      cachedProbe.run([
+        'log',
+        '--all',
+        '--name-only',
+        '--date=short',
+        '--format=${_kCommitMarker}%ad'
+      ]),
       cachedProbe.run([
         'log',
         '--all',
@@ -143,7 +156,13 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         '--format=${_kCommitMarker}%ad',
       ]),
       cachedProbe.run(
-        ['log', '--all', '--shortstat', '--date=short', '--pretty=format:${_kCommitMarker}%H\t%h\t%ad\t%an\t%s'],
+        [
+          'log',
+          '--all',
+          '--shortstat',
+          '--date=short',
+          '--pretty=format:${_kCommitMarker}%H\t%h\t%ad\t%an\t%s'
+        ],
       ),
       cachedProbe.run(
         [
@@ -158,11 +177,25 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       ),
       cachedProbe.run(['log', '--all', '--date=short', '--pretty=format:%ad']),
       cachedProbe.run(
-        ['log', '--all', '--grep=^t3 checkpoint', '--invert-grep', '--date=short', '--pretty=format:%ad'],
+        [
+          'log',
+          '--all',
+          '--grep=^t3 checkpoint',
+          '--invert-grep',
+          '--date=short',
+          '--pretty=format:%ad'
+        ],
       ),
       cachedProbe.run(['shortlog', '-sn', '--all', '--no-merges']),
       cachedProbe.run(
-        ['shortlog', '-sn', '--all', '--no-merges', '--grep=^t3 checkpoint', '--invert-grep'],
+        [
+          'shortlog',
+          '-sn',
+          '--all',
+          '--no-merges',
+          '--grep=^t3 checkpoint',
+          '--invert-grep'
+        ],
       ),
       cachedProbe.run(['reflog', '-n', '120', '--date=short']),
       cachedProbe.run(['stash', 'list']),
@@ -170,7 +203,13 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       cachedProbe.run(['worktree', 'list', '--porcelain']),
       cachedProbe.run(['log', '--all', '--merges', '--oneline']),
       cachedProbe.run(
-        ['log', '--all', '--diff-filter=R', '--summary', '--pretty=format:${_kCommitMarker}%H'],
+        [
+          'log',
+          '--all',
+          '--diff-filter=R',
+          '--summary',
+          '--pretty=format:${_kCommitMarker}%H'
+        ],
       ),
       cachedProbe.run(['remote', '-v']),
       // Per-path size at HEAD. Single git call, gives us byte-size for
@@ -214,6 +253,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         final size = pathBytes[path];
         return size != null && size > 0;
       }
+
       rawPathTouches = {
         for (final e in rawPathTouches.entries)
           if (keep(e.key)) e.key: e.value,
@@ -226,19 +266,23 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
     // Directory touches re-aggregate from the (now-filtered) per-path
     // counts so a stratum's touchCount can't include deleted files.
     final rawDirTouches = _aggregateDirTouchesFromPaths(rawPathTouches);
-    final filteredDirTouches = _aggregateDirTouchesFromPaths(filteredPathTouches);
+    final filteredDirTouches =
+        _aggregateDirTouchesFromPaths(filteredPathTouches);
 
-    final localBranchCount = futures[1].stdout
+    final localBranchCount = futures[1]
+        .stdout
         .toString()
         .split('\n')
         .where((line) => line.trim().isNotEmpty && !line.contains('remotes/'))
         .length;
-    final remoteBranchCount = futures[1].stdout
+    final remoteBranchCount = futures[1]
+        .stdout
         .toString()
         .split('\n')
         .where((line) => line.contains('remotes/') && !line.contains('->'))
         .length;
-    final tagCount = refs.where((ref) => ref.refName.startsWith('refs/tags/')).length;
+    final tagCount =
+        refs.where((ref) => ref.refName.startsWith('refs/tags/')).length;
     final hiddenRefs = refs
         .where(
           (ref) =>
@@ -260,8 +304,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
     final filteredDated = _parseDatedCommitFiles(futures[5].stdout.toString());
     final rawCommitFiles = [for (final c in rawDated) c.files];
     final filteredCommitFiles = [for (final c in filteredDated) c.files];
-    final rawCoChange =
-        _computeCoChange(rawCommitFiles, rawPathTouches);
+    final rawCoChange = _computeCoChange(rawCommitFiles, rawPathTouches);
     final filteredCoChange =
         _computeCoChange(filteredCommitFiles, filteredPathTouches);
 
@@ -329,8 +372,8 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       filteredCommitCount: filteredCommits.length,
       machineCommitCount: rawCommits.length - filteredCommits.length,
       hiddenRefCount: hiddenRefs.length,
-      machineHistoryDominant:
-          rawCommits.isNotEmpty && (rawCommits.length - filteredCommits.length) > filteredCommits.length,
+      machineHistoryDominant: rawCommits.isNotEmpty &&
+          (rawCommits.length - filteredCommits.length) > filteredCommits.length,
       hasHiddenRefs: hiddenRefs.isNotEmpty,
     );
 
@@ -352,7 +395,8 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         repoName: _repoNameFromPath(repo),
         branch: status.branch,
         headCommitHash: headHash,
-        headShortHash: headHash.length >= 8 ? headHash.substring(0, 8) : headHash,
+        headShortHash:
+            headHash.length >= 8 ? headHash.substring(0, 8) : headHash,
         dirtyFileCount: status.files.length,
         computedAt: DateTime.now().toIso8601String(),
         fingerprint: fingerprint,
@@ -508,9 +552,18 @@ List<_ShortstatRecord> _parseShortstats(String output) {
         date: current[2].trim(),
         author: current[3].trim(),
         subject: current.sublist(4).join('\t').trim(),
-        filesChanged: int.tryParse(RegExp(r'(\d+) files? changed').firstMatch(line)?.group(1) ?? '') ?? 0,
-        insertions: int.tryParse(RegExp(r'(\d+) insertions?\(\+\)').firstMatch(line)?.group(1) ?? '') ?? 0,
-        deletions: int.tryParse(RegExp(r'(\d+) deletions?\(-\)').firstMatch(line)?.group(1) ?? '') ?? 0,
+        filesChanged: int.tryParse(
+                RegExp(r'(\d+) files? changed').firstMatch(line)?.group(1) ??
+                    '') ??
+            0,
+        insertions: int.tryParse(
+                RegExp(r'(\d+) insertions?\(\+\)').firstMatch(line)?.group(1) ??
+                    '') ??
+            0,
+        deletions: int.tryParse(
+                RegExp(r'(\d+) deletions?\(-\)').firstMatch(line)?.group(1) ??
+                    '') ??
+            0,
       ),
     );
   }
@@ -523,7 +576,10 @@ List<String> _parseCommits(String output) {
 
 Map<String, int> _countDateSeries(String output) {
   final counts = <String, int>{};
-  for (final date in output.split('\n').map((line) => line.trim()).where((line) => line.isNotEmpty)) {
+  for (final date in output
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)) {
     counts.update(date, (value) => value + 1, ifAbsent: () => 1);
   }
   return counts;
@@ -554,6 +610,7 @@ List<_DatedCommit> _parseDatedCommitFiles(String raw) {
     }
     curFiles = null;
   }
+
   for (final line in raw.split('\n')) {
     final trimmed = line.trim();
     if (trimmed.startsWith(_kCommitMarker)) {
@@ -586,7 +643,6 @@ Map<String, DateTime> _pathLastTouchedAt(List<_DatedCommit> commits) {
 }
 
 /// Selects a decay half-life for alive-mass computation.
-///
 ///   1. Use the AR(2) metabolism fit's `halfLifeDays` when finite —
 ///      the decay constant the oscillator extracted from commit-rate
 ///      eigenvalues.
@@ -661,10 +717,8 @@ Map<String, double> _aggregateAliveMassByDirectory(
 /// couplings to all co-changed files — is high while its own touch
 /// count stays modest. These are the bridge species: quiet on their
 /// own ledger, load-bearing across clusters.
-///
 ///   pull(f)     = Σ_g J(f, g)      (Jaccard co-change with every other file)
 ///   keystone(f) = pull(f) / log1p(touchCount(f))
-///
 /// The log1p dampens the divisor so raw frequency doesn't dominate —
 /// we want pull-per-touch to identify files whose *each touch* is
 /// structurally heavy. Top 10% (or ≥3 files for tiny repos) get
@@ -723,9 +777,11 @@ _CoChangeAnalysis _computeCoChange(
         final b = members[j];
         // Only count each pair once at read time — aggregate per-file
         // co-count, then convert to Jaccard below.
-        pairWeights.putIfAbsent(a, () => <String, double>{})
+        pairWeights
+            .putIfAbsent(a, () => <String, double>{})
             .update(b, (v) => v + 1, ifAbsent: () => 1);
-        pairWeights.putIfAbsent(b, () => <String, double>{})
+        pairWeights
+            .putIfAbsent(b, () => <String, double>{})
             .update(a, (v) => v + 1, ifAbsent: () => 1);
       }
     }
@@ -772,7 +828,6 @@ _CoChangeAnalysis _computeCoChange(
 /// timeline. Then a single Engram fit yields spectral radius,
 /// half-life (in days), and the converging/diverging/steady label
 /// the rest of the app already knows how to render.
-///
 /// Returns [RepositoryXrayMetabolismData.empty] for windows too short
 /// for a fit, so renderers can silently omit the card.
 RepositoryXrayMetabolismData _computeMetabolism(Map<String, int> dateCounts) {
@@ -909,9 +964,7 @@ Map<String, int> _aggregateDirTouchesFromPaths(Map<String, int> pathTouches) {
 }
 
 /// Parse `git ls-tree -r -l HEAD` into Map<path, bytes>. Each line is:
-///
 ///   <mode> SP <type> SP <object> <pad> <size> TAB <path>
-///
 /// Exactly one TAB separates the metadata block from the path. The
 /// metadata block ends in a space-padded size column, which may be
 /// `-` for non-blob entries (commits in submodules) — those we skip.
@@ -961,8 +1014,10 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
 ) async {
   final keystoneScores = coChange.scores;
   final coupling = coChange.coupling;
-  final files = pathTouches.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-  final dirs = dirTouches.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+  final files = pathTouches.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  final dirs = dirTouches.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
 
   // Keystone flag is top-decile of the distribution, with a floor of
   // at least three files so tiny repos still surface their bridge
@@ -988,39 +1043,49 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
   final sortedKeystones = keystoneFlags
       .where((k) => !picked.contains(k))
       .toList()
-    ..sort((a, b) =>
-        (keystoneScores[b] ?? 0).compareTo(keystoneScores[a] ?? 0));
+    ..sort(
+        (a, b) => (keystoneScores[b] ?? 0).compareTo(keystoneScores[a] ?? 0));
   for (final path in sortedKeystones.take(_keystoneHotspotCap)) {
     picked.add(path);
   }
 
-  final hotspotFutures = <Future<RepositoryXrayHotspotData>>[
+  // Each `_enrichHotspot` spawns 2 `git log` subprocesses. With ~40
+  // file candidates + 16 directory candidates, an eager `Future.wait`
+  // would fire ~112 `git log` processes simultaneously — on Windows
+  // that's catastrophic (each ~20–50ms to spawn, plus .git disk
+  // contention), turning individual log calls from ~50ms into ~1.5s.
+  // Route through [_runBounded] so only [_xraySubprocessConcurrency]
+  // enrichments are in flight at a time. Result order is preserved.
+  final hotspotTasks = <Future<RepositoryXrayHotspotData> Function()>[
     for (final path in picked)
-      _enrichHotspot(
-        path,
-        'file',
-        pathTouches[path] ?? 0,
-        includeMachineHistory,
-        probe,
-        keystoneScores[path],
-        keystoneFlags.contains(path),
-        coupling[path] ?? const [],
-        pathAliveMass[path] ?? (pathTouches[path] ?? 0).toDouble(),
-      ),
+      () => _enrichHotspot(
+            path,
+            'file',
+            pathTouches[path] ?? 0,
+            includeMachineHistory,
+            probe,
+            keystoneScores[path],
+            keystoneFlags.contains(path),
+            coupling[path] ?? const [],
+            pathAliveMass[path] ?? (pathTouches[path] ?? 0).toDouble(),
+          ),
     for (final entry in dirs.take(_mapDirHotspotCandidateCap))
-      _enrichHotspot(
-        entry.key,
-        'directory',
-        entry.value,
-        includeMachineHistory,
-        probe,
-        null,
-        false,
-        const [],
-        pathAliveMass[entry.key] ?? entry.value.toDouble(),
-      ),
+      () => _enrichHotspot(
+            entry.key,
+            'directory',
+            entry.value,
+            includeMachineHistory,
+            probe,
+            null,
+            false,
+            const [],
+            pathAliveMass[entry.key] ?? entry.value.toDouble(),
+          ),
   ];
-  final hotspots = await Future.wait(hotspotFutures);
+  final hotspots = await _runBounded(
+    hotspotTasks,
+    maxConcurrent: _xraySubprocessConcurrency,
+  );
   // Sort: keystones group at the top (they're the noteworthy shape),
   // then remaining by raw touch count. Within each group, touch count
   // tie-breaks so the ordering stays stable and familiar.
@@ -1035,14 +1100,12 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
 /// number of paths the backend surfaces to the renderer — not UX
 /// limits. The renderer culls by tile area (font-derived readability
 /// floor), so the visible count emerges from canvas size, not these.
-///
 /// Each cap is sized to the semantic shape it carries:
 ///  • Strata are top-level directory partitions; even monorepos rarely
 ///    have more than a handful of meaningful ones.
 ///  • File hotspots want diversity — the renderer should be able to
 ///    show many on a wide window, few on a narrow one.
 ///  • Directory hotspots fill the gap between strata and files.
-///
 /// Each `_enrichHotspot` issues 2 git probes in parallel, so the sum
 /// also bounds subprocess fan-out per snapshot.
 const int _mapStratumCandidateCap = 12;
@@ -1082,9 +1145,8 @@ Set<String> _flagKeystones(Map<String, double> scores) {
   final sorted = scores.entries.toList()
     ..sort((a, b) => b.value.compareTo(a.value));
   final topFraction = (sorted.length * _keystoneTopFraction).ceil();
-  final take = topFraction > _keystoneMinFlags
-      ? topFraction
-      : _keystoneMinFlags;
+  final take =
+      topFraction > _keystoneMinFlags ? topFraction : _keystoneMinFlags;
   return sorted.take(take.clamp(1, sorted.length)).map((e) => e.key).toSet();
 }
 
@@ -1127,8 +1189,12 @@ Future<RepositoryXrayHotspotData> _enrichHotspot(
     touchCount: touchCount,
     ownerCount: ownerCount,
     lastTouchedAt: recentParts.length > 2 ? recentParts[2] : '',
-    latestCommitHash: recentParts.isNotEmpty && recentParts[0].isNotEmpty ? recentParts[0] : null,
-    latestShortHash: recentParts.length > 1 && recentParts[1].isNotEmpty ? recentParts[1] : null,
+    latestCommitHash: recentParts.isNotEmpty && recentParts[0].isNotEmpty
+        ? recentParts[0]
+        : null,
+    latestShortHash: recentParts.length > 1 && recentParts[1].isNotEmpty
+        ? recentParts[1]
+        : null,
     keystoneScore: keystoneScore,
     isKeystone: isKeystone,
     coupledTo: coupledTo,
@@ -1141,13 +1207,24 @@ Future<List<RepositoryXrayStratumData>> _buildStrata(
   Future<ProcessResult> Function(List<String> args) probe,
   Map<String, double> dirAliveMass,
 ) async {
-  final entries = dirTouches.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-  return Future.wait(
+  final entries = dirTouches.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  // 12 strata × 2 `git log` each = 24 subprocess spawns. Funnel through
+  // the same concurrency cap as hotspots so strata + hotspots together
+  // stay under the shared subprocess budget.
+  return _runBounded<RepositoryXrayStratumData>(
     [
       for (final entry in entries.take(_mapStratumCandidateCap))
         () async {
           final results = await Future.wait([
-            probe(['log', '--grep=^t3 checkpoint', '--invert-grep', '--format=%an', '--', entry.key]),
+            probe([
+              'log',
+              '--grep=^t3 checkpoint',
+              '--invert-grep',
+              '--format=%an',
+              '--',
+              entry.key
+            ]),
             probe([
               'log',
               '-n',
@@ -1178,14 +1255,57 @@ Future<List<RepositoryXrayStratumData>> _buildStrata(
             summary: 'Touched ${entry.value} times in filtered history.',
             aliveMass: dirAliveMass[entry.key] ?? entry.value.toDouble(),
           );
-        }(),
+        },
     ],
+    maxConcurrent: _xraySubprocessConcurrency,
   );
 }
 
-List<RepositoryXrayPivotCommitData> _buildPivotCommits(List<_ShortstatRecord> records) {
-  final sorted = [...records]
-    ..sort((a, b) {
+/// Maximum number of in-flight subprocess enrichments during an xray
+/// snapshot. The xray fires 2 `git log` processes per enriched file
+/// or directory and can enrich ~56 total (40 files + 16 dirs), plus
+/// 12 strata — an eager Future.wait would spawn 136 processes at
+/// once. On Windows each spawn costs ~20–50ms and fights the .git
+/// object store for I/O, so an unbounded wave stalls individual logs
+/// from their native ~50ms into the 1.5s range observed in telemetry.
+/// 6 in-flight matches the branches-page PR prefetch budget
+/// (`_bounded` there uses 4–6) and keeps spawn + disk pressure within
+/// what a single git repo can absorb.
+const int _xraySubprocessConcurrency = 6;
+
+/// Run [tasks] with at most [maxConcurrent] in flight at a time,
+/// preserving input order in the returned list. Factory-closure input
+/// is essential — a pre-built `List<Future<T>>` would have *already*
+/// started every future by the time it reaches us. Errors propagate;
+/// the caller decides whether to swallow or surface them. Mirrors
+/// `_bounded<T>` in branches_page.dart but without the silent
+/// error-swallowing (xray reports failures upstream).
+Future<List<T>> _runBounded<T>(
+  List<Future<T> Function()> tasks, {
+  required int maxConcurrent,
+}) async {
+  if (tasks.isEmpty) return const [];
+  final results = List<T?>.filled(tasks.length, null);
+  var next = 0;
+  Future<void> worker() async {
+    while (true) {
+      final idx = next++;
+      if (idx >= tasks.length) return;
+      results[idx] = await tasks[idx]();
+    }
+  }
+
+  final workers = List.generate(
+    math.min(maxConcurrent, tasks.length),
+    (_) => worker(),
+  );
+  await Future.wait(workers);
+  return results.cast<T>();
+}
+
+List<RepositoryXrayPivotCommitData> _buildPivotCommits(
+    List<_ShortstatRecord> records) {
+  final sorted = [...records]..sort((a, b) {
       final byFiles = b.filesChanged.compareTo(a.filesChanged);
       if (byFiles != 0) {
         return byFiles;
@@ -1212,7 +1332,8 @@ List<RepositoryXrayCadenceData> _buildCadence(
   Map<String, int> reflogDates,
 ) {
   final cadence = <RepositoryXrayCadenceData>[];
-  final bursts = commitDates.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+  final bursts = commitDates.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
   for (final entry in bursts.take(3)) {
     cadence.add(
       RepositoryXrayCadenceData(
@@ -1247,14 +1368,16 @@ List<RepositoryXrayCadenceData> _buildCadence(
     }
   }
 
-  final reflogBursts = reflogDates.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+  final reflogBursts = reflogDates.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
   if (reflogBursts.isNotEmpty) {
     cadence.add(
       RepositoryXrayCadenceData(
         kind: 'reflog',
         label: reflogBursts.first.key,
         count: reflogBursts.first.value,
-        detail: '${reflogBursts.first.value} local session events on ${reflogBursts.first.key}.',
+        detail:
+            '${reflogBursts.first.value} local session events on ${reflogBursts.first.key}.',
       ),
     );
   }
@@ -1274,23 +1397,32 @@ List<RepositoryXrayCardData> _buildCards({
 }) {
   final cards = <RepositoryXrayCardData>[];
   final topHotspot = hotspots.isEmpty ? null : hotspots.first;
-  final totalTouches = hotspots.fold<int>(0, (sum, hotspot) => sum + hotspot.touchCount);
-  final topShare = topHotspot == null || totalTouches == 0 ? 0.0 : topHotspot.touchCount / totalTouches;
-  final peakBurst = cadence.where((item) => item.kind == 'burst').fold<int>(0, (best, item) => item.count > best ? item.count : best);
-  final peakReflog = cadence.where((item) => item.kind == 'reflog').fold<int>(0, (best, item) => item.count > best ? item.count : best);
+  final totalTouches =
+      hotspots.fold<int>(0, (sum, hotspot) => sum + hotspot.touchCount);
+  final topShare = topHotspot == null || totalTouches == 0
+      ? 0.0
+      : topHotspot.touchCount / totalTouches;
+  final peakBurst = cadence
+      .where((item) => item.kind == 'burst')
+      .fold<int>(0, (best, item) => item.count > best ? item.count : best);
+  final peakReflog = cadence
+      .where((item) => item.kind == 'reflog')
+      .fold<int>(0, (best, item) => item.count > best ? item.count : best);
 
   if (signalIntegrity.hasHiddenRefs) {
     cards.add(
       RepositoryXrayCardData(
         id: 'hidden-refs',
         title: 'Hidden Git namespaces',
-        claim: '${signalIntegrity.hiddenRefCount} refs live outside normal branch/tag space.',
+        claim:
+            '${signalIntegrity.hiddenRefCount} refs live outside normal branch/tag space.',
         verdict: 'hard-fact',
         confidence: 'high',
         evidence: [
           RepositoryXrayEvidenceData(
             label: 'Hidden refs',
-            detail: '${signalIntegrity.hiddenRefCount} refs outside heads/remotes/tags.',
+            detail:
+                '${signalIntegrity.hiddenRefCount} refs outside heads/remotes/tags.',
             kind: 'ref',
             count: signalIntegrity.hiddenRefCount,
           ),
@@ -1309,18 +1441,21 @@ List<RepositoryXrayCardData> _buildCards({
       RepositoryXrayCardData(
         id: 'machine-history',
         title: 'Machine history dominates raw metrics',
-        claim: 'Checkpoint-style commits materially distort naive history metrics.',
+        claim:
+            'Checkpoint-style commits materially distort naive history metrics.',
         verdict: 'strong-pattern',
         confidence: 'high',
         evidence: [
           RepositoryXrayEvidenceData(
             label: 'Raw vs filtered',
-            detail: '${signalIntegrity.rawCommitCount} raw commits vs ${signalIntegrity.filteredCommitCount} filtered commits.',
+            detail:
+                '${signalIntegrity.rawCommitCount} raw commits vs ${signalIntegrity.filteredCommitCount} filtered commits.',
             kind: 'history',
           ),
           RepositoryXrayEvidenceData(
             label: 'Machine commits',
-            detail: '${signalIntegrity.machineCommitCount} commits matched machine/session patterns.',
+            detail:
+                '${signalIntegrity.machineCommitCount} commits matched machine/session patterns.',
             kind: 'history',
             count: signalIntegrity.machineCommitCount,
           ),
@@ -1341,13 +1476,15 @@ List<RepositoryXrayCardData> _buildCards({
         evidence: [
           RepositoryXrayEvidenceData(
             label: migrationPair.older.pathPrefix,
-            detail: '${migrationPair.older.touchCount} touches, last active ${migrationPair.older.lastTouchedAt}.',
+            detail:
+                '${migrationPair.older.touchCount} touches, last active ${migrationPair.older.lastTouchedAt}.',
             kind: 'path',
             path: migrationPair.older.pathPrefix,
           ),
           RepositoryXrayEvidenceData(
             label: migrationPair.newer.pathPrefix,
-            detail: '${migrationPair.newer.touchCount} touches, last active ${migrationPair.newer.lastTouchedAt}.',
+            detail:
+                '${migrationPair.newer.touchCount} touches, last active ${migrationPair.newer.lastTouchedAt}.',
             kind: 'path',
             path: migrationPair.newer.pathPrefix,
           ),
@@ -1356,7 +1493,9 @@ List<RepositoryXrayCardData> _buildCards({
     );
   }
 
-  if (topHotspot != null && topHotspot.ownerCount <= 1 && topHotspot.touchCount >= 8) {
+  if (topHotspot != null &&
+      topHotspot.ownerCount <= 1 &&
+      topHotspot.touchCount >= 8) {
     cards.add(
       RepositoryXrayCardData(
         id: 'single-owner-hotspot',
@@ -1368,7 +1507,8 @@ List<RepositoryXrayCardData> _buildCards({
         evidence: [
           RepositoryXrayEvidenceData(
             label: 'Touch count',
-            detail: '${topHotspot.touchCount} touches in ${usingRawMetrics ? 'raw' : 'filtered'} history.',
+            detail:
+                '${topHotspot.touchCount} touches in ${usingRawMetrics ? 'raw' : 'filtered'} history.',
             kind: 'path',
             path: topHotspot.path,
           ),
@@ -1390,7 +1530,8 @@ List<RepositoryXrayCardData> _buildCards({
       RepositoryXrayCardData(
         id: 'no-tags',
         title: 'No formal release/tag trail',
-        claim: 'Git tags are not being used as a visible release or milestone layer.',
+        claim:
+            'Git tags are not being used as a visible release or milestone layer.',
         verdict: 'hard-fact',
         confidence: 'high',
         evidence: [
@@ -1414,7 +1555,8 @@ List<RepositoryXrayCardData> _buildCards({
       RepositoryXrayCardData(
         id: 'bursty-cadence',
         title: 'Bursty development cadence',
-        claim: 'Work lands in concentrated bursts rather than a flat daily rhythm.',
+        claim:
+            'Work lands in concentrated bursts rather than a flat daily rhythm.',
         verdict: 'strong-pattern',
         confidence: 'medium',
         evidence: cadence
@@ -1464,7 +1606,8 @@ List<RepositoryXrayCardData> _buildCards({
       RepositoryXrayCardData(
         id: 'reflog-intense',
         title: 'Intense local editing sessions',
-        claim: 'Reflog volume suggests concentrated local iteration beyond published commits.',
+        claim:
+            'Reflog volume suggests concentrated local iteration beyond published commits.',
         verdict: 'strong-pattern',
         confidence: 'medium',
         evidence: [
@@ -1479,7 +1622,6 @@ List<RepositoryXrayCardData> _buildCards({
     );
   }
 
-  // ── Keystone bridge-files signal ───────────────────────────────
   // Surfaces the ecological bridge species: files that carry a lot
   // of co-change pull for their touch count. Silent when the repo
   // has no flagged keystones (tiny repo, no coupling data).
@@ -1505,8 +1647,7 @@ List<RepositoryXrayCardData> _buildCards({
           for (final k in keystones.take(_signalCardEvidenceCap))
             RepositoryXrayEvidenceData(
               label: k.path,
-              detail:
-                  '${k.touchCount} touch${k.touchCount == 1 ? '' : 'es'} · '
+              detail: '${k.touchCount} touch${k.touchCount == 1 ? '' : 'es'} · '
                   'pull φ=${(k.keystoneScore ?? 0).toStringAsFixed(2)}',
               kind: 'file',
               count: k.touchCount,
@@ -1521,13 +1662,15 @@ List<RepositoryXrayCardData> _buildCards({
       RepositoryXrayCardData(
         id: 'narrow-hotspot',
         title: 'Hotspot concentration is narrow',
-        claim: 'A small set of files and directories absorbs a disproportionate share of changes.',
+        claim:
+            'A small set of files and directories absorbs a disproportionate share of changes.',
         verdict: 'strong-pattern',
         confidence: 'medium',
         evidence: [
           RepositoryXrayEvidenceData(
             label: 'Top hotspot',
-            detail: '${topHotspot.path} accounts for ${(topShare * 100).toStringAsFixed(0)}% of the visible hotspot set.',
+            detail:
+                '${topHotspot.path} accounts for ${(topShare * 100).toStringAsFixed(0)}% of the visible hotspot set.',
             kind: 'path',
             path: topHotspot.path,
           ),
@@ -1552,7 +1695,8 @@ _MigrationPair? _detectMigrationPair(List<RepositoryXrayStratumData> strata) {
       if (older.pathPrefix == newer.pathPrefix) {
         continue;
       }
-      if (older.pathPrefix.split('/').first != newer.pathPrefix.split('/').first) {
+      if (older.pathPrefix.split('/').first !=
+          newer.pathPrefix.split('/').first) {
         continue;
       }
       final olderDate = DateTime.tryParse(older.lastTouchedAt);
@@ -1560,7 +1704,9 @@ _MigrationPair? _detectMigrationPair(List<RepositoryXrayStratumData> strata) {
       if (olderDate == null || newerDate == null) {
         continue;
       }
-      if (olderDate.isBefore(newerDate) && older.touchCount >= 20 && newer.touchCount >= 20) {
+      if (olderDate.isBefore(newerDate) &&
+          older.touchCount >= 20 &&
+          newer.touchCount >= 20) {
         return _MigrationPair(older, newer);
       }
     }
@@ -1608,7 +1754,10 @@ int _nonEmptyLineCount(String output) {
 }
 
 int _countWorktrees(String output) {
-  return output.split('\n').where((line) => line.trim().startsWith('worktree ')).length;
+  return output
+      .split('\n')
+      .where((line) => line.trim().startsWith('worktree '))
+      .length;
 }
 
 int _countRenameCommits(String output) {

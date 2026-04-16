@@ -1,5 +1,3 @@
-// ── DTOs — mirrors src/lib/backend/dtos.ts exactly ──────────────────────────
-
 class RepositoryStatusFile {
   final String path;
   final String staged;
@@ -8,7 +6,76 @@ class RepositoryStatusFile {
       {required this.path, required this.staged, required this.unstaged});
   factory RepositoryStatusFile.fromJson(Map<String, dynamic> j) =>
       RepositoryStatusFile(
-          path: j['path'], staged: j['staged'], unstaged: j['unstaged']);
+          path: j['path']?.toString() ?? '',
+          staged: j['staged']?.toString() ?? '',
+          unstaged: j['unstaged']?.toString() ?? '');
+
+  String get stagedCode => canonicalGitStatusCode(staged, stagedSlot: true);
+  String get unstagedCode =>
+      canonicalGitStatusCode(unstaged, stagedSlot: false);
+
+  bool get hasStagedChange => stagedCode.isNotEmpty;
+  bool get hasUnstagedChange => unstagedCode.isNotEmpty;
+  bool get hasAnyChange => hasStagedChange || hasUnstagedChange;
+  bool get isUntracked =>
+      gitStatusCodeIsUntracked(staged) || gitStatusCodeIsUntracked(unstaged);
+  bool get isConflicted => stagedCode == 'U' || unstagedCode == 'U';
+  bool get isStagedAddition => stagedCode == 'A';
+}
+
+String canonicalGitStatusCode(
+  String raw, {
+  required bool stagedSlot,
+}) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty || trimmed == '.') {
+    return '';
+  }
+
+  final lower = trimmed.toLowerCase();
+  switch (lower) {
+    case 'clean':
+      return '';
+    case '?':
+    case 'untracked':
+    case 'unknown':
+      return stagedSlot ? '' : '?';
+    case 'm':
+    case 'modified':
+      return 'M';
+    case 'a':
+    case 'added':
+      return 'A';
+    case 'd':
+    case 'deleted':
+      return 'D';
+    case 'r':
+    case 'renamed':
+      return 'R';
+    case 'c':
+    case 'copied':
+      return 'C';
+    case 'u':
+    case 'unmerged':
+    case 'conflict':
+    case 'conflicted':
+      return 'U';
+    case 't':
+    case 'typechange':
+    case 'type-changed':
+    case 'type_changed':
+      return 'T';
+    default:
+      if (lower.startsWith('state-') && lower.length == 7) {
+        return lower.substring(6).toUpperCase();
+      }
+      return trimmed.length == 1 ? trimmed.toUpperCase() : trimmed;
+  }
+}
+
+bool gitStatusCodeIsUntracked(String raw) {
+  final lower = raw.trim().toLowerCase();
+  return lower == '?' || lower == 'untracked' || lower == 'unknown';
 }
 
 /// Per-file numstat breakdown. Feeds the "by impact" sort with enough
@@ -371,9 +438,7 @@ class RepositoryXrayHotspotData {
   /// flows through it, relative to how often it's actually touched.
   /// The bridge-species file — quiet on its own, but losing it
   /// collapses clusters. Derived as:
-  ///
   ///   keystoneScore = pull / log1p(touchCount)
-  ///
   /// where `pull` is the sum of the file's Jaccard couplings to its
   /// neighbourhood (read from the co-change matrix). High pull with
   /// low touch count means many clusters depend on this file without
@@ -526,21 +591,17 @@ class RepositoryXraySignalIntegrityData {
 /// Repo-wide metabolism derived from a Whisper Engram AR(2) fit on
 /// the daily commit-rate series. Answers "is this repo alive, steady,
 /// or slowing?" as physics, not vibes.
-///
 ///   [spectralRadius] — |λ| of the oscillator. ≈ 1 means the repo
 ///   homeostats (active-day bursts beget more active days at roughly
 ///   the same amplitude); < 0.5 means activity spikes decay fast
 ///   (maintenance mode); > 1 means unbounded growth (almost certainly
 ///   an anomaly or a very fresh repo).
-///
 ///   [halfLifeDays] — activity memory depth in days. Short = volatile
 ///   ("what mattered last week doesn't matter this week"); long =
 ///   slow, contemplative repo.
-///
 ///   [activeDays] — how many distinct days had at least one commit in
 ///   the window. The sample count behind the fit; low values mean the
 ///   radius/half-life readings are wobbly.
-///
 ///   [sparkline] — normalised commits-per-day counts in chronological
 ///   order, clipped to the recent window used for the fit. Already-
 ///   normalised so renderers can plot without recomputation.
@@ -745,30 +806,36 @@ class AiMuseMove {
 }
 
 /// Output of the three-phase muse pipeline.
-///
-/// The muse posture differs from review: no score, no findings count.
-/// `intent` is the muse's read-back of what the change is reaching for.
-/// `drift` calls out hunks that don't serve the intent. `wiringBroken`
-/// surfaces deterministic call-site mismatches; `wiringMissing` surfaces
-/// coupled-but-untouched files. `ideaFlaws` challenges the conceptual
-/// premise. `trajectory` describes the cleanest landing.
+/// `intent` is the muse's read of what the change is reaching for.
+/// `resonances` names patterns elsewhere in the codebase the change
+/// rhymes with. `alternatives` proposes directions the change could
+/// take alongside or instead. `extensions` names places the codebase
+/// invites the work to grow into. `trajectory` sketches what the next
+/// 1–3 commits naturally look like.
 class AiMuseData {
   final String providerId;
   final String modelId;
   final String scopeLabel;
   final String intent;
   final String trajectory;
-  final List<AiMuseMove> drift;
-  final List<AiMuseMove> wiringBroken;
-  final List<AiMuseMove> wiringMissing;
-  final List<AiMuseMove> ideaFlaws;
+  final List<AiMuseMove> resonances;
+  final List<AiMuseMove> alternatives;
+  final List<AiMuseMove> extensions;
   final List<AiMuseIdea> brainstormIdeas;
   final int promptCharacters;
   final int diffCharacters;
+
   /// Number of `<move>` tags the model emitted that the parser could not
   /// fully extract.  Zero when parse was clean; non-zero means the user
   /// is seeing a partial result — rendered as a warning note in the UI.
   final int droppedMoves;
+
+  /// Paths the user explicitly pulled on during the loading canvas.
+  /// These boosted the phase-2 seed map and their presence in a move's
+  /// citation list is what lets the UI surface "you pulled this" to
+  /// the reader — closing the loop between the physical gesture and
+  /// the rendered result.
+  final Set<String> userBoostedPaths;
 
   const AiMuseData({
     required this.providerId,
@@ -776,18 +843,17 @@ class AiMuseData {
     required this.scopeLabel,
     required this.intent,
     required this.trajectory,
-    this.drift = const [],
-    this.wiringBroken = const [],
-    this.wiringMissing = const [],
-    this.ideaFlaws = const [],
+    this.resonances = const [],
+    this.alternatives = const [],
+    this.extensions = const [],
     this.brainstormIdeas = const [],
     required this.promptCharacters,
     required this.diffCharacters,
     this.droppedMoves = 0,
+    this.userBoostedPaths = const {},
   });
 
-  int get keptIdeaCount =>
-      brainstormIdeas.where((idea) => idea.kept).length;
+  int get keptIdeaCount => brainstormIdeas.where((idea) => idea.kept).length;
   int get totalIdeaCount => brainstormIdeas.length;
 }
 

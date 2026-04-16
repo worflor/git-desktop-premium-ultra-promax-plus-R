@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import '../../backend/dtos.dart';
 
 /// Pure layout for the commit-detail seismograph.
-///
 /// The panel is a recursively-subdivided view of the directory tree of a
 /// commit's touched files. The shape emerges from two real visual
 /// constraints — `minTrackPx` (one readable line of label) and

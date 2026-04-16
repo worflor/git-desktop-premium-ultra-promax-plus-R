@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // logos_git_diagnostics.dart — observability for the Logos engine
 //
 // Replaces the `catch (_) { return ''; }` pattern that was silently
@@ -9,7 +8,6 @@
 // Stateless-ish — one static instance. Hook into a debug panel or
 // audit store later; for now, errors surface to debugPrint and tests
 // can assert on them.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'package:flutter/foundation.dart';
 

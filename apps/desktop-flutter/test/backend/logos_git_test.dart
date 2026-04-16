@@ -23,7 +23,6 @@ import 'package:git_desktop/backend/logos_git.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  // ─── A. Reference correctness (Tier 1 — math must be right) ─────────────
 
   group('path-graph analytic reference', () {
     // 3-node path graph with unit edges: 0 — 1 — 2
@@ -151,7 +150,6 @@ void main() {
     });
   });
 
-  // ─── B. Linearity (Tier 1 — catches ρ-handling bugs) ────────────────────
 
   group('diffuseWeighted — single-pass weighted source', () {
     test('equivalent to diffuse() when all weights are equal', () {
@@ -285,7 +283,6 @@ void main() {
     });
   });
 
-  // ─── C. Disconnected component containment (Tier 1) ─────────────────────
 
   group('disconnected components', () {
     test('mass does not leak from one component to another', () {
@@ -341,7 +338,6 @@ void main() {
     });
   });
 
-  // ─── D. BornMixer invariants (Tier 1/2 — rewrote tautologies) ───────────
 
   group('BornMixer', () {
     const caps = [0.6931, 1.3863, 1.0986, 1.0986];
@@ -428,7 +424,6 @@ void main() {
     });
   });
 
-  // ─── E. Chebyshev coefficient stability (Tier 1) ────────────────────────
 
   group('Chebyshev Bessel coefficients', () {
     test('coefficients are finite across a reasonable (t, K) grid', () {
@@ -458,7 +453,6 @@ void main() {
     });
   });
 
-  // ─── F. Graph construction (Tier 2) ─────────────────────────────────────
 
   group('LogosGit.buildFromStats — construction', () {
     test('empty stats produce empty engine', () {
@@ -535,7 +529,6 @@ void main() {
     });
   });
 
-  // ─── G. DiffusionBasis (Tier 1/2) ───────────────────────────────────────
 
   group('DiffusionBasis', () {
     test('recombine matches direct diffuse at same t', () {
@@ -594,7 +587,6 @@ void main() {
     });
   });
 
-  // ─── H. API coverage (Tier 2) ───────────────────────────────────────────
 
   group('LogosGit.relatedTo ordering', () {
     test('tightly-coupled files rank above loosely-coupled ones', () {
@@ -790,7 +782,7 @@ void main() {
         },
         volMean: 5.0,
         volStddev: 0.0,
-        coupling: const FileCouplingMatrix(
+        coupling: FileCouplingMatrix(
           jaccard: {
             'same/dir/x.dart': <String, double>{},
             'same/dir/y.dart': <String, double>{},

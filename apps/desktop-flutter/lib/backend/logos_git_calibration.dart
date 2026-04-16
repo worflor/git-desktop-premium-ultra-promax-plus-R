@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // logos_git_calibration.dart — SSE calibration for the Logos attention codec
 //
 // Logos's Secondary Symbol Estimation (SSE) is a 3-dimensional grid:
@@ -28,7 +27,6 @@
 //   <repo>/.git/logos-git/sse.json
 // Per-repo, gitignored by living inside .git. Small (~4KB) so we can
 // re-read on every review and write on every feedback.
-// ═════════════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'dart:convert';
@@ -72,21 +70,20 @@ enum LogosRegime {
 /// Which observable got a file emitted. Primary = the diff itself;
 /// M = pickaxe pulled it in; Ab = path-mirror pulled it in; Graph =
 /// none of the above (the diffusion ranked it high from graph edges
-/// alone — CC / SP / V / F0 collectively).
-enum LogosAxis { primary, m, ab, graph }
+/// alone — CC / SP / V / F0 collectively). Symbol = the file had no
+/// git history but was structurally coupled via identifier overlap
+/// (IDF-Jaccard) — the leading-signal counterpart to CC's lagging one.
+enum LogosAxis { primary, m, ab, graph, symbol }
 
 /// The fundamental SSE cell: an (emitted, cited) counter per
 /// (regime, axis), with two decay mechanisms:
-///
 ///   1. **Count saturation halving** at n=256 — matches Logos's discrete
 ///      `evaporate()` — keeps the cell responsive when counts accumulate
 ///      faster than opinions shift.
-///
 ///   2. **Continuous-time decay** on wall-clock age — matches Logos's
 ///      evaporate() at the continuous-time limit. A cell last updated
 ///      weeks ago contributes with an exponentially reduced weight vs
 ///      one updated yesterday. Half-life 30d by default.
-///
 /// The two decays work together: count-halving prevents saturation,
 /// time-decay prevents stale calibrations from anchoring forever.
 /// Counts are stored as doubles (not ints) because continuous decay
@@ -150,17 +147,14 @@ class LogosSseCell {
   /// update. Pure; called lazily on read (`utility`) and on increment
   /// so both paths see correctly-aged values. Invariant: after decay,
   /// `cited ≤ emitted` remains true (both shrink by the same factor).
-  ///
   /// **Variance-modulated half-life.** The base [halfLife] is the
   /// "neutral" decay; we accelerate it when [utilityVariance] is high.
   /// Whisper's thermodynamic-evaporation idea applied here: a cell
   /// whose per-round utility is bouncing in this regime carries less
   /// signal per sample, so its history should decay faster. A cell
   /// whose utility is converged is informative — let it freeze.
-  ///
   ///   accelerationFactor = 1 + (variance / kBernoulliMaxVariance)
   ///   effectiveHalfLife  = halfLife / accelerationFactor
-  ///
   /// `kBernoulliMaxVariance = 0.25` (the maximum possible variance of
   /// a [0,1]-bounded ratio at p=0.5) — a physical bound, not a
   /// tuning knob. So acceleration is in [1.0, 2.0]: at zero variance
@@ -228,7 +222,6 @@ class LogosSseCell {
   ///   • current evidence below [_minEvidenceForUtility] (utility
   ///     would just be the KT prior — no real signal to differentiate)
   ///   • Δt ≤ 0 or non-finite (clock-skew safety)
-  ///
   /// Positive = axis becoming more predictive in this regime.
   /// Negative = axis becoming less predictive (its citations not
   /// keeping up with its emissions). Drives the probe builder's
@@ -253,7 +246,6 @@ class LogosSseCell {
   /// Welford's online algorithm against [_snapshotUtility] samples.
   /// Bounded above by [_bernoulliMaxVariance] = 0.25. Returns 0 until
   /// at least two samples have been taken (no spread to measure).
-  ///
   /// Drives the variance-modulated decay in [_decayInPlace] — high
   /// variance ⇒ axis is bouncing in this regime ⇒ shorter effective
   /// half-life ⇒ faster forget. Whisper's evaporation primitive on
@@ -368,7 +360,6 @@ class LogosEmissionRecord {
 /// The per-repo calibration store. Read-through + write-through JSON.
 /// Cheap: a 3-second cache keeps repeated reads near-free without a
 /// long-lived lock.
-///
 /// Concurrent-write safety: each `recordEmissions` / `recordCitations`
 /// runs inside [_withRepoWriteLock], which serialises read-modify-write
 /// cycles per `repoPath` *across all [LogosSseStore] instances* (the
@@ -516,7 +507,6 @@ class LogosSseStore {
   /// Returns utility ratios suitable for scaling probe-axis weights.
   /// `1.0` is the neutral prior; above means the axis is pulling its
   /// weight in this regime; below means it's overfiring.
-  ///
   /// This is the "spot value" — current utility only. For
   /// trend-aware weighting that anticipates an axis becoming more
   /// (or less) predictive, use [projectedUtilitiesFor].
@@ -536,12 +526,10 @@ class LogosSseStore {
   /// axes whose utility is climbing in this regime get weighted up
   /// *before* their evidence fully accumulates, and axes whose utility
   /// is falling get downweighted before they do real damage.
-  ///
   /// [lookaheadDays] is the projection horizon in days. The natural
   /// choice is the SSE store's own half-life: project as far as the
   /// store keeps memory; beyond that, decay erases the trend anyway.
   /// Defaults to `LogosSseCell.halfLife.inDays` for that reason.
-  ///
   /// Cells without a velocity snapshot (fresh cells, low evidence)
   /// degrade gracefully to the spot utility — same as
   /// [utilitiesFor] would return. No NaN, no surprise.
@@ -566,7 +554,6 @@ class LogosSseStore {
     };
   }
 
-  // ─── persistence ─────────────────────────────────────────────────────
 
   Future<Map<LogosRegime, Map<LogosAxis, LogosSseCell>>> _load() async {
     // Invalidate own cache if a sibling store wrote more recently.

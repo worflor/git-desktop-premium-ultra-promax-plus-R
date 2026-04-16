@@ -1,2 +1,48 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Default for every file in the repo: detect text vs binary from
+# content, and force text files to LF in both the index and the
+# working copy on every platform. This overrides whatever
+# `core.autocrlf` each contributor has set globally — the policy
+# lives with the repo, not the machine.
+* text=auto eol=lf
+
+# Scripts that MUST keep their native endings for the OS to execute
+# them. Windows shells reject LF-only `.bat` / `.cmd`; POSIX shells
+# reject CRLF `.sh`. These override the default above.
+*.sh    text eol=lf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binary formats git might otherwise misdetect as text (headers can
+# look printable). Listing them keeps diffs, merges, and line-end
+# normalisation off these files. The project's own opaque blob
+# formats (`.endb`, model caches) sit alongside the common ones.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.icns  binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.eot   binary
+*.mp3   binary
+*.mp4   binary
+*.mov   binary
+*.webm  binary
+*.wav   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.7z    binary
+*.rar   binary
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.dylib binary
+*.bin   binary
+*.endb  binary

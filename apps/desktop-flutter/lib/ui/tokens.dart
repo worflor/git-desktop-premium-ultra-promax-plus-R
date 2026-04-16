@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-// ── Semantic severity palette ──────────────────────────────────────────
 // Theme-independent signal colors used for review verdicts, guardrail
 // stages, and any UI that communicates a confidence/risk level.
 // Order: safe → informational → cautious → risky → critical.
@@ -36,18 +35,19 @@ enum AppThemeId {
   petrichor,
   helix,
   nacre,
+  loverboy,
   aether,
   quanta,
   phosphor,
   redshift,
+  kirby,
   blackboard,
   crafty,
-  kirby,
 }
 
 enum SurfaceMaterialMode { solid, glass }
 
-enum ThemeTexture { none, grain, scanlines, pixels, halftone, iridescent }
+enum ThemeTexture { none, grain, scanlines, pixels, halftone, iridescent, darkIridescent }
 
 enum ThemeMotion { snappy, fluid, elastic }
 
@@ -653,8 +653,8 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFFFCC66, // 44 hyperCore — warm honey (was dark brown text, which
                   //                  made the hypercube core invisible at
                   //                  small sizes and identical to chrome)
-      0xFF4E7F5E,
-      0xFFCD7F2D,
+      0xFF0F8F5E, // 45 hypercubePositive — rich deep emerald
+      0xFF4E7F5E, // 46 hypercubeNegative — muted sage (previous positive)
       0xFF9B835D,
       0x73A58A6E,
       0x00000000,
@@ -763,6 +763,84 @@ final _tokens = <AppThemeId, AppTokens>{
       Color(0xFFFCF7F0),
       Color(0xFFF4ECE0),
       Color(0xFFEDE3D6),
+    ],
+    appGradientAlignments: const [
+      Alignment.topLeft,
+      Alignment.center,
+      Alignment.bottomRight,
+    ],
+  ),
+  // Loverboy. Hot pink and lavender over warm-dark. The blacks have a
+  // slight red-brown cast rather than cold obsidian.
+  AppThemeId.loverboy: AppTokens._(
+    id: AppThemeId.loverboy,
+    isDark: true,
+    colors: const [
+      0xFF0C0609, // 0  bg0           — near-black, faint warmth underneath
+      0xFF120A0E, // 1  bg1
+      0xFF180E14, // 2  bg2
+      0xFF201218, // 3  bg3
+      0xFF120A0E, // 4  surface0      — solid; iridescent texture paints on top
+      0xFF180E14, // 5  surface1      — solid
+      0xFF1E1218, // 6  surface2      — solid
+      0x33FF6EB4, // 7  surfaceAccent — rose blush wash (~20%)
+      0xFFF0E8FF, // 8  textStrong    — near-white, lavender-tinted
+      0xFFD4C8F0, // 9  textNormal    — lavender-white
+      0xFF9080B8, // 10 textMuted     — medium lavender
+      0xFF5ECC9B, // 11 stateAdded    — mint
+      0xFFE8A84E, // 12 stateModified — amber
+      0xFFFF6B8A, // 13 stateDeleted  — rose-red
+      0xFFFF7A5C, // 14 stateConflicted — coral
+      0xFF7ADEB8, // 15 stateStaged
+      0xFF7A6A9B, // 16 stateUnstaged — dim lavender
+      0xFFFF6EB4, // 17 focusRing     — hot pink
+      0xFFFF6EB4, // 18 accentBright  — hot pink (identity colour)
+      0xFFB09AE0, // 19 chromeBorder  — lavender hairline
+      0xFFFF6EB4, // 20 chromeAccent  — hot pink
+      0xFFFF6B8A, // 21 danger        — rose-red
+      0xFF120A0E, // 22 panelOverlay        — solid
+      0xFF180E14, // 23 panelOverlayStrong  — solid
+      0xFF100E1A, // 24 inputOverlay        — solid
+      0xFF180E14, // 25 diffOverlay         — solid
+      0xFF1A1014, // 26 btnBg
+      0xFF221418, // 27 btnHoverBg
+      0x44FF6EB4, // 28 btnBorder     — translucent pink; whisper treatment
+      0xFFD4C8F0, // 29 btnText
+      0xFF160E12, // 30 inputBg
+      0x55B09AE0, // 31 inputBorder   — translucent lavender; melts into surface
+      0xFFFF6EB4, // 32 inputFocusBorder — hot pink
+      0x22FF6EB4, // 33 itemHoverBg   — 13% pink
+      0x40FF6EB4, // 34 itemActiveBg  — 25% pink
+      0xFFFF6EB4, // 35 itemActiveBorder
+      0x44B09AE0, // 36 secondaryBtnBorder — translucent lavender
+      0x1AFF6EB4, // 37 secondaryBtnHoverBg
+      0xFF120B0F, // 38 rowBg
+      0xFF6A5490, // 39 scrollbarThumb — dim lavender
+      0x44FF6EB4, // 40 selectionBg
+      0x55FF6EB4, // 41 shadowElev    — pink glow shadow
+      0xFFC4A8F5, // 42 hyperChromatic1 — soft lavender shimmer
+      0xFFFF6EB4, // 43 hyperChromatic2 — hot pink shimmer
+      0xFFFF6EB4, // 44 hyperCore       — pink logo glow
+      0xFF4DE0F0, // 45 hypercubePositive — cyan (full CMYK with the pink)
+      0xFFF5E050, // 46 hypercubeNegative — yellow
+      0xFF5A4E7A, // 47 textFaint      — deep lavender (ghosted)
+      0xFF8A70BA, // 48 scrollbarHover
+      0xFF150C10, // 49 secondaryBtnBg
+      0xFF221418, // 50 sliderTrack
+      0xFFFFFFFF, // 51 sliderThumb
+      0xFFFF6EB4, // 52 sliderThumbBorder — pink
+      0xCC1A0812, // 53 dangerOverlay  — dark rose tint
+      0xFFFF6EB4, // 54 eventStartTone
+    ],
+    themeAmbient: const Color(0xFFFF6EB4),
+    themeSparkOpacity: 0.30,
+    themeSparkSpeed: const Duration(seconds: 22),
+    backdropBlur: 22,
+    backdropSaturate: 1.6,
+    appGradientColors: const [
+      Color(0xFF0C0609),
+      Color(0xFF160C10),
+      Color(0xFF0E080A),
     ],
     appGradientAlignments: const [
       Alignment.topLeft,
@@ -1007,6 +1085,111 @@ final _tokens = <AppThemeId, AppTokens>{
       Alignment.bottomRight
     ],
   ),
+  AppThemeId.kirby: AppTokens._(
+    id: AppThemeId.kirby,
+    isDark: false,
+    colors: const [
+      // Aged newsprint palette + CMYK process accents. Real comic
+      // books were printed on cheap pulp paper with 4-color separation
+      // (Cyan / Magenta / Yellow / Black) — the colors here lock to
+      // that printing reality, not generic "comic-y" pastels.
+      0xFFEDE2BC, // 0  bg0          — aged newsprint, warm
+      0xFFE5D8AC, // 1  bg1          — slightly deeper page
+      0xFFDCCD9C, // 2  bg2          — page shadow
+      0xFFD2C18A, // 3  bg3          — deepest crease
+      0xCCF2EAC6, // 4  surface0     — lifted page
+      0xE6F8F1D6, // 5  surface1     — clean page area
+      0xFFFCF6E0, // 6  surface2     — cleanest paper highlight
+      0x40FFD300, // 7  surfaceAccent — process-yellow wash
+      0xFF14141A, // 8  textStrong   — process black ink
+      0xFF24242C, // 9  textNormal
+      0xFF5A5040, // 10 textMuted    — old-newsprint muted
+      0xFF6B9F3D, // 11 stateAdded   — pulled CMYK green
+      0xFFB8860B, // 12 stateModified — darkgoldenrod (process yellow on
+                  //                    cream paper would be invisible; this
+                  //                    is the "yellow ink baked into newsprint
+                  //                    for 50 years" version: same hue family,
+                  //                    finally readable on bg0)
+      0xFFE63946, // 13 stateDeleted — comic spot red
+      0xFFFF8C42, // 14 stateConflicted — printed orange
+      0xFF00ACC8, // 15 stateStaged  — process cyan
+      0xFF8A7E68, // 16 stateUnstaged — paper-aged gray
+      0xFFE91E5F, // 17 focusRing    — process magenta (POW!)
+      0xFF00ACC8, // 18 accentBright — process cyan (the cool accent)
+      0xFF14141A, // 19 chromeBorder — INK LINE — every panel border
+      0xFFE91E5F, // 20 chromeAccent — magenta highlight
+      0xFFE63946, // 21 danger
+      0xCCF2EAC6, // 22 panelOverlay
+      0xE6E5D8AC, // 23 panelOverlayStrong
+      0x99FCF6E0, // 24 inputOverlay
+      0xCCF2EAC6, // 25 diffOverlay
+      0xFFF8F1D6, // 26 btnBg        — clean page
+      0xFFFFD300, // 27 btnHoverBg   — process yellow on hover (POW)
+      0xFF14141A, // 28 btnBorder    — INK
+      0xFF14141A, // 29 btnText      — INK
+      0xFFFCF6E0, // 30 inputBg
+      0xFF14141A, // 31 inputBorder
+      0xFFE91E5F, // 32 inputFocusBorder — magenta
+      0x40FFD300, // 33 itemHoverBg  — yellow wash
+      0x66FFD300, // 34 itemActiveBg
+      0xFF14141A, // 35 itemActiveBorder — INK
+      0xFF14141A, // 36 secondaryBtnBorder
+      0x33FFD300, // 37 secondaryBtnHoverBg
+      0xFFF8F1D6, // 38 rowBg
+      0xFF5A5040, // 39 scrollbarThumb
+      0x66FFD300, // 40 selectionBg
+      0x99000000, // 41 shadowElev   — hard ink-shadow drop
+      0xFFE91E5F, // 42 hyperChromatic1 — magenta plate
+      0xFF00ACC8, // 43 hyperChromatic2 — cyan plate
+      0xFF14141A, // 44 hyperCore — process black (K of CMYK). Yellow plate
+                  //                  was invisible on cream paper bg; black
+                  //                  ink IS the defining color of the comic
+                  //                  aesthetic and matches every chromeBorder
+                  //                  in the theme. Cyan/magenta chromatic
+                  //                  edges now wrap a true inked silhouette.
+      0xFFC9272E, // 45 hypercubePositive — Marvel newsprint hero red.
+                  //                       Eyedropped from the Spider-Man
+                  //                       chest on Amazing Fantasy #15
+                  //                       and Cap's stripes on Tales of
+                  //                       Suspense. Muted by absorbent
+                  //                       newsprint, NOT modern-screen
+                  //                       saturated — sits on the cream
+                  //                       paper bg without screaming.
+      0xFF2A4A98, // 46 hypercubeNegative — Marvel newsprint hero blue.
+                  //                       Spider-Man's web-suit blue,
+                  //                       Cap's field, Reed Richards'
+                  //                       uniform — same plate, same era.
+                  //                       Slightly purple-tinted from
+                  //                       the magenta bleed printers
+                  //                       got on absorbent stock.
+      0xFF8A7E68, // 47 textFaint
+      0xFF8A7E68, // 48 scrollbarHover
+      0xFFF8F1D6, // 49 secondaryBtnBg
+      0xFFD2C18A, // 50 sliderTrack
+      0xFF14141A, // 51 sliderThumb
+      0xFF14141A, // 52 sliderThumbBorder
+      0xCCFCE5E0, // 53 dangerOverlay
+      0xFF00ACC8, // 54 eventStartTone — cyan
+    ],
+    themeAmbient: const Color(0xFFF0C040), // yellow ambient
+    themeSparkOpacity: 0,
+    themeSparkSpeed: const Duration(seconds: 30),
+    backdropBlur: 0,
+    backdropSaturate: 1,
+    // Page light: warm key from the upper-left (like a comic-panel
+    // light source), cooling toward the lower-right shadow side. Reads
+    // as "this page is lit," not "flat cream."
+    appGradientColors: const [
+      Color(0xFFFFEAB8), // warm highlight UL
+      Color(0xFFE5D8AC), // page mid
+      Color(0xFFC8B888), // cool shadow LR
+    ],
+    appGradientAlignments: const [
+      Alignment.topLeft,
+      Alignment.center,
+      Alignment.bottomRight,
+    ],
+  ),
   AppThemeId.blackboard: AppTokens._(
     id: AppThemeId.blackboard,
     isDark: true,
@@ -1153,104 +1336,6 @@ final _tokens = <AppThemeId, AppTokens>{
     appGradientColors: const [Color(0xFF17110E), Color(0xFF1C1511)],
     appGradientAlignments: const [Alignment.topCenter, Alignment.bottomCenter],
   ),
-  // ── Kirby — Borderlands-inspired comic-book theme ────────────
-  // Cream paper bg, heavy black ink outlines, saturated comic palette,
-  // halftone shaded by the fragment shader. The chromeBorder is
-  // intentionally pure-near-black because every UI element wears a
-  // 2px ink line in this theme.
-  AppThemeId.kirby: AppTokens._(
-    id: AppThemeId.kirby,
-    isDark: false,
-    colors: const [
-      // Aged newsprint palette + CMYK process accents. Real comic
-      // books were printed on cheap pulp paper with 4-color separation
-      // (Cyan / Magenta / Yellow / Black) — the colors here lock to
-      // that printing reality, not generic "comic-y" pastels.
-      0xFFEDE2BC, // 0  bg0          — aged newsprint, warm
-      0xFFE5D8AC, // 1  bg1          — slightly deeper page
-      0xFFDCCD9C, // 2  bg2          — page shadow
-      0xFFD2C18A, // 3  bg3          — deepest crease
-      0xCCF2EAC6, // 4  surface0     — lifted page
-      0xE6F8F1D6, // 5  surface1     — clean page area
-      0xFFFCF6E0, // 6  surface2     — cleanest paper highlight
-      0x40FFD300, // 7  surfaceAccent — process-yellow wash
-      0xFF14141A, // 8  textStrong   — process black ink
-      0xFF24242C, // 9  textNormal
-      0xFF5A5040, // 10 textMuted    — old-newsprint muted
-      0xFF6B9F3D, // 11 stateAdded   — pulled CMYK green
-      0xFFB8860B, // 12 stateModified — darkgoldenrod (process yellow on
-                  //                    cream paper would be invisible; this
-                  //                    is the "yellow ink baked into newsprint
-                  //                    for 50 years" version: same hue family,
-                  //                    finally readable on bg0)
-      0xFFE63946, // 13 stateDeleted — comic spot red
-      0xFFFF8C42, // 14 stateConflicted — printed orange
-      0xFF00ACC8, // 15 stateStaged  — process cyan
-      0xFF8A7E68, // 16 stateUnstaged — paper-aged gray
-      0xFFE91E5F, // 17 focusRing    — process magenta (POW!)
-      0xFF00ACC8, // 18 accentBright — process cyan (the cool accent)
-      0xFF14141A, // 19 chromeBorder — INK LINE — every panel border
-      0xFFE91E5F, // 20 chromeAccent — magenta highlight
-      0xFFE63946, // 21 danger
-      0xCCF2EAC6, // 22 panelOverlay
-      0xE6E5D8AC, // 23 panelOverlayStrong
-      0x99FCF6E0, // 24 inputOverlay
-      0xCCF2EAC6, // 25 diffOverlay
-      0xFFF8F1D6, // 26 btnBg        — clean page
-      0xFFFFD300, // 27 btnHoverBg   — process yellow on hover (POW)
-      0xFF14141A, // 28 btnBorder    — INK
-      0xFF14141A, // 29 btnText      — INK
-      0xFFFCF6E0, // 30 inputBg
-      0xFF14141A, // 31 inputBorder
-      0xFFE91E5F, // 32 inputFocusBorder — magenta
-      0x40FFD300, // 33 itemHoverBg  — yellow wash
-      0x66FFD300, // 34 itemActiveBg
-      0xFF14141A, // 35 itemActiveBorder — INK
-      0xFF14141A, // 36 secondaryBtnBorder
-      0x33FFD300, // 37 secondaryBtnHoverBg
-      0xFFF8F1D6, // 38 rowBg
-      0xFF5A5040, // 39 scrollbarThumb
-      0x66FFD300, // 40 selectionBg
-      0x99000000, // 41 shadowElev   — hard ink-shadow drop
-      0xFFE91E5F, // 42 hyperChromatic1 — magenta plate
-      0xFF00ACC8, // 43 hyperChromatic2 — cyan plate
-      0xFF14141A, // 44 hyperCore — process black (K of CMYK). Yellow plate
-                  //                  was invisible on cream paper bg; black
-                  //                  ink IS the defining color of the comic
-                  //                  aesthetic and matches every chromeBorder
-                  //                  in the theme. Cyan/magenta chromatic
-                  //                  edges now wrap a true inked silhouette.
-      0xFF6B9F3D, // 45 hypercubePositive — pulled green
-      0xFFE63946, // 46 hypercubeNegative — spot red
-      0xFF8A7E68, // 47 textFaint
-      0xFF8A7E68, // 48 scrollbarHover
-      0xFFF8F1D6, // 49 secondaryBtnBg
-      0xFFD2C18A, // 50 sliderTrack
-      0xFF14141A, // 51 sliderThumb
-      0xFF14141A, // 52 sliderThumbBorder
-      0xCCFCE5E0, // 53 dangerOverlay
-      0xFF00ACC8, // 54 eventStartTone — cyan
-    ],
-    themeAmbient: const Color(0xFFF0C040), // yellow ambient
-    themeSparkOpacity: 0,
-    themeSparkSpeed: const Duration(seconds: 30),
-    backdropBlur: 0,
-    backdropSaturate: 1,
-    // Page light: warm key from the upper-left (like a comic-panel
-    // light source), cooling toward the lower-right shadow side. Reads
-    // as "this page is lit," not "flat cream."
-    appGradientColors: const [
-      Color(0xFFFFEAB8), // warm highlight UL
-      Color(0xFFE5D8AC), // page mid
-      Color(0xFFC8B888), // cool shadow LR
-    ],
-    appGradientAlignments: const [
-      Alignment.topLeft,
-      Alignment.center,
-      Alignment.bottomRight,
-    ],
-  ),
-  // ── Phosphor — CRT terminal, green-on-black, scanlines ───────────
   // Iconic serial-line / VT220 vibe. Pure black background, bright
   // phosphor green text that bleeds horizontally like CRT signal,
   // amber as the secondary "warning" color (matches old terminals).
@@ -1306,8 +1391,13 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF00FF66, // 42 hyperChromatic1 — phosphor green
       0xFFFFB000, // 43 hyperChromatic2 — amber
       0xFF7CFF99, // 44 hyperCore       — light phosphor (logo glow)
-      0xFF77FF44, // 45 hypercubePositive — lime
-      0xFFFF3344, // 46 hypercubeNegative — red
+      0xFF77FF44, // 45 hypercubePositive — P1 lime phosphor
+                  //                       (primary CRT emission)
+      0xFFFFB000, // 46 hypercubeNegative — P3 amber phosphor
+                  //                       (the other commercial CRT
+                  //                       coating; same accent the
+                  //                       theme already uses across
+                  //                       focus rings + accentBright)
       0xFF005522, // 47 textFaint
       0xFF00DD55, // 48 scrollbarHover
       0xFF03100A, // 49 secondaryBtnBg
@@ -1343,7 +1433,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.halo,
       'Halo',
-      'Angelic white gold with ethereal clouds and divine radiance.',
+      'the light that arrives before anything else does.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.glass,
@@ -1369,7 +1459,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.nightwalker,
       'Nightwalker',
-      'Abyssal obsidian brutalism. The silent, technical shadow of the Halo.',
+      'a fallen angel\'s halo cracks in cold obsidian rain - am i here?',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.glass,
@@ -1395,7 +1485,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.petrichor,
       'Petrichor',
-      'Misty cool light mode tuned for daytime readability.',
+      'first light through fog before the sky remembers itself.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.solid,
@@ -1412,7 +1502,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.helix,
       'Helix',
-      'Warm daylight surfaces with soft amber chrome.',
+      'honey tastes sweeter drizzled over expensive emeralds.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.solid,
@@ -1432,7 +1522,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.nacre,
       'Nacre',
-      'Light pooling in mother-of-pearl. Every surface its own quiet spectrum.',
+      'light pooling in mother-of-pearl. every surface its own quiet spectrum.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.glass,
@@ -1461,9 +1551,41 @@ const themeDefinitions = <AppThemeDefinition>[
   ),
   AppThemeDefinition(
     ThemeOption(
+      AppThemeId.loverboy,
+      'Loverboy',
+      '"i love you," into the void of overflowing thoughts.',
+    ),
+    SurfaceMaterialShader(
+      mode: SurfaceMaterialMode.solid,
+      blurPx: 0,
+      saturatePct: 120,
+      opacityScale: 1.0,
+      edgeIntensity: 1.6,
+      // Same hue physics as nacre's iridescent shader, compressed to
+      // the pink/lavender/violet band.
+      texture: ThemeTexture.darkIridescent,
+      textureOpacity: 0.55,
+      motion: ThemeMotion.fluid,
+      luminescence: 1.4,
+      particles: ThemeParticles.ethereal,
+      textEffect: ThemeTextEffect.iridescent,
+      parallaxStrength: 0.32,
+      interaction: ThemeInteraction.caustic,
+      // Thin directional hairline (kirby recipe) rather than a 2px stamp.
+      outlineWidth: 1.0,
+      geometry: SurfaceMaterialGeometry(
+        radius: 0,
+        typography: 'Playfair Display',
+        fontScale: 1.08,
+        letterSpacingEm: 0.025,
+      ),
+    ),
+  ),
+  AppThemeDefinition(
+    ThemeOption(
       AppThemeId.aether,
       'Aether',
-      'Crisp cosmic glass with cool contrast for long review sessions.',
+      'somewhere between the last star and the first thought. cold, clear, awake.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.glass,
@@ -1485,7 +1607,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.quanta,
       'Quanta',
-      'Rich emerald obsidian with crystalline subatomic clarity and high-refraction glass.',
+      'i don\'t know what the goal is. i was protected till the end.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.glass,
@@ -1510,7 +1632,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.phosphor,
       'Phosphor',
-      'Green burning behind glass. Slow scanlines on a warm tube.',
+      'something typed here before you. the screen is still warm to the touch.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.solid,
@@ -1538,79 +1660,28 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.redshift,
       'Redshift',
-      'Light tells you where things were, never where they are.',
+      'the light left. you\'re seeing the memory of where it was.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.glass,
-      blurPx: 24,
+      // Harder geometry: less blur, higher edge intensity, snappy
+      // motion. Palette and scanlines unchanged.
+      blurPx: 10,
       saturatePct: 150,
-      opacityScale: 0.9,
-      edgeIntensity: 0.8,
+      opacityScale: 0.92,
+      edgeIntensity: 1.25,
       texture: ThemeTexture.scanlines,
-      textureOpacity: 0.08,
-      motion: ThemeMotion.fluid,
+      textureOpacity: 0.11,
+      motion: ThemeMotion.snappy,
       luminescence: 0.45,
       particles: ThemeParticles.whisps,
       textEffect: ThemeTextEffect.burn,
       parallaxStrength: 0.35,
+      outlineWidth: 0.6, // kirby-style hairline, directional shading
       geometry: SurfaceMaterialGeometry(
         radius: 0,
         typography: 'JetBrains Mono',
-      ),
-    ),
-  ),
-  AppThemeDefinition(
-    ThemeOption(
-      AppThemeId.blackboard,
-      'Blackboard',
-      'Raw slate geometry with physical chalk typographical rendering.',
-    ),
-    SurfaceMaterialShader(
-      mode: SurfaceMaterialMode.solid,
-      blurPx: 0,
-      saturatePct: 100,
-      opacityScale: 1,
-      edgeIntensity: 1,
-      texture: ThemeTexture.grain,
-      textureOpacity: 0.1,
-      motion: ThemeMotion.snappy,
-      luminescence: 0.1,
-      particles: ThemeParticles.chalkdust,
-      textEffect: ThemeTextEffect.chalk,
-      parallaxStrength: 0.12,
-      interaction: ThemeInteraction.chalk,
-      geometry: SurfaceMaterialGeometry(
-        radius: 2,
-        typography: 'Lora',
-        fontScale: 1.05,
-      ),
-    ),
-  ),
-  AppThemeDefinition(
-    ThemeOption(
-      AppThemeId.crafty,
-      'Crafty',
-      'Sharp 8-bit geometry with nostalgic block architecture and pixel-perfect surfaces.',
-    ),
-    SurfaceMaterialShader(
-      mode: SurfaceMaterialMode.solid,
-      blurPx: 0,
-      saturatePct: 150,
-      opacityScale: 1,
-      edgeIntensity: 0.8,
-      texture: ThemeTexture.pixels,
-      textureOpacity: 0.15,
-      motion: ThemeMotion.snappy,
-      luminescence: 0.4,
-      particles: ThemeParticles.voxels,
-      textEffect: ThemeTextEffect.pop,
-      parallaxStrength: 0.3,
-      geometry: SurfaceMaterialGeometry(
-        radius: 0,
-        pixelated: true,
-        typography: 'VT323',
-        fontScale: 1.2,
-        letterSpacingEm: 0.02,
+        letterSpacingEm: 0.01,
       ),
     ),
   ),
@@ -1618,7 +1689,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.kirby,
       'Kirby',
-      'Aged newsprint and off-register process inks. Every change is a splash panel.',
+      'off-register ink on newsprint. was it always supposed to look like that?',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.solid,
@@ -1645,6 +1716,61 @@ const themeDefinitions = <AppThemeDefinition>[
         radius: 0,
         fontScale: 1.0,
         letterSpacingEm: 0.005,
+      ),
+    ),
+  ),
+  AppThemeDefinition(
+    ThemeOption(
+      AppThemeId.blackboard,
+      'Blackboard',
+      'chalk dust in the air. something was just figured out.',
+    ),
+    SurfaceMaterialShader(
+      mode: SurfaceMaterialMode.solid,
+      blurPx: 0,
+      saturatePct: 100,
+      opacityScale: 1,
+      edgeIntensity: 1,
+      texture: ThemeTexture.grain,
+      textureOpacity: 0.1,
+      motion: ThemeMotion.snappy,
+      luminescence: 0.1,
+      particles: ThemeParticles.chalkdust,
+      textEffect: ThemeTextEffect.chalk,
+      parallaxStrength: 0.12,
+      interaction: ThemeInteraction.chalk,
+      geometry: SurfaceMaterialGeometry(
+        radius: 2,
+        typography: 'Lora',
+        fontScale: 1.05,
+      ),
+    ),
+  ),
+  AppThemeDefinition(
+    ThemeOption(
+      AppThemeId.crafty,
+      'Crafty',
+      '16 colours. infinite time. nothing else mattered.',
+    ),
+    SurfaceMaterialShader(
+      mode: SurfaceMaterialMode.solid,
+      blurPx: 0,
+      saturatePct: 150,
+      opacityScale: 1,
+      edgeIntensity: 0.8,
+      texture: ThemeTexture.pixels,
+      textureOpacity: 0.15,
+      motion: ThemeMotion.snappy,
+      luminescence: 0.4,
+      particles: ThemeParticles.voxels,
+      textEffect: ThemeTextEffect.pop,
+      parallaxStrength: 0.3,
+      geometry: SurfaceMaterialGeometry(
+        radius: 0,
+        pixelated: true,
+        typography: 'VT323',
+        fontScale: 1.2,
+        letterSpacingEm: 0.02,
       ),
     ),
   ),
@@ -1694,7 +1820,6 @@ extension ClusterColors on AppTokens {
   /// app's logo so cluster groups read as part of the family rather
   /// than as alarm semantics. Step alpha down for the 5th+ cluster so
   /// far-out groups fade rather than flash.
-  ///
   /// Promoted from a private helper in `changes_page.dart` so the
   /// branches lens (PR file pills) and any future surface that wants
   /// to visualize coupling can share the exact same color identity.

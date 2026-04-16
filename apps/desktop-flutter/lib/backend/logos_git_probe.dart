@@ -1,4 +1,3 @@
-// ═════════════════════════════════════════════════════════════════════════
 // logos_git_probe.dart — structural probe enrichment for the context builder
 //
 // Philosophy — Logos is an attention codec:
@@ -38,8 +37,9 @@
 //   precisely because we don't know where to look. This is the
 //   codec-aesthetic equivalent of "when the match state is crystal,
 //   trust the predictor; when it's gas, let the prior take over."
-// ═════════════════════════════════════════════════════════════════════════
 
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -96,17 +96,23 @@ class ProbeStats {
   final int abMatches;
   final int mSymbols;
   final double coherence;
+  /// Number of files surfaced via the symbol-overlap axis — new/untracked
+  /// files whose identifier overlap with change-set peers was the signal.
+  /// Tracked so SSE can calibrate symbol-axis utility per regime.
+  final int symbolMatches;
   const ProbeStats({
     required this.primaryCount,
     required this.mMatches,
     required this.abMatches,
     required this.mSymbols,
     required this.coherence,
+    this.symbolMatches = 0,
   });
 
   @override
   String toString() =>
-      'primary=$primaryCount M=$mMatches/$mSymbols Ab=$abMatches coh=${coherence.toStringAsFixed(2)}';
+      'primary=$primaryCount M=$mMatches/$mSymbols Ab=$abMatches '
+      'sym=$symbolMatches coh=${coherence.toStringAsFixed(2)}';
 }
 
 /// SSE-learned utility scales are clamped to this band before scaling
@@ -114,7 +120,6 @@ class ProbeStats {
 /// over- or under-confident utilities early (cold-start KT prior
 /// deviations), so the clamp caps how aggressively the calibration
 /// loop can push the weights away from the hand-picked defaults.
-///
 /// Upper bound 2.5× matches the cap Agent B recommended during the
 /// SSE calibration design pass; lower bound 0.3× keeps an axis alive
 /// even when historically uncited so it can re-earn weight if the
@@ -142,10 +147,8 @@ class LogosGitProbeBuilder {
   /// Optional SSE calibration store. When supplied, the probe reads
   /// learned per-regime utilities and SCALES the default m/ab weights
   /// accordingly. This is the closed learning loop:
-  ///
   ///   emission → audit → citation matching → SSE cell update → next
   ///   probe reads utility → weight scales → better emission
-  ///
   /// Null falls back to the hardcoded weights; existing tests and the
   /// cold-start path stay deterministic.
   final LogosSseStore? sseStore;
@@ -247,13 +250,30 @@ class LogosGitProbeBuilder {
     // its test counterpart (and vice versa) using common convention
     // patterns. Language-agnostic — the patterns cover Dart, JS/TS,
     // Python, Rust, Go with minimal per-language logic.
+    //
+    // Existence checks run in parallel via `Future.wait`. Each
+    // `_fileExists` is a real async `File.exists()` stat — serialising
+    // them under an outer `await` compounded single-digit-ms syscalls
+    // into hundreds of ms of blocked time on wide diffs. Candidates are
+    // deduped first so we don't stat the same mirror twice when two
+    // touched files point at the same counterpart (e.g. src/foo and
+    // its test/foo_test both nominating the other).
     var abMatches = 0;
+    final mirrors = <String>{};
     for (final touched in primaryPaths) {
-      final mirrors = _candidateMirrors(touched);
-      for (final mirror in mirrors) {
+      for (final mirror in _candidateMirrors(touched)) {
         if (weights.containsKey(mirror)) continue; // already in probe
-        if (await _fileExists(repoPath, mirror)) {
-          weights[mirror] = effectiveAbWeight;
+        mirrors.add(mirror);
+      }
+    }
+    if (mirrors.isNotEmpty) {
+      final paths = mirrors.toList(growable: false);
+      final exists = await Future.wait(
+        paths.map((m) => _fileExists(repoPath, m)),
+      );
+      for (var i = 0; i < paths.length; i++) {
+        if (exists[i]) {
+          weights[paths[i]] = effectiveAbWeight;
           abMatches++;
         }
       }
@@ -267,6 +287,17 @@ class LogosGitProbeBuilder {
       coherence: coherence,
     );
 
+    // Symbol-axis diagnostic: count primary paths that are NOT graph
+    // nodes but have symbol-edge neighbours — these are the files where
+    // the symbol axis carries real information (new/untracked files with
+    // identifier overlap against the change set). Feeds SSE regime
+    // classification and the probe's toString() for observability.
+    var symbolMatches = 0;
+    for (final path in primaryPaths) {
+      if (engine.pathToId.containsKey(path)) continue;
+      if (engine.symbolEdges[path]?.isNotEmpty ?? false) symbolMatches++;
+    }
+
     return DiffProbe(
       sourceWeights: weights,
       primaryPaths: primaryPaths,
@@ -277,6 +308,7 @@ class LogosGitProbeBuilder {
         abMatches: abMatches,
         mSymbols: addedRemovedSymbols.length,
         coherence: coherence,
+        symbolMatches: symbolMatches,
       ),
     );
   }
@@ -306,7 +338,6 @@ class LogosGitProbeBuilder {
     return (1.0 + sizeScale + cohShift).clamp(0.3, 3.0);
   }
 
-  // ─── internals ─────────────────────────────────────────────────────────
 
   Set<String> _extractTouchedPaths(String diffText) =>
       extractDiffTouchedPaths(diffText);
@@ -379,18 +410,37 @@ class LogosGitProbeBuilder {
     required String repoPath,
     required String symbol,
   }) async {
+    // Per-grep timeout. `git grep -l` is O(files containing the symbol);
+    // hub identifiers (`String`, `value`, `handle`) can take multiple
+    // seconds on large repos — telemetry observed p95 ≈ 4.5 s and a 6 s
+    // outlier. The specificity weight `1 / log(1 + matches)` already
+    // collapses hub-symbol contribution toward zero, so bailing after
+    // 3 s costs essentially no signal while bounding tail latency.
+    // Hard-killed processes return an empty set (identical to "no
+    // matches"), which downstream Ab-axis / diffusion handle naturally.
+    const grepTimeout = Duration(seconds: 3);
+    Process? process;
     try {
-      final result = await Process.run(
+      process = await Process.start(
         'git',
         ['grep', '-l', '-w', '-I', symbol],
         workingDirectory: repoPath,
         runInShell: false,
       );
-      if (result.exitCode != 0 && result.exitCode != 1) {
-        // exit 1 = no matches; anything else = error (e.g. not a git repo)
+      final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+      // Drain stderr so a slow `git grep` can't block on pipe backpressure.
+      final stderrFuture = process.stderr.drain<void>();
+      final int exitCode;
+      try {
+        exitCode = await process.exitCode.timeout(grepTimeout);
+      } on TimeoutException {
+        process.kill();
         return const {};
       }
-      final out = result.stdout.toString();
+      // exit 1 = no matches; anything else = error (e.g. not a git repo).
+      if (exitCode != 0 && exitCode != 1) return const {};
+      final out = await stdoutFuture;
+      await stderrFuture;
       return out
           .split('\n')
           .map((l) => l.trim())
@@ -510,7 +560,6 @@ Future<DiffProbe> buildDiffProbe({
 /// Diffuse from a [DiffProbe]. Unlike the engine's `diffuse(Set<String>)`,
 /// this respects per-source *weights* — M and Ab contributions land with
 /// less starting mass than the primary diff.
-///
 /// Lives here (not on [LogosGit]) because probe construction is repo-aware
 /// (I/O + git) but diffusion is pure math. Keeping the engine pure makes
 /// the WASM port trivial later.
@@ -521,6 +570,33 @@ List<RelevanceScore> diffuseFromProbe({
 }) {
   if (probe.sourceWeights.isEmpty) return const [];
   final t = temperatureOverride ?? probe.suggestedTemperature ?? 1.0;
+  final symbolPaths = <String>{
+    for (final p in engine.symbolEdges.keys)
+      if (!engine.pathToId.containsKey(p)) p,
+  };
+  final axisLabels = <String, String>{
+    for (final entry in probe.sourceWeights.entries)
+      entry.key: _classifyProbeAxis(
+        entry.key,
+        probe,
+        symbolPaths: symbolPaths,
+      ),
+  };
+  final evidence = engine.gatherEvidence(
+    focusWeights: probe.sourceWeights,
+    axisLabelByPath: axisLabels,
+    t: t,
+    excludePaths: probe.primaryPaths,
+  );
+  if (evidence != null && evidence.ranked.isNotEmpty) {
+    return [
+      for (final e in evidence.ranked)
+        RelevanceScore(
+          e.path,
+          e.utility > 0 ? e.utility : (e.support * e.integrity * 0.05),
+        ),
+    ];
+  }
 
   // Build a weighted set via repeated application: diffuse returns a
   // single ranking from a unit source. For weighted sources we scale
@@ -536,6 +612,16 @@ List<RelevanceScore> diffuseFromProbe({
   // Heat kernel is linear in ρ, so the weighted mixture diffuses in
   // one matvec pass — no per-source basis needed.
   return _weightedDiffuse(engine: engine, probe: probe, t: t);
+}
+
+String _classifyProbeAxis(
+  String path,
+  DiffProbe probe, {
+  required Set<String> symbolPaths,
+}) {
+  if (probe.primaryPaths.contains(path)) return 'primary';
+  if (symbolPaths.contains(path)) return LogosAxis.symbol.name;
+  return 'graph';
 }
 
 List<RelevanceScore> _weightedDiffuse({
