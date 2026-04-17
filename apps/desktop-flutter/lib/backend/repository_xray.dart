@@ -9,6 +9,9 @@ import '../diagnostics/diagnostics_state.dart';
 import 'dtos.dart';
 import 'engram_fit.dart';
 import 'git_result.dart';
+import 'logos_core.dart' show SpectralBasis;
+import 'logos_git.dart';
+import 'logos_git_resolver.dart' show resolveLogosGit;
 
 typedef XrayGitProbe = Future<ProcessResult> Function(
   String workingDir,
@@ -89,6 +92,15 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
     type: 'start',
     command: 'git.repo_xray',
   );
+
+  // Opportunistic Logos engine resolve. Runs in parallel with the git
+  // log/refs fan-out below — if it's already cached (HEAD unchanged),
+  // we get the spectral basis essentially for free; if it's a cold
+  // build, the engine ships back before/after the git calls and we
+  // still get the win. Failures (non-repo paths, test fixtures,
+  // unreachable .git) return null and every spectral path falls back
+  // to the legacy O(|commit|²) pair walk — nothing blocks or throws.
+  final engineFuture = _tryResolveEngine(repo);
 
   try {
     final statusResult = await statusLoader(repo);
@@ -305,9 +317,24 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
     final filteredDated = _parseDatedCommitFiles(futures[5].stdout.toString());
     final rawCommitFiles = [for (final c in rawDated) c.files];
     final filteredCommitFiles = [for (final c in filteredDated) c.files];
-    final rawCoChange = _computeCoChange(rawCommitFiles, rawPathTouches);
-    final filteredCoChange =
-        _computeCoChange(filteredCommitFiles, filteredPathTouches);
+    // Await the engine now — both the spectral co-change path and
+    // the flow observables want it. If it resolved fast (cache hit)
+    // we skip the pair walk entirely; if it returned null (test
+    // context, non-repo path) we fall back to Jaccard-from-commits.
+    final engine = await engineFuture;
+    final spectral = _buildSpectralSummary(engine);
+    final rawCoChange = _computeCoChange(
+      rawCommitFiles,
+      rawPathTouches,
+      engine: engine,
+      spectral: spectral,
+    );
+    final filteredCoChange = _computeCoChange(
+      filteredCommitFiles,
+      filteredPathTouches,
+      engine: engine,
+      spectral: spectral,
+    );
 
     // Compute metabolism early so its halfLife seeds the alive-mass
     // decay. Metabolism is cheap (single AR(2) fit on the date series)
@@ -348,6 +375,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       cachedProbe.run,
       rawCoChange,
       rawPathAlive,
+      spectral,
     );
     final filteredHotspots = await _buildHotspots(
       filteredPathTouches,
@@ -356,6 +384,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       cachedProbe.run,
       filteredCoChange,
       filteredPathAlive,
+      spectral,
     );
     final strata = await _buildStrata(
       filteredDirTouches,
@@ -397,6 +426,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       strata: strata,
       metabolism: metabolism,
       migrationPair: migrationPair,
+      spectral: spectral,
     );
 
     final snapshot = RepositoryXraySnapshotData(
@@ -500,6 +530,232 @@ class _SnapshotProbeCache {
     final key = args.join('\u0000');
     return _pending.putIfAbsent(key, () => probe(repo, args));
   }
+}
+
+/// Hard ceiling on how long we'll wait for the Logos engine to resolve
+/// during an xray snapshot. Cache-hit resolution is a few ms; a cold
+/// build is hundreds of ms and runs on a background isolate. Past
+/// this budget we give up and let the snapshot finish on the classical
+/// (non-spectral) path — x-ray is a diagnostic that should never block
+/// the UI on an engine rebuild.
+const Duration _kEngineResolveBudget = Duration(seconds: 2);
+
+Future<LogosGit?> _tryResolveEngine(String repo) async {
+  // Pre-flight filesystem check: without this, the resolver spawns
+  // `git rev-parse HEAD` on the path regardless, which both spams
+  // test-context stderr and wastes a subprocess on paths we already
+  // know can't host an engine. `.git` as a directory covers normal
+  // working trees; as a file covers submodule worktrees (git stores
+  // `gitdir: …` redirects as regular files).
+  final gitEntry = FileSystemEntity.typeSync('$repo/.git');
+  if (gitEntry == FileSystemEntityType.notFound) return null;
+  try {
+    return await resolveLogosGit(repo).timeout(
+      _kEngineResolveBudget,
+      onTimeout: () => null,
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Packaged view over everything we read from a resolved Logos engine's
+/// cached spectral basis during an xray snapshot. All the heavy lifting
+/// (Lanczos eigendecomposition, k-means community labels, projection
+/// of the recent-activity focus) happens once up front — every
+/// downstream consumer (co-change pull, keystone flagging, flow
+/// observables) reads precomputed fields instead of re-traversing
+/// the graph.
+///
+/// Null fields indicate the engine either isn't available, or the
+/// graph is below the spectral minimum (n < 256). Callers must treat
+/// the whole object as optional and fall back cleanly.
+class _SpectralSummary {
+  _SpectralSummary({
+    required this.engine,
+    required this.basis,
+    required this.centralityByPath,
+    required this.couplingByPath,
+    required this.communityByPath,
+    required this.heatTraceNormalised,
+    required this.focusEntropyNormalised,
+  });
+
+  final LogosGit engine;
+
+  /// Cached spectral basis. Null when `n < _kSpectralMinNodes` or no
+  /// engine was resolvable.
+  final SpectralBasis? basis;
+
+  /// path → `Σⱼ uⱼ[f]²·e^{−t·λⱼ}` at the canonical temperature. This is
+  /// the heat-kernel diagonal — "how much of the heat trace localises
+  /// at file f". The spectral analog of co-change pull and our keystone
+  /// signal when the engine is available. Empty when basis is null.
+  final Map<String, double> centralityByPath;
+
+  /// path → top-N coupled neighbours read directly from the engine's
+  /// weighted coupling CSR. Replaces the O(|commit|²) Jaccard pair
+  /// walk with a single edge-list traversal. Empty when no engine.
+  final Map<String, List<String>> couplingByPath;
+
+  /// path → Shi–Malik k-way community label on the low-frequency
+  /// eigenspace. Empty when basis is null.
+  final Map<String, int> communityByPath;
+
+  /// `Z(t)/k` — the heat trace normalised to [0, 1] so consumers can
+  /// treat it as a bounded pressure signal. 0 when basis is null.
+  final double heatTraceNormalised;
+
+  /// Spectral participation entropy of the recent-activity focus
+  /// divided by `log(k)` — in [0, 1]. 0 = a single mode carries the
+  /// activity (laser focus); 1 = uniform across modes (scattered).
+  /// 0 when basis/focus is null.
+  final double focusEntropyNormalised;
+}
+
+/// Canonical temperature for xray-level spectral observables. The heat
+/// kernel's low-frequency regime dominates at `t ~ 1/λ_smallest_nonzero`;
+/// we pick `t = 1.0` which the engine's own diffusion queries also use
+/// as the default so our observables and the rail's observables speak
+/// the same units.
+const double _kXraySpectralT = 1.0;
+
+/// Number of architectural communities to surface in hotspots. Matches
+/// the stratum candidate cap (`_mapStratumCandidateCap = 12`) — roughly
+/// "one community per major directory cluster" on a real repo. Empty
+/// clusters are absorbed cleanly by the k-means implementation.
+const int _kXraySpectralCommunityCount = 8;
+
+/// Extract cacheable spectral observables from a resolved Logos engine.
+/// Returns null when the engine is null; otherwise always returns a
+/// `_SpectralSummary` — the summary's inner fields handle the
+/// "engine is there but the graph is too small for Lanczos" case.
+_SpectralSummary? _buildSpectralSummary(LogosGit? engine) {
+  if (engine == null) return null;
+  final basis = engine.spectralBasis();
+  if (basis == null) {
+    return _SpectralSummary(
+      engine: engine,
+      basis: null,
+      centralityByPath: const {},
+      couplingByPath: _buildCouplingFromGraph(engine),
+      communityByPath: const {},
+      heatTraceNormalised: 0.0,
+      focusEntropyNormalised: 0.0,
+    );
+  }
+
+  // Heat-kernel diagonal: per-node Σⱼ uⱼ[i]²·e^{−t·λⱼ}. One O(k·n)
+  // pass replaces the whole Jaccard pair walk as our keystone signal.
+  final n = basis.n;
+  final k = basis.k;
+  final centrality = Float64List(n);
+  final decays = Float64List(k);
+  for (var j = 0; j < k; j++) {
+    decays[j] = math.exp(-_kXraySpectralT * basis.eigenvalues[j]);
+  }
+  for (var j = 0; j < k; j++) {
+    final d = decays[j];
+    if (d == 0.0) continue;
+    final base = j * n;
+    for (var i = 0; i < n; i++) {
+      final u = basis.eigenvectors[base + i];
+      centrality[i] += d * u * u;
+    }
+  }
+  final paths = engine.nodePaths;
+  final centralityByPath = <String, double>{};
+  for (var i = 0; i < n; i++) {
+    centralityByPath[paths[i]] = centrality[i];
+  }
+
+  // Coupling neighbours — read directly from the weighted CSR. Each
+  // file gets up to `_couplingNeighborCap` neighbours ranked by edge
+  // weight. No pair walk, no per-commit traversal — just one CSR row
+  // scan per file.
+  final couplingByPath = _buildCouplingFromGraph(engine);
+
+  // Community labels from the Shi–Malik k-way clustering on u₁..u_k.
+  final labels = basis.spectralCommunityLabels(_kXraySpectralCommunityCount);
+  final communityByPath = <String, int>{};
+  for (var i = 0; i < n; i++) {
+    communityByPath[paths[i]] = labels[i];
+  }
+
+  // Normalised heat trace: Z(t)/k ∈ [0, 1]. Equals 1 at t=0 (all modes
+  // contribute 1), decays as t grows. Useful as a bounded pressure
+  // signal in the flow observables.
+  final heatTrace = basis.heatTrace(_kXraySpectralT);
+  final heatTraceNorm = (heatTrace / k).clamp(0.0, 1.0).toDouble();
+
+  // Focus entropy on the recent-activity field. `recentActivityWeights`
+  // is cached on the engine, so this is essentially free after the
+  // first query. Normalise by log(k) so the result is in [0, 1].
+  var focusEntropyNorm = 0.0;
+  final activity = engine.recentActivityWeights();
+  if (activity.isNotEmpty && k > 1) {
+    final rho = Float64List(n);
+    for (final e in activity.entries) {
+      final id = engine.pathToId[e.key];
+      if (id != null) rho[id] = e.value;
+    }
+    final s = basis.spectralEntropy(rho, _kXraySpectralT);
+    final sMax = math.log(k.toDouble());
+    if (sMax > 0 && s.isFinite) {
+      focusEntropyNorm = (s / sMax).clamp(0.0, 1.0).toDouble();
+    }
+  }
+
+  return _SpectralSummary(
+    engine: engine,
+    basis: basis,
+    centralityByPath: centralityByPath,
+    couplingByPath: couplingByPath,
+    communityByPath: communityByPath,
+    heatTraceNormalised: heatTraceNorm,
+    focusEntropyNormalised: focusEntropyNorm,
+  );
+}
+
+/// Read the engine's weighted coupling CSR into a path → top-N
+/// neighbours map. Cost: O(|E|) total across all files. Replaces the
+/// Jaccard pair walk's O(Σ|commit|²) with a single edge-list scan
+/// whose work is linear in the graph, not in the commit history.
+Map<String, List<String>> _buildCouplingFromGraph(LogosGit engine) {
+  final graph = engine.graph;
+  if (graph.n == 0) return const {};
+  final paths = engine.nodePaths;
+  final out = <String, List<String>>{};
+  for (var i = 0; i < graph.n; i++) {
+    final start = graph.indptr[i];
+    final end = graph.indptr[i + 1];
+    if (end == start) continue;
+    // Collect (neighbourId, weight) for this row and take top-N by
+    // weight. Rows are already bounded by the engine's `edgeDensity`
+    // (a small constant), so a full sort of the row is cheap.
+    final count = end - start;
+    final entries = List<_CouplingEdge>.generate(
+      count,
+      (k) => _CouplingEdge(graph.indices[start + k], graph.values[start + k]),
+    );
+    entries.sort((a, b) => b.weight.compareTo(a.weight));
+    final take = math.min(_couplingNeighborCap, count);
+    final neigh = <String>[];
+    for (var k = 0; k < take; k++) {
+      neigh.add(paths[entries[k].id]);
+    }
+    if (neigh.isNotEmpty) out[paths[i]] = neigh;
+  }
+  return out;
+}
+
+/// Tiny value type for sorting CSR edges by weight. Keeps the top-N
+/// collection honest without reading the weight array twice inside
+/// the comparator.
+class _CouplingEdge {
+  final int id;
+  final double weight;
+  const _CouplingEdge(this.id, this.weight);
 }
 
 class _RefRecord {
@@ -759,10 +1015,44 @@ const int _couplingNeighborCap = 5;
 
 _CoChangeAnalysis _computeCoChange(
   List<Set<String>> commits,
-  Map<String, int> touches,
-) {
+  Map<String, int> touches, {
+  LogosGit? engine,
+  _SpectralSummary? spectral,
+}) {
   if (commits.isEmpty || touches.isEmpty) {
     return const _CoChangeAnalysis(scores: {}, coupling: {});
+  }
+
+  // Spectral fast path: when the Logos engine has a spectral basis,
+  // both the "pull per touch" score and the per-file coupling come
+  // straight from cached O(k·n) data — the heat-kernel diagonal plus
+  // one scan of the weighted coupling CSR. We skip the full pair walk
+  // over commit history entirely; the engine already represents every
+  // pair weight in the CSR's edge weights, built during engine
+  // construction once per HEAD.
+  if (spectral != null &&
+      spectral.centralityByPath.isNotEmpty &&
+      spectral.couplingByPath.isNotEmpty) {
+    final scores = <String, double>{};
+    spectral.centralityByPath.forEach((path, centrality) {
+      final touch = touches[path];
+      if (touch == null) return;
+      // log1p dampens the divisor so raw touch count doesn't dominate
+      // — same shape as the classical formula, just with a spectral
+      // "pull" (heat-kernel diagonal) instead of a Jaccard sum.
+      final divisor = math.log(1 + touch);
+      scores[path] = divisor > 0 ? centrality / divisor : centrality;
+    });
+    // Filter coupling to paths the current touch map knows about, so
+    // the raw-vs-filtered partition of history doesn't bleed coupling
+    // neighbours from files absent in the current view.
+    final coupling = <String, List<String>>{};
+    spectral.couplingByPath.forEach((path, neigh) {
+      if (!touches.containsKey(path)) return;
+      final filtered = [for (final n in neigh) if (touches.containsKey(n)) n];
+      if (filtered.isNotEmpty) coupling[path] = filtered;
+    });
+    return _CoChangeAnalysis(scores: scores, coupling: coupling);
   }
 
   // Per-file membership index — commitIndex → filesInCommit is given;
@@ -1030,6 +1320,7 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
   Future<ProcessResult> Function(List<String> args) probe,
   _CoChangeAnalysis coChange,
   Map<String, double> pathAliveMass,
+  _SpectralSummary? spectral,
 ) async {
   final keystoneScores = coChange.scores;
   final coupling = coChange.coupling;
@@ -1075,6 +1366,8 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
   // contention), turning individual log calls from ~50ms into ~1.5s.
   // Route through [_runBounded] so only [_xraySubprocessConcurrency]
   // enrichments are in flight at a time. Result order is preserved.
+  int communityOf(String path) =>
+      spectral?.communityByPath[path] ?? -1;
   final hotspotTasks = <Future<RepositoryXrayHotspotData> Function()>[
     for (final path in picked)
       () => _enrichHotspot(
@@ -1087,6 +1380,7 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
             keystoneFlags.contains(path),
             coupling[path] ?? const [],
             pathAliveMass[path] ?? (pathTouches[path] ?? 0).toDouble(),
+            communityOf(path),
           ),
     for (final entry in dirs.take(_mapDirHotspotCandidateCap))
       () => _enrichHotspot(
@@ -1099,6 +1393,7 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
             false,
             const [],
             pathAliveMass[entry.key] ?? entry.value.toDouble(),
+            -1,
           ),
   ];
   final hotspots = await _runBounded(
@@ -1179,6 +1474,7 @@ Future<RepositoryXrayHotspotData> _enrichHotspot(
   bool isKeystone,
   List<String> coupledTo,
   double aliveMass,
+  int spectralCommunity,
 ) async {
   final authorArgs = ['log', '--format=%an'];
   final recentArgs = ['log', '-n', '1', '--date=short', '--format=%H\t%h\t%ad'];
@@ -1218,6 +1514,7 @@ Future<RepositoryXrayHotspotData> _enrichHotspot(
     isKeystone: isKeystone,
     coupledTo: coupledTo,
     aliveMass: aliveMass,
+    spectralCommunity: spectralCommunity,
   );
 }
 
@@ -1716,6 +2013,7 @@ RepositoryXrayFlowData _buildXrayFlow({
   required List<RepositoryXrayStratumData> strata,
   required RepositoryXrayMetabolismData metabolism,
   required _MigrationPair? migrationPair,
+  required _SpectralSummary? spectral,
 }) {
   double clamp01(double value) => value.clamp(0.0, 1.0).toDouble();
 
@@ -1795,12 +2093,25 @@ RepositoryXrayFlowData _buildXrayFlow({
         (metabolism.activeDays > 0 ? 0.14 : 0.0),
   );
 
+  // Spectral observables, if we have them. These are free readouts
+  // from the engine's cached basis — no extra Lanczos work, no extra
+  // CSR passes. Scattered focus (high entropy) lifts confidence
+  // slightly since we're seeing real structure the math can speak
+  // to, even when commit cadence is thin.
+  final focusEntropy = spectral?.focusEntropyNormalised ?? 0.0;
+  final heatTrace = spectral?.heatTraceNormalised ?? 0.0;
+  final adjustedConfidence = spectral == null || spectral.basis == null
+      ? confidence
+      : clamp01(confidence + 0.04 * (1.0 - focusEntropy));
+
   return RepositoryXrayFlowData(
     gradientMass: gradientMass,
     curlMass: curlMass,
     harmonicMass: harmonicMass,
     structuralStress: structuralStress,
-    confidence: confidence,
+    confidence: adjustedConfidence,
+    focusEntropy: focusEntropy,
+    heatTrace: heatTrace,
   );
 }
 

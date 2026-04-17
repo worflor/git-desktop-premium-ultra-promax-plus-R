@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -189,6 +190,13 @@ class _ChangesPageState extends State<ChangesPage> {
   // clicking the toggle button next to the file list header).
   static const _kAtlasOpenKey = 'changes.atlas_open';
   bool _constellationOpen = false;
+  static const _kSelectionSnapshotPrefix = 'changes.selection_state_v1.';
+  Timer? _selectionPersistDebounce;
+  String? _selectionRepoPath;
+  String? _selectionStorageScopeKey;
+  bool _selectionStorageLoaded = false;
+  int _selectionLoadRequestId = 0;
+  String? _selectionPersistFingerprint;
 
   // Per-path line churn (adds + dels) feeding the "by impact" sort.
   // Refreshed whenever the status signature changes. Empty until the
@@ -284,6 +292,196 @@ class _ChangesPageState extends State<ChangesPage> {
     setState(() => _constellationOpen = next);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kAtlasOpenKey, next);
+  }
+
+  String _normalizeSelectionStoragePath(String path) {
+    final normalized = p.normalize(path).replaceAll('\\', '/');
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  }
+
+  String _selectionPrefsKey(String scopeKey) =>
+      '$_kSelectionSnapshotPrefix$scopeKey';
+
+  Future<String> _resolveSelectionStorageScopeKey(String repoPath) async {
+    var mainRepoPath = repoPath;
+    try {
+      final result = await Process.run(
+        'git',
+        ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+        workingDirectory: repoPath,
+      );
+      if (result.exitCode == 0) {
+        final commonDir = (result.stdout as String).trim();
+        if (commonDir.isNotEmpty) {
+          mainRepoPath = p.dirname(commonDir);
+        }
+      }
+    } catch (_) {}
+    final repoKey = _normalizeSelectionStoragePath(mainRepoPath);
+    final worktreeKey = _normalizeSelectionStoragePath(repoPath);
+    return '$repoKey::$worktreeKey';
+  }
+
+  Map<String, Set<String>> _selectionSnapshot() {
+    final snapshot = <String, Set<String>>{
+      for (final entry in _includedByContextKey.entries)
+        entry.key: Set<String>.from(entry.value),
+    };
+    final currentKey = _draftKey;
+    if (currentKey != null) {
+      snapshot[currentKey] = Set<String>.from(_includedPaths);
+    }
+    return snapshot;
+  }
+
+  Map<String, List<String>> _selectionSnapshotJson(
+    Map<String, Set<String>> snapshot,
+  ) {
+    final orderedKeys = snapshot.keys.toList()..sort();
+    final encoded = <String, List<String>>{};
+    for (final key in orderedKeys) {
+      final paths = snapshot[key]!.toList()..sort();
+      encoded[key] = paths;
+    }
+    return encoded;
+  }
+
+  String _selectionPersistenceFingerprint(String scopeKey) {
+    return jsonEncode({
+      'scope': scopeKey,
+      'contexts': _selectionSnapshotJson(_selectionSnapshot()),
+    });
+  }
+
+  Map<String, Set<String>> _decodeSelectionSnapshot(String? raw) {
+    if (raw == null || raw.isEmpty) {
+      return const <String, Set<String>>{};
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      final rawContexts = decoded is Map<String, dynamic>
+          ? (decoded['contexts'] is Map ? decoded['contexts'] as Map : decoded)
+          : null;
+      if (rawContexts == null) {
+        return const <String, Set<String>>{};
+      }
+      final out = <String, Set<String>>{};
+      for (final entry in rawContexts.entries) {
+        final value = entry.value;
+        if (value is! List) continue;
+        final paths = <String>{};
+        for (final item in value) {
+          if (item is String && item.isNotEmpty) {
+            paths.add(item);
+          }
+        }
+        out[entry.key.toString()] = paths;
+      }
+      return out;
+    } catch (_) {
+      return const <String, Set<String>>{};
+    }
+  }
+
+  Future<void> _persistSelectionSnapshotForScope(
+    String scopeKey,
+    Map<String, Set<String>> snapshot,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final prefKey = _selectionPrefsKey(scopeKey);
+      if (snapshot.isEmpty) {
+        await prefs.remove(prefKey);
+        return;
+      }
+      await prefs.setString(
+        prefKey,
+        jsonEncode({
+          'version': 1,
+          'contexts': _selectionSnapshotJson(snapshot),
+        }),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _persistSelectionStateNow() async {
+    final scopeKey = _selectionStorageScopeKey;
+    if (scopeKey == null) {
+      return;
+    }
+    await _persistSelectionSnapshotForScope(scopeKey, _selectionSnapshot());
+  }
+
+  void _scheduleSelectionPersistence() {
+    if (!_selectionStorageLoaded || _selectionStorageScopeKey == null) {
+      return;
+    }
+    _selectionPersistDebounce?.cancel();
+    _selectionPersistDebounce = Timer(const Duration(milliseconds: 250), () {
+      unawaited(_persistSelectionStateNow());
+    });
+  }
+
+  void _flushSelectionPersistenceBestEffort() {
+    _selectionPersistDebounce?.cancel();
+    _selectionPersistDebounce = null;
+    final scopeKey = _selectionStorageScopeKey;
+    if (!_selectionStorageLoaded || scopeKey == null) {
+      return;
+    }
+    final snapshot = _selectionSnapshot();
+    unawaited(_persistSelectionSnapshotForScope(scopeKey, snapshot));
+  }
+
+  void _resetSelectionScopeState() {
+    _draftKey = null;
+    _includedPaths.clear();
+    _includedByContextKey.clear();
+    _selectedDiffPath = null;
+    _inspectionDiffPath = null;
+    _visibleDiffPath = null;
+    _diffDocument = null;
+    _diffLoading = false;
+    _diffError = null;
+    _multiDiffScopeKey = null;
+    _multiDiffDocument = null;
+    _multiDiffLoading = false;
+    _multiDiffError = null;
+    _multiDiffSections = const [];
+    _multiDiffCurrentPath = null;
+    _multiDiffJumpLineIndex = null;
+    _actionError = null;
+    _actionMessage = null;
+    _clearReviewState();
+  }
+
+  Future<void> _loadSelectionStateForRepo(String repoPath) async {
+    final repoState = context.read<RepositoryState>();
+    final requestId = ++_selectionLoadRequestId;
+    final scopeKey = await _resolveSelectionStorageScopeKey(repoPath);
+    final prefs = await SharedPreferences.getInstance();
+    final restored = _decodeSelectionSnapshot(
+      prefs.getString(_selectionPrefsKey(scopeKey)),
+    );
+    if (!mounted ||
+        _selectionRepoPath != repoPath ||
+        requestId != _selectionLoadRequestId) {
+      return;
+    }
+    final currentStatus = repoState.status;
+    setState(() {
+      _selectionStorageScopeKey = scopeKey;
+      _selectionStorageLoaded = true;
+      _selectionPersistFingerprint = null;
+      _draftKey = null;
+      _includedPaths.clear();
+      _includedByContextKey
+        ..clear()
+        ..addAll(restored);
+      if (currentStatus != null) {
+        _syncDraftFromStatus(currentStatus);
+      }
+    });
   }
 
   void _cancelPendingLogosRerank() {
@@ -473,6 +671,7 @@ class _ChangesPageState extends State<ChangesPage> {
   void dispose() {
     _undoTimer?.cancel();
     _commitDraftSaveDebounce?.cancel();
+    _flushSelectionPersistenceBestEffort();
     // Flush on dispose so closing the app doesn't lose the draft.
     final repo = _lastDraftRepoPath;
     final branch = _lastDraftBranch;
@@ -1484,9 +1683,11 @@ class _ChangesPageState extends State<ChangesPage> {
         final base = row * p;
         final qRe = Float64List(p);
         final qIm = Float64List(p);
+        final ri = table.kRi;
         for (var j = 0; j < p; j++) {
-          qRe[j] = table.kRe[base + j];
-          qIm[j] = table.kIm[base + j];
+          final v = ri[base + j];
+          qRe[j] = v.x;
+          qIm[j] = v.y;
         }
         // Semantic threshold is tighter than the panel's lookup
         // because we're making a suggestion the user can one-click
@@ -3497,7 +3698,30 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     if (repoPath == null) {
+      if (_selectionRepoPath != null) {
+        _flushSelectionPersistenceBestEffort();
+        _selectionRepoPath = null;
+        _selectionStorageScopeKey = null;
+        _selectionStorageLoaded = false;
+        _selectionPersistFingerprint = null;
+        _resetSelectionScopeState();
+      }
       return const AppStatusView.noRepository();
+    }
+
+    if (_selectionRepoPath != repoPath) {
+      _flushSelectionPersistenceBestEffort();
+      _selectionRepoPath = repoPath;
+      _selectionStorageScopeKey = null;
+      _selectionStorageLoaded = false;
+      _selectionPersistFingerprint = null;
+      _resetSelectionScopeState();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _selectionRepoPath != repoPath) {
+          return;
+        }
+        _loadSelectionStateForRepo(repoPath);
+      });
     }
 
     // Kick off a coupling-matrix compute whenever the observable repo state
@@ -3620,6 +3844,15 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     _syncDraftFromStatus(status);
+
+    if (_selectionStorageLoaded && _selectionStorageScopeKey != null) {
+      final fingerprint =
+          _selectionPersistenceFingerprint(_selectionStorageScopeKey!);
+      if (_selectionPersistFingerprint != fingerprint) {
+        _selectionPersistFingerprint = fingerprint;
+        _scheduleSelectionPersistence();
+      }
+    }
 
     if (status.files.isEmpty && _stashes.isEmpty && !_stashesLoading) {
       // The dirty-state surface below wraps its content in a DragTarget
@@ -8738,7 +8971,9 @@ class _RailStripe extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shader = themeDefinitionFor(tokens.id).shader;
-    final reduceMotion = context.watch<PreferencesState>().reduceMotion;
+    final reduceMotion = context.select<PreferencesState, bool>(
+      (s) => s.reduceMotion,
+    );
     // Width: 3 at rest, 5 when this row is the subject, 2.5..4.5 for peers
     // proportional to score. Creates a physical "bulge" toward strong
     // peers, fading toward weak ones.
@@ -9044,9 +9279,68 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
         .toDouble();
     final effectiveRadius = (radius * 0.75).clamp(0.0, 14.0);
 
+    // Hoist the TextField subtree into `child:` — it depends only on
+    // widget props (controller, focusNode, enabled, shapeMode,
+    // onChanged, hintText), all of which are stable across animation
+    // ticks. `_composerSignal` wakes this builder on pulse/bloom
+    // animation frames AND on controller/focus changes; only the
+    // border chrome and the hasText-driven button row actually need
+    // the rebuild. The field itself — about 40 lines of decoration —
+    // was being rebuilt for nothing on every pulse frame.
+    final textFieldSubtree = ScrollbarTheme(
+      data: ScrollbarThemeData(
+        thumbColor: WidgetStateProperty.all(
+          tokens.textMuted.withValues(alpha: 0.28),
+        ),
+        thickness: WidgetStateProperty.all(3),
+        radius: const Radius.circular(2),
+        // Hug the right edge — no inset margin
+        crossAxisMargin: 2,
+        mainAxisMargin: 4,
+      ),
+      child: Scrollbar(
+        controller: _scrollCtrl,
+        child: ScrollbarTheme(
+          data: ScrollbarThemeData(
+            thickness: WidgetStateProperty.all(0),
+          ),
+          child: TextField(
+            controller: widget.controller,
+            focusNode: widget.focusNode,
+            scrollController: _scrollCtrl,
+            enabled: widget.enabled,
+            minLines: 5,
+            maxLines: null,
+            onChanged: widget.onChanged,
+            cursorColor: tokens.accentBright,
+            textAlignVertical: TextAlignVertical.top,
+            style: TextStyle(
+              color: tokens.textStrong,
+              fontSize: 12,
+            ),
+            decoration: InputDecoration(
+              isCollapsed: true,
+              contentPadding: const EdgeInsets.fromLTRB(10, 10, 16, 10),
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              hintText: widget.hintText,
+              hintStyle: TextStyle(
+                color: tokens.textMuted.withValues(alpha: 0.55),
+                fontSize: 12,
+                fontStyle:
+                    widget.shapeMode ? FontStyle.italic : FontStyle.normal,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
     return AnimatedBuilder(
       animation: _composerSignal!,
-      builder: (context, child) {
+      child: textFieldSubtree,
+      builder: (context, textField) {
         final hasText = widget.controller.text.trim().isNotEmpty;
         final isFocused = widget.focusNode.hasFocus;
         final innerRadius = math.max(0.0, effectiveRadius - 1.5);
@@ -9091,60 +9385,9 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
               borderRadius: BorderRadius.circular(innerRadius),
               child: Stack(
                 children: [
-                  // TextField drives the Stack's intrinsic height now —
-                  // no Positioned.fill, so content growth pushes the
-                  // composer taller up to the ConstrainedBox ceiling.
-                  ScrollbarTheme(
-                    data: ScrollbarThemeData(
-                      thumbColor: WidgetStateProperty.all(
-                        tokens.textMuted.withValues(alpha: 0.28),
-                      ),
-                      thickness: WidgetStateProperty.all(3),
-                      radius: const Radius.circular(2),
-                      // Hug the right edge — no inset margin
-                      crossAxisMargin: 2,
-                      mainAxisMargin: 4,
-                    ),
-                    child: Scrollbar(
-                      controller: _scrollCtrl,
-                      child: ScrollbarTheme(
-                        data: ScrollbarThemeData(
-                          thickness: WidgetStateProperty.all(0),
-                        ),
-                        child: TextField(
-                          controller: widget.controller,
-                          focusNode: widget.focusNode,
-                          scrollController: _scrollCtrl,
-                          enabled: widget.enabled,
-                          minLines: 5,
-                          maxLines: null,
-                          onChanged: widget.onChanged,
-                          cursorColor: tokens.accentBright,
-                          textAlignVertical: TextAlignVertical.top,
-                          style: TextStyle(
-                            color: tokens.textStrong,
-                            fontSize: 12,
-                          ),
-                          decoration: InputDecoration(
-                            isCollapsed: true,
-                            contentPadding:
-                                const EdgeInsets.fromLTRB(10, 10, 16, 10),
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            hintText: widget.hintText,
-                            hintStyle: TextStyle(
-                              color: tokens.textMuted.withValues(alpha: 0.55),
-                              fontSize: 12,
-                              fontStyle: widget.shapeMode
-                                  ? FontStyle.italic
-                                  : FontStyle.normal,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  // TextField subtree hoisted via `child:`. See the
+                  // comment above the AnimatedBuilder for the rationale.
+                  textField!,
                   Positioned(
                     right: 7,
                     bottom: 7,

@@ -696,6 +696,20 @@ String? detectLikelySecretInPrompt(String prompt) {
 ///     `diff --git` / `--- ` / `Index:` header onward, drops anything
 ///     after the last `\n` that doesn't look like patch content).
 /// Never mangles the patch body itself — only trims the wrapping.
+/// Count lines in a string as `number of '\n' + 1` — the same semantics
+/// editors use (a trailing blank line still counts). Avoids the per-call
+/// `Match` allocation that `'\n'.allMatches(s).length` would trigger at
+/// every file emission on the hot prompt-builder path.
+@pragma('vm:prefer-inline')
+int _countLinesPlusOne(String content) {
+  var n = 1;
+  final len = content.length;
+  for (var i = 0; i < len; i++) {
+    if (content.codeUnitAt(i) == 0x0A) n++;
+  }
+  return n;
+}
+
 String _extractPatchFromModelOutput(String raw) {
   var text = raw.trim();
   // Strip a single outer fenced block if present: ```diff ... ```
@@ -2094,7 +2108,7 @@ Future<({String text, LogosEmissionRecord? record})>
           final f = File(p.join(repositoryPath, item.path));
           if (await f.exists()) {
             final content = await f.readAsString();
-            final lineCount = '\n'.allMatches(content).length + 1;
+            final lineCount = _countLinesPlusOne(content);
             final wellPill = well != null ? ' [well=$well]' : '';
             final block = item.tier == EmissionTier.full
                 ? '--- ${item.path} ($lineCount lines)$wellPill ---\n$content\n'
@@ -4339,7 +4353,7 @@ Future<String> _collectFileContext({
       final file = File(p.join(repositoryPath, filePath));
       if (!await file.exists()) continue;
       final content = await file.readAsString();
-      final lineCount = '\n'.allMatches(content).length + 1;
+      final lineCount = _countLinesPlusOne(content);
       // Engram semantic well annotation. The resolver populates
       // `engine.perFileKVectors` for every file the engine has
       // encoded (working-tree content → K-vector). When present, we
@@ -4924,7 +4938,7 @@ Future<({String text, LogosEmissionRecord? record})>
         final file = File(p.join(repositoryPath, item.path));
         if (!await file.exists()) continue;
         final content = await file.readAsString();
-        final lineCount = '\n'.allMatches(content).length + 1;
+        final lineCount = _countLinesPlusOne(content);
         if (item.tier == EmissionTier.full) {
           final fullBlock = '$header\n$content\n';
           if (fullBlock.length <= remaining) {

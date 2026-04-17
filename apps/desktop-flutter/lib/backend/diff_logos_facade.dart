@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show ChangeNotifier, setEquals;
+import 'package:flutter/foundation.dart'
+    show ChangeNotifier, Listenable, setEquals;
 import 'package:path/path.dart' as p;
 
 import '../diagnostics/diagnostics_state.dart';
@@ -203,6 +204,18 @@ class DiffLogosHunkSignal {
   });
 }
 
+/// Internal fan-out notifier used by [DiffLogosSession] to expose a
+/// publicly-listenable channel without leaking `notifyListeners` as a
+/// public API. One instance per granularity level — snapshot (heavy,
+/// rare) vs per-file context (light, frequent) — so consumers can
+/// subscribe to only the signal they care about. See Grimoire XV
+/// (coherency granule) applied at the state-notifier layer.
+class _SubNotifier extends ChangeNotifier {
+  void fire() {
+    if (hasListeners) notifyListeners();
+  }
+}
+
 class DiffLogosSession extends ChangeNotifier {
   static const DiffLogosShape _emptyShape = DiffLogosShape(
     regime: LogosRegime.uncategorised,
@@ -220,8 +233,32 @@ class DiffLogosSession extends ChangeNotifier {
   final Set<String> _subscribedFiles = <String>{};
   final Map<String, Future<DiffFileContextPlan>> _contextInflightByPath = {};
 
+  /// Snapshot-level change notifier: fires when the top-level diff
+  /// analysis (shape / filesByPath / hunksByKey / relatedJumps /
+  /// loading state / error) changes. Rare; one fire per refresh.
+  final _SubNotifier _snapshotNotifier = _SubNotifier();
+
+  /// Per-file-context change notifier: fires when any file's
+  /// [DiffFileContextPlan] is materialised or invalidated. Frequent —
+  /// one fire per async file-context completion during a refresh.
+  /// Consumers that only render snapshot data should listen to
+  /// [snapshotListenable] instead to avoid rebuilding on every
+  /// per-file arrival.
+  final _SubNotifier _contextNotifier = _SubNotifier();
+
+  /// Listenable for the snapshot channel. See [_snapshotNotifier].
+  Listenable get snapshotListenable => _snapshotNotifier;
+
+  /// Listenable for the per-file-context channel. See
+  /// [_contextNotifier].
+  Listenable get contextListenable => _contextNotifier;
+
   Future<void> _ready = Future<void>.value();
-  Timer? _notifyTimer;
+  // Per-channel debounce timers. Previously both channels shared a
+  // single `_notifyTimer`; `_notifyNow` cancelling that timer would
+  // silently drop any pending per-file context fire, and the shell
+  // never saw the corresponding `_contextRevision` bump.
+  Timer? _contextNotifyTimer;
   int _epoch = 0;
   int _snapshotVersion = 0;
   int _contextRevision = 0;
@@ -478,8 +515,14 @@ class DiffLogosSession extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _notifyTimer?.cancel();
+    _contextNotifyTimer?.cancel();
     _contextInflightByPath.clear();
+    // super.dispose() asserts `!hasListeners` in debug; attached
+    // listeners belong to the shell which detaches in its own
+    // dispose. We intentionally leave the sub-notifiers un-disposed
+    // here to avoid racing the shell's detach during a combined
+    // teardown — they are owned by this session and are GC-eligible
+    // alongside it once the shell releases its listeners.
     super.dispose();
   }
 
@@ -487,20 +530,40 @@ class DiffLogosSession extends ChangeNotifier {
     if (_disposed) {
       return;
     }
-    _notifyTimer?.cancel();
-    _notifyTimer = null;
+    // Snapshot-level fires are always accompanied by a bump of
+    // `_snapshotVersion`, so the snapshot channel is the truth; the
+    // session-level `notifyListeners()` stays so any remaining
+    // legacy listeners keep working. Grimoire XV: consumers that
+    // only care about the snapshot attach to [snapshotListenable]
+    // instead of the whole session.
+    //
+    // If a debounced context fire is pending, flush it eagerly as
+    // part of this broadcast — the snapshot refresh always observes
+    // whatever context-revision progress has already been made, and
+    // losing it here (as the previous shared-timer design did) caused
+    // context-only listeners to miss per-file completions that were
+    // batched into a cancelled timer.
+    final hadPendingContext = _contextNotifyTimer != null;
+    _contextNotifyTimer?.cancel();
+    _contextNotifyTimer = null;
+    _snapshotNotifier.fire();
+    if (hadPendingContext) _contextNotifier.fire();
     notifyListeners();
   }
 
   void _notifyContextReady() {
-    if (_disposed || _notifyTimer != null) {
+    if (_disposed || _contextNotifyTimer != null) {
       return;
     }
-    _notifyTimer = Timer(const Duration(milliseconds: 12), () {
-      _notifyTimer = null;
+    _contextNotifyTimer = Timer(const Duration(milliseconds: 12), () {
+      _contextNotifyTimer = null;
       if (_disposed) {
         return;
       }
+      // Fire the per-file-context channel ONLY. Consumers listening
+      // to [snapshotListenable] don't wake up on per-file context
+      // completions — which is the whole point of the split.
+      _contextNotifier.fire();
       notifyListeners();
     });
   }

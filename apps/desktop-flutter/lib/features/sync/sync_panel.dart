@@ -143,9 +143,29 @@ class _SyncPanelState extends State<SyncPanel> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final repo = context.watch<RepositoryState>();
-    final repoPath = repo.activePath;
-    final status = repo.status;
+    // Narrow the RepositoryState subscription to the four fields the
+    // sync panel actually rebuilds against. `repo` below is the
+    // `context.read` view used for mutating methods and passed into
+    // helpers that expect the full instance — `read` doesn't
+    // subscribe, so it doesn't reintroduce a whole-notifier rebuild.
+    final repoSnapshot = context.select<
+        RepositoryState,
+        ({
+          String? path,
+          RepositoryStatus? status,
+          bool loading,
+          String? error,
+        })>(
+      (s) => (
+        path: s.activePath,
+        status: s.status,
+        loading: s.statusLoading,
+        error: s.statusError,
+      ),
+    );
+    final repoPath = repoSnapshot.path;
+    final status = repoSnapshot.status;
+    final repo = context.read<RepositoryState>();
     final action = _describeAction(status);
     final busy = _syncRunning || _fetchRunning;
 

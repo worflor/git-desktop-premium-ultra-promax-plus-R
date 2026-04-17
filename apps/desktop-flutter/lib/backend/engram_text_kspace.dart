@@ -123,20 +123,23 @@ List<FileSimilarity> nearestRowsInTable(
   if (qNorm <= 0) return const [];
 
   final n = table.n;
-  final kRe = table.kRe;
-  final kIm = table.kIm;
+  final ri = table.kRi;
 
   // Streaming top-K: keep a bounded list sorted ascending by
   // similarity so the head is the current worst-kept. Cheap for small
   // topK — the muse pipeline caps this at a dozen or so.
+  // Grimoire XIV: interleaved re/im per pair delivers both
+  // components in one fetch, collapsing what used to be two disjoint
+  // Float64List streams into a single Float64x2List stride.
   final kept = <FileSimilarity>[];
   for (var row = 0; row < n; row++) {
     final base = row * p;
     var dotRe = 0.0;
     var rowNormSq = 0.0;
     for (var j = 0; j < p; j++) {
-      final ar = kRe[base + j];
-      final ai = kIm[base + j];
+      final a = ri[base + j];
+      final ar = a.x;
+      final ai = a.y;
       final br = qRe[j];
       final bi = qIm[j];
       dotRe += ar * br + ai * bi;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../backend/git.dart';
@@ -10,6 +12,15 @@ class RepositoryState extends ChangeNotifier {
   String? _statusError;
   List<String> _recentPaths = [];
   int _statusRequestId = 0;
+  Timer? _statusLoadingPublish;
+
+  /// Threshold before a loading state is published. Most `git status`
+  /// probes complete in a few ms on a warm repo; publishing
+  /// `_statusLoading = true` immediately would flash a spinner in
+  /// every consumer on each refresh. This delay folds the common
+  /// fast-path down to a single `notifyListeners()` (data only), while
+  /// still surfacing a spinner on legitimately slow probes.
+  static const Duration _loadingPublishDelay = Duration(milliseconds: 120);
 
   String? get activePath => _activePath;
   RepositoryStatus? get status => _status;
@@ -99,9 +110,21 @@ class RepositoryState extends ChangeNotifier {
     if (path == null) return;
     final requestId = ++_statusRequestId;
 
+    // Flip `_statusLoading` internally but don't broadcast yet — if
+    // the probe resolves within [_loadingPublishDelay], consumers
+    // never see the transient loading state and the whole refresh
+    // collapses into a single `notifyListeners()`. Previously the
+    // loading flip fired on every tick and caused every widget
+    // subscribed to `RepositoryState` to rebuild twice per refresh.
     _statusLoading = true;
     _statusError = null;
-    notifyListeners();
+    _statusLoadingPublish?.cancel();
+    _statusLoadingPublish = Timer(_loadingPublishDelay, () {
+      _statusLoadingPublish = null;
+      if (_activePath != path || requestId != _statusRequestId) return;
+      if (!_statusLoading) return; // already resolved — no spinner
+      notifyListeners();
+    });
 
     try {
       final result = await getRepositoryStatus(path);
@@ -124,6 +147,23 @@ class RepositoryState extends ChangeNotifier {
       _status = null;
       _statusError = error.toString();
     }
+    // Cancel the pending loading-publish: if we beat the threshold
+    // this is the ONLY notify consumers see; otherwise it's the
+    // second (data-arrived) notify and the timer already fired once.
+    _statusLoadingPublish?.cancel();
+    _statusLoadingPublish = null;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _statusLoadingPublish?.cancel();
+    _statusLoadingPublish = null;
+    // Clear the in-flight loading flag so any late observer that
+    // reads state after dispose (possible when an ancestor provider
+    // outlives its widget tree by a frame) sees a coherent "not
+    // loading" state instead of a permanent spinner-trigger.
+    _statusLoading = false;
+    super.dispose();
   }
 }

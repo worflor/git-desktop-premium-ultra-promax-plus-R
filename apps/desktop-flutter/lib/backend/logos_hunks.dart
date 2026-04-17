@@ -574,6 +574,15 @@ CsrGraph _buildHunkGraph({
   // with the Jaccard evidence held at its "zero overlap, single
   // witness" baseline of log(1+1) = ln(2).
   if (engramKVectors != null) {
+    // Walks every pair (i, j) that has K-vectors and wasn't already
+    // scored in pass 1. Cross-file pairs are INCLUDED here on purpose:
+    // the H_file pass below uses file-level φ coupling, which is pair-
+    // uniform within a file pair and does not capture hunk-level
+    // K-vector similarity across files. A lone renamed helper in file A
+    // that semantically clones a helper in file B has no Jaccard
+    // overlap and weak file-level φ coupling, yet produces a strong
+    // engram cosine — that's the cross-file semantic bridge this pass
+    // exists to admit. The 1/e cosine gate keeps the edge count small.
     for (var i = 0; i < n; i++) {
       final kvi = engramKVectors[i];
       if (kvi == null) continue;
@@ -581,7 +590,6 @@ CsrGraph _buildHunkGraph({
       for (var j = i + 1; j < n; j++) {
         final kvj = engramKVectors[j];
         if (kvj == null) continue;
-        // Skip pairs already scored in pass 1.
         if (alreadyBonded != null && alreadyBonded.containsKey(j)) continue;
         final cos = EngramHunkEncoder.cosine(kvi, kvj);
         if (cos < engramOnlyThreshold) continue;
@@ -590,10 +598,10 @@ CsrGraph _buildHunkGraph({
                 .toDouble());
         // Self-normalised engram-only weight. With Jaccard evidence =
         // ln(2) (the zero-overlap baseline), the blend collapses to:
-        //   weight = cos Â· engEvidence / (engEvidence + ln2)
+        //   weight = cos · engEvidence / (engEvidence + ln2)
         // which tends to `cos` as evidence grows and to `0` when
-        // evidence is tiny â€” exactly the "confidence-gated signal"
-        // shape the Born mixer uses on its axes.
+        // evidence is tiny — the "confidence-gated signal" shape the
+        // Born mixer uses on its axes.
         final selfNorm = engEvidence / (engEvidence + math.ln2);
         addEdge(i, j, wSym * cos * selfNorm);
       }

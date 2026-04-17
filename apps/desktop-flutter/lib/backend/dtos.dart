@@ -21,6 +21,17 @@ class RepositoryStatusFile {
       gitStatusCodeIsUntracked(staged) || gitStatusCodeIsUntracked(unstaged);
   bool get isConflicted => stagedCode == 'U' || unstagedCode == 'U';
   bool get isStagedAddition => stagedCode == 'A';
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RepositoryStatusFile &&
+          other.path == path &&
+          other.staged == staged &&
+          other.unstaged == unstaged;
+
+  @override
+  int get hashCode => Object.hash(path, staged, unstaged);
 }
 
 String canonicalGitStatusCode(
@@ -114,6 +125,38 @@ class RepositoryStatus {
         files: (j['files'] as List? ?? [])
             .map((f) => RepositoryStatusFile.fromJson(f))
             .toList(),
+      );
+
+  /// Structural equality. Required so `context.select<RepositoryState,
+  /// RepositoryStatus?>` actually narrows rebuilds — every
+  /// `refreshStatus` parses fresh JSON and produces a new instance,
+  /// and without `==` the consumer rebuild on every tick regardless
+  /// of whether anything meaningfully changed.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! RepositoryStatus) return false;
+    if (other.branch != branch) return false;
+    if (other.upstream != upstream) return false;
+    if (other.ahead != ahead) return false;
+    if (other.behind != behind) return false;
+    if (other.files.length != files.length) return false;
+    for (var i = 0; i < files.length; i++) {
+      if (other.files[i] != files[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        branch,
+        upstream,
+        ahead,
+        behind,
+        // File-list identity collapsed via `Object.hashAll` so two
+        // equally-shaped statuses hash the same without materialising
+        // a new list.
+        Object.hashAll(files),
       );
 }
 
@@ -437,13 +480,13 @@ class RepositoryXrayHotspotData {
   /// disproportionately large share of the repo's co-change mass
   /// flows through it, relative to how often it's actually touched.
   /// The bridge-species file — quiet on its own, but losing it
-  /// collapses clusters. Derived as:
-  ///   keystoneScore = pull / log1p(touchCount)
-  /// where `pull` is the sum of the file's Jaccard couplings to its
-  /// neighbourhood (read from the co-change matrix). High pull with
-  /// low touch count means many clusters depend on this file without
-  /// the file itself being busy. Null when no coupling data was
-  /// available at snapshot time.
+  /// collapses clusters. When a Logos engine is available this is the
+  /// spectral centrality `Σⱼ uⱼ[f]²·e^{−t·λⱼ}` divided by log1p(touch)
+  /// — an operator-level "how much heat localises here per unit
+  /// activity"; otherwise it falls back to Jaccard-pull per touch.
+  /// High pull with low touch count means many clusters depend on
+  /// this file without the file itself being busy. Null when no
+  /// coupling data was available at snapshot time.
   final double? keystoneScore;
 
   /// True when [keystoneScore] is in the top band of this repo's own
@@ -453,10 +496,13 @@ class RepositoryXrayHotspotData {
   /// both surface their top keystones without sharing thresholds.
   final bool isKeystone;
 
-  /// Top co-changed files for this hotspot, ranked by Jaccard. Capped
-  /// to a small N for prompt-size + render-time. Drives the Map view's
-  /// coupling overlay (lines from the selected tile to its strongest
-  /// co-changers). Empty when the file has no co-change neighbours.
+  /// Top co-changed files for this hotspot, ranked by coupling
+  /// strength. Capped to a small N for prompt-size + render-time.
+  /// Drives the Map view's coupling overlay (lines from the selected
+  /// tile to its strongest co-changers). When a Logos engine is
+  /// available this reads directly from the weighted coupling CSR
+  /// graph; otherwise it falls back to per-commit Jaccard. Empty when
+  /// the file has no co-change neighbours.
   final List<String> coupledTo;
 
   /// Currently-alive mass = touchCount × exp(-ageDays / repoHalfLife).
@@ -465,6 +511,15 @@ class RepositoryXrayHotspotData {
   /// paths shrink in proportion to how dormant they are. Defaults to
   /// raw touchCount when alive-mass data isn't available.
   final double aliveMass;
+
+  /// Architectural community id assigned by Shi–Malik k-way spectral
+  /// clustering on the low-frequency eigenspace of the coupling
+  /// graph's normalised Laplacian. Two files with the same label
+  /// diffuse onto each other faster than they diffuse onto outsiders —
+  /// the math's natural partitioning, independent of the directory
+  /// tree. `-1` when no Logos engine / spectral basis was available
+  /// (tiny repos, test fixtures).
+  final int spectralCommunity;
 
   const RepositoryXrayHotspotData({
     required this.kind,
@@ -478,6 +533,7 @@ class RepositoryXrayHotspotData {
     this.isKeystone = false,
     this.coupledTo = const [],
     this.aliveMass = 0.0,
+    this.spectralCommunity = -1,
   });
 }
 
@@ -641,12 +697,30 @@ class RepositoryXrayFlowData {
   final double structuralStress;
   final double confidence;
 
+  /// Spectral participation entropy of the repo's recent-activity focus
+  /// under the heat-kernel at a canonical temperature, normalised to
+  /// [0, 1] by `log(k)`. 0 = the recent work sits on a single spectral
+  /// mode (maximally focused — one coherent sweep); 1 = uniform across
+  /// modes (maximally diffuse — scatter-shot). Reads the Logos engine's
+  /// cached spectral basis; 0 when no engine/basis is available.
+  final double focusEntropy;
+
+  /// Normalised isospectral fingerprint of the coupling graph:
+  /// `Z(t) = Σⱼ e^{−t·λⱼ}` divided by `k` so the value sits in [0, 1].
+  /// Two repos with the same coupling shape share the same trace (Kac,
+  /// "Can one hear the shape of a drum?"). A PR or refactor that shifts
+  /// this materially is changing architectural shape, not just file
+  /// contents. Zero when no Logos engine/basis is available.
+  final double heatTrace;
+
   const RepositoryXrayFlowData({
     required this.gradientMass,
     required this.curlMass,
     required this.harmonicMass,
     required this.structuralStress,
     required this.confidence,
+    this.focusEntropy = 0.0,
+    this.heatTrace = 0.0,
   });
 
   static const empty = RepositoryXrayFlowData(

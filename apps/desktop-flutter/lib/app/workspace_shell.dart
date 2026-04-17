@@ -76,7 +76,9 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final syncMaxHeight = size.height > 64 ? size.height - 64 : size.height;
-    final activeRepoPath = context.watch<RepositoryState>().activePath;
+    final activeRepoPath = context.select<RepositoryState, String?>(
+      (s) => s.activePath,
+    );
     if (_lastRepoPathForXray != activeRepoPath) {
       _lastRepoPathForXray = activeRepoPath;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -788,7 +790,19 @@ class _DeskRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final worktreeState = context.watch<WorktreeState>();
-    final repoState = context.watch<RepositoryState>();
+    // Narrow the RepositoryState subscription to the two fields the
+    // desk strip actually rebuilds against (`activePath` + `status`).
+    // `repoState` below is `context.read` — used for mutating calls
+    // (`setActivePath`, `refreshStatus`) and passed into helper flows
+    // that expect the full instance. Because `read` doesn't subscribe,
+    // the only rebuild trigger is the narrow select above.
+    final repoSnap = context
+        .select<RepositoryState, ({String? path, RepositoryStatus? status})>(
+      (s) => (path: s.activePath, status: s.status),
+    );
+    final repoActivePath = repoSnap.path;
+    final repoStatus = repoSnap.status;
+    final repoState = context.read<RepositoryState>();
     final activeNormalized =
         activeRepoPath?.replaceAll('\\', '/').toLowerCase();
     final activeDesk = worktreeState.activeDesk;
@@ -849,7 +863,7 @@ class _DeskRow extends StatelessWidget {
                   desk: desk,
                   highlightSyncTarget: desk.path == suggestedSyncTargetPath,
                   onTap: () {
-                    if (desk.path != repoState.activePath) {
+                    if (desk.path != repoActivePath) {
                       repoState.setActivePath(desk.path, addToRecents: false);
                     }
                   },
@@ -1643,15 +1657,24 @@ class _DeskTabState extends State<_DeskTab>
 
     // Watch the desk-PR state so the tab can carry a "has local PR"
     // glyph without polling — the context-menu options change shape
-    // alongside it.
-    final hasLocalPr = widget.desk.branch != null &&
-        context.watch<DeskPrState>().prFor(widget.desk.branch!) != null;
+    // alongside it. Narrowed to a single bool so the tab no longer
+    // rebuilds on unrelated PR mutations (audit entries, review
+    // comments, status ticks) — only when this branch's PR-presence
+    // flips.
+    final branch = widget.desk.branch;
+    final hasLocalPr = branch != null &&
+        context.select<DeskPrState, bool>(
+          (s) => s.prFor(branch) != null,
+        );
     // Per-desk activity probes — already-cached on WorktreeState so
     // this is a synchronous lookup with no I/O on the build path.
     // Drives the dirty / ahead / behind / last-touched chrome that
-    // makes the desk row a status map at a glance.
-    final activity =
-        context.watch<WorktreeState>().activityFor(widget.desk.path);
+    // makes the desk row a status map at a glance. Narrowed so the
+    // tab only rebuilds when THIS desk's activity changes, not on
+    // every other desk's poll tick.
+    final activity = context.select<WorktreeState, DeskActivity?>(
+      (s) => s.activityFor(widget.desk.path),
+    );
     final dirtyN = widget.desk.dirtyFileCount;
     final aheadN = activity?.ahead ?? 0;
     final behindN = activity?.behind ?? 0;

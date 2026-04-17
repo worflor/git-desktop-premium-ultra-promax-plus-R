@@ -1932,8 +1932,11 @@ class _HistoryPageState extends State<HistoryPage> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final repo = context.watch<RepositoryState>();
-    final repoPath = repo.activePath;
+    // History page only rebuilds when the active repo changes —
+    // `git status` ticks no longer invalidate the whole history tree.
+    final repoPath = context.select<RepositoryState, String?>(
+      (s) => s.activePath,
+    );
 
     if (repoPath == null) {
       return const AppStatusView.noRepository();

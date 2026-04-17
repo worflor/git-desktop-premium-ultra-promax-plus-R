@@ -2697,8 +2697,12 @@ class _BranchesPageState extends State<BranchesPage> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final repo = context.watch<RepositoryState>();
-    final repoPath = repo.activePath;
+    // BranchesPage body only needs the active path at the outer level.
+    // Inner surfaces (_buildPrRow, _buildIssuesBody) narrow to the
+    // fields they actually use via their own `context.select` calls.
+    final repoPath = context.select<RepositoryState, String?>(
+      (s) => s.activePath,
+    );
 
     if (repoPath == null) {
       return const AppStatusView.noRepository();
@@ -3058,7 +3062,14 @@ class _BranchesPageState extends State<BranchesPage> {
             (state) => state.engineFor(repoPath),
           )
         : context.read<LogosGitState>().engineFor(repoPath);
-    final deskPrs = context.watch<DeskPrState>().all;
+    // Identity select on the backing map — each mutation in
+    // [DeskPrState] replaces `_byBranch` with a fresh instance, so the
+    // identity compare fires precisely on state moves without
+    // rebuilding on unrelated notifier activity.
+    final deskPrs =
+        context.select<DeskPrState, Map<String, DeskPr>>((s) => s.byBranch)
+            .values
+            .toList();
     if (isActive) {
       final warmToken = logosEngine == null
           ? null
@@ -3437,10 +3448,17 @@ class _BranchesPageState extends State<BranchesPage> {
     final pr = prs[i];
     final isLocalPr = localNumbers.contains(pr.number);
     final expanded = _expandedPrNumber == pr.number;
-    final matrix = context.watch<FileCouplingState>().matrixFor(repoPath);
+    // Narrow both watches to the single field each one actually needs.
+    // Previously a git.status tick fired full rebuilds of every PR row
+    // through two separate whole-notifier subscriptions.
+    final matrix = context.select<FileCouplingState, FileCouplingMatrix?>(
+      (s) => s.matrixFor(repoPath),
+    );
     // Local-only signals: working-tree status (for conflict pill)
     // and issues this PR closes (for the LINKS section).
-    final repoStatus = context.watch<RepositoryState>().status;
+    final repoStatus = context.select<RepositoryState, RepositoryStatus?>(
+      (s) => s.status,
+    );
     final detail = _prDetails[pr.number];
     final conflicts = detail == null
         ? const <String>{}
@@ -4105,12 +4123,18 @@ class _BranchesPageState extends State<BranchesPage> {
   Widget _buildIssuesBody(AppTokens t, String repoPath) {
     final status = _ghStatus;
     final deskIssues = context.watch<DeskIssueState>().all;
-    // Also watch DeskPrState so issue rows rebuild when a desk is promoted
-    // to a local PR or linked issues are edited from the PRs lens.
-    // Without this, `_buildIssueRow` reads DeskPrState.all via .read and
-    // serves stale "addressed by" cross-links until an unrelated signal
-    // triggers a rebuild.
-    context.watch<DeskPrState>();
+    // Track DeskPrState so issue rows rebuild when a desk is promoted
+    // to a local PR OR when any PR's linked-issues / verdict / state
+    // changes (cross-links in `_buildIssueRow` go stale otherwise).
+    //
+    // We select on the map reference, not its length: every mutation
+    // in [DeskPrState] (add/remove/retry/setStateFor/addComment) flows
+    // through `refreshFor` which assigns a fresh `_byBranch` Map. The
+    // identity compare fires precisely when any PR state moves, not on
+    // every unrelated notify. A length-only narrow (the previous try)
+    // silently missed in-place mutations like review-vote updates that
+    // keep the PR count stable.
+    context.select<DeskPrState, Map<String, DeskPr>>((s) => s.byBranch);
     if (_issuesLoading &&
         (_issues == null || _issues!.isEmpty) &&
         deskIssues.isEmpty) {

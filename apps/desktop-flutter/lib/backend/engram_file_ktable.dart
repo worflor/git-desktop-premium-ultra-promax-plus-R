@@ -53,8 +53,7 @@ class EngramFileKTable {
     required this.n,
     required this.paths,
     required Map<String, int> pathToRow,
-    required this.kRe,
-    required this.kIm,
+    required this.kRi,
     required this.meanRms,
     required this.vocabHits,
     required this.wellIdx,
@@ -77,11 +76,17 @@ class EngramFileKTable {
   /// reads are pointer-bumping array loads.
   final Map<String, int> _pathToRow;
 
-  /// K-vector real parts, row-major: `kRe[row * pairs + pair]`.
-  final Float64List kRe;
-
-  /// K-vector imaginary parts, row-major: `kIm[row * pairs + pair]`.
-  final Float64List kIm;
+  /// Interleaved K-vector as `Float64x2List` (grimoire XIV / AoSoA):
+  /// one vector lane per pair, with real in `.x` and imaginary in `.y`.
+  /// Addressed as `kRi[row * pairs + pair]`.
+  ///
+  /// Replaced the earlier two-column `kRe` + `kIm` storage because the
+  /// hot loop (`_cosineRows` inside `_EnAxis`) reads BOTH components
+  /// per pair; two separate arrays forced four disjoint cache-line
+  /// streams (re[a], im[a], re[b], im[b]). The interleaved layout
+  /// fuses re/im into one fetch per pair so a single cache line
+  /// carries up to four consecutive complex values at once.
+  final Float64x2List kRi;
 
   /// Per-row mean RMS of the AR(2) fit. f32 because this is a signal-
   /// quality indicator, not a precision-critical value.
@@ -170,8 +175,7 @@ class EngramFileKTable {
       n: 0,
       paths: const [],
       pathToRow: const {},
-      kRe: Float64List(0),
-      kIm: Float64List(0),
+      kRi: Float64x2List(0),
       meanRms: Float32List(0),
       vocabHits: Int32List(0),
       wellIdx: Int32List(0),
@@ -196,8 +200,7 @@ class EngramFileKTable {
 
     final paths = List<String>.filled(n, '', growable: false);
     final pathToRow = <String, int>{};
-    final kRe = Float64List(n * pairs);
-    final kIm = Float64List(n * pairs);
+    final kRi = Float64x2List(n * pairs);
     final meanRms = Float32List(n);
     final vocabHits = Int32List(n);
     final wellIdx = Int32List(n)..fillRange(0, n, kEngramNoWell);
@@ -211,12 +214,20 @@ class EngramFileKTable {
       paths[row] = path;
       pathToRow[path] = row;
 
-      // Bulk block-copy each row's K-vector into the column store.
-      // setRange is memcpy at the VM level; scalar loop would be per-
-      // element.
+      // Interleave kv.kRe/kv.kIm into the Float64x2List: one vector
+      // per pair, `.x = re`, `.y = im`. Per-element copy because the
+      // source layout is two separate Float64Lists — no memcpy short-
+      // cut exists for that→interleaved transition. The pair count
+      // is small (~150) so this is a fraction of the time the old
+      // setRange pair was spending on two larger copies, and this
+      // happens once per encoded row at build time, not on the hot
+      // query path.
       final base = row * pairs;
-      kRe.setRange(base, base + pairs, kv.kRe);
-      kIm.setRange(base, base + pairs, kv.kIm);
+      final srcRe = kv.kRe;
+      final srcIm = kv.kIm;
+      for (var j = 0; j < pairs; j++) {
+        kRi[base + j] = Float64x2(srcRe[j], srcIm[j]);
+      }
       meanRms[row] = kv.meanRms;
       vocabHits[row] = kv.vocabHits;
       final w = kv.well;
@@ -233,8 +244,7 @@ class EngramFileKTable {
       n: n,
       paths: List<String>.unmodifiable(paths),
       pathToRow: pathToRow,
-      kRe: kRe,
-      kIm: kIm,
+      kRi: kRi,
       meanRms: meanRms,
       vocabHits: vocabHits,
       wellIdx: wellIdx,

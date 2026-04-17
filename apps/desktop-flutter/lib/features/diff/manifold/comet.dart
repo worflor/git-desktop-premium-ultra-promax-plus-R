@@ -74,6 +74,20 @@ class Comet {
   final Color laneColor;
   final double phase;
   final CometShape shape;
+  /// Just-intonation wavelength ratio versus the tonic (anchor).
+  /// Comets picked from a consonant ratio (3/2, 4/3, …) reinforce
+  /// the anchor when both fire; comets at a more dissonant ratio
+  /// (9/8, 15/8) produce visible beat frequencies in the shader.
+  /// Defaults to 1.0 (unison) so legacy construction sites still
+  /// behave.
+  final double pitch;
+  /// Four-value timbre signature `(h1, h2, h3, phaseShift)`. The
+  /// first three are amplitudes of the first three harmonics; the
+  /// last doubles as per-source beat tempo and phase offset. Derived
+  /// from the comet's simhash PCA coefficients in the caller so
+  /// each source's wave *shape* encodes real evidence. Default
+  /// `[1, 0, 0, 0]` is a pure cosine tonic.
+  final List<double> harmonics;
   final Object? tag;
 
   const Comet({
@@ -84,6 +98,8 @@ class Comet {
     required this.laneColor,
     required this.phase,
     this.shape = CometShape.circle,
+    this.pitch = 1.0,
+    this.harmonics = const [1.0, 0.0, 0.0, 0.0],
     this.tag,
   });
 }
@@ -260,9 +276,9 @@ class CometField extends CustomPainter {
   final Offset anchor;
   final double staggerSpread;
 
-  /// When luminescence drops below this, the traveling pulse on flow
-  /// lines and the sonar pulse on comets are suppressed. Respects the
-  /// petrichor-plain intent that low-lum themes signal "no decoration".
+  /// When luminescence drops below this, the traveling pulse on
+  /// flow lines is suppressed. Respects the petrichor-plain intent
+  /// that low-lum themes signal "no decoration".
   static const double silentPulseThreshold = 0.18;
 
   const CometField({
@@ -430,9 +446,6 @@ class CometField extends CustomPainter {
   static double _coreRadius(double strength, double density, double tLocal) =>
       ((1.6 + 3.4 * strength) / math.sqrt(1 + 0.35 * density)) * tLocal;
 
-  static double _maxPulseRadius(double strength, double tLocal) =>
-      (18.0 + 28.0 * strength) * tLocal;
-
   double _strokeWidth(double base, double scale) {
     // edgeIntensity is not clamped from below — petrichor's 0 is
     // respected. Upper clamp keeps extreme themes from painting
@@ -455,12 +468,16 @@ class CometField extends CustomPainter {
       camera: camera,
     );
 
-    final pulseActive = luminescence >= silentPulseThreshold;
+    // Anchor pixel for bezier sag. Links curve toward it so the web
+    // reads as draping inward under gravity rather than as flat
+    // polyline chords.
+    final anchorPx = Offset(anchor.dx * size.width, anchor.dy * size.height);
 
-    // Pass 0: relationship links. Rendered first, so everything else
-    // sits on top. Peer links (hoverOnly=false) stay as a gossamer
-    // mesh at rest; focus tethers (hoverOnly=true) only appear when
-    // one of their endpoints is hovered.
+    // Pass 0: flowing connection web. Each link renders as a honey-
+    // gooey double-stroke (wider halo + narrower core) cubic bezier
+    // with energy particles drifting along it. Peer links are always
+    // visible at low alpha; focus tethers only appear while one of
+    // their endpoints is hovered.
     if (links.isNotEmpty) {
       final f = focusedIndex;
       for (final link in links) {
@@ -481,73 +498,90 @@ class CometField extends CustomPainter {
         final double alpha;
         if (link.hoverOnly) {
           if (!isFocused) continue;
-          alpha = (0.42 * link.strength * luminescence * progress)
-              .clamp(0.0, 0.7);
+          alpha = (0.55 * link.strength * luminescence * progress)
+              .clamp(0.0, 0.85);
         } else {
           final base = f == null
-              ? 0.12
-              : (isFocused ? 0.40 : 0.05);
+              ? 0.18
+              : (isFocused ? 0.50 : 0.06);
           alpha = (base * link.strength * luminescence * progress)
-              .clamp(0.0, 0.6);
+              .clamp(0.0, 0.75);
         }
         if (alpha <= 0.01) continue;
 
-        // Slight arc so links don't cross in a tangle. Pull the
-        // midpoint toward the scene anchor in pixel space — creates
-        // an organic bow toward the "gravitational" center.
         final a = lay.positions[link.fromIndex];
         final b = lay.positions[link.toIndex];
-        final anchorPx = Offset(anchor.dx * size.width, anchor.dy * size.height);
-        final mid = (a + b) * 0.5;
-        final bowed = mid + (anchorPx - mid) * 0.08;
 
+        // Cubic bezier draping toward the scene anchor — control
+        // points pulled a third of the way from each endpoint
+        // toward the anchor, giving a "hanging honey strand" sag.
+        final m1 = Offset.lerp(a, anchorPx, 0.22)!;
+        final c1 = Offset.lerp(a, m1, 0.55)!;
+        final m2 = Offset.lerp(b, anchorPx, 0.22)!;
+        final c2 = Offset.lerp(b, m2, 0.55)!;
         final path = Path()
           ..moveTo(a.dx, a.dy)
-          ..quadraticBezierTo(bowed.dx, bowed.dy, b.dx, b.dy);
+          ..cubicTo(c1.dx, c1.dy, c2.dx, c2.dy, b.dx, b.dy);
 
-        final w = (0.55 * edgeIntensity *
-                (lay.scales[link.fromIndex] + lay.scales[link.toIndex]) *
-                0.5)
-            .clamp(0.0, 1.6);
-        if (w <= 0.01) continue;
+        final scaleAvg =
+            (lay.scales[link.fromIndex] + lay.scales[link.toIndex]) * 0.5;
 
+        // Honey halo — wider, lower alpha. Gives thickness.
+        final haloWidth =
+            (2.4 * edgeIntensity * scaleAvg).clamp(0.5, 4.0);
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = link.color.withValues(alpha: alpha * 0.45)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = haloWidth
+            ..strokeCap = StrokeCap.round,
+        );
+
+        // Honey core — narrower, brighter.
+        final coreWidth =
+            (1.1 * edgeIntensity * scaleAvg).clamp(0.4, 2.2);
         canvas.drawPath(
           path,
           Paint()
             ..color = link.color.withValues(alpha: alpha)
             ..style = PaintingStyle.stroke
-            ..strokeWidth = w
+            ..strokeWidth = coreWidth
             ..strokeCap = StrokeCap.round,
         );
-      }
-    }
 
-    // Pass 1: sonar pulse rings (gated by luminescence — petrichor/
-    // other plain themes stay silent by design).
-    if (pulseActive) {
-      for (final i in lay.paintOrder) {
-        final c = comets[i];
-        final tLocal = lay.localTimes[i];
-        if (tLocal <= 0) continue;
-        if (c.coreMass <= 0.001) continue;
-
-        final pulseT = (breathT + c.phase) % 1.0;
-        final r = _maxPulseRadius(c.strength, tLocal) * pulseT * lay.scales[i];
-        if (r <= 0.5) continue;
-
-        final fade = (1.0 - pulseT);
-        final alpha =
-            (0.28 * fade * c.strength * luminescence).clamp(0.0, 0.6);
-        if (alpha <= 0.01) continue;
-
-        final w = _strokeWidth(0.8, lay.scales[i]);
-        if (w <= 0.01) continue;
-
-        final paint = Paint()
-          ..color = c.laneColor.withValues(alpha: alpha)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = w;
-        canvas.drawCircle(lay.positions[i], r, paint);
+        // Energy droplets flowing along the strand. Three particles
+        // staggered at 1/3 phase offsets; each fades in at the
+        // start and out at the end of its travel via a sin
+        // envelope so they don't pop at the endpoints.
+        final metrics = path.computeMetrics().toList();
+        if (metrics.isNotEmpty) {
+          final metric = metrics.first;
+          final len = metric.length;
+          if (len > 1.0) {
+            const droplets = 3;
+            for (var k = 0; k < droplets; k++) {
+              final phaseOffset = k / droplets;
+              final t = (breathT + phaseOffset + link.strength * 0.1) % 1.0;
+              final tangent =
+                  metric.getTangentForOffset(t * len);
+              if (tangent == null) continue;
+              // sin(πt) peaks at t=0.5 — droplets brightest mid-strand.
+              final envelope = math.sin(t * math.pi);
+              final droplAlpha =
+                  (alpha * 1.4 * envelope).clamp(0.0, 1.0);
+              if (droplAlpha <= 0.02) continue;
+              final droplRadius =
+                  (1.3 + 0.6 * link.strength) * scaleAvg;
+              canvas.drawCircle(
+                tangent.position,
+                droplRadius,
+                Paint()
+                  ..color = link.color.withValues(alpha: droplAlpha),
+              );
+            }
+          }
+        }
       }
     }
 
@@ -562,8 +596,9 @@ class CometField extends CustomPainter {
       if (r <= 0.5) continue;
 
       final isGhost = c.coreMass <= 0.001;
-      final alpha = ((0.40 + 0.30 * c.strength) * luminescence * tLocal)
-          .clamp(0.0, 0.95);
+      final alpha =
+          ((0.40 + 0.30 * c.strength) * luminescence * tLocal)
+              .clamp(0.0, 0.95);
       if (alpha <= 0.01) continue;
 
       final w = _strokeWidth(isGhost ? 1.0 : 1.1, lay.scales[i]);
@@ -589,7 +624,8 @@ class CometField extends CustomPainter {
 
       final coreR = _coreRadius(c.strength, lay.densities[i], tLocal) *
           lay.scales[i];
-      final alpha = ((0.88 * c.coreMass) * tLocal).clamp(0.0, 1.0);
+      final alpha = ((0.88 * c.coreMass) * tLocal)
+          .clamp(0.0, 1.0);
       final fill = Paint()..color = c.laneColor.withValues(alpha: alpha);
 
       switch (c.shape) {

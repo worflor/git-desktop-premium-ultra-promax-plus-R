@@ -16,10 +16,14 @@ class TitlebarStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final repo = context.watch<RepositoryState>();
+    // Titlebar only cares about the repo name. Narrowing the watch
+    // means every git.status tick no longer rebuilds the titlebar
+    // (which paints the window chrome on every frame otherwise).
+    final repoName = context.select<RepositoryState, String?>(
+      (s) => s.activeRepoName,
+    );
     final identity = context.appIdentity;
 
-    final repoName = repo.activeRepoName;
     final hasRepo = repoName != null;
 
     // border-bottom: 1px solid secondaryBtnBorder

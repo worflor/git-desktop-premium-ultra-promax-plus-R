@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import '../../backend/dtos.dart';
 import '../../backend/engram_fit.dart';
@@ -1652,6 +1653,14 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
   // normalizing affinity values into probabilities.
   final totalAffinityMass = corpusBaseline.values
       .fold<double>(0.0, (a, b) => a + b);
+  // Scratch buffers for the per-commit three-temperature recombination.
+  // Allocated once and reused across every commit in the loop below —
+  // each `basis.recombineInto` writes into these instead of handing out
+  // a fresh Float64List. With N commits and n nodes, this saves 3·N
+  // allocations of 8·n bytes (≈24 MB of transient heap at N=100, n=10k).
+  final phi05Vec = Float64List(engine.graph.n);
+  final phi10Vec = Float64List(engine.graph.n);
+  final phi20Vec = Float64List(engine.graph.n);
   for (final c in commits) {
     final d = detailsByHash[c.commitHash];
     if (d == null || d.files.isEmpty) continue;
@@ -1693,9 +1702,9 @@ Map<String, ({String label, double score})> _computeBorrowedLabels(
     }
     final basis = engine.buildBasisWeighted(sourceWeights);
     if (basis == null) continue;
-    final phi05Vec = basis.recombine(0.5);
-    final phi10Vec = basis.recombine(1.0);
-    final phi20Vec = basis.recombine(2.0);
+    basis.recombineInto(0.5, phi05Vec);
+    basis.recombineInto(1.0, phi10Vec);
+    basis.recombineInto(2.0, phi20Vec);
     // Geometric mean across scales. eps avoids log(0); files present
     // at only one scale contribute a small amount, files present at
     // all scales get the full geometric-mean lift.

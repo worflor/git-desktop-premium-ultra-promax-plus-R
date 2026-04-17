@@ -40,6 +40,28 @@ import '../../../backend/lru_cache.dart';
 import '../../../ui/motion.dart';
 import '../../../ui/tokens.dart';
 import 'comet.dart';
+import 'manifold_tuning.dart';
+
+/// Pitch for a related-file comet — maps the engine's relation
+/// flags to a just-intonation interval so hovering a file sounds
+/// (and visually beats) according to how close it actually is.
+double _pitchForRelated(DiffPinnedRelatedFile f) {
+  if (f.coupled && f.semantic) return JustIntonation.perfectFifth;
+  if (f.coupled) return JustIntonation.perfectFourth;
+  if (f.semantic) return JustIntonation.majorSecond;
+  return JustIntonation.majorSeventh;
+}
+
+/// Pitch for a transport-edge comet — strong pulls ring as perfect
+/// fifths, weak ones as major 2nds. The wave interference between
+/// the pinned file and a strong-pull target is more consonant than
+/// with a weak one.
+double _pitchForTransportEdge(double pull) {
+  if (pull >= ManifoldTuning.pullStrong) return JustIntonation.perfectFifth;
+  if (pull >= ManifoldTuning.pullMedium) return JustIntonation.perfectFourth;
+  if (pull >= ManifoldTuning.pullWeak) return JustIntonation.majorThird;
+  return JustIntonation.majorSecond;
+}
 
 /// Prefixed perspectives the user can slerp between. Order drives the
 /// chip row layout. Each one answers a distinct programmer question;
@@ -158,23 +180,22 @@ class _ManifoldPaneState extends State<ManifoldPane>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final shader = context.surfaceShader;
-    // Intro and slerp follow the active theme's motion character and
-    // respect the user's motion-rate preference for accessibility.
-    final introDesired = context.motion(shader.duration * 4);
+    Duration derived(int multiplier) =>
+        context.motion(shader.duration * multiplier);
+
+    final introDesired = derived(ManifoldTuning.introDurationMult);
     if (introDesired > Duration.zero && _intro.duration != introDesired) {
       _intro.duration = introDesired;
     }
-    // Slerp runs longer than ordinary state transitions — perspective
-    // shifts physically remap where comets sit, and we want the morph
-    // to feel like matter flowing through the manifold, not a
-    // flat-lerp snap.
-    final slerpDesired = context.motion(shader.duration * 5);
+    // Perspective morph physically remaps comet positions; longer
+    // slerp lets the user read the flow instead of a flat-lerp snap.
+    final slerpDesired = derived(ManifoldTuning.slerpDurationMult);
     if (slerpDesired > Duration.zero && _slerp.duration != slerpDesired) {
       _slerp.duration = slerpDesired;
     }
-    // Breath — if the user has disabled motion, stop the idle loop
-    // entirely; otherwise keep it in sync with the motion rate.
-    final breathTarget = context.motion(const Duration(milliseconds: 5000));
+    // Breath — theme-independent ambient drift; motion rate 0
+    // disables it entirely.
+    final breathTarget = context.motion(ManifoldTuning.breathCycle);
     if (breathTarget <= Duration.zero) {
       if (_breath.isAnimating) _breath.stop();
     } else {
@@ -250,7 +271,12 @@ class _ManifoldPaneState extends State<ManifoldPane>
     final shader = ctx.surfaceShader;
     final t = widget.tokens;
     return AnimatedBuilder(
-      animation: Listenable.merge([_intro, _breath, _slerp, _landing]),
+      animation: Listenable.merge([
+        _intro,
+        _breath,
+        _slerp,
+        _landing,
+      ]),
       builder: (_, __) {
         final introT = _intro.value;
         final breathT = _breath.value;
@@ -266,7 +292,7 @@ class _ManifoldPaneState extends State<ManifoldPane>
         return Padding(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
           child: SizedBox(
-            height: 202,
+            height: ManifoldTuning.paneHeight,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1031,8 +1057,22 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
   // Inner shell: rhymes. Sunflower packing so 1 comet sits alone,
   // 20 fill the shell uniformly.
   final rs = c.rhymePreviews;
-  const rhymeShellXY = 0.22;
-  const rhymeShellZ = 0.20;
+  const rhymeShellXY = ManifoldTuning.rhymeShellRadius;
+  const rhymeShellZ = ManifoldTuning.rhymeShellDepth;
+  // Pre-compute simhash PCA once so each rhyme's wave timbre can be
+  // derived from its actual position in the local spectral basis.
+  // The first entry is the current line; rest are the rhymes.
+  final anchorSimHash = c.line.simHash;
+  final rhymeSimHashes = [for (final r in rs) r.simHash];
+  final pcaInput = <int>[anchorSimHash, ...rhymeSimHashes];
+  final hasAnyHashes =
+      anchorSimHash != 0 || rhymeSimHashes.any((h) => h != 0);
+  final pca = hasAnyHashes
+      ? _simhashPcaCached(pcaInput)
+      : const <(double, double, double)>[];
+  final anchorPca =
+      pca.isNotEmpty ? pca[0] : const (0.0, 0.0, 0.0);
+
   for (var i = 0; i < rs.length; i++) {
     final r = rs[i];
     final (ux, uy, uz) = _sunflowerOnSphere(i, rs.length);
@@ -1040,11 +1080,40 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
     // wider-than-tall pane — comets don't stack tightly at top/bottom.
     final pos = Offset(
       (0.5 + ux * rhymeShellXY).clamp(0.08, 0.92),
-      (0.5 + uy * rhymeShellXY * 0.72).clamp(0.14, 0.86),
+      (0.5 + uy * rhymeShellXY * ManifoldTuning.shellAspect).clamp(0.14, 0.86),
     );
     final pathSeed = _fnv1a('rhyme:${r.filePath}:${r.displayIndex}');
-    final strength = (0.72 + (1.0 - (uz * uz)) * 0.18).clamp(0.4, 0.92);
+    final strength = (0.72 + (1.0 - (uz * uz)) * 0.18)
+        .clamp(ManifoldTuning.scoreMinRhyme, ManifoldTuning.scoreMaxRhyme);
     final rhymeIndex = comets.length;
+
+    // Harmonic signature from simhash PCA — this rhyme's offset in
+    // the principal basis of the local cloud. Scaled so the Fourier
+    // series is audible (h1=1 + h2,h3 from PCA coordinates) without
+    // drowning the fundamental.
+    List<double> harmonics = const [1.0, 0.0, 0.0, 0.0];
+    if (pca.length > i + 1) {
+      final dx = (pca[i + 1].$1 - anchorPca.$1);
+      final dy = (pca[i + 1].$2 - anchorPca.$2);
+      final dz = (pca[i + 1].$3 - anchorPca.$3);
+      // PCA coords come in ~[-0.35, 0.35]; harmonicXYAmplification
+      // pushes them into an audible Fourier band without eclipsing
+      // the fundamental. Clamp bounds enforce "h2/h3 accentuate,
+      // never dominate h1".
+      harmonics = [
+        JustIntonation.tonic,
+        (dx * ManifoldTuning.harmonicXYAmplification)
+            .clamp(-ManifoldTuning.harmonicClamp, ManifoldTuning.harmonicClamp)
+            .toDouble(),
+        (dy * ManifoldTuning.harmonicXYAmplification)
+            .clamp(-ManifoldTuning.harmonicClamp, ManifoldTuning.harmonicClamp)
+            .toDouble(),
+        (dz * ManifoldTuning.harmonicZAmplification)
+            .clamp(-ManifoldTuning.harmonicPhaseClamp, ManifoldTuning.harmonicPhaseClamp)
+            .toDouble(),
+      ];
+    }
+
     comets.add(Comet(
       position: pos,
       z: uz * rhymeShellZ,
@@ -1052,6 +1121,7 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
       coreMass: 1.0,
       laneColor: _laneColor(t, 'rhyme:${r.filePath}'),
       phase: (pathSeed & 0xFF) / 0xFF,
+      harmonics: harmonics,
       tag: r,
     ));
     roles.add(_ChartRole(
@@ -1072,19 +1142,22 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
   // Outer shell: related files. Larger shell, offset phase so its
   // sunflower doesn't align angularly with the rhyme shell.
   final rf = c.relatedFiles;
-  const relShellXY = 0.36;
-  const relShellZ = 0.28;
+  const relShellXY = ManifoldTuning.relatedShellRadius;
+  const relShellZ = ManifoldTuning.relatedShellDepth;
   for (var i = 0; i < rf.length; i++) {
     final f = rf[i];
     // Offset index so rings don't share angular phases with rhymes.
     final (ux, uy, uz) = _sunflowerOnSphere(i + rs.length, rs.length + rf.length);
     final pos = Offset(
       (0.5 + ux * relShellXY).clamp(0.06, 0.94),
-      (0.5 + uy * relShellXY * 0.72).clamp(0.14, 0.86),
+      (0.5 + uy * relShellXY * ManifoldTuning.shellAspect).clamp(0.14, 0.86),
     );
     final pathSeed = _fnv1a('rel:${f.path}');
     final double coreMass = f.coupled && f.semantic ? 1.0 : 0.82;
-    final clampedScore = f.score.clamp(0.3, 0.9).toDouble();
+    final clampedScore = f.score
+        .clamp(ManifoldTuning.scoreMinRelated, ManifoldTuning.scoreMaxRelated)
+        .toDouble();
+    final double pitch = _pitchForRelated(f);
     comets.add(Comet(
       position: pos,
       z: uz * relShellZ,
@@ -1092,6 +1165,7 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
       coreMass: coreMass,
       laneColor: _laneColor(t, 'rel:${f.path}'),
       phase: (pathSeed & 0xFF) / 0xFF,
+      pitch: pitch,
       tag: f,
     ));
     roles.add(_ChartRole(
@@ -1152,28 +1226,16 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
     ];
   }
 
-  // Eigenshape: PCA of [currentLine, ...rhymes] simhashes. Shift so
-  // the current line lands at origin; rhymes scatter at their learned
-  // principal coordinates. Related files take a stable outer-ring
-  // placement (no simhash available at the facade level) with
-  // coupling on the z axis so parallel worktree signal still reads.
+  // Eigenshape: reuse the PCA already computed up top for harmonic
+  // derivation — same `pca` list, indexed as [anchor, ...rhymes].
   final eigen = <(Offset, double)>[];
-  final currentSimHash = c.line.simHash;
-  final rhymeSimhashes = [for (final r in c.rhymePreviews) r.simHash];
-  final simhashes = <int>[currentSimHash, ...rhymeSimhashes];
-  final hasAnyHashes =
-      currentSimHash != 0 || rhymeSimhashes.any((h) => h != 0);
-  final eigenCoords = hasAnyHashes
-      ? _simhashPcaCached(simhashes)
-      : const <(double, double, double)>[];
-  final anchorEigen = eigenCoords.isNotEmpty
-      ? eigenCoords[0]
-      : const (0.0, 0.0, 0.0);
+  final eigenCoords = pca;
+  final anchorEigen = anchorPca;
   const anchorCenter = Offset(0.5, 0.5);
   // Anchor always at center.
   eigen.add((anchorCenter, 0.0));
   // Rhymes — one per entry in c.rhymePreviews, in order.
-  for (var i = 0; i < rhymeSimhashes.length; i++) {
+  for (var i = 0; i < rhymeSimHashes.length; i++) {
     if (eigenCoords.length > i + 1) {
       final ex = eigenCoords[i + 1].$1 - anchorEigen.$1;
       final ey = eigenCoords[i + 1].$2 - anchorEigen.$2;
@@ -1439,8 +1501,8 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
   // +x. Uses sunflower so small counts spread well and large counts
   // stay uniform. Pull scalar nudges the target slightly inward (high
   // pull = forward in z, strong visible).
-  const fanRadiusXY = 0.34;
-  const fanRadiusZ = 0.30;
+  const fanRadiusXY = ManifoldTuning.tangentFanRadius;
+  const fanRadiusZ = ManifoldTuning.tangentFanDepth;
   final n = sortedEdges.length;
   for (var i = 0; i < n; i++) {
     final e = sortedEdges[i];
@@ -1466,7 +1528,10 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
         ? e.laneLabel!.trim()
         : 'transport';
     final color = _laneColor(t, 'lane:$lane');
-    final strength = e.pull.clamp(0.28, 0.95).toDouble();
+    final strength = e.pull
+        .clamp(ManifoldTuning.scoreMinTangent, ManifoldTuning.scoreMaxTangent)
+        .toDouble();
+    final double pitch = _pitchForTransportEdge(strength);
     final cometIndex = comets.length;
     comets.add(Comet(
       position: pos,
@@ -1475,6 +1540,7 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
       coreMass: 1.0,
       laneColor: color,
       phase: (_fnv1a(target) & 0xFF) / 0xFF,
+      pitch: pitch,
       tag: e,
     ));
     roles.add(_TangentRole(
@@ -1516,7 +1582,10 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
       (0.5 + yOffset).clamp(0.10, 0.90),
     );
     final color = _laneColor(t, 'ghost:${r.path}');
-    final strength = r.score.clamp(0.22, 0.55).toDouble();
+    final strength = r.score
+        .clamp(ManifoldTuning.scoreMinGhost, ManifoldTuning.scoreMaxGhost)
+        .toDouble();
+    const double pitch = JustIntonation.subharmonicFourth;
     comets.add(Comet(
       position: pos,
       z: zOffset,
@@ -1524,6 +1593,7 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
       coreMass: 0.0,
       laneColor: color,
       phase: (_fnv1a('ghost:${r.path}') & 0xFF) / 0xFF,
+      pitch: pitch,
       tag: r,
     ));
     roles.add(_TangentRole(

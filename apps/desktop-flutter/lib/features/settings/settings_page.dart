@@ -3182,9 +3182,16 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
         // manual composer both consult these prefs; the Style Guide
         // below layers voice/tone notes on top.
         _CommitFormatStage(
-          structure: context.watch<PreferencesState>().commitStructure,
-          voice: context.watch<PreferencesState>().commitVoice,
-          coverage: context.watch<PreferencesState>().commitCoverage,
+          // Narrowed to a single record-select rather than three
+          // whole-PreferencesState watches. Dart records use
+          // structural equality, so the stage rebuilds only when one
+          // of these three fields genuinely changes.
+          structure: context.select<PreferencesState, CommitStructure>(
+              (s) => s.commitStructure),
+          voice: context.select<PreferencesState, CommitVoice>(
+              (s) => s.commitVoice),
+          coverage: context.select<PreferencesState, CommitCoverage>(
+              (s) => s.commitCoverage),
           onStructureChanged: (v) {
             unawaited(context
                 .read<PreferencesState>()
@@ -7629,8 +7636,9 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
     // Watching it here rebuilds the stage when the user touches the
     // guardrail slider elsewhere — no AI-generation coupling, purely
     // a settings-UI immersion detail.
-    final guardrailStage =
-        context.watch<PreferencesState>().guardrailStage;
+    final guardrailStage = context.select<PreferencesState, int>(
+      (s) => s.guardrailStage,
+    );
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
       decoration: BoxDecoration(

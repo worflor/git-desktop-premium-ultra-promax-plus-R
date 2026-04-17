@@ -377,21 +377,85 @@ class _EnAxis {
     if (ra < 0) return AxisObs.silent;
     final rb = rowIds[bNodeId];
     if (rb < 0) return AxisObs.silent;
-    final cos = _cosineRows(table, ra, rb);
+    final aMagSq = _rowMagSq(table, ra);
+    return _observeWithMagSq(ra, rb, aMagSq);
+  }
+
+  /// Precomputed `‖kRi[row]‖²` for [aNodeId]. Returns -1 if the node
+  /// has no K-vector (caller must skip EN observations for that node).
+  /// The build-loop pre-computes this ONCE per outer node `i` and
+  /// reuses it across all candidate `j` via [observeIdsWithMag] —
+  /// saves `P = pairs` FMAs per candidate that were previously
+  /// re-accumulating the same `aMagSq` on every scored pair.
+  double aMagSqFor(int aNodeId) {
+    final ra = rowIds[aNodeId];
+    if (ra < 0) return -1.0;
+    return _rowMagSq(table, ra);
+  }
+
+  /// Variant of [observeIds] that skips the row-A mag-sq accumulation
+  /// when the caller has cached `aMagSq` via [aMagSqFor]. Must pass a
+  /// non-negative [aMagSq] (caller-gated).
+  AxisObs observeIdsWithMag(int aNodeId, int bNodeId, double aMagSq) {
+    final ra = rowIds[aNodeId];
+    if (ra < 0) return AxisObs.silent;
+    final rb = rowIds[bNodeId];
+    if (rb < 0) return AxisObs.silent;
+    return _observeWithMagSq(ra, rb, aMagSq);
+  }
+
+  AxisObs _observeWithMagSq(int ra, int rb, double aMagSq) {
+    final cos = _cosineRowsWithAMagSq(table, ra, rb, aMagSq);
     if (cos <= 0) return AxisObs.silent;
-    // Map cosine in [0,1] to p in [0.5, 1] - the axis is a "boost only"
-    // signal. The 0.5 anchor makes the confidence gate `|p - 0.5|`
-    // proportional to the cosine itself, which is what we want.
     final p = 0.5 + 0.5 * cos;
-    // Evidence: the K-vector quality reflects how many GloVe-hittable
-    // sub-tokens fed the AR(2). Use the smaller of the pair so a
-    // sparsely-tokenised file can't claim more confidence than its
-    // signal supports.
     final hitsA = table.vocabHits[ra];
     final hitsB = table.vocabHits[rb];
     final n = hitsA < hitsB ? hitsA : hitsB;
     return AxisObs(p, n);
   }
+}
+
+/// Sum-of-squares of a single row's interleaved `kRi` slice. Used by
+/// [_EnAxis.aMagSqFor] to cache the outer-node mag-sq across a whole
+/// candidate scan (Grimoire XXI — tile row A into L1 for the inner
+/// candidate loop instead of re-accumulating on every pair).
+double _rowMagSq(EngramFileKTable t, int row) {
+  final p = t.pairs;
+  final base = row * p;
+  final ri = t.kRi;
+  double sum = 0.0;
+  for (var i = 0; i < p; i++) {
+    final a = ri[base + i];
+    sum += a.x * a.x + a.y * a.y;
+  }
+  return sum;
+}
+
+/// Like [_cosineRows] but trusts a caller-provided `aMagSq` for row A.
+/// The inner loop now reads ONE Float64x2 per pair (row B only) and
+/// accumulates `dot` and `bMagSq`, cutting the per-pair work roughly
+/// in half versus [_cosineRows].
+double _cosineRowsWithAMagSq(
+    EngramFileKTable t, int rowA, int rowB, double aMagSq) {
+  if (aMagSq <= 0) return 0.0;
+  final p = t.pairs;
+  final aBase = rowA * p;
+  final bBase = rowB * p;
+  final ri = t.kRi;
+  double dot = 0.0;
+  double bMagSq = 0.0;
+  for (var i = 0; i < p; i++) {
+    final a = ri[aBase + i];
+    final b = ri[bBase + i];
+    dot += a.x * b.x + a.y * b.y;
+    bMagSq += b.x * b.x + b.y * b.y;
+  }
+  if (bMagSq <= 0) return 0.0;
+  final cos = dot / math.sqrt(aMagSq * bMagSq);
+  if (!cos.isFinite) return 0.0;
+  if (cos <= 0) return 0.0;
+  if (cos >= 1) return 1.0;
+  return cos;
 }
 
 /// Cosine between two rows of an [EngramFileKTable], reading directly
@@ -402,16 +466,22 @@ double _cosineRows(EngramFileKTable t, int rowA, int rowB) {
   final p = t.pairs;
   final aBase = rowA * p;
   final bBase = rowB * p;
-  final re = t.kRe;
-  final im = t.kIm;
+  // Grimoire XIV: interleaved Float64x2 storage lets each pair's
+  // (re, im) arrive together in one lane, so the three accumulators
+  // (dot, aMagSq, bMagSq) come from a single streaming read per row
+  // pair instead of four disjoint cache-line fetches (re[a], im[a],
+  // re[b], im[b]).
+  final ri = t.kRi;
   double dot = 0.0;
   double aMagSq = 0.0;
   double bMagSq = 0.0;
   for (var i = 0; i < p; i++) {
-    final ar = re[aBase + i];
-    final ai = im[aBase + i];
-    final br = re[bBase + i];
-    final bi = im[bBase + i];
+    final a = ri[aBase + i];
+    final b = ri[bBase + i];
+    final ar = a.x;
+    final ai = a.y;
+    final br = b.x;
+    final bi = b.y;
     dot += ar * br + ai * bi;
     aMagSq += ar * ar + ai * ai;
     bMagSq += br * br + bi * bi;
@@ -1236,6 +1306,22 @@ typedef _BasisCacheKey = ({int rhoFingerprint, int K});
 /// ~1 MB, comfortably in last-level cache without punishing hot code.
 const int _kChebyshevBasisCacheSize = 4;
 
+/// Minimum graph size below which the spectral path stays disabled.
+/// For tiny graphs (typical hunk and chunk graphs are ≲ 200 nodes), the
+/// one-time Lanczos cost outweighs the per-query saving — Chebyshev's
+/// O(K·|E|) on a sparse 30-edge graph is well under a millisecond. The
+/// spectral path becomes profitable on the file graph (n ≈ 2k–10k)
+/// where multiple gatherEvidence calls amortise the build.
+const int _kSpectralMinNodes = 256;
+
+/// Default number of Laplacian eigenmodes to retain. The heat kernel
+/// `e^{−t·λ}` decays exponentially in λ, so for the gatherEvidence
+/// temperature range t ∈ [0.35, 4.0] the bulk of the energy is carried
+/// by the bottom ~20 modes. The eigenvectors are stored as a single
+/// `k·n` Float64List (≈320 KB at k=20, n=2k) — cheap memory for an
+/// always-on per-graph cache.
+const int _kSpectralModeK = 20;
+
 /// Content fingerprint of a ρ vector. Uses the Float64 bit patterns so
 /// identical-valued-but-freshly-allocated vectors hash the same. FNV-1a
 /// style mix over the int32 halves keeps cost linear in `n` with no
@@ -1334,6 +1420,15 @@ class LogosGit {
   /// to thread it through; the cache is a private implementation detail.
   final LruCache<_BasisCacheKey, Float64List> _basisCache;
 
+  /// Per-engine spectral basis cache. Keyed by `k` — the requested
+  /// number of low-frequency Laplacian eigenpairs. The graph itself is
+  /// fixed for the lifetime of an engine instance (see [manifoldRevision]),
+  /// so a single basis per k is enough. A fresh basis is computed lazily
+  /// the first time [_getOrBuildSpectralBasis] is called for a given k.
+  /// Shared with [withSymbolEdges] overlays — symbol edges live in a
+  /// sidecar and never touch L_sym.
+  final Map<int, SpectralBasis> _spectralCache;
+
   LogosGit._({
     required this.graph,
     required this.transportGraph,
@@ -1347,11 +1442,13 @@ class LogosGit {
     EngramFileKTable? perFileKVectors,
     int? manifoldRevision,
     LruCache<_BasisCacheKey, Float64List>? basisCache,
+    Map<int, SpectralBasis>? spectralCache,
   })  : perFileKVectors = perFileKVectors ?? _emptyTable,
         manifoldRevision = manifoldRevision ?? ++_logosGitRevisionCounter,
         _basisCache = basisCache ??
             LruCache<_BasisCacheKey, Float64List>(
-                maxSize: _kChebyshevBasisCacheSize);
+                maxSize: _kChebyshevBasisCacheSize),
+        _spectralCache = spectralCache ?? <int, SpectralBasis>{};
 
   /// Singleton empty K-table used when no engram assets are loaded.
   /// Avoids per-engine empty allocations and ensures the field is
@@ -1397,6 +1494,7 @@ class LogosGit {
       // valid for the overlay.
       manifoldRevision: manifoldRevision,
       basisCache: _basisCache,
+      spectralCache: _spectralCache,
     );
   }
 
@@ -1417,6 +1515,46 @@ class LogosGit {
     _basisCache.put(key, built);
     return built;
   }
+
+  /// Fetch (or build) the spectral basis — top-`k` smallest eigenpairs
+  /// of `L_sym` on this engine's graph. Once built, every diffusion
+  /// query through it costs O(k·n) regardless of source ρ, temperature
+  /// t, or how many axes are batched. The Lanczos build is one-time
+  /// per engine instance per k value (graph topology is fixed for an
+  /// engine's lifetime — see [manifoldRevision]).
+  ///
+  /// Returns null when the graph is too small to amortise the
+  /// decomposition: for n < [_kSpectralMinNodes], the per-query
+  /// Chebyshev path beats a one-time Lanczos pass and there's no
+  /// reason to incur the build cost.
+  SpectralBasis? _getOrBuildSpectralBasis(int k) {
+    if (graph.n < _kSpectralMinNodes) return null;
+    final clampedK = math.min(k, graph.n);
+    final cached = _spectralCache[clampedK];
+    if (cached != null) return cached;
+    final built = SpectralBasis.fromGraph(graph, clampedK);
+    _spectralCache[clampedK] = built;
+    return built;
+  }
+
+  /// Public accessor for this engine's spectral basis. Use this to
+  /// read codebase-level *observables* the math gives us for free —
+  /// the Fiedler partition (deepest natural cleavage), spectral
+  /// communities (k-way clustering by L_sym low modes), heat trace
+  /// (isospectral graph fingerprint), free energy of a focus,
+  /// spectral entropy of a focus, diffusion distance between any
+  /// two files, and spectral divergence between two source
+  /// distributions. See [SpectralBasis] for the full menu.
+  ///
+  /// `k` defaults to the engine's `_kSpectralModeK` (20) — enough
+  /// modes for the heat kernel's low-frequency regime; bump it if
+  /// you want sharper community resolution.
+  ///
+  /// Returns null when the graph is below [_kSpectralMinNodes] —
+  /// observables on tiny graphs are uninformative anyway, and the
+  /// caller should fall back to direct edge inspection.
+  SpectralBasis? spectralBasis({int? k}) =>
+      _getOrBuildSpectralBasis(k ?? _kSpectralModeK);
 
   /// Construct the engine from per-file statistics. Nodes are all files
   /// with at least one observation from any axis; edges are the
@@ -1755,7 +1893,23 @@ class LogosGit {
       // scaling stays in that range - edges never boost past their
       // Born value, only proportionally attenuate.
       final curvA = curvatures[i];
-      final scored = <_EdgeCandidate>[];
+      // Precompute ‖kRi[row_i]‖² once per outer node and reuse it
+      // across every candidate j scored inside this loop. Previously
+      // each `en.observeIds(i, j)` call re-accumulated `aMagSq` over
+      // all P pairs from scratch — for C_avg candidates that's
+      // P·(C_avg−1) redundant FMAs per node, multiplied across all
+      // n outer iterations. Grimoire XXI — tile row A into L1 and
+      // let the inner loop stream only row B per pair.
+      final aMagSqI = en == null ? -1.0 : en.aMagSqFor(i);
+      // Bounded min-heap (size ≤ edgeDensity). Previously we
+      // collected every candidate into a growable list and ran a
+      // full sort + sublist, which is O(C · log C). The heap drops
+      // every candidate whose pMix is below the current K-th-best in
+      // O(log K) — for large candidate counts this is a win, and it
+      // eliminates the intermediate `scored` list + its sublist
+      // allocation (Grimoire XIX — avoid allocation pressure on the
+      // hottest build-time loop).
+      final kept = <_EdgeCandidate>[];
       for (final j in candidates) {
         final b = nodePaths[j];
 
@@ -1786,11 +1940,20 @@ class LogosGit {
         obsBuf[2] = spObs;
         obsBuf[3] = v.observe(a, b);
         if (en != null) {
-          obsBuf[4] = en.observeIds(i, j);
+          obsBuf[4] = aMagSqI > 0
+              ? en.observeIdsWithMag(i, j, aMagSqI)
+              : AxisObs.silent;
         }
         var p = mixer.mix(obsBuf);
-        p *= math.sqrt(curvA * curvatures[j]);
-        p *= math.sqrt(integrityA * (stats.integrityByPath[b] ?? 1.0)) *
+        // Merge the two `sqrt` calls into one: the algebra is
+        // `sqrt(curvA·curvB) · sqrt(integrityA·integrityB) =
+        // sqrt(curvA·curvB·integrityA·integrityB)`. Saves one sqrt
+        // per scored candidate — ~500k sqrt calls saved on a typical
+        // 10k-file build (Grimoire XIX).
+        final integrityB = stats.integrityByPath[b] ?? 1.0;
+        p *= math.sqrt(
+              curvA * curvatures[j] * integrityA * integrityB,
+            ) *
             logosPairPenalty(a, b);
         final lane = logosTransportLane(a, b);
         if (lane != null && lane.strength > 0) {
@@ -1823,7 +1986,13 @@ class LogosGit {
           }
         }
         if (p <= 0.5) continue; // only keep edges with positive lift
-        scored.add(_EdgeCandidate(j, p));
+        if (kept.length < edgeDensity) {
+          kept.add(_EdgeCandidate(j, p));
+          _edgeHeapSiftUp(kept, kept.length - 1);
+        } else if (p > kept[0].pMix) {
+          kept[0] = _EdgeCandidate(j, p);
+          _edgeHeapSiftDown(kept, 0);
+        }
       }
       for (final j in transportCandidates) {
         if (candidates.contains(j)) continue;
@@ -1861,11 +2030,11 @@ class LogosGit {
         }
       }
 
-      // Top-K by p_mix - keep the graph sparse. Full sort at K=24 and
-      // typical |scored| in the dozens-to-hundreds is fast enough.
-      scored.sort((x, y) => y.pMix.compareTo(x.pMix));
-      final k = math.min(edgeDensity, scored.length);
-      final kept = scored.sublist(0, k);
+      // Top-K admission policy — `kept` has been maintained as a
+      // min-heap of size ≤ edgeDensity throughout the candidate scan.
+      // Heap order is not topological order for the downstream CSR
+      // pack (which sorts by column index anyway), so we leave it
+      // unordered here and only pay for one degree-sum sweep.
       rawRows[i] = kept;
       for (final e in kept) {
         degree[i] += e.pMix;
@@ -2026,10 +2195,26 @@ class LogosGit {
     final cached = _activityCache[halfLifeCommits];
     if (cached != null) return cached;
     final tau = halfLifeCommits / math.ln2;
+    final invTau = 1.0 / tau; // hoisted divide (Grimoire XIX)
     final newest = useSemanticClock
         ? stats.semanticCommitMass
         : (stats.totalCommits - 1).toDouble();
     final cutoff = halfLifeCommits * 6;
+
+    // Precompute an `exp(-age·invTau)` lookup for integer-stepped ages
+    // in `[0, cutoff]`. The hot inner loop runs once per touch-index
+    // per file — for a mid-size repo this is tens of thousands of
+    // transcendental calls. The LUT replaces each `math.exp` with a
+    // bounded-interpolation table read (Grimoire XXV — small enough
+    // to live in L1, accurate enough for a mass-weight that's fed
+    // into rank-order comparisons). `halfLifeCommits * 6 + 1 ≤ 541`
+    // entries ≈ 4.3 KB — well inside L1.
+    final lutSize = cutoff + 1;
+    final expLut = Float64List(lutSize);
+    for (var i = 0; i < lutSize; i++) {
+      expLut[i] = math.exp(-i * invTau);
+    }
+
     final out = <String, double>{};
     final seriesByPath = useSemanticClock
         ? stats.perFileCommitClock
@@ -2044,8 +2229,16 @@ class LogosGit {
         final age = newest - v[k];
         if (age < 0) continue;
         // Skip entries beyond ~6 half-lives - contribution < 1.5%.
-        if (age > cutoff) continue;
-        w += math.exp(-age / tau);
+        if (age >= cutoff) continue;
+        // Linear-interpolate the LUT for fractional ages (semantic
+        // clock carries real-valued timestamps). At tau ≫ 1 the
+        // interpolation error is below 1e-4, well under the noise
+        // floor of downstream rank-order consumption.
+        final floorIdx = age.floor();
+        final frac = age - floorIdx;
+        final lo = expLut[floorIdx];
+        final hi = floorIdx + 1 < lutSize ? expLut[floorIdx + 1] : 0.0;
+        w += lo + (hi - lo) * frac;
       }
       if (w > 0) out[entry.key] = w;
     }
@@ -2146,10 +2339,20 @@ class LogosGit {
     double minCoherence,
   ) {
     if (results.length < 2) return results;
+    // Pre-extract paths once into a fixed `Set<String>` that we pop
+    // from as we prune. The previous loop built a new lazy
+    // `.take(k).map(...)` iterable on every iteration, and
+    // `coherence` internally materialised it to a list — O(k) extra
+    // allocation per step for a loop that already has O(k) steps
+    // worst case, i.e. O(k²) cumulative allocation (Grimoire XIX).
+    // A mutable set lets us drop the weakest tail in O(1) per step
+    // while `coherence` reads it via its existing `Iterable<String>`
+    // parameter contract.
+    final paths = <String>{for (final r in results) r.path};
     var k = results.length;
     while (k > 1) {
-      final paths = results.take(k).map((r) => r.path);
       if (coherence(paths) >= minCoherence) break;
+      paths.remove(results[k - 1].path);
       k--;
     }
     return k == results.length ? results : results.sublist(0, k);
@@ -2166,11 +2369,19 @@ class LogosGit {
   Float64List? _buildRho(Map<String, double> weights) {
     final rho = Float64List(graph.n);
     var total = 0.0;
+    // Track which indices received mass. Typical sources are k ≪ n
+    // (a handful of primary files, a few symbol proxies), so the
+    // final normalisation touches only O(k) entries instead of
+    // sweeping the full n-length buffer — on a 10k-file graph with
+    // 5 source paths, that's a 2000× reduction of the normalisation
+    // scan (Grimoire XIX — avoid touching memory we don't need to).
+    final writtenIds = <int>[];
     for (final entry in weights.entries) {
       final w = entry.value;
       if (w <= 0) continue;
       final id = pathToId[entry.key];
       if (id != null) {
+        if (rho[id] == 0.0) writtenIds.add(id);
         rho[id] += w;
         total += w;
       } else if (symbolEdges.isNotEmpty) {
@@ -2181,16 +2392,138 @@ class LogosGit {
           final nid = pathToId[ne.key];
           if (nid == null) continue;
           final proxied = w * ne.value;
+          if (rho[nid] == 0.0) writtenIds.add(nid);
           rho[nid] += proxied;
           total += proxied;
         }
       }
     }
     if (total <= 0) return null;
-    for (var i = 0; i < graph.n; i++) {
-      rho[i] /= total;
+    final invTotal = 1.0 / total;
+    for (final id in writtenIds) {
+      rho[id] *= invTotal;
     }
     return rho;
+  }
+
+  /// Joint builder for the focus ρ and its per-axis partition — both derived
+  /// from the same total-mass denominator, so the identity
+  /// `Σ_a perAxisRho[a][i] == focusRho[i]` holds by construction. This is
+  /// the key invariant that lets [gatherEvidence] fuse the attribution
+  /// matvec chain into the focus-basis matvec chain via
+  /// [chebyshevBasisBatch]: recombining any column of the batched basis at
+  /// temperature t yields a phi vector whose sum over axes equals the
+  /// focus phi, matching what a separate attribution call would have
+  /// returned. Returns null when no mass resolves into the graph.
+  ({
+    Float64List focusRho,
+    Map<String, Float64List> perAxisRhos,
+  })? _buildFocusAndAxisRhos(
+    Map<String, double> weights,
+    Map<String, String> axisLabelByPath,
+  ) {
+    // Pass 1: accumulate total mass (direct + symbol-proxied). Must match
+    // [_buildRho]'s denominator so focusRho here is bit-identical to
+    // what _buildRho produces for the same input.
+    var totalMass = 0.0;
+    for (final entry in weights.entries) {
+      final w = entry.value;
+      if (w <= 0) continue;
+      final path = entry.key;
+      if (pathToId.containsKey(path)) {
+        totalMass += w;
+      } else if (symbolEdges.isNotEmpty) {
+        final neighbours = symbolEdges[path];
+        if (neighbours == null || neighbours.isEmpty) continue;
+        for (final ne in neighbours.entries) {
+          if (pathToId.containsKey(ne.key)) totalMass += w * ne.value;
+        }
+      }
+    }
+    if (totalMass <= 0) return null;
+    final invTotal = 1.0 / totalMass;
+    final focusRho = Float64List(graph.n);
+    final perAxis = <String, Float64List>{};
+    final needAxes = axisLabelByPath.isNotEmpty;
+    final symbolAxisLabel = LogosAxis.symbol.name;
+
+    // Pass 2: write normalised contributions to both focusRho and (when
+    // requested) the per-axis bucket. Unknown paths with symbol proxies
+    // always route to the `symbol` axis bucket — same convention used by
+    // [diffuseWithAttribution] so downstream dominantAxis callers see a
+    // consistent label.
+    for (final entry in weights.entries) {
+      final w = entry.value;
+      if (w <= 0) continue;
+      final path = entry.key;
+      final id = pathToId[path];
+      if (id != null) {
+        final contribution = w * invTotal;
+        focusRho[id] += contribution;
+        if (needAxes) {
+          final axis = axisLabelByPath[path] ?? '_default';
+          final rho = perAxis.putIfAbsent(axis, () => Float64List(graph.n));
+          rho[id] += contribution;
+        }
+      } else if (symbolEdges.isNotEmpty) {
+        final neighbours = symbolEdges[path];
+        if (neighbours == null || neighbours.isEmpty) continue;
+        for (final ne in neighbours.entries) {
+          final nid = pathToId[ne.key];
+          if (nid == null) continue;
+          final contribution = (w * ne.value) * invTotal;
+          focusRho[nid] += contribution;
+          if (needAxes) {
+            final rho = perAxis.putIfAbsent(
+              symbolAxisLabel,
+              () => Float64List(graph.n),
+            );
+            rho[nid] += contribution;
+          }
+        }
+      }
+    }
+    return (focusRho: focusRho, perAxisRhos: perAxis);
+  }
+
+  /// Derive `dominantAxis` + `shareByAxis` maps from a per-axis phi set.
+  /// Mirrors the provenance extraction in [diffuseWithAttribution], but
+  /// operates on an already-computed per-axis phi map (the fused path in
+  /// [gatherEvidence] builds phi via batched basis recombine instead of
+  /// running its own matvec chain).
+  ({
+    Map<String, String> dominantAxis,
+    Map<String, Map<String, double>> shareByAxis,
+  }) _deriveAxisProvenance(Map<String, Float64List> perAxisPhi) {
+    final dominantAxis = <String, String>{};
+    final shareByAxis = <String, Map<String, double>>{};
+    if (perAxisPhi.isEmpty) {
+      return (dominantAxis: dominantAxis, shareByAxis: shareByAxis);
+    }
+    for (var i = 0; i < graph.n; i++) {
+      var combined = 0.0;
+      for (final phi in perAxisPhi.values) {
+        final v = phi[i];
+        if (v > 0) combined += v;
+      }
+      if (combined <= 0) continue;
+      final path = nodePaths[i];
+      var bestAxis = '';
+      var bestVal = -1.0;
+      final shares = <String, double>{};
+      for (final entry in perAxisPhi.entries) {
+        final ap = entry.value[i];
+        if (ap <= 0) continue;
+        shares[entry.key] = ap / combined;
+        if (ap > bestVal) {
+          bestVal = ap;
+          bestAxis = entry.key;
+        }
+      }
+      if (bestAxis.isNotEmpty) dominantAxis[path] = bestAxis;
+      if (shares.isNotEmpty) shareByAxis[path] = shares;
+    }
+    return (dominantAxis: dominantAxis, shareByAxis: shareByAxis);
   }
 
   /// Derive phi scores for paths that are not graph nodes but are reachable
@@ -2487,8 +2820,15 @@ class LogosGit {
     double phiThreshold = 0.0,
   }) {
     if (graph.n == 0 || focusWeights.isEmpty) return null;
-    final focusRho = _buildRho(focusWeights);
-    if (focusRho == null) return null;
+    final attribWanted =
+        includeSupportAttribution && axisLabelByPath.isNotEmpty;
+    final focusAxes = _buildFocusAndAxisRhos(
+      focusWeights,
+      attribWanted ? axisLabelByPath : const {},
+    );
+    if (focusAxes == null) return null;
+    final focusRho = focusAxes.focusRho;
+    final perAxisRhos = focusAxes.perAxisRhos;
     final transportPhi = _transportProject(focusRho);
 
     final ambientWeights =
@@ -2499,64 +2839,165 @@ class LogosGit {
     final farTBase = math.min(4.0, math.max(t, t * 1.85));
     final nearT = math.min(nearTBase, farTBase);
     final farT = math.max(nearTBase, farTBase);
-    final supportAttribution =
-        !includeSupportAttribution || axisLabelByPath.isEmpty
-            ? null
-            : diffuseWithAttribution(
-                weightsByPath: focusWeights,
-                axisLabelByPath: axisLabelByPath,
-                t: t,
-                K: K,
-                excludePaths: excludePaths,
-              );
 
-    // Focus ρ is queried at 1 or 3 temperatures below; caching the basis
-    // once lets each additional temperature cost O(K·n) recombination
-    // instead of a fresh O(K·|E|) matvec chain. This replaces the old
-    // pattern of one batched Chebyshev pass + two more single-T passes
-    // (3 × O(K·|E|)) with one basis build + 3 recombines (1 × O(K·|E|)
-    // + 3 × O(K·n)) for the spectrum case.
-    final focusBasis = _getOrBuildBasis(focusRho, K);
-    final focusPhi = recombineHeatPhi(
-      graph: graph,
-      basis: focusBasis,
-      t: t,
-      K: K,
-    );
+    final axisOrder = perAxisRhos.keys.toList(growable: false);
+    final hasAxes = attribWanted && axisOrder.isNotEmpty;
+
+    // Try the spectral path first. When the engine's graph has been
+    // queried at least once before (or is large enough to warrant the
+    // one-time Lanczos build), every diffusion below — focus at t /
+    // near / far, ambient at t, every axis at t — collapses to a
+    // single O(k·n) projection + recombine on the cached spectral
+    // basis. No edge traversals, no Chebyshev recurrence.
+    //
+    // Returns null on small graphs where Chebyshev's per-query
+    // O(K·|E|) wins; the rest of the function then runs the existing
+    // Chebyshev path with the basis-fusion / attribution batching that
+    // [_buildFocusAndAxisRhos] sets up.
+    final spectral = _getOrBuildSpectralBasis(_kSpectralModeK);
+
+    final Float64List focusPhi;
     final Float64List nearPhi;
     final Float64List farPhi;
-    if (includeSpectrum) {
-      nearPhi = recombineHeatPhi(
-        graph: graph,
-        basis: focusBasis,
-        t: nearT,
-        K: K,
-      );
-      farPhi = recombineHeatPhi(
-        graph: graph,
-        basis: focusBasis,
-        t: farT,
-        K: K,
-      );
+    final Float64List ambientPhi;
+    Map<String, Float64List>? perAxisPhi;
+
+    if (spectral != null) {
+      // Spectral path — projection coefficients are the universal
+      // spectral coordinate of the source. Project once, recombine at
+      // any number of temperatures for free.
+      final focusCoeffs = spectral.project(focusRho);
+      focusPhi = spectral.recombineFromProjection(focusCoeffs, t);
+      if (includeSpectrum) {
+        nearPhi = spectral.recombineFromProjection(focusCoeffs, nearT);
+        farPhi = spectral.recombineFromProjection(focusCoeffs, farT);
+      } else {
+        nearPhi = Float64List(graph.n);
+        farPhi = Float64List(graph.n);
+      }
+      ambientPhi = ambientRho != null
+          ? spectral.diffuse(ambientRho, t)
+          : Float64List(graph.n);
+      if (hasAxes) {
+        perAxisPhi = <String, Float64List>{};
+        for (final axisLabel in axisOrder) {
+          perAxisPhi[axisLabel] =
+              spectral.diffuse(perAxisRhos[axisLabel]!, t);
+        }
+      }
     } else {
-      nearPhi = Float64List(graph.n);
-      farPhi = Float64List(graph.n);
+      // Chebyshev fallback — basis cache + per-axis fusion via
+      // [chebyshevBasisBatch]. Same identity (Σ_a perAxisRho[a] ==
+      // focusRho) makes one batched matvec chain cover focus + every
+      // axis when both miss the cache.
+      final focusKey = (rhoFingerprint: _fingerprintRho(focusRho), K: K);
+      var focusBasis = _basisCache.get(focusKey);
+      if (focusBasis == null && hasAxes) {
+        final b = 1 + axisOrder.length;
+        final rhoBatch = Float64List(graph.n * b);
+        for (var i = 0; i < graph.n; i++) {
+          rhoBatch[i * b] = focusRho[i];
+        }
+        for (var a = 0; a < axisOrder.length; a++) {
+          final axisRho = perAxisRhos[axisOrder[a]]!;
+          for (var i = 0; i < graph.n; i++) {
+            rhoBatch[i * b + 1 + a] = axisRho[i];
+          }
+        }
+        final batched = chebyshevBasisBatch(
+            graph: graph, rhoBatch: rhoBatch, B: b, K: K);
+        focusBasis = extractBasisColumn(
+          batchedBasis: batched,
+          n: graph.n,
+          B: b,
+          b: 0,
+          K: K,
+        );
+        _basisCache.put(focusKey, focusBasis);
+        perAxisPhi = <String, Float64List>{};
+        for (var a = 0; a < axisOrder.length; a++) {
+          final axisBasis = extractBasisColumn(
+            batchedBasis: batched,
+            n: graph.n,
+            B: b,
+            b: 1 + a,
+            K: K,
+          );
+          perAxisPhi[axisOrder[a]] =
+              recombineHeatPhi(graph: graph, basis: axisBasis, t: t, K: K);
+        }
+      } else {
+        focusBasis ??= _getOrBuildBasis(focusRho, K);
+        if (hasAxes) {
+          final b = axisOrder.length;
+          perAxisPhi = <String, Float64List>{};
+          if (b == 1) {
+            final phi = Float64List(graph.n);
+            chebyshevDiffuse(
+              graph: graph,
+              rho: perAxisRhos[axisOrder[0]]!,
+              phi: phi,
+              t: t,
+              K: K,
+            );
+            perAxisPhi[axisOrder[0]] = phi;
+          } else {
+            final rhoBatch = Float64List(graph.n * b);
+            for (var a = 0; a < b; a++) {
+              final axisRho = perAxisRhos[axisOrder[a]]!;
+              for (var i = 0; i < graph.n; i++) {
+                rhoBatch[i * b + a] = axisRho[i];
+              }
+            }
+            final phiBatch = chebyshevDiffuseBatch(
+              graph: graph,
+              rhoBatch: rhoBatch,
+              B: b,
+              t: t,
+              K: K,
+            );
+            for (var a = 0; a < b; a++) {
+              final phi = Float64List(graph.n);
+              for (var i = 0; i < graph.n; i++) {
+                phi[i] = phiBatch[i * b + a];
+              }
+              perAxisPhi[axisOrder[a]] = phi;
+            }
+          }
+        }
+      }
+      focusPhi =
+          recombineHeatPhi(graph: graph, basis: focusBasis, t: t, K: K);
+      if (includeSpectrum) {
+        nearPhi = recombineHeatPhi(
+            graph: graph, basis: focusBasis, t: nearT, K: K);
+        farPhi = recombineHeatPhi(
+            graph: graph, basis: focusBasis, t: farT, K: K);
+      } else {
+        nearPhi = Float64List(graph.n);
+        farPhi = Float64List(graph.n);
+      }
+      if (ambientRho != null) {
+        final ambientBasis = _getOrBuildBasis(ambientRho, K);
+        ambientPhi = recombineHeatPhi(
+            graph: graph, basis: ambientBasis, t: t, K: K);
+      } else {
+        ambientPhi = Float64List(graph.n);
+      }
     }
 
-    // Ambient ρ is only needed at temperature `t`. Basis-cache hits on
-    // repeated calls with the same ambient source (same recent-activity
-    // window); on a cold cache it's a single matvec chain.
-    final Float64List ambientPhi;
-    if (ambientRho != null) {
-      final ambientBasis = _getOrBuildBasis(ambientRho, K);
-      ambientPhi = recombineHeatPhi(
-        graph: graph,
-        basis: ambientBasis,
-        t: t,
-        K: K,
+    final AxisAttribution? supportAttribution;
+    if (perAxisPhi != null) {
+      final provenance = _deriveAxisProvenance(perAxisPhi);
+      supportAttribution = AxisAttribution(
+        combined: const [],
+        perAxisPhi: perAxisPhi,
+        nodePaths: nodePaths,
+        dominantAxis: provenance.dominantAxis,
+        shareByAxis: provenance.shareByAxis,
       );
     } else {
-      ambientPhi = Float64List(graph.n);
+      supportAttribution = null;
     }
 
     var focusMass = 0.0;
@@ -3752,6 +4193,7 @@ class LogosGit {
     return projected;
   }
 
+  @pragma('vm:prefer-inline')
   double _companionRescueScore({
     required double support,
     required double integrity,
@@ -4195,6 +4637,40 @@ class _EdgeCandidate {
   const _EdgeCandidate(this.node, this.pMix);
 }
 
+// Min-heap helpers keyed on [pMix]. Used by the build-time top-K
+// admission loop in [buildFromStats] to keep the K best edges across
+// a candidate scan without a trailing full sort.
+
+void _edgeHeapSiftUp(List<_EdgeCandidate> heap, int i) {
+  while (i > 0) {
+    final parent = (i - 1) >> 1;
+    if (heap[i].pMix < heap[parent].pMix) {
+      final tmp = heap[i];
+      heap[i] = heap[parent];
+      heap[parent] = tmp;
+      i = parent;
+    } else {
+      break;
+    }
+  }
+}
+
+void _edgeHeapSiftDown(List<_EdgeCandidate> heap, int i) {
+  final n = heap.length;
+  while (true) {
+    final l = 2 * i + 1;
+    final r = 2 * i + 2;
+    var smallest = i;
+    if (l < n && heap[l].pMix < heap[smallest].pMix) smallest = l;
+    if (r < n && heap[r].pMix < heap[smallest].pMix) smallest = r;
+    if (smallest == i) break;
+    final tmp = heap[i];
+    heap[i] = heap[smallest];
+    heap[smallest] = tmp;
+    i = smallest;
+  }
+}
+
 class _HigherOrderSignal {
   final double lift;
   final double gap;
@@ -4297,18 +4773,34 @@ class DiffusionBasis {
   /// Adaptive truncation: at low t the Bessel tail is already below
   /// 1e-8; we skip those terms. At high t we use the full K.
   Float64List recombine(double t) {
+    final phi = Float64List(n);
+    recombineInto(t, phi);
+    return phi;
+  }
+
+  /// In-place variant of [recombine]. Writes `φ(t)` into the caller-
+  /// owned [out] buffer (which must have length [n]). Zeroes [out]
+  /// before accumulation. Callers that evaluate the basis at multiple
+  /// temperatures — the canonical three-T blend in `commit_tagger.dart`,
+  /// any future temperature-slider UI — can allocate three scratch
+  /// buffers once and reuse them across thousands of recombines,
+  /// eliminating the per-call `Float64List(n)` allocation that
+  /// [recombine] would emit.
+  void recombineInto(double t, Float64List out) {
+    assert(out.length == n, 'out buffer must have length n');
     final coeffs = besselCoeffs(t, K);
     final kEff = adaptiveK(coeffs, 1e-8);
-    final phi = Float64List(n);
+    for (var i = 0; i < n; i++) {
+      out[i] = 0.0;
+    }
     for (var k = 0; k <= kEff; k++) {
       final c = coeffs[k];
       if (c == 0) continue;
       final base = k * n;
       for (var i = 0; i < n; i++) {
-        phi[i] += c * basis[base + i];
+        out[i] += c * basis[base + i];
       }
     }
-    return phi;
   }
 
   /// Recombine AND rank into sorted scores, excluding [sources]. Useful

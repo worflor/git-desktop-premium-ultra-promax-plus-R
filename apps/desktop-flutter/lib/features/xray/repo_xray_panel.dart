@@ -45,7 +45,13 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final repoPath = context.watch<RepositoryState>().activePath;
+    // Narrow from watch<RepositoryState>() → select((s) => s.activePath).
+    // The panel only rebuilds when the active path changes, not on every
+    // `git status` tick. Paired with the same narrowing in [build] below
+    // — previously both methods held the whole-object subscription.
+    final repoPath = context.select<RepositoryState, String?>(
+      (s) => s.activePath,
+    );
     final xrayState = context.read<RepositoryXrayState>();
     if (repoPath == null) {
       _lastLoadedRepoPath = null;
@@ -65,7 +71,9 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final repoPath = context.watch<RepositoryState>().activePath;
+    final repoPath = context.select<RepositoryState, String?>(
+      (s) => s.activePath,
+    );
     return MaterialSurface(
       tone: AppMaterialTone.panelStrong,
       borderAlpha: 0.22,

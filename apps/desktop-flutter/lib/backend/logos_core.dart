@@ -56,6 +56,8 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'lru_cache.dart';
+
 // Constants — pinned by the math, not by tuning
 
 /// Default Chebyshev truncation order. K=20 gives relative error <1e-8
@@ -620,9 +622,43 @@ bool _isX2Aligned(Float64List v) =>
 /// Cost: O(K) log() calls for the factorial table, plus the inner series
 /// loop. The earlier version re-summed `Σ log(i)` per k for O(K²) total
 /// log()s — measurably slower at the three-temperature blend call rate.
+/// System-wide memo for `besselCoeffs`. Hot-path temperatures come
+/// from a tiny discrete set (the canonical three-temperature blend
+/// uses t ∈ {0.5, 1.0, 2.0}; `gatherEvidence` derives nearT ≈ 0.55·t
+/// and farT ≈ 1.85·t from its single input t). A 16-entry LRU keyed
+/// by `(t, K)` holds every realistic call shape for the lifetime of
+/// the process — basis builds, recombines, and the DiffusionBasis
+/// animation slider all hit the same slot repeatedly.
+///
+/// Returns a **shared immutable view**: callers MUST NOT mutate the
+/// returned `Float64List`. `recombineHeatPhi` and the Chebyshev
+/// passes only read, so the share is safe.
+final LruCache<_BesselKey, Float64List> _besselCache =
+    LruCache<_BesselKey, Float64List>(maxSize: 16);
+
+class _BesselKey {
+  const _BesselKey(this.t, this.k);
+  final double t;
+  final int k;
+  @override
+  bool operator ==(Object other) =>
+      other is _BesselKey && other.t == t && other.k == k;
+  @override
+  int get hashCode => Object.hash(t, k);
+}
+
 Float64List besselCoeffs(double t, int k) {
+  final tSafe = t.isNaN ? 0.0 : t.clamp(0.0, _maxSafeT).toDouble();
+  final key = _BesselKey(tSafe, k);
+  final cached = _besselCache.get(key);
+  if (cached != null) return cached;
+  final computed = _computeBesselCoeffs(tSafe, k);
+  _besselCache.put(key, computed);
+  return computed;
+}
+
+Float64List _computeBesselCoeffs(double tSafe, int k) {
   final result = Float64List(k + 1);
-  final tSafe = t.isNaN ? 0.0 : t.clamp(0.0, _maxSafeT);
   if (tSafe == 0) {
     // c_0 = e^0 · I_0(0) = 1; c_k = 0 for k≥1.
     result[0] = 1.0;
@@ -838,6 +874,92 @@ Float64List chebyshevBasis({
     t2 = tmps;
   }
   return basis;
+}
+
+/// Batched variant of [chebyshevBasis] — builds `T_k(L_sym − I)·ρ` for
+/// `k = 0..K` over `B` independent rho inputs in a SINGLE SpMV chain
+/// over the graph. `rhoBatch` is AoSoA-packed: `rhoBatch[i*B + b]` is
+/// the seed mass at node `i` for column `b`. Output layout mirrors the
+/// input's AoSoA pattern but with an outer k-stride:
+/// `basis[k * (n * B) + i * B + b]` is the k-th basis coefficient of
+/// node i for column b.
+/// Use [extractBasisColumn] to lift one column into the same flat layout
+/// [chebyshevBasis] produces (so it is drop-in compatible with
+/// [recombineHeatPhi]).
+/// Graph-array memory traffic scales `O(K·|E|)` regardless of `B` — one
+/// pass services every column. Arithmetic scales `O(K·|E|·B)` but
+/// arithmetic is cheap vs. cache misses on sparse indices.
+Float64List chebyshevBasisBatch({
+  required CsrGraph graph,
+  required Float64List rhoBatch,
+  required int B,
+  int K = kDefaultChebyshevK,
+}) {
+  final n = graph.n;
+  final stride = n * B;
+  final basis = Float64List((K + 1) * stride);
+  if (n == 0 || B == 0) return basis;
+
+  final stridePairs = (stride + 1) >> 1;
+  var t0x = Float64x2List(stridePairs);
+  var t1x = Float64x2List(stridePairs);
+  var t2x = Float64x2List(stridePairs);
+  final scratchX = Float64x2List(stridePairs);
+  var t0 = Float64List.view(t0x.buffer, 0, stride);
+  var t1 = Float64List.view(t1x.buffer, 0, stride);
+  var t2 = Float64List.view(t2x.buffer, 0, stride);
+  final scratch = Float64List.view(scratchX.buffer, 0, stride);
+
+  // T_0·ρ = ρ — seed T_0 and emit basis row 0.
+  t0.setRange(0, stride, rhoBatch);
+  basis.setRange(0, stride, rhoBatch);
+  if (K == 0) return basis;
+
+  // T_1 = L_sym·T_0 − T_0
+  graph.applyLsymBatch(t0, scratch, B);
+  for (var i = 0; i < stridePairs; i++) {
+    t1x[i] = scratchX[i] - t0x[i];
+  }
+  basis.setRange(stride, 2 * stride, t1);
+
+  for (var k = 2; k <= K; k++) {
+    graph.applyLsymBatch(t1, scratch, B);
+    for (var i = 0; i < stridePairs; i++) {
+      t2x[i] = (scratchX[i] - t1x[i]).scale(2.0) - t0x[i];
+    }
+    basis.setRange(k * stride, (k + 1) * stride, t2);
+    final tmpx = t0x;
+    t0x = t1x;
+    t1x = t2x;
+    t2x = tmpx;
+    final tmps = t0;
+    t0 = t1;
+    t1 = t2;
+    t2 = tmps;
+  }
+  return basis;
+}
+
+/// Lift one AoSoA column `b` from a [chebyshevBasisBatch] result into
+/// the same flat layout [chebyshevBasis] emits, so the returned basis
+/// plugs straight into [recombineHeatPhi].
+Float64List extractBasisColumn({
+  required Float64List batchedBasis,
+  required int n,
+  required int B,
+  required int b,
+  int K = kDefaultChebyshevK,
+}) {
+  final out = Float64List((K + 1) * n);
+  final stride = n * B;
+  for (var k = 0; k <= K; k++) {
+    final kInBase = k * stride;
+    final kOutBase = k * n;
+    for (var i = 0; i < n; i++) {
+      out[kOutBase + i] = batchedBasis[kInBase + i * B + b];
+    }
+  }
+  return out;
 }
 
 /// Batched Chebyshev diffusion — runs `B` heat-kernel solutions
@@ -1067,3 +1189,751 @@ Float64List _flushSubnormals(Float64List buf) {
   }
   return buf;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// SPECTRAL PRIMITIVES
+//
+// The heat kernel φ(t) = exp(−t·L_sym)·ρ has a closed-form spectral
+// expansion: if L_sym = U·Λ·Uᵀ with eigenpairs (λ_j, u_j), then
+//
+//   φ(t) = U · diag(e^{−t·λ}) · Uᵀ · ρ
+//
+// Once the eigenpairs are cached, every query (any t, any ρ) costs
+// only O(k·n) — independent of the graph's edge count and Chebyshev's
+// degree-K matvec chain. The trade-off: a one-time O(m·|E| + m²·n)
+// Lanczos decomposition.
+//
+// Heat kernels are dominated by the SMALL eigenvalues of L_sym (large
+// λ → fast decay → negligible contribution at any t > 0). Standard
+// Lanczos converges fastest at extremal eigenvalues, which means it
+// hunts the LARGE end of the spectrum naturally. To pivot it onto the
+// small end without sparse LU / shift-invert, we run Lanczos on the
+// folded operator
+//
+//   M = 2·I − L_sym
+//
+// whose eigenvalues are 2 − λ (also in [0, 2], spectrum flipped).
+// Lanczos's affinity for the large eigenvalues of M lands on the
+// small eigenvalues of L_sym, and eigenvectors are shared between
+// the two operators (they differ only by a uniform shift). M·v is
+// computed via the existing applyLsym in two SIMD passes:
+// `M·v = 2·v − L_sym·v`.
+// ─────────────────────────────────────────────────────────────────────
+
+/// Diagonalise a small dense symmetric matrix `A` in-place using cyclic
+/// Jacobi rotations. `n` is the matrix dimension; `A` is row-major of
+/// length `n²`. On return, `A` holds eigenvalues on its diagonal (and
+/// near-zero entries off-diagonal); `eigvecs` is filled with the
+/// orthogonal matrix of eigenvectors stored row-major (column j is
+/// eigenvector j). `eigvecs` must be passed pre-allocated of length
+/// `n²` and is overwritten with the identity before rotation.
+///
+/// Cost: ~O(n³) per Jacobi sweep × ~log(1/eps) sweeps. Intended for
+/// small n (≲ 100) — the m×m tridiagonal that drops out of Lanczos.
+/// For m=50 this finishes in well under a millisecond.
+void _jacobiSymmetricEigen(Float64List A, int n, Float64List eigvecs) {
+  // Initialise eigvecs to identity.
+  for (var i = 0; i < n * n; i++) {
+    eigvecs[i] = 0.0;
+  }
+  for (var i = 0; i < n; i++) {
+    eigvecs[i * n + i] = 1.0;
+  }
+  if (n <= 1) return;
+
+  const maxSweeps = 64;
+  const tol = 1e-14;
+  for (var sweep = 0; sweep < maxSweeps; sweep++) {
+    // Compute Frobenius norm of the off-diagonal — convergence test.
+    var off = 0.0;
+    for (var p = 0; p < n - 1; p++) {
+      for (var q = p + 1; q < n; q++) {
+        final a = A[p * n + q];
+        off += a * a;
+      }
+    }
+    if (off < tol) break;
+
+    for (var p = 0; p < n - 1; p++) {
+      for (var q = p + 1; q < n; q++) {
+        final apq = A[p * n + q];
+        if (apq.abs() < 1e-18) continue;
+        final app = A[p * n + p];
+        final aqq = A[q * n + q];
+
+        // Compute rotation that zeros A[p,q]. Numerically robust form
+        // from Press et al.'s "Numerical Recipes" §11.1.
+        final theta = (aqq - app) / (2.0 * apq);
+        final t = theta >= 0
+            ? 1.0 / (theta + math.sqrt(1.0 + theta * theta))
+            : 1.0 / (theta - math.sqrt(1.0 + theta * theta));
+        final c = 1.0 / math.sqrt(1.0 + t * t);
+        final s = t * c;
+
+        // Rotate A in-place. Symmetric updates only need to touch the
+        // upper triangle plus the diagonal; the lower triangle is
+        // mirrored at the end of the sweep.
+        A[p * n + p] = app - t * apq;
+        A[q * n + q] = aqq + t * apq;
+        A[p * n + q] = 0.0;
+        A[q * n + p] = 0.0;
+        for (var r = 0; r < n; r++) {
+          if (r == p || r == q) continue;
+          final arp = A[r * n + p];
+          final arq = A[r * n + q];
+          final newRp = c * arp - s * arq;
+          final newRq = s * arp + c * arq;
+          A[r * n + p] = newRp;
+          A[p * n + r] = newRp;
+          A[r * n + q] = newRq;
+          A[q * n + r] = newRq;
+        }
+
+        // Update accumulating eigenvectors.
+        for (var r = 0; r < n; r++) {
+          final vrp = eigvecs[r * n + p];
+          final vrq = eigvecs[r * n + q];
+          eigvecs[r * n + p] = c * vrp - s * vrq;
+          eigvecs[r * n + q] = s * vrp + c * vrq;
+        }
+      }
+    }
+  }
+}
+
+/// Result of [lanczosSmallEigenpairs] — the top-k SMALLEST eigenpairs
+/// of the normalised Laplacian, with eigenvectors row-major
+/// (`eigenvectors[j * n + i]` = entry i of eigenvector j) and
+/// eigenvalues sorted ascending.
+class LaplacianEigenpairs {
+  final int n;
+  final int k;
+  final Float64List eigenvalues; // [k], sorted ascending in [0, 2]
+  final Float64List eigenvectors; // [k * n], row-major
+  const LaplacianEigenpairs({
+    required this.n,
+    required this.k,
+    required this.eigenvalues,
+    required this.eigenvectors,
+  });
+}
+
+/// Compute the top-`kRequested` SMALLEST eigenpairs of `graph`'s
+/// normalised Laplacian via folded-spectrum Lanczos. The fold
+/// `M = 2·I − L_sym` maps small L_sym eigenvalues to large M
+/// eigenvalues, so Lanczos's natural extremal-end convergence hits
+/// exactly the modes the heat kernel cares about — without ever
+/// needing a sparse LU factorisation for shift-invert.
+///
+/// Algorithm: m-step Lanczos with full reorthogonalisation. The
+/// orthonormal Lanczos vectors V (size n × (m+1)) and the symmetric
+/// tridiagonal T (m × m, encoded as alpha/beta arrays) are the only
+/// scratch state. T is then diagonalised by [_jacobiSymmetricEigen]
+/// to extract m Ritz pairs; we keep the top `kRequested` (by Ritz
+/// value on M) and reconstruct full-length Ritz vectors from V.
+///
+/// `maxIters` defaults to `max(2·k, 30)` — enough Lanczos steps that
+/// the top-k Ritz values converge to working precision on a normalised
+/// Laplacian. Random init uses a fixed seed so the decomposition is
+/// deterministic across runs (test reproducibility).
+LaplacianEigenpairs lanczosSmallEigenpairs(
+  CsrGraph graph,
+  int kRequested, {
+  int? maxIters,
+  int seed = 0xA1ECDA15,
+}) {
+  final n = graph.n;
+  if (n == 0 || kRequested <= 0) {
+    return LaplacianEigenpairs(
+      n: n,
+      k: 0,
+      eigenvalues: Float64List(0),
+      eigenvectors: Float64List(0),
+    );
+  }
+  // Lanczos iterations capped at the dimension (T can be at most n×n).
+  final m = math.min(n, math.max(maxIters ?? 0, math.max(2 * kRequested, 30)));
+  final k = math.min(kRequested, m);
+
+  // Lanczos vectors V[step * n + node]. step ranges 0..m (m+1 entries
+  // total — step m is the residual that closes the recurrence).
+  final V = Float64List((m + 1) * n);
+  final alpha = Float64List(m); // T diagonal
+  final beta = Float64List(m + 1); // T sub-diagonal (beta[0] unused)
+
+  // Random unit vector seeds the Krylov subspace. A simple
+  // linear-congruential generator suffices — Lanczos doesn't need
+  // cryptographic randomness, only that the seed isn't orthogonal to
+  // the eigenvectors we're after (vanishingly unlikely with random
+  // gaussian-ish entries).
+  var rngState = (seed | 1) & 0x7fffffff;
+  double nextNormal() {
+    // Box-Muller from two uniform draws. Replace later with a faster
+    // stateless alternative if hot.
+    rngState = (rngState * 1103515245 + 12345) & 0x7fffffff;
+    final u1 = (rngState + 1) / 0x80000000;
+    rngState = (rngState * 1103515245 + 12345) & 0x7fffffff;
+    final u2 = (rngState + 1) / 0x80000000;
+    return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2);
+  }
+
+  var seedNorm = 0.0;
+  for (var i = 0; i < n; i++) {
+    final v = nextNormal();
+    V[i] = v;
+    seedNorm += v * v;
+  }
+  seedNorm = math.sqrt(seedNorm);
+  if (seedNorm == 0.0) {
+    // Pathological — synthesise an axis-aligned unit vector.
+    V[0] = 1.0;
+    seedNorm = 1.0;
+  }
+  final invSeed = 1.0 / seedNorm;
+  for (var i = 0; i < n; i++) {
+    V[i] *= invSeed;
+  }
+
+  final scratch = Float64List(n);
+  final w = Float64List(n);
+  var actualM = m;
+
+  for (var j = 0; j < m; j++) {
+    // w = M · v_j  =  2·v_j − L_sym·v_j
+    final vj = Float64List.view(V.buffer, V.offsetInBytes + j * n * 8, n);
+    graph.applyLsym(vj, scratch);
+    for (var i = 0; i < n; i++) {
+      w[i] = 2.0 * vj[i] - scratch[i];
+    }
+    // w -= beta_{j-1} · v_{j-1}   (skipped at j=0; beta[0] = 0)
+    if (j > 0) {
+      final bjm1 = beta[j];
+      for (var i = 0; i < n; i++) {
+        w[i] -= bjm1 * V[(j - 1) * n + i];
+      }
+    }
+    // alpha_j = w · v_j  (Rayleigh quotient on M)
+    var aj = 0.0;
+    for (var i = 0; i < n; i++) {
+      aj += w[i] * vj[i];
+    }
+    alpha[j] = aj;
+    // w -= alpha_j · v_j
+    for (var i = 0; i < n; i++) {
+      w[i] -= aj * vj[i];
+    }
+
+    // Full reorthogonalisation against all previous Lanczos vectors.
+    // Without this, modified Gram-Schmidt loses orthogonality after
+    // the first cluster of eigenvalues converges and Ritz vectors
+    // get spurious copies. Cost is O(j·n) per step → O(m²·n) total,
+    // tolerable for m ≲ 50.
+    for (var l = 0; l <= j; l++) {
+      var dot = 0.0;
+      for (var i = 0; i < n; i++) {
+        dot += w[i] * V[l * n + i];
+      }
+      if (dot.abs() < 1e-18) continue;
+      for (var i = 0; i < n; i++) {
+        w[i] -= dot * V[l * n + i];
+      }
+    }
+
+    // beta_{j+1} = ||w||
+    var bj = 0.0;
+    for (var i = 0; i < n; i++) {
+      bj += w[i] * w[i];
+    }
+    bj = math.sqrt(bj);
+    beta[j + 1] = bj;
+    if (bj < 1e-12) {
+      // Krylov subspace exhausted — eigenproblem is rank-deficient
+      // or the seed happened to lie in a smaller invariant subspace.
+      // Truncate; what we have is exact for the explored subspace.
+      actualM = j + 1;
+      break;
+    }
+    final invBj = 1.0 / bj;
+    for (var i = 0; i < n; i++) {
+      V[(j + 1) * n + i] = w[i] * invBj;
+    }
+  }
+
+  // Build the dense m×m tridiagonal T from alpha/beta and diagonalise.
+  final T = Float64List(actualM * actualM);
+  for (var j = 0; j < actualM; j++) {
+    T[j * actualM + j] = alpha[j];
+    if (j + 1 < actualM) {
+      T[j * actualM + j + 1] = beta[j + 1];
+      T[(j + 1) * actualM + j] = beta[j + 1];
+    }
+  }
+  final Y = Float64List(actualM * actualM);
+  _jacobiSymmetricEigen(T, actualM, Y);
+
+  // Ritz values of M live on T's diagonal; their corresponding
+  // eigenvectors of M sit in V·Y (column j of Y mixes the Lanczos
+  // basis). We want the LARGEST Ritz values of M (= smallest L_sym
+  // eigenvalues), so take the top-k by descending Ritz value.
+  final ritzM = Float64List(actualM);
+  for (var j = 0; j < actualM; j++) {
+    ritzM[j] = T[j * actualM + j];
+  }
+  final indices = List<int>.generate(actualM, (i) => i);
+  indices.sort((a, b) => ritzM[b].compareTo(ritzM[a]));
+
+  final keep = math.min(k, actualM);
+  final eigenvalues = Float64List(keep);
+  final eigenvectors = Float64List(keep * n);
+  for (var j = 0; j < keep; j++) {
+    final src = indices[j];
+    // λ_L = 2 − λ_M, clamped to the Laplacian's [0, 2] spectrum to
+    // mop up the tiny negative drift Jacobi can leave on near-zero
+    // eigenvalues. Reordering descending Ritz-of-M → ascending λ_L.
+    var lam = 2.0 - ritzM[src];
+    if (lam < 0.0) lam = 0.0;
+    if (lam > 2.0) lam = 2.0;
+    eigenvalues[j] = lam;
+    // Ritz vector u_j = Σ_l Y[l, src] · v_l  (size n)
+    final dst = j * n;
+    for (var i = 0; i < n; i++) {
+      var v = 0.0;
+      for (var l = 0; l < actualM; l++) {
+        v += Y[l * actualM + src] * V[l * n + i];
+      }
+      eigenvectors[dst + i] = v;
+    }
+  }
+
+  return LaplacianEigenpairs(
+    n: n,
+    k: keep,
+    eigenvalues: eigenvalues,
+    eigenvectors: eigenvectors,
+  );
+}
+
+/// Spectral basis cache — top-k eigenpairs of a graph's normalised
+/// Laplacian, stored once and reused across every diffusion query
+/// regardless of source ρ or temperature t. After the one-time
+/// Lanczos decomposition, every `diffuse` / `project` call costs
+/// O(k·n) — no edge traversals, no Chebyshev recurrence.
+///
+/// This is the "make it instant" path: a temperature slider that
+/// re-evaluates 60 Hz, a multi-axis attribution call that runs a
+/// dozen ρ projections, an autoregressive backtracking-attention
+/// walk that needs the projection coefficients per node — all of
+/// them collapse to dense O(k·n) work on the cached basis.
+///
+/// Conventions: eigenvalues are sorted ascending in [0, 2];
+/// eigenvectors are row-major (`eigenvectors[j * n + i]` is entry i
+/// of eigenvector j); the basis is exactly orthonormal up to Lanczos
+/// floating-point drift.
+class SpectralBasis {
+  final int n;
+  final int k;
+  final Float64List eigenvalues; // [k]
+  final Float64List eigenvectors; // [k * n]
+
+  const SpectralBasis({
+    required this.n,
+    required this.k,
+    required this.eigenvalues,
+    required this.eigenvectors,
+  });
+
+  /// Build a spectral basis directly from a graph by running
+  /// [lanczosSmallEigenpairs]. Convenience constructor — most callers
+  /// should go through the engine-level cache rather than rebuild
+  /// per query.
+  factory SpectralBasis.fromGraph(CsrGraph graph, int k, {int? maxIters}) {
+    final pairs =
+        lanczosSmallEigenpairs(graph, k, maxIters: maxIters);
+    return SpectralBasis(
+      n: pairs.n,
+      k: pairs.k,
+      eigenvalues: pairs.eigenvalues,
+      eigenvectors: pairs.eigenvectors,
+    );
+  }
+
+  /// Project `rho` onto the eigenbasis: returns `Uᵀ·ρ` of length k.
+  /// Cheap O(k·n). The projection is the natural representation of a
+  /// source distribution in the spectral coordinates — one number per
+  /// mode, scale-aware. Future backtracking-attention paths will sit
+  /// on top of this primitive (modes ↔ random-walk rates).
+  Float64List project(Float64List rho) {
+    assert(rho.length == n, 'rho length must equal n');
+    final coeffs = Float64List(k);
+    for (var j = 0; j < k; j++) {
+      final base = j * n;
+      var s = 0.0;
+      for (var i = 0; i < n; i++) {
+        s += eigenvectors[base + i] * rho[i];
+      }
+      coeffs[j] = s;
+    }
+    return coeffs;
+  }
+
+  /// Reconstruct φ(t) from a precomputed projection. Each mode j
+  /// scales by `e^{−t·λ_j}`; the result is `U · diag(decay) · coeffs`.
+  /// Use this for slider sweeps: project once, recombine many times.
+  Float64List recombineFromProjection(Float64List coeffs, double t) {
+    assert(coeffs.length == k, 'coeffs length must equal k');
+    final phi = Float64List(n);
+    for (var j = 0; j < k; j++) {
+      final c = coeffs[j] * math.exp(-t * eigenvalues[j]);
+      if (c == 0.0) continue;
+      final base = j * n;
+      for (var i = 0; i < n; i++) {
+        phi[i] += c * eigenvectors[base + i];
+      }
+    }
+    return phi;
+  }
+
+  /// One-shot diffuse: project, scale by `e^{−t·λ}`, reconstruct.
+  /// Equivalent to `recombineFromProjection(project(rho), t)` but
+  /// avoids materialising the intermediate coefficient vector when
+  /// the caller doesn't need it.
+  Float64List diffuse(Float64List rho, double t) {
+    return recombineFromProjection(project(rho), t);
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  // OBSERVABLES — physical quantities the math gives us for free.
+  //
+  // The heat-kernel diffusion's quantum-thermodynamic structure means
+  // every cached spectrum carries more information than `diffuse(ρ, t)`
+  // ever surfaces. The methods below extract scalars and structures
+  // that make sense in their own right: the partition function and
+  // free energy of the operator on a source, the entropy of the
+  // source's spectral participation, the heat trace as a graph
+  // invariant, the diffusion-induced metric on the manifold, and
+  // the Fiedler / k-way community structure of the codebase as
+  // partitions of L_sym's low-frequency eigenspace.
+  //
+  // None of these add a SpMV — every observable is derived from the
+  // already-computed eigendecomposition. Cost is at most O(k·n).
+  // ───────────────────────────────────────────────────────────────────
+
+  /// Heat trace `Z(t) = tr(e^{−t·L_sym}) = Σⱼ e^{−t·λⱼ}`.
+  ///
+  /// **Reading**: an isospectral invariant of the codebase. Two graphs
+  /// with the same heat trace at every t share the same Laplacian
+  /// spectrum (modulo Lanczos truncation); they "sound the same"
+  /// (Kac, "Can one hear the shape of a drum?"). A PR that significantly
+  /// shifts the trace is changing architectural shape, not just file
+  /// contents. With `k = n` this is exact; with truncated `k` it
+  /// captures the low-frequency contribution that dominates at
+  /// any non-trivial `t`.
+  double heatTrace(double t) {
+    var s = 0.0;
+    for (var j = 0; j < k; j++) {
+      s += math.exp(-t * eigenvalues[j]);
+    }
+    return s;
+  }
+
+  /// Partition function of `ρ` under the heat operator at temperature
+  /// `t`: `Z(ρ, t) = ⟨ρ | e^{−t·L_sym} | ρ⟩ = Σⱼ e^{−t·λⱼ}·cⱼ²`,
+  /// where `cⱼ = uⱼ·ρ` are the projection coefficients.
+  ///
+  /// **Reading**: how much of `ρ`'s mass survives after diffusing for
+  /// time `t`. Concentrated sources on tightly-coupled clusters keep
+  /// most of their mass; diffuse sources scatter into the low-mass
+  /// regime. Substrate for [freeEnergy] and [spectralEntropy].
+  double partitionFunction(Float64List rho, double t) {
+    final coeffs = project(rho);
+    var z = 0.0;
+    for (var j = 0; j < k; j++) {
+      z += math.exp(-t * eigenvalues[j]) * coeffs[j] * coeffs[j];
+    }
+    return z;
+  }
+
+  /// Helmholtz free energy of `ρ` at temperature `t`:
+  /// `F(ρ, t) = −log Z(ρ, t)`.
+  ///
+  /// **Reading**: the natural information-theoretic cost of the
+  /// source. Low free energy = `ρ` aligns with the operator's
+  /// low-frequency modes (focused, well-coupled). High free energy =
+  /// `ρ` lives in the high-frequency tail (scattered, poorly coupled).
+  /// The minimum-free-energy `ρ` over a constraint set is the
+  /// principled "minimum description length" emission set for that
+  /// constraint — replaces ad-hoc budget knobs with a thermodynamic
+  /// stationarity condition.
+  double freeEnergy(Float64List rho, double t) {
+    final z = partitionFunction(rho, t);
+    if (z <= _subnormalFloor) return double.infinity;
+    return -math.log(z);
+  }
+
+  /// Spectral participation entropy of `ρ` at temperature `t`:
+  /// `S(ρ, t) = −Σⱼ pⱼ·log pⱼ` where `pⱼ = e^{−t·λⱼ}·cⱼ² / Z(ρ, t)`.
+  ///
+  /// **Reading**: how many spectral modes the source meaningfully
+  /// occupies *after* thermal weighting. Bounded above by `log(k)`
+  /// (uniform across modes — maximally diffuse focus); minimum 0
+  /// (a single mode — maximally sharp focus). The natural scalar
+  /// readout of "how focused is this PR / query / commit?". Free —
+  /// it just reads off the projection we already cached.
+  double spectralEntropy(Float64List rho, double t) {
+    final coeffs = project(rho);
+    var z = 0.0;
+    final weighted = Float64List(k);
+    for (var j = 0; j < k; j++) {
+      final w = math.exp(-t * eigenvalues[j]) * coeffs[j] * coeffs[j];
+      weighted[j] = w;
+      z += w;
+    }
+    if (z <= _subnormalFloor) return 0.0;
+    final invZ = 1.0 / z;
+    var s = 0.0;
+    for (var j = 0; j < k; j++) {
+      final p = weighted[j] * invZ;
+      if (p > _subnormalFloor) s -= p * math.log(p);
+    }
+    return s;
+  }
+
+  /// Diffusion distance between two graph nodes at scale `t`:
+  /// `d_t²(x, y) = ||p_t(x, ·) − p_t(y, ·)||² = Σⱼ e^{−2tλⱼ}·(uⱼ[x] − uⱼ[y])²`.
+  ///
+  /// **Reading**: a true metric on the graph induced by the heat
+  /// kernel — small `t` recovers the graph's local geometry, large
+  /// `t` recovers macroscopic cluster structure. Unlike shortest-path
+  /// distance, it averages over *all* paths weighted by their thermal
+  /// likelihood, so two nodes connected by many medium-strength paths
+  /// are closer than two nodes connected by a single strong path.
+  /// Use this for "how close is file X to file Y in the codebase's
+  /// natural geometry?".
+  double diffusionDistance(int srcId, int dstId, double t) {
+    if (srcId == dstId) return 0.0;
+    var sumSq = 0.0;
+    for (var j = 0; j < k; j++) {
+      final base = j * n;
+      final delta = eigenvectors[base + srcId] - eigenvectors[base + dstId];
+      sumSq += math.exp(-2.0 * t * eigenvalues[j]) * delta * delta;
+    }
+    return math.sqrt(sumSq);
+  }
+
+  /// L² distance between the two diffused fields `φ(t, ρa)` and
+  /// `φ(t, ρb)`. By orthonormality of the eigenbasis this collapses
+  /// to a closed-form sum over modes:
+  /// `‖φa − φb‖² = Σⱼ e^{−2tλⱼ}·(cⱼ_a − cⱼ_b)²`.
+  ///
+  /// **Reading**: a rigorous, math-grounded "are these two source
+  /// distributions touching the same conceptual region of the
+  /// codebase?" metric. Stronger than file-overlap, stronger than
+  /// embedding cosines, *grounded in the graph's own geometry*.
+  /// Use this for PR-vs-PR similarity, commit-vs-commit shape change,
+  /// or "how different is yesterday's review focus from today's?".
+  double spectralDivergence(Float64List rhoA, Float64List rhoB, double t) {
+    final ca = project(rhoA);
+    final cb = project(rhoB);
+    var sumSq = 0.0;
+    for (var j = 0; j < k; j++) {
+      final delta = ca[j] - cb[j];
+      sumSq += math.exp(-2.0 * t * eigenvalues[j]) * delta * delta;
+    }
+    return math.sqrt(sumSq);
+  }
+
+  /// The Fiedler vector — eigenvector for the smallest non-trivial
+  /// eigenvalue `λ₁` of `L_sym`. On a connected graph `λ₀ = 0`
+  /// (trivial constant mode), so `u₁` is the next eigenvector and
+  /// captures the codebase's deepest natural cleavage: the partition
+  /// of nodes that minimises edge-cut weight relative to subset
+  /// volume (Cheeger's inequality bounds this).
+  ///
+  /// **Reading**: the soul of the codebase, projected onto a single
+  /// axis. `sign(fiedler[i])` partitions every file into one of two
+  /// natural halves; the magnitude tells you how decisively each file
+  /// belongs to its half. Returns null when `k < 2` (need at least
+  /// the trivial + first non-trivial mode).
+  Float64List? get fiedlerVector {
+    if (k < 2) return null;
+    return Float64List.view(
+      eigenvectors.buffer,
+      eigenvectors.offsetInBytes + n * 8,
+      n,
+    );
+  }
+
+  /// Cluster the graph's nodes into `kClusters` communities by
+  /// running Lloyd's k-means in the spectral embedding spanned by
+  /// `u₁..u_{kClusters}` (skip `u₀` — constant on a connected graph,
+  /// no clustering signal). This is the Shi–Malik / Ng–Jordan–Weiss
+  /// spectral clustering algorithm at its cleanest.
+  ///
+  /// **Reading**: the codebase's natural community structure as the
+  /// math sees it — independent of the user's directory tree, the
+  /// authors' co-authorship, or any heuristic. Two files in the same
+  /// cluster diffuse onto each other faster than they diffuse onto
+  /// outsiders. Surface this as a permanent dashboard layer; users
+  /// will recognise architectural intent they never articulated.
+  ///
+  /// Returns a `List<int>` of length `n` mapping node id → cluster
+  /// label `[0, kClusters)`. Deterministic given `seed`.
+  List<int> spectralCommunityLabels(int kClusters, {int seed = 0xC005C0DE}) {
+    if (kClusters <= 1 || n == 0 || k < 2) {
+      return List<int>.filled(n, 0);
+    }
+    final embedDim = math.min(kClusters, k - 1);
+    // Build n × embedDim embedding using u_1..u_{embedDim} (skip u_0).
+    // Row-normalised so cosine-like similarity drives the k-means.
+    final embedding = Float64List(n * embedDim);
+    for (var i = 0; i < n; i++) {
+      var rowNormSq = 0.0;
+      for (var d = 0; d < embedDim; d++) {
+        final v = eigenvectors[(d + 1) * n + i];
+        embedding[i * embedDim + d] = v;
+        rowNormSq += v * v;
+      }
+      final rowNorm = math.sqrt(rowNormSq);
+      if (rowNorm > _subnormalFloor) {
+        final inv = 1.0 / rowNorm;
+        for (var d = 0; d < embedDim; d++) {
+          embedding[i * embedDim + d] *= inv;
+        }
+      }
+    }
+    return _kmeansSpectral(embedding, n, embedDim, kClusters, seed);
+  }
+}
+
+/// Lloyd's k-means clustering over a flat row-major embedding. Used
+/// internally by [SpectralBasis.spectralCommunityLabels]. Centroids
+/// are seeded by k-means++ for stable cluster ids; the algorithm
+/// runs until either no labels change or `_kKmeansMaxIters` is hit.
+List<int> _kmeansSpectral(
+  Float64List points, // [n * d], row-major
+  int n,
+  int d,
+  int kClusters,
+  int seed,
+) {
+  if (n == 0) return const [];
+  if (kClusters <= 1) return List<int>.filled(n, 0);
+  final clamped = math.min(kClusters, n);
+
+  // k-means++ initialisation: pick the first centroid uniformly at
+  // random, then each subsequent centroid with probability
+  // proportional to its squared distance to the nearest existing one.
+  // This avoids the bad-starting-points failure mode of pure random
+  // init and makes the labelling deterministic across runs.
+  var rngState = (seed | 1) & 0x7fffffff;
+  int nextInt(int bound) {
+    rngState = (rngState * 1103515245 + 12345) & 0x7fffffff;
+    return rngState % bound;
+  }
+
+  final centroids = Float64List(clamped * d);
+  // First centroid: random sample.
+  final firstId = nextInt(n);
+  for (var dim = 0; dim < d; dim++) {
+    centroids[dim] = points[firstId * d + dim];
+  }
+  final dist = Float64List(n);
+  for (var c = 1; c < clamped; c++) {
+    // Compute min squared distance to any existing centroid.
+    var totalDist = 0.0;
+    for (var i = 0; i < n; i++) {
+      var minDist = double.infinity;
+      for (var existing = 0; existing < c; existing++) {
+        var s = 0.0;
+        for (var dim = 0; dim < d; dim++) {
+          final delta = points[i * d + dim] - centroids[existing * d + dim];
+          s += delta * delta;
+        }
+        if (s < minDist) minDist = s;
+      }
+      dist[i] = minDist;
+      totalDist += minDist;
+    }
+    if (totalDist <= 0) {
+      // All points coincide with existing centroids — duplicate the
+      // last one to fill the slot.
+      for (var dim = 0; dim < d; dim++) {
+        centroids[c * d + dim] = centroids[(c - 1) * d + dim];
+      }
+      continue;
+    }
+    // Sample proportional to dist[].
+    final scaled = (nextInt(0x7fffffff) / 0x7fffffff) * totalDist;
+    var cum = 0.0;
+    var pick = n - 1;
+    for (var i = 0; i < n; i++) {
+      cum += dist[i];
+      if (cum >= scaled) {
+        pick = i;
+        break;
+      }
+    }
+    for (var dim = 0; dim < d; dim++) {
+      centroids[c * d + dim] = points[pick * d + dim];
+    }
+  }
+
+  final labels = List<int>.filled(n, 0);
+  final newCentroids = Float64List(clamped * d);
+  final counts = Int32List(clamped);
+
+  for (var iter = 0; iter < _kKmeansMaxIters; iter++) {
+    // Assignment: each point to its nearest centroid.
+    var changed = 0;
+    for (var i = 0; i < n; i++) {
+      var bestC = 0;
+      var bestDist = double.infinity;
+      for (var c = 0; c < clamped; c++) {
+        var s = 0.0;
+        for (var dim = 0; dim < d; dim++) {
+          final delta = points[i * d + dim] - centroids[c * d + dim];
+          s += delta * delta;
+        }
+        if (s < bestDist) {
+          bestDist = s;
+          bestC = c;
+        }
+      }
+      if (labels[i] != bestC) {
+        labels[i] = bestC;
+        changed++;
+      }
+    }
+    if (changed == 0 && iter > 0) break;
+
+    // Update: centroid = mean of assigned points. Empty clusters keep
+    // their previous centroid (rare with k-means++ init, but possible
+    // on degenerate spectra).
+    for (var i = 0; i < clamped * d; i++) {
+      newCentroids[i] = 0.0;
+    }
+    for (var c = 0; c < clamped; c++) {
+      counts[c] = 0;
+    }
+    for (var i = 0; i < n; i++) {
+      final c = labels[i];
+      counts[c]++;
+      for (var dim = 0; dim < d; dim++) {
+        newCentroids[c * d + dim] += points[i * d + dim];
+      }
+    }
+    for (var c = 0; c < clamped; c++) {
+      if (counts[c] == 0) continue;
+      final inv = 1.0 / counts[c];
+      for (var dim = 0; dim < d; dim++) {
+        centroids[c * d + dim] = newCentroids[c * d + dim] * inv;
+      }
+    }
+  }
+  return labels;
+}
+
+/// Cap on Lloyd's k-means iterations. K-means++ init plus this many
+/// refinement passes converges on the spectral embeddings we feed in
+/// (low-dimensional, well-separated clusters when communities exist).
+const int _kKmeansMaxIters = 32;

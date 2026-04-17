@@ -840,7 +840,10 @@ class _DiffShellState extends State<DiffShell> {
     // Capture the final position so closing without scrolling still records
     // a mark. Read BEFORE disposing the scroll controller.
     _recordTemporalMark();
-    _logosSession?.removeListener(_handleLogosSessionChanged);
+    _logosSession?.snapshotListenable
+        .removeListener(_handleLogosSnapshotChanged);
+    _logosSession?.contextListenable
+        .removeListener(_handleLogosContextChanged);
     if (_ownedLogosSession != null &&
         identical(_ownedLogosSession, _logosSession)) {
       _ownedLogosSession!.dispose();
@@ -1012,7 +1015,12 @@ class _DiffShellState extends State<DiffShell> {
       return;
     }
     final previous = _logosSession;
-    previous?.removeListener(_handleLogosSessionChanged);
+    // Detach from the two sub-notifiers (see `DiffLogosSession`'s
+    // snapshot/context split — Grimoire XV applied at the state
+    // layer). Listening to each channel separately means a per-file
+    // context arrival can't wake up snapshot-only consumers.
+    previous?.snapshotListenable.removeListener(_handleLogosSnapshotChanged);
+    previous?.contextListenable.removeListener(_handleLogosContextChanged);
     if (disposeOldOwned &&
         _ownedLogosSession != null &&
         identical(previous, _ownedLogosSession)) {
@@ -1024,10 +1032,15 @@ class _DiffShellState extends State<DiffShell> {
     _subscribedLogosFiles = const {};
     _appliedLogosSnapshotVersion = 0;
     _appliedLogosContextRevision = 0;
-    session?.addListener(_handleLogosSessionChanged);
+    session?.snapshotListenable.addListener(_handleLogosSnapshotChanged);
+    session?.contextListenable.addListener(_handleLogosContextChanged);
   }
 
-  void _handleLogosSessionChanged() {
+  void _handleLogosSnapshotChanged() {
+    _applyLatestLogosState();
+  }
+
+  void _handleLogosContextChanged() {
     _applyLatestLogosState();
   }
 
@@ -2790,13 +2803,22 @@ class _DiffShellState extends State<DiffShell> {
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
-    final prefs = context.watch<PreferencesState>();
-    // Cache prefs so async methods (blame hover timer) can read them without
-    // needing a BuildContext. Overwrite on every build so pref changes
-    // propagate immediately.
-    _reduceMotion = prefs.reduceMotion;
-    _motionRate = prefs.motionRate;
-    _instantBlameHover = prefs.instantBlameHover;
+    // Diff shell only cares about three motion/hover prefs — narrow
+    // the subscription so pref writes for unrelated knobs (sort guide,
+    // commit voice, update channel, …) don't invalidate the entire
+    // diff body. Dart records use structural equality, so the rebuild
+    // fires only on a genuine value change.
+    final motionPrefs = context.select<PreferencesState,
+        ({bool reduceMotion, double motionRate, bool instantBlameHover})>(
+      (s) => (
+        reduceMotion: s.reduceMotion,
+        motionRate: s.motionRate,
+        instantBlameHover: s.instantBlameHover,
+      ),
+    );
+    _reduceMotion = motionPrefs.reduceMotion;
+    _motionRate = motionPrefs.motionRate;
+    _instantBlameHover = motionPrefs.instantBlameHover;
     final hasContent =
         (_effectiveDiffContent != null && _effectiveDiffContent!.isNotEmpty) ||
             _lines.isNotEmpty;
@@ -2967,13 +2989,6 @@ class _DiffShellState extends State<DiffShell> {
               ),
           ]),
         ),
-        if (!_searchVisible && (_logosLoading || _logosSession != null))
-          _DiffShapeStrip(
-            tokens: t,
-            session: _logosSession,
-            loading: _logosLoading,
-          ),
-
         Expanded(
           child: Stack(
             children: [
@@ -5086,103 +5101,6 @@ class _HunkDropdown extends StatelessWidget {
   }
 }
 
-class _DiffShapeStrip extends StatelessWidget {
-  final AppTokens tokens;
-  final DiffLogosSession? session;
-  final bool loading;
-
-  const _DiffShapeStrip({
-    required this.tokens,
-    required this.session,
-    required this.loading,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = tokens;
-    final s = session;
-    if (loading && s == null) {
-      return Container(
-        height: 28,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: t.surface0.withValues(alpha: 0.2),
-          border: Border(
-            bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.12)),
-          ),
-        ),
-        alignment: Alignment.centerLeft,
-        child: Text(
-          'reading topology',
-          style: TextStyle(
-            color: t.textFaint,
-            fontSize: 10.5,
-            fontFamily: 'JetBrainsMono',
-          ),
-        ),
-      );
-    }
-    if (s == null) return const SizedBox.shrink();
-    final related = s.relatedJumps
-        .take(3)
-        .map((jump) => _diffDisplayName(jump.path))
-        .toList();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: t.surface0.withValues(alpha: 0.14),
-        border: Border(
-          bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.08)),
-        ),
-      ),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 6,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          _shapeChip(t, s.shape.regime.name),
-          Text(
-            s.shape.touchedSummary(),
-            style: TextStyle(
-              color: t.textMuted,
-              fontSize: 10.5,
-              fontFamily: 'JetBrainsMono',
-            ),
-          ),
-          if (related.isNotEmpty)
-            Text(
-              'next ${related.join('  ')}',
-              style: TextStyle(
-                color: t.textFaint,
-                fontSize: 10,
-                fontFamily: 'JetBrainsMono',
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _shapeChip(AppTokens t, String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: t.surface1.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.18)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: t.textStrong,
-          fontSize: 10,
-          fontFamily: 'JetBrainsMono',
-        ),
-      ),
-    );
-  }
-}
-
 //
 // While scrolled deep inside a hunk, the natural `@@ ... @@` header scrolls
 // away. This overlay pins the current hunk's label at the top of the viewport
@@ -6896,9 +6814,41 @@ class _StickyHunkHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Hoist everything the scroll tick *can't* change. Previously these
+    // allocations happened inside the `AnimatedBuilder.builder` closure
+    // and so reran on every scroll pixel — the header fires dozens of
+    // build passes per second during an active scroll. Only the
+    // label-bearing right region actually varies with scroll position;
+    // the decoration tokens, text style, and left sigil strip do not.
+    const double sigilReserveWidth = _kLeftReserveWidth;
+    final bg = BoxDecoration(
+      color: tokens.chromeAccent.withValues(alpha: 0.14),
+      border: Border(
+        bottom: BorderSide(
+          color: tokens.chromeBorder.withValues(alpha: 0.25),
+        ),
+      ),
+    );
+    final labelStyle = TextStyle(
+      color: tokens.accentBright,
+      fontSize: 11,
+      fontFamily: 'JetBrainsMono',
+      height: 1.3,
+    );
+    final leftStrip = IgnorePointer(
+      child: Container(
+        width: sigilReserveWidth,
+        height: lineExtent,
+        decoration: bg,
+      ),
+    );
     return AnimatedBuilder(
       animation: scrollCtrl,
-      builder: (_, __) {
+      // Pass the invariant left strip through as `child:` so
+      // `AnimatedBuilder` reuses the exact same widget instance across
+      // every scroll tick instead of rebuilding it.
+      child: leftStrip,
+      builder: (context, leftChild) {
         if (!scrollCtrl.hasClients) return const SizedBox.shrink();
         if (hunkDisplayRows.length != hunks.length) {
           return const SizedBox.shrink();
@@ -6943,37 +6893,17 @@ class _StickyHunkHeader extends StatelessWidget {
         }
 
         final label = hunks[activeHunk].label;
-        // Proscenium layer precedence: the sticky header sits visually above
-        // the list, but the leftmost strip — where the stage ribbon + sigil
-        // live — stays pointer-transparent so paint-drag and sigil taps on
-        // the row beneath still land correctly. The reserve width is
-        // [_kLeftReserveWidth] (ribbon + sigil cell), the single source of
-        // truth — if the row layout widens, this reserves the matching
-        // space automatically, no hardcoded duplication.
-        const double sigilReserveWidth = _kLeftReserveWidth;
-        final bg = BoxDecoration(
-          color: tokens.chromeAccent.withValues(alpha: 0.14),
-          border: Border(
-            bottom: BorderSide(
-              color: tokens.chromeBorder.withValues(alpha: 0.25),
-            ),
-          ),
-        );
         return Opacity(
           opacity: opacity,
           child: SizedBox(
             height: lineExtent,
             child: Row(
               children: [
-                // Left strip: drawn bg, pointer pass-through so paint-drag
-                // and sigil taps on the underlying row still fire.
-                IgnorePointer(
-                  child: Container(
-                    width: sigilReserveWidth,
-                    height: lineExtent,
-                    decoration: bg,
-                  ),
-                ),
+                // Left strip (hoisted via AnimatedBuilder child:). Pointer
+                // pass-through so paint-drag + sigil taps reach the row
+                // beneath the sticky overlay. Reserved width tracks
+                // [_kLeftReserveWidth] through the hoisted widget.
+                leftChild!,
                 // Right region: click to jump. IgnorePointer during the
                 // 1-line handoff fade so the sticky doesn't eat a tap that
                 // belongs to the next hunk's natural header.
@@ -6993,12 +6923,7 @@ class _StickyHunkHeader extends StatelessWidget {
                             label,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: tokens.accentBright,
-                              fontSize: 11,
-                              fontFamily: 'JetBrainsMono',
-                              height: 1.3,
-                            ),
+                            style: labelStyle,
                           ),
                         ),
                       ),

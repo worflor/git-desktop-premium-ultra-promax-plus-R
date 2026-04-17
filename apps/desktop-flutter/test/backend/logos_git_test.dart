@@ -1666,6 +1666,8 @@ void main() {
       }
     });
   });
+
+  group('Spectral basis (Lanczos)', _spectralTests);
 }
 
 /// Fixture: four files where {a, b, c} strongly co-change and
@@ -1715,4 +1717,253 @@ LogosGitStats _canonicalCoChangeStats() {
     ),
     perFileCommitIndices: const {},
   );
+}
+
+void _spectralTests() {
+  // Path graph: 0—1—2—3—4 with unit edge weights. Used by both
+  // Chebyshev path-graph reference test and here for spectral
+  // equivalence so the two paths are pinned against the same fixture.
+  CsrGraph buildPath(int n) {
+    final edges = <List<(int, double)>>[];
+    for (var i = 0; i < n; i++) {
+      final row = <(int, double)>[];
+      if (i > 0) row.add((i - 1, 1.0));
+      if (i < n - 1) row.add((i + 1, 1.0));
+      edges.add(row);
+    }
+    return CsrGraph.fromRawEdges(n: n, edgesPerNode: edges);
+  }
+
+  test('lanczosSmallEigenpairs returns sorted eigenvalues in [0, 2]', () {
+    final g = buildPath(20);
+    final pairs = lanczosSmallEigenpairs(g, 8);
+    expect(pairs.k, 8);
+    for (var j = 0; j < pairs.k; j++) {
+      expect(pairs.eigenvalues[j],
+          inInclusiveRange(-1e-9, 2.0 + 1e-9));
+    }
+    for (var j = 1; j < pairs.k; j++) {
+      expect(pairs.eigenvalues[j], greaterThanOrEqualTo(pairs.eigenvalues[j - 1] - 1e-9));
+    }
+    // Smallest eigenvalue of L_sym on a connected graph is 0.
+    expect(pairs.eigenvalues[0], closeTo(0.0, 1e-6));
+  });
+
+  test('Spectral eigenvectors are orthonormal up to Lanczos drift', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 8);
+    // Uᵀ·U should be identity. Test diagonal ≈ 1 and off-diagonal ≈ 0.
+    for (var a = 0; a < basis.k; a++) {
+      for (var b = 0; b < basis.k; b++) {
+        var dot = 0.0;
+        for (var i = 0; i < basis.n; i++) {
+          dot += basis.eigenvectors[a * basis.n + i] *
+              basis.eigenvectors[b * basis.n + i];
+        }
+        if (a == b) {
+          expect(dot, closeTo(1.0, 1e-8),
+              reason: 'eigenvector $a should be unit-norm');
+        } else {
+          expect(dot, closeTo(0.0, 1e-8),
+              reason: 'eigenvectors $a and $b should be orthogonal');
+        }
+      }
+    }
+  });
+
+  test('Spectral diffuse with full k matches Chebyshev to f64 precision', () {
+    // Full eigendecomposition (k = n) should recover Chebyshev exactly
+    // up to Lanczos floating-point drift — both compute exp(−t·L_sym)·ρ,
+    // just with different numerical paths.
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    final rho = Float64List(g.n)..[5] = 1.0;
+    for (final t in const [0.5, 1.0, 2.0]) {
+      final phiSpectral = basis.diffuse(rho, t);
+      final phiChebyshev = Float64List(g.n);
+      chebyshevDiffuse(graph: g, rho: rho, phi: phiChebyshev, t: t);
+      var maxAbsErr = 0.0;
+      for (var i = 0; i < g.n; i++) {
+        final e = (phiSpectral[i] - phiChebyshev[i]).abs();
+        if (e > maxAbsErr) maxAbsErr = e;
+      }
+      expect(maxAbsErr, lessThan(1e-8),
+          reason: 't=$t: full-rank spectral must equal Chebyshev');
+    }
+  });
+
+  test('Spectral diffuse with truncated k beats Chebyshev at large t', () {
+    // Heat-kernel modes decay as e^(−t·λ). At t ≥ 1, modes with λ > 3
+    // contribute < e^−3 ≈ 0.05 of their initial amplitude — truncating
+    // them costs a small constant and we still recover the right shape.
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final rho = Float64List(g.n)..[10] = 1.0;
+    final phiSpectral = basis.diffuse(rho, 2.0);
+    final phiChebyshev = Float64List(g.n);
+    chebyshevDiffuse(graph: g, rho: rho, phi: phiChebyshev, t: 2.0);
+    var maxAbsErr = 0.0;
+    for (var i = 0; i < g.n; i++) {
+      final e = (phiSpectral[i] - phiChebyshev[i]).abs();
+      if (e > maxAbsErr) maxAbsErr = e;
+    }
+    // 12 of 20 modes at t=2.0 — the missing 8 high-frequency modes
+    // each contribute up to e^(−2·1.9) ≈ 0.022 of their projection
+    // amplitude. Per-node max-abs error around 1–2% is the expected
+    // shape; tighten by raising k or t.
+    expect(maxAbsErr, lessThan(2e-2),
+        reason: 'truncated spectral should approximate well at large t');
+  });
+
+  test('Spectral project + recombine equals one-shot diffuse', () {
+    // The two-step API (project once, recombine many) must match the
+    // one-step API exactly — they're literally the same math, the
+    // split exists only to amortise project across slider sweeps.
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 8);
+    final rho = Float64List(g.n)..[3] = 0.7..[12] = 0.3;
+    final coeffs = basis.project(rho);
+    expect(coeffs.length, basis.k);
+    for (final t in const [0.25, 0.75, 1.5]) {
+      final phiOneShot = basis.diffuse(rho, t);
+      final phiTwoStep = basis.recombineFromProjection(coeffs, t);
+      for (var i = 0; i < g.n; i++) {
+        expect(phiTwoStep[i], closeTo(phiOneShot[i], 1e-12));
+      }
+    }
+  });
+
+  test('Heat trace decays monotonically in t and equals Σ e^(−tλ)', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    final z0 = basis.heatTrace(0.0);
+    expect(z0, closeTo(20.0, 1e-9), reason: 'tr(I) = n');
+    var prev = z0;
+    for (final t in const [0.5, 1.0, 2.0, 4.0]) {
+      final z = basis.heatTrace(t);
+      expect(z, lessThan(prev), reason: 'heat trace must decay');
+      var manual = 0.0;
+      for (var j = 0; j < basis.k; j++) {
+        manual += math.exp(-t * basis.eigenvalues[j]);
+      }
+      expect(z, closeTo(manual, 1e-12));
+      prev = z;
+    }
+  });
+
+  test('Free energy and partition function obey F = −log Z', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    // Build a unit-mass focus on the centre node.
+    final rho = Float64List(g.n)..[10] = 1.0;
+    for (final t in const [0.5, 1.0, 2.0]) {
+      final z = basis.partitionFunction(rho, t);
+      final f = basis.freeEnergy(rho, t);
+      expect(z, greaterThan(0.0));
+      expect(f, closeTo(-math.log(z), 1e-12));
+    }
+  });
+
+  test('Spectral entropy is bounded and ordered with focus diffusion', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    final delta = Float64List(g.n)..[10] = 1.0;
+    // At t=0 the projection coeffs are the raw uⱼ[10] values; entropy
+    // is bounded by log(k). Larger t concentrates mass into lower
+    // modes (small λ survive longer) — entropy decreases.
+    final entropyCold = basis.spectralEntropy(delta, 0.0);
+    final entropyWarm = basis.spectralEntropy(delta, 1.0);
+    final entropyHot = basis.spectralEntropy(delta, 4.0);
+    final logK = math.log(basis.k.toDouble());
+    expect(entropyCold, lessThanOrEqualTo(logK + 1e-9));
+    expect(entropyHot, lessThan(entropyWarm),
+        reason: 'higher t → more low-mode dominance → lower entropy');
+    expect(entropyWarm, lessThanOrEqualTo(entropyCold + 1e-9));
+  });
+
+  test('Diffusion distance is a metric on a path graph', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    // Identity: d(x, x) = 0.
+    expect(basis.diffusionDistance(5, 5, 1.0), closeTo(0.0, 1e-12));
+    // Symmetry: d(x, y) = d(y, x).
+    expect(basis.diffusionDistance(3, 7, 1.0),
+        closeTo(basis.diffusionDistance(7, 3, 1.0), 1e-12));
+    // On a path graph, far-apart nodes have larger diffusion distance
+    // than close nodes (at any moderate t).
+    final dShort = basis.diffusionDistance(5, 7, 1.0);
+    final dLong = basis.diffusionDistance(5, 15, 1.0);
+    expect(dLong, greaterThan(dShort));
+  });
+
+  test('Spectral divergence is zero on identical sources, positive otherwise',
+      () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    final rhoA = Float64List(g.n)..[5] = 1.0;
+    final rhoB = Float64List(g.n)..[5] = 1.0;
+    final rhoC = Float64List(g.n)..[15] = 1.0;
+    expect(basis.spectralDivergence(rhoA, rhoB, 1.0),
+        closeTo(0.0, 1e-12));
+    final dAC = basis.spectralDivergence(rhoA, rhoC, 1.0);
+    expect(dAC, greaterThan(0.0));
+    // Symmetry.
+    expect(basis.spectralDivergence(rhoC, rhoA, 1.0), closeTo(dAC, 1e-12));
+  });
+
+  test('Fiedler partition splits a barbell graph along its bridge', () {
+    // Two K3 cliques joined by a single edge. The Fiedler vector
+    // u₁ should change sign across the bridge — the deepest cut of
+    // the graph is exactly that one edge.
+    //
+    //   0 — 1            4 — 5
+    //   |\ /|            |\ /|
+    //   |/ \|            |/ \|
+    //   2 — 3 ─────── 4
+    //
+    // Numbering: clique A = {0,1,2}, clique B = {3,4,5}, bridge 2—3.
+    final edges = <List<(int, double)>>[
+      [(1, 1.0), (2, 1.0)], // 0
+      [(0, 1.0), (2, 1.0)], // 1
+      [(0, 1.0), (1, 1.0), (3, 1.0)], // 2 — bridge end
+      [(2, 1.0), (4, 1.0), (5, 1.0)], // 3 — bridge end
+      [(3, 1.0), (5, 1.0)], // 4
+      [(3, 1.0), (4, 1.0)], // 5
+    ];
+    final g = CsrGraph.fromRawEdges(n: 6, edgesPerNode: edges);
+    final basis = SpectralBasis.fromGraph(g, 6);
+    final fiedler = basis.fiedlerVector!;
+    // Each clique's nodes should share the sign of fiedler[i]; the
+    // two cliques should have opposite signs.
+    final signA = fiedler[0].sign;
+    final signB = fiedler[5].sign;
+    expect(signA, isNot(signB),
+        reason: 'two cliques sit on opposite sides of u₁');
+    expect(fiedler[1].sign, signA);
+    expect(fiedler[2].sign, signA);
+    expect(fiedler[3].sign, signB);
+    expect(fiedler[4].sign, signB);
+  });
+
+  test('Spectral community labels separate the barbell cliques', () {
+    final edges = <List<(int, double)>>[
+      [(1, 1.0), (2, 1.0)],
+      [(0, 1.0), (2, 1.0)],
+      [(0, 1.0), (1, 1.0), (3, 1.0)],
+      [(2, 1.0), (4, 1.0), (5, 1.0)],
+      [(3, 1.0), (5, 1.0)],
+      [(3, 1.0), (4, 1.0)],
+    ];
+    final g = CsrGraph.fromRawEdges(n: 6, edgesPerNode: edges);
+    final basis = SpectralBasis.fromGraph(g, 6);
+    final labels = basis.spectralCommunityLabels(2);
+    expect(labels, hasLength(6));
+    // Nodes 0..2 must share a label; nodes 3..5 must share a (different) label.
+    expect(labels[0], labels[1]);
+    expect(labels[1], labels[2]);
+    expect(labels[3], labels[4]);
+    expect(labels[4], labels[5]);
+    expect(labels[2], isNot(labels[3]),
+        reason: 'two cliques must end up in different communities');
+  });
 }

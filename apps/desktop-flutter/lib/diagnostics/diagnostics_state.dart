@@ -429,6 +429,24 @@ class DiagnosticsState extends ChangeNotifier {
   int _nextLifecycleEventId = 1;
   int _retentionDays = _defaultRetentionDays;
   int _retentionMb = _defaultRetentionMb;
+
+  /// Microtask-coalesced notification. A single git command routes
+  /// through three `record*` methods (lifecycle-start, lifecycle-success,
+  /// latency-sample), each of which used to fire its own
+  /// `notifyListeners()` synchronously — one logical event waking
+  /// subscribers three times in the same event-loop tick. Scheduling
+  /// the broadcast on the microtask queue folds those three fires into
+  /// one. External callers still hit `notifyListeners` directly for
+  /// operations that genuinely want an immediate broadcast.
+  bool _pendingNotify = false;
+  void _scheduleNotify() {
+    if (_pendingNotify) return;
+    _pendingNotify = true;
+    scheduleMicrotask(() {
+      _pendingNotify = false;
+      notifyListeners();
+    });
+  }
   bool _loaded = false;
   Future<void> _backgroundIo = Future<void>.value();
   Timer? _backendSnapshotRefreshTimer;
@@ -505,7 +523,9 @@ class DiagnosticsState extends ChangeNotifier {
         scope: 'command',
         roundTripMs: stopwatch.elapsedMicroseconds / 1000,
       );
-      notifyListeners();
+      // No direct notify here — `recordCommandLatency` already
+      // scheduled one via `_scheduleNotify`; a second synchronous
+      // fire would wake listeners twice for one logical event.
     } catch (error) {
       stopwatch.stop();
       recordCommandLifecycleEvent(
@@ -558,7 +578,7 @@ class DiagnosticsState extends ChangeNotifier {
       );
     }
     if (notify) {
-      notifyListeners();
+      _scheduleNotify();
     }
   }
 
@@ -602,7 +622,7 @@ class DiagnosticsState extends ChangeNotifier {
     );
     _applyCommandLatencyRetention();
     _cachedCommandLatencyReport = null;
-    notifyListeners();
+    _scheduleNotify();
     _enqueueBackgroundIo(() async {
       await _persistCommandSamples();
       await CommandTelemetryStore.recordSample(
@@ -666,7 +686,7 @@ class DiagnosticsState extends ChangeNotifier {
     );
     _applyDiffRenderRetention();
     _cachedDiffRenderMetricsReport = null;
-    notifyListeners();
+    _scheduleNotify();
     _enqueueBackgroundIo(_persistDiffRenderSamples);
   }
 
@@ -677,7 +697,7 @@ class DiagnosticsState extends ChangeNotifier {
     _diffRenderSamples.clear();
     _cachedDiffRenderMetricsReport = null;
     await _persistDiffRenderSamples();
-    notifyListeners();
+    _scheduleNotify();
   }
 
   Future<void> recordUiTiming({
@@ -714,7 +734,11 @@ class DiagnosticsState extends ChangeNotifier {
       notify: false,
     );
     _enqueueBackgroundIo(_persistUiTimingSamples);
-    notifyListeners();
+    // Coalesced notify — diff_shell's `_profileUiSync` fires this
+    // many times per refresh; a bare notifyListeners here wakes
+    // every diagnostics-panel consumer per sample instead of once
+    // per frame.
+    _scheduleNotify();
   }
 
   Future<void> clearUiTimingReport() async {
@@ -724,7 +748,7 @@ class DiagnosticsState extends ChangeNotifier {
     _uiTimingSamples.clear();
     _cachedUiTimingReport = null;
     await _persistUiTimingSamples();
-    notifyListeners();
+    _scheduleNotify();
   }
 
   Future<void> clearAllDiagnostics() async {
