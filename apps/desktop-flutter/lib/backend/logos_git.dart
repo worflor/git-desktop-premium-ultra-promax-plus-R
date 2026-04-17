@@ -131,12 +131,22 @@ extension LogosGitTestAccess on LogosGit {
 /// repeated weight computation doesn't call `math.log` for every edge.
 /// Sentinel 0.0 means "not yet computed"; ln(1+0) = 0 naturally, so the
 /// sentinel is safe for n=0 too.
+///
+/// Size is tuned to the dominant caller's evidence range. The CC axis
+/// inside [BornMixer.mix] is called with `(matrix.commitsAnalyzed / 10)`
+/// clamped to ~1024, so a 1024-entry table covers it completely while
+/// keeping the table at 8 KB — solidly in L1 on every target core. The
+/// F0 axis can exceed the cap for very large repos; those rare requests
+/// fall through to `math.log` directly with no memoisation, which is
+/// fine because the tail is one-off and the table would have been a
+/// cold miss anyway.
 class _Log1pLut {
-  static final Float64List _t = Float64List(4096);
+  static const int _size = 1024;
+  static final Float64List _t = Float64List(_size);
 
   static double call(int n) {
     if (n <= 0) return 0;
-    if (n < 4096) {
+    if (n < _size) {
       final cached = _t[n];
       if (cached != 0) return cached;
       final v = math.log(1.0 + n);

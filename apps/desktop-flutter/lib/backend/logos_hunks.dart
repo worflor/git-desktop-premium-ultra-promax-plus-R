@@ -527,21 +527,23 @@ CsrGraph _buildHunkGraph({
 
   // Pass 1: pairs with at least one shared token. Blend Jaccard with
   // engram cosine using evidence-weighted convex combination.
-  symNumerator.forEach((i, row) {
-    row.forEach((j, overlap) {
-      final denom = tokens[i].length + tokens[j].length - overlap;
-      if (denom <= 0) return;
+  for (final outer in symNumerator.entries) {
+    final i = outer.key;
+    final iTokens = tokens[i].length;
+    final kvi = engramKVectors != null ? engramKVectors[i] : null;
+    for (final inner in outer.value.entries) {
+      final j = inner.key;
+      final overlap = inner.value;
+      final denom = iTokens + tokens[j].length - overlap;
+      if (denom <= 0) continue;
       final jaccard = overlap / denom;
       double weight;
       if (engramKVectors != null) {
-        final kvi = engramKVectors[i];
         final kvj = engramKVectors[j];
         final cos = EngramHunkEncoder.cosine(kvi, kvj);
         if (cos > 0 && kvi != null && kvj != null) {
-          // log1p of pool size = Jaccard's own evidence in nats.
           final jaccardEvidence =
-              math.log(1.0 + (tokens[i].length + tokens[j].length).toDouble());
-          // log1p of min vocab hits = engram's evidence in nats.
+              math.log(1.0 + (iTokens + tokens[j].length).toDouble());
           final engramEvidence = math.log(1.0 +
               (kvi.vocabHits < kvj.vocabHits ? kvi.vocabHits : kvj.vocabHits)
                   .toDouble());
@@ -552,16 +554,14 @@ CsrGraph _buildHunkGraph({
               : jaccard;
           weight = wSym * blended;
         } else {
-          // One or both hunks couldn't be encoded â€” fall back to pure
-          // Jaccard so H_sym degrades gracefully per hunk.
           weight = wSym * jaccard;
         }
       } else {
         weight = wSym * jaccard;
       }
       addEdge(i, j, weight);
-    });
-  });
+    }
+  }
 
   // Pass 2: engram-only edges. Walk every pair that has K-vectors but
   // did NOT share any tokens, and admit those clearing the 1/e cosine
@@ -706,15 +706,19 @@ CsrGraph _buildHunkGraph({
   }
 
   final trimmedRows = List<List<_Edge>>.generate(n, (_) => <_Edge>[]);
-  edges.forEach((i, row) {
-    final list =
-        row.entries.map((e) => _Edge(e.key, e.value)).toList(growable: false);
+  for (final rowEntry in edges.entries) {
+    final i = rowEntry.key;
+    final list = <_Edge>[];
+    for (final e in rowEntry.value.entries) {
+      list.add(_Edge(e.key, e.value));
+    }
     list.sort((x, y) => y.w.compareTo(x.w));
     final cap = math.min(topK, list.length);
+    final outRow = trimmedRows[i];
     for (var k = 0; k < cap; k++) {
-      trimmedRows[i].add(list[k]);
+      outRow.add(list[k]);
     }
-  });
+  }
 
   // Symmetrise: an edge survives if EITHER endpoint kept it. This is the
   // same top-K-then-symmetrise policy LogosGit uses.

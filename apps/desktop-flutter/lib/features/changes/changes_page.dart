@@ -9304,8 +9304,14 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
           // pulse a sharp brief peak rather than a smooth sine — reads
           // as a "flash" instead of a slow brightness wave.
           final glintPhase = (t * 2.0) % 1.0;
-          final raw = math.sin(glintPhase * math.pi);
-          final glint = isActive ? math.pow(raw.abs(), 6).toDouble() : 0.0;
+          final raw = math.sin(glintPhase * math.pi).abs();
+          // `raw^6` via three multiplies. `math.pow(x, 6)` dispatches
+          // through the `num` boxing path and a `log/exp` pair for the
+          // generic case — runs every animation frame, so inlining the
+          // square-then-cube schedule removes a transcendental from the
+          // per-tick cost.
+          final raw2 = raw * raw;
+          final glint = isActive ? raw2 * raw2 * raw2 : 0.0;
 
           // Slow continuous rotation when active; faster on loading.
           final rotation = (isActive || widget.state == IconAnimState.loading)

@@ -61,6 +61,26 @@ final Map<String, Future<LogosGit?>> _inflight = {};
 final Map<String, _HeadSnapshot> _headSnapshots = {};
 const Duration _kHeadProbeTtl = Duration(seconds: 2);
 
+/// Hard ceiling on the cheap `git rev-parse HEAD` probe that precedes
+/// every engine refresh. Without a bound, a hung git (network drive
+/// unmount, ref-lock held by a crashed tool, malformed repo) would pin
+/// the `_inflight` entry for this repo forever and prevent any later
+/// refresh. Chosen generously: a healthy rev-parse returns in a few ms
+/// even on large repos; 8 s is far past the tail of normal behaviour.
+const Duration _kHeadProbeTimeout = Duration(seconds: 8);
+
+/// Drop `_headSnapshots` entries for repos that are no longer in the
+/// `_engines` LRU. Called after each insert so the head-snapshot map
+/// can never outgrow the engine cache. Cheap — the LRU holds ≤ 3
+/// entries and `_headSnapshots` is typically the same size.
+void _pruneHeadSnapshotsForEngines() {
+  if (_headSnapshots.length <= _kMaxEngines) return;
+  final live = <String>{
+    for (final entry in _engines.entries) entry.key,
+  };
+  _headSnapshots.removeWhere((key, _) => !live.contains(key));
+}
+
 /// Build the per-file engram K-vector index with disk caching +
 /// parallel encoding. Runs on the main isolate so we can fan out to
 /// multiple worker isolates via `Isolate.run`; isolates can't nest
@@ -362,10 +382,21 @@ Future<LogosGit?> _resolveImpl(
     }
 
     // Staleness check — cheap rev-parse, bail if HEAD unchanged.
-    final head = await runGitProbe(
-      repoPath,
-      const ['rev-parse', 'HEAD'],
-    );
+    // Bounded by [_kHeadProbeTimeout] so a hung git can't pin the
+    // `_inflight` slot for this repo indefinitely (the subprocess call
+    // itself has no internal deadline).
+    final ProcessResult head;
+    try {
+      head = await runGitProbe(
+        repoPath,
+        const ['rev-parse', 'HEAD'],
+      ).timeout(_kHeadProbeTimeout);
+    } on TimeoutException {
+      log.recordFailure(repoPath,
+          'rev-parse HEAD timed out after ${_kHeadProbeTimeout.inSeconds}s',
+          sw.elapsed);
+      return null;
+    }
     if (head.exitCode != 0) {
       log.recordFailure(repoPath, 'rev-parse HEAD failed', sw.elapsed);
       return null;
@@ -461,6 +492,7 @@ Future<LogosGit?> _resolveImpl(
     );
 
     _engines.put(repoPath, _ResolverEntry(hash, engine));
+    _pruneHeadSnapshotsForEngines();
     log.recordBuild(
       repoPath: repoPath,
       nodes: engine.nodePaths.length,

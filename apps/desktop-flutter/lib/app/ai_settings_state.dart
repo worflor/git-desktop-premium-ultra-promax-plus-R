@@ -7,6 +7,17 @@ import '../backend/dtos.dart';
 class AiSettingsState extends ChangeNotifier {
   bool _loaded = false;
   Map<String, String> _modelSelections = {};
+  // Cached unmodifiable views. Rebuilt only when the underlying map
+  // changes; previously each getter call allocated a fresh
+  // `Map.unmodifiable`, which is a hot allocation on widgets that
+  // rebuild every frame under `context.watch<AiSettingsState>()`.
+  Map<String, String> _modelSelectionsView =
+      const <String, String>{};
+  Map<String, String> _modelCategoryLabelsView = const <String, String>{};
+  List<AiProviderStatus> _runtimeProvidersView =
+      const <AiProviderStatus>[];
+  List<AiModelCategoryData> _runtimeModelCategoriesView =
+      const <AiModelCategoryData>[];
   Map<String, String> _modelCategoryLabels = {
     'quality': 'Quality model',
     'fast': 'Fast model',
@@ -32,9 +43,8 @@ class AiSettingsState extends ChangeNotifier {
   Future<bool>? _modelCategoryRefreshFuture;
 
   bool get isLoaded => _loaded;
-  Map<String, String> get modelSelections => Map.unmodifiable(_modelSelections);
-  Map<String, String> get modelCategoryLabels =>
-      Map.unmodifiable(_modelCategoryLabels);
+  Map<String, String> get modelSelections => _modelSelectionsView;
+  Map<String, String> get modelCategoryLabels => _modelCategoryLabelsView;
   String get commitMessageModelCategoryId => _commitMessageModelCategoryId;
   String get commitMessagePrompt => _commitMessagePrompt;
   String get commitMessagePromptPath => _commitMessagePromptPath;
@@ -46,12 +56,11 @@ class AiSettingsState extends ChangeNotifier {
   String get musePromptPath => _musePromptPath;
   String get museBrainstormModelCategoryId => _museBrainstormModelCategoryId;
   String get museSynthesisModelCategoryId => _museSynthesisModelCategoryId;
-  List<AiProviderStatus> get runtimeProviders =>
-      List.unmodifiable(_runtimeProviders);
+  List<AiProviderStatus> get runtimeProviders => _runtimeProvidersView;
   String? get runtimeProvidersError => _runtimeProvidersError;
   bool get runtimeProvidersLoading => _runtimeProvidersLoading;
   List<AiModelCategoryData> get runtimeModelCategories =>
-      List.unmodifiable(_runtimeModelCategories);
+      _runtimeModelCategoriesView;
   String? get runtimeModelCategoriesError => _runtimeModelCategoriesError;
   bool get runtimeModelCategoriesLoading => _runtimeModelCategoriesLoading;
 
@@ -60,26 +69,46 @@ class AiSettingsState extends ChangeNotifier {
       return;
     }
 
-    final snapshot = await AiSettingsStore.load();
+    // Settings snapshot is a single disk read; prompts + paths are six
+    // further independent awaits. Fanning them out via `Future.wait`
+    // turns a 7-step serial chain into one round-trip — prompt files
+    // aren't dependencies of one another.
+    final snapshotFuture = AiSettingsStore.load();
+    final commitPromptFuture = AiSettingsStore.loadCommitMessagePrompt();
+    final commitPathFuture = AiSettingsStore.commitMessagePromptPath();
+    final reviewPromptFuture = AiSettingsStore.loadReviewCommitPrompt();
+    final reviewPathFuture = AiSettingsStore.reviewCommitPromptPath();
+    final musePromptFuture = AiSettingsStore.loadMusePrompt();
+    final musePathFuture = AiSettingsStore.musePromptPath();
+
+    final snapshot = await snapshotFuture;
     _modelSelections = Map<String, String>.from(snapshot.modelSelections);
     _modelCategoryLabels = {
       'quality': 'Quality model',
       'fast': 'Fast model',
       ...snapshot.modelCategoryLabels,
     };
+    _rebuildModelViews();
     _commitMessageModelCategoryId = snapshot.commitMessageModelCategoryId;
-    _commitMessagePrompt = await AiSettingsStore.loadCommitMessagePrompt();
-    _commitMessagePromptPath = await AiSettingsStore.commitMessagePromptPath();
     _reviewCommitModelCategoryId = snapshot.reviewCommitModelCategoryId;
-    _reviewCommitPrompt = await AiSettingsStore.loadReviewCommitPrompt();
-    _reviewCommitPromptPath = await AiSettingsStore.reviewCommitPromptPath();
     _reviewCommitDoubleCheckEnabled = snapshot.reviewCommitDoubleCheckEnabled;
-    _musePrompt = await AiSettingsStore.loadMusePrompt();
-    _musePromptPath = await AiSettingsStore.musePromptPath();
     _museBrainstormModelCategoryId = snapshot.museBrainstormModelCategoryId;
     _museSynthesisModelCategoryId = snapshot.museSynthesisModelCategoryId;
+
+    _commitMessagePrompt = await commitPromptFuture;
+    _commitMessagePromptPath = await commitPathFuture;
+    _reviewCommitPrompt = await reviewPromptFuture;
+    _reviewCommitPromptPath = await reviewPathFuture;
+    _musePrompt = await musePromptFuture;
+    _musePromptPath = await musePathFuture;
     _loaded = true;
     notifyListeners();
+  }
+
+  void _rebuildModelViews() {
+    _modelSelectionsView = Map<String, String>.unmodifiable(_modelSelections);
+    _modelCategoryLabelsView =
+        Map<String, String>.unmodifiable(_modelCategoryLabels);
   }
 
   String labelForCategory(String categoryId, String fallbackLabel) {
@@ -144,6 +173,7 @@ class AiSettingsState extends ChangeNotifier {
     }
 
     _modelSelections = nextSelections;
+    _rebuildModelViews();
     await _persistSnapshot();
     notifyListeners();
   }
@@ -157,6 +187,7 @@ class AiSettingsState extends ChangeNotifier {
       ..._modelSelections,
       categoryId: value,
     };
+    _rebuildModelViews();
     await _persistSnapshot();
     notifyListeners();
   }
@@ -172,6 +203,7 @@ class AiSettingsState extends ChangeNotifier {
       ..._modelCategoryLabels,
       categoryId: normalized,
     };
+    _rebuildModelViews();
     await _persistSnapshot();
     notifyListeners();
   }
@@ -272,6 +304,8 @@ class AiSettingsState extends ChangeNotifier {
       final result = await listAiProviders(forceRefresh: forceRefresh);
       if (result.ok) {
         _runtimeProviders = result.data!.providers;
+        _runtimeProvidersView =
+            List<AiProviderStatus>.unmodifiable(_runtimeProviders);
         _runtimeProvidersError = null;
       } else {
         _runtimeProvidersError = result.error;
@@ -309,6 +343,8 @@ class AiSettingsState extends ChangeNotifier {
       final result = await listAiModelOptions(forceRefresh: forceRefresh);
       if (result.ok) {
         _runtimeModelCategories = result.data!.categories;
+        _runtimeModelCategoriesView =
+            List<AiModelCategoryData>.unmodifiable(_runtimeModelCategories);
         _runtimeModelCategoriesError = null;
         await syncModelCategories(result.data!.categories);
       } else {

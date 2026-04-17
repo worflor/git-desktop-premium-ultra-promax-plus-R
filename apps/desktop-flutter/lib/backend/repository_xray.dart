@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
@@ -868,12 +869,16 @@ RepositoryXrayMetabolismData _computeMetabolism(Map<String, int> dateCounts) {
   });
 
   // Centre the signal so AR(2) fits the dynamics, not the mean rate.
+  // Typed-list output avoids per-element boxing inside the AR(2) fit.
   var mean = 0.0;
   for (final v in series) {
     mean += v;
   }
   mean /= series.length;
-  final centred = List<double>.generate(series.length, (i) => series[i] - mean);
+  final centred = Float64List(series.length);
+  for (var i = 0; i < series.length; i++) {
+    centred[i] = series[i] - mean;
+  }
 
   final fit = engramFit(centred);
   final orbit = BranchOrbit(
@@ -894,9 +899,13 @@ RepositoryXrayMetabolismData _computeMetabolism(Map<String, int> dateCounts) {
   for (final v in series) {
     if (v > peak) peak = v;
   }
-  final sparkline = peak <= 0
-      ? List<double>.filled(series.length, 0)
-      : series.map((v) => v / peak).toList(growable: false);
+  final sparkline = Float64List(series.length);
+  if (peak > 0) {
+    final invPeak = 1.0 / peak;
+    for (var i = 0; i < series.length; i++) {
+      sparkline[i] = series[i] * invPeak;
+    }
+  }
 
   return RepositoryXrayMetabolismData(
     spectralRadius: fit.spectralRadius,

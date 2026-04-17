@@ -24,6 +24,12 @@ import 'logos_git_integrity.dart';
 const int _statsCommitWindow = 1000;
 const String _commitMetaSep = '\u001f';
 
+/// Volatility EWMA decay rate: λ = 1 − 2^(−1/90). Hoisted to a file-level
+/// `final` so the `math.pow` runs once per isolate instead of once per
+/// stats-collection call (which previously recomputed it every time a
+/// user switched repos or invalidated the coupling matrix).
+final double _volEwmaLambda = 1.0 - math.pow(0.5, 1.0 / 90.0).toDouble();
+
 /// Gather the four Phase-1 statistics the engine needs from the repo.
 /// We walk the commit log via two independent `git log` invocations —
 /// one with `--numstat` (drives F0 + V), one with `--name-only` (drives
@@ -88,10 +94,11 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   var totalCommits = 0;
   var semanticCommitMass = 0.0;
 
-  // EWMA half-life: 90 commits. λ = 1 - 2^(-1/90) ≈ 0.00767.
-  // Recent commits outweigh old ones in the V-axis signal.
-  const halfLife = 90.0;
-  final lambda = 1.0 - math.pow(0.5, 1.0 / halfLife).toDouble();
+  // EWMA half-life: 90 commits. λ = 1 − 2^(−1/90) ≈ 0.00767. Recent
+  // commits outweigh old ones in the V-axis signal. Value is a physical
+  // constant of the half-life; hoisted to a file-level final so the
+  // `math.pow` only runs once per isolate.
+  final lambda = _volEwmaLambda;
 
   final lines = log.stdout.toString().split('\n');
   final blocks = _splitCommitBlocks(lines);

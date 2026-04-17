@@ -620,7 +620,7 @@ bool _isX2Aligned(Float64List v) =>
 /// Cost: O(K) log() calls for the factorial table, plus the inner series
 /// loop. The earlier version re-summed `Σ log(i)` per k for O(K²) total
 /// log()s — measurably slower at the three-temperature blend call rate.
-List<double> besselCoeffs(double t, int k) {
+Float64List besselCoeffs(double t, int k) {
   final result = Float64List(k + 1);
   final tSafe = t.isNaN ? 0.0 : t.clamp(0.0, _maxSafeT);
   if (tSafe == 0) {
@@ -660,7 +660,7 @@ List<double> besselCoeffs(double t, int k) {
 /// exponentially past `k ≈ t·e/2`; for small t the tail is already
 /// negligible at `K = 8–10` while large t needs more. Hardcoding K=20
 /// wastes matvecs at low t and starves accuracy at high t.
-int adaptiveK(List<double> coeffs, double eps) {
+int adaptiveK(Float64List coeffs, double eps) {
   var maxAbs = 0.0;
   for (final c in coeffs) {
     final a = c.abs();

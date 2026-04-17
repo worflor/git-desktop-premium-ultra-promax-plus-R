@@ -249,10 +249,10 @@ EngramFit engramFitF64(Float64List z) => engramFit(z);
 /// Empty/single-commit inputs return an empty list. Extracted to a
 /// single location so the half-life derivation, branch-orbit fit, and
 /// AI commit-shape probe all read the same math.
-List<double> consecutiveJaccardSeries(List<Set<String>> commitFileSets) {
+Float64List consecutiveJaccardSeries(List<Set<String>> commitFileSets) {
   final n = commitFileSets.length;
-  if (n < 2) return const [];
-  final sims = List<double>.filled(n - 1, 0);
+  if (n < 2) return Float64List(0);
+  final sims = Float64List(n - 1);
   for (var i = 0; i < n - 1; i++) {
     final a = commitFileSets[i];
     final b = commitFileSets[i + 1];

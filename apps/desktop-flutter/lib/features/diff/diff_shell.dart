@@ -210,6 +210,13 @@ class _DiffShellState extends State<DiffShell> {
   final List<double> _frameRasterSamples = [];
   // Blame cache keyed by file path → line number → entry.
   // Supports multi-file diffs where each file has its own blame.
+  //
+  // Bounded: [_kBlameCacheMaxFiles] entries. Without a cap, hovering
+  // across a 50-file multi-file diff accumulated every file's line-by-
+  // line blame indefinitely (≈ MB-scale for large files). Eviction is
+  // LRU via re-insertion — a hovered file's entry is touched on read
+  // in [_blameFor].
+  static const int _kBlameCacheMaxFiles = 16;
   final Map<String, Map<int, BlameLineData>> _blameByFile = {};
   final Set<String> _blameFetchedFiles = {};
   final Set<String> _blameFetchingFiles = {};
@@ -948,7 +955,17 @@ class _DiffShellState extends State<DiffShell> {
         for (final entry in blameData) {
           map[entry.lineNumber] = entry;
         }
+        // Evict stale entries before inserting so the newest arrival
+        // is always at the most-recent end of the LRU order.
+        _blameByFile.remove(key);
         _blameByFile[key] = map;
+        while (_blameByFile.length > _kBlameCacheMaxFiles) {
+          final oldest = _blameByFile.keys.first;
+          _blameByFile.remove(oldest);
+          // Also drop the companion tracking-set entry so a future
+          // fetch of the evicted file refreshes cleanly.
+          _blameFetchedFiles.remove(oldest);
+        }
       } else if (blameFailed) {
         _blameUnavailableFiles.add(key);
       }
@@ -963,8 +980,16 @@ class _DiffShellState extends State<DiffShell> {
 
   BlameLineData? _blameFor(String? filePath, int lineNum) {
     if (filePath == null) return null;
-    return _blameByFile[_blameLookupKey(filePath, _activeRevisionRef)]
-        ?[lineNum];
+    final key = _blameLookupKey(filePath, _activeRevisionRef);
+    final map = _blameByFile[key];
+    if (map == null) return null;
+    // LRU bump: move this file to the most-recently-used end so
+    // actively-hovered files don't get evicted when the cap is hit.
+    if (_blameByFile.length > 1) {
+      _blameByFile.remove(key);
+      _blameByFile[key] = map;
+    }
+    return map[lineNum];
   }
 
   Set<String> _uniqueFilePathsInDiff() {

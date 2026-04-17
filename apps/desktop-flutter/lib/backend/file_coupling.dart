@@ -754,8 +754,12 @@ Future<GitResult<FileCouplingMatrix>> computeFileCoupling(
       final a = files[i];
       for (var j = i + 1; j < n; j++) {
         final b = files[j];
-        final lo = a.compareTo(b) < 0 ? a : b;
-        final hi = a.compareTo(b) < 0 ? b : a;
+        // Order the pair canonically so (a,b) and (b,a) hash to the
+        // same map slot. One `compareTo` — the previous two calls were
+        // literally the same comparison evaluated twice per pair.
+        final cmp = a.compareTo(b);
+        final lo = cmp < 0 ? a : b;
+        final hi = cmp < 0 ? b : a;
         final row = pairCount.putIfAbsent(lo, () => {});
         row[hi] = (row[hi] ?? 0) + w;
       }
@@ -848,17 +852,31 @@ double deriveEngramHalfLife(List<List<String>> commitFileLists) {
   // similarity series has length n-1. +1 margin for the centring pass.
   if (n < engramMinSamples + 2) return _fallbackHalfLife(n);
 
-  final fileSets = commitFileLists.map((c) => c.toSet()).toList();
+  // `commitFileLists` is typically `List<List<String>>` where each
+  // inner list is the paths touched by one commit. We only iterate each
+  // list once (inside the Jaccard computation) — materialising a
+  // `List<Set<String>>` up front avoids re-scanning the same paths on
+  // every pairwise comparison. Using a fixed-size typed-list factory
+  // avoids growable-list overhead given `fileSets.length` is known.
+  final fileSets = List<Set<String>>.generate(
+    commitFileLists.length,
+    (i) => commitFileLists[i].toSet(),
+    growable: false,
+  );
   final sims = consecutiveJaccardSeries(fileSets);
 
   // Centre the signal. AR(2) on a biased series fits the mean instead
-  // of the dynamics.
+  // of the dynamics. `Float64List` avoids per-element boxing on the
+  // hot AR(2) iterations downstream.
   var mean = 0.0;
   for (final s in sims) {
     mean += s;
   }
   mean /= sims.length;
-  final centred = List<double>.generate(sims.length, (i) => sims[i] - mean);
+  final centred = Float64List(sims.length);
+  for (var i = 0; i < sims.length; i++) {
+    centred[i] = sims[i] - mean;
+  }
 
   final fit = engramFit(centred);
   final hl = fit.halfLifeSamples;

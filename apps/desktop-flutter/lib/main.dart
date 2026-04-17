@@ -77,11 +77,24 @@ void main() async {
   // pure Jaccard.
   EngramRuntime.instance.assets();
 
+  // Four independent Provider loads: theme, recent-repos, preferences,
+  // AI settings. Each hits disk through either `SettingsStore.load()`
+  // (now process-memoised — first caller pays, rest hit the cache)
+  // or its own JSON file. None depend on the others, so one
+  // `Future.wait` fan-out turns four sequential awaits into one
+  // round-trip. DiagnosticsState is deferred entirely to after the
+  // first frame — its telemetry samples are only consumed by the
+  // diagnostics panel, never by the hot first-paint path.
   final themeState = ThemeState();
-  await themeState.load();
-
   final repoState = RepositoryState();
-  await repoState.loadRecents();
+  final preferencesState = PreferencesState();
+  final aiSettingsState = AiSettingsState();
+  await Future.wait([
+    themeState.load(),
+    repoState.loadRecents(),
+    preferencesState.load(),
+    aiSettingsState.load(),
+  ]);
 
   // Pre-warm the most-recently-used repo's LogosGit engine in the
   // background. By the time the user clicks through the repo picker
@@ -113,14 +126,16 @@ void main() async {
   // refresh the cache — keeps cross-cutting UI surfaces in sync.
   deskIssueState.attachRemoteCache(remoteIssueCacheState);
 
-  final preferencesState = PreferencesState();
-  await preferencesState.load();
-
-  final aiSettingsState = AiSettingsState();
-  await aiSettingsState.load();
-
   final diagnosticsState = DiagnosticsState.instance;
-  await diagnosticsState.load();
+  // Defer telemetry load until after the first frame. Its samples are
+  // only read by the diagnostics panel + background refresh; nothing
+  // on the first-paint path needs them. Fire-and-forget: the
+  // `DiagnosticsState` singleton self-publishes via `notifyListeners`
+  // once the load completes, so any open diagnostics surface picks
+  // the data up on the next rebuild.
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    diagnosticsState.load().catchError((_) {});
+  });
 
   runApp(
     MultiProvider(

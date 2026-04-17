@@ -52,6 +52,13 @@ bool _isSigLine(String line) {
   return false;
 }
 
+/// `d > sigma · _proxCutoffLnRatio` ⇒ `exp(-d/sigma) ≤ 1e-6`, below the
+/// noise floor of the `D^{-1/2}`-normalised Laplacian. Precomputed as
+/// `ln(1e6)` (Dart's `math.log` isn't `const`-evaluable, so a named
+/// double literal is clearer than a runtime calculation and keeps the
+/// horizon visible at the call site).
+const double _proxCutoffLnRatio = 13.815510557964274;
+
 int _leadingIndent(String line) {
   var i = 0;
   while (i < line.length &&
@@ -312,44 +319,61 @@ CsrGraph _buildChunkGraph({
       }
     }
   }
-  symNumerator.forEach((i, row) {
-    row.forEach((j, overlap) {
-      final denom = tokens[i].length + tokens[j].length - overlap;
-      if (denom <= 0) return;
-      final jaccard = overlap / denom;
-      addEdge(i, j, wSym * jaccard);
-    });
-  });
-
-  for (var i = 0; i < n; i++) {
-    for (var j = i + 1; j < n; j++) {
-      final d = (chunks[j].startLine - chunks[i].startLine).abs().toDouble();
-      final k = math.exp(-d / sigma);
-      if (k <= 1e-6) continue;
-      addEdge(i, j, wProx * k);
+  for (final outer in symNumerator.entries) {
+    final i = outer.key;
+    final iTokens = tokens[i].length;
+    for (final inner in outer.value.entries) {
+      final j = inner.key;
+      final overlap = inner.value;
+      final denom = iTokens + tokens[j].length - overlap;
+      if (denom <= 0) continue;
+      addEdge(i, j, wSym * overlap / denom);
     }
   }
 
-  // Same start-indent → likely siblings in the same scope. Cheap prior
-  // that nudges adjacent same-scope defs to be packed together.
+  // Fused pass for proximity + struct-sibling. Grimoire circles XXI
+  // (loop fusion — one memory sweep, one `addEdge` per pair instead of
+  // two) and XIX (skip the `exp` transcendental when it can't produce
+  // a meaningful weight). `chunkSourceFile` emits chunks in ascending
+  // `startLine` order and the coalesce pass preserves that, so `d`
+  // grows monotonically in `j` for fixed `i`; once `d > proxHorizon`
+  // the proximity kernel's contribution is below `1e-6` and we can
+  // stop calling `math.exp` altogether. Struct-sibling is not distance-
+  // bounded so we keep the outer loop but check only an integer
+  // comparison in the tail.
+  final proxHorizon = sigma * _proxCutoffLnRatio;
+  final invSigma = sigma > 0 ? 1.0 / sigma : 0.0;
   for (var i = 0; i < n; i++) {
+    final iStart = chunks[i].startLine;
+    final iIndent = chunks[i].startIndent;
     for (var j = i + 1; j < n; j++) {
-      if (chunks[i].startIndent != chunks[j].startIndent) continue;
-      addEdge(i, j, wStruct);
+      final d = (chunks[j].startLine - iStart).abs().toDouble();
+      double w = 0.0;
+      if (d <= proxHorizon && invSigma != 0.0) {
+        final k = math.exp(-d * invSigma);
+        if (k > 1e-6) w += wProx * k;
+      }
+      if (chunks[j].startIndent == iIndent) w += wStruct;
+      if (w > 0) addEdge(i, j, w);
     }
   }
 
   // Top-K + symmetrise (same policy as logos_hunks / logos_git).
   final trimmedRows = List<List<_Edge>>.generate(n, (_) => <_Edge>[]);
-  edges.forEach((i, row) {
-    final list =
-        row.entries.map((e) => _Edge(e.key, e.value)).toList(growable: false);
+  for (final rowEntry in edges.entries) {
+    final i = rowEntry.key;
+    final row = rowEntry.value;
+    final list = <_Edge>[];
+    for (final e in row.entries) {
+      list.add(_Edge(e.key, e.value));
+    }
     list.sort((x, y) => y.w.compareTo(x.w));
     final cap = math.min(topK, list.length);
+    final outRow = trimmedRows[i];
     for (var k = 0; k < cap; k++) {
-      trimmedRows[i].add(list[k]);
+      outRow.add(list[k]);
     }
-  });
+  }
   final adj = List<Map<int, double>>.generate(n, (_) => <int, double>{});
   for (var i = 0; i < n; i++) {
     for (final e in trimmedRows[i]) {

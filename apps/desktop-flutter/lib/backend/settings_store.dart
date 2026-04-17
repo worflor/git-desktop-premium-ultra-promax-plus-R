@@ -366,27 +366,63 @@ class AppSettingsSnapshot {
 class SettingsStore {
   static const String _settingsFileName = 'settings.json';
 
-  static Future<AppSettingsSnapshot> load() async {
-    final file = await _settingsFile();
-    if (!await file.exists()) {
-      final defaults = AppSettingsSnapshot.defaults();
-      await persist(defaults);
-      return defaults;
-    }
+  /// Process-scoped memoised snapshot. Every per-feature state class
+  /// (`ThemeState`, `PreferencesState`, `AiSettingsState`,
+  /// `DiagnosticsState`) used to call [load] independently, each
+  /// issuing its own disk read + JSON parse + `persist` round-trip.
+  /// The file is functionally global per-process, so read once and
+  /// hand the same snapshot to every caller.
+  static AppSettingsSnapshot? _cached;
+  static Future<AppSettingsSnapshot>? _loading;
 
+  static Future<AppSettingsSnapshot> load() {
+    final cached = _cached;
+    if (cached != null) return Future<AppSettingsSnapshot>.value(cached);
+    final inflight = _loading;
+    if (inflight != null) return inflight;
+    final future = _loadImpl();
+    _loading = future;
+    return future;
+  }
+
+  static Future<AppSettingsSnapshot> _loadImpl() async {
     try {
+      final file = await _settingsFile();
+      if (!await file.exists()) {
+        final defaults = AppSettingsSnapshot.defaults();
+        // First-launch case: create the file now so subsequent writes
+        // don't race on create. Previously `persist` ran on every
+        // `load` regardless of whether the snapshot had changed.
+        await persist(defaults);
+        _cached = defaults;
+        return defaults;
+      }
       final raw = await file.readAsString();
       final parsed = jsonDecode(raw);
       if (parsed is Map<String, dynamic>) {
         final snapshot = AppSettingsSnapshot.fromJson(parsed);
-        await persist(snapshot);
+        _cached = snapshot;
         return snapshot;
       }
-    } catch (_) {}
+      // Malformed file — overwrite with defaults.
+      final defaults = AppSettingsSnapshot.defaults();
+      await persist(defaults);
+      _cached = defaults;
+      return defaults;
+    } catch (_) {
+      final defaults = AppSettingsSnapshot.defaults();
+      _cached = defaults;
+      return defaults;
+    } finally {
+      _loading = null;
+    }
+  }
 
-    final defaults = AppSettingsSnapshot.defaults();
-    await persist(defaults);
-    return defaults;
+  /// Drop the process-scoped snapshot so the next [load] re-reads from
+  /// disk. Exists for tests + the settings page's explicit "reset to
+  /// defaults" flow.
+  static void invalidateCache() {
+    _cached = null;
   }
 
   static Future<void> persist(AppSettingsSnapshot snapshot) async {
@@ -396,6 +432,8 @@ class SettingsStore {
       const JsonEncoder.withIndent('  ').convert(snapshot.toJson()),
       flush: true,
     );
+    // Keep the memoised snapshot coherent with what's on disk.
+    _cached = snapshot;
   }
 
   static Future<File> _settingsFile() async {

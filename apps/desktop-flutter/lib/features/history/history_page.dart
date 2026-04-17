@@ -1394,6 +1394,12 @@ class _HistoryPageState extends State<HistoryPage> {
   String _tagInputValue = '';
   String? _tagError;
   final _tagCtrl = TextEditingController();
+  // Stable FocusNode for the tag-input KeyboardListener. Previously a
+  // fresh `FocusNode()` was constructed inline every rebuild while the
+  // input was visible; each such node registered with Flutter's focus
+  // system and was never disposed. Owning one on the state class keeps
+  // the node alive exactly as long as the panel can show the input.
+  final _tagEscapeFocus = FocusNode(debugLabel: 'history.tag-input.escape');
 
   // Shift-select rebase range
   int? _rebaseRangeEndIndex;
@@ -1458,6 +1464,7 @@ class _HistoryPageState extends State<HistoryPage> {
   void dispose() {
     _tagCtrl.dispose();
     _limitCtrl.dispose();
+    _tagEscapeFocus.dispose();
     _tagProfileDebounce?.cancel();
     super.dispose();
   }
@@ -2251,6 +2258,7 @@ class _HistoryPageState extends State<HistoryPage> {
                                   repoPath, _detail!.commitHash, path),
                               onOpenAllFiles: () => _openCommitAllDiff(
                                   repoPath, _detail!.commitHash),
+                              tagEscapeFocus: _tagEscapeFocus,
                               signature: _signatureFor(_detail!),
                               lifecycles: _lifecyclesFor(repoPath),
                             ),
@@ -2689,6 +2697,7 @@ class _CommitDetail extends StatelessWidget {
   final VoidCallback onOpenAllFiles;
   final CommitSignature? signature;
   final Map<String, FileLifecycle>? lifecycles;
+  final FocusNode tagEscapeFocus;
 
   const _CommitDetail({
     super.key,
@@ -2704,6 +2713,7 @@ class _CommitDetail extends StatelessWidget {
     required this.onCreateTag,
     required this.onOpenFile,
     required this.onOpenAllFiles,
+    required this.tagEscapeFocus,
     this.signature,
     this.lifecycles,
   });
@@ -2854,7 +2864,7 @@ class _CommitDetail extends StatelessWidget {
         Row(children: [
           Expanded(
             child: KeyboardListener(
-              focusNode: FocusNode(),
+              focusNode: tagEscapeFocus,
               onKeyEvent: (e) {
                 if (e is KeyDownEvent &&
                     e.logicalKey == LogicalKeyboardKey.escape) {
@@ -2953,6 +2963,7 @@ class _CommitDetailTransition extends StatelessWidget {
   final VoidCallback onOpenAllFiles;
   final CommitSignature? signature;
   final Map<String, FileLifecycle>? lifecycles;
+  final FocusNode tagEscapeFocus;
 
   const _CommitDetailTransition({
     required this.detail,
@@ -2968,6 +2979,7 @@ class _CommitDetailTransition extends StatelessWidget {
     required this.onCreateTag,
     required this.onOpenFile,
     required this.onOpenAllFiles,
+    required this.tagEscapeFocus,
     this.signature,
     this.lifecycles,
   });
@@ -2998,6 +3010,7 @@ class _CommitDetailTransition extends StatelessWidget {
             onCreateTag: onCreateTag,
             onOpenFile: onOpenFile,
             onOpenAllFiles: onOpenAllFiles,
+            tagEscapeFocus: tagEscapeFocus,
             signature: signature,
             lifecycles: lifecycles,
           ),
