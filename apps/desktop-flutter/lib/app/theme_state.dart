@@ -83,7 +83,12 @@ class ThemeState extends ChangeNotifier {
   }
 
   Future<void> setSidebarWidth(double w) async {
-    _sidebarWidth = w.clamp(140, 380);
+    // The frame measures the brand lockup each frame and drives the
+    // min / max / default from that width, so the callers already
+    // pass a clamped value. Keep a sane positive floor here as a
+    // belt-and-suspenders against a caller sending NaN or a
+    // negative drag value.
+    _sidebarWidth = w.isFinite && w > 0 ? w : _sidebarWidth;
     final settings = await SettingsStore.load();
     await SettingsStore.persist(
       settings.copyWith(sidebarWidthPx: _sidebarWidth.round()),

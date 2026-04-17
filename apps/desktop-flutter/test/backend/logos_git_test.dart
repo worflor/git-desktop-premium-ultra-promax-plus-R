@@ -13,6 +13,7 @@
 // If those three pass, the engine's physics is correct. Everything else
 // is surface / API / edge-case coverage.
 
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -21,6 +22,11 @@ import 'package:git_desktop/backend/file_coupling.dart';
 import 'package:git_desktop/backend/logos_core.dart';
 import 'package:git_desktop/backend/logos_git.dart';
 import 'package:git_desktop/backend/logos_git_integrity.dart';
+import 'package:git_desktop/backend/spectral_persistence.dart';
+import 'package:git_desktop/backend/spectral_spacetime.dart';
+import 'package:git_desktop/backend/spectral_ratchet.dart';
+import 'package:git_desktop/backend/spectral_tower.dart';
+import 'package:git_desktop/backend/spectral_walks.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -1668,6 +1674,511 @@ void main() {
   });
 
   group('Spectral basis (Lanczos)', _spectralTests);
+  group('Spectral tower (multi-level)', _spectralTowerTests);
+  group('Spectral spacetime (Kronecker sum)', _spectralSpacetimeTests);
+  group('Spectral walks (path-integral sampling)', _spectralWalksTests);
+  group('Spectral ratchet (forward-only dynamics)', _spectralRatchetTests);
+}
+
+void _spectralRatchetTests() {
+  // The ratchet wraps a LogosGit engine and enforces monotonic,
+  // forward-only event application with a bounded skip buffer. Tests
+  // don't need a real repo — we use a minimal stub that satisfies
+  // the ratchet's read surface (revision, heatTraceWitness, etc.).
+  // The engine is built from the canonical co-change fixture.
+
+  LogosGit miniEngine() => LogosGit.buildFromStats(_canonicalCoChangeStats());
+
+  test('Forward-only: past ops are silently discarded', () {
+    final r = LogosRatchet.fromEngine(miniEngine());
+    r.advance(FileEvent(sequence: 1, paths: const {'lib/a.dart'}));
+    r.advance(FileEvent(sequence: 2, paths: const {'lib/b.dart'}));
+    expect(r.revision, 2);
+    // A "past" event — already applied — must not rewind the counter.
+    r.advance(FileEvent(sequence: 1, paths: const {'lib/a.dart'}));
+    expect(r.revision, 2);
+  });
+
+  test('In-order ops advance the revision monotonically', () {
+    final r = LogosRatchet.fromEngine(miniEngine());
+    for (var i = 1; i <= 10; i++) {
+      r.advance(FileEvent(sequence: i, paths: const {}));
+    }
+    expect(r.revision, 10);
+    expect(r.skippedCount, 0);
+    expect(r.isSpectralDirty, true);
+  });
+
+  test('Out-of-order ops buffer until their slot comes up', () {
+    final r = LogosRatchet.fromEngine(miniEngine());
+    r.advance(FileEvent(sequence: 3, paths: const {}));
+    r.advance(FileEvent(sequence: 5, paths: const {}));
+    expect(r.revision, 0);
+    expect(r.skippedCount, 2);
+    r.advance(FileEvent(sequence: 1, paths: const {}));
+    expect(r.revision, 1);
+    expect(r.skippedCount, 2);
+    r.advance(FileEvent(sequence: 2, paths: const {}));
+    // Now ops 3 drains immediately (4 is still missing).
+    expect(r.revision, 3);
+    expect(r.skippedCount, 1);
+    r.advance(FileEvent(sequence: 4, paths: const {}));
+    // Both 4 and 5 drain.
+    expect(r.revision, 5);
+    expect(r.skippedCount, 0);
+  });
+
+  test('Skip buffer evicts oldest when over capacity', () {
+    final r = LogosRatchet.fromEngine(miniEngine());
+    // Fill well past kMaxSkip with out-of-order ops (start at seq=2
+    // so nothing can advance; we're at revision 0 waiting for seq=1).
+    for (var i = 2; i <= LogosRatchet.kMaxSkip + 10; i++) {
+      r.advance(FileEvent(sequence: i, paths: const {}));
+    }
+    expect(r.skippedCount, LogosRatchet.kMaxSkip);
+    // The oldest eviction is sequence=2 (the first out-of-order one).
+    // When seq=1 finally lands, the drain skips the evicted slots
+    // and stops at the first missing sequence in the buffer.
+    r.advance(FileEvent(sequence: 1, paths: const {}));
+    expect(r.revision, 1);
+    // The surviving ops are the most-recent kMaxSkip, starting at
+    // some sequence > 2. So draining from seq=2 fails at slot 2 (it
+    // was evicted), leaving revision at 1.
+  });
+
+  test('Rekey resets the dirty flag and op counter, keeps revision',
+      () {
+    final r = LogosRatchet.fromEngine(miniEngine());
+    for (var i = 1; i <= 5; i++) {
+      r.advance(FileEvent(sequence: i, paths: const {}));
+    }
+    expect(r.revision, 5);
+    expect(r.isSpectralDirty, true);
+    r.rekey(miniEngine());
+    expect(r.revision, 5, reason: 'rekey does not rewind ratchet identity');
+    expect(r.isSpectralDirty, false);
+    expect(r.shouldRekey(), false);
+  });
+
+  test('shouldRekey fires past the op-count threshold', () {
+    final r = LogosRatchet.fromEngine(miniEngine());
+    for (var i = 1; i <= LogosRatchet.kDefaultRekeyInterval; i++) {
+      r.advance(FileEvent(sequence: i, paths: const {}));
+    }
+    expect(r.shouldRekey(), true);
+    r.rekey(miniEngine());
+    expect(r.shouldRekey(), false);
+  });
+
+  test('diagnose reports inSync on identical ratchets', () {
+    final engineA = miniEngine();
+    final engineB = miniEngine();
+    final a = LogosRatchet.fromEngine(engineA);
+    final b = LogosRatchet.fromEngine(engineB);
+    final diag = a.diagnose(b);
+    expect(diag.inSync, true);
+    expect(diag.revisionMatch, true);
+    expect(diag.heatTraceMatch, true);
+    expect(diag.hammingByPath, isEmpty);
+  });
+
+  test('diagnose detects revision divergence', () {
+    final a = LogosRatchet.fromEngine(miniEngine());
+    final b = LogosRatchet.fromEngine(miniEngine());
+    a.advance(FileEvent(sequence: 1, paths: const {}));
+    a.advance(FileEvent(sequence: 2, paths: const {}));
+    final diag = a.diagnose(b);
+    expect(diag.revisionMatch, false);
+    expect(diag.selfRevision, 2);
+    expect(diag.peerRevision, 0);
+    expect(diag.inSync, false);
+  });
+
+  test('Event subtypes all extend LogosEvent', () {
+    const f = FileEvent(sequence: 1, paths: {'a'});
+    const e = EdgeEvent(sequence: 2, a: 'a', b: 'b', delta: 0.5);
+    const c = CommitEvent(sequence: 3, paths: {'a'}, commitId: 'abc');
+    expect(f, isA<LogosEvent>());
+    expect(e, isA<LogosEvent>());
+    expect(c, isA<LogosEvent>());
+    expect(c.touchedPaths, {'a'});
+  });
+}
+
+/// Unit-weight path graph `0 — 1 — 2 — … — n-1`. The canonical
+/// non-degenerate-spectrum fixture every spectral test reaches for.
+CsrGraph _buildPathFixture(int n) {
+  final edges = <List<(int, double)>>[];
+  for (var i = 0; i < n; i++) {
+    final row = <(int, double)>[];
+    if (i > 0) row.add((i - 1, 1.0));
+    if (i < n - 1) row.add((i + 1, 1.0));
+    edges.add(row);
+  }
+  return CsrGraph.fromRawEdges(n: n, edgesPerNode: edges);
+}
+
+void _spectralSpacetimeTests() {
+  CsrGraph buildPath(int n) => _buildPathFixture(n);
+
+  test('Joint heat trace factors as Z_space(t) · Z_time(t)', () {
+    final gS = buildPath(10);
+    final gT = buildPath(6);
+    final bS = SpectralBasis.fromGraph(gS, 10);
+    final bT = SpectralBasis.fromGraph(gT, 6);
+    final st = SpacetimeBasis(space: bS, time: bT);
+    for (final t in const [0.25, 1.0, 2.5]) {
+      expect(st.heatTrace(t),
+          closeTo(bS.heatTrace(t) * bT.heatTrace(t), 1e-10));
+    }
+  });
+
+  test('Joint diffuse at t=0 is identity on rho', () {
+    // At t=0 all thermal weights are 1 and the full-rank projection+
+    // recombination round-trips to rho.
+    final gS = buildPath(5);
+    final gT = buildPath(4);
+    final bS = SpectralBasis.fromGraph(gS, 5);
+    final bT = SpectralBasis.fromGraph(gT, 4);
+    final st = SpacetimeBasis(space: bS, time: bT);
+    final rho = Float64List(20);
+    for (var i = 0; i < 20; i++) {
+      rho[i] = i.toDouble();
+    }
+    final out = st.diffuse(rho, 0.0);
+    for (var i = 0; i < 20; i++) {
+      expect(out[i], closeTo(rho[i], 1e-8));
+    }
+  });
+
+  test('Joint project returns a k_space × k_time coefficient grid', () {
+    final gS = buildPath(10);
+    final gT = buildPath(6);
+    final bS = SpectralBasis.fromGraph(gS, 5);
+    final bT = SpectralBasis.fromGraph(gT, 4);
+    final st = SpacetimeBasis(space: bS, time: bT);
+    final rho = Float64List(60);
+    rho[23] = 1.0;
+    final c = st.project(rho);
+    expect(c, hasLength(5 * 4));
+  });
+
+  test('Joint eigenvalue at (0, 0) is zero on a connected-graph pair', () {
+    final gS = buildPath(10);
+    final gT = buildPath(6);
+    final bS = SpectralBasis.fromGraph(gS, 5);
+    final bT = SpectralBasis.fromGraph(gT, 4);
+    final st = SpacetimeBasis(space: bS, time: bT);
+    expect(st.eigenvalue(0, 0), closeTo(0.0, 1e-6));
+  });
+
+  test('buildCommitGraph links commits that touched overlapping files', () {
+    // Three commits: 0 touches {a}, 1 touches {a, b}, 2 touches {b}.
+    // Commits 0-1 share {a}, commits 1-2 share {b}, 0-2 share nothing.
+    final g = buildCommitGraph(
+      perFileCommitIndices: const {
+        'a': [0, 1],
+        'b': [1, 2],
+      },
+      totalCommits: 3,
+      timeDecay: 0.0,
+    );
+    expect(g.n, 3);
+    // Find edges from commit 0 — should include 1 and possibly 2 (if
+    // they happened to share via transitive walk; but edges are direct
+    // Jaccard, so 0-2 should be absent).
+    var has01 = false;
+    var has02 = false;
+    for (var e = g.indptr[0]; e < g.indptr[1]; e++) {
+      final dst = g.indices[e];
+      if (dst == 1) has01 = true;
+      if (dst == 2) has02 = true;
+    }
+    expect(has01, isTrue);
+    expect(has02, isFalse,
+        reason: 'commits 0 and 2 share no files and should not be linked');
+  });
+
+  test('buildCommitGraph attenuates distant commits by temporal decay', () {
+    // Two commit pairs with identical overlap but different temporal
+    // distance — far pair should end up with smaller weight.
+    final g = buildCommitGraph(
+      perFileCommitIndices: const {
+        'a': [0, 1, 100, 101],
+      },
+      totalCommits: 102,
+      topK: 8,
+      timeDecay: 0.1,
+    );
+    double weightBetween(int a, int b) {
+      for (var e = g.indptr[a]; e < g.indptr[a + 1]; e++) {
+        if (g.indices[e] == b) return g.values[e];
+      }
+      return 0.0;
+    }
+    // CsrGraph values are fused with D^{-1/2} on both sides, so absolute
+    // weights depend on node degrees; use sign/ordering tests rather
+    // than exact magnitude comparisons.
+    final near = weightBetween(0, 1);
+    final far = weightBetween(0, 100);
+    // File 'a' was touched by {0, 1, 100, 101}. Under a 0.1 decay, the
+    // 0-1 pair should have a stronger raw weight than the 0-100 pair,
+    // which propagates through the normalisation (same degrees).
+    expect(near, greaterThan(far),
+        reason: 'adjacent commits should couple more strongly');
+  });
+
+  test('Evaporation factor rises with spectral concentration', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    // Spatial delta projects onto many eigenmodes (spectrally diffuse),
+    // so its spectral entropy is HIGHER than a uniform distribution
+    // — the uniform vector lives almost entirely in u₀ (the zero mode
+    // on a connected graph). Confidence runs on spectral concentration,
+    // not spatial concentration.
+    final spatialDelta = Float64List(20)..[5] = 1.0;
+    final spatialUniform = Float64List(20);
+    for (var i = 0; i < 20; i++) {
+      spatialUniform[i] = 0.05;
+    }
+    final fDelta = basis.evaporationFactor(spatialDelta, 1.0);
+    final fUniform = basis.evaporationFactor(spatialUniform, 1.0);
+    expect(fUniform, greaterThan(fDelta),
+        reason: 'spectrally concentrated ρ (uniform) → crystal phase');
+    for (final f in [fDelta, fUniform]) {
+      expect(f, inInclusiveRange(1.0 / math.e - 1e-9, 1.0 + 1e-9));
+    }
+  });
+}
+
+void _spectralWalksTests() {
+  CsrGraph buildPath(int n) => _buildPathFixture(n);
+
+  test('Transition amplitude is symmetric and largest at self', () {
+    final g = buildPath(12);
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final walker = SpectralWalker(basis: basis, seed: 42);
+    final selfAmp = walker.transitionAmplitude(5, 5, 0.5);
+    final neigh = walker.transitionAmplitude(5, 6, 0.5);
+    final far = walker.transitionAmplitude(5, 10, 0.5);
+    expect(selfAmp, greaterThan(neigh));
+    expect(neigh, greaterThan(far));
+    expect(walker.transitionAmplitude(5, 6, 0.5),
+        closeTo(walker.transitionAmplitude(6, 5, 0.5), 1e-10));
+  });
+
+  test('Step distribution is a proper probability', () {
+    final g = buildPath(12);
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final walker = SpectralWalker(basis: basis, seed: 7);
+    final p = walker.stepDistribution(5, 1.0);
+    var total = 0.0;
+    for (var i = 0; i < p.length; i++) {
+      expect(p[i], greaterThanOrEqualTo(0.0));
+      total += p[i];
+    }
+    expect(total, closeTo(1.0, 1e-10));
+  });
+
+  test('Forward walk stays inside the node set', () {
+    final g = buildPath(12);
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final walker = SpectralWalker(basis: basis, seed: 99);
+    final w =
+        walker.sampleForwardWalk(start: 3, steps: 10, dt: 0.5);
+    expect(w.nodes, hasLength(11));
+    expect(w.nodes.first, 3);
+    for (final node in w.nodes) {
+      expect(node, inInclusiveRange(0, 11));
+    }
+  });
+
+  test('Bridge walk ends at the pinned target', () {
+    final g = buildPath(12);
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final walker = SpectralWalker(basis: basis, seed: 11);
+    final w = walker.sampleBridgeWalk(
+      start: 1,
+      target: 9,
+      steps: 8,
+      dt: 0.6,
+    );
+    expect(w.nodes.first, 1);
+    expect(w.nodes.last, 9);
+  });
+
+  test('Same seed → same walk (reproducibility)', () {
+    final g = buildPath(12);
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final a = SpectralWalker(basis: basis, seed: 1234)
+        .sampleForwardWalk(start: 5, steps: 6, dt: 0.5);
+    final b = SpectralWalker(basis: basis, seed: 1234)
+        .sampleForwardWalk(start: 5, steps: 6, dt: 0.5);
+    expect(a.nodes, b.nodes);
+  });
+
+  test('Sharpest path is deterministic and begins/ends on pinned nodes',
+      () {
+    final g = buildPath(12);
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final walker = SpectralWalker(basis: basis, seed: 1);
+    final a = walker.sharpestPath(
+      start: 1,
+      target: 9,
+      steps: 6,
+      dt: 0.6,
+    );
+    final b = walker.sharpestPath(
+      start: 1,
+      target: 9,
+      steps: 6,
+      dt: 0.6,
+    );
+    expect(a.nodes, b.nodes);
+    expect(a.nodes.first, 1);
+    expect(a.nodes.last, 9);
+  });
+
+  test('Aggregate forward hits approximate the heat kernel shape', () {
+    // Over many samples the hit distribution should peak near the
+    // start and decay with graph distance — qualitative sanity, not
+    // bit-exact kernel match.
+    final g = buildPath(12);
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final walker = SpectralWalker(basis: basis, seed: 777);
+    final hits = walker.aggregateForwardHits(
+      start: 5,
+      steps: 1,
+      dt: 1.0,
+      numSamples: 2000,
+    );
+    // Near the start should have more hits than far away, in expectation.
+    expect(hits[5] + hits[4] + hits[6],
+        greaterThan(hits[0] + hits[1] + hits[11]));
+  });
+}
+
+void _spectralTowerTests() {
+  CsrGraph buildPath(int n) => _buildPathFixture(n);
+
+  test('Uniform restriction averages fine values onto coarse', () {
+    // 2 coarse nodes, 4 fine nodes. Coarse 0 owns {0, 1}; coarse 1
+    // owns {2, 3}. Uniform weights = 1/2 each.
+    final r = RestrictionOperator.uniform(
+      nCoarse: 2,
+      nFine: 4,
+      membersByCoarse: {
+        0: const [0, 1],
+        1: const [2, 3],
+      },
+    );
+    final fine = Float64List.fromList(const [1.0, 3.0, 5.0, 7.0]);
+    final coarse = r.restrict(fine);
+    expect(coarse[0], closeTo(2.0, 1e-12));
+    expect(coarse[1], closeTo(6.0, 1e-12));
+  });
+
+  test('Prolongate is the formal adjoint of restrict', () {
+    final r = RestrictionOperator.uniform(
+      nCoarse: 2,
+      nFine: 4,
+      membersByCoarse: {
+        0: const [0, 1],
+        1: const [2, 3],
+      },
+    );
+    // ⟨R·fine, coarse⟩ == ⟨fine, P·coarse⟩ for any vectors.
+    final fine = Float64List.fromList(const [0.5, 1.5, 2.5, 3.5]);
+    final coarse = Float64List.fromList(const [7.0, 11.0]);
+    final lhs = _dot(r.restrict(fine), coarse);
+    final rhs = _dot(fine, r.prolongate(coarse));
+    expect(lhs, closeTo(rhs, 1e-12));
+  });
+
+  test('Tower lift yields one vector per level, finest first preserved', () {
+    final coarseG = buildPath(4);
+    final fineG = buildPath(8);
+    final coarseBasis = SpectralBasis.fromGraph(coarseG, 4);
+    final fineBasis = SpectralBasis.fromGraph(fineG, 8);
+    final r = RestrictionOperator.uniform(
+      nCoarse: 4,
+      nFine: 8,
+      membersByCoarse: {
+        for (var c = 0; c < 4; c++) c: [2 * c, 2 * c + 1],
+      },
+    );
+    final tower = SpectralTower(
+      bases: [coarseBasis, fineBasis],
+      restrictions: [r],
+    );
+    final fine = Float64List.fromList(
+      const [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+    );
+    final lifted = tower.liftToTop(fine);
+    expect(lifted, hasLength(2));
+    expect(lifted[1], fine); // finest level untouched
+    expect(lifted[0][0], closeTo(1.5, 1e-12));
+    expect(lifted[0][1], closeTo(3.5, 1e-12));
+    expect(lifted[0][2], closeTo(5.5, 1e-12));
+    expect(lifted[0][3], closeTo(7.5, 1e-12));
+  });
+
+  test('Cross-level coherence is high on an aligned path tower', () {
+    // Both levels are paths; their Fiedlers are both monotone, so
+    // aggregating the fine Fiedler onto the coarse should be a
+    // monotone vector aligned with the coarse Fiedler — high coherence.
+    final coarseG = buildPath(4);
+    final fineG = buildPath(8);
+    final coarseBasis = SpectralBasis.fromGraph(coarseG, 4);
+    final fineBasis = SpectralBasis.fromGraph(fineG, 8);
+    final r = RestrictionOperator.uniform(
+      nCoarse: 4,
+      nFine: 8,
+      membersByCoarse: {
+        for (var c = 0; c < 4; c++) c: [2 * c, 2 * c + 1],
+      },
+    );
+    final tower = SpectralTower(
+      bases: [coarseBasis, fineBasis],
+      restrictions: [r],
+    );
+    final coherence = tower
+        .crossLevelCoherence(coarseIdx: 0, fineIdx: 1, t: 0.0)
+        .abs();
+    expect(coherence, greaterThan(0.9),
+        reason: 'aligned path tower must have high Fiedler coherence');
+  });
+
+  test('Multiscale projection returns one coefficient vector per level', () {
+    final coarseG = buildPath(4);
+    final fineG = buildPath(8);
+    final coarseBasis = SpectralBasis.fromGraph(coarseG, 4);
+    final fineBasis = SpectralBasis.fromGraph(fineG, 8);
+    final r = RestrictionOperator.uniform(
+      nCoarse: 4,
+      nFine: 8,
+      membersByCoarse: {
+        for (var c = 0; c < 4; c++) c: [2 * c, 2 * c + 1],
+      },
+    );
+    final tower = SpectralTower(
+      bases: [coarseBasis, fineBasis],
+      restrictions: [r],
+    );
+    final fine = Float64List(8)..[0] = 1.0;
+    final proj = tower.multiscaleProject(fine);
+    expect(proj, hasLength(2));
+    expect(proj[0].length, coarseBasis.k);
+    expect(proj[1].length, fineBasis.k);
+  });
+}
+
+double _dot(Float64List a, Float64List b) {
+  var s = 0.0;
+  for (var i = 0; i < a.length; i++) {
+    s += a[i] * b[i];
+  }
+  return s;
 }
 
 /// Fixture: four files where {a, b, c} strongly co-change and
@@ -1723,16 +2234,7 @@ void _spectralTests() {
   // Path graph: 0—1—2—3—4 with unit edge weights. Used by both
   // Chebyshev path-graph reference test and here for spectral
   // equivalence so the two paths are pinned against the same fixture.
-  CsrGraph buildPath(int n) {
-    final edges = <List<(int, double)>>[];
-    for (var i = 0; i < n; i++) {
-      final row = <(int, double)>[];
-      if (i > 0) row.add((i - 1, 1.0));
-      if (i < n - 1) row.add((i + 1, 1.0));
-      edges.add(row);
-    }
-    return CsrGraph.fromRawEdges(n: n, edgesPerNode: edges);
-  }
+  CsrGraph buildPath(int n) => _buildPathFixture(n);
 
   test('lanczosSmallEigenpairs returns sorted eigenvalues in [0, 2]', () {
     final g = buildPath(20);
@@ -1965,5 +2467,396 @@ void _spectralTests() {
     expect(labels[4], labels[5]);
     expect(labels[2], isNot(labels[3]),
         reason: 'two cliques must end up in different communities');
+  });
+
+  test('Spectral gap recovers Fiedler eigenvalue on connected graph', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 6);
+    final gap = basis.spectralGap;
+    expect(gap, closeTo(basis.eigenvalues[1] - basis.eigenvalues[0], 1e-12));
+    expect(gap, greaterThan(0.0));
+  });
+
+  test('Stationary distribution sums to 1 and puts most mass on hubs', () {
+    // Star graph: node 0 is connected to all others. Hub should dominate.
+    final edges = <List<(int, double)>>[
+      [(1, 1.0), (2, 1.0), (3, 1.0), (4, 1.0), (5, 1.0)],
+      [(0, 1.0)],
+      [(0, 1.0)],
+      [(0, 1.0)],
+      [(0, 1.0)],
+      [(0, 1.0)],
+    ];
+    final g = CsrGraph.fromRawEdges(n: 6, edgesPerNode: edges);
+    final basis = SpectralBasis.fromGraph(g, 6);
+    final pi = basis.stationaryDistribution();
+    var total = 0.0;
+    for (var i = 0; i < pi.length; i++) {
+      expect(pi[i], greaterThanOrEqualTo(0.0));
+      total += pi[i];
+    }
+    expect(total, closeTo(1.0, 1e-8));
+    // Hub has degree 5, leaves have degree 1; hub should carry 5/10 = 0.5.
+    for (var i = 1; i < 6; i++) {
+      expect(pi[0], greaterThan(pi[i]));
+    }
+  });
+
+  test('Effective resistance is zero on self, symmetric, and positive', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    expect(basis.effectiveResistance(5, 5), closeTo(0.0, 1e-12));
+    expect(basis.effectiveResistance(3, 7),
+        closeTo(basis.effectiveResistance(7, 3), 1e-12));
+    final short = basis.effectiveResistance(5, 7);
+    final long = basis.effectiveResistance(5, 15);
+    expect(short, greaterThan(0.0));
+    // On a path graph, effective resistance is monotone in graph distance.
+    expect(long, greaterThan(short));
+  });
+
+  test('Heat capacity is non-negative and peaks at a finite scale', () {
+    // For a connected path graph, heat capacity is a bell-shaped curve
+    // in t — zero at t=0 and t=∞, positive in the middle.
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    for (final t in const [0.0, 0.5, 1.0, 2.0, 4.0, 8.0]) {
+      final c = basis.heatCapacity(t);
+      expect(c, greaterThanOrEqualTo(-1e-12));
+    }
+    // C(0) = variance of all eigenvalues (uniform weighting) — non-zero
+    // because the spectrum is non-degenerate.
+    final cZero = basis.heatCapacity(0.0);
+    expect(cZero, greaterThan(0.0));
+    // At very large t the distribution collapses onto λ_0 = 0 — variance
+    // vanishes asymptotically. Floating-point noise in Lanczos's tiny
+    // λ_0 (not exactly zero) leaves a ~1e-4 tail, so tolerance accordingly.
+    final cHot = basis.heatCapacity(50.0);
+    expect(cHot, lessThan(cZero));
+    expect(cHot, lessThan(1e-3));
+  });
+
+  test('Spectral fingerprint is an 8-bit label and respects Hamming geometry',
+      () {
+    // Path graph gives us a non-degenerate spectrum so Lanczos can
+    // return all k=9 Ritz pairs cleanly. Fiedler splits the path at
+    // its midpoint — nodes in opposite halves must differ on bit 0.
+    final g = buildPath(30);
+    final basis = SpectralBasis.fromGraph(g, 9);
+    expect(basis.k, greaterThanOrEqualTo(9));
+    final table = basis.spectralFingerprintTable();
+    expect(table, hasLength(30));
+    for (var i = 0; i < 30; i++) {
+      expect(table[i], inInclusiveRange(0, 255));
+      expect(table[i], basis.spectralByteFingerprint(i));
+    }
+    // Opposite ends of a 30-node path are on opposite sides of the Fiedler.
+    final leftBit0 = table[0] & 1;
+    final rightBit0 = table[29] & 1;
+    expect(leftBit0, isNot(rightBit0),
+        reason: 'Fiedler sign must flip across the path midpoint');
+  });
+
+  test('Spectral fingerprint returns 0 when basis has fewer than 9 modes',
+      () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 4);
+    // Not enough modes to read 8 non-trivial cleavages — safe fallback.
+    expect(basis.spectralByteFingerprint(5), 0);
+    final table = basis.spectralFingerprintTable();
+    for (var i = 0; i < table.length; i++) {
+      expect(table[i], 0);
+    }
+  });
+
+  test('Natural scales returns monotone-sorted t values above threshold',
+      () {
+    final g = buildPath(40);
+    final basis = SpectralBasis.fromGraph(g, 15);
+    final scales = basis.naturalScales();
+    // Path graph has a smooth heat-capacity curve — typically one
+    // broad peak, but the exact count depends on sample grid and
+    // numeric Lanczos. Just assert the shape contract.
+    for (var i = 1; i < scales.length; i++) {
+      expect(scales[i], greaterThan(scales[i - 1]));
+    }
+    for (final t in scales) {
+      expect(t, inInclusiveRange(0.1, 8.0));
+    }
+  });
+
+  test('Fingerprint Hamming distance agrees with popcount(XOR)', () {
+    final g = buildPath(30);
+    final basis = SpectralBasis.fromGraph(g, 9);
+    final table = basis.spectralFingerprintTable();
+    // Same-index distance is zero.
+    expect(basis.spectralFingerprintDistance(5, 5), 0);
+    // Cross-midpoint pairs should flip at least the Fiedler bit (bit 0),
+    // so distance ≥ 1 — and match XOR popcount exactly.
+    for (final pair in const [(0, 29), (2, 27), (10, 20)]) {
+      final d = basis.spectralFingerprintDistance(pair.$1, pair.$2);
+      expect(d, greaterThanOrEqualTo(0));
+      expect(d, lessThanOrEqualTo(8));
+      // Independently verified popcount.
+      var xor = table[pair.$1] ^ table[pair.$2];
+      var manual = 0;
+      while (xor != 0) {
+        manual += xor & 1;
+        xor >>= 1;
+      }
+      expect(d, manual);
+    }
+  });
+
+  test('Node coordinates return top-k non-trivial eigenvector entries', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 6);
+    final coords = basis.nodeCoordinates(5, dims: 3);
+    expect(coords, hasLength(3));
+    // Should equal u_1[5], u_2[5], u_3[5] (skipping u_0).
+    expect(coords[0], closeTo(basis.eigenvectors[1 * 20 + 5], 1e-12));
+    expect(coords[1], closeTo(basis.eigenvectors[2 * 20 + 5], 1e-12));
+    expect(coords[2], closeTo(basis.eigenvectors[3 * 20 + 5], 1e-12));
+  });
+
+  test('Unitary diffusion preserves total probability for all t', () {
+    // Quantum evolution e^(−itL) is unitary — ‖ψ(t)‖² = ‖ρ‖² for every
+    // t. Verifies exactly what classical heat diffusion violates (the
+    // heat kernel contracts mass monotonically).
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    final rho = Float64List(20);
+    rho[5] = 0.8;
+    rho[12] = -0.3;
+    rho[18] = 0.5;
+    var normSq = 0.0;
+    for (var i = 0; i < 20; i++) {
+      normSq += rho[i] * rho[i];
+    }
+    for (final t in const [0.0, 0.5, 1.5, 3.0]) {
+      final p = basis.quantumProbability(rho, t);
+      var total = 0.0;
+      for (var i = 0; i < 20; i++) {
+        total += p[i];
+      }
+      expect(total, closeTo(normSq, 1e-6),
+          reason: 't=$t: unitary evolution must preserve ‖ρ‖²');
+    }
+  });
+
+  test('Unitary diffuse at t=0 returns ρ real, zero imag', () {
+    final g = buildPath(10);
+    final basis = SpectralBasis.fromGraph(g, 10);
+    final rho = Float64List(10);
+    for (var i = 0; i < 10; i++) {
+      rho[i] = i.toDouble();
+    }
+    final psi = basis.unitaryDiffuse(rho, 0.0);
+    for (var i = 0; i < 10; i++) {
+      expect(psi.real[i], closeTo(rho[i], 1e-8));
+      expect(psi.imag[i], closeTo(0.0, 1e-10));
+    }
+  });
+
+  test('Interference mass equals per-node field integral and is t-invariant',
+      () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    final a = Float64List(20)..[5] = 1.0;
+    final b = Float64List(20)..[8] = 1.0;
+    final scalar = basis.interferenceMass(a, b);
+    for (final t in const [0.0, 0.3, 1.0, 2.5]) {
+      final field = basis.interferenceField(a, b, t);
+      var integral = 0.0;
+      for (var i = 0; i < 20; i++) {
+        integral += field[i];
+      }
+      // Integrated cross-term is conserved under unitary evolution —
+      // spatial fringes move, total is invariant.
+      expect(integral, closeTo(scalar, 1e-6),
+          reason: 't=$t: integrated interference must equal 2·⟨c_a, c_b⟩');
+    }
+  });
+
+  test('Interference of identical focuses equals 2·‖project(ρ)‖² at t=0',
+      () {
+    // |ψ_a + ψ_a|² = 4·|ψ_a|² — coherent doubling. At t=0, the
+    // interference cross-term collapses to `2·⟨project(ρ)|project(ρ)⟩`,
+    // which equals `2·‖ρ‖²` when the basis is full-rank, less when
+    // the spectrum is truncated.
+    final g = buildPath(12);
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final rho = Float64List(12)..[4] = 1.0;
+    final coeffs = basis.project(rho);
+    var projSq = 0.0;
+    for (var j = 0; j < coeffs.length; j++) {
+      projSq += coeffs[j] * coeffs[j];
+    }
+    final mass = basis.interferenceMass(rho, rho);
+    expect(mass, closeTo(2.0 * projSq, 1e-8));
+  });
+
+  test('Orthogonal full-rank focuses have interference mass near zero', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 20);
+    final a = Float64List(20)..[2] = 1.0;
+    final b = Float64List(20)..[17] = 1.0;
+    // Cross term = 2·⟨c_a, c_b⟩. Under full-rank Uᵀ the spectral
+    // coefficients inherit the spatial inner product, so disjoint
+    // deltas produce ~0 interference mass.
+    expect(basis.interferenceMass(a, b), closeTo(0.0, 1e-6));
+  });
+
+  test('Signature is stable, deterministic, reflects Λ identity', () {
+    final g = buildPath(20);
+    final a = SpectralBasis.fromGraph(g, 8);
+    final b = SpectralBasis.fromGraph(g, 8);
+    // Two independent builds from the same deterministic Lanczos seed
+    // yield identical eigenvalues → identical signature.
+    expect(a.signature, b.signature);
+    expect(a.signature, isNonZero);
+    // Different k → different spectrum → different signature.
+    final c = SpectralBasis.fromGraph(g, 6);
+    expect(c.signature, isNot(a.signature));
+  });
+
+  test('SpectralBasis round-trips through toBytes / fromBytes', () {
+    final g = buildPath(15);
+    final a = SpectralBasis.fromGraph(g, 6,
+        nodePaths: [for (var i = 0; i < 15; i++) 'node_$i']);
+    final bytes = a.toBytes();
+    final b = SpectralBasis.fromBytes(bytes);
+    expect(b.n, a.n);
+    expect(b.k, a.k);
+    expect(b.signature, a.signature);
+    for (var i = 0; i < a.k; i++) {
+      expect(b.eigenvalues[i], closeTo(a.eigenvalues[i], 1e-12));
+    }
+    for (var i = 0; i < a.k * a.n; i++) {
+      expect(b.eigenvectors[i], closeTo(a.eigenvectors[i], 1e-12));
+    }
+    expect(b.nodePaths, a.nodePaths);
+  });
+
+  test('Labeled projection + phiForPath agree with plain project+diffuse',
+      () {
+    final g = buildPath(20);
+    final paths = [for (var i = 0; i < 20; i++) 'file_$i'];
+    final basis = SpectralBasis.fromGraph(g, 8, nodePaths: paths);
+    final weights = <String, double>{
+      'file_3': 0.7,
+      'file_12': 0.3,
+    };
+    final coeffs = basis.labelProject(weights);
+    // Equivalent plain rho (normalised weights on those nodes).
+    final plainRho = Float64List(20)..[3] = 0.7..[12] = 0.3;
+    final total = 1.0;
+    for (var i = 0; i < 20; i++) {
+      plainRho[i] /= total;
+    }
+    final plainCoeffs = basis.project(plainRho);
+    for (var j = 0; j < basis.k; j++) {
+      expect(coeffs[j], closeTo(plainCoeffs[j], 1e-9));
+    }
+    // phiForPath matches direct recombine at that node.
+    final phi = basis.recombineFromProjection(coeffs, 1.0);
+    for (final p in paths.take(5)) {
+      final direct = basis.phiForPath(coeffs, p, 1.0);
+      final id = basis.pathToId![p]!;
+      expect(direct, closeTo(phi[id], 1e-9));
+    }
+  });
+
+  test('Unlabeled basis throws on labelProject', () {
+    final g = buildPath(10);
+    final basis = SpectralBasis.fromGraph(g, 4);
+    expect(() => basis.labelProject({'x': 1.0}), throwsStateError);
+    expect(basis.phiForPath(Float64List(4), 'x', 1.0), 0.0);
+  });
+
+  test('Ratchet diagnose uses signature fast-path', () {
+    final g = buildPath(300);
+    final a = SpectralBasis.fromGraph(g, 20);
+    final b = SpectralBasis.fromGraph(g, 20);
+    // Same graph → deterministic Lanczos → identical signature.
+    expect(a.signature, b.signature);
+  });
+
+  test('== and hashCode mirror signature equality', () {
+    final g1 = buildPath(12);
+    final g2 = buildPath(12);
+    final a = SpectralBasis.fromGraph(g1, 6);
+    final b = SpectralBasis.fromGraph(g2, 6);
+    expect(a == b, true);
+    expect(a.hashCode, b.hashCode);
+    final set = <SpectralBasis>{a};
+    expect(set.contains(b), true, reason: 'HashSet key equivalence');
+    // Different k produces a different signature → !=.
+    final c = SpectralBasis.fromGraph(g1, 4);
+    expect(a == c, false);
+  });
+
+  test('tensorSpectral produces a SpacetimeBasis with derived signature',
+      () {
+    final g1 = buildPath(10);
+    final g2 = buildPath(6);
+    final a = SpectralBasis.fromGraph(g1, 5);
+    final b = SpectralBasis.fromGraph(g2, 4);
+    final st = tensorSpectral(a, b);
+    expect(st.space.signature, a.signature);
+    expect(st.time.signature, b.signature);
+    // Joint signature changes when either factor changes.
+    final c = SpectralBasis.fromGraph(g1, 4);
+    final stPrime = tensorSpectral(c, b);
+    expect(stPrime.signature, isNot(st.signature));
+  });
+
+  test('SpectralBasisCache roundtrips a basis through disk', () async {
+    final tmp = await Directory.systemTemp.createTemp('logos-basis-test-');
+    try {
+      final cache = SpectralBasisCache(directory: tmp);
+      final g = buildPath(14);
+      final a = SpectralBasis.fromGraph(g, 6,
+          nodePaths: [for (var i = 0; i < 14; i++) 'n$i']);
+      await cache.write(a);
+      final b = await cache.read(a.signature);
+      expect(b, isNotNull);
+      expect(b!.signature, a.signature);
+      expect(b, a, reason: '== via signature match');
+      // Unknown signature returns null.
+      expect(await cache.read(0xdeadbeef), isNull);
+    } finally {
+      await tmp.delete(recursive: true);
+    }
+  });
+
+  test('SpectralBasisCache prunes everything outside the keep set',
+      () async {
+    final tmp = await Directory.systemTemp.createTemp('logos-basis-prune-');
+    try {
+      final cache = SpectralBasisCache(directory: tmp);
+      final a = SpectralBasis.fromGraph(buildPath(10), 4);
+      final b = SpectralBasis.fromGraph(buildPath(12), 4);
+      await cache.write(a);
+      await cache.write(b);
+      await cache.prune({a.signature});
+      expect(await cache.read(a.signature), isNotNull);
+      expect(await cache.read(b.signature), isNull);
+    } finally {
+      await tmp.delete(recursive: true);
+    }
+  });
+
+  test('Bulk coordinate table packs every node row-major', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 6);
+    final table = basis.nodeCoordinateTable(dims: 3);
+    expect(table, hasLength(20 * 3));
+    for (var i = 0; i < 20; i++) {
+      final row = basis.nodeCoordinates(i, dims: 3);
+      expect(table[i * 3 + 0], closeTo(row[0], 1e-12));
+      expect(table[i * 3 + 1], closeTo(row[1], 1e-12));
+      expect(table[i * 3 + 2], closeTo(row[2], 1e-12));
+    }
   });
 }

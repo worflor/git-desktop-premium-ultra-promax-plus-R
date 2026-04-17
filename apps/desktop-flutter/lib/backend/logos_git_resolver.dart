@@ -484,10 +484,20 @@ Future<LogosGit?> _resolveImpl(
     }
 
     final engine = await Isolate.run<LogosGit>(
-      () => LogosGit.buildFromStats(
-        stats,
-        perFileKVectors: perFileKVectors,
-      ),
+      () {
+        final built = LogosGit.buildFromStats(
+          stats,
+          perFileKVectors: perFileKVectors,
+        );
+        // Warm the spectral basis inside the worker so the first
+        // [gatherEvidence] call on the UI isolate never pays the
+        // one-time Lanczos cost. The basis lives inside the engine's
+        // cache (`_spectralCache`) and is copied across the isolate
+        // boundary with the engine on return — turning a UI-freeze
+        // into a background build.
+        built.spectralBasis();
+        return built;
+      },
       debugName: 'LogosGit.buildFromStats',
     );
 

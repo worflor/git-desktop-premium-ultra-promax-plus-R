@@ -97,6 +97,13 @@ class _ChangesPageState extends State<ChangesPage> {
   String? _selectedDiffPath;
   String? _inspectionDiffPath;
   String? _visibleDiffPath;
+  /// Diff-navigation history. Pushed when the user drills into a
+  /// related path from the drawer (`onOpenRelatedPath`); popped when
+  /// they hit the toolbar's `<` button. Empty stack = button hidden.
+  /// Purposefully simple — stores only paths, so back from a nested
+  /// single-file diff restores that file in single-diff mode even
+  /// if the user originally came from a multi-diff context.
+  final List<String> _diffNavStack = <String>[];
   DiffDocument? _diffDocument;
   bool _diffLoading = false;
   String? _diffError;
@@ -1009,6 +1016,27 @@ class _ChangesPageState extends State<ChangesPage> {
       _inspectionDiffPath = path;
     });
     unawaited(_loadDiff(repo, path));
+  }
+
+  /// Capture the currently-visible diff path onto the nav stack, then
+  /// delegate to [_inspectSingleDiff]. Wired into the drawer's
+  /// related-path links so drilling deeper pushes a breadcrumb; the
+  /// toolbar's `<` button then pops the stack. Dedupes against the
+  /// target so navigating "to where you already were" is a no-op.
+  void _pushAndInspectSingleDiff(String repo, String path) {
+    final current = _visibleDiffPath ?? _selectedDiffPath;
+    if (current != null && current != path) {
+      _diffNavStack.add(current);
+    }
+    _inspectSingleDiff(repo, path);
+  }
+
+  void _navigateBackDiff(String repo) {
+    if (_diffNavStack.isEmpty) return;
+    final prev = _diffNavStack.removeLast();
+    // _inspectSingleDiff rather than _pushAndInspectSingleDiff so the
+    // pop doesn't immediately re-push and trap the user in a cycle.
+    _inspectSingleDiff(repo, prev);
   }
 
   /// Read the file from disk and synthesize a new-file unified diff
@@ -4954,8 +4982,12 @@ class _ChangesPageState extends State<ChangesPage> {
                                         _jumpToMultiDiffPath(path);
                                         return;
                                       }
-                                      _inspectSingleDiff(repoPath, path);
+                                      _pushAndInspectSingleDiff(
+                                          repoPath, path);
                                     },
+                                    onNavigateBack: _diffNavStack.isEmpty
+                                        ? null
+                                        : () => _navigateBackDiff(repoPath),
                                     onStagingApplied: () {
                                       unawaited(_loadMultiDiff(
                                         repoPath,
@@ -5003,11 +5035,23 @@ class _ChangesPageState extends State<ChangesPage> {
                                     return;
                                   }
                                   if (includedFiles.length > 1) {
-                                    _inspectSingleDiff(repoPath, path);
+                                    _pushAndInspectSingleDiff(
+                                        repoPath, path);
                                     return;
+                                  }
+                                  // Single-file selection context — push the
+                                  // current focus then load the next one so
+                                  // back restores the previous diff.
+                                  final current = _visibleDiffPath ??
+                                      _selectedDiffPath;
+                                  if (current != null && current != path) {
+                                    _diffNavStack.add(current);
                                   }
                                   unawaited(_loadDiff(repoPath, path));
                                 },
+                                onNavigateBack: _diffNavStack.isEmpty
+                                    ? null
+                                    : () => _navigateBackDiff(repoPath),
                                 onStagingApplied: () {
                                   final path =
                                       _visibleDiffPath ?? _selectedDiffPath;
@@ -5668,27 +5712,44 @@ class _MusePaneState extends State<_MusePane> {
         : '';
     return Row(
       children: [
-        Icon(Icons.bubble_chart_outlined, size: 16, color: t.textFaint),
-        const SizedBox(width: 8),
-        Text('Muse',
-            style: TextStyle(
-              color: t.textStrong,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w500,
-            )),
-        const SizedBox(width: 8),
-        Text('· ${widget.guardrailLabel.toLowerCase()}',
-            style: TextStyle(color: t.textFaint, fontSize: 11)),
-        if (keptLine.isNotEmpty) ...[
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text('· $keptLine',
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: t.textFaint, fontSize: 11)),
+        // Left cluster — wrapped in Expanded so the Flexible kept-line
+        // gets all remaining space inside, not a flex-share that it
+        // splits with a sibling Spacer. Prior layout used Flexible(1)
+        // + Spacer(1), so both got half the remaining width and the
+        // text truncated at ~half-row even when the full row had
+        // hundreds of pixels of empty space past the kept line.
+        Expanded(
+          child: Row(
+            children: [
+              Icon(Icons.bubble_chart_outlined, size: 16, color: t.textFaint),
+              const SizedBox(width: 8),
+              Text('Muse',
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w500,
+                  )),
+              const SizedBox(width: 8),
+              Text('· ${widget.guardrailLabel.toLowerCase()}',
+                  style: TextStyle(color: t.textFaint, fontSize: 11)),
+              if (keptLine.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                // Flexible, not Expanded, so the text takes only what
+                // it needs. Ellipsizes only when the window is truly
+                // narrow (kept line exceeds available space after
+                // icon + Muse + guardrail label).
+                Flexible(
+                  child: Text('· $keptLine',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: t.textFaint, fontSize: 11)),
+                ),
+              ],
+            ],
           ),
-        ],
-        const Spacer(),
-        // Mirror the review-pane order: back · copy · rerun.
+        ),
+        // Chips take their intrinsic widths on the right. Mirror the
+        // review-pane order: back · copy · rerun.
+        const SizedBox(width: 12),
         _GhostActionChip(
             tokens: t, label: 'back to diff', onTap: widget.onBack),
         if (widget.onCopy != null) ...[

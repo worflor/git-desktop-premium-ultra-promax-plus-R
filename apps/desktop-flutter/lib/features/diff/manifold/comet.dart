@@ -28,13 +28,150 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'manifold_tuning.dart';
+
 enum CometShape {
-  /// Generic echo / ripple. Filled disc + concentric ring.
+  /// Generic evidence node — topology ladder picks its polyhedron
+  /// from the per-comet `support` count.
   circle,
 
-  /// Orientation anchor (current hunk, tangent source). Filled diamond
-  /// so the eye lands on it first without needing a label.
+  /// Orientation anchor (current hunk, tangent source). Forced to
+  /// the densest polyhedron on the ladder regardless of support so
+  /// the pinned line always reads as the centerpiece.
   diamond,
+}
+
+/// Platonic-solid topology ladder. Picked per-comet from the amount
+/// of evidence the engine has for that node — more witnesses = more
+/// facets. The shape family emerges from the data; nothing is role-
+/// pinned except the anchor (forced to [icosa] via [CometShape.diamond]).
+enum Polyhedron { tetra, octa, cube, icosa }
+
+typedef _V3 = (double, double, double);
+
+/// Vertex / face tables for each Platonic solid. Coordinates are
+/// normalized so the polyhedron fits inside a unit sphere — callers
+/// scale by the comet's core radius. Face windings are consistently
+/// counter-clockwise when viewed from outside, which lets the painter
+/// use a cross-product sign test for back-face culling.
+class _Polyhedra {
+  _Polyhedra._();
+
+  static const double _phi = 1.6180339887498949;
+
+  // Normalization scales so every solid's vertices sit on the unit
+  // sphere. Baked in rather than computed so the tables stay `const`.
+  static const double _sTetra = 0.5773502691896257;   // 1/√3
+  static const double _sCube = 0.5773502691896257;    // 1/√3
+  static const double _sIcosa = 0.5257311121191336;   // 1/√(1+φ²)
+
+  static const List<_V3> _tetraVerts = [
+    (_sTetra, _sTetra, _sTetra),
+    (_sTetra, -_sTetra, -_sTetra),
+    (-_sTetra, _sTetra, -_sTetra),
+    (-_sTetra, -_sTetra, _sTetra),
+  ];
+  static const List<List<int>> _tetraFaces = [
+    [0, 2, 1],
+    [0, 1, 3],
+    [0, 3, 2],
+    [1, 2, 3],
+  ];
+
+  static const List<_V3> _octaVerts = [
+    (1, 0, 0),
+    (-1, 0, 0),
+    (0, 1, 0),
+    (0, -1, 0),
+    (0, 0, 1),
+    (0, 0, -1),
+  ];
+  static const List<List<int>> _octaFaces = [
+    [0, 2, 4],
+    [2, 1, 4],
+    [1, 3, 4],
+    [3, 0, 4],
+    [2, 0, 5],
+    [1, 2, 5],
+    [3, 1, 5],
+    [0, 3, 5],
+  ];
+
+  static const List<_V3> _cubeVerts = [
+    (-_sCube, -_sCube, -_sCube),
+    (_sCube, -_sCube, -_sCube),
+    (_sCube, _sCube, -_sCube),
+    (-_sCube, _sCube, -_sCube),
+    (-_sCube, -_sCube, _sCube),
+    (_sCube, -_sCube, _sCube),
+    (_sCube, _sCube, _sCube),
+    (-_sCube, _sCube, _sCube),
+  ];
+  static const List<List<int>> _cubeFaces = [
+    [0, 3, 2, 1], // -z
+    [4, 5, 6, 7], // +z
+    [0, 1, 5, 4], // -y
+    [2, 3, 7, 6], // +y
+    [1, 2, 6, 5], // +x
+    [0, 4, 7, 3], // -x
+  ];
+
+  static const List<_V3> _icosaVerts = [
+    (0, _sIcosa, _sIcosa * _phi),
+    (0, -_sIcosa, _sIcosa * _phi),
+    (0, _sIcosa, -_sIcosa * _phi),
+    (0, -_sIcosa, -_sIcosa * _phi),
+    (_sIcosa, _sIcosa * _phi, 0),
+    (-_sIcosa, _sIcosa * _phi, 0),
+    (_sIcosa, -_sIcosa * _phi, 0),
+    (-_sIcosa, -_sIcosa * _phi, 0),
+    (_sIcosa * _phi, 0, _sIcosa),
+    (_sIcosa * _phi, 0, -_sIcosa),
+    (-_sIcosa * _phi, 0, _sIcosa),
+    (-_sIcosa * _phi, 0, -_sIcosa),
+  ];
+  static const List<List<int>> _icosaFaces = [
+    [0, 1, 8], [0, 10, 1], [0, 5, 10], [0, 4, 5], [0, 8, 4],
+    [1, 6, 8], [1, 7, 6], [1, 10, 7], [8, 6, 9], [8, 9, 4],
+    [4, 9, 2], [4, 2, 5], [5, 2, 11], [5, 11, 10], [10, 11, 7],
+    [7, 11, 3], [7, 3, 6], [6, 3, 9], [9, 3, 2], [2, 3, 11],
+  ];
+
+  static List<_V3> vertices(Polyhedron p) {
+    switch (p) {
+      case Polyhedron.tetra:
+        return _tetraVerts;
+      case Polyhedron.octa:
+        return _octaVerts;
+      case Polyhedron.cube:
+        return _cubeVerts;
+      case Polyhedron.icosa:
+        return _icosaVerts;
+    }
+  }
+
+  static List<List<int>> faces(Polyhedron p) {
+    switch (p) {
+      case Polyhedron.tetra:
+        return _tetraFaces;
+      case Polyhedron.octa:
+        return _octaFaces;
+      case Polyhedron.cube:
+        return _cubeFaces;
+      case Polyhedron.icosa:
+        return _icosaFaces;
+    }
+  }
+}
+
+/// Pick the polyhedron family based on how much evidence the engine
+/// has for a node. More support = more facets — shape complexity is
+/// literally the engine's confidence in the node's relevance.
+Polyhedron polyhedronFor(int support) {
+  if (support <= 1) return Polyhedron.tetra;
+  if (support <= 3) return Polyhedron.octa;
+  if (support <= 6) return Polyhedron.cube;
+  return Polyhedron.icosa;
 }
 
 /// A relationship line between two comets.
@@ -88,6 +225,11 @@ class Comet {
   /// each source's wave *shape* encodes real evidence. Default
   /// `[1, 0, 0, 0]` is a pure cosine tonic.
   final List<double> harmonics;
+  /// Evidence count for this node — witnesses + integrity reasons +
+  /// transport siblings, whatever the builder chose to sum. Drives
+  /// the polyhedron topology picker via [polyhedronFor]: more support
+  /// = more facets = the engine has more to say about this node.
+  final int support;
   final Object? tag;
 
   const Comet({
@@ -100,6 +242,7 @@ class Comet {
     this.shape = CometShape.circle,
     this.pitch = 1.0,
     this.harmonics = const [1.0, 0.0, 0.0, 0.0],
+    this.support = 0,
     this.tag,
   });
 }
@@ -267,10 +410,24 @@ class CometField extends CustomPainter {
   final List<Comet> comets;
   final List<CometLink> links;
   final double introT;
+  /// Monotonic breath-cycle count — ever-increasing real number where
+  /// 1.0 = one full breath cycle of wall time. Sawtooth-free: every
+  /// rotation consumer (polyhedron spin, link droplets) reads this
+  /// and takes `% 1.0` itself if it wants a cycle position. Driving
+  /// rotation off the raw value keeps quaternions coherent across
+  /// the cycle boundary — no snap-back at the wrap.
   final double breathT;
   final double luminescence;
   final double edgeIntensity;
   final int? focusedIndex;
+  /// Progress 0..1 of the focus-ring acquisition animation. Drives
+  /// the ring's scale via [Curves.easeOutBack] (so it lands with a
+  /// small overshoot past the rest radius, then settles at exactly
+  /// the rest radius at t=1) and its alpha via [Curves.easeOutCubic]
+  /// so brightness trails the scale by a half-beat. Default 1.0 =
+  /// "already acquired" for legacy callers that don't animate the
+  /// ring.
+  final double focusRingT;
   final Offset? cursor;
   final CometCamera camera;
   final Offset anchor;
@@ -289,6 +446,7 @@ class CometField extends CustomPainter {
     this.luminescence = 1,
     this.edgeIntensity = 1,
     this.focusedIndex,
+    this.focusRingT = 1.0,
     this.cursor,
     this.camera = CometCamera.flat,
     this.anchor = const Offset(0.5, 0.5),
@@ -361,9 +519,17 @@ class CometField extends CustomPainter {
       final dx = c.position.dx - anchor.dx;
       final dy = c.position.dy - anchor.dy;
 
-      // Intro: emerge from the anchor along its target direction. Same
-      // curve as before but now interpreted in 3D; z also eases in.
-      final ease = Curves.easeOutCubic.transform(tLocal);
+      // Intro: emerge from the anchor along its target direction,
+      // blending the default easeOutCubic with a snap-heavy
+      // easeOutExpo based on the comet's own `strength`. Confident
+      // nodes (anchor @ strength 1) snap into place; weak peripheral
+      // echoes drift in soft. Confidence is tempo, not topology.
+      final snappiness = c.strength.clamp(0.0, 1.0);
+      final easeCubic = Curves.easeOutCubic.transform(tLocal);
+      final easeExpo = Curves.easeOutExpo.transform(tLocal);
+      final ease = easeCubic *
+              (1.0 - snappiness * ManifoldTuning.introSnapBlend) +
+          easeExpo * (snappiness * ManifoldTuning.introSnapBlend);
       final rx0 = dx * ease;
       final ry0 = dy * ease;
       final rz0 = c.z * ease;
@@ -417,7 +583,14 @@ class CometField extends CustomPainter {
 
     final reach = <double>[];
     for (var i = 0; i < n; i++) {
-      reach.add(_staticRingRadius(comets[i].strength, locals[i]) * scales[i]);
+      // Support-driven presence lift — more evidence behind a node
+      // makes it *physically larger*, not just more-faceted. Reads
+      // as "this matters more" at a glance, without counting verts.
+      final presence =
+          1.0 + comets[i].support * ManifoldTuning.supportPresenceLift;
+      reach.add(_staticRingRadius(comets[i].strength, locals[i]) *
+          presence *
+          scales[i]);
     }
 
     // Back-to-front paint order — smallest rotated z (farthest from
@@ -442,9 +615,6 @@ class CometField extends CustomPainter {
 
   static double _staticRingRadius(double strength, double tLocal) =>
       (7.0 + 14.0 * strength) * tLocal;
-
-  static double _coreRadius(double strength, double density, double tLocal) =>
-      ((1.6 + 3.4 * strength) / math.sqrt(1 + 0.35 * density)) * tLocal;
 
   double _strokeWidth(double base, double scale) {
     // edgeIntensity is not clamped from below — petrichor's 0 is
@@ -560,9 +730,14 @@ class CometField extends CustomPainter {
           final len = metric.length;
           if (len > 1.0) {
             const droplets = 3;
+            // Tempo scales with link strength — strong transport
+            // pull surges droplets visibly faster than a weak edge.
+            // Urgency is tempo, not label.
+            final speed = ManifoldTuning.dropletBaseSpeed +
+                link.strength * ManifoldTuning.dropletPullSpeedLift;
             for (var k = 0; k < droplets; k++) {
               final phaseOffset = k / droplets;
-              final t = (breathT + phaseOffset + link.strength * 0.1) % 1.0;
+              final t = (breathT * speed + phaseOffset) % 1.0;
               final tangent =
                   metric.getTangentForOffset(t * len);
               if (tangent == null) continue;
@@ -585,89 +760,292 @@ class CometField extends CustomPainter {
       }
     }
 
-    // Pass 2: static halo ring — solid for present comets, dashed for
-    // ghosts. Density compositing happens through alpha stacking.
+    // Pass 2+3 (unified): 3D polyhedron body per comet. Topology
+    // comes from each comet's `support` count (tetra → icosa), pose
+    // from the camera quaternion × a per-node base orientation × a
+    // slow breath spin. PCA harmonics anisotropically stretch the
+    // vertices so two same-family shapes still read as individual.
+    // Ghosts draw wireframe-only — absence as skeletal outline.
     for (final i in lay.paintOrder) {
       final c = comets[i];
       final tLocal = lay.localTimes[i];
       if (tLocal <= 0) continue;
 
+      final isGhost = c.coreMass <= 0.001;
+      final bodyAlpha = ((0.88 * (isGhost ? 0.55 : c.coreMass)) * tLocal)
+          .clamp(0.0, 1.0);
+      if (bodyAlpha <= 0.01) continue;
+
+      // Radius tracks the old ring reach so spacing density reads the
+      // same — the polyhedron literally replaces the ring+core pair.
       final r = lay.reachRadii[i];
       if (r <= 0.5) continue;
 
-      final isGhost = c.coreMass <= 0.001;
-      final alpha =
-          ((0.40 + 0.30 * c.strength) * luminescence * tLocal)
-              .clamp(0.0, 0.95);
-      if (alpha <= 0.01) continue;
-
-      final w = _strokeWidth(isGhost ? 1.0 : 1.1, lay.scales[i]);
-      if (w <= 0.01) continue;
-
-      final paint = Paint()
-        ..color = c.laneColor.withValues(alpha: alpha)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = w;
-
-      if (isGhost) {
-        _drawDashedCircle(canvas, lay.positions[i], r, paint);
-      } else {
-        canvas.drawCircle(lay.positions[i], r, paint);
-      }
-    }
-
-    // Pass 3: solid core bodies — skipped for ghosts.
-    for (final i in lay.paintOrder) {
-      final c = comets[i];
-      final tLocal = lay.localTimes[i];
-      if (tLocal <= 0 || c.coreMass <= 0.001) continue;
-
-      final coreR = _coreRadius(c.strength, lay.densities[i], tLocal) *
-          lay.scales[i];
-      final alpha = ((0.88 * c.coreMass) * tLocal)
-          .clamp(0.0, 1.0);
-      final fill = Paint()..color = c.laneColor.withValues(alpha: alpha);
-
-      switch (c.shape) {
-        case CometShape.circle:
-          canvas.drawCircle(lay.positions[i], coreR, fill);
-        case CometShape.diamond:
-          _drawDiamond(canvas, lay.positions[i], coreR * 1.25, fill);
-      }
+      _paintPolyhedron(
+        canvas,
+        center: lay.positions[i],
+        radius: r,
+        comet: c,
+        cameraYaw: camera.yaw,
+        cameraPitch: camera.pitch,
+        breathT: breathT,
+        tLocal: tLocal,
+        bodyAlpha: bodyAlpha,
+        wireframe: isGhost,
+      );
     }
 
     // Pass 4: focus ring — matches the underlying comet's style
-    // (dashed for ghosts, solid for present).
+    // (dashed for ghosts, solid for present). The ring pops in with
+    // an overshoot (easeOutBack on radius) and brightens a half-beat
+    // behind (easeOutCubic on alpha) — tells the body "yes, I heard
+    // you" with a tiny weight transfer instead of a silent snap.
     final f = focusedIndex;
     if (f != null && f >= 0 && f < comets.length) {
       final tLocal = lay.localTimes[f];
       if (tLocal > 0) {
         final c = comets[f];
         final isGhost = c.coreMass <= 0.001;
-        final r = lay.reachRadii[f] + 3.5;
-        final w = _strokeWidth(1.3, lay.scales[f]);
-        final paint = Paint()
-          ..color = c.laneColor
-              .withValues(alpha: (0.92 * luminescence).clamp(0.0, 1.0))
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = w.clamp(0.6, 2.6);
-        if (isGhost) {
-          _drawDashedCircle(canvas, lay.positions[f], r, paint);
-        } else {
-          canvas.drawCircle(lay.positions[f], r, paint);
+        final ringT = focusRingT.clamp(0.0, 1.0);
+        // easeOutBack starts at 0, passes ~1.1 near t≈0.8, lands
+        // exactly at 1.0 — a bounded overshoot that uses the curve's
+        // built-in "back" amount. No magic overshoot constant needed.
+        final ringScale = Curves.easeOutBack.transform(ringT);
+        final alphaT = Curves.easeOutCubic.transform(ringT);
+        final baseR = lay.reachRadii[f] + 3.5;
+        final r = baseR * ringScale;
+        if (r > 0.5) {
+          final w = _strokeWidth(1.3, lay.scales[f]);
+          final paint = Paint()
+            ..color = c.laneColor.withValues(
+              alpha: (0.92 * luminescence * alphaT).clamp(0.0, 1.0),
+            )
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = w.clamp(0.6, 2.6);
+          if (isGhost) {
+            _drawDashedCircle(canvas, lay.positions[f], r, paint);
+          } else {
+            canvas.drawCircle(lay.positions[f], r, paint);
+          }
         }
       }
     }
   }
 
-  void _drawDiamond(Canvas canvas, Offset c, double r, Paint paint) {
-    final path = Path()
-      ..moveTo(c.dx, c.dy - r)
-      ..lineTo(c.dx + r, c.dy)
-      ..lineTo(c.dx, c.dy + r)
-      ..lineTo(c.dx - r, c.dy)
-      ..close();
-    canvas.drawPath(path, paint);
+  /// Render a per-comet polyhedron at [center] fitting inside radius
+  /// [radius]. Faces are sorted back-to-front by rotated-z centroid
+  /// and culled by face-normal dot viewer direction so silhouettes
+  /// are genuinely 3D — rotating the camera reveals a different set
+  /// of faces rather than just translating a flat sprite.
+  void _paintPolyhedron(
+    Canvas canvas, {
+    required Offset center,
+    required double radius,
+    required Comet comet,
+    required double cameraYaw,
+    required double cameraPitch,
+    required double breathT,
+    required double tLocal,
+    required double bodyAlpha,
+    required bool wireframe,
+  }) {
+    // Anchor is forced to icosa regardless of evidence count — it's
+    // the pinned line itself, the dense centerpiece of the scene.
+    final topology = comet.shape == CometShape.diamond
+        ? Polyhedron.icosa
+        : polyhedronFor(comet.support);
+    final verts = _Polyhedra.vertices(topology);
+    final faces = _Polyhedra.faces(topology);
+
+    // PCA / spectral harmonics drive anisotropic stretch. Clamps
+    // enforce "vary, don't invert" — we want two icosas to look like
+    // different icosas, not like a collapsed point.
+    final h = comet.harmonics;
+    final hx = h.length > 1 ? h[1] : 0.0;
+    final hy = h.length > 2 ? h[2] : 0.0;
+    final hz = h.length > 3 ? h[3] : 0.0;
+    final sx = (1.0 + hx * ManifoldTuning.vertexStretchLateral)
+        .clamp(ManifoldTuning.vertexStretchMinLateral,
+            ManifoldTuning.vertexStretchMaxLateral);
+    final sy = (1.0 + hy * ManifoldTuning.vertexStretchLateral)
+        .clamp(ManifoldTuning.vertexStretchMinLateral,
+            ManifoldTuning.vertexStretchMaxLateral);
+    final sz = (1.0 + hz * ManifoldTuning.vertexStretchLongitudinal)
+        .clamp(ManifoldTuning.vertexStretchMinLongitudinal,
+            ManifoldTuning.vertexStretchMaxLongitudinal);
+    // Chirality — sign of the dominant lateral harmonic flips spin
+    // direction. Two same-family nodes with opposite principal-
+    // component signs rotate opposite ways.
+    final chirality = hx < 0 ? -1.0 : 1.0;
+
+    // Per-node base orientation — stable per-frame, seeded by
+    // `phase`. The irrational pitch/roll multipliers keep the three
+    // rotation axes from syncing back to the same silhouette.
+    final phaseAngle = comet.phase * 2 * math.pi;
+    final baseYaw = phaseAngle;
+    final basePitch = math.sin(phaseAngle * ManifoldTuning.posePitchPhaseMult) *
+        ManifoldTuning.posePitchAmp;
+    final baseRoll = math.cos(phaseAngle * ManifoldTuning.poseRollPhaseMult) *
+        ManifoldTuning.poseRollAmp;
+
+    // Data-derived spin rate: stronger nodes (anchor @ 1.0) breathe
+    // slower / statelier; weaker nodes (peripheral echoes) rotate
+    // more quickly. Harmonic energy adds per-node jitter so two
+    // same-strength comets never lock in phase.
+    final harmEnergy = math.sqrt(hx * hx + hy * hy + hz * hz);
+    var spinTurnsPerCycle = (ManifoldTuning.spinBaseTurnsPerCycle +
+            (1.0 - comet.strength) * ManifoldTuning.spinWeaknessLift +
+            harmEnergy * ManifoldTuning.spinHarmonicJitter)
+        .clamp(ManifoldTuning.spinMinTurnsPerCycle,
+            ManifoldTuning.spinMaxTurnsPerCycle);
+    // Ghost amplification — a ghost at the top of its strength band
+    // (almost-present) fidgets up to `ghostSpinAmplification`× its
+    // base rate; one at the bottom (deep background) is unchanged.
+    // Absence that almost was a presence feels restless; forgotten
+    // absence sits still.
+    if (wireframe) {
+      const ghostSpan = ManifoldTuning.scoreMaxGhost -
+          ManifoldTuning.scoreMinGhost;
+      final ghostStrength = ghostSpan > 0
+          ? ((comet.strength - ManifoldTuning.scoreMinGhost) / ghostSpan)
+              .clamp(0.0, 1.0)
+              .toDouble()
+          : 0.0;
+      spinTurnsPerCycle *= 1.0 +
+          ghostStrength * (ManifoldTuning.ghostSpinAmplification - 1.0);
+    }
+    // Monotonic breath-time means this angle grows without bound,
+    // but quaternions wrap cleanly mod 2π — no visible seam at any
+    // cycle boundary. This is the fix for the teleport bug.
+    final breathAngle = breathT * 2 * math.pi * spinTurnsPerCycle * chirality;
+
+    // Data-derived spin axis: each node rotates around a unit vector
+    // unique to its (phase, harmonics) signature. Two cubes that used
+    // to both spin around +Y now spin around genuinely different
+    // lines — silhouettes move in visibly different ways.
+    final axX = math.cos(phaseAngle) * ManifoldTuning.spinAxisPhaseWeight +
+        hx * ManifoldTuning.spinAxisHarmonicLateralWeight;
+    final axY = math.sin(phaseAngle) * ManifoldTuning.spinAxisPhaseWeight +
+        hy * ManifoldTuning.spinAxisHarmonicLateralWeight;
+    final axZ = hz * ManifoldTuning.spinAxisHarmonicLongitudinalWeight +
+        ManifoldTuning.spinAxisLongitudinalBias;
+    final axLen = math.sqrt(axX * axX + axY * axY + axZ * axZ);
+    final double nax;
+    final double nay;
+    final double naz;
+    if (axLen < 1e-6) {
+      // Degenerate (all weights canceled) — fall back to +Z so the
+      // node still rotates rather than freezing.
+      nax = 0.0;
+      nay = 0.0;
+      naz = 1.0;
+    } else {
+      nax = axX / axLen;
+      nay = axY / axLen;
+      naz = axZ / axLen;
+    }
+
+    // Compose: camera × base orientation × breath spin. Order matters —
+    // breath-spin is innermost (local to the node), then base
+    // orientation, then camera so the whole scene still rotates
+    // coherently as the user slerps perspective.
+    final qCam = _Quat.yawPitch(cameraYaw, cameraPitch);
+    final qBaseYP = _Quat.yawPitch(baseYaw, basePitch);
+    final qRoll = _Quat.axisAngle(0, 0, 1, baseRoll);
+    final qSpin = _Quat.axisAngle(nax, nay, naz, breathAngle);
+    final qTotal = qCam * qBaseYP * qRoll * qSpin;
+
+    // Scale to the target pixel radius. Poly vertices live in the
+    // unit sphere; multiplying by radius fits them to the comet's
+    // reach.
+    final projected = List<Offset>.filled(verts.length, Offset.zero);
+    final zDepths = List<double>.filled(verts.length, 0);
+    for (var vi = 0; vi < verts.length; vi++) {
+      final v = verts[vi];
+      final (rx, ry, rz) =
+          qTotal.rotate(v.$1 * sx * radius, v.$2 * sy * radius, v.$3 * sz * radius);
+      projected[vi] = Offset(center.dx + rx, center.dy + ry);
+      zDepths[vi] = rz;
+    }
+
+    // Per-face: centroid z for paint ordering, rotated normal for
+    // backface test. Normal comes from two in-plane edges of each
+    // face (v1 - v0) × (v2 - v0) — consistent CCW winding gives
+    // outward-pointing normals, so after rotation a positive Z
+    // component means the face is pointing toward the viewer.
+    final faceDepth = List<double>.filled(faces.length, 0);
+    final faceFront = List<bool>.filled(faces.length, false);
+    for (var fi = 0; fi < faces.length; fi++) {
+      final face = faces[fi];
+      var z = 0.0;
+      for (final vi in face) {
+        z += zDepths[vi];
+      }
+      faceDepth[fi] = z / face.length;
+
+      final v0 = verts[face[0]];
+      final v1 = verts[face[1]];
+      final v2 = verts[face[2]];
+      final ex = v1.$1 - v0.$1;
+      final ey = v1.$2 - v0.$2;
+      final ez = v1.$3 - v0.$3;
+      final fx = v2.$1 - v0.$1;
+      final fy = v2.$2 - v0.$2;
+      final fz = v2.$3 - v0.$3;
+      final nx = ey * fz - ez * fy;
+      final ny = ez * fx - ex * fz;
+      final nz = ex * fy - ey * fx;
+      final (_, _, nrz) = qTotal.rotate(nx, ny, nz);
+      // Viewer direction is +Z after projection (camera looks down
+      // the negative Z / into the scene). Positive rotated nz means
+      // the face normal points back at the viewer — front-facing.
+      faceFront[fi] = nrz >= 0;
+    }
+
+    final order = List<int>.generate(faces.length, (i) => i);
+    order.sort((a, b) => faceDepth[a].compareTo(faceDepth[b]));
+
+    final edgeAlpha =
+        ((0.55 + 0.30 * comet.strength) * luminescence * tLocal)
+            .clamp(0.0, 0.95);
+    final edgePaint = Paint()
+      ..color = comet.laneColor.withValues(alpha: edgeAlpha)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = (0.9 * edgeIntensity).clamp(0.3, 2.0)
+      ..strokeJoin = StrokeJoin.round
+      ..strokeCap = StrokeCap.round;
+
+    for (final fi in order) {
+      if (!faceFront[fi]) continue;
+      final face = faces[fi];
+
+      final path = Path()
+        ..moveTo(projected[face[0]].dx, projected[face[0]].dy);
+      for (var k = 1; k < face.length; k++) {
+        path.lineTo(projected[face[k]].dx, projected[face[k]].dy);
+      }
+      path.close();
+
+      if (!wireframe) {
+        // Cheap Lambert-ish shading: face-centroid depth doubles as
+        // a "how much does this face face the viewer" proxy. Brighter
+        // at the front, dimmer at the rim — gives real volume without
+        // needing a light source.
+        final centroidShade =
+            (0.72 + 0.28 * (faceDepth[fi] / (radius + 0.01)))
+                .clamp(0.40, 1.0);
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = comet.laneColor.withValues(
+              alpha: (bodyAlpha * centroidShade * 0.72).clamp(0.0, 1.0),
+            ),
+        );
+      }
+      if (edgeAlpha > 0.01 && edgePaint.strokeWidth > 0.01) {
+        canvas.drawPath(path, edgePaint);
+      }
+    }
   }
 
   void _drawDashedCircle(Canvas canvas, Offset c, double r, Paint paint) {
@@ -691,6 +1069,7 @@ class CometField extends CustomPainter {
       old.luminescence != luminescence ||
       old.edgeIntensity != edgeIntensity ||
       old.focusedIndex != focusedIndex ||
+      old.focusRingT != focusRingT ||
       old.cursor != cursor ||
       old.camera.yaw != camera.yaw ||
       old.camera.pitch != camera.pitch ||
@@ -779,7 +1158,14 @@ class TangentFlowPainter extends CustomPainter {
       final (eFull, endScale) =
           _project(f.end.dx, f.end.dy, f.endZ, size);
 
-      final ease = Curves.easeOutCubic.transform(tLocal);
+      // Same strength-weighted ease as the chart intro — flows with
+      // strong transport pull snap into place; weak flows drift.
+      final snappiness = f.strength.clamp(0.0, 1.0);
+      final easeCubic = Curves.easeOutCubic.transform(tLocal);
+      final easeExpo = Curves.easeOutExpo.transform(tLocal);
+      final ease = easeCubic *
+              (1.0 - snappiness * ManifoldTuning.introSnapBlend) +
+          easeExpo * (snappiness * ManifoldTuning.introSnapBlend);
       final end = Offset.lerp(s, eFull, ease)!;
 
       final dx = eFull.dx - s.dx;

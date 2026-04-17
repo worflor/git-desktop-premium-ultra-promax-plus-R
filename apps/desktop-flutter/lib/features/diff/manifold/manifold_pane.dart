@@ -105,6 +105,29 @@ const Map<ManifoldPerspective, CometCamera> _tangentPerspectives = {
       CometCamera(yaw: -0.45, pitch: 0.22, focal: 2.4),
 };
 
+/// Slerp progression curve with a settle overshoot at the end. For
+/// t ∈ [0, 1 - [ManifoldTuning.slerpSettleWindow]] it's plain
+/// easeInOutCubic. During the final settle window a sin(π·local)
+/// pulse adds a bounded overshoot ([ManifoldTuning.slerpSettleOvershoot])
+/// that returns to exactly 1.0 at t=1. The scene lands with a tiny
+/// recoil instead of stopping flat — fuses the slerp motion with
+/// the landing flash timing-wise.
+class _SlerpSettleCurve extends Curve {
+  const _SlerpSettleCurve();
+
+  @override
+  double transformInternal(double t) {
+    final base = Curves.easeInOutCubic.transform(t);
+    const settleStart = 1.0 - ManifoldTuning.slerpSettleWindow;
+    if (t < settleStart) return base;
+    final local = (t - settleStart) / ManifoldTuning.slerpSettleWindow;
+    final pulse = math.sin(local * math.pi);
+    return base + ManifoldTuning.slerpSettleOvershoot * pulse;
+  }
+}
+
+const _slerpSettleCurve = _SlerpSettleCurve();
+
 
 class ManifoldPane extends StatefulWidget {
   final DiffPinnedContextModel context;
@@ -133,6 +156,18 @@ class _ManifoldPaneState extends State<ManifoldPane>
   /// when the slerp lands so the target chip gets a small celebratory
   /// ripple instead of the wavefront animation silently stopping.
   late final AnimationController _landing;
+  /// Focus-ring acquisition animations. Fire on every focus change
+  /// so the ring pops in with a small overshoot (easeOutBack on
+  /// radius, easeOutCubic on alpha trailing it). Resting state is 1
+  /// (fully acquired) so an unanimated ring still renders correctly.
+  late final AnimationController _chartFocusRing;
+  late final AnimationController _tangentFocusRing;
+  /// Monotonic wall clock — used for continuous rotation consumers
+  /// (polyhedron spin, link droplets) that would otherwise snap on the
+  /// sawtooth wrap of the repeating [_breath] controller. 0 at widget
+  /// mount, always increasing; units are seconds, converted to
+  /// breath-cycles at consumption so the existing tempo is preserved.
+  late final Stopwatch _wallClock;
 
   ManifoldPerspective _from = ManifoldPerspective.eigenshape;
   ManifoldPerspective _to = ManifoldPerspective.eigenshape;
@@ -164,16 +199,19 @@ class _ManifoldPaneState extends State<ManifoldPane>
       vsync: this,
       duration: const Duration(milliseconds: 560),
     );
-    // When the slerp settles, trigger the landing flash on the
-    // destination glyph. Status listener fires exactly once per
-    // transition regardless of frame pacing.
-    _slerp.addStatusListener((status) {
-      if (status == AnimationStatus.completed && _from != _to) {
-        _landing
-          ..reset()
-          ..forward();
-      }
-    });
+    // Focus-ring controllers start at 1 (acquired) so first render
+    // doesn't show a cold-start scale-from-zero before any hover.
+    _chartFocusRing = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 140),
+      value: 1.0,
+    );
+    _tangentFocusRing = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 140),
+      value: 1.0,
+    );
+    _wallClock = Stopwatch()..start();
   }
 
   @override
@@ -192,6 +230,17 @@ class _ManifoldPaneState extends State<ManifoldPane>
     final slerpDesired = derived(ManifoldTuning.slerpDurationMult);
     if (slerpDesired > Duration.zero && _slerp.duration != slerpDesired) {
       _slerp.duration = slerpDesired;
+    }
+    // Focus-ring acquisition — snappy by design. One shader-unit,
+    // lands in ~80-180ms depending on theme.
+    final focusRingDesired = derived(ManifoldTuning.focusRingDurationMult);
+    if (focusRingDesired > Duration.zero) {
+      if (_chartFocusRing.duration != focusRingDesired) {
+        _chartFocusRing.duration = focusRingDesired;
+      }
+      if (_tangentFocusRing.duration != focusRingDesired) {
+        _tangentFocusRing.duration = focusRingDesired;
+      }
     }
     // Breath — theme-independent ambient drift; motion rate 0
     // disables it entirely.
@@ -244,6 +293,9 @@ class _ManifoldPaneState extends State<ManifoldPane>
     _breath.dispose();
     _slerp.dispose();
     _landing.dispose();
+    _chartFocusRing.dispose();
+    _tangentFocusRing.dispose();
+    _wallClock.stop();
     super.dispose();
   }
 
@@ -255,10 +307,17 @@ class _ManifoldPaneState extends State<ManifoldPane>
       _slerp
         ..reset()
         ..forward();
-      // Clear hover state — the geometry has moved; old focus index
-      // would hit-test against stale positions until next hover.
-      _chartFocus = null;
-      _tangentFocus = null;
+      // Kick the landing flash at slerp-start, not on completion. Its
+      // 560ms ease overlaps the slerp settle (~420ms) so the pulse
+      // peaks as the scene lands — fused motion, not a sequential
+      // "rotate, then pop".
+      _landing
+        ..reset()
+        ..forward();
+      // Focus survives the slerp on purpose: the focused comet's
+      // projected position morphs smoothly with the camera, so the
+      // ring rides the motion. A moved cursor during or after the
+      // slerp naturally re-hit-tests against the new layout.
     });
   }
 
@@ -276,10 +335,24 @@ class _ManifoldPaneState extends State<ManifoldPane>
         _breath,
         _slerp,
         _landing,
+        _chartFocusRing,
+        _tangentFocusRing,
       ]),
       builder: (_, __) {
         final introT = _intro.value;
+        // Sawtooth 0..1 — for the glyph row where consumers use t as
+        // an in-unit traveling position (pulseX, pulseT-radius).
         final breathT = _breath.value;
+        // Monotonic breath-cycle count (real number, ever-increasing).
+        // Continuous-rotation consumers (polyhedron spin, link
+        // droplets) use this so they never snap at the sawtooth wrap.
+        // Consumers that want a 0..1 cycle position call `% 1.0` on
+        // it — a proper modulo, not a reset.
+        final breathPeriodSec =
+            ManifoldTuning.breathCycle.inMicroseconds / 1e6;
+        final breathTime = breathPeriodSec <= 0
+            ? 0.0
+            : _wallClock.elapsedMicroseconds / 1e6 / breathPeriodSec;
         final chartCamera = _camera(_chartPerspectives);
         final tangentCamera = _camera(_tangentPerspectives);
         // Themes whose text effect is `none` stay silent on arrival —
@@ -335,13 +408,14 @@ class _ManifoldPaneState extends State<ManifoldPane>
                               shader: shader,
                               model: widget.context,
                               introT: introT,
-                              breathT: breathT,
+                              breathT: breathTime,
                               camera: chartCamera,
                               perspectiveFrom: _from,
                               perspectiveTo: _to,
                               perspectiveT: _slerp.value,
                               cursor: _chartCursor,
                               focus: _chartFocus,
+                              focusRingT: _chartFocusRing.value,
                               onCursor: (p) {
                                 if (_chartCursor != p) {
                                   setState(() => _chartCursor = p);
@@ -350,6 +424,11 @@ class _ManifoldPaneState extends State<ManifoldPane>
                               onFocus: (f) {
                                 if (_chartFocus != f) {
                                   setState(() => _chartFocus = f);
+                                  if (f != null) {
+                                    _chartFocusRing
+                                      ..reset()
+                                      ..forward();
+                                  }
                                 }
                               },
                               onOpenPath: widget.onOpenRelatedPath,
@@ -368,13 +447,14 @@ class _ManifoldPaneState extends State<ManifoldPane>
                               shader: shader,
                               model: widget.context,
                               introT: introT,
-                              breathT: breathT,
+                              breathT: breathTime,
                               camera: tangentCamera,
                               perspectiveFrom: _from,
                               perspectiveTo: _to,
                               perspectiveT: _slerp.value,
                               cursor: _tangentCursor,
                               focus: _tangentFocus,
+                              focusRingT: _tangentFocusRing.value,
                               onCursor: (p) {
                                 if (_tangentCursor != p) {
                                   setState(() => _tangentCursor = p);
@@ -383,6 +463,11 @@ class _ManifoldPaneState extends State<ManifoldPane>
                               onFocus: (f) {
                                 if (_tangentFocus != f) {
                                   setState(() => _tangentFocus = f);
+                                  if (f != null) {
+                                    _tangentFocusRing
+                                      ..reset()
+                                      ..forward();
+                                  }
                                 }
                               },
                               onOpenPath: widget.onOpenRelatedPath,
@@ -452,7 +537,7 @@ class _PerspectiveChipRow extends StatelessWidget {
     final fromIndex = values.indexOf(from).toDouble();
     final toIndex = values.indexOf(to).toDouble();
     // Same curve as slerp so row motion and scene morph feel fused.
-    final curved = Curves.easeInOutCubic.transform(slerpT.clamp(0.0, 1.0));
+    final curved = _slerpSettleCurve.transform(slerpT.clamp(0.0, 1.0));
     final pulsePos = fromIndex + (toIndex - fromIndex) * curved;
     final distance = (pIndex - pulsePos).abs();
     const sigma = 0.6;
@@ -1028,6 +1113,99 @@ double _chartZBoost(ManifoldPerspective p, _ChartRole r) {
   }
 }
 
+/// Deterministic phase offset seeded by the dominant semantic axis
+/// name. When the anchor's dominantAxis is "auth" every pinned line
+/// on that axis gets the same base orientation; change the axis and
+/// the whole scene reposes. Ratios come out in [0, 1] so it slots
+/// directly into `Comet.phase`.
+double _axisPhase(String? axis) {
+  if (axis == null || axis.isEmpty) return 0;
+  return ((_fnv1a(axis) & 0xFFFF) / 0xFFFF);
+}
+
+/// Evidence count for the pinned line's anchor comet. Sums the
+/// engine's concrete support signals — witnesses, integrity reasons,
+/// active transport edges, and related-file list — capped per source
+/// so a single noisy dimension can't overwhelm the topology picker.
+int _anchorSupport(DiffPinnedContextModel c) {
+  final transportCap = math.min(c.transportEdges.length, 6);
+  final relatedCap = math.min(c.relatedFiles.length, 6);
+  return c.witnesses.length +
+      c.integrityReasons.length +
+      transportCap +
+      relatedCap;
+}
+
+/// How many transport edges touch each path. Used as a per-file
+/// evidence proxy for related-file comets: a path that appears on
+/// multiple edges is better-supported than one sitting alone on the
+/// related-files ring.
+Map<String, int> _transportEdgesByPath(DiffPinnedContextModel c) {
+  final map = <String, int>{};
+  for (final e in c.transportEdges) {
+    if (e.sourcePath.isNotEmpty) {
+      map[e.sourcePath] = (map[e.sourcePath] ?? 0) + 1;
+    }
+    if (e.targetPath.isNotEmpty && e.targetPath != e.sourcePath) {
+      map[e.targetPath] = (map[e.targetPath] ?? 0) + 1;
+    }
+  }
+  return map;
+}
+
+/// How many rhymes cluster per file. Multiple hits in the same file
+/// corroborate each other — each rhyme's support is its file's
+/// occurrence count, so a file that rhymes three times lifts all
+/// three nodes up the polyhedron ladder together.
+Map<String, int> _rhymesByFile(List<DiffPinnedRhymePreview> rhymes) {
+  final map = <String, int>{};
+  for (final r in rhymes) {
+    map[r.filePath] = (map[r.filePath] ?? 0) + 1;
+  }
+  return map;
+}
+
+/// Pull bucket for transport edges — discretizes continuous pull
+/// into support-count ticks. Strong pull contributes more "support"
+/// than weak pull, so high-confidence transport targets sit on a
+/// denser polyhedron than weakly-pulled ones.
+int _pullSupport(double pull) {
+  if (pull >= ManifoldTuning.pullStrong) return 3;
+  if (pull >= ManifoldTuning.pullMedium) return 2;
+  if (pull >= ManifoldTuning.pullWeak) return 1;
+  return 0;
+}
+
+/// Pack a file's spectral coordinates into the comet's harmonic
+/// signature. `h1` stays at the tonic (1.0) so the fundamental is
+/// always present; `h2`/`h3` + phase-shift come straight from the
+/// eigenmode coordinates. Every file sees its polyhedron stretched
+/// along the engine's global spectral axes, so two cubes actually
+/// read as different cubes — their silhouettes encode their
+/// geometry in the codebase.
+List<double> _harmonicsFromSpectral(DiffPinnedSpectral sp) {
+  return [
+    JustIntonation.tonic,
+    sp.x.clamp(-ManifoldTuning.harmonicClamp, ManifoldTuning.harmonicClamp)
+        .toDouble(),
+    sp.y.clamp(-ManifoldTuning.harmonicClamp, ManifoldTuning.harmonicClamp)
+        .toDouble(),
+    sp.z.clamp(-ManifoldTuning.harmonicPhaseClamp,
+            ManifoldTuning.harmonicPhaseClamp)
+        .toDouble(),
+  ];
+}
+
+/// Convert spectral `reach` (participation entropy in [0, 1]) to
+/// extra support ticks. The anchor of a file with broad spectral
+/// reach — one that touches many modes of the codebase's geometry —
+/// earns up to 3 additional support points so its polyhedron climbs
+/// toward icosa. Sparse-reach nodes don't get a bump.
+int _supportBumpFromReach(DiffPinnedSpectral? sp, int maxBump) {
+  if (sp == null) return 0;
+  return (sp.reach * maxBump).round().clamp(0, maxBump);
+}
+
 _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
   final comets = <Comet>[];
   final roles = <_ChartRole>[];
@@ -1040,15 +1218,40 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
   final rhymeIndicesByPath = <String, List<int>>{};
   final currentFilePath = c.line.filePath ?? '';
 
-  // Orientation anchor: current hunk, center, diamond.
+  // Axis-seeded orientation so every anchor on the same semantic axis
+  // poses identically — hovering different lines on the same axis
+  // reveals the family resemblance. Used for the anchor here and
+  // XOR'd into per-rhyme seeds below so rhymes share the family pose.
+  final axisPhase = _axisPhase(c.dominantAxis);
+  final axisHash = c.dominantAxis == null
+      ? 0
+      : _fnv1a(c.dominantAxis!);
+  // Support = evidence-based topology floor + spectral-reach ceiling
+  // lift. A file that touches many modes of the repo's geometry
+  // lifts its anchor further up the polyhedron ladder.
+  final anchorSupport =
+      _anchorSupport(c) + _supportBumpFromReach(c.anchorSpectral, 3);
+  final rhymeCountByFile = _rhymesByFile(c.rhymePreviews);
+  final edgeCountByPath = _transportEdgesByPath(c);
+
+  // Orientation anchor: current hunk, center, icosa (forced via
+  // diamond shape) — the most-faceted solid reads as the pinned
+  // line's dense "centerpiece". Harmonics come from the engine's
+  // spectral basis if available, so the anchor stretches along the
+  // real eigenmode axes rather than a default identity pose.
+  final anchorHarmonics = c.anchorSpectral == null
+      ? const [JustIntonation.tonic, 0.0, 0.0, 0.0]
+      : _harmonicsFromSpectral(c.anchorSpectral!);
   comets.add(Comet(
     position: const Offset(0.5, 0.5),
     z: 0,
     strength: 1.0,
     coreMass: 1.0,
     laneColor: t.accentBright,
-    phase: 0,
+    phase: axisPhase,
     shape: CometShape.diamond,
+    harmonics: anchorHarmonics,
+    support: anchorSupport,
   ));
   roles.add(_ChartRole.anchor);
   rhymeIdxs.add(-1);
@@ -1082,9 +1285,17 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
       (0.5 + ux * rhymeShellXY).clamp(0.08, 0.92),
       (0.5 + uy * rhymeShellXY * ManifoldTuning.shellAspect).clamp(0.14, 0.86),
     );
-    final pathSeed = _fnv1a('rhyme:${r.filePath}:${r.displayIndex}');
+    // XOR the axis seed into each rhyme's pose seed so the whole
+    // set shares an orientation family rooted in the anchor's axis.
+    final pathSeed =
+        _fnv1a('rhyme:${r.filePath}:${r.displayIndex}') ^ axisHash;
     final strength = (0.72 + (1.0 - (uz * uz)) * 0.18)
         .clamp(ManifoldTuning.scoreMinRhyme, ManifoldTuning.scoreMaxRhyme);
+    // Rhyme support = corroborating hits in the same file; a rhyme
+    // standing alone in a file stays a tetrahedron, three hits in the
+    // same file lift all three up to at least an octa.
+    final rhymeSupport =
+        (rhymeCountByFile[r.filePath] ?? 1) + (r.lineNumber != null ? 1 : 0);
     final rhymeIndex = comets.length;
 
     // Harmonic signature from simhash PCA — this rhyme's offset in
@@ -1122,6 +1333,7 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
       laneColor: _laneColor(t, 'rhyme:${r.filePath}'),
       phase: (pathSeed & 0xFF) / 0xFF,
       harmonics: harmonics,
+      support: rhymeSupport,
       tag: r,
     ));
     roles.add(_ChartRole(
@@ -1158,6 +1370,16 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
         .clamp(ManifoldTuning.scoreMinRelated, ManifoldTuning.scoreMaxRelated)
         .toDouble();
     final double pitch = _pitchForRelated(f);
+    // Support = relation-flags + how many transport edges actually
+    // touch this file + spectral reach bump. Both flags set + two
+    // edges + wide spectral reach lands the node on icosa.
+    final relatedSupport = (f.coupled ? 2 : 0) +
+        (f.semantic ? 2 : 0) +
+        (edgeCountByPath[f.path] ?? 0) +
+        _supportBumpFromReach(f.spectral, 2);
+    final relHarmonics = f.spectral == null
+        ? const [JustIntonation.tonic, 0.0, 0.0, 0.0]
+        : _harmonicsFromSpectral(f.spectral!);
     comets.add(Comet(
       position: pos,
       z: uz * relShellZ,
@@ -1166,6 +1388,8 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
       laneColor: _laneColor(t, 'rel:${f.path}'),
       phase: (pathSeed & 0xFF) / 0xFF,
       pitch: pitch,
+      harmonics: relHarmonics,
+      support: relatedSupport,
       tag: f,
     ));
     roles.add(_ChartRole(
@@ -1292,6 +1516,7 @@ class _ChartSurface extends StatelessWidget {
   final double perspectiveT;
   final Offset? cursor;
   final int? focus;
+  final double focusRingT;
   final ValueChanged<Offset?> onCursor;
   final ValueChanged<int?> onFocus;
   final ValueChanged<String>? onOpenPath;
@@ -1309,6 +1534,7 @@ class _ChartSurface extends StatelessWidget {
     required this.perspectiveT,
     required this.cursor,
     required this.focus,
+    required this.focusRingT,
     required this.onCursor,
     required this.onFocus,
     this.onOpenPath,
@@ -1385,6 +1611,7 @@ class _ChartSurface extends StatelessWidget {
                   luminescence: shader.luminescence,
                   edgeIntensity: shader.edgeIntensity,
                   focusedIndex: focus,
+                  focusRingT: focusRingT,
                   cursor: cursor,
                   camera: camera,
                 ),
@@ -1479,14 +1706,27 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
   final currentPath = c.line.filePath ?? '';
   const source = Offset(0.09, 0.5);
 
+  // Same axis seed + support derivation the chart uses, so the two
+  // panes pose the centerpiece together — they're views of the same
+  // pinned line. Harmonics likewise come from the same spectral
+  // basis so the anchor's silhouette matches across panes.
+  final axisPhase = _axisPhase(c.dominantAxis);
+  final anchorSupport =
+      _anchorSupport(c) + _supportBumpFromReach(c.anchorSpectral, 3);
+  final anchorHarmonics = c.anchorSpectral == null
+      ? const [JustIntonation.tonic, 0.0, 0.0, 0.0]
+      : _harmonicsFromSpectral(c.anchorSpectral!);
+
   comets.add(Comet(
     position: source,
     z: 0,
     strength: 1.0,
     coreMass: 1.0,
     laneColor: t.accentBright,
-    phase: 0,
+    phase: axisPhase,
     shape: CometShape.diamond,
+    harmonics: anchorHarmonics,
+    support: anchorSupport,
   ));
   roles.add(_TangentRole.source);
   openPaths.add(null);
@@ -1494,6 +1734,21 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
   // Sort by pull desc so the strongest edges land first.
   final sortedEdges = [...c.transportEdges]
     ..sort((a, b) => b.pull.compareTo(a.pull));
+
+  // Pre-count lane membership so each transport target's support
+  // number reflects the size of its sibling cohort — targets on a
+  // busy lane corroborate each other; targets alone on a lane read
+  // as simpler polyhedra.
+  final laneCount = <String, int>{};
+  for (final e in sortedEdges) {
+    final target =
+        e.targetPath == currentPath ? e.sourcePath : e.targetPath;
+    if (target.isEmpty || target == currentPath) continue;
+    final lane = (e.laneLabel?.trim().isNotEmpty ?? false)
+        ? e.laneLabel!.trim()
+        : 'transport';
+    laneCount[lane] = (laneCount[lane] ?? 0) + 1;
+  }
 
   final edgeTargets = <String>{};
 
@@ -1533,14 +1788,26 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
         .toDouble();
     final double pitch = _pitchForTransportEdge(strength);
     final cometIndex = comets.length;
+    // Lane sibling count + pull-bucket + spectral reach lift the
+    // target up the polyhedron ladder. Lane label doubles as the
+    // local "axis" seed in the node's pose; spectral harmonics make
+    // two targets in the same lane still read as distinct shapes.
+    final targetSupport = (laneCount[lane] ?? 1) +
+        _pullSupport(e.pull) +
+        _supportBumpFromReach(e.targetSpectral, 2);
+    final targetHarmonics = e.targetSpectral == null
+        ? const [JustIntonation.tonic, 0.0, 0.0, 0.0]
+        : _harmonicsFromSpectral(e.targetSpectral!);
     comets.add(Comet(
       position: pos,
       z: zOffset,
       strength: strength,
       coreMass: 1.0,
       laneColor: color,
-      phase: (_fnv1a(target) & 0xFF) / 0xFF,
+      phase: (_fnv1a('$lane|$target') & 0xFF) / 0xFF,
       pitch: pitch,
+      harmonics: targetHarmonics,
+      support: targetSupport,
       tag: e,
     ));
     roles.add(_TangentRole(
@@ -1586,6 +1853,16 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
         .clamp(ManifoldTuning.scoreMinGhost, ManifoldTuning.scoreMaxGhost)
         .toDouble();
     const double pitch = JustIntonation.subharmonicFourth;
+    // Ghosts pull support from relation flags only — no active edge,
+    // so the evidence is indirect. No reach bump either: ghosts
+    // should read as skeletal regardless of their spectral reach.
+    // They still get the spectral harmonics so the wireframe
+    // silhouette stretches along the engine's real axes.
+    final ghostSupport =
+        (r.coupled ? 1 : 0) + (r.semantic ? 1 : 0) + 1;
+    final ghostHarmonics = r.spectral == null
+        ? const [JustIntonation.tonic, 0.0, 0.0, 0.0]
+        : _harmonicsFromSpectral(r.spectral!);
     comets.add(Comet(
       position: pos,
       z: zOffset,
@@ -1594,6 +1871,8 @@ _TangentData _buildTangent(AppTokens t, DiffPinnedContextModel c) {
       laneColor: color,
       phase: (_fnv1a('ghost:${r.path}') & 0xFF) / 0xFF,
       pitch: pitch,
+      harmonics: ghostHarmonics,
+      support: ghostSupport,
       tag: r,
     ));
     roles.add(_TangentRole(
@@ -1654,7 +1933,7 @@ List<Comet> _morphChart(
   double t,
 ) {
   if (data.baseComets.isEmpty) return const [];
-  final curved = Curves.easeInOutCubic.transform(t.clamp(0.0, 1.0));
+  final curved = _slerpSettleCurve.transform(t.clamp(0.0, 1.0));
   final fromP = data.positions[from] ??
       data.positions[ManifoldPerspective.eigenshape]!;
   final toP = data.positions[to] ??
@@ -1672,6 +1951,9 @@ List<Comet> _morphChart(
       laneColor: base.laneColor,
       phase: base.phase,
       shape: base.shape,
+      pitch: base.pitch,
+      harmonics: base.harmonics,
+      support: base.support,
       tag: base.tag,
     ));
   }
@@ -1685,7 +1967,7 @@ List<Comet> _morphTangent(
   double t,
 ) {
   if (data.comets.isEmpty) return const [];
-  final curved = Curves.easeInOutCubic.transform(t.clamp(0.0, 1.0));
+  final curved = _slerpSettleCurve.transform(t.clamp(0.0, 1.0));
   final out = <Comet>[];
   for (var i = 0; i < data.comets.length; i++) {
     final role = data.roles[i];
@@ -1701,6 +1983,9 @@ List<Comet> _morphTangent(
       laneColor: base.laneColor,
       phase: base.phase,
       shape: base.shape,
+      pitch: base.pitch,
+      harmonics: base.harmonics,
+      support: base.support,
       tag: base.tag,
     ));
   }
@@ -1716,7 +2001,7 @@ List<TangentFlow> _morphFlows(
   double t,
 ) {
   if (data.flows.isEmpty) return const [];
-  final curved = Curves.easeInOutCubic.transform(t.clamp(0.0, 1.0));
+  final curved = _slerpSettleCurve.transform(t.clamp(0.0, 1.0));
   final out = <TangentFlow>[];
   // Flow i connects source (role 0) to target (role i+1), aligned by
   // build order — same indexing used when _buildTangent created them.
@@ -1751,6 +2036,7 @@ class _TangentSurface extends StatelessWidget {
   final double perspectiveT;
   final Offset? cursor;
   final int? focus;
+  final double focusRingT;
   final ValueChanged<Offset?> onCursor;
   final ValueChanged<int?> onFocus;
   final ValueChanged<String>? onOpenPath;
@@ -1767,6 +2053,7 @@ class _TangentSurface extends StatelessWidget {
     required this.perspectiveT,
     required this.cursor,
     required this.focus,
+    required this.focusRingT,
     required this.onCursor,
     required this.onFocus,
     this.onOpenPath,
@@ -1847,6 +2134,7 @@ class _TangentSurface extends StatelessWidget {
                   luminescence: shader.luminescence,
                   edgeIntensity: shader.edgeIntensity,
                   focusedIndex: focus,
+                  focusRingT: focusRingT,
                   cursor: cursor,
                   camera: camera,
                 ),
@@ -1868,6 +2156,7 @@ class _TangentCompositePainter extends CustomPainter {
   final double luminescence;
   final double edgeIntensity;
   final int? focusedIndex;
+  final double focusRingT;
   final Offset? cursor;
   final CometCamera camera;
 
@@ -1880,6 +2169,7 @@ class _TangentCompositePainter extends CustomPainter {
     required this.luminescence,
     required this.edgeIntensity,
     this.focusedIndex,
+    this.focusRingT = 1.0,
     this.cursor,
     required this.camera,
   });
@@ -1903,6 +2193,7 @@ class _TangentCompositePainter extends CustomPainter {
       luminescence: luminescence,
       edgeIntensity: edgeIntensity,
       focusedIndex: focusedIndex,
+      focusRingT: focusRingT,
       cursor: cursor,
       camera: camera,
       anchor: const Offset(0.09, 0.5),
@@ -1916,6 +2207,7 @@ class _TangentCompositePainter extends CustomPainter {
       old.luminescence != luminescence ||
       old.edgeIntensity != edgeIntensity ||
       old.focusedIndex != focusedIndex ||
+      old.focusRingT != focusRingT ||
       old.cursor != cursor ||
       old.camera.yaw != camera.yaw ||
       old.camera.pitch != camera.pitch ||

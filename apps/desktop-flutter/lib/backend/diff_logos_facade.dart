@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
     show ChangeNotifier, Listenable, setEquals;
@@ -17,6 +19,7 @@ import 'git.dart' show runGitProbe;
 import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
 import 'logos_chunks.dart' as chunks;
+import 'logos_core.dart' show SpectralBasis;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart' show LogosAxis, LogosRegime;
 import 'logos_git_probe.dart'
@@ -698,17 +701,58 @@ class _DiffLogosSnapshot {
   });
 }
 
+/// A file node's position in the engine's spectral basis, already
+/// reduced to the three quantities a visualization cares about:
+/// first-three non-trivial eigenmode coordinates (x, y, z) and a
+/// normalized participation entropy ([reach]) measuring how many
+/// modes the node occupies. All four numbers come from the SAME
+/// cached `LogosGit.spectralBasis()` so every surface that renders
+/// this node sees it in the same geometric frame.
+///
+/// Null when the engine's graph was too small for a basis
+/// ([kDefaultSpectralMinNodes]); callers should have a deterministic
+/// fallback.
+class DiffPinnedSpectral {
+  /// Mode-1 eigenvector coordinate (Fiedler). Normalized so the
+  /// unit-sphere scale matches the magnitude painters expect —
+  /// values land in roughly [-1, 1] for most files in a medium-
+  /// sized repo.
+  final double x;
+
+  /// Mode-2 coordinate.
+  final double y;
+
+  /// Mode-3 coordinate.
+  final double z;
+
+  /// Spectral participation entropy normalized to [0, 1]. 1 = the
+  /// node touches every mode equally (maximal architectural reach);
+  /// 0 = mass collapses to a single mode (a tightly-localized node).
+  final double reach;
+
+  const DiffPinnedSpectral({
+    required this.x,
+    required this.y,
+    required this.z,
+    required this.reach,
+  });
+}
+
 class DiffPinnedRelatedFile {
   final String path;
   final double score;
   final bool semantic;
   final bool coupled;
+  /// File's position in the engine's spectral basis. Null when the
+  /// repo graph is too small or the file isn't a graph node.
+  final DiffPinnedSpectral? spectral;
 
   const DiffPinnedRelatedFile({
     required this.path,
     required this.score,
     this.semantic = false,
     this.coupled = false,
+    this.spectral,
   });
 }
 
@@ -717,12 +761,17 @@ class DiffPinnedTransportEdge {
   final String targetPath;
   final double pull;
   final String? laneLabel;
+  /// Target file's spectral position, same basis as the anchor's.
+  /// Lets the tangent pane pose each transport target in its real
+  /// engine-geometric coordinates rather than a path hash.
+  final DiffPinnedSpectral? targetSpectral;
 
   const DiffPinnedTransportEdge({
     required this.sourcePath,
     required this.targetPath,
     required this.pull,
     this.laneLabel,
+    this.targetSpectral,
   });
 }
 
@@ -800,6 +849,11 @@ class DiffPinnedContextModel {
   final List<String> witnesses;
   final List<DiffPinnedTransportEdge> transportEdges;
   final List<String> integrityReasons;
+  /// Anchor file's position in the engine's spectral basis. When
+  /// non-null, visualizers can pose the pinned line's node in its
+  /// real geometric coordinates and read its reach for a complexity
+  /// signal. Null on small repos where no basis is computed.
+  final DiffPinnedSpectral? anchorSpectral;
 
   const DiffPinnedContextModel({
     required this.line,
@@ -813,6 +867,7 @@ class DiffPinnedContextModel {
     required this.witnesses,
     required this.transportEdges,
     required this.integrityReasons,
+    this.anchorSpectral,
   });
 
   bool get hasAnything =>
@@ -825,6 +880,94 @@ class DiffPinnedContextModel {
       witnesses.isNotEmpty ||
       transportEdges.isNotEmpty ||
       integrityReasons.isNotEmpty;
+}
+
+/// Project a file's graph-node id into the engine's cached spectral
+/// basis. Returns the first three non-trivial modal coordinates
+/// (modes 1, 2, 3 — mode 0 is near-constant on connected graphs and
+/// carries no positional information) plus a normalized spectral
+/// entropy of the 1-hot source distribution. All four quantities
+/// come straight from the already-computed Lanczos decomposition —
+/// no extra SpMVs, just O(k) work per node.
+///
+/// Returns null when the basis has fewer than 4 modes or the node
+/// id is out of range — callers fall back to a deterministic hash.
+/// 💀 Off-isolate wrapper around [LogosGit.gatherEvidence]. The
+/// evidence pass runs multi-source heat diffusion with axis
+/// attribution — O(k·n) per query plus the first-call Lanczos
+/// (O(k·|E|)) on repo-scale graphs — which was the primary source
+/// of UI-thread blocks in `diff.logos.refresh` (p95 13.7s per
+/// telemetry).
+///
+/// Falls back to a synchronous call if the engine or its internals
+/// aren't sendable across the isolate boundary (some collaborator
+/// types may hold non-transferable state). On fallback, behavior is
+/// identical to the pre-fix path — correct, just blocking — so the
+/// worst case is "no regression".
+Future<LogosEvidenceQueryResult?> _gatherEvidenceOffThread({
+  required LogosGit engine,
+  required Map<String, double> focusWeights,
+  required Map<String, String> axisLabelByPath,
+  required double t,
+  required Set<String> excludePaths,
+  required int detailBudget,
+}) async {
+  try {
+    return await Isolate.run<LogosEvidenceQueryResult?>(
+      () => engine.gatherEvidence(
+        focusWeights: focusWeights,
+        axisLabelByPath: axisLabelByPath,
+        t: t,
+        excludePaths: excludePaths,
+        detailBudget: detailBudget,
+      ),
+      debugName: 'gatherEvidence',
+    );
+  } catch (_) {
+    // Sendability error (or any isolate-layer failure) — run on the
+    // calling isolate so correctness is preserved even though the UI
+    // pays the block. Telemetry still captures the timing via the
+    // outer diff.logos.refresh event so regressions stay visible.
+    return engine.gatherEvidence(
+      focusWeights: focusWeights,
+      axisLabelByPath: axisLabelByPath,
+      t: t,
+      excludePaths: excludePaths,
+      detailBudget: detailBudget,
+    );
+  }
+}
+
+DiffPinnedSpectral? _projectSpectralForNode(
+  SpectralBasis basis,
+  int nodeId, {
+  double entropyTemperature = 1.0,
+}) {
+  if (nodeId < 0 || nodeId >= basis.n || basis.k < 4) return null;
+
+  // Amplify raw eigenvector components — each one is ~1/sqrt(n) in
+  // magnitude (unit-norm across n nodes). Multiplying by sqrt(n)
+  // brings coords into roughly [-1, 1] for typical repos.
+  final amplify = math.sqrt(basis.n.toDouble());
+  final x = basis.eigenvectors[1 * basis.n + nodeId] * amplify;
+  final y = basis.eigenvectors[2 * basis.n + nodeId] * amplify;
+  final z = basis.eigenvectors[3 * basis.n + nodeId] * amplify;
+
+  // Entropy on a 1-hot source — how evenly this node's mass spreads
+  // across the modes after a unit of thermal decay. log(k) is the
+  // maximum; normalize so callers get [0, 1].
+  final rho = Float64List(basis.n);
+  rho[nodeId] = 1.0;
+  final s = basis.spectralEntropy(rho, entropyTemperature);
+  final sMax = math.log(basis.k.toDouble());
+  final reach = sMax > 0 ? (s / sMax).clamp(0.0, 1.0).toDouble() : 0.0;
+
+  return DiffPinnedSpectral(
+    x: x.clamp(-1.2, 1.2).toDouble(),
+    y: y.clamp(-1.2, 1.2).toDouble(),
+    z: z.clamp(-1.2, 1.2).toDouble(),
+    reach: reach,
+  );
 }
 
 class DiffLogosFacade {
@@ -1029,18 +1172,72 @@ class DiffLogosFacade {
       }
     }
 
+    // Spectral augmentation — everything past this point is cheap
+    // O(k·n) reads against the engine's already-cached Lanczos
+    // basis. Each file's spectral coords land in the SAME basis as
+    // the anchor's so downstream visualizations can treat them as
+    // coordinates in one geometric frame.
+    SpectralBasis? basis;
+    if (engine != null) {
+      try {
+        basis = engine.spectralBasis();
+      } catch (_) {
+        basis = null;
+      }
+    }
+    DiffPinnedSpectral? anchorSpectral;
+    final relatedWithSpectral = <DiffPinnedRelatedFile>[];
+    final transportWithSpectral = <DiffPinnedTransportEdge>[];
+    if (basis != null && engine != null) {
+      final selfId = engine.pathToId[selfPath];
+      if (selfId != null) {
+        anchorSpectral = _projectSpectralForNode(basis, selfId);
+      }
+      for (final r in related) {
+        final id = engine.pathToId[r.path];
+        final sp = id == null ? null : _projectSpectralForNode(basis, id);
+        relatedWithSpectral.add(
+          DiffPinnedRelatedFile(
+            path: r.path,
+            score: r.score,
+            semantic: r.semantic,
+            coupled: r.coupled,
+            spectral: sp,
+          ),
+        );
+      }
+      for (final e in transportEdges) {
+        final targetPath = e.targetPath == selfPath ? e.sourcePath : e.targetPath;
+        final id = engine.pathToId[targetPath];
+        final sp = id == null ? null : _projectSpectralForNode(basis, id);
+        transportWithSpectral.add(
+          DiffPinnedTransportEdge(
+            sourcePath: e.sourcePath,
+            targetPath: e.targetPath,
+            pull: e.pull,
+            laneLabel: e.laneLabel,
+            targetSpectral: sp,
+          ),
+        );
+      }
+    } else {
+      relatedWithSpectral.addAll(related);
+      transportWithSpectral.addAll(transportEdges);
+    }
+
     return DiffPinnedContextModel(
       line: line,
       wellName: wellName,
       wellDistance: wellDistance,
-      relatedFiles: related.take(6).toList(growable: false),
+      relatedFiles: relatedWithSpectral.take(6).toList(growable: false),
       rhymeDisplayIdxs: rhymes,
       rhymePreviews: rhymePreviews,
       blame: request.blame,
       dominantAxis: dominantAxis,
       witnesses: witnesses,
-      transportEdges: transportEdges,
+      transportEdges: transportWithSpectral,
       integrityReasons: integrityReasons,
+      anchorSpectral: anchorSpectral,
     );
   }
 
@@ -1124,7 +1321,8 @@ class DiffLogosFacade {
               symbolPaths: symbolPaths,
             ).name,
         };
-        evidence = engine.gatherEvidence(
+        evidence = await _gatherEvidenceOffThread(
+          engine: engine,
           focusWeights: probe.sourceWeights,
           axisLabelByPath: axisLabels,
           t: effectiveT,
@@ -1490,6 +1688,11 @@ bool _shouldUseLightweightDiffSnapshot({
   required List<hunks.DiffHunk> parsedHunks,
   required String diffText,
 }) {
+  // The lightweight path exists to cap wall-time on *big* diffs where
+  // gatherEvidence's O(k·n) cost actually matters. Tiny diffs were
+  // previously routed here too, but that path skips gatherEvidence
+  // entirely and breaks related-file surfacing on single-file edits
+  // (the user's most common case), so the tiny-ceiling guard is off.
   if (touchedPaths.length >= _kLightweightDiffRefreshPathThreshold) {
     return true;
   }

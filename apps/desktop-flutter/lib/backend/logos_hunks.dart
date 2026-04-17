@@ -795,6 +795,7 @@ class HunkDiffusionResult {
   HunkDiffusionResult({
     required this.rankings,
     required this.fellBackToChurn,
+    this.graph,
   });
 
   /// Hunks in descending Ï† order. First = most central.
@@ -804,6 +805,28 @@ class HunkDiffusionResult {
   /// and we fell back to ranking by churn. Callers may log this but
   /// behaviour is otherwise identical from their perspective.
   final bool fellBackToChurn;
+
+  /// The hunk graph this diffusion ran on. Available (non-null) in the
+  /// normal diffusion path; null on the churn-fallback and empty-input
+  /// paths. Use [spectralBasis] to get a lazy Lanczos eigendecomposition
+  /// for the same observables (heat trace, Fiedler, fingerprint, etc.)
+  /// that [SpectralBasis] exposes on the file-level graph.
+  final CsrGraph? graph;
+
+  SpectralBasis? _cachedSpectralBasis;
+
+  /// Lazy spectral basis over [graph]. Cached for the lifetime of this
+  /// result — safe because hunk graphs are immutable once built.
+  /// Returns null when [graph] is null or when the graph is too small
+  /// to amortise the Lanczos build.
+  SpectralBasis? spectralBasis({int k = kDefaultSpectralBasisK}) {
+    final g = graph;
+    if (g == null || g.n < kDefaultSpectralMinNodes) return null;
+    if (_cachedSpectralBasis != null) return _cachedSpectralBasis;
+    final clamped = math.min(k, g.n);
+    _cachedSpectralBasis = SpectralBasis.fromGraph(g, clamped);
+    return _cachedSpectralBasis;
+  }
 }
 
 class HunkFileEvidence {
@@ -1154,6 +1177,7 @@ HunkDiffusionResult _rankHunksByPhiCore({
   return HunkDiffusionResult(
     rankings: rankings,
     fellBackToChurn: false,
+    graph: graph,
   );
 }
 

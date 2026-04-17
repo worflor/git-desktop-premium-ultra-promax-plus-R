@@ -150,6 +150,11 @@ class DiffShell extends StatefulWidget {
   final String? revisionRef;
   final DiffLogosSession? logosSession;
   final ValueChanged<String>? onOpenRelatedPath;
+  /// When non-null, renders a `<` back button in the toolbar's
+  /// leading slot (before the search toggle). Wired by parents that
+  /// maintain a navigation stack — clicking it pops one layer. Null
+  /// when there's nothing to go back to, so the button disappears.
+  final VoidCallback? onNavigateBack;
   final String? toolbarFilePath;
   final String? toolbarLabel;
   final String? toolbarTooltip;
@@ -175,6 +180,7 @@ class DiffShell extends StatefulWidget {
     this.revisionRef,
     this.logosSession,
     this.onOpenRelatedPath,
+    this.onNavigateBack,
     this.toolbarFilePath,
     this.toolbarLabel,
     this.toolbarTooltip,
@@ -2874,6 +2880,18 @@ class _DiffShellState extends State<DiffShell> {
           height: 34,
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(children: [
+            // Back button — visible only when the parent has a nav
+            // history to pop. Sits before the search toggle so the
+            // leading cluster reads as "navigation, then find".
+            if (widget.onNavigateBack != null) ...[
+              _ToolbarBtn(
+                icon: 'chevron-left',
+                active: false,
+                t: t,
+                onTap: widget.onNavigateBack!,
+              ),
+              const SizedBox(width: 4),
+            ],
             // Search toggle. Tinted with the same accent the file-status
             // dot uses so the icon visually pairs with the dot beside it
             // — the search becomes part of "this file's chrome" instead
@@ -5257,9 +5275,11 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
                         const SizedBox(width: 8),
                       ],
                       Expanded(
-                        child: c == null
-                            ? const SizedBox.shrink()
-                            : _pinnedLinePreview(t, c),
+                        child: c != null
+                            ? _pinnedLinePreview(t, c)
+                            : widget.loading
+                                ? _loadingRow(t)
+                                : const SizedBox.shrink(),
                       ),
                       if (c != null) ...[
                         const SizedBox(width: 10),
@@ -5295,13 +5315,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
                 ],
               ),
             ),
-            if (widget.loading && c == null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 10, 12),
-                child: _loadingRow(t),
-              )
-            else if (c != null)
-              Flexible(child: _body(t, c)),
+            if (c != null) Flexible(child: _body(t, c)),
           ],
         ),
       ),

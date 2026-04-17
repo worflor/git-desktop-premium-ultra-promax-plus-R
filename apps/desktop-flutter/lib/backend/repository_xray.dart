@@ -365,7 +365,6 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       halfLifeDays: halfLifeDays,
       referenceDate: referenceDate,
     );
-    final rawDirAlive = _aggregateAliveMassByDirectory(rawPathAlive);
     final filteredDirAlive = _aggregateAliveMassByDirectory(filteredPathAlive);
 
     final rawHotspots = await _buildHotspots(
@@ -1299,18 +1298,6 @@ Map<String, int> _parseLsTreeBytes(String output) {
     out[path] = size;
   }
   return out;
-}
-
-Map<String, int> _countDirectoryTouches(String output) {
-  final counts = <String, int>{};
-  for (final line in output.split('\n')) {
-    final path = line.trim();
-    if (path.isEmpty) continue;
-    if (path.startsWith(_kCommitMarker)) continue;
-    final prefix = _directoryPrefixForPath(path.replaceAll('\\', '/'));
-    counts.update(prefix, (value) => value + 1, ifAbsent: () => 1);
-  }
-  return counts;
 }
 
 Future<List<RepositoryXrayHotspotData>> _buildHotspots(

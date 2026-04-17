@@ -76,9 +76,10 @@ import 'package:meta/meta.dart';
 
 import 'engram_file_ktable.dart';
 import 'engram_fit.dart';
-import 'engram_hunk_encoder.dart';
 import 'file_coupling.dart';
 import 'logos_core.dart';
+import 'spectral_spacetime.dart';
+import 'spectral_walks.dart';
 import 'logos_git_calibration.dart' show LogosAxis;
 import 'logos_git_integrity.dart';
 import 'lru_cache.dart';
@@ -431,10 +432,12 @@ double _rowMagSq(EngramFileKTable t, int row) {
   return sum;
 }
 
-/// Like [_cosineRows] but trusts a caller-provided `aMagSq` for row A.
-/// The inner loop now reads ONE Float64x2 per pair (row B only) and
-/// accumulates `dot` and `bMagSq`, cutting the per-pair work roughly
-/// in half versus [_cosineRows].
+/// Cosine between two rows of an [EngramFileKTable] when the caller
+/// already has row A's magnitude-squared cached — the typical hot-path
+/// shape in `buildFromStats`, where every row is compared against many
+/// neighbours so the outer row's norm is paid once and reused.
+/// The inner loop reads one Float64x2 per pair (row B only) and
+/// accumulates `dot` and `bMagSq`.
 double _cosineRowsWithAMagSq(
     EngramFileKTable t, int rowA, int rowB, double aMagSq) {
   if (aMagSq <= 0) return 0.0;
@@ -451,42 +454,6 @@ double _cosineRowsWithAMagSq(
     bMagSq += b.x * b.x + b.y * b.y;
   }
   if (bMagSq <= 0) return 0.0;
-  final cos = dot / math.sqrt(aMagSq * bMagSq);
-  if (!cos.isFinite) return 0.0;
-  if (cos <= 0) return 0.0;
-  if (cos >= 1) return 1.0;
-  return cos;
-}
-
-/// Cosine between two rows of an [EngramFileKTable], reading directly
-/// from the flat columns. Treats the real/imag pair columns as a
-/// flattened 2P vector - same metric as
-/// [EngramHunkEncoder.cosine] but with no object dereference.
-double _cosineRows(EngramFileKTable t, int rowA, int rowB) {
-  final p = t.pairs;
-  final aBase = rowA * p;
-  final bBase = rowB * p;
-  // Grimoire XIV: interleaved Float64x2 storage lets each pair's
-  // (re, im) arrive together in one lane, so the three accumulators
-  // (dot, aMagSq, bMagSq) come from a single streaming read per row
-  // pair instead of four disjoint cache-line fetches (re[a], im[a],
-  // re[b], im[b]).
-  final ri = t.kRi;
-  double dot = 0.0;
-  double aMagSq = 0.0;
-  double bMagSq = 0.0;
-  for (var i = 0; i < p; i++) {
-    final a = ri[aBase + i];
-    final b = ri[bBase + i];
-    final ar = a.x;
-    final ai = a.y;
-    final br = b.x;
-    final bi = b.y;
-    dot += ar * br + ai * bi;
-    aMagSq += ar * ar + ai * ai;
-    bMagSq += br * br + bi * bi;
-  }
-  if (aMagSq <= 0 || bMagSq <= 0) return 0.0;
   final cos = dot / math.sqrt(aMagSq * bMagSq);
   if (!cos.isFinite) return 0.0;
   if (cos <= 0) return 0.0;
@@ -1306,21 +1273,11 @@ typedef _BasisCacheKey = ({int rhoFingerprint, int K});
 /// ~1 MB, comfortably in last-level cache without punishing hot code.
 const int _kChebyshevBasisCacheSize = 4;
 
-/// Minimum graph size below which the spectral path stays disabled.
-/// For tiny graphs (typical hunk and chunk graphs are ≲ 200 nodes), the
-/// one-time Lanczos cost outweighs the per-query saving — Chebyshev's
-/// O(K·|E|) on a sparse 30-edge graph is well under a millisecond. The
-/// spectral path becomes profitable on the file graph (n ≈ 2k–10k)
-/// where multiple gatherEvidence calls amortise the build.
-const int _kSpectralMinNodes = 256;
-
-/// Default number of Laplacian eigenmodes to retain. The heat kernel
-/// `e^{−t·λ}` decays exponentially in λ, so for the gatherEvidence
-/// temperature range t ∈ [0.35, 4.0] the bulk of the energy is carried
-/// by the bottom ~20 modes. The eigenvectors are stored as a single
-/// `k·n` Float64List (≈320 KB at k=20, n=2k) — cheap memory for an
-/// always-on per-graph cache.
-const int _kSpectralModeK = 20;
+// Spectral thresholds are shared with hunk and chunk engines via
+// [kDefaultSpectralMinNodes] and [kDefaultSpectralBasisK] in
+// `logos_core.dart`. Keeping them in one place means every level of
+// the spectral tower answers the "should I build a basis here?"
+// question with the same policy.
 
 /// Content fingerprint of a ρ vector. Uses the Float64 bit patterns so
 /// identical-valued-but-freshly-allocated vectors hash the same. FNV-1a
@@ -1524,15 +1481,23 @@ class LogosGit {
   /// engine's lifetime — see [manifoldRevision]).
   ///
   /// Returns null when the graph is too small to amortise the
-  /// decomposition: for n < [_kSpectralMinNodes], the per-query
+  /// decomposition: for n < [kDefaultSpectralMinNodes], the per-query
   /// Chebyshev path beats a one-time Lanczos pass and there's no
   /// reason to incur the build cost.
   SpectralBasis? _getOrBuildSpectralBasis(int k) {
-    if (graph.n < _kSpectralMinNodes) return null;
+    if (graph.n < kDefaultSpectralMinNodes) return null;
     final clampedK = math.min(k, graph.n);
     final cached = _spectralCache[clampedK];
     if (cached != null) return cached;
-    final built = SpectralBasis.fromGraph(graph, clampedK);
+    // File-level bases carry nodePaths by default — callers that ask
+    // for the basis on an engine already have the path labelling
+    // available, and `labelProject` / `phiForPath` are the ergonomic
+    // win that makes this worth the cheap re-wrap.
+    final built = SpectralBasis.fromGraph(
+      graph,
+      clampedK,
+      nodePaths: nodePaths,
+    );
     _spectralCache[clampedK] = built;
     return built;
   }
@@ -1546,15 +1511,99 @@ class LogosGit {
   /// two files, and spectral divergence between two source
   /// distributions. See [SpectralBasis] for the full menu.
   ///
-  /// `k` defaults to the engine's `_kSpectralModeK` (20) — enough
+  /// `k` defaults to the engine's `kDefaultSpectralBasisK` (20) — enough
   /// modes for the heat kernel's low-frequency regime; bump it if
   /// you want sharper community resolution.
   ///
-  /// Returns null when the graph is below [_kSpectralMinNodes] —
+  /// Returns null when the graph is below [kDefaultSpectralMinNodes] —
   /// observables on tiny graphs are uninformative anyway, and the
   /// caller should fall back to direct edge inspection.
-  SpectralBasis? spectralBasis({int? k}) =>
-      _getOrBuildSpectralBasis(k ?? _kSpectralModeK);
+  SpectralBasis? spectralBasis({int k = kDefaultSpectralBasisK}) =>
+      _getOrBuildSpectralBasis(k);
+
+  /// Convenience: build a [SpectralWalker] over this engine's spectral
+  /// basis. Use it to sample concrete random-walk paths ("why this
+  /// file surfaced") — the path-integral realisation of the heat
+  /// kernel. Returns null when the engine's graph is too small to
+  /// support a useful spectral basis.
+  SpectralWalker? spectralWalker({
+    int k = kDefaultSpectralBasisK,
+    int? seed,
+  }) {
+    final basis = spectralBasis(k: k);
+    if (basis == null) return null;
+    return SpectralWalker(basis: basis, seed: seed);
+  }
+
+  /// Cached commit graph (built lazily from [LogosGitStats.perFileCommitIndices]).
+  CsrGraph? _commitGraph;
+
+  /// Cached commit-level spectral basis.
+  SpectralBasis? _commitSpectralBasis;
+
+  /// Cached spatiotemporal basis tying file space × commit time.
+  SpacetimeBasis? _spacetimeBasis;
+
+  /// The commit graph derived from this engine's stats: one node per
+  /// commit, edges weighted by Jaccard file-overlap and attenuated by
+  /// temporal distance. Lazy-built, cached per engine lifetime.
+  ///
+  /// Returns null when the stats don't carry commit indices or the
+  /// repo has fewer than [kDefaultSpectralMinNodes] commits (spectral path
+  /// isn't amortised below that threshold).
+  CsrGraph? commitGraph({int topK = 16, double timeDecay = 0.1}) {
+    if (_commitGraph != null) return _commitGraph;
+    final indices = stats.perFileCommitIndices;
+    final total = stats.totalCommits;
+    if (indices.isEmpty || total < kDefaultSpectralMinNodes) return null;
+    _commitGraph = buildCommitGraph(
+      perFileCommitIndices: indices,
+      totalCommits: total,
+      topK: topK,
+      timeDecay: timeDecay,
+    );
+    return _commitGraph;
+  }
+
+  /// Commit-level [SpectralBasis] — the temporal analog of
+  /// [spectralBasis]. Same Lanczos machinery, smaller graph (one node
+  /// per commit). Returns null when the commit graph is below the
+  /// spectral-amortisation threshold.
+  SpectralBasis? commitSpectralBasis({int k = kDefaultSpectralBasisK}) {
+    if (_commitSpectralBasis != null) return _commitSpectralBasis;
+    final g = commitGraph();
+    if (g == null || g.n < kDefaultSpectralMinNodes) return null;
+    final clamped = math.min(k, g.n);
+    _commitSpectralBasis = SpectralBasis.fromGraph(g, clamped);
+    return _commitSpectralBasis;
+  }
+
+  /// Joint file × commit-time spectral basis via Kronecker sum. The
+  /// file graph is the spatial factor; the commit graph is the
+  /// temporal factor. Every joint observable factors through the two
+  /// separate bases — we never materialise an `n_file · n_commit` ×
+  /// `n_file · n_commit` joint Laplacian.
+  ///
+  /// **Reading**: the codebase-as-spacetime view. A focus distributed
+  /// over (file, commit) pairs diffuses simultaneously through
+  /// architectural coupling and historical co-evolution. Joint
+  /// observables (heat trace, free energy, spectral divergence on
+  /// joint rho) answer questions like "has this PR's shape appeared
+  /// before in repo history?" that neither factor alone can reach.
+  ///
+  /// Returns null when either factor is unavailable.
+  SpacetimeBasis? spacetimeBasis({
+    int kSpace = kDefaultSpectralBasisK,
+    int kTime = kDefaultSpectralBasisK,
+  }) {
+    if (_spacetimeBasis != null) return _spacetimeBasis;
+    final sp = spectralBasis(k: kSpace);
+    if (sp == null) return null;
+    final tm = commitSpectralBasis(k: kTime);
+    if (tm == null) return null;
+    _spacetimeBasis = SpacetimeBasis(space: sp, time: tm);
+    return _spacetimeBasis;
+  }
 
   /// Construct the engine from per-file statistics. Nodes are all files
   /// with at least one observation from any axis; edges are the
@@ -2854,7 +2903,7 @@ class LogosGit {
     // O(K·|E|) wins; the rest of the function then runs the existing
     // Chebyshev path with the basis-fusion / attribution batching that
     // [_buildFocusAndAxisRhos] sets up.
-    final spectral = _getOrBuildSpectralBasis(_kSpectralModeK);
+    final spectral = _getOrBuildSpectralBasis(kDefaultSpectralBasisK);
 
     final Float64List focusPhi;
     final Float64List nearPhi;
@@ -4133,8 +4182,9 @@ class LogosGit {
 
     for (final score in ranked) {
       if (steps.length >= limit) break;
-      if (focusPaths.contains(score.path) || !seenPaths.add(score.path))
+      if (focusPaths.contains(score.path) || !seenPaths.add(score.path)) {
         continue;
+      }
       LogosEvidenceWitness? transportWitness;
       for (final witness in score.witnesses) {
         if (witness.kind == LogosWitnessKind.transport) {

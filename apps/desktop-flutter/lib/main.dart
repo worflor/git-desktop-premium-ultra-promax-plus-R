@@ -240,12 +240,77 @@ class _AppFrameState extends State<_AppFrame> {
   double _resizeStartX = 0;
   double _resizeStartWidth = 0;
 
+  /// Sidebar layout is pinned to the brand lockup's actual rendered
+  /// width — the sidebar shouldn't be able to shrink below the
+  /// "Manifold [DEV]" pill or sit with an awkward amount of empty
+  /// room past it. We measure the lockup post-frame via a GlobalKey
+  /// and derive min / max / default widths from that measurement.
+  final GlobalKey _brandLockupKey = GlobalKey();
+  double? _brandLockupWidth;
+
+  /// Spacing unit — the same 8-px grid the BrandLockup itself uses
+  /// between its logo, text, and tag. Keeps the sidebar's breathing
+  /// room coherent with the lockup's internal proportions.
+  static const double _kSidebarUnitPx = 8;
+  /// Default padding past the brand lockup, in grid units. Matches
+  /// the Changes-page content padding so the sidebar feels like the
+  /// same visual rhythm.
+  static const int _kSidebarDefaultMarginUnits = 2;
+  /// Minimum padding so the lockup never butts up against the drag
+  /// handle or clips the DEV badge on small windows.
+  static const int _kSidebarMinMarginUnits = 1;
+  /// Upper bound so the sidebar can't swallow half the window.
+  static const int _kSidebarMaxMarginUnits = 24;
+  /// Pre-measure fallback used for exactly the first frame. Replaced
+  /// by the real measurement via the post-frame callback.
+  static const double _kPreMeasureBrandWidthPx = 132;
+
+  double get _measuredBrandWidth =>
+      _brandLockupWidth ?? _kPreMeasureBrandWidthPx;
+  double get _sidebarMin =>
+      _measuredBrandWidth + _kSidebarMinMarginUnits * _kSidebarUnitPx;
+  double get _sidebarMax =>
+      _measuredBrandWidth + _kSidebarMaxMarginUnits * _kSidebarUnitPx;
+  double get _sidebarDefault =>
+      _measuredBrandWidth + _kSidebarDefaultMarginUnits * _kSidebarUnitPx;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(_updateBrandLockupWidth);
+  }
+
+  void _updateBrandLockupWidth(Duration _) {
+    final ctx = _brandLockupKey.currentContext;
+    final render = ctx?.findRenderObject();
+    if (render is! RenderBox || !render.hasSize) return;
+    final w = render.size.width;
+    if (w <= 0 || w == _brandLockupWidth) return;
+    setState(() {
+      _brandLockupWidth = w;
+    });
+    // Migrate persisted width into the freshly-derived bounds if
+    // it's now out of range. A legacy saved 188 stays put if it
+    // still fits; a width that's now too small or too large gets
+    // clamped (and persisted, so next launch is already valid).
+    final themeState = context.read<ThemeState>();
+    final clamped = themeState.sidebarWidth.clamp(_sidebarMin, _sidebarMax);
+    if (clamped != themeState.sidebarWidth) {
+      themeState.setSidebarWidth(clamped);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final themeState = context.watch<ThemeState>();
     final definition = themeDefinitionFor(themeState.themeId);
     _sidebarWidth = themeState.sidebarWidth;
+    // Re-measure the brand lockup after every build — theme changes
+    // can shift font metrics and nudge its rendered width. setState
+    // inside the callback is guarded against no-op changes so this
+    // is idempotent.
+    WidgetsBinding.instance.addPostFrameCallback(_updateBrandLockupWidth);
 
     final gradient = t.appGradientColors.length <= 2
         ? LinearGradient(
@@ -343,13 +408,16 @@ class _AppFrameState extends State<_AppFrame> {
               ],
             ),
             // Brand lockup floats above all panels so the hypercube
-            // never clips behind content during drag.
-            const Positioned(
+            // never clips behind content during drag. Its rendered
+            // width feeds the sidebar's min / max / default clamps
+            // via [_brandLockupKey] — re-measured every frame after
+            // this overlay lays out.
+            Positioned(
               left: 12,
               top: 12,
               child: IgnorePointer(
                 ignoring: false,
-                child: BrandLockup(),
+                child: BrandLockup(key: _brandLockupKey),
               ),
             ),
           ],
@@ -358,9 +426,17 @@ class _AppFrameState extends State<_AppFrame> {
     );
   }
 
+  /// Snap a resize-drag value onto the grid and clamp it to the
+  /// lockup-derived bounds. Snaps to the derived default when the
+  /// drag lands within a single unit of it so the user reliably
+  /// settles on the intended resting width without a pixel hunt.
   double _snapSidebarWidth(double value) {
-    final snapped = (value / 8).round() * 8.0;
-    return (snapped - 188).abs() <= 8 ? 188 : snapped;
+    final snapped = (value / _kSidebarUnitPx).round() * _kSidebarUnitPx;
+    final clamped = snapped.clamp(_sidebarMin, _sidebarMax).toDouble();
+    if ((clamped - _sidebarDefault).abs() <= _kSidebarUnitPx) {
+      return _sidebarDefault;
+    }
+    return clamped;
   }
 
   bool _showsParticleBackdrop(SurfaceMaterialShader shader) =>

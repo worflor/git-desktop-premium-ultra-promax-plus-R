@@ -20,6 +20,9 @@ dependencies:
   # Without this the codex-style review comments show as raw text
   # (`### Codex Review`, `**Reviewed commit**`, etc).
   flutter_markdown: ^0.7.4
+  # Used by logos_git.dart for @visibleForTesting annotations. Pins the
+  # transitive dep as a direct dep so it's legal to import.
+  meta: ^1.17.0
 
 dev_dependencies:
   flutter_test:

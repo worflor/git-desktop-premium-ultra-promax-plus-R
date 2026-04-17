@@ -1469,7 +1469,7 @@ const themeDefinitions = <AppThemeDefinition>[
     ThemeOption(
       AppThemeId.loverboy,
       'Loverboy',
-      '"i love you," into the void of overflowing thoughts.',
+      '"i love you," into a void of overflowing thoughts.',
     ),
     SurfaceMaterialShader(
       mode: SurfaceMaterialMode.solid,

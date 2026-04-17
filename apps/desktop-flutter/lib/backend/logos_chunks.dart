@@ -247,6 +247,40 @@ Set<String> _deriveStopTokens(List<Set<String>> perChunkTokens) {
 // C_struct) and the source-mass model. The graph itself is the shared
 // [CsrGraph] type.
 
+/// Public entry to the chunk graph builder — same contract as the
+/// private [_buildChunkGraph] hot path below, exposed so callers can
+/// compose a [SpectralBasis] over chunks without re-implementing the
+/// axis blend. Prefer [chunkSpectralBasis] when you just want the
+/// basis; this entry is for callers who want the raw graph.
+CsrGraph buildChunkGraph({
+  required List<SourceChunk> chunks,
+  required List<Set<String>> tokens,
+  required int topK,
+}) =>
+    _buildChunkGraph(chunks: chunks, tokens: tokens, topK: topK);
+
+/// Build a chunk-level [SpectralBasis] over the given chunks and
+/// their pre-extracted token sets. Mirrors `LogosGit.spectralBasis()`
+/// and `HunkDiffusionResult.spectralBasis()` for the chunk level of
+/// the spectral tower. Returns null below [kDefaultSpectralMinNodes].
+SpectralBasis? chunkSpectralBasis({
+  required List<SourceChunk> chunks,
+  required List<Set<String>> tokens,
+  int k = kDefaultSpectralBasisK,
+  int? topK,
+}) {
+  final n = chunks.length;
+  if (n < kDefaultSpectralMinNodes) return null;
+  final resolvedTopK = topK ?? math.max(4, math.sqrt(n).ceil());
+  final graph = _buildChunkGraph(
+    chunks: chunks,
+    tokens: tokens,
+    topK: resolvedTopK,
+  );
+  if (graph.n < kDefaultSpectralMinNodes) return null;
+  return SpectralBasis.fromGraph(graph, math.min(k, graph.n));
+}
+
 CsrGraph _buildChunkGraph({
   required List<SourceChunk> chunks,
   required List<Set<String>> tokens,

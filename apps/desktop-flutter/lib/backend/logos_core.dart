@@ -53,6 +53,7 @@
 // output buffers get a subnormal flush pass to defend against the web
 // FPU microcode trap on CanvasKit.
 
+import 'dart:convert' show utf8;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -81,6 +82,19 @@ const int kChebyshevSmallGraph = 24;
 /// `λ₂ < λ₁ ≤ 2` on a normalised Laplacian. 24 iterations gets us 2-3
 /// significant figures on any realistic graph.
 const int kDefaultPowerIterations = 24;
+
+/// Default number of Laplacian eigenmodes to retain in a cached
+/// [SpectralBasis]. Heat-kernel energy concentrates in the bottom 15–30
+/// modes on typical code graphs (see `heatCapacity` natural-scale
+/// detection); 20 comfortably covers that range. Tune via the per-engine
+/// or per-result `k` parameter.
+const int kDefaultSpectralBasisK = 20;
+
+/// Minimum graph size below which the spectral path stays disabled.
+/// For small graphs (hunk, chunk) the one-time Lanczos cost outweighs
+/// the per-query saving. Above this threshold, spectral queries
+/// amortise after the second call on the same graph.
+const int kDefaultSpectralMinNodes = 256;
 
 /// Hard ceiling on diffusion time before the Bessel computation
 /// becomes numerically untrustworthy. The recurrence for `I_k(t)` uses
@@ -235,7 +249,7 @@ class CsrGraph {
     // row gains one edge (to the new node) at the end; a fresh row is
     // appended for the new node itself.
     final oldNnz = indptr[n];
-    final edgesPerIncident = 1; // one new edge per incident existing row
+    const edgesPerIncident = 1; // one new edge per incident existing row
     final addedToExisting = edgeByTarget.length * edgesPerIncident;
     final newRowSize = edgeByTarget.length;
     final newNnz = oldNnz + addedToExisting + newRowSize;
@@ -1535,26 +1549,252 @@ class SpectralBasis {
   final Float64List eigenvalues; // [k]
   final Float64List eigenvectors; // [k * n]
 
-  const SpectralBasis({
+  /// Optional path labels — when supplied, the basis carries enough
+  /// metadata to answer labeled queries (`labelProject(weightsByPath)`,
+  /// `phiForPath(...)`). null when the basis is operating purely in
+  /// mathematical mode (no external labels attached). Every tower
+  /// level (file/hunk/chunk/commit) enriches its basis with this
+  /// when labels are available.
+  final List<String>? nodePaths;
+
+  /// Reverse index for [nodePaths]. Lazily materialised on first use
+  /// when [nodePaths] is set and [pathToId] wasn't provided directly.
+  final Map<String, int>? pathToId;
+
+  /// Cheap 64-bit identity hash. Derived from the eigenvalue bit
+  /// patterns — two bases produced from structurally-identical
+  /// graphs have identical signatures. Used for:
+  /// - Cache keys (hashing the basis as a whole)
+  /// - Ratchet `diagnose` fast-path (sig match → bases are identical)
+  /// - CRDT merges (sig divergence → need fingerprint-level localise)
+  /// - Wire transfers (signature as the short id for a long blob)
+  final int signature;
+
+  SpectralBasis({
     required this.n,
     required this.k,
     required this.eigenvalues,
     required this.eigenvectors,
-  });
+    this.nodePaths,
+    Map<String, int>? pathToId,
+    int? signature,
+  })  : pathToId = pathToId ??
+            (nodePaths != null
+                ? <String, int>{
+                    for (var i = 0; i < nodePaths.length; i++) nodePaths[i]: i,
+                  }
+                : null),
+        signature = signature ?? _fingerprintEigenvalues(eigenvalues);
 
   /// Build a spectral basis directly from a graph by running
   /// [lanczosSmallEigenpairs]. Convenience constructor — most callers
   /// should go through the engine-level cache rather than rebuild
-  /// per query.
-  factory SpectralBasis.fromGraph(CsrGraph graph, int k, {int? maxIters}) {
-    final pairs =
-        lanczosSmallEigenpairs(graph, k, maxIters: maxIters);
+  /// per query. Callers that have node labels handy can supply them
+  /// via [nodePaths] so labeled queries become available.
+  factory SpectralBasis.fromGraph(
+    CsrGraph graph,
+    int k, {
+    int? maxIters,
+    List<String>? nodePaths,
+  }) {
+    final pairs = lanczosSmallEigenpairs(graph, k, maxIters: maxIters);
     return SpectralBasis(
       n: pairs.n,
       k: pairs.k,
       eigenvalues: pairs.eigenvalues,
       eigenvectors: pairs.eigenvectors,
+      nodePaths: nodePaths,
     );
+  }
+
+  /// Two bases are equal iff their signatures match. Signature is
+  /// derived from the eigenvalue bit patterns, so equality implies
+  /// structural identity of the underlying spectra. A deliberately
+  /// cheap comparison — one integer equality — so `SpectralBasis`
+  /// can serve as a Map key, Set element, or cache lookup handle.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SpectralBasis && signature == other.signature);
+
+  @override
+  int get hashCode => signature;
+
+  /// Return a new [SpectralBasis] with node labels attached. Shares
+  /// the underlying Float64List storage (O(1) rewrap) so labelling
+  /// is cheap regardless of basis size. Use to enrich a math-only
+  /// basis with path metadata for labeled queries.
+  SpectralBasis withLabels(List<String> paths) {
+    assert(paths.length == n,
+        'labels length (${paths.length}) must equal basis n ($n)');
+    return SpectralBasis(
+      n: n,
+      k: k,
+      eigenvalues: eigenvalues,
+      eigenvectors: eigenvectors,
+      nodePaths: paths,
+      signature: signature,
+    );
+  }
+
+  // ── Serialization ────────────────────────────────────────────────
+
+  /// Wire-transferable byte representation of this basis. Layout:
+  ///   [0..8)     magic + version
+  ///   [8..16)    signature
+  ///   [16..20)   n (uint32)
+  ///   [20..24)   k (uint32)
+  ///   [24..28)   nodePaths count (0 if unlabeled; uint32)
+  ///   [28..)     eigenvalues   (k * 8 bytes)
+  ///              eigenvectors  (k * n * 8 bytes)
+  ///              path strings  (length-prefixed UTF-8) — optional
+  ///
+  /// The result is `O(k·n · 8)` bytes plus ~k·8 for Λ plus labels.
+  /// For a typical 10k-node repo at k=20, this is ≈1.6 MB — a single
+  /// HTTP response body. Send it on the wire and reconstruct on the
+  /// other side with [SpectralBasis.fromBytes].
+  Uint8List toBytes() {
+    final labelCount = nodePaths?.length ?? 0;
+    final labelBytes = <Uint8List>[];
+    var labelsTotal = 0;
+    if (labelCount > 0) {
+      for (final p in nodePaths!) {
+        final enc = utf8.encode(p);
+        labelBytes.add(enc);
+        labelsTotal += 4 + enc.length;
+      }
+    }
+    final valBytes = k * 8;
+    final vecBytes = k * n * 8;
+    final total = 28 + valBytes + vecBytes + labelsTotal;
+    final out = Uint8List(total);
+    final bd = ByteData.view(out.buffer);
+    // Magic: "LGS\0" + version 1 at bytes 4..7.
+    bd.setUint32(0, 0x4c475300, Endian.little);
+    bd.setUint32(4, 1, Endian.little);
+    // We encode signature as little-endian pair because Dart's int
+    // on web lacks native 64-bit semantics.
+    bd.setUint32(8, signature & 0xffffffff, Endian.little);
+    bd.setUint32(12, (signature >> 32) & 0xffffffff, Endian.little);
+    bd.setUint32(16, n, Endian.little);
+    bd.setUint32(20, k, Endian.little);
+    bd.setUint32(24, labelCount, Endian.little);
+    // Eigenvalues.
+    var off = 28;
+    for (var i = 0; i < k; i++) {
+      bd.setFloat64(off + i * 8, eigenvalues[i], Endian.little);
+    }
+    off += valBytes;
+    // Eigenvectors.
+    for (var i = 0; i < k * n; i++) {
+      bd.setFloat64(off + i * 8, eigenvectors[i], Endian.little);
+    }
+    off += vecBytes;
+    // Labels (optional).
+    for (final b in labelBytes) {
+      bd.setUint32(off, b.length, Endian.little);
+      off += 4;
+      out.setRange(off, off + b.length, b);
+      off += b.length;
+    }
+    return out;
+  }
+
+  /// Reconstruct a [SpectralBasis] from its [toBytes] representation.
+  /// Throws [FormatException] on mismatched magic / version. The
+  /// reconstructed basis is bit-identical to the original (same
+  /// eigenvalues → same signature → same identity).
+  factory SpectralBasis.fromBytes(Uint8List bytes) {
+    final bd = ByteData.view(bytes.buffer, bytes.offsetInBytes, bytes.lengthInBytes);
+    final magic = bd.getUint32(0, Endian.little);
+    final version = bd.getUint32(4, Endian.little);
+    if (magic != 0x4c475300 || version != 1) {
+      throw const FormatException('SpectralBasis.fromBytes: bad magic/version');
+    }
+    final sigLo = bd.getUint32(8, Endian.little);
+    final sigHi = bd.getUint32(12, Endian.little);
+    final signature = (sigHi << 32) | sigLo;
+    final n = bd.getUint32(16, Endian.little);
+    final k = bd.getUint32(20, Endian.little);
+    final labelCount = bd.getUint32(24, Endian.little);
+    var off = 28;
+    final eigenvalues = Float64List(k);
+    for (var i = 0; i < k; i++) {
+      eigenvalues[i] = bd.getFloat64(off + i * 8, Endian.little);
+    }
+    off += k * 8;
+    final eigenvectors = Float64List(k * n);
+    for (var i = 0; i < k * n; i++) {
+      eigenvectors[i] = bd.getFloat64(off + i * 8, Endian.little);
+    }
+    off += k * n * 8;
+    List<String>? nodePaths;
+    if (labelCount > 0) {
+      nodePaths = <String>[];
+      for (var i = 0; i < labelCount; i++) {
+        final len = bd.getUint32(off, Endian.little);
+        off += 4;
+        nodePaths.add(utf8.decode(
+          Uint8List.view(bytes.buffer, bytes.offsetInBytes + off, len),
+        ));
+        off += len;
+      }
+    }
+    return SpectralBasis(
+      n: n,
+      k: k,
+      eigenvalues: eigenvalues,
+      eigenvectors: eigenvectors,
+      nodePaths: nodePaths,
+      signature: signature,
+    );
+  }
+
+  // ── Labeled queries ──────────────────────────────────────────────
+
+  /// Labeled variant of [project] — accepts a `path → weight` map,
+  /// builds a sparse ρ via [pathToId], projects onto the eigenbasis.
+  /// Requires [nodePaths] / [pathToId] to be set. Paths absent from
+  /// the basis are silently dropped.
+  Float64List labelProject(Map<String, double> weightsByPath) {
+    final paths = pathToId;
+    if (paths == null) {
+      throw StateError(
+        'labelProject requires nodePaths/pathToId; '
+        'use `basis.withLabels(paths)` first.',
+      );
+    }
+    final rho = Float64List(n);
+    var total = 0.0;
+    for (final entry in weightsByPath.entries) {
+      final id = paths[entry.key];
+      if (id == null || entry.value <= 0) continue;
+      rho[id] += entry.value;
+      total += entry.value;
+    }
+    if (total > 0) {
+      final inv = 1.0 / total;
+      for (var i = 0; i < n; i++) {
+        if (rho[i] != 0) rho[i] *= inv;
+      }
+    }
+    return project(rho);
+  }
+
+  /// Return the diffused mass at a specific path, at temperature t,
+  /// from a cached projection. `O(k)` lookup — no per-node sweep.
+  /// Throws if the basis is unlabeled.
+  double phiForPath(Float64List projection, String path, double t) {
+    final id = pathToId?[path];
+    if (id == null) return 0.0;
+    assert(projection.length == k, 'projection.length must equal k');
+    var v = 0.0;
+    for (var j = 0; j < k; j++) {
+      v += projection[j] *
+          math.exp(-t * eigenvalues[j]) *
+          eigenvectors[j * n + id];
+    }
+    return v;
   }
 
   /// Project `rho` onto the eigenbasis: returns `Uᵀ·ρ` of length k.
@@ -1565,11 +1805,44 @@ class SpectralBasis {
   Float64List project(Float64List rho) {
     assert(rho.length == n, 'rho length must equal n');
     final coeffs = Float64List(k);
+    if (n == 0) return coeffs;
+    // Grimoire XIV — the k·n dot products are the hottest path on this
+    // class. When both ρ and the eigenvector slice are 16-byte aligned
+    // (fresh `Float64List` / `Float64x2List`-backed views always are),
+    // collapse each dot product into a Float64x2 accumulator so two
+    // multiplies retire per lane per cycle. Misaligned base offsets
+    // (odd n across modes) fall through to a scalar loop — still
+    // stride-1, still cache-friendly.
+    final evenPairs = n >> 1;
+    final hasTail = (n & 1) == 1;
+    final tailIdx = n - 1;
+    final rhoAligned = (rho.offsetInBytes & 15) == 0;
+    final basisAligned = (eigenvectors.offsetInBytes & 15) == 0;
+    final Float64x2List? rhoX = rhoAligned && evenPairs > 0
+        ? Float64x2List.view(rho.buffer, rho.offsetInBytes, evenPairs)
+        : null;
+
     for (var j = 0; j < k; j++) {
       final base = j * n;
       var s = 0.0;
-      for (var i = 0; i < n; i++) {
-        s += eigenvectors[base + i] * rho[i];
+      if (rhoX != null &&
+          basisAligned &&
+          evenPairs > 0 &&
+          ((base * 8) & 15) == 0) {
+        final eigX = Float64x2List.view(eigenvectors.buffer,
+            eigenvectors.offsetInBytes + base * 8, evenPairs);
+        var accX = Float64x2.zero();
+        for (var i = 0; i < evenPairs; i++) {
+          accX = accX + eigX[i] * rhoX[i];
+        }
+        s = accX.x + accX.y;
+      } else {
+        for (var i = 0; i < evenPairs * 2; i++) {
+          s += eigenvectors[base + i] * rho[i];
+        }
+      }
+      if (hasTail) {
+        s += eigenvectors[base + tailIdx] * rho[tailIdx];
       }
       coeffs[j] = s;
     }
@@ -1581,16 +1854,40 @@ class SpectralBasis {
   /// Use this for slider sweeps: project once, recombine many times.
   Float64List recombineFromProjection(Float64List coeffs, double t) {
     assert(coeffs.length == k, 'coeffs length must equal k');
-    final phi = Float64List(n);
+    if (n == 0) return Float64List(0);
+    // Float64x2-backed accumulator — see Grimoire XIV / XXIII comments
+    // on [project]. Same SIMD pattern as [recombineHeatPhi] in the
+    // Chebyshev path, ported so the two diffusion paths are equal-cost.
+    final evenPairs = n >> 1;
+    final hasTail = (n & 1) == 1;
+    final tailIdx = n - 1;
+    final phiX = Float64x2List((n + 1) >> 1);
+    final phi = Float64List.view(phiX.buffer, 0, n);
+    final basisAligned = (eigenvectors.offsetInBytes & 15) == 0;
+
     for (var j = 0; j < k; j++) {
       final c = coeffs[j] * math.exp(-t * eigenvalues[j]);
       if (c == 0.0) continue;
       final base = j * n;
-      for (var i = 0; i < n; i++) {
-        phi[i] += c * eigenvectors[base + i];
+      if (evenPairs > 0 && basisAligned && ((base * 8) & 15) == 0) {
+        final eigX = Float64x2List.view(eigenvectors.buffer,
+            eigenvectors.offsetInBytes + base * 8, evenPairs);
+        for (var i = 0; i < evenPairs; i++) {
+          phiX[i] = phiX[i] + eigX[i].scale(c);
+        }
+      } else {
+        for (var i = 0; i < evenPairs * 2; i++) {
+          phi[i] += c * eigenvectors[base + i];
+        }
+      }
+      if (hasTail) {
+        phi[tailIdx] += c * eigenvectors[base + tailIdx];
       }
     }
-    return phi;
+    // Return a caller-owned fresh buffer (the view aliases phiX storage).
+    final out = Float64List(n);
+    out.setRange(0, n, phi);
+    return out;
   }
 
   /// One-shot diffuse: project, scale by `e^{−t·λ}`, reconstruct.
@@ -1803,6 +2100,472 @@ class SpectralBasis {
     }
     return _kmeansSpectral(embedding, n, embedDim, kClusters, seed);
   }
+
+  // ───────────────────────────────────────────────────────────────────
+  // SECOND-TIER OBSERVABLES
+  //
+  // The first observable layer (heat trace, free energy, entropy,
+  // Fiedler, communities) reads single scalars off the spectrum.
+  // This layer reads structure: graph invariants (spectral gap,
+  // stationary distribution), two-point metrics (effective resistance),
+  // derivatives of thermodynamic potentials (heat capacity), and the
+  // codebase's **byte-wide spectral identity** — a derived analog of
+  // OG Logos's 8-bit chain-rule lattice, obtained by reading the sign
+  // pattern of the first eight non-trivial eigenvectors. Same Λ*(R⁸),
+  // constructed from the graph's own cleavages rather than from bytes.
+  // ───────────────────────────────────────────────────────────────────
+
+  /// Spectral gap `λ₁ − λ₀`. On a connected graph `λ₀ = 0`, so this
+  /// collapses to `λ₁` — the Fiedler eigenvalue. Bounds the graph's
+  /// Cheeger constant from above (Cheeger's inequality) and governs
+  /// the mixing time of a random walk (≈ 1/gap for moderate graphs).
+  ///
+  /// **Reading**: the one-number "how connected is the codebase?".
+  /// Large gap = tightly knit single community; small gap = the graph
+  /// is one cut away from splitting into two loosely-coupled halves.
+  double get spectralGap {
+    if (k < 2) return 0.0;
+    return eigenvalues[1] - eigenvalues[0];
+  }
+
+  /// Stationary distribution of the random walk `D⁻¹·W`. For the
+  /// normalised Laplacian the zero-mode eigenvector `u₀` satisfies
+  /// `u₀ ∝ D^{1/2}·𝟙`, so on a connected graph `π_i = u₀[i]²` is
+  /// proportional to the i-th node's degree (and already unit-norm
+  /// since `u₀` is).
+  ///
+  /// **Reading**: the PageRank of the codebase, free. High-`π_i` files
+  /// are hubs — random diffusion drifts toward them regardless of where
+  /// it starts.
+  Float64List stationaryDistribution() {
+    final pi = Float64List(n);
+    if (k == 0) return pi;
+    var sum = 0.0;
+    for (var i = 0; i < n; i++) {
+      final v = eigenvectors[i];
+      final sq = v * v;
+      pi[i] = sq;
+      sum += sq;
+    }
+    if (sum > _subnormalFloor && (sum - 1.0).abs() > 1e-6) {
+      // Defensive re-normalise against Lanczos floating-point drift.
+      final inv = 1.0 / sum;
+      for (var i = 0; i < n; i++) {
+        pi[i] *= inv;
+      }
+    }
+    return pi;
+  }
+
+  /// Effective resistance between two nodes: the electrical resistance
+  /// when the graph is treated as a network of unit resistors scaled
+  /// by edge weights. `R(x, y) = Σⱼ₌₁ (uⱼ[x] − uⱼ[y])² / λⱼ` (skip
+  /// `j=0` — the degenerate zero mode contributes nothing because
+  /// `u₀[x] = u₀[y]` only up to degree rescaling, handled implicitly).
+  ///
+  /// **Reading**: a *different* metric than diffusion distance —
+  /// captures the *commute time* `E[T_{x→y→x}] = 2·|E|·R(x,y)` under
+  /// the normalised random walk. Pairs connected by many medium-weight
+  /// paths have low R; pairs connected by a single bottleneck have
+  /// high R *even if their diffusion distance is small*. Use this when
+  /// "reliability of coupling" matters more than "proximity."
+  double effectiveResistance(int x, int y) {
+    if (x == y || k < 2) return 0.0;
+    var s = 0.0;
+    for (var j = 1; j < k; j++) {
+      final lam = eigenvalues[j];
+      if (lam <= _subnormalFloor) continue;
+      final delta = eigenvectors[j * n + x] - eigenvectors[j * n + y];
+      s += (delta * delta) / lam;
+    }
+    return s;
+  }
+
+  /// Heat capacity at temperature t: the second derivative of the
+  /// log-partition `log Z(t)` with respect to t. Equals the variance
+  /// of `λ` under the thermal probability `pⱼ(t) = e^{−tλⱼ} / Z(t)`.
+  ///
+  /// **Reading**: spikes in heat capacity mark **phase transitions**
+  /// — temperatures at which the codebase's effective structure changes
+  /// character. Sweep t; peaks identify the codebase's natural scales
+  /// (e.g. t ≈ 1.3 method-level, t ≈ 4.7 module-level). This is the
+  /// diagnostic that tells you *which t to pick* for any query that
+  /// wants a specific structural scale.
+  double heatCapacity(double t) {
+    if (k == 0) return 0.0;
+    var z = 0.0;
+    var zLam = 0.0;
+    var zLam2 = 0.0;
+    for (var j = 0; j < k; j++) {
+      final w = math.exp(-t * eigenvalues[j]);
+      z += w;
+      zLam += w * eigenvalues[j];
+      zLam2 += w * eigenvalues[j] * eigenvalues[j];
+    }
+    if (z <= _subnormalFloor) return 0.0;
+    final mean = zLam / z;
+    final meanSq = zLam2 / z;
+    final variance = meanSq - mean * mean;
+    return variance < 0.0 ? 0.0 : variance; // floating-point safety
+  }
+
+  /// Detect the codebase's natural thermal scales — the `t` values at
+  /// which `heatCapacity(t)` peaks. Each peak is a **phase transition**:
+  /// a scale at which the effective structure of the diffusion
+  /// changes character. On a typical repo the first peak sits at the
+  /// method/symbol scale, the second at the module scale, the third
+  /// at the service scale — derived from the spectrum itself, not
+  /// hand-picked.
+  ///
+  /// Sweeps `t` on a log grid between [tMin] and [tMax]; returns local
+  /// maxima above `minPeakRatio · globalMax` sorted ascending.
+  ///
+  /// This is the principled replacement for magic thermal constants
+  /// like `nearT = 0.55·t`, `farT = 1.85·t`, `3-temperature blend
+  /// {0.5, 1.0, 2.0}` — instead of picking temperatures a priori,
+  /// read them off the codebase's own heat-capacity spectrum.
+  List<double> naturalScales({
+    double tMin = 0.1,
+    double tMax = 8.0,
+    int samples = 64,
+    double minPeakRatio = 0.25,
+  }) {
+    if (k == 0 || samples < 3) return const [];
+    final logMin = math.log(tMin);
+    final logMax = math.log(tMax);
+    final step = (logMax - logMin) / (samples - 1);
+    final ts = Float64List(samples);
+    final cs = Float64List(samples);
+    var globalMax = 0.0;
+    for (var s = 0; s < samples; s++) {
+      final t = math.exp(logMin + s * step);
+      ts[s] = t;
+      final c = heatCapacity(t);
+      cs[s] = c;
+      if (c > globalMax) globalMax = c;
+    }
+    if (globalMax <= _subnormalFloor) return const [];
+    final threshold = globalMax * minPeakRatio;
+    final peaks = <double>[];
+    // Interior local maxima only — endpoint detection would bias
+    // toward the grid boundaries rather than real phase transitions.
+    for (var s = 1; s < samples - 1; s++) {
+      if (cs[s] < threshold) continue;
+      if (cs[s] > cs[s - 1] && cs[s] > cs[s + 1]) {
+        peaks.add(ts[s]);
+      }
+    }
+    return peaks;
+  }
+
+  /// 8-bit spectral fingerprint of node `i` — the binary representation
+  /// of `(sign(u₁[i]), sign(u₂[i]), …, sign(u₈[i]))`. On a connected
+  /// graph `u₀` is constant-ish (degree-weighted), so we skip it and
+  /// read signs of the first 8 **non-trivial** eigenvectors. The result
+  /// is an integer in `[0, 256)` — the natural Logos analog of OG
+  /// Logos's byte-wide identity, except derived from the graph's own
+  /// cleavages rather than the stream's bit structure.
+  ///
+  /// **Reading**: every node gets a byte-wide class label. Two nodes
+  /// with the same fingerprint share the same side of the first eight
+  /// graph cleavages — they're structurally equivalent to byte-identity
+  /// resolution. Pairs with Hamming-distance-1 fingerprints differ on
+  /// exactly one cleavage. Pairs with distance 8 are maximally
+  /// separated in the first 8 cleavages.
+  ///
+  /// Returns 0 when the basis has fewer than 9 modes (not enough for
+  /// 8 non-trivial cleavages plus the zero mode).
+  int spectralByteFingerprint(int i) {
+    if (k < 9 || i < 0 || i >= n) return 0;
+    var b = 0;
+    for (var j = 0; j < 8; j++) {
+      // Mode j+1 is the j-th non-trivial cleavage. Positive side → 1.
+      if (eigenvectors[(j + 1) * n + i] >= 0.0) {
+        b |= (1 << j);
+      }
+    }
+    return b;
+  }
+
+  /// Compute the full fingerprint table in one sweep — one byte per
+  /// node, length `n`. Cheaper than calling [spectralByteFingerprint]
+  /// per node when you need all of them: one pass over memory in mode-
+  /// major order, writing every node's j-th bit as the sign test fires.
+  Uint8List spectralFingerprintTable() {
+    final out = Uint8List(n);
+    if (k < 9) return out;
+    for (var j = 0; j < 8; j++) {
+      final base = (j + 1) * n;
+      final bit = 1 << j;
+      for (var i = 0; i < n; i++) {
+        if (eigenvectors[base + i] >= 0.0) {
+          out[i] |= bit;
+        }
+      }
+    }
+    return out;
+  }
+
+  /// Coordinates of node `i` in the first `dims` non-trivial modes —
+  /// a `dims`-vector `[u₁[i], u₂[i], …, u_{dims}[i]]`. Skips `u₀` (the
+  /// constant zero mode on a connected graph carries no positional
+  /// signal) and returns the requested mode entries directly.
+  ///
+  /// **Reading**: the natural embedding of node `i` into the codebase's
+  /// spectral manifold. `dims = 3` gives a 3D point cloud where nearby
+  /// nodes are structurally similar; `dims = 4` gives a 4-vector
+  /// suitable for sonification harmonics (the replacement the Muse
+  /// called out for the simhash-PCA trick in the manifold pane). Cost
+  /// is O(dims) — cheaper than reading degree.
+  Float64List nodeCoordinates(int i, {int dims = 3}) {
+    final out = Float64List(dims);
+    if (i < 0 || i >= n) return out;
+    final bound = math.min(dims, math.max(0, k - 1));
+    for (var d = 0; d < bound; d++) {
+      out[d] = eigenvectors[(d + 1) * n + i];
+    }
+    return out;
+  }
+
+  /// Bulk variant of [nodeCoordinates] — returns every node's
+  /// `dims`-vector embedding packed row-major into a single
+  /// `Float64List` of length `n * dims`. One pass over memory; cheap
+  /// even for full-repo emission to a GPU vertex buffer.
+  Float64List nodeCoordinateTable({int dims = 3}) {
+    final out = Float64List(n * dims);
+    if (n == 0) return out;
+    final bound = math.min(dims, math.max(0, k - 1));
+    for (var d = 0; d < bound; d++) {
+      final base = (d + 1) * n;
+      for (var i = 0; i < n; i++) {
+        out[i * dims + d] = eigenvectors[base + i];
+      }
+    }
+    return out;
+  }
+
+  /// Hamming distance between two nodes' 8-bit spectral fingerprints.
+  /// Returns the number of cleavages (out of 8) on which `x` and `y`
+  /// sit on opposite sides. 0 = spectrally indistinguishable in the
+  /// top 8 modes; 8 = maximally separated (every cleavage disagrees).
+  ///
+  /// **Reading**: the byte-level kizuna distance — same math that
+  /// powers OG Logos's exact-match axis, applied to the graph
+  /// fingerprint we derived. One hardware-instruction popcount on the
+  /// XOR of two fingerprints.
+  int spectralFingerprintDistance(int x, int y) {
+    final fx = spectralByteFingerprint(x);
+    final fy = spectralByteFingerprint(y);
+    return _popcount8(fx ^ fy);
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  // QUANTUM LIFT — unitary evolution on the same spectral basis.
+  //
+  // The heat kernel `exp(−t·L_sym)` is the Wick rotation of the
+  // Schrödinger propagator `exp(−i·t·L_sym)`. Swap the real `−t`
+  // for imaginary `−it` and the same diagonalisation gives a
+  // unitary (mass-preserving, norm-preserving) evolution with
+  // interference between coherent amplitudes.
+  //
+  // The Born rule we've been quoting as a name becomes literal here:
+  // amplitudes live in ℂⁿ, probabilities are `|ψ|²`, two coherent
+  // focuses superpose and their cross-term is the interference.
+  // Same real eigenvectors (L_sym is self-adjoint, spectrum real);
+  // only the coefficient evolution changes from `e^(−tλ)` (real, decaying)
+  // to `e^(−itλ) = cos(tλ) − i·sin(tλ)` (complex, unitary).
+  // ───────────────────────────────────────────────────────────────────
+
+  /// Unitary Schrödinger evolution `ψ(t) = exp(−i·t·L_sym)·ρ`.
+  /// Returns the complex amplitude split into real and imaginary parts.
+  /// Same cost as [diffuse] (O(k·n)), produces a complex field instead
+  /// of a decaying real one.
+  ///
+  /// **Reading**: the quantum version of heat diffusion. `|ψ|²` is
+  /// a proper probability (mass is preserved for all t, unlike the
+  /// contracting heat kernel). Two focuses evolved in parallel can
+  /// interfere — constructive fringes where their phases align,
+  /// destructive fringes where they oppose.
+  ({Float64List real, Float64List imag}) unitaryDiffuse(
+      Float64List rho, double t) {
+    final coeffs = project(rho);
+    if (n == 0) return (real: Float64List(0), imag: Float64List(0));
+    // Twin-accumulator SIMD: each eigenvector chunk is read ONCE per
+    // mode and feeds both the real and imaginary accumulators, halving
+    // memory traffic vs. running re/im as separate passes. Same
+    // alignment guard as [project] / [recombineFromProjection].
+    final evenPairs = n >> 1;
+    final hasTail = (n & 1) == 1;
+    final tailIdx = n - 1;
+    final reX = Float64x2List((n + 1) >> 1);
+    final imX = Float64x2List((n + 1) >> 1);
+    final re = Float64List.view(reX.buffer, 0, n);
+    final im = Float64List.view(imX.buffer, 0, n);
+    final basisAligned = (eigenvectors.offsetInBytes & 15) == 0;
+
+    for (var j = 0; j < k; j++) {
+      final c = coeffs[j];
+      if (c == 0.0) continue;
+      final phase = t * eigenvalues[j];
+      final cReal = c * math.cos(phase);
+      final cImag = -c * math.sin(phase);
+      final base = j * n;
+      if (evenPairs > 0 && basisAligned && ((base * 8) & 15) == 0) {
+        final eigX = Float64x2List.view(eigenvectors.buffer,
+            eigenvectors.offsetInBytes + base * 8, evenPairs);
+        for (var i = 0; i < evenPairs; i++) {
+          final u = eigX[i];
+          reX[i] = reX[i] + u.scale(cReal);
+          imX[i] = imX[i] + u.scale(cImag);
+        }
+      } else {
+        for (var i = 0; i < evenPairs * 2; i++) {
+          final u = eigenvectors[base + i];
+          re[i] += cReal * u;
+          im[i] += cImag * u;
+        }
+      }
+      if (hasTail) {
+        final u = eigenvectors[base + tailIdx];
+        re[tailIdx] += cReal * u;
+        im[tailIdx] += cImag * u;
+      }
+    }
+    // Return caller-owned fresh buffers (views alias reX/imX storage).
+    final outRe = Float64List(n)..setRange(0, n, re);
+    final outIm = Float64List(n)..setRange(0, n, im);
+    return (real: outRe, imag: outIm);
+  }
+
+  /// Born-rule probability density `|ψ(t)|²` at every node. Preserved
+  /// under unitary evolution: `Σᵢ |ψ|²(i, t) = ‖ρ‖²` for all t.
+  ///
+  /// **Reading**: quantum probability of finding the focus at file i
+  /// after unitary evolution for time t. Mass never leaks away (unlike
+  /// heat), so this is the proper observable for "where would this
+  /// focus interfere with another one?" style questions.
+  Float64List quantumProbability(Float64List rho, double t) {
+    final psi = unitaryDiffuse(rho, t);
+    final out = Float64List(n);
+    for (var i = 0; i < n; i++) {
+      out[i] = psi.real[i] * psi.real[i] + psi.imag[i] * psi.imag[i];
+    }
+    return out;
+  }
+
+  /// Per-node interference field between two focuses `ρ_a`, `ρ_b`
+  /// under unitary evolution at time t. Defined as
+  /// `2·Re(ψ_a(i) · conj(ψ_b(i)))` — the cross term in
+  /// `|ψ_a + ψ_b|² = |ψ_a|² + |ψ_b|² + 2·Re(ψ_a·ψ_b*)`. Positive at
+  /// nodes where the two focuses constructively interfere, negative
+  /// where they destructively interfere.
+  ///
+  /// **Reading**: where in the codebase would two PRs/queries/foci
+  /// *combine amplitude* rather than just share files? File-overlap
+  /// and embedding cosines are classical; this is quantum. A sharp
+  /// negative valley means the two foci are out of phase in that
+  /// region — they describe it differently despite touching it both.
+  /// A sharp positive peak means they reinforce each other.
+  Float64List interferenceField(
+      Float64List rhoA, Float64List rhoB, double t) {
+    final a = unitaryDiffuse(rhoA, t);
+    final b = unitaryDiffuse(rhoB, t);
+    final out = Float64List(n);
+    for (var i = 0; i < n; i++) {
+      out[i] =
+          2.0 * (a.real[i] * b.real[i] + a.imag[i] * b.imag[i]);
+    }
+    return out;
+  }
+
+  /// Total interference mass — `∑ᵢ 2·Re(ψ_a·ψ_b*)` — as a single
+  /// scalar. Unitary evolution preserves the inner product
+  /// `⟨ψ_a, ψ_b⟩ = ⟨c_a, c_b⟩` for all t, so this reduces to
+  /// `2·⟨c_a, c_b⟩` — a **time-independent** scalar (the integrated
+  /// cross-term is a conserved quantity, even though its per-node
+  /// distribution evolves into visible fringes).
+  ///
+  /// Sign-carrying: positive for focus pairs whose spectral
+  /// coefficients align, negative for anti-aligned pairs, zero for
+  /// spectrally orthogonal pairs (the interesting case: two focuses
+  /// that share no dominant eigenmode despite sharing files).
+  double interferenceMass(Float64List rhoA, Float64List rhoB) {
+    final ca = project(rhoA);
+    final cb = project(rhoB);
+    var s = 0.0;
+    for (var j = 0; j < k; j++) {
+      s += ca[j] * cb[j];
+    }
+    return 2.0 * s;
+  }
+
+  /// Thermodynamic evaporation: the OG Logos confidence gate, ported
+  /// verbatim from the byte-level codec to the graph-level engine.
+  /// `c` is a confidence signal in `[0, 1]` — defaults to `1 −
+  /// spectralEntropy(rho, t) / log(k)`, the natural "how focused is
+  /// this query" scalar. Returns `f = e^{−(1−c)²}` — the
+  /// crystal/gas freeze function from OG Logos' `live-wasm-logos.ts`.
+  ///
+  /// **Reading**: `f → 1` when confidence is high (crystal phase —
+  /// trust the basis, do nothing). `f → 1/e ≈ 0.368` when confidence
+  /// bottoms out (gas phase — the basis is no longer describing the
+  /// signal well, consider a refresh). Landau second-order transition
+  /// math — same function OG Logos uses to decide when to freeze /
+  /// melt its predictor tables. Same ontology, transplanted cleanly.
+  double evaporationFactor(Float64List rho, double t) {
+    if (k == 0) return 0.0;
+    final s = spectralEntropy(rho, t);
+    final bound = math.log(k.toDouble());
+    if (bound <= 0.0) return 1.0;
+    final c = (1.0 - s / bound).clamp(0.0, 1.0).toDouble();
+    final delta = 1.0 - c;
+    return math.exp(-delta * delta);
+  }
+}
+
+/// 64-bit FNV-1a-style mixer over the bit patterns of a Float64List.
+/// Used to derive [SpectralBasis.signature] — two bases with the same
+/// eigenvalue sequence produce the same signature, enabling cheap
+/// identity comparison. Truncates to 62 bits to stay inside Dart's
+/// safe-integer range on web (where ints are JS doubles with a 53-bit
+/// mantissa, but 62 bits fits via subtle bit-masking in AOT).
+int _fingerprintEigenvalues(Float64List values) {
+  if (values.isEmpty) return 0;
+  final bd = values.buffer.asByteData(values.offsetInBytes, values.lengthInBytes);
+  var h = 0x811c9dc5 ^ values.length;
+  for (var i = 0; i < values.length; i++) {
+    final lo = bd.getInt32(i * 8, Endian.little);
+    final hi = bd.getInt32(i * 8 + 4, Endian.little);
+    h = (h ^ lo) & 0x3fffffff;
+    h = ((h * 0x01000193) ^ (h >> 13)) & 0x3fffffff;
+    h = (h ^ hi) & 0x3fffffff;
+    h = ((h * 0x01000193) ^ (h >> 13)) & 0x3fffffff;
+  }
+  return h;
+}
+
+/// Universal name for the object the tower collapses into — every
+/// level of the tower (file, hunk, chunk, commit, spacetime) returns
+/// an instance of this type. Instances are:
+///   - immutable (frozen bytes + integer metadata)
+///   - cheaply identity-comparable via [SpectralBasis.signature]
+///   - hashable for cache keys, CRDT merges, and wire transfers
+///   - labeled or unlabeled (paths optional; math works regardless)
+///   - serializable to a single byte blob (see `toBytes` / `fromBytes`)
+///
+/// Observables are pure functions of `(SpectralIdentity, SourceCoord,
+/// temperature)`. The class holds the data; free functions + instance
+/// methods give you the readouts. This is the singularity: one type,
+/// many readouts, no hidden state.
+typedef SpectralIdentity = SpectralBasis;
+
+/// 8-bit popcount via the standard bit-tricks reduction. Three shifts,
+/// three masks. Compiles to a few integer ops on AOT; no tables.
+@pragma('vm:prefer-inline')
+int _popcount8(int v) {
+  v = (v & 0x55) + ((v >> 1) & 0x55);
+  v = (v & 0x33) + ((v >> 2) & 0x33);
+  return (v & 0x0f) + ((v >> 4) & 0x0f);
 }
 
 /// Lloyd's k-means clustering over a flat row-major embedding. Used
