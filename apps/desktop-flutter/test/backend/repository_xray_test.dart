@@ -66,6 +66,13 @@ void main() {
       final rawHotspotPaths =
           snapshot.rawHotspots.map((hotspot) => hotspot.path).toList();
       expect(rawHotspotPaths, contains('generated/session.lock'));
+
+      expect(snapshot.flow.gradientMass, inInclusiveRange(0.0, 1.0));
+      expect(snapshot.flow.curlMass, inInclusiveRange(0.0, 1.0));
+      expect(snapshot.flow.harmonicMass, inInclusiveRange(0.0, 1.0));
+      expect(snapshot.flow.structuralStress, inInclusiveRange(0.0, 1.0));
+      expect(snapshot.flow.confidence, inInclusiveRange(0.0, 1.0));
+      expect(snapshot.flow.confidence, greaterThan(0.5));
     });
 
     test('fingerprint uses repo path, branch, head, and dirty count', () async {

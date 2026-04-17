@@ -27,10 +27,13 @@ import '../backend/remote_issue_provider.dart' show IssueSummary;
 import 'desk_drop_payload.dart';
 import 'desk_issue_state.dart';
 import 'desk_pr_state.dart';
+import 'file_coupling_state.dart';
 import 'remote_issue_cache_state.dart';
 import 'hyper_reactivity.dart';
+import 'logos_git_state.dart';
 import 'repository_state.dart';
 import 'repository_xray_state.dart';
+import 'symbol_frequency_state.dart';
 import 'theme_state.dart';
 import 'worktree_state.dart';
 
@@ -81,6 +84,11 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
           return;
         }
         context.read<RepositoryXrayState>().invalidateAllExcept(activeRepoPath);
+        context.read<LogosGitState>().invalidateAllExcept(activeRepoPath);
+        context.read<FileCouplingState>().invalidateAllExcept(activeRepoPath);
+        context
+            .read<SymbolFrequencyState>()
+            .invalidateAllExcept(activeRepoPath);
       });
     }
 
@@ -114,8 +122,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                       mode: _mode,
                       selectedCommitHash: _selectedCommitHash,
                       onOpenXray: () => setState(() => _panel = _Panel.xray),
-                      onOpenChanges: () =>
-                          _selectMode(_WorkspaceMode.changes),
+                      onOpenChanges: () => _selectMode(_WorkspaceMode.changes),
                     ),
                   ),
                 ),
@@ -177,14 +184,13 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                     child: AnimatedOpacity(
                       duration: context.surfaceShader.duration,
                       curve: context.surfaceShader.safeCurve,
-                      opacity: (_panel == _Panel.settings ||
-                              _panel == _Panel.search)
-                          ? 1.0
-                          : 0.0,
+                      opacity:
+                          (_panel == _Panel.settings || _panel == _Panel.search)
+                              ? 1.0
+                              : 0.0,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: () =>
-                            setState(() => _panel = _Panel.none),
+                        onTap: () => setState(() => _panel = _Panel.none),
                         child: Container(
                             color: Colors.black.withValues(alpha: 0.4)),
                       ),
@@ -196,8 +202,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                       reverseDuration: context.surfaceShader.duration,
                       switchInCurve: context.surfaceShader.safeCurve,
                       switchOutCurve: context.surfaceShader.safeCurve,
-                      layoutBuilder: (currentChild, previousChildren) =>
-                          Stack(
+                      layoutBuilder: (currentChild, previousChildren) => Stack(
                         fit: StackFit.expand,
                         children: [
                           ...previousChildren,
@@ -218,14 +223,12 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                         _Panel.settings => _SlidePanel(
                             key: const ValueKey('settings'),
                             title: 'Settings',
-                            onClose: () =>
-                                setState(() => _panel = _Panel.none),
+                            onClose: () => setState(() => _panel = _Panel.none),
                             child: const SettingsPage(),
                           ),
                         _Panel.search => _SlidePanel(
                             key: const ValueKey('search'),
-                            onClose: () =>
-                                setState(() => _panel = _Panel.none),
+                            onClose: () => setState(() => _panel = _Panel.none),
                             child: SearchPanel(
                               onClose: () =>
                                   setState(() => _panel = _Panel.none),
@@ -417,8 +420,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                         Expanded(
                           child: Text(
                             r.$2,
-                            style: TextStyle(
-                                color: t.textNormal, fontSize: 11),
+                            style: TextStyle(color: t.textNormal, fontSize: 11),
                           ),
                         ),
                       ],
@@ -622,16 +624,12 @@ class _ModeBtnState extends State<_ModeBtn> {
   // to a static `AppIcon` — deliberate graceful fallback, not a missing
   // case. Adding animation is a per-icon effort, not an automatic upgrade.
   Widget _buildIcon(Color color) {
-    final state =
-        _hovered ? IconAnimState.hovered : IconAnimState.idle;
+    final state = _hovered ? IconAnimState.hovered : IconAnimState.idle;
     return switch (widget.icon) {
-      'history' =>
-        AnimatedHistoryIcon(state: state, color: color, size: 16),
-      'branches' =>
-        AnimatedBranchesIcon(state: state, color: color, size: 16),
+      'history' => AnimatedHistoryIcon(state: state, color: color, size: 16),
+      'branches' => AnimatedBranchesIcon(state: state, color: color, size: 16),
       'xray' => AnimatedXrayIcon(state: state, color: color, size: 16),
-      'settings' =>
-        AnimatedSettingsIcon(state: state, color: color, size: 16),
+      'settings' => AnimatedSettingsIcon(state: state, color: color, size: 16),
       _ => AppIcon(name: widget.icon, size: 16, color: color),
     };
   }
@@ -730,9 +728,8 @@ class _RepoNameLabelState extends State<_RepoNameLabel> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final baseColor = widget.hasRepo
-        ? t.textStrong
-        : t.textMuted.withValues(alpha: 0.5);
+    final baseColor =
+        widget.hasRepo ? t.textStrong : t.textMuted.withValues(alpha: 0.5);
     final color = widget.hasRepo && _hovered ? t.accentBright : baseColor;
 
     return MouseRegion(
@@ -773,7 +770,6 @@ class _XrayModeBtn extends StatelessWidget {
   }
 }
 
-
 /// The desk row lives in the second line of the topbar. The first position
 /// is the active desk (rendered as `_BranchPill` — keeps the dropdown
 /// affordance). Subsequent positions are other open worktrees as smaller
@@ -795,10 +791,19 @@ class _DeskRow extends StatelessWidget {
     final repoState = context.watch<RepositoryState>();
     final activeNormalized =
         activeRepoPath?.replaceAll('\\', '/').toLowerCase();
+    final activeDesk = worktreeState.activeDesk;
+    final activeActivity =
+        activeDesk == null ? null : worktreeState.activityFor(activeDesk.path);
     // Other desks = every known worktree except the one currently active.
     final otherDesks = worktreeState.desks.where((d) {
       return d.path.replaceAll('\\', '/').toLowerCase() != activeNormalized;
     }).toList();
+    final suggestedSyncTargetPath = _suggestedSyncTargetPath(
+      activeDesk: activeDesk,
+      activeActivity: activeActivity,
+      otherDesks: otherDesks,
+      worktreeState: worktreeState,
+    );
 
     // Wrap the whole desk row in a DragTarget so dragging a branch row
     // (from BRANCHES) or a PR row (from PRS) and dropping it anywhere
@@ -831,75 +836,148 @@ class _DeskRow extends StatelessWidget {
             ),
           ),
           child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _BranchPill(
-          branch: activeBranch,
-          repoPath: activeRepoPath,
-          onNavigate: onNavigateBranches,
-        ),
-        for (final desk in otherDesks) ...[
-          const SizedBox(width: 6),
-          _DeskTab(
-            desk: desk,
-            onTap: () {
-              if (desk.path != repoState.activePath) {
-                repoState.setActivePath(desk.path, addToRecents: false);
-              }
-            },
-            onClose: desk.isMain
-                ? null
-                : () => _closeDeskFlow(context, desk, worktreeState),
-            onSecondaryTap: (pos) => _showDeskContextMenu(
-                context, pos, desk, repoState, worktreeState),
-          ),
-        ],
-        if (hasCandidate) ...[
-          const SizedBox(width: 6),
-          // Ghost placeholder showing where the new desk will land.
-          Container(
-            height: 26,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(
-              color: t.accentBright.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(
-                color: t.accentBright.withValues(alpha: 0.5),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _BranchPill(
+                branch: activeBranch,
+                repoPath: activeRepoPath,
+                onNavigate: onNavigateBranches,
               ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('+',
-                    style: TextStyle(
-                      color: t.accentBright,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      height: 1,
-                    )),
+              for (final desk in otherDesks) ...[
                 const SizedBox(width: 6),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 200),
-                  child: Text(
-                    candidates.first?.label ?? 'new desk',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: t.accentBright,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w700,
+                _DeskTab(
+                  desk: desk,
+                  highlightSyncTarget: desk.path == suggestedSyncTargetPath,
+                  onTap: () {
+                    if (desk.path != repoState.activePath) {
+                      repoState.setActivePath(desk.path, addToRecents: false);
+                    }
+                  },
+                  onClose: desk.isMain
+                      ? null
+                      : () => _closeDeskFlow(context, desk, worktreeState),
+                  onSecondaryTap: (pos) => _showDeskContextMenu(
+                      context, pos, desk, repoState, worktreeState),
+                ),
+              ],
+              if (hasCandidate) ...[
+                const SizedBox(width: 6),
+                // Ghost placeholder showing where the new desk will land.
+                Container(
+                  height: 26,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: t.accentBright.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: t.accentBright.withValues(alpha: 0.5),
                     ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('+',
+                          style: TextStyle(
+                            color: t.accentBright,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            height: 1,
+                          )),
+                      const SizedBox(width: 6),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 200),
+                        child: Text(
+                          candidates.first?.label ?? 'new desk',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: t.accentBright,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
-            ),
-          ),
-        ],
-      ],
+            ],
           ),
         );
       },
     );
+  }
+
+  String? _suggestedSyncTargetPath({
+    required WorktreeData? activeDesk,
+    required DeskActivity? activeActivity,
+    required List<WorktreeData> otherDesks,
+    required WorktreeState worktreeState,
+  }) {
+    if (activeDesk == null || activeDesk.isDetached || activeDesk.isLocked) {
+      return null;
+    }
+    WorktreeData? bestDesk;
+    var bestScore = 0;
+    for (final targetDesk in otherDesks) {
+      if (targetDesk.isDetached || targetDesk.isLocked) continue;
+      final score = _syncSuggestionScore(
+        activeDesk: activeDesk,
+        activeActivity: activeActivity,
+        targetDesk: targetDesk,
+        targetActivity: worktreeState.activityFor(targetDesk.path),
+      );
+      if (score > bestScore) {
+        bestScore = score;
+        bestDesk = targetDesk;
+      }
+    }
+    return bestDesk?.path;
+  }
+
+  int _syncSuggestionScore({
+    required WorktreeData activeDesk,
+    required DeskActivity? activeActivity,
+    required WorktreeData targetDesk,
+    required DeskActivity? targetActivity,
+  }) {
+    final targetDirty = targetDesk.dirtyFileCount > 0;
+    final targetAhead = (targetActivity?.ahead ?? 0) > 0;
+    final activeBehind = (activeActivity?.behind ?? 0) > 0;
+    final targetIsMeaningfullyNewer = _isMeaningfullyNewer(
+      candidate: targetActivity?.lastActivity,
+      baseline: activeActivity?.lastActivity,
+    );
+
+    // On feature desks, prefer main when it looks newer.
+    if (!activeDesk.isMain && targetDesk.isMain) {
+      var score = 0;
+      if (activeBehind) score += 5;
+      if (targetDirty) score += 3;
+      if (targetAhead) score += 2;
+      if (targetIsMeaningfullyNewer) score += 2;
+      return score;
+    }
+
+    // On main, prefer the busiest feature desk.
+    if (activeDesk.isMain && !targetDesk.isMain) {
+      var score = 0;
+      if (targetDirty) score += 4;
+      if (targetAhead) score += 3;
+      if (targetIsMeaningfullyNewer) score += 2;
+      return score;
+    }
+
+    return 0;
+  }
+
+  bool _isMeaningfullyNewer({
+    required DateTime? candidate,
+    required DateTime? baseline,
+  }) {
+    if (candidate == null) return false;
+    if (baseline == null) return true;
+    return candidate.isAfter(baseline.add(const Duration(hours: 6)));
   }
 
   Future<void> _handleDeskDrop(
@@ -912,8 +990,11 @@ class _DeskRow extends StatelessWidget {
       final existing = worktreeState.desks.firstWhere(
         (d) => d.branch == payload.branchName,
         orElse: () => const WorktreeData(
-          path: '', head: '', isMain: false,
-          isDetached: false, isLocked: false,
+          path: '',
+          head: '',
+          isMain: false,
+          isDetached: false,
+          isLocked: false,
         ),
       );
       if (existing.path.isNotEmpty) {
@@ -935,8 +1016,11 @@ class _DeskRow extends StatelessWidget {
       final existing = worktreeState.desks.firstWhere(
         (d) => d.branch == localRef,
         orElse: () => const WorktreeData(
-          path: '', head: '', isMain: false,
-          isDetached: false, isLocked: false,
+          path: '',
+          head: '',
+          isMain: false,
+          isDetached: false,
+          isLocked: false,
         ),
       );
       if (existing.path.isNotEmpty) {
@@ -950,7 +1034,8 @@ class _DeskRow extends StatelessWidget {
       if (remote == null) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text(
+            const SnackBar(
+                content: Text(
               "Couldn't fetch PR: no remote configured.",
             )),
           );
@@ -961,7 +1046,8 @@ class _DeskRow extends StatelessWidget {
       // before force-overwriting — any local commits on that branch would
       // become unreachable with no UI path to the reflog.
       final refCheck = await Process.run(
-        'git', ['rev-parse', '--verify', localRef],
+        'git',
+        ['rev-parse', '--verify', localRef],
         workingDirectory: activeRepoPath!,
       );
       if (refCheck.exitCode == 0 && context.mounted) {
@@ -1000,8 +1086,9 @@ class _DeskRow extends StatelessWidget {
       if (fetchRes.exitCode != 0) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(
-                "Couldn't fetch PR: ${(fetchRes.stderr as String).trim()}")),
+            SnackBar(
+                content: Text(
+                    "Couldn't fetch PR: ${(fetchRes.stderr as String).trim()}")),
           );
         }
         return;
@@ -1026,6 +1113,10 @@ class _DeskRow extends StatelessWidget {
     final branch = desk.branch;
     final hasPr = branch != null && deskPrState.prFor(branch) != null;
     final canPromote = branch != null && !desk.isDetached && !hasPr;
+    final currentDesk = worktreeState.activeDesk;
+    final currentDeskLabel = currentDesk == null
+        ? (repoState.status?.branch ?? 'current')
+        : _deskDisplayLabel(currentDesk);
     // Resolve main worktree path so we can exclude it from "Apply to
     // main" even in the edge case where a desk's path resolves to the
     // main worktree but isMain is false (unusual rebuilt state).
@@ -1033,20 +1124,29 @@ class _DeskRow extends StatelessWidget {
     // itself and the PR lifecycle would still transition to MERGED.
     String? mainPath;
     for (final d in worktreeState.desks) {
-      if (d.isMain) { mainPath = d.path; break; }
+      if (d.isMain) {
+        mainPath = d.path;
+        break;
+      }
     }
     final canApply = branch != null &&
         !desk.isDetached &&
         !desk.isMain &&
         desk.path != mainPath;
+    final canUpdateCurrentFromDesk = desk.path != repoState.activePath &&
+        desk.isMain &&
+        currentDesk != null &&
+        !currentDesk.isMain &&
+        !currentDesk.isDetached &&
+        !currentDesk.isLocked;
     showAppContextMenu(context, pos, [
       [
         if (canPromote)
           AppContextMenuItem(
             icon: Icons.rocket_launch_outlined,
             label: 'Promote desk to PR',
-            onTap: () => _promoteDeskFlow(
-                context, desk, repoState, deskPrState),
+            onTap: () =>
+                _promoteDeskFlow(context, desk, repoState, deskPrState),
           ),
         if (canApply)
           AppContextMenuItem(
@@ -1055,24 +1155,27 @@ class _DeskRow extends StatelessWidget {
             onTap: () => _applyDeskToMainFlow(
                 context, desk, repoState, deskPrState, worktreeState),
           ),
-        // Menu counterpart of the drag-to-changes gesture. Lossy:
-        // flattens the desk's commits + WIP into one unstaged pile
-        // on whatever worktree is currently active. Source desk is
-        // untouched. Gated on "not my own desk" — imprinting onto
-        // yourself is a no-op. Label names the destination branch so
-        // the user sees "where this goes" before clicking.
-        if (desk.path != repoState.activePath)
+        // Keep branch upkeep separate from patch preview.
+        if (canUpdateCurrentFromDesk)
           AppContextMenuItem(
-            icon: Icons.layers_outlined,
-            label: 'Imprint on ${repoState.status?.branch ?? 'current'}',
-            onTap: () => _imprintDeskFlow(context, desk, repoState),
+            icon: Icons.system_update_alt,
+            label: 'Update $currentDeskLabel from ${_deskDisplayLabel(desk)}',
+            onTap: () => _updateCurrentDeskFromDeskFlow(
+                context, desk, repoState, worktreeState),
+          ),
+        if (!canUpdateCurrentFromDesk && desk.path != repoState.activePath)
+          AppContextMenuItem(
+            icon: Icons.download_outlined,
+            label: 'Bring changes from ${_deskDisplayLabel(desk)} here',
+            onTap: () => _bringDeskChangesHereFlow(
+                context, desk, repoState, worktreeState),
           ),
         if (hasPr)
           AppContextMenuItem(
             icon: Icons.edit_outlined,
             label: 'Edit local PR',
-            onTap: () => _editLocalPrFlow(
-                context, desk, branch, repoState, deskPrState),
+            onTap: () =>
+                _editLocalPrFlow(context, desk, branch, repoState, deskPrState),
           ),
         if (hasPr)
           AppContextMenuItem(
@@ -1147,7 +1250,8 @@ class _DeskRow extends StatelessWidget {
     if (desk.dirtyFileCount > 0) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(
+          const SnackBar(
+              content: Text(
             "Commit or shelve the desk's changes before applying.",
           )),
         );
@@ -1166,7 +1270,8 @@ class _DeskRow extends StatelessWidget {
     if (mainRepoPath == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text(
+          const SnackBar(
+              content: Text(
             'Could not resolve the main worktree path.',
           )),
         );
@@ -1198,7 +1303,8 @@ class _DeskRow extends StatelessWidget {
     if (baseRef == null) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text(
+          const SnackBar(
+              content: Text(
             "Couldn't determine the base branch for this desk.",
           )),
         );
@@ -1208,7 +1314,8 @@ class _DeskRow extends StatelessWidget {
     if (baseRef == branch) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(
+          SnackBar(
+              content: Text(
             "PR base and head are the same branch ($branch) — nothing to apply.",
           )),
         );
@@ -1243,48 +1350,90 @@ class _DeskRow extends StatelessWidget {
     }
   }
 
-  /// "Imprint here": the menu counterpart to drag-dropping a desk onto
-  /// the Changes page. Takes `git diff <activeBranch>` from inside the
-  /// desk — folding ahead-commits + WIP into one unified patch — and
-  /// pipes that through the shared patch-preview dialog so the user
-  /// can inspect and apply as uncommitted work on the current tree.
-  /// Lossy: commit boundaries are flattened. Source desk untouched.
-  Future<void> _imprintDeskFlow(
+  /// Preview updates from the clicked desk onto the current desk.
+  Future<void> _updateCurrentDeskFromDeskFlow(
     BuildContext context,
     WorktreeData desk,
     RepositoryState repoState,
+    WorktreeState worktreeState,
   ) async {
+    final targetDesk = worktreeState.activeDesk;
+    final targetLabel = targetDesk == null
+        ? (repoState.status?.branch ?? 'current')
+        : _deskDisplayLabel(targetDesk);
+    final sourceLabel = _deskDisplayLabel(desk);
+    await _openDeskPatchPreviewFlow(
+      context,
+      sourceDesk: desk,
+      repoState: repoState,
+      worktreeState: worktreeState,
+      previewLabel: 'update $targetLabel from $sourceLabel',
+      emptyMessage: 'No updates to bring from $sourceLabel into $targetLabel.',
+      failureLabel: 'Update prep failed',
+    );
+  }
+
+  /// Preview the clicked desk's changes on the current desk.
+  Future<void> _bringDeskChangesHereFlow(
+    BuildContext context,
+    WorktreeData desk,
+    RepositoryState repoState,
+    WorktreeState worktreeState,
+  ) async {
+    final targetDesk = worktreeState.activeDesk;
+    final targetLabel = targetDesk == null
+        ? (repoState.status?.branch ?? 'current')
+        : _deskDisplayLabel(targetDesk);
+    final sourceLabel = _deskDisplayLabel(desk);
+    await _openDeskPatchPreviewFlow(
+      context,
+      sourceDesk: desk,
+      repoState: repoState,
+      worktreeState: worktreeState,
+      previewLabel: 'bring changes from $sourceLabel into $targetLabel',
+      emptyMessage:
+          'No patchable changes to bring from $sourceLabel into $targetLabel.',
+      failureLabel: 'Patch prep failed',
+    );
+  }
+
+  Future<void> _openDeskPatchPreviewFlow(
+    BuildContext context, {
+    required WorktreeData sourceDesk,
+    required RepositoryState repoState,
+    required WorktreeState worktreeState,
+    required String previewLabel,
+    required String emptyMessage,
+    required String failureLabel,
+  }) async {
     final repoPath = repoState.activePath;
     if (repoPath == null) return;
-    if (desk.path == repoPath) return; // can't imprint onto self
+    if (sourceDesk.path == repoPath) return; // can't preview from self
     final targetRef = repoState.status?.branch ?? 'HEAD';
-    final result = await getDeskDumpDiff(desk.path, targetRef);
+    final result = await getDeskDumpDiff(sourceDesk.path, targetRef);
     if (!context.mounted) return;
     if (!result.ok) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Diff failed: ${result.error}')),
+        SnackBar(content: Text('$failureLabel: ${result.error}')),
       );
       return;
     }
     final diff = result.data ?? '';
     if (diff.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Nothing to imprint — desk is already at parity.'),
-        ),
+        SnackBar(content: Text(emptyMessage)),
       );
       return;
     }
-    final label = desk.branch ??
-        (desk.isDetached ? desk.head.substring(0, 7) : 'desk');
     await showPatchPreviewDialog(
       context,
       repoPath: repoPath,
       rawPatch: diff,
-      sourceLabel: 'desk $label',
+      sourceLabel: previewLabel,
       onApplied: () async {
         if (!context.mounted) return;
         await repoState.refreshStatus();
+        await worktreeState.refreshFor(repoPath);
       },
     );
   }
@@ -1321,8 +1470,8 @@ class _DeskRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text('Edit local PR',
-                        style: t.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w800)),
+                        style: t.textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 12),
                     TextField(
                       controller: titleCtrl,
@@ -1347,8 +1496,7 @@ class _DeskRow extends StatelessWidget {
                       children: [
                         Checkbox(
                           value: isDraft,
-                          onChanged: (v) =>
-                              setSt(() => isDraft = v ?? false),
+                          onChanged: (v) => setSt(() => isDraft = v ?? false),
                         ),
                         const Text('draft'),
                       ],
@@ -1417,14 +1565,17 @@ class _DeskRow extends StatelessWidget {
 
 class _DeskTab extends StatefulWidget {
   final WorktreeData desk;
+  final bool highlightSyncTarget;
   final VoidCallback onTap;
   final VoidCallback? onClose;
+
   /// Right-click handler. Called with the global pointer position so
   /// the caller can anchor a context menu to the cursor.
   final ValueChanged<Offset>? onSecondaryTap;
 
   const _DeskTab({
     required this.desk,
+    this.highlightSyncTarget = false,
     required this.onTap,
     required this.onClose,
     this.onSecondaryTap,
@@ -1434,8 +1585,50 @@ class _DeskTab extends StatefulWidget {
   State<_DeskTab> createState() => _DeskTabState();
 }
 
-class _DeskTabState extends State<_DeskTab> {
+class _DeskTabState extends State<_DeskTab>
+    with SingleTickerProviderStateMixin {
   bool _hovered = false;
+  late final AnimationController _dotPulseCtrl;
+  late final Animation<double> _dotPulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _dotPulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    );
+    _dotPulse = CurvedAnimation(
+      parent: _dotPulseCtrl,
+      curve: Curves.easeInOut,
+    );
+    _syncDotPulse();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DeskTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.highlightSyncTarget != widget.highlightSyncTarget) {
+      _syncDotPulse();
+    }
+  }
+
+  void _syncDotPulse() {
+    if (widget.highlightSyncTarget) {
+      if (!_dotPulseCtrl.isAnimating) {
+        _dotPulseCtrl.repeat(reverse: true);
+      }
+      return;
+    }
+    _dotPulseCtrl.stop();
+    _dotPulseCtrl.value = 0;
+  }
+
+  @override
+  void dispose() {
+    _dotPulseCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1457,10 +1650,15 @@ class _DeskTabState extends State<_DeskTab> {
     // this is a synchronous lookup with no I/O on the build path.
     // Drives the dirty / ahead / behind / last-touched chrome that
     // makes the desk row a status map at a glance.
-    final activity = context.watch<WorktreeState>().activityFor(widget.desk.path);
+    final activity =
+        context.watch<WorktreeState>().activityFor(widget.desk.path);
     final dirtyN = widget.desk.dirtyFileCount;
     final aheadN = activity?.ahead ?? 0;
     final behindN = activity?.behind ?? 0;
+    final syncHighlight = widget.highlightSyncTarget;
+    final backgroundColor =
+        _hovered ? t.secondaryBtnHoverBg : t.bg0.withValues(alpha: 0.25);
+    final borderColor = t.chromeBorder.withValues(alpha: 0.2);
 
     return Tooltip(
       message: _composeTooltip(
@@ -1473,145 +1671,180 @@ class _DeskTabState extends State<_DeskTab> {
       ),
       waitDuration: const Duration(milliseconds: 400),
       child: LongPressDraggable<DeskDropPayload>(
-      data: DeskDropPayload.desk(path: d.path, label: label),
-      dragAnchorStrategy: pointerDragAnchorStrategy,
-      feedback: _DeskTabDragFeedback(label: label, tokens: t),
-      child: MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        onSecondaryTapDown: widget.onSecondaryTap == null
-            ? null
-            : (d) => widget.onSecondaryTap!(d.globalPosition),
-        child: AnimatedContainer(
-          duration: context.motion(const Duration(milliseconds: 80)),
-          height: 26,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          decoration: BoxDecoration(
-            color: _hovered
-                ? t.secondaryBtnHoverBg
-                : t.bg0.withValues(alpha: 0.25),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: t.chromeBorder.withValues(alpha: 0.2),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Indicator position: dot by default, × overlay on hover.
-              // Same footprint so the tab never reflows.
-              SizedBox(
-                width: 12,
-                height: 12,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    AnimatedOpacity(
-                      opacity: showCloseOverDot ? 0.0 : 1.0,
-                      duration: context.motion(const Duration(milliseconds: 100)),
-                      child: Container(
-                        width: 6,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: dotColor,
-                        ),
-                      ),
-                    ),
-                    if (canClose)
-                      AnimatedOpacity(
-                        opacity: showCloseOverDot ? 1.0 : 0.0,
-                        duration: context.motion(const Duration(milliseconds: 100)),
-                        child: GestureDetector(
-                          onTap: widget.onClose,
-                          behavior: HitTestBehavior.opaque,
-                          child: Text(
-                            '×',
-                            style: TextStyle(
-                              color: t.textMuted,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              height: 1,
-                            ),
+        data: DeskDropPayload.desk(path: d.path, label: label),
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        feedback: _DeskTabDragFeedback(label: label, tokens: t),
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: widget.onTap,
+            onSecondaryTapDown: widget.onSecondaryTap == null
+                ? null
+                : (d) => widget.onSecondaryTap!(d.globalPosition),
+            child: AnimatedContainer(
+              duration: context.motion(const Duration(milliseconds: 80)),
+              height: 26,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: backgroundColor,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: borderColor,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Dot by default; close affordance on hover.
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        AnimatedOpacity(
+                          opacity: showCloseOverDot ? 0.0 : 1.0,
+                          duration:
+                              context.motion(const Duration(milliseconds: 100)),
+                          child: AnimatedBuilder(
+                            animation: _dotPulse,
+                            builder: (context, _) {
+                              final pulseT =
+                                  syncHighlight ? _dotPulse.value : 0.0;
+                              final haloScale = 1.15 + (0.65 * pulseT);
+                              final dotScale = 1.0 + (0.18 * pulseT);
+                              final haloAlpha =
+                                  syncHighlight ? 0.08 + (0.14 * pulseT) : 0.0;
+                              final liveDotColor = syncHighlight
+                                  ? t.accentBright
+                                      .withValues(alpha: 0.78 + (0.18 * pulseT))
+                                  : dotColor;
+                              return Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  if (syncHighlight)
+                                    Transform.scale(
+                                      scale: haloScale,
+                                      child: Container(
+                                        width: 7,
+                                        height: 7,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: t.accentBright
+                                              .withValues(alpha: haloAlpha),
+                                        ),
+                                      ),
+                                    ),
+                                  Transform.scale(
+                                    scale: dotScale,
+                                    child: Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: liveDotColor,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                         ),
+                        if (canClose)
+                          AnimatedOpacity(
+                            opacity: showCloseOverDot ? 1.0 : 0.0,
+                            duration: context
+                                .motion(const Duration(milliseconds: 100)),
+                            child: GestureDetector(
+                              onTap: widget.onClose,
+                              behavior: HitTestBehavior.opaque,
+                              child: Text(
+                                '×',
+                                style: TextStyle(
+                                  color: t.textMuted,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: t.textNormal,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (hasLocalPr) ...[
+                    const SizedBox(width: 6),
+                    // "Local PR" sigil. Same accentBright as other "live"
+                    // indicators so the eye groups them as the same kind
+                    // of signal (this desk has metadata, the PR list will
+                    // show it).
+                    Container(
+                      width: 4,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: t.accentBright.withValues(alpha: 0.85),
                       ),
+                    ),
                   ],
-                ),
+                  if (dirtyN > 0) ...[
+                    const SizedBox(width: 6),
+                    // Dirty count — the number of modified-or-staged files
+                    // in this worktree. Tabular figures so it doesn't jitter
+                    // when the count crosses a digit boundary. Read at a
+                    // glance: "this desk has work waiting on you."
+                    Text(
+                      '$dirtyN',
+                      style: TextStyle(
+                        color: t.accentBright,
+                        fontSize: 9.5,
+                        fontFamily: 'JetBrainsMono',
+                        fontWeight: FontWeight.w800,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                  if (aheadN > 0) ...[
+                    const SizedBox(width: 6),
+                    // Ahead-of-base — green up-chevron with count. Same
+                    // accentBright as the rest of the live signals so they
+                    // feel like one family of "this desk is alive."
+                    _DeskTrendGlyph(
+                      glyph: '↑',
+                      count: aheadN,
+                      color: t.stateAdded,
+                    ),
+                  ],
+                  if (behindN > 0) ...[
+                    const SizedBox(width: 4),
+                    // Behind-of-base — warm down-chevron. Always shown when
+                    // non-zero because "you're behind" is the kind of state
+                    // where surprise is bad — better quiet awareness than
+                    // discovery on a failed merge.
+                    _DeskTrendGlyph(
+                      glyph: '↓',
+                      count: behindN,
+                      color: t.stateConflicted,
+                    ),
+                  ],
+                ],
               ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: t.textNormal,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (hasLocalPr) ...[
-                const SizedBox(width: 6),
-                // "Local PR" sigil. Same accentBright as other "live"
-                // indicators so the eye groups them as the same kind
-                // of signal (this desk has metadata, the PR list will
-                // show it).
-                Container(
-                  width: 4,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: t.accentBright.withValues(alpha: 0.85),
-                  ),
-                ),
-              ],
-              if (dirtyN > 0) ...[
-                const SizedBox(width: 6),
-                // Dirty count — the number of modified-or-staged files
-                // in this worktree. Tabular figures so it doesn't jitter
-                // when the count crosses a digit boundary. Read at a
-                // glance: "this desk has work waiting on you."
-                Text(
-                  '$dirtyN',
-                  style: TextStyle(
-                    color: t.accentBright,
-                    fontSize: 9.5,
-                    fontFamily: 'JetBrainsMono',
-                    fontWeight: FontWeight.w800,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-              if (aheadN > 0) ...[
-                const SizedBox(width: 6),
-                // Ahead-of-base — green up-chevron with count. Same
-                // accentBright as the rest of the live signals so they
-                // feel like one family of "this desk is alive."
-                _DeskTrendGlyph(
-                  glyph: '↑',
-                  count: aheadN,
-                  color: t.stateAdded,
-                ),
-              ],
-              if (behindN > 0) ...[
-                const SizedBox(width: 4),
-                // Behind-of-base — warm down-chevron. Always shown when
-                // non-zero because "you're behind" is the kind of state
-                // where surprise is bad — better quiet awareness than
-                // discovery on a failed merge.
-                _DeskTrendGlyph(
-                  glyph: '↓',
-                  count: behindN,
-                  color: t.stateConflicted,
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
-    ),
-    ),
     );
   }
 
@@ -1627,6 +1860,7 @@ class _DeskTabState extends State<_DeskTab> {
     required bool hasLocalPr,
   }) {
     final parts = <String>[branch];
+    if (widget.highlightSyncTarget) parts.add('suggested source');
     if (dirty > 0) parts.add('$dirty modified');
     if (ahead > 0) parts.add('$ahead ahead');
     if (behind > 0) parts.add('$behind behind');
@@ -1648,6 +1882,16 @@ class _DeskTabState extends State<_DeskTab> {
     }
     return '$head\nlast touched $rel';
   }
+}
+
+String _deskDisplayLabel(WorktreeData desk) {
+  if (desk.branch != null && desk.branch!.trim().isNotEmpty) {
+    return desk.branch!;
+  }
+  if (desk.isDetached && desk.head.isNotEmpty) {
+    return desk.head.substring(0, math.min(7, desk.head.length));
+  }
+  return 'desk';
 }
 
 /// Drag feedback chip shown while the user is dragging a desk tab to
@@ -1775,27 +2019,23 @@ class _CloseDeskDialog extends StatelessWidget {
       ),
       actions: [
         TextButton(
-          onPressed: () =>
-              Navigator.of(context).pop(_CloseDeskChoice.cancel),
+          onPressed: () => Navigator.of(context).pop(_CloseDeskChoice.cancel),
           child: Text('Cancel', style: TextStyle(color: t.textMuted)),
         ),
         TextButton(
-          onPressed: () =>
-              Navigator.of(context).pop(_CloseDeskChoice.discard),
-          child: Text('Discard & close',
-              style: TextStyle(color: t.stateDeleted)),
+          onPressed: () => Navigator.of(context).pop(_CloseDeskChoice.discard),
+          child:
+              Text('Discard & close', style: TextStyle(color: t.stateDeleted)),
         ),
         TextButton(
-          onPressed: () =>
-              Navigator.of(context).pop(_CloseDeskChoice.shelve),
-          child: Text('Shelve & close',
-              style: TextStyle(color: t.accentBright)),
+          onPressed: () => Navigator.of(context).pop(_CloseDeskChoice.shelve),
+          child:
+              Text('Shelve & close', style: TextStyle(color: t.accentBright)),
         ),
       ],
     );
   }
 }
-
 
 class _BranchPill extends StatefulWidget {
   final String branch;
@@ -1911,8 +2151,11 @@ class _BranchPillState extends State<_BranchPill> {
           final existing = worktreeState.desks.firstWhere(
             (d) => d.branch == branchName,
             orElse: () => const WorktreeData(
-              path: '', head: '', isMain: false,
-              isDetached: false, isLocked: false,
+              path: '',
+              head: '',
+              isMain: false,
+              isDetached: false,
+              isLocked: false,
             ),
           );
           _close();
@@ -1969,7 +2212,6 @@ class _BranchPillState extends State<_BranchPill> {
     _close();
   }
 
-
   @override
   void dispose() {
     _overlay?.remove();
@@ -2000,14 +2242,12 @@ class _BranchPillState extends State<_BranchPill> {
             // this cap, a long branch name pushed the next desk tab
             // rightward, leaving visible dead space between the popup
             // (fixed-width) and the next tab when the popup was open.
-            constraints:
-                const BoxConstraints(maxWidth: _kBranchPillMaxWidth),
+            constraints: const BoxConstraints(maxWidth: _kBranchPillMaxWidth),
             child: AnimatedContainer(
               key: _pillKey,
               duration: context.motion(const Duration(milliseconds: 150)),
               curve: Curves.easeOut,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: _hovered ? t.itemHoverBg : t.surface0,
                 borderRadius: BorderRadius.circular(999),
@@ -2016,8 +2256,7 @@ class _BranchPillState extends State<_BranchPill> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  AppIcon(
-                      name: 'git-branch', size: 11, color: t.accentBright),
+                  AppIcon(name: 'git-branch', size: 11, color: t.accentBright),
                   const SizedBox(width: 5),
                   Flexible(
                     child: Text(
@@ -2033,8 +2272,7 @@ class _BranchPillState extends State<_BranchPill> {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  AppIcon(
-                      name: 'chevron-right', size: 10, color: t.textMuted),
+                  AppIcon(name: 'chevron-right', size: 10, color: t.textMuted),
                 ],
               ),
             ),
@@ -2052,7 +2290,6 @@ class _BranchPillState extends State<_BranchPill> {
 /// without leaving a gap against the next desk tab.
 const double _kBranchPillMaxWidth = 280;
 
-
 class _BranchPanelOverlay extends StatefulWidget {
   final double top;
   final double left;
@@ -2063,8 +2300,10 @@ class _BranchPanelOverlay extends StatefulWidget {
   final bool switching;
   final String currentBranch;
   final List<DeskIssue> issues;
+
   /// Remote issues from [RemoteIssueCacheState].
   final List<IssueSummary> remoteIssues;
+
   /// Maps desk-PR head branches to the remote issue numbers they address.
   final Map<String, Set<int>> branchRemoteIssues;
   final VoidCallback onDismiss;
@@ -2073,6 +2312,7 @@ class _BranchPanelOverlay extends StatefulWidget {
   final ValueChanged<String>? onCreateDeskFromHead;
   final Set<String> branchesOpenAsDesks;
   final VoidCallback onNavigate;
+
   /// Submit a new issue. Returns an error string or null on success.
   final Future<String?> Function({
     required String title,
@@ -2293,9 +2533,11 @@ class _PanelBody extends StatelessWidget {
   final ValueChanged<String> onCheckout;
   final ValueChanged<String>? onOpenAsDesk;
   final Set<String> branchesOpenAsDesks;
+
   /// Create a new branch from HEAD and open it on a new desk, in one motion.
   final ValueChanged<String>? onCreateDeskFromHead;
   final VoidCallback onNavigate;
+
   /// Called with branch name on row hover-enter, null on hover-exit.
   final ValueChanged<String?>? onBranchHover;
   final AppTokens t;
@@ -2349,12 +2591,9 @@ class _PanelBody extends StatelessWidget {
             isCurrent: branch.current,
             switching: switching,
             t: t,
-            onTap: branch.current
-                ? null
-                : () => onCheckout(branch.name),
-            onOpenAsDesk: onOpenAsDesk == null
-                ? null
-                : () => onOpenAsDesk!(branch.name),
+            onTap: branch.current ? null : () => onCheckout(branch.name),
+            onOpenAsDesk:
+                onOpenAsDesk == null ? null : () => onOpenAsDesk!(branch.name),
             alreadyOpenAsDesk: branchesOpenAsDesks.contains(branch.name),
             onHoverChanged: (hovered) =>
                 onBranchHover?.call(hovered ? branch.name : null),
@@ -2373,19 +2612,21 @@ class _PanelBody extends StatelessWidget {
   }
 }
 
-
 class _BranchRow extends StatefulWidget {
   final BranchInfo branch;
   final bool isCurrent;
   final bool switching;
   final AppTokens t;
   final VoidCallback? onTap;
+
   /// When non-null, shows a hover-reveal "open on new desk" affordance.
   /// If the branch already has a worktree, this instead jumps to that desk.
   final VoidCallback? onOpenAsDesk;
+
   /// True when this branch is already open as a separate desk — the desk
   /// action then "jumps" instead of creating a new one.
   final bool alreadyOpenAsDesk;
+
   /// Reports hover state changes to parent (true = entered, false = exited).
   final ValueChanged<bool>? onHoverChanged;
 
@@ -2414,8 +2655,7 @@ class _BranchRowState extends State<_BranchRow> {
     final canSwitch = widget.onTap != null && !widget.switching;
 
     return MouseRegion(
-      cursor:
-          canSwitch ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor: canSwitch ? SystemMouseCursors.click : SystemMouseCursors.basic,
       onEnter: (_) {
         setState(() => _hovered = true);
         widget.onHoverChanged?.call(true);
@@ -2428,8 +2668,7 @@ class _BranchRowState extends State<_BranchRow> {
         onTap: canSwitch ? widget.onTap : null,
         child: AnimatedContainer(
           duration: context.motion(const Duration(milliseconds: 80)),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           color: _hovered && canSwitch
               ? t.secondaryBtnHoverBg
               : t.secondaryBtnHoverBg.withValues(alpha: 0),
@@ -2454,9 +2693,8 @@ class _BranchRowState extends State<_BranchRow> {
                   style: TextStyle(
                     color: widget.isCurrent ? t.textStrong : t.textNormal,
                     fontSize: 11,
-                    fontWeight: widget.isCurrent
-                        ? FontWeight.w600
-                        : FontWeight.w400,
+                    fontWeight:
+                        widget.isCurrent ? FontWeight.w600 : FontWeight.w400,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -2473,8 +2711,7 @@ class _BranchRowState extends State<_BranchRow> {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                if (b.ahead > 0 && b.behind > 0)
-                  const SizedBox(width: 3),
+                if (b.ahead > 0 && b.behind > 0) const SizedBox(width: 3),
                 if (b.behind > 0)
                   Text(
                     '↓${b.behind}',
@@ -2674,8 +2911,7 @@ class _NavRowState extends State<_NavRow> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: context.motion(const Duration(milliseconds: 80)),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
             color: _hovered
                 ? t.secondaryBtnHoverBg
@@ -2704,7 +2940,6 @@ class _NavRowState extends State<_NavRow> {
   }
 }
 
-
 const double _kIssuesPanelWidth = 172.0;
 
 /// Unified item for the side panel — wraps either a local [DeskIssue] or a
@@ -2713,8 +2948,10 @@ class _SidePanelIssue {
   final int displayId;
   final String title;
   final String state;
+
   /// True when backed by a local DeskIssue (has git storage).
   final bool isLocal;
+
   /// True when the issue exists on GitHub (local+promoted counts here too).
   final bool isRemote;
 
@@ -3195,9 +3432,8 @@ class _RemoteToggle extends StatelessWidget {
                 borderRadius: BorderRadius.circular(3),
               ),
               alignment: Alignment.center,
-              child: value
-                  ? AppIcon(name: 'check', size: 8, color: t.bg0)
-                  : null,
+              child:
+                  value ? AppIcon(name: 'check', size: 8, color: t.bg0) : null,
             ),
             const SizedBox(width: 5),
             Text(
@@ -3239,9 +3475,7 @@ class _SubmitButtonState extends State<_SubmitButton> {
   Widget build(BuildContext context) {
     final t = widget.t;
     return MouseRegion(
-      cursor: widget.busy
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
+      cursor: widget.busy ? SystemMouseCursors.basic : SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
@@ -3356,7 +3590,8 @@ class _KeepAlivePages extends StatefulWidget {
 
 class _KeepAlivePagesState extends State<_KeepAlivePages>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _ac = AnimationController(vsync: this, value: 1);
+  late final AnimationController _ac =
+      AnimationController(vsync: this, value: 1);
   int _from = 0;
   int _to = 0;
 

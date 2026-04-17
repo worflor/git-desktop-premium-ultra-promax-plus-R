@@ -1065,6 +1065,7 @@ class _OverviewInspector extends StatelessWidget {
     final si = snapshot.signalIntegrity;
     final rs = snapshot.refSummary;
     final h = snapshot.header;
+    final flow = snapshot.flow;
     final machineCount = si.rawCommitCount - si.filteredCommitCount;
     final linearRatio = si.filteredCommitCount > 0
         ? rs.mergeCommitCount / si.filteredCommitCount
@@ -1135,6 +1136,18 @@ class _OverviewInspector extends StatelessWidget {
         value: rs.mergeCommitCount == 0
             ? shapeHint
             : '$shapeHint · ${rs.mergeCommitCount} merges',
+      ),
+      const SizedBox(height: 5),
+      _InspectorRow(
+        label: 'flow',
+        value:
+            'g ${flow.gradientMass.toStringAsFixed(2)} Â· c ${flow.curlMass.toStringAsFixed(2)} Â· h ${flow.harmonicMass.toStringAsFixed(2)}',
+      ),
+      const SizedBox(height: 5),
+      _InspectorRow(
+        label: 'stress',
+        value:
+            '${flow.structuralStress.toStringAsFixed(2)} Â· conf ${flow.confidence.toStringAsFixed(2)}',
       ),
       if (rs.renameCommitCount > 0) ...[
         const SizedBox(height: 5),

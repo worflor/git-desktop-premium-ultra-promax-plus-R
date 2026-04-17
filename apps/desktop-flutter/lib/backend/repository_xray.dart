@@ -388,6 +388,15 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       renameCommitCount: _countRenameCommits(futures[17].stdout.toString()),
       hiddenNamespaces: hiddenNamespaces,
     );
+    final flow = _buildXrayFlow(
+      signalIntegrity: signalIntegrity,
+      refSummary: refSummary,
+      hotspots: filteredHotspots,
+      cadence: filteredCadence,
+      strata: strata,
+      metabolism: metabolism,
+      migrationPair: migrationPair,
+    );
 
     final snapshot = RepositoryXraySnapshotData(
       header: RepositoryXrayHeaderData(
@@ -437,6 +446,7 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       // the metabolism card share the same AR(2) fit (one source of
       // truth for repo time-constants).
       metabolism: metabolism,
+      flow: flow,
     );
 
     stopwatch.stop();
@@ -1687,6 +1697,102 @@ List<RepositoryXrayCardData> _buildCards({
   }
 
   return cards.take(8).toList();
+}
+
+RepositoryXrayFlowData _buildXrayFlow({
+  required RepositoryXraySignalIntegrityData signalIntegrity,
+  required RepositoryXrayRefSummaryData refSummary,
+  required List<RepositoryXrayHotspotData> hotspots,
+  required List<RepositoryXrayCadenceData> cadence,
+  required List<RepositoryXrayStratumData> strata,
+  required RepositoryXrayMetabolismData metabolism,
+  required _MigrationPair? migrationPair,
+}) {
+  double clamp01(double value) => value.clamp(0.0, 1.0).toDouble();
+
+  final totalTouches =
+      hotspots.fold<int>(0, (sum, hotspot) => sum + hotspot.touchCount);
+  final topShare = hotspots.isEmpty || totalTouches == 0
+      ? 0.0
+      : hotspots.first.touchCount / totalTouches;
+  final peakBurst = cadence
+      .where((item) => item.kind == 'burst')
+      .fold<int>(0, (best, item) => item.count > best ? item.count : best);
+  final peakReflog = cadence
+      .where((item) => item.kind == 'reflog')
+      .fold<int>(0, (best, item) => item.count > best ? item.count : best);
+  final machinePressure = signalIntegrity.rawCommitCount == 0
+      ? 0.0
+      : signalIntegrity.machineCommitCount / signalIntegrity.rawCommitCount;
+  final mergePressure = signalIntegrity.filteredCommitCount == 0
+      ? 0.0
+      : refSummary.mergeCommitCount / signalIntegrity.filteredCommitCount;
+  final hiddenPressure = signalIntegrity.hiddenRefCount == 0
+      ? 0.0
+      : math.min(1.0, signalIntegrity.hiddenRefCount / 3.0);
+  final hotspotPressure = clamp01(topShare);
+  final burstPressure = peakBurst == 0 ? 0.0 : math.min(1.0, peakBurst / 8.0);
+  final reflogPressure =
+      peakReflog == 0 ? 0.0 : math.min(1.0, peakReflog / 16.0);
+  final migrationPressure = migrationPair == null
+      ? 0.0
+      : math.min(
+          1.0,
+          (migrationPair.older.touchCount + migrationPair.newer.touchCount) /
+              24.0,
+        );
+  final stratumPressure =
+      strata.isEmpty ? 0.0 : math.min(1.0, strata.length / 6.0);
+  final orbitalLift = metabolism.activeDays == 0
+      ? 0.0
+      : metabolism.isOrbital
+          ? 0.18
+          : 0.08;
+
+  final gradientMass = clamp01(
+    0.34 * (1.0 - clamp01(mergePressure)) +
+        0.20 * (1.0 - burstPressure) +
+        0.16 * (1.0 - hotspotPressure) +
+        0.15 * (1.0 - machinePressure) +
+        0.15 * (1.0 - hiddenPressure) +
+        orbitalLift,
+  );
+  final curlMass = clamp01(
+    0.42 * clamp01(mergePressure) +
+        0.28 * burstPressure +
+        0.16 * reflogPressure +
+        0.14 * hotspotPressure,
+  );
+  final harmonicMass = clamp01(
+    0.33 * hiddenPressure +
+        0.28 * migrationPressure +
+        0.17 * stratumPressure +
+        0.12 * hotspotPressure +
+        0.10 * reflogPressure,
+  );
+  final structuralStress = clamp01(
+    0.26 * machinePressure +
+        0.21 * clamp01(mergePressure) +
+        0.19 * hotspotPressure +
+        0.14 * hiddenPressure +
+        0.10 * reflogPressure +
+        0.10 * migrationPressure,
+  );
+  final confidence = clamp01(
+    0.34 +
+        (hotspots.isNotEmpty ? 0.20 : 0.0) +
+        (cadence.isNotEmpty ? 0.18 : 0.0) +
+        (strata.isNotEmpty ? 0.14 : 0.0) +
+        (metabolism.activeDays > 0 ? 0.14 : 0.0),
+  );
+
+  return RepositoryXrayFlowData(
+    gradientMass: gradientMass,
+    curlMass: curlMass,
+    harmonicMass: harmonicMass,
+    structuralStress: structuralStress,
+    confidence: confidence,
+  );
 }
 
 _MigrationPair? _detectMigrationPair(List<RepositoryXrayStratumData> strata) {

@@ -25,6 +25,7 @@ import '../../backend/git_result.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
 import '../../backend/logos_git.dart';
+import '../../backend/logos_git_diagnostics.dart';
 import '../../backend/pr_shape.dart';
 import '../../backend/desk_pr.dart';
 import '../../backend/desk_pr_diff.dart';
@@ -451,6 +452,7 @@ class _BranchesPageState extends State<BranchesPage> {
   // alignments are mutually consistent. Recomputed on engine refresh.
   ActivityField? _activityField;
   String? _activityFieldRepoKey;
+  String? _prWarmSweepToken;
 
   // TOUCHED-SINCE-YOU-LOOKED — local timestamp per PR-id of when the
   // viewer last opened that PR's detail. Persisted to SharedPreferences
@@ -1955,6 +1957,7 @@ class _BranchesPageState extends State<BranchesPage> {
     int prNumber,
     PullRequestDetail detail,
   ) async {
+    final stopwatch = Stopwatch()..start();
     // Content-addressed cache: if the file list shifted (new commits on
     // the branch since the shape was last computed), recompute. The old
     // `containsKey` short-circuit froze the header at stale values
@@ -1990,6 +1993,16 @@ class _BranchesPageState extends State<BranchesPage> {
       if (shape != null) {
         _prShapes[prNumber] = shape;
         _prShapeFileFingerprints[prNumber] = fingerprint;
+        LogosGitDiagnostics.instance.recordFlow(
+          repoPath: repoPath,
+          scope: 'pr',
+          identity: '$prNumber',
+          gradientMass: shape.flow.gradientMass,
+          curlMass: shape.flow.curlMass,
+          harmonicMass: shape.flow.harmonicMass,
+          structuralStress: shape.flow.structuralStress,
+          confidence: shape.flow.confidence,
+        );
         // Pairwise cosine map invalidates whenever a new shape lands —
         // cheap to recompute (O(P²)) at realistic open-PR counts.
         _cachedCosineMap = null;
@@ -2003,6 +2016,15 @@ class _BranchesPageState extends State<BranchesPage> {
     } finally {
       _prShapesLoading.remove(prNumber);
       if (mounted) setState(() {});
+      stopwatch.stop();
+      final durationMs = stopwatch.elapsedMicroseconds / 1000;
+      if (durationMs.isFinite && durationMs >= 8) {
+        await DiagnosticsState.instance.recordUiTiming(
+          event: 'branches.pr.shape.compute',
+          phase: 'compute',
+          durationMs: durationMs,
+        );
+      }
     }
   }
 
@@ -3030,22 +3052,44 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Widget _buildPullRequestsBody(AppTokens t, String repoPath) {
-    // Watch the engine state — when LogosGit warms, this body rebuilds,
-    // and the post-frame sweep below picks up any cached PR details
-    // whose shapes haven't computed yet. The interplay is the only
-    // safe way to bridge "engine is async" with "shapes need engine":
-    // we don't block on cold-start, but we don't drop the signal
-    // either.
-    context.watch<LogosGitState>();
+    final isActive = TickerMode.valuesOf(context).enabled;
+    final logosEngine = isActive
+        ? context.select<LogosGitState, LogosGit?>(
+            (state) => state.engineFor(repoPath),
+          )
+        : context.read<LogosGitState>().engineFor(repoPath);
     final deskPrs = context.watch<DeskPrState>().all;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _warmPrShapesForVisibleDetails(repoPath);
-      // Lazily fetch detail for any local desk PR that hasn't been
-      // expanded yet — same role as _prefetchPrDetails for remote PRs,
-      // but the data source is `git diff baseRef..headRef`.
-      _prefetchLocalDeskPrDetails(repoPath, deskPrs);
-    });
+    if (isActive) {
+      final warmToken = logosEngine == null
+          ? null
+          : '$repoPath|${identityHashCode(logosEngine)}';
+      if (warmToken != null && warmToken != _prWarmSweepToken) {
+        _prWarmSweepToken = warmToken;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted ||
+              !TickerMode.valuesOf(context).enabled ||
+              _prWarmSweepToken != warmToken) {
+            return;
+          }
+          _warmPrShapesForVisibleDetails(repoPath);
+        });
+      } else if (warmToken == null) {
+        _prWarmSweepToken = null;
+      }
+      if (deskPrs.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !TickerMode.valuesOf(context).enabled) {
+            return;
+          }
+          // Lazily fetch detail for any local desk PR that hasn't been
+          // expanded yet — same role as _prefetchPrDetails for remote PRs,
+          // but the data source is `git diff baseRef..headRef`.
+          _prefetchLocalDeskPrDetails(repoPath, deskPrs);
+        });
+      }
+    } else {
+      _prWarmSweepToken = null;
+    }
     final status = _ghStatus;
     if (_prsLoading && (_prs == null || _prs!.isEmpty) && deskPrs.isEmpty) {
       return _LensLoadingNotice(label: 'Reading pull requests…');
@@ -6645,7 +6689,6 @@ class _PrExpanded extends StatelessWidget {
               return SizedBox(
                 height: 520,
                 child: DiffShell(
-                  key: ValueKey(activePath),
                   filePath: activePath,
                   tokens: t,
                   diffContent: detail!.rawDiffByFile[activePath],
@@ -7474,9 +7517,14 @@ class _FilesSectionHeader extends StatelessWidget {
     // which drops to 0 for weak-but-real couplings pruned by top-K.
     final paths = files.map((f) => f.path);
     final repoPath = context.read<RepositoryState>().activePath;
+    final isActive = TickerMode.valuesOf(context).enabled;
     final engine = repoPath == null
         ? null
-        : context.watch<LogosGitState>().engineFor(repoPath);
+        : (isActive
+            ? context.select<LogosGitState, LogosGit?>(
+                (state) => state.engineFor(repoPath),
+              )
+            : context.read<LogosGitState>().engineFor(repoPath));
     final fallbackMatrix = engine?.stats.coupling ?? matrix;
     final coherence = shape?.coherence ??
         (fallbackMatrix == null || files.length < 2
@@ -7485,6 +7533,23 @@ class _FilesSectionHeader extends StatelessWidget {
     final stability = shape?.stability;
     final orientation = shape?.orientation;
     final align = shape?.fieldAlignment;
+    final sourceAlign = shape?.sourceAlignment;
+    final sourceSurprise = shape?.sourceSurprise;
+    final fieldSurprise = shape?.fieldSurprise;
+    final highFreq = shape?.highFrequencySurprise ?? 0.0;
+    final higherOrder = shape?.higherOrderLift ?? 0.0;
+    final reducibility = shape?.reducibilityGap ?? 0.0;
+    final flow = shape?.flow;
+    final topWitnessKinds = (shape?.witnessKindFractions.entries.toList() ??
+        <MapEntry<String, double>>[])
+      ..sort((a, b) {
+        final byValue = b.value.compareTo(a.value);
+        if (byValue != 0) return byValue;
+        return a.key.compareTo(b.key);
+      });
+    final witnessPill = topWitnessKinds.isEmpty
+        ? null
+        : topWitnessKinds.take(3).map((e) => e.key).join('|');
 
     // Stability modulates the dot color: high stability = full
     // accentBright; low = pulled toward textFaint. Lerp factor uses
@@ -7533,9 +7598,25 @@ class _FilesSectionHeader extends StatelessWidget {
           // textual sigil here so the user can decode rail color when
           // it's ambiguous (or learn what the rail color means).
           Tooltip(
-            message: align == null
-                ? _orientationLabel(orientation)
-                : '${_orientationLabel(orientation)} · cos ${align.toStringAsFixed(2)}',
+            message: [
+              _orientationLabel(orientation),
+              if (align != null) 'field ${align.toStringAsFixed(2)}',
+              if (sourceAlign != null)
+                'source ${sourceAlign.toStringAsFixed(2)}',
+              if (sourceSurprise != null)
+                'srcΔ ${sourceSurprise.toStringAsFixed(2)}',
+              if (fieldSurprise != null)
+                'fldΔ ${fieldSurprise.toStringAsFixed(2)}',
+              if (highFreq > 0.01) 'hf ${highFreq.toStringAsFixed(2)}',
+              if (higherOrder > 0.01) 'ho ${higherOrder.toStringAsFixed(2)}',
+              if (reducibility > 0.01) 'rg ${reducibility.toStringAsFixed(2)}',
+              if (flow != null) 'g ${flow.gradientMass.toStringAsFixed(2)}',
+              if (flow != null) 'c ${flow.curlMass.toStringAsFixed(2)}',
+              if (flow != null) 'h ${flow.harmonicMass.toStringAsFixed(2)}',
+              if (flow != null)
+                'stress ${flow.structuralStress.toStringAsFixed(2)}',
+              if (witnessPill != null) 'wit $witnessPill',
+            ].join(' · '),
             child: Padding(
               padding: const EdgeInsets.only(right: 8),
               child: Text(
@@ -10400,11 +10481,11 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
   /// apply") to bound the path slice so we correctly handle paths
   /// containing spaces or embedded colons — a regex with `\S+?` would
   /// truncate at the first whitespace or colon.
-  Set<String> _failingPathsFromStderr(String err) {
+  Map<String, Set<int>> _failingLineHintsFromStderr(String err) {
     const failedPrefix = 'error: patch failed: ';
     const notAppliedSuffix = ': patch does not apply';
     const errorPrefix = 'error: ';
-    final out = <String>{};
+    final out = <String, Set<int>>{};
     for (final raw in err.split('\n')) {
       final line = raw.trim();
       if (line.startsWith(failedPrefix)) {
@@ -10416,23 +10497,194 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
         if (lastColon <= 0) continue;
         final tail = rest.substring(lastColon + 1);
         if (RegExp(r'^\d+$').hasMatch(tail)) {
-          out.add(rest.substring(0, lastColon));
+          final path = rest.substring(0, lastColon);
+          (out[path] ??= <int>{}).add(int.parse(tail));
         }
         continue;
       }
       if (line.startsWith(errorPrefix) && line.endsWith(notAppliedSuffix)) {
         final path = line.substring(
             errorPrefix.length, line.length - notAppliedSuffix.length);
-        if (path.isNotEmpty) out.add(path);
+        if (path.isNotEmpty) {
+          out.putIfAbsent(path, () => <int>{});
+        }
       }
     }
     return out;
+  }
+
+  String _excerptTargetFileForPatchResolution(
+    String content,
+    Set<int> lineHints,
+  ) {
+    final normalized = content.replaceAll('\r\n', '\n');
+    final lines = normalized.split('\n');
+    if (lines.length <= 220) return normalized;
+
+    if (lineHints.isEmpty) {
+      const headCount = 140;
+      const tailCount = 60;
+      final headEnd = math.min(lines.length, headCount);
+      final tailStart = math.max(0, lines.length - tailCount);
+      return [
+        '@@ target excerpt lines 1-$headEnd @@',
+        _formatTargetExcerptLines(lines, 0, headEnd, const <int>{}),
+        '... omitted lines ${headEnd + 1}-${math.max(headEnd + 1, tailStart)} ...',
+        '@@ target excerpt lines ${tailStart + 1}-${lines.length} @@',
+        _formatTargetExcerptLines(
+            lines, tailStart, lines.length, const <int>{}),
+      ].join('\n').trim();
+    }
+
+    const radius = 45;
+    final ranges = <({int start, int end})>[];
+    for (final hint in lineHints) {
+      final center = (hint - 1).clamp(0, math.max(0, lines.length - 1)).toInt();
+      final start = math.max(0, center - radius);
+      final end = math.min(lines.length, center + radius + 1);
+      ranges.add((start: start, end: end));
+    }
+    ranges.sort((a, b) => a.start.compareTo(b.start));
+
+    final merged = <({int start, int end})>[];
+    for (final range in ranges) {
+      if (merged.isEmpty || range.start > merged.last.end) {
+        merged.add(range);
+        continue;
+      }
+      final last = merged.removeLast();
+      merged.add((start: last.start, end: math.max(last.end, range.end)));
+    }
+
+    final buf = StringBuffer();
+    var cursor = 0;
+    for (final range in merged) {
+      if (range.start > cursor) {
+        buf.writeln('... omitted lines ${cursor + 1}-${range.start} ...');
+      }
+      buf.writeln('@@ target excerpt lines ${range.start + 1}-${range.end} @@');
+      buf.writeln(
+          _formatTargetExcerptLines(lines, range.start, range.end, lineHints));
+      cursor = range.end;
+    }
+    if (cursor < lines.length) {
+      buf.writeln('... omitted lines ${cursor + 1}-${lines.length} ...');
+    }
+    return buf.toString().trim();
+  }
+
+  String _formatTargetExcerptLines(
+    List<String> lines,
+    int start,
+    int end,
+    Set<int> lineHints,
+  ) {
+    final buf = StringBuffer();
+    for (var i = start; i < end; i++) {
+      final lineNumber = i + 1;
+      final marker = lineHints.contains(lineNumber) ? '>>' : '  ';
+      buf.writeln('$marker ${lineNumber.toString().padLeft(5)} | ${lines[i]}');
+    }
+    return buf.toString().trimRight();
+  }
+
+  String _summarizeHintLines(Set<int> lineHints) {
+    if (lineHints.isEmpty) return '';
+    final sorted = lineHints.toList()..sort();
+    final parts = <String>[];
+    var runStart = sorted.first;
+    var previous = sorted.first;
+    void flush() {
+      if (runStart == previous) {
+        parts.add('$runStart');
+      } else {
+        parts.add('$runStart-$previous');
+      }
+    }
+
+    for (final value in sorted.skip(1)) {
+      if (value == previous + 1) {
+        previous = value;
+        continue;
+      }
+      flush();
+      runStart = value;
+      previous = value;
+    }
+    flush();
+    return parts.take(4).join(', ');
+  }
+
+  String _buildFocusedPatchResolutionPrompt(
+    String err,
+    List<({String path, String patchBlock, String targetContent})> files,
+    Map<String, String> logosHintsByPath,
+  ) {
+    final buf = StringBuffer();
+    buf.writeln(
+        'A unified diff failed to apply against a git repository with `git apply --check`.');
+    buf.writeln(
+        'Only some file blocks failed. Rewrite ONLY those failing file blocks so they apply cleanly against the current target state.');
+    buf.writeln();
+    buf.writeln('Rules:');
+    buf.writeln(
+        '  1. Output ONLY replacement unified diff file sections for the failing paths listed below.');
+    buf.writeln(
+        '  2. Keep the same file-block order as listed below. Do not emit any non-failing files.');
+    buf.writeln(
+        '  3. For failing hunks, integrate the change in a situationally cohesive way that');
+    buf.writeln(
+        '     aligns with the contextual surroundings already present on the target.');
+    buf.writeln(
+        '  4. Preserve each block\'s original intent. New files stay new. Deleted files stay deleted.');
+    buf.writeln(
+        '  5. The caller will splice your rewritten blocks back into the original patch and keep every non-failing block verbatim.');
+    buf.writeln(
+        '  6. Output format: raw unified diff only. No code fences, no prose, no commentary.');
+    buf.writeln(
+        '  7. Treat any Logos guidance as a locality hint about transport companions, missing witnesses, or unexplained innovation.');
+    buf.writeln(
+        '     Use it to stay aligned with the failing block intent, not to expand the rewrite outside the listed failing files.');
+    buf.writeln(
+        '  8. In target excerpts, numbered lines marked with `>>` are the nearest known failing neighborhoods from `git apply --check`.');
+    buf.writeln();
+    buf.writeln('`git apply --check` stderr:');
+    buf.writeln('--- begin stderr ---');
+    buf.writeln(err);
+    buf.writeln('--- end stderr ---');
+    buf.writeln();
+    buf.writeln('Failing file blocks and current target-side excerpts:');
+    buf.writeln();
+    for (final f in files) {
+      buf.writeln('--- failing file: ${f.path} ---');
+      final logosHint = logosHintsByPath[f.path];
+      if (logosHint != null && logosHint.isNotEmpty) {
+        buf.writeln('Logos guidance:');
+        buf.writeln(logosHint);
+        buf.writeln();
+      }
+      buf.writeln('Original failing patch block:');
+      buf.writeln('--- begin patch block ---');
+      buf.writeln(f.patchBlock);
+      buf.writeln('--- end patch block ---');
+      buf.writeln();
+      buf.writeln('Current target-side excerpt:');
+      buf.writeln('--- begin target excerpt ---');
+      buf.writeln(f.targetContent);
+      buf.writeln('--- end target excerpt ---');
+      buf.writeln('--- end failing file: ${f.path} ---');
+      buf.writeln();
+    }
+    buf.writeln(
+        'Output the replacement unified diff file sections for those failing paths now.');
+    return buf.toString();
   }
 
   String _buildPatchResolutionPrompt(
     String raw,
     String err,
     List<({String path, String content})> files,
+    Map<String, String> logosHintsByPath,
   ) {
     final buf = StringBuffer();
     buf.writeln(
@@ -10453,6 +10705,12 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
         '  4. New files stay new. Deleted files stay deleted. No reordering of file blocks.');
     buf.writeln(
         '  5. Output format: raw unified diff only. No code fences, no prose, no commentary.');
+    buf.writeln(
+        '  6. Treat any Logos guidance as a locality hint about transport companions, missing witnesses, or unexplained innovation.');
+    buf.writeln(
+        '     It sharpens the rewrite target but does not authorize broader file changes.');
+    buf.writeln(
+        '  7. In any target excerpts, numbered lines marked with `>>` are the nearest known failing neighborhoods from `git apply --check`.');
     buf.writeln();
     buf.writeln('Original patch:');
     buf.writeln('--- begin patch ---');
@@ -10464,6 +10722,13 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     buf.writeln(err);
     buf.writeln('--- end stderr ---');
     buf.writeln();
+    if (logosHintsByPath.isNotEmpty) {
+      buf.writeln('Logos guidance for failing paths:');
+      for (final entry in logosHintsByPath.entries) {
+        buf.writeln('- ${entry.key}: ${entry.value}');
+      }
+      buf.writeln();
+    }
     buf.writeln('Current target-side contents of the failing files:');
     buf.writeln();
     for (final f in files) {
@@ -10477,6 +10742,106 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     return buf.toString();
   }
 
+  Map<String, String> _logosHintsForPatchResolution(
+    String repoPath,
+    Iterable<String> focusPaths,
+    Map<String, Set<int>> lineHintsByPath,
+  ) {
+    final engine = context.read<LogosGitState>().engineFor(repoPath);
+    if (engine == null) return const {};
+    final uniquePaths = <String>{
+      for (final path in focusPaths)
+        if (path.trim().isNotEmpty) path,
+    };
+    if (uniquePaths.isEmpty) return const {};
+    final evidence = engine.gatherEvidence(
+      focusWeights: <String, double>{
+        for (final path in uniquePaths) path: 1.0,
+      },
+      detailBudget: 24,
+      includeSummaryDiagnostics: false,
+    );
+    if (evidence == null) return const {};
+    final hints = <String, String>{};
+    for (final path in uniquePaths) {
+      final signal = evidence.residualByPath[path];
+      if (signal == null) continue;
+      final parts = <String>[];
+      if (signal.transportSignal > 0.05) {
+        parts.add('transport=${signal.transportSignal.toStringAsFixed(2)}');
+      }
+      if (signal.innovationResidual > 0.05) {
+        parts.add('innovation=${signal.innovationResidual.toStringAsFixed(2)}');
+      }
+      if (signal.witnessResidual > 0.05) {
+        parts.add(
+            'missing-witness=${signal.witnessResidual.toStringAsFixed(2)}');
+      }
+      if (signal.dominantAxis != null && signal.dominantAxis!.isNotEmpty) {
+        parts.add('axis=${signal.dominantAxis}');
+      }
+      final lineSummary =
+          _summarizeHintLines(lineHintsByPath[path] ?? const {});
+      if (lineSummary.isNotEmpty) {
+        parts.add('focus-lines=$lineSummary');
+      }
+      final witnessLabels = signal.witnesses
+          .take(3)
+          .map(formatLogosEvidenceWitness)
+          .where((label) => label.trim().isNotEmpty)
+          .toList(growable: false);
+      if (witnessLabels.isNotEmpty) {
+        parts.add('witnesses=${witnessLabels.join(', ')}');
+      }
+      if (parts.isNotEmpty) {
+        hints[path] = parts.join('; ');
+      }
+    }
+    return hints;
+  }
+
+  String? _spliceResolvedPatchBlocks({
+    required String originalPatch,
+    required Set<String> failingPaths,
+    required String rewrittenPatch,
+  }) {
+    final originalBlocks = sliceDiffByFile(originalPatch);
+    if (originalBlocks.isEmpty) return null;
+    final rewrittenBlocks = sliceDiffByFile(rewrittenPatch);
+    if (rewrittenBlocks.isEmpty) return null;
+
+    final originalPaths = originalBlocks.keys.toSet();
+    if (rewrittenBlocks.keys.toSet().containsAll(originalPaths)) {
+      return rewrittenPatch.trim();
+    }
+
+    final unexpected = rewrittenBlocks.keys
+        .where((path) => !failingPaths.contains(path))
+        .toList();
+    if (unexpected.isNotEmpty) {
+      return null;
+    }
+
+    final missing = failingPaths
+        .where((path) => !rewrittenBlocks.containsKey(path))
+        .toList();
+    if (missing.isNotEmpty) {
+      return null;
+    }
+
+    final stitched = <String>[];
+    for (final entry in originalBlocks.entries) {
+      final block = failingPaths.contains(entry.key)
+          ? rewrittenBlocks[entry.key]
+          : entry.value;
+      if (block == null || block.trim().isEmpty) {
+        return null;
+      }
+      stitched.add(block.trimRight());
+    }
+    return stitched.join('\n');
+  }
+
   Future<void> _resolveWithAi(String categoryId) async {
     if (_resolving) return;
     final aiSettings = context.read<AiSettingsState>();
@@ -10488,11 +10853,21 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     }
 
     final err = _dryRunError ?? '';
-    final failingPaths = _failingPathsFromStderr(err);
+    final failingHintsByPath = _failingLineHintsFromStderr(err);
+    final failingPaths = failingHintsByPath.keys.toSet();
+    final originalBlocks = sliceDiffByFile(_rawPatch);
+    final canFocusOnFailingBlocks = failingPaths.isNotEmpty &&
+        originalBlocks.isNotEmpty &&
+        failingPaths.every(originalBlocks.containsKey);
     // If we couldn't parse anything, include every path the patch
     // touches — better to send too much context than none.
     final pathsToInclude =
         failingPaths.isEmpty ? _filesByPath.keys.toSet() : failingPaths;
+    final logosHintsByPath = _logosHintsForPatchResolution(
+      widget.repoPath,
+      pathsToInclude,
+      failingHintsByPath,
+    );
 
     setState(() {
       _resolving = true;
@@ -10514,9 +10889,14 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
       // larger is almost certainly binary or minified and wouldn't
       // help the model anyway.
       const maxBytes = 512 * 1024;
+      final skippedSensitivePaths = <String>[];
+      final snapshotByPath = <String, String>{};
       final snapshots = <({String path, String content})>[];
       for (final p in pathsToInclude) {
-        if (isSensitivePath(p)) continue;
+        if (isSensitivePath(p)) {
+          skippedSensitivePaths.add(p);
+          continue;
+        }
         try {
           final abs = p.startsWith('/') || p.contains(':')
               ? p
@@ -10535,7 +10915,15 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
           // from ever allocating a giant buffer.
           final size = await file.length();
           if (size > maxBytes) continue;
-          snapshots.add((path: p, content: await file.readAsString()));
+          final content = await file.readAsString();
+          final shapedContent = canFocusOnFailingBlocks
+              ? _excerptTargetFileForPatchResolution(
+                  content,
+                  failingHintsByPath[p] ?? const <int>{},
+                )
+              : content;
+          snapshots.add((path: p, content: shapedContent));
+          snapshotByPath[p] = shapedContent;
         } catch (_) {
           // File missing on target (legit new-file hunk) or unreadable.
           // The LLM will see the path listed in the original patch but
@@ -10543,7 +10931,34 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
         }
       }
 
-      final prompt = _buildPatchResolutionPrompt(_rawPatch, err, snapshots);
+      if (canFocusOnFailingBlocks && skippedSensitivePaths.isNotEmpty) {
+        if (!mounted) return;
+        setState(() => _resolveError =
+            'blocked — failing patch touches sensitive file(s): ${skippedSensitivePaths.join(', ')}');
+        return;
+      }
+
+      final prompt = canFocusOnFailingBlocks
+          ? _buildFocusedPatchResolutionPrompt(
+              err,
+              [
+                for (final path in originalBlocks.keys)
+                  if (failingPaths.contains(path))
+                    (
+                      path: path,
+                      patchBlock: originalBlocks[path]!,
+                      targetContent: snapshotByPath[path] ??
+                          '<<target file missing or unreadable>>',
+                    ),
+              ],
+              logosHintsByPath,
+            )
+          : _buildPatchResolutionPrompt(
+              _rawPatch,
+              err,
+              snapshots,
+              logosHintsByPath,
+            );
       final secretHit = detectLikelySecretInPrompt(prompt);
       if (secretHit != null) {
         if (!mounted) return;
@@ -10564,7 +10979,18 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
         return;
       }
 
-      final newPatch = r.data!.patch;
+      final newPatch = canFocusOnFailingBlocks
+          ? _spliceResolvedPatchBlocks(
+                  originalPatch: _rawPatch,
+                  failingPaths: failingPaths,
+                  rewrittenPatch: r.data!.patch) ??
+              ''
+          : r.data!.patch;
+      if (newPatch.isEmpty) {
+        setState(() => _resolveError =
+            'model returned patch blocks that did not cover the failing files');
+        return;
+      }
       // Re-parse and re-check the rewritten patch.
       final lines = newPatch.length < 32 * 1024
           ? parseUnifiedDiff(newPatch)

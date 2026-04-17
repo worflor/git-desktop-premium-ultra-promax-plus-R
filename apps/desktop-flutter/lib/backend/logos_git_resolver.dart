@@ -15,7 +15,6 @@
 // via `Isolate.run` so the UI never freezes during a cold build.
 
 import 'dart:async';
-import 'dart:collection';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
@@ -32,11 +31,22 @@ import 'logos_git.dart';
 import 'logos_git_diagnostics.dart';
 import 'logos_git_stats.dart';
 import 'logos_vis_events.dart';
+import 'lru_cache.dart';
 
 class _ResolverEntry {
   final String headHash;
   final LogosGit engine;
   const _ResolverEntry(this.headHash, this.engine);
+}
+
+class _HeadSnapshot {
+  final String headHash;
+  final DateTime fetchedAt;
+
+  const _HeadSnapshot({
+    required this.headHash,
+    required this.fetchedAt,
+  });
 }
 
 /// Hard cap on the number of engines the resolver retains. Each engine
@@ -45,11 +55,11 @@ class _ResolverEntry {
 /// one or two recently-visited" pattern; the rest get evicted LRU.
 const int _kMaxEngines = 3;
 
-/// LinkedHashMap iteration order is insertion order, so we can use it
-/// as an LRU by deleting + re-inserting on access. Cheap and sufficient
-/// for a 3-entry cache.
-final LinkedHashMap<String, _ResolverEntry> _engines = LinkedHashMap();
+final LruCache<String, _ResolverEntry> _engines =
+    LruCache<String, _ResolverEntry>(maxSize: _kMaxEngines);
 final Map<String, Future<LogosGit?>> _inflight = {};
+final Map<String, _HeadSnapshot> _headSnapshots = {};
+const Duration _kHeadProbeTtl = Duration(seconds: 2);
 
 /// Build the per-file engram K-vector index with disk caching +
 /// parallel encoding. Runs on the main isolate so we can fan out to
@@ -119,9 +129,7 @@ Future<EngramFileKTable?> _buildEngramFileIndexFast({
       freshMeta[rel] = (mtimeMs: mtimeMs, size: size);
 
       final cached = cache.get(rel);
-      if (cached != null &&
-          cached.mtimeMs == mtimeMs &&
-          cached.size == size) {
+      if (cached != null && cached.mtimeMs == mtimeMs && cached.size == size) {
         hits[rel] = cached.kVector;
       } else {
         missPaths.add(rel);
@@ -160,7 +168,9 @@ Future<EngramFileKTable?> _buildEngramFileIndexFast({
   }
 
   // Merge hits + fresh encoded → final map.
-  final merged = <String, HunkKVector>{}..addAll(hits)..addAll(encoded);
+  final merged = <String, HunkKVector>{}
+    ..addAll(hits)
+    ..addAll(encoded);
 
   // Persist the updated cache (fire-and-forget). We write the full
   // cache including both prior hits and new misses so stale entries
@@ -255,13 +265,33 @@ Future<LogosGit?> resolveLogosGit(
   String repoPath, {
   FileCouplingMatrix? coupling,
 }) {
-  final pending = _inflight[repoPath];
+  final exactKey = _inflightKey(repoPath, coupling: coupling);
+  final pending = _inflight[exactKey];
   if (pending != null) return pending;
 
+  if (coupling == null) {
+    final coupledPending = _findInflightForRepo(
+      repoPath,
+      preferCoupled: true,
+    );
+    if (coupledPending != null) return coupledPending;
+  }
+
   final future = _resolveImpl(repoPath, coupling);
-  _inflight[repoPath] = future;
-  future.whenComplete(() => _inflight.remove(repoPath));
+  _inflight[exactKey] = future;
+  future.whenComplete(() => _inflight.remove(exactKey));
   return future;
+}
+
+String? peekResolvedLogosGitHeadHash(
+  String repoPath, {
+  FileCouplingMatrix? coupling,
+}) {
+  final snapshot = _headSnapshots[repoPath];
+  if (snapshot != null) return snapshot.headHash;
+  final cached = _engines.get(repoPath);
+  if (cached != null) return cached.headHash;
+  return coupling?.headHash;
 }
 
 /// Drop any cached engine for [repoPath]. Next [resolveLogosGit] call
@@ -269,11 +299,34 @@ Future<LogosGit?> resolveLogosGit(
 /// the rebuild eager rather than next-lookup-lazy.
 void invalidateLogosGit(String repoPath) {
   _engines.remove(repoPath);
+  _headSnapshots.remove(repoPath);
 }
 
 /// Drop every cached engine. Repo closed, user cleared caches, etc.
 void invalidateAllLogosGit() {
   _engines.clear();
+  _headSnapshots.clear();
+}
+
+String _inflightKey(
+  String repoPath, {
+  FileCouplingMatrix? coupling,
+}) =>
+    coupling == null
+        ? '$repoPath|base'
+        : '$repoPath|coupling:${coupling.headHash}';
+
+Future<LogosGit?>? _findInflightForRepo(
+  String repoPath, {
+  required bool preferCoupled,
+}) {
+  for (final entry in _inflight.entries) {
+    if (!entry.key.startsWith('$repoPath|')) continue;
+    final isCoupled = entry.key.contains('|coupling:');
+    if (preferCoupled && !isCoupled) continue;
+    return entry.value;
+  }
+  return null;
 }
 
 Future<LogosGit?> _resolveImpl(
@@ -290,6 +343,24 @@ Future<LogosGit?> _resolveImpl(
     (sid) => LogosVisEngineResolving(sid, repoPath: repoPath),
   );
   try {
+    final cached = _engines.get(repoPath);
+    final now = DateTime.now();
+    final headSnapshot = _headSnapshots[repoPath];
+    if (cached != null &&
+        headSnapshot != null &&
+        now.difference(headSnapshot.fetchedAt) <= _kHeadProbeTtl &&
+        cached.headHash == headSnapshot.headHash) {
+      log.recordCacheHit(repoPath, sw.elapsed);
+      LogosVisBus.instance.emitInSession(
+        (sid) => LogosVisEngineReady(
+          sid,
+          nodeCount: cached.engine.nodePaths.length,
+          cached: true,
+        ),
+      );
+      return cached.engine;
+    }
+
     // Staleness check — cheap rev-parse, bail if HEAD unchanged.
     final head = await runGitProbe(
       repoPath,
@@ -304,13 +375,14 @@ Future<LogosGit?> _resolveImpl(
       log.recordFailure(repoPath, 'empty HEAD hash', sw.elapsed);
       return null;
     }
+    _headSnapshots[repoPath] = _HeadSnapshot(
+      headHash: hash,
+      fetchedAt: now,
+    );
 
-    final cached = _engines[repoPath];
     if (cached != null && cached.headHash == hash) {
-      // LRU touch: re-insert moves to the most-recently-used end.
-      _engines
-        ..remove(repoPath)
-        ..[repoPath] = cached;
+      // LRU touch via re-insertion. `put` promotes to most-recently-used.
+      _engines.put(repoPath, cached);
       log.recordCacheHit(repoPath, sw.elapsed);
       // Cache-hit path. Canvas snaps to the ready frame with no
       // warming linger since the engine was already built.
@@ -388,12 +460,7 @@ Future<LogosGit?> _resolveImpl(
       debugName: 'LogosGit.buildFromStats',
     );
 
-    // Insert + LRU-evict in one step. `entries.first` is the
-    // least-recently-used because LinkedHashMap is insertion-ordered.
-    _engines[repoPath] = _ResolverEntry(hash, engine);
-    while (_engines.length > _kMaxEngines) {
-      _engines.remove(_engines.keys.first);
-    }
+    _engines.put(repoPath, _ResolverEntry(hash, engine));
     log.recordBuild(
       repoPath: repoPath,
       nodes: engine.nodePaths.length,

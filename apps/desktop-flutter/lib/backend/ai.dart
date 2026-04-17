@@ -13,15 +13,15 @@ import 'dtos.dart';
 import 'engram_bootstrap.dart';
 import 'engram_brain.dart' show EngramWellMatch;
 import 'engram_file_ktable.dart';
-import 'engram_fit.dart';
 import 'engram_text_kspace.dart';
-import 'file_coupling.dart' show logCommitSeparator;
 import 'logos_vis_events.dart';
 import 'git.dart';
 import 'git_result.dart';
 import 'package:meta/meta.dart';
 
 import 'ai_context_engine.dart';
+import 'logos_branch_orbit.dart'
+    show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart';
 import 'logos_git_diagnostics.dart';
@@ -669,15 +669,18 @@ String? detectLikelySecretInPrompt(String prompt) {
     (RegExp(r'AKIA[0-9A-Z]{16}'), 'AWS access key ID'),
     (RegExp(r'AIza[0-9A-Za-z_\-]{35}'), 'Google API key'),
     (RegExp(r'gh[pousr]_[A-Za-z0-9]{30,}'), 'GitHub token'),
-    (RegExp(r'sk-(?:ant-)?[A-Za-z0-9_\-]{20,}'),
-        'OpenAI/Anthropic secret key'),
+    (RegExp(r'sk-(?:ant-)?[A-Za-z0-9_\-]{20,}'), 'OpenAI/Anthropic secret key'),
     (RegExp(r'xox[baprs]-[A-Za-z0-9\-]{10,}'), 'Slack token'),
-    (RegExp(
+    (
+      RegExp(
           r'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'),
-        'JWT'),
+      'JWT'
+    ),
     // Private-key block header.
-    (RegExp(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'),
-        'private key block'),
+    (
+      RegExp(r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'),
+      'private key block'
+    ),
   ];
   for (final (re, label) in patterns) {
     if (re.hasMatch(prompt)) return label;
@@ -715,9 +718,50 @@ String _extractPatchFromModelOutput(String raw) {
       break;
     }
   }
-  if (start <= 0) return text;
-  return lines.sublist(start).join('\n').trim();
+  final trimmedLeading = start <= 0 ? lines : lines.sublist(start);
+  var end = -1;
+  for (var i = trimmedLeading.length - 1; i >= 0; i--) {
+    if (_isLikelyPatchLine(trimmedLeading[i])) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return trimmedLeading.join('\n').trim();
+  return trimmedLeading.sublist(0, end + 1).join('\n').trim();
 }
+
+bool _isLikelyPatchLine(String line) {
+  if (line.isEmpty) return false;
+  if (line.startsWith('diff --git ') ||
+      line.startsWith('Index: ') ||
+      line.startsWith('index ') ||
+      line.startsWith('old mode ') ||
+      line.startsWith('new mode ') ||
+      line.startsWith('deleted file mode ') ||
+      line.startsWith('new file mode ') ||
+      line.startsWith('similarity index ') ||
+      line.startsWith('rename from ') ||
+      line.startsWith('rename to ') ||
+      line.startsWith('copy from ') ||
+      line.startsWith('copy to ') ||
+      line.startsWith('Binary files ') ||
+      line.startsWith('GIT binary patch') ||
+      line.startsWith('literal ') ||
+      line.startsWith('delta ') ||
+      line.startsWith('--- ') ||
+      line.startsWith('+++ ') ||
+      line.startsWith('@@ ') ||
+      line.startsWith('@@-') ||
+      line.startsWith('\\ No newline at end of file')) {
+    return true;
+  }
+  final prefix = line[0];
+  return prefix == ' ' || prefix == '+' || prefix == '-';
+}
+
+@visibleForTesting
+String extractPatchFromModelOutputForTesting(String raw) =>
+    _extractPatchFromModelOutput(raw);
 
 Future<GitResult<AiCommitReviewData>> reviewCommit({
   required String repositoryPath,
@@ -1092,9 +1136,11 @@ class MuseGuardrailProfile {
   final String brainstormCharter;
   final String synthesisCharter;
   final int suggestedIdeaCount;
+
   /// When true, the muse may surface idea_flaws items. Loose hides the
   /// section entirely — at low guardrail the muse is encouragement-mode.
   final bool allowIdeaFlaws;
+
   /// When true, every Move must include at least one citation from the
   /// reshaped relevance pack. Strict and paranoid require it; loose
   /// lets the muse offer ungrounded high-level reads.
@@ -1118,8 +1164,7 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
       return const MuseGuardrailProfile(
         id: 'loose',
         seat: 'sketchbook muse',
-        wakeFrame:
-            'You are a sketchbook open in a kitchen on a slow morning. '
+        wakeFrame: 'You are a sketchbook open in a kitchen on a slow morning. '
             'The diff is laid across the table; you turn its pages '
             'without commitment, drawing in pencil. They reached for '
             'something with this change — your first move is to read '
@@ -1179,8 +1224,7 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
       return const MuseGuardrailProfile(
         id: 'balanced',
         seat: 'desk collaborator',
-        wakeFrame:
-            'You are sitting across the desk from a craftsperson '
+        wakeFrame: 'You are sitting across the desk from a craftsperson '
             'mid-build. The diff is between you, fanned open. A yellow '
             'pad waits. They reached for something with this change — '
             'your first move is to read what.\n\n'
@@ -1241,8 +1285,7 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
       return const MuseGuardrailProfile(
         id: 'strict',
         seat: 'pattern reader',
-        wakeFrame:
-            'You are a pattern reader steeped in this codebase. You '
+        wakeFrame: 'You are a pattern reader steeped in this codebase. You '
             'have walked it long enough that you hear when one shape '
             'echoes another and feel when a change is bending the '
             'field around it. The diff arrives as a perturbation. '
@@ -1259,8 +1302,7 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
             'Both registers are you reading. The relevance pack is '
             'your topography — code-rooted moves point at it '
             'precisely; field-rooted moves use it as a horizon.',
-        brainstormCharter:
-            'Open a dense and reaching field. Move between two '
+        brainstormCharter: 'Open a dense and reaching field. Move between two '
             'registers as you generate:\n'
             '  · code-rooted — a path, a symbol, a domain word; '
             'something an editor can open.\n'
@@ -1269,8 +1311,7 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
             'editor knows how to navigate to.\n\n'
             'Aim for ~20 ideas, roughly balanced across both. Density '
             'and reach over polish.',
-        synthesisCharter:
-            'Speak as someone who has been listening to this '
+        synthesisCharter: 'Speak as someone who has been listening to this '
             'codebase for a long time. Read what the work is '
             'reaching for, then offer back what comes from listening. '
             'Each section — resonances, alternatives, extensions, '
@@ -1308,8 +1349,7 @@ MuseGuardrailProfile _museGuardrailProfileForStage(int stage) {
       return const MuseGuardrailProfile(
         id: 'paranoid',
         seat: 'eldritch cartographer',
-        wakeFrame:
-            'You are an eldritch cartographer of this codebase as '
+        wakeFrame: 'You are an eldritch cartographer of this codebase as '
             'manifold. You see it not as files but as a field — and '
             'this diff is a perturbation rippling outward through it. '
             'Your first move is to listen to the field.\n\n'
@@ -1411,13 +1451,16 @@ class _BrainstormIdea {
   final String text;
   _IdeaKind kind = _IdeaKind.other;
   _IdeaConfidence confidence = _IdeaConfidence.med;
+
   /// K-space encoding of the idea text. Null when GloVe coverage was
   /// too thin to fit an AR(2) (very short or out-of-vocab prose).
   Float64List? kRe;
   Float64List? kIm;
+
   /// Nearest Alexandria well for this idea — the semantic basin the
   /// brainstorm text lands in. Null when [kRe] is null.
   EngramWellMatch? well;
+
   /// Paths the idea pulled in (K-space KNN + well expansion + any
   /// fallback fuzzy match). Surface for attribution-based trimming.
   final Set<String> handlePaths = <String>{};
@@ -1444,52 +1487,39 @@ Future<List<_BrainstormIdea>> _runBrainstormPhase({
   buf.writeln('</charter>');
   buf.writeln();
   buf.writeln('<plumbing>');
-  buf.writeln(
-      '- Land between ${profile.suggestedIdeaCount - 4} and '
+  buf.writeln('- Land between ${profile.suggestedIdeaCount - 4} and '
       '${profile.suggestedIdeaCount + 6} ideas, one per line, each '
       'prefixed with "- " and held to ≤ 30 words.');
-  buf.writeln(
-      '- Start each idea with a "[kind|confidence]" tag — the '
+  buf.writeln('- Start each idea with a "[kind|confidence]" tag — the '
       'downstream relevance engine keys off these when reshaping the '
       'context pack for synthesis.');
-  buf.writeln(
-      '- kind ∈ {refactor, bugfix, feature, perf, security, docs, '
+  buf.writeln('- kind ∈ {refactor, bugfix, feature, perf, security, docs, '
       'test, quality, risk, pattern, stance, question, analogy, '
       'other}. The first block (refactor…risk) is code-rooted; the '
       'second block (pattern, stance, question, analogy) is '
       'field-rooted — a shape, a posture, a worth-sitting question, '
       'a metaphor from outside the code. Roughly half field-rooted, '
       'half code-rooted. "other" only when nothing lands cleanly.');
-  buf.writeln(
-      '- confidence ∈ {high, med, low}. High = you\'d stake a PR '
+  buf.writeln('- confidence ∈ {high, med, low}. High = you\'d stake a PR '
       'review on it / the pattern is clearly the right reading. '
       'Low = worth surfacing but speculative.');
-  buf.writeln(
-      '- Write at the register of the idea itself. Don\'t describe '
+  buf.writeln('- Write at the register of the idea itself. Don\'t describe '
       'the code as "Add X" or "Implement Y" — that\'s what a commit '
       'message does. Say what the change is reaching for.');
-  buf.writeln(
-      '- Examples spanning both registers:');
-  buf.writeln(
-      '    · [pattern|high] Three places in the UI now swap text '
+  buf.writeln('- Examples spanning both registers:');
+  buf.writeln('    · [pattern|high] Three places in the UI now swap text '
       'labels for encoded geometry — a small grammar is forming.');
-  buf.writeln(
-      '    · [analogy|med] The rope-tether interaction borrows from '
+  buf.writeln('    · [analogy|med] The rope-tether interaction borrows from '
       'CAD software\'s sketch constraints: visible, direct, reversible.');
-  buf.writeln(
-      '    · [question|high] What is the smallest version of this '
+  buf.writeln('    · [question|high] What is the smallest version of this '
       'change that still feels worth merging?');
-  buf.writeln(
-      '    · [bugfix|high] Null deref in parseTokens on empty input — '
+  buf.writeln('    · [bugfix|high] Null deref in parseTokens on empty input — '
       'lexer.dart:142.');
-  buf.writeln(
-      '    · [refactor|med] The three loading-state widgets are '
+  buf.writeln('    · [refactor|med] The three loading-state widgets are '
       'diverging; a shared surface would hold them together.');
-  buf.writeln(
-      '    · [stance|med] This diff chooses discovery over '
+  buf.writeln('    · [stance|med] This diff chooses discovery over '
       'discoverability — the user has to find the feature to learn it.');
-  buf.writeln(
-      '- The ideas themselves are the whole output. Each one stands '
+  buf.writeln('- The ideas themselves are the whole output. Each one stands '
       'on its own; let them be plain.');
   buf.writeln('</plumbing>');
   buf.writeln();
@@ -1531,8 +1561,8 @@ Future<List<_BrainstormIdea>> _runBrainstormPhase({
     // ignores the tag instruction.
     var kind = _IdeaKind.other;
     var confidence = _IdeaConfidence.med;
-    final tagMatch = RegExp(r'^\[([a-zA-Z]+)\s*\|\s*([a-zA-Z]+)\]\s*')
-        .firstMatch(line);
+    final tagMatch =
+        RegExp(r'^\[([a-zA-Z]+)\s*\|\s*([a-zA-Z]+)\]\s*').firstMatch(line);
     if (tagMatch != null) {
       kind = _parseIdeaKind(tagMatch.group(1)!);
       confidence = _parseIdeaConfidence(tagMatch.group(2)!);
@@ -1977,6 +2007,7 @@ Future<({String text, LogosEmissionRecord? record})>
       focusWeights: seedMap,
       axisLabelByPath: axisLabel,
       t: _temperatureForIdeas(ideas),
+      detailBudget: 24,
     );
     final attribution = evidence?.supportAttribution ??
         engine.diffuseWithAttribution(
@@ -2052,9 +2083,8 @@ Future<({String text, LogosEmissionRecord? record})>
       // file in. Reads at a glance: "diff+brainstorm" means both
       // streams agreed this matters.
       final sources = perPathSources[item.path] ?? const <String>{};
-      final via = sources.isEmpty
-          ? ''
-          : ' via=${(sources.toList()..sort()).join('+')}';
+      final via =
+          sources.isEmpty ? '' : ' via=${(sources.toList()..sort()).join('+')}';
       buffer.writeln(
         '[$tag φ=${item.phi.toStringAsFixed(3)}$wellTag$via] ${item.path}',
       );
@@ -2671,8 +2701,7 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
     // fewer parsed moves, some got lost — non-fatal (what we did
     // parse is still real signal), but worth an audit trail so a
     // misbehaving model is visible in telemetry.
-    final rawMoveOpens =
-        '<move'.allMatches(providerOutput.output!).length;
+    final rawMoveOpens = '<move'.allMatches(providerOutput.output!).length;
     final parsedMoveCount = parsed.resonances.length +
         parsed.alternatives.length +
         parsed.extensions.length;
@@ -2941,23 +2970,49 @@ String? _findModelValueInJson(dynamic value) {
 _ProviderModelDiscovery? _discoverGeminiModels(
   _ProviderResolution? resolution,
 ) {
-  // Gemini CLI accepts stable shorthand aliases (--model auto/pro/flash/flash-lite).
-  // Surface these plus whatever the user has explicitly configured.
+  // Surface the local Gemini aliases we support plus the concrete preview
+  // model ids that this endpoint accepts today.
   final models = <String>{
     'gemini auto',
     'gemini pro',
     'gemini flash',
-    'gemini flash-lite'
+    'gemini flash-lite',
+    _geminiApiPreviewProModel,
+    _geminiApiPreviewFlashModel,
+    _geminiApiPreview31ProModel,
+    _geminiApiPreview31FlashLiteModel,
+  };
+  final details = <String, String>{
+    _normalizeModelKey('gemini auto'):
+        'Local alias -> Gemini 3 auto family (routes to $_geminiApiPreviewProModel by default).',
+    _normalizeModelKey('gemini pro'):
+        'Local alias -> $_geminiApiPreviewProModel',
+    _normalizeModelKey('gemini flash'):
+        'Local alias -> $_geminiApiPreviewFlashModel',
+    _normalizeModelKey('gemini flash-lite'):
+        'Local alias -> $_geminiApiPreview31FlashLiteModel',
+    _normalizeModelKey(_geminiApiPreviewProModel):
+        'Accepted preview model on the Gemini Code Assist API.',
+    _normalizeModelKey(_geminiApiPreviewFlashModel):
+        'Accepted preview model on the Gemini Code Assist API.',
+    _normalizeModelKey(_geminiApiPreview31ProModel):
+        'Accepted preview model on the Gemini Code Assist API.',
+    _normalizeModelKey(_geminiApiPreview31FlashLiteModel):
+        'Accepted preview model on the Gemini Code Assist API.',
   };
 
   final configured = _discoverGeminiConfiguredModel();
   if (configured != null) {
     models.add(configured);
+    details.putIfAbsent(
+      _normalizeModelKey(configured),
+      () => 'Configured from GEMINI_MODEL or .gemini/settings.json.',
+    );
   }
 
   return _ProviderModelDiscovery(
     models: models.toList(),
-    modelDetails: const {},
+    modelDetails: details,
   );
 }
 
@@ -3530,6 +3585,7 @@ Future<_CommitDiffContextResult> _collectCommitMessageContext({
   final engine = AiContextEngine([
     const _FileContextProducer(),
     const _FileMetadataProducer(),
+    const _LogosTopologyProducer(),
     const _RelevanceNeighborhoodProducer(),
     _ChangeTypesProducer(
       scopeArgs: scopeArgs,
@@ -4224,6 +4280,7 @@ Future<String> _collectFileContext({
   final pathList = paths.toList();
   List<String> orderedPaths;
   LogosGit? engine;
+  LogosEvidenceQueryResult? fileContextEvidence;
   try {
     engine = await resolveLogosGit(repositoryPath);
     if (engine != null) {
@@ -4232,19 +4289,38 @@ Future<String> _collectFileContext({
       // bleed less; isolated files bleed most. Highest-retention files
       // are the most "anchored" parts of the change.
       final sourceWeights = {for (final p in pathList) p: 1.0};
+      fileContextEvidence = engine.gatherEvidence(
+        focusWeights: sourceWeights,
+        excludePaths: const {},
+        detailBudget: 24,
+        includeSupportAttribution: false,
+        includeSummaryDiagnostics: false,
+      );
       // Default t=1.0 is the canonical self-φ diffusion distance — any
       // other temperature would change what "anchored" means and break
       // the retention-ranking heuristic documented above.
-      final scores =
-          engine.diffuseWeighted(sourceWeights, excludePaths: const {});
-      final phi = {for (final s in scores) s.path: s.phi};
-      orderedPaths = [...pathList]..sort((a, b) {
-          final pa = phi[a] ?? 0.0;
-          final pb = phi[b] ?? 0.0;
-          final cmp = pb.compareTo(pa); // desc
-          if (cmp != 0) return cmp;
-          return a.compareTo(b); // alphabetical tiebreaker for determinism
-        });
+      final residualByPath = fileContextEvidence?.residualByPath ??
+          const <String, LogosResidualView>{};
+      if (pathList.every(residualByPath.containsKey)) {
+        orderedPaths = [...pathList]..sort((a, b) {
+            final pa = residualByPath[a]?.support ?? 0.0;
+            final pb = residualByPath[b]?.support ?? 0.0;
+            final cmp = pb.compareTo(pa); // desc
+            if (cmp != 0) return cmp;
+            return a.compareTo(b); // alphabetical tiebreaker for determinism
+          });
+      } else {
+        final scores =
+            engine.diffuseWeighted(sourceWeights, excludePaths: const {});
+        final phi = {for (final s in scores) s.path: s.phi};
+        orderedPaths = [...pathList]..sort((a, b) {
+            final pa = phi[a] ?? 0.0;
+            final pb = phi[b] ?? 0.0;
+            final cmp = pb.compareTo(pa); // desc
+            if (cmp != 0) return cmp;
+            return a.compareTo(b); // alphabetical tiebreaker for determinism
+          });
+      }
     } else {
       // No engine available (early profile build, empty repo). Fall
       // back to alphabetical — better than randomized iteration order.
@@ -4254,6 +4330,7 @@ Future<String> _collectFileContext({
     orderedPaths = [...pathList]..sort();
   }
 
+  final touchedRangesByFile = chunks.touchedRangesByFileFromDiff(diffText);
   final buffer = StringBuffer();
   var remaining = budgetChars;
   for (final filePath in orderedPaths) {
@@ -4281,15 +4358,21 @@ Future<String> _collectFileContext({
       // Over-budget at full size — try the chunk-pack fallback. Build
       // touched line ranges from the diff so the chunk diffusion knows
       // where the heat source is.
-      final touched = chunks.touchedRangesFromDiff(
-        filePath: filePath,
-        diffText: diffText,
-      );
+      final touched =
+          touchedRangesByFile[filePath] ?? const <chunks.TouchedLineRange>[];
+      final fileResidual = fileContextEvidence?.residualByPath[filePath];
       final pack = await chunks.packRelevantChunksAsync(
         filePath: filePath,
         content: content,
         touchedRanges: touched,
         budgetChars: remaining,
+        fileTransportedSupport: fileResidual?.transportedSupport ?? 0.0,
+        fileInnovationResidual: fileResidual?.innovationResidual ?? 0.0,
+        fileWitnessResidual: fileResidual?.witnessResidual ?? 0.0,
+        fileEvidenceTags: fileResidual == null
+            ? const <String>[]
+            : _evidenceTagParts(fileResidual, includeWitnessNotes: false),
+        fileEvidenceWitnesses: fileResidual?.witnesses ?? const [],
       );
       if (pack.body.isEmpty) continue;
       buffer.write(pack.body);
@@ -4353,8 +4436,10 @@ class _FileContextProducer extends AiContextProducer {
     if (probe == null || probe.stats.primaryCount == 0) return 1.0;
     return _logosYieldOf(probe).coh;
   }
+
   @override
-  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
     final body = await _collectFileContext(
       repositoryPath: req.repositoryPath,
       diffText: req.diffText,
@@ -4377,13 +4462,34 @@ class _FileMetadataProducer extends AiContextProducer {
     final y = _logosYieldOf(probe);
     return y.dispersion * (1.0 - y.yieldFraction);
   }
+
   @override
-  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
     final body = await _collectFileMetadata(
       repositoryPath: req.repositoryPath,
       diffText: req.diffText,
       budgetChars: budgetChars,
     );
+    return AiContextSection(id: id, body: body);
+  }
+}
+
+class _LogosTopologyProducer extends AiContextProducer {
+  const _LogosTopologyProducer();
+  @override
+  String get id => 'logos_topology';
+  @override
+  int get order => 45;
+  @override
+  double? urgency(AiContextRequest req) => null;
+  @override
+  int fixedRequest(AiContextRequest req) =>
+      req.logos?.evidence == null ? 0 : 260;
+  @override
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
+    final body = _collectLogosTopology(req.logos, budgetChars: budgetChars);
     return AiContextSection(id: id, body: body);
   }
 }
@@ -4401,8 +4507,10 @@ class _RelevanceNeighborhoodProducer extends AiContextProducer {
     final y = _logosYieldOf(probe);
     return y.dispersion * y.yieldFraction;
   }
+
   @override
-  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
     final result = await _collectRelevanceNeighborhood(
       repositoryPath: req.repositoryPath,
       diffText: req.diffText,
@@ -4443,7 +4551,8 @@ class _ChangeTypesProducer extends AiContextProducer {
   @override
   int fixedRequest(AiContextRequest req) => 0;
   @override
-  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
     // budgetChars is informational — the underlying collector emits
     // its own naturally-bounded output (one line per touched file).
     final body = await _collectChangeTypes(
@@ -4470,6 +4579,7 @@ class _BrainstormSeededRelevanceProducer extends AiContextProducer {
   });
   final List<_BrainstormIdea> ideas;
   final Map<String, double> diffSourceWeights;
+
   /// Per-path pull magnitudes the user applied on the loading canvas,
   /// snapshotted by the muse pipeline and passed through so phase-2
   /// can both use them for seeding AND the muse result can cite them
@@ -4483,7 +4593,8 @@ class _BrainstormSeededRelevanceProducer extends AiContextProducer {
   // Constant 1.0 is fine here — softmax of {1.0} = {1.0}.
   double? urgency(AiContextRequest req) => 1.0;
   @override
-  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
     final result = await _runBrainstormSeededRelevance(
       repositoryPath: req.repositoryPath,
       diffText: req.diffText,
@@ -4514,7 +4625,8 @@ class _StructuralVerificationProducer extends AiContextProducer {
   @override
   int fixedRequest(AiContextRequest req) => 0;
   @override
-  Future<AiContextSection> produce(AiContextRequest req, int budgetChars) async {
+  Future<AiContextSection> produce(
+      AiContextRequest req, int budgetChars) async {
     // budgetChars is informational; collector emits what it emits.
     final body = await _collectStructuralVerification(
       repositoryPath: req.repositoryPath,
@@ -4544,9 +4656,9 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
     );
     if (probe.sourceWeights.isEmpty) return null;
 
-    final orbit = await _probeBranchOrbit(repositoryPath);
-    final resolvedT =
-        (probe.suggestedTemperature ?? 1.0) * _temperatureMultiplierFromOrbit(orbit);
+    final orbit = await probeLogosBranchOrbit(repositoryPath);
+    final resolvedT = (probe.suggestedTemperature ?? 1.0) *
+        logosTemperatureMultiplierFromOrbit(orbit);
 
     // Per-axis attribution diffusion. Costs ~4× a plain weighted
     // diffuse (one Chebyshev pass per source-axis bucket) but yields
@@ -4578,6 +4690,7 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
       axisLabelByPath: axisLabels,
       t: resolvedT,
       excludePaths: probe.primaryPaths,
+      detailBudget: 32,
     );
     final attribution = evidence?.supportAttribution;
     final List<RelevanceScore> scores;
@@ -4626,7 +4739,8 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
       (sid) => LogosVisDiffSources(
         sid,
         weights: Map<String, double>.from(probe.sourceWeights),
-        churn: probe.sourceWeights.values.fold<double>(0, (a, b) => a + b).round(),
+        churn:
+            probe.sourceWeights.values.fold<double>(0, (a, b) => a + b).round(),
       ),
     );
     // Post-diffusion scores + well assignments. The canvas uses these
@@ -4676,8 +4790,8 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
 ///                 [0, 1): fraction of "diff energy" that lives in the
 ///                 neighbourhood the probe found via pickaxe + path
 ///                 mirrors, vs. confined to the primary set itself.
-({double coh, double dispersion, double yieldFraction})
-    _logosYieldOf(DiffProbe probe) {
+({double coh, double dispersion, double yieldFraction}) _logosYieldOf(
+    DiffProbe probe) {
   final coh = probe.stats.coherence.clamp(0.0, 1.0);
   final neigh = (probe.stats.mMatches + probe.stats.abMatches).toDouble();
   final primary = probe.stats.primaryCount.toDouble();
@@ -4713,10 +4827,8 @@ Future<({String text, LogosEmissionRecord? record})>
     final probe = result.probe;
     final scores = result.scores;
     final resolvedT = result.resolvedT;
-    final evidenceByPath = <String, LogosEvidenceScore>{
-      for (final e in result.evidence?.ranked ?? const <LogosEvidenceScore>[])
-        e.path: e,
-    };
+    final residualByPath =
+        result.evidence?.residualByPath ?? const <String, LogosResidualView>{};
 
     // No candidate trim — let the knapsack see the full ranking. The
     // budget closes the long tail naturally; an arbitrary pre-trim
@@ -4788,7 +4900,7 @@ Future<({String text, LogosEmissionRecord? record})>
       // file's φ. Falls through silently when no attribution was
       // computed (engine cold) — the rest of the line is unchanged.
       final via = _formatAxisBreakdown(result.attribution, item.path);
-      final ev = evidenceByPath[item.path];
+      final ev = residualByPath[item.path];
       // Engram well pill — the dominant Alexandria well for this
       // file's identifier content. Present whenever the resolver
       // loaded engram assets and the file encoded successfully.
@@ -4797,9 +4909,7 @@ Future<({String text, LogosEmissionRecord? record})>
       // to the `computing` well" when deciding whether it's relevant.
       final well = result.engine.wellOf(item.path);
       final wellPill = well != null ? '  well=$well' : '';
-      final evidencePill = ev == null
-          ? ''
-          : '  u=${ev.utility.toStringAsFixed(3)} s=${ev.support.toStringAsFixed(3)} a=${ev.ambient.toStringAsFixed(3)} i=${ev.integrity.toStringAsFixed(2)}';
+      final evidencePill = ev == null ? '' : _formatEvidencePill(ev);
       final header = via.isEmpty
           ? '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}$evidencePill$wellPill ---'
           : '--- ${item.path}  φ=${item.phi.toStringAsFixed(3)}  tier=${_tierName(item.tier)}  via=$via$evidencePill$wellPill ---';
@@ -4831,6 +4941,14 @@ Future<({String text, LogosEmissionRecord? record})>
             content: content,
             touchedRanges: const [],
             budgetChars: remaining,
+            fileTransportedSupport: ev?.transportedSupport ?? 0.0,
+            fileInnovationResidual: ev?.innovationResidual ?? 0.0,
+            fileWitnessResidual: ev?.witnessResidual ?? 0.0,
+            fileEvidenceTags: ev == null
+                ? const <String>[]
+                : _evidenceTagParts(ev, includeWitnessNotes: false),
+            fileEvidenceWitnesses:
+                ev == null ? const <LogosEvidenceWitness>[] : ev.witnesses,
           );
           if (pack.body.isEmpty) continue;
           buffer.write(pack.body);
@@ -4894,9 +5012,8 @@ String _formatAxisBreakdown(AxisAttribution? attr, String path) {
   for (final entry in ordered) {
     if (entry.value < 0.10) continue; // signal floor
     final pct = (entry.value * 100).round();
-    parts.add(entry.key == dominant
-        ? '${entry.key}($pct%)'
-        : '${entry.key}=$pct%');
+    parts.add(
+        entry.key == dominant ? '${entry.key}($pct%)' : '${entry.key}=$pct%');
   }
   return parts.join(' ');
 }
@@ -4931,7 +5048,8 @@ bool _pathLooksLikeMirrorOf(String candidate, Set<String> primary) {
   // same classifier the probe uses so axis tags stay consistent across
   // the probe builder and this downstream citation path.
   if (!looksLikeTestPath(candidate)) return false;
-  final candBase = p.basenameWithoutExtension(candidate)
+  final candBase = p
+      .basenameWithoutExtension(candidate)
       .replaceAll(RegExp(r'(_test|_spec|\.test|\.spec)$'), '');
   for (final pri in primary) {
     final priBase = p.basenameWithoutExtension(pri);
@@ -4992,20 +5110,24 @@ class LogosCommitShape {
   final List<RelevanceScore> missingMass;
   final int primaryCount;
   final double temperature;
+
   /// Per-axis fraction of the diffused mass — `primary`, `m`, `ab`,
   /// `graph` (the axis labels of [_classifyAxis]). Sums to ~1. Empty
   /// when attribution wasn't computed (engine fell back to plain
   /// weighted diffusion).
   final Map<String, double> axisShares;
+
   /// For each surfaced missing-mass file, the dominant axis label that
   /// pulled it in. Lets the prompt say "the test-mirror axis surfaced
   /// foo_test.dart" instead of just naming the file.
   final Map<String, String> dominantAxisByPath;
+
   /// Stability of the top-K ranking under small source perturbations,
   /// in [0, 1]. High = trust the missing-mass suggestions; low = they
   /// are on a knife-edge — the prompt should soften the language.
   /// Null when not computed (engine cold, single-source diff, etc.).
   final double? stability;
+
   /// Short branch-trajectory label ('converging', 'diverging', 'steady')
   /// derived from a Whisper Engram AR(2) fit on the preceding commits'
   /// file-set Jaccard series. Null when the branch is too short to
@@ -5018,6 +5140,33 @@ class LogosCommitShape {
   final double? fieldAlignment;
   final double? sourceSurprise;
   final double? fieldSurprise;
+  final Map<String, double> supportByPath;
+  final Map<String, double> ambientByPath;
+  final Map<String, double> transportPullByPath;
+  final Map<String, double> lowFrequencyByPath;
+  final Map<String, double> highFrequencyByPath;
+  final Map<String, double> higherOrderLiftByPath;
+  final Map<String, double> reducibilityGapByPath;
+  final LogosFlowDiagnostics? flowDiagnostics;
+  final LogosWitnessSyndrome? witnessSyndrome;
+  final List<String> metricSidecarLabels;
+  final List<String> transportLaneLabels;
+  final List<String> transportFrontierPaths;
+  final List<LogosTransportFlowEdge> transportEdges;
+  final List<String> inquiryStepLabels;
+  final double? motionWarpCoverage;
+  final double? motionInnovationMass;
+  final double? motionCompensatedChangeRatio;
+  final bool motionSceneCut;
+  final List<String> motionInnovationFrontier;
+  final double? witnessResidualPredictedMass;
+  final double? witnessResidualMass;
+  final double? witnessResidualCoverage;
+  final List<String> witnessResidualFrontier;
+  final List<String> witnessResidualKinds;
+  final Map<String, List<LogosEvidenceWitness>> witnessesByPath;
+  final Map<String, List<String>> witnessLabelsByPath;
+  final Map<String, List<String>> sidecarLabelsByPath;
 
   const LogosCommitShape({
     required this.regime,
@@ -5034,6 +5183,33 @@ class LogosCommitShape {
     this.fieldAlignment,
     this.sourceSurprise,
     this.fieldSurprise,
+    this.supportByPath = const {},
+    this.ambientByPath = const {},
+    this.transportPullByPath = const {},
+    this.lowFrequencyByPath = const {},
+    this.highFrequencyByPath = const {},
+    this.higherOrderLiftByPath = const {},
+    this.reducibilityGapByPath = const {},
+    this.flowDiagnostics,
+    this.witnessSyndrome,
+    this.metricSidecarLabels = const [],
+    this.transportLaneLabels = const [],
+    this.transportFrontierPaths = const [],
+    this.transportEdges = const [],
+    this.inquiryStepLabels = const [],
+    this.motionWarpCoverage,
+    this.motionInnovationMass,
+    this.motionCompensatedChangeRatio,
+    this.motionSceneCut = false,
+    this.motionInnovationFrontier = const [],
+    this.witnessResidualPredictedMass,
+    this.witnessResidualMass,
+    this.witnessResidualCoverage,
+    this.witnessResidualFrontier = const [],
+    this.witnessResidualKinds = const [],
+    this.witnessesByPath = const {},
+    this.witnessLabelsByPath = const {},
+    this.sidecarLabelsByPath = const {},
   });
 }
 
@@ -5045,39 +5221,6 @@ class LogosCommitShape {
 /// Returns null on any failure (non-git dir, empty history, parse
 /// error) so callers degrade silently. Cheap enough to run per-AI-
 /// call — ~30 commits' metadata, no blob reads.
-Future<BranchOrbit?> _probeBranchOrbit(String repositoryPath) async {
-  try {
-    final logResult = await runGitProbe(repositoryPath, [
-      'log',
-      '-n', '30',
-      '--no-merges',
-      '--name-only',
-      '--format=$logCommitSeparator%H',
-    ]);
-    if (logResult.exitCode != 0) return null;
-    final raw = logResult.stdout.toString();
-    final commitSets = <Set<String>>[];
-    Set<String>? current;
-    for (final line in const LineSplitter().convert(raw)) {
-      if (line.startsWith(logCommitSeparator)) {
-        if (current != null && current.isNotEmpty) {
-          commitSets.add(current);
-        }
-        current = <String>{};
-        continue;
-      }
-      final trimmed = line.trim();
-      if (trimmed.isEmpty || current == null) continue;
-      current.add(trimmed.replaceAll('\\', '/'));
-    }
-    if (current != null && current.isNotEmpty) commitSets.add(current);
-    // git log returns newest-first; branch-orbit expects oldest→tip.
-    return computeBranchOrbit(commitSets.reversed.toList());
-  } catch (_) {
-    return null;
-  }
-}
-
 /// Map a branch orbit to a diffusion-temperature multiplier. A
 /// converging branch — scope narrowing toward the tip — benefits
 /// from a *cooler* diffusion that trusts the core touched files and
@@ -5088,18 +5231,6 @@ Future<BranchOrbit?> _probeBranchOrbit(String repositoryPath) async {
 /// Values derived from the orbit's own semantics, not tuned:
 ///   converging → 1 − trendSlope magnitude → cooler (min 0.75)
 ///   diverging  → 1 + trendSlope magnitude → hotter (max 1.25)
-double _temperatureMultiplierFromOrbit(BranchOrbit? orbit) {
-  if (orbit == null || !orbit.hasSignal) return 1.0;
-  // trendSlope magnitude bounds the departure from neutral. The
-  // fit's slope already sits in a small range (empirically ≪ 0.2
-  // for real repos), so we clamp to a narrow band that can't
-  // overwhelm the adaptive-from-coherence temperature.
-  final mag = orbit.trendSlope.abs().clamp(0.0, 0.25);
-  if (orbit.isConverging) return (1.0 - mag).clamp(0.75, 1.0);
-  if (orbit.isDiverging) return (1.0 + mag).clamp(1.0, 1.25);
-  return 1.0;
-}
-
 Future<LogosCommitShape?> _collectLogosCommitShape({
   required String repositoryPath,
   required String diffText,
@@ -5164,12 +5295,40 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
       t: t,
       excludePaths: probe.primaryPaths,
       topK: 5,
+      detailBudget: 16,
     );
     final attr = evidence?.supportAttribution;
 
     List<RelevanceScore> missing;
     Map<String, double> axisShares = const {};
     Map<String, String> dominantByPath = const {};
+    Map<String, double> supportByPath = const {};
+    Map<String, double> ambientByPath = const {};
+    Map<String, double> transportPullByPath = const {};
+    Map<String, double> lowFrequencyByPath = const {};
+    Map<String, double> highFrequencyByPath = const {};
+    Map<String, double> higherOrderLiftByPath = const {};
+    Map<String, double> reducibilityGapByPath = const {};
+    LogosFlowDiagnostics? flowDiagnostics;
+    LogosWitnessSyndrome? witnessSyndrome;
+    List<String> metricSidecarLabels = const [];
+    List<String> transportLaneLabels = const [];
+    List<String> transportFrontierPaths = const [];
+    List<LogosTransportFlowEdge> transportEdges = const [];
+    List<String> inquiryStepLabels = const [];
+    double? motionWarpCoverage;
+    double? motionInnovationMass;
+    double? motionCompensatedChangeRatio;
+    var motionSceneCut = false;
+    List<String> motionInnovationFrontier = const [];
+    double? witnessResidualPredictedMass;
+    double? witnessResidualMass;
+    double? witnessResidualCoverage;
+    List<String> witnessResidualFrontier = const [];
+    List<String> witnessResidualKinds = const [];
+    Map<String, List<LogosEvidenceWitness>> witnessesByPath = const {};
+    Map<String, List<String>> witnessLabelsByPath = const {};
+    Map<String, List<String>> sidecarLabelsByPath = const {};
     if (evidence != null && evidence.ranked.isNotEmpty) {
       missing = [
         for (final e in evidence.ranked.take(5))
@@ -5183,6 +5342,88 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
         for (final e in evidence.ranked.take(5))
           if (e.dominantAxis != null) e.path: e.dominantAxis!,
       };
+      supportByPath = {
+        for (final e in evidence.ranked.take(5)) e.path: e.support,
+      };
+      ambientByPath = {
+        for (final e in evidence.ranked.take(5)) e.path: e.ambient,
+      };
+      transportPullByPath = {
+        for (final e in evidence.ranked.take(5))
+          e.path: evidence.transportPullByPath[e.path] ?? 0.0,
+      };
+      lowFrequencyByPath = {
+        for (final e in evidence.ranked.take(5)) e.path: e.lowFrequencySupport,
+      };
+      highFrequencyByPath = {
+        for (final e in evidence.ranked.take(5))
+          e.path: e.highFrequencySurprise,
+      };
+      higherOrderLiftByPath = {
+        for (final e in evidence.ranked.take(5))
+          if (e.higherOrderLift > 0) e.path: e.higherOrderLift,
+      };
+      reducibilityGapByPath = {
+        for (final e in evidence.ranked.take(5))
+          if (e.reducibilityGap > 0) e.path: e.reducibilityGap,
+      };
+      flowDiagnostics = evidence.flowDiagnostics;
+      witnessSyndrome = evidence.witnessSyndrome;
+      metricSidecarLabels = [
+        for (final sidecar in evidence.metricSidecars)
+          formatLogosMetricSidecar(sidecar, includeNote: false),
+      ];
+      transportEdges = evidence.transport.frontierEdges.take(4).toList(
+            growable: false,
+          );
+      transportLaneLabels = (() {
+        final fromEdges = evidence.transport.dominantEdgeLanes(limit: 4);
+        if (fromEdges.isNotEmpty) return fromEdges;
+        return evidence.transport.dominantLanes(limit: 4);
+      })();
+      transportFrontierPaths = (() {
+        final fromEdges = evidence.transport.frontierPathsFromEdges(limit: 4);
+        if (fromEdges.isNotEmpty) return fromEdges;
+        return evidence.transport.frontierPaths;
+      })();
+      inquiryStepLabels = [
+        for (final step in evidence.inquiryPlan.steps.take(4))
+          formatLogosInquiryStep(step),
+      ];
+      motionWarpCoverage = evidence.semanticMotion.warpCoverage;
+      motionInnovationMass = evidence.semanticMotion.innovationMass;
+      motionCompensatedChangeRatio =
+          evidence.semanticMotion.compensatedChangeRatio;
+      motionSceneCut = evidence.semanticMotion.sceneCut;
+      motionInnovationFrontier = evidence.semanticMotion.innovationFrontier;
+      witnessResidualPredictedMass = evidence.witnessResidual.predictedMass;
+      witnessResidualMass = evidence.witnessResidual.residualMass;
+      witnessResidualCoverage = evidence.witnessResidual.coverage;
+      witnessResidualFrontier = evidence.witnessResidual.frontierPaths;
+      witnessResidualKinds = evidence.witnessResidual.dominantKinds;
+      witnessesByPath = {
+        for (final e in evidence.ranked.take(5))
+          if (e.witnesses.isNotEmpty) e.path: e.witnesses.take(3).toList(),
+      };
+      witnessLabelsByPath = {
+        for (final entry in witnessesByPath.entries)
+          entry.key: [
+            for (final w in entry.value)
+              formatLogosEvidenceWitness(
+                w,
+                includeNote: true,
+                includeSource: true,
+              ),
+          ],
+      };
+      sidecarLabelsByPath = {
+        for (final e in evidence.ranked.take(5))
+          if (e.sidecars.isNotEmpty)
+            e.path: [
+              for (final sidecar in e.sidecars.take(2))
+                formatLogosMetricSidecar(sidecar, includeNote: false),
+            ],
+      };
     } else if (attr != null) {
       missing = attr.combined.take(5).toList();
       axisShares = attr.axisMassFractions();
@@ -5190,6 +5431,14 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
         for (final s in missing)
           if (attr.dominantAxis[s.path] != null)
             s.path: attr.dominantAxis[s.path]!,
+      };
+      supportByPath = {
+        for (final s in missing) s.path: s.phi,
+      };
+      witnessLabelsByPath = {
+        for (final s in missing)
+          if (attr.dominantAxis[s.path] != null)
+            s.path: [attr.dominantAxis[s.path]!],
       };
     } else {
       // Fallback: plain weighted diffusion (engine returns empty if no
@@ -5203,9 +5452,9 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
     }
 
     // Branch trajectory via Engram orbit fit on the last N commits.
-    // Shared probe — see [_probeBranchOrbit]. Result also gets reused
+    // Shared probe — see [probeLogosBranchOrbit]. Result also gets reused
     // by `_collectRelevanceNeighborhood` to tune diffusion temperature.
-    final orbit = await _probeBranchOrbit(repositoryPath);
+    final orbit = await probeLogosBranchOrbit(repositoryPath);
     final branchTrajectory = orbit?.characterLabel;
 
     // Stability: how firm is the top-K ranking under small source
@@ -5239,6 +5488,33 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
       fieldAlignment: evidence?.fieldAlignment,
       sourceSurprise: evidence?.sourceSurprise,
       fieldSurprise: evidence?.fieldSurprise,
+      supportByPath: supportByPath,
+      ambientByPath: ambientByPath,
+      transportPullByPath: transportPullByPath,
+      lowFrequencyByPath: lowFrequencyByPath,
+      highFrequencyByPath: highFrequencyByPath,
+      higherOrderLiftByPath: higherOrderLiftByPath,
+      reducibilityGapByPath: reducibilityGapByPath,
+      flowDiagnostics: flowDiagnostics,
+      witnessSyndrome: witnessSyndrome,
+      metricSidecarLabels: metricSidecarLabels,
+      transportLaneLabels: transportLaneLabels,
+      transportFrontierPaths: transportFrontierPaths,
+      transportEdges: transportEdges,
+      inquiryStepLabels: inquiryStepLabels,
+      motionWarpCoverage: motionWarpCoverage,
+      motionInnovationMass: motionInnovationMass,
+      motionCompensatedChangeRatio: motionCompensatedChangeRatio,
+      motionSceneCut: motionSceneCut,
+      motionInnovationFrontier: motionInnovationFrontier,
+      witnessResidualPredictedMass: witnessResidualPredictedMass,
+      witnessResidualMass: witnessResidualMass,
+      witnessResidualCoverage: witnessResidualCoverage,
+      witnessResidualFrontier: witnessResidualFrontier,
+      witnessResidualKinds: witnessResidualKinds,
+      witnessesByPath: witnessesByPath,
+      witnessLabelsByPath: witnessLabelsByPath,
+      sidecarLabelsByPath: sidecarLabelsByPath,
     );
   } catch (e, st) {
     LogosGitDiagnostics.instance.recordFailure(
@@ -5261,7 +5537,8 @@ String _formatCommitShapeBlock(LogosCommitShape? shape) {
   buf.writeln('primary files: ${shape.primaryCount}');
   buf.writeln('diffusion t: ${shape.temperature.toStringAsFixed(2)}');
   if (shape.sourceAlignment != null) {
-    buf.writeln('source alignment: ${shape.sourceAlignment!.toStringAsFixed(2)}');
+    buf.writeln(
+        'source alignment: ${shape.sourceAlignment!.toStringAsFixed(2)}');
   }
   if (shape.fieldAlignment != null) {
     buf.writeln('field alignment: ${shape.fieldAlignment!.toStringAsFixed(2)}');
@@ -5271,6 +5548,92 @@ String _formatCommitShapeBlock(LogosCommitShape? shape) {
   }
   if (shape.fieldSurprise != null) {
     buf.writeln('field surprise: ${shape.fieldSurprise!.toStringAsFixed(2)}');
+  }
+  if (shape.flowDiagnostics != null) {
+    buf.writeln(
+      'flow gradient/curl/harmonic: '
+      '${shape.flowDiagnostics!.gradientMass.toStringAsFixed(2)} / '
+      '${shape.flowDiagnostics!.curlMass.toStringAsFixed(2)} / '
+      '${shape.flowDiagnostics!.harmonicMass.toStringAsFixed(2)}',
+    );
+    buf.writeln(
+      'structural stress: '
+      '${shape.flowDiagnostics!.structuralStress.toStringAsFixed(2)}',
+    );
+    buf.writeln(
+      'flow confidence: '
+      '${shape.flowDiagnostics!.confidence.toStringAsFixed(2)}',
+    );
+  }
+  if (shape.witnessSyndrome != null) {
+    final syndrome = shape.witnessSyndrome!;
+    buf.writeln(
+      'witness syndrome: '
+      'cov=${syndrome.coverage.toStringAsFixed(2)}  '
+      'corr=${syndrome.corroboration.toStringAsFixed(2)}  '
+      'dis=${syndrome.disagreement.toStringAsFixed(2)}',
+    );
+    if (syndrome.dominantKinds.isNotEmpty) {
+      buf.writeln(
+          'witness dominant kinds: ${syndrome.dominantKinds.join(', ')}');
+    }
+    if (syndrome.missingKinds.isNotEmpty) {
+      buf.writeln('witness missing kinds: ${syndrome.missingKinds.join(', ')}');
+    }
+  }
+  if (shape.metricSidecarLabels.isNotEmpty) {
+    buf.writeln('metric sidecars: ${shape.metricSidecarLabels.join(', ')}');
+  }
+  if (shape.transportLaneLabels.isNotEmpty) {
+    buf.writeln('transport lanes: ${shape.transportLaneLabels.join(', ')}');
+  }
+  if (shape.transportFrontierPaths.isNotEmpty) {
+    buf.writeln(
+        'transport frontier: ${shape.transportFrontierPaths.join(', ')}');
+  }
+  if (shape.transportEdges.isNotEmpty) {
+    buf.writeln(
+      'transport edges: ${shape.transportEdges.take(3).map((e) => formatLogosTransportFlowEdge(e)).join(', ')}',
+    );
+  }
+  if (shape.motionWarpCoverage != null &&
+      shape.motionInnovationMass != null &&
+      shape.motionCompensatedChangeRatio != null) {
+    buf.writeln(
+      'motion warp/innovation/ratio: '
+      '${shape.motionWarpCoverage!.toStringAsFixed(2)} / '
+      '${shape.motionInnovationMass!.toStringAsFixed(2)} / '
+      '${shape.motionCompensatedChangeRatio!.toStringAsFixed(2)}',
+    );
+    buf.writeln('motion scene cut: ${shape.motionSceneCut ? 'yes' : 'no'}');
+    if (shape.motionInnovationFrontier.isNotEmpty) {
+      buf.writeln(
+        'motion innovation frontier: ${shape.motionInnovationFrontier.join(', ')}',
+      );
+    }
+  }
+  if (shape.witnessResidualPredictedMass != null &&
+      shape.witnessResidualMass != null &&
+      shape.witnessResidualCoverage != null) {
+    buf.writeln(
+      'witness predicted/residual/coverage: '
+      '${shape.witnessResidualPredictedMass!.toStringAsFixed(2)} / '
+      '${shape.witnessResidualMass!.toStringAsFixed(2)} / '
+      '${shape.witnessResidualCoverage!.toStringAsFixed(2)}',
+    );
+    if (shape.witnessResidualFrontier.isNotEmpty) {
+      buf.writeln(
+        'witness residual frontier: ${shape.witnessResidualFrontier.join(', ')}',
+      );
+    }
+    if (shape.witnessResidualKinds.isNotEmpty) {
+      buf.writeln(
+        'witness residual kinds: ${shape.witnessResidualKinds.join(', ')}',
+      );
+    }
+  }
+  if (shape.inquiryStepLabels.isNotEmpty) {
+    buf.writeln('inquiry path: ${shape.inquiryStepLabels.join(' | ')}');
   }
   if (shape.scopeCentroid != null) {
     buf.writeln(
@@ -5321,7 +5684,8 @@ String _formatCommitShapeBlock(LogosCommitShape? shape) {
     final entries = shape.axisShares.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     for (final entry in entries) {
-      buf.writeln('  - ${entry.key}: ${(entry.value * 100).toStringAsFixed(0)}%');
+      buf.writeln(
+          '  - ${entry.key}: ${(entry.value * 100).toStringAsFixed(0)}%');
     }
   }
   if (shape.missingMass.isNotEmpty) {
@@ -5356,12 +5720,229 @@ String _formatCommitShapeBlock(LogosCommitShape? shape) {
     buf.writeln(preface);
     for (final m in shape.missingMass) {
       final axis = shape.dominantAxisByPath[m.path];
-      final axisTag = axis != null ? '  via=$axis' : '';
-      buf.writeln('  - ${m.path} (φ=${m.phi.toStringAsFixed(3)}$axisTag)');
+      final support = shape.supportByPath[m.path];
+      final ambient = shape.ambientByPath[m.path];
+      final transportPull = shape.transportPullByPath[m.path];
+      final low = shape.lowFrequencyByPath[m.path];
+      final high = shape.highFrequencyByPath[m.path];
+      final higherOrder = shape.higherOrderLiftByPath[m.path];
+      final reducibility = shape.reducibilityGapByPath[m.path];
+      final witnesses = shape.witnessLabelsByPath[m.path] ?? const <String>[];
+      final sidecars = shape.sidecarLabelsByPath[m.path] ?? const <String>[];
+      final metricTags = <String>[
+        'phi=${m.phi.toStringAsFixed(3)}',
+        if (axis != null) 'via=$axis',
+        if (support != null) 's=${support.toStringAsFixed(3)}',
+        if (ambient != null && ambient > 0.001)
+          'a=${ambient.toStringAsFixed(3)}',
+        if (transportPull != null && transportPull > 0.02)
+          'tp=${transportPull.toStringAsFixed(3)}',
+        if (low != null && low > 0.01) 'lf=${low.toStringAsFixed(3)}',
+        if (high != null && high > 0.01) 'hf=${high.toStringAsFixed(3)}',
+        if (higherOrder != null && higherOrder > 0.02)
+          'ho=${higherOrder.toStringAsFixed(3)}',
+        if (reducibility != null && reducibility > 0.02)
+          'rg=${reducibility.toStringAsFixed(3)}',
+        if (witnesses.isNotEmpty) 'wit=${witnesses.join('|')}',
+        if (sidecars.isNotEmpty) 'sc=${sidecars.join('|')}',
+      ];
+      buf.writeln('  - ${m.path} (${metricTags.join('  ')})');
     }
   }
   buf.writeln('</logos_shape>');
   return buf.toString();
+}
+
+String _formatEvidencePill(LogosResidualView ev) {
+  return '  ${_evidenceTagParts(ev).join(' ')}';
+}
+
+List<String> _evidenceTagParts(
+  LogosResidualView ev, {
+  bool includeWitnessNotes = true,
+}) {
+  final parts = <String>[
+    'u=${ev.utility.toStringAsFixed(3)}',
+    's=${ev.support.toStringAsFixed(3)}',
+  ];
+  if (ev.ambient > 0.001) {
+    parts.add('a=${ev.ambient.toStringAsFixed(3)}');
+  }
+  if (ev.transportPull > 0.02) {
+    parts.add('tp=${ev.transportPull.toStringAsFixed(3)}');
+  }
+  if (ev.transportedSupport > 0.02) {
+    parts.add('ts=${ev.transportedSupport.toStringAsFixed(3)}');
+  }
+  if (ev.innovationResidual > 0.02) {
+    parts.add('ir=${ev.innovationResidual.toStringAsFixed(3)}');
+  }
+  if (ev.witnessResidual > 0.02) {
+    parts.add('wr=${ev.witnessResidual.toStringAsFixed(3)}');
+  }
+  if (ev.lowFrequencySupport > 0.01) {
+    parts.add('lf=${ev.lowFrequencySupport.toStringAsFixed(3)}');
+  }
+  if (ev.highFrequencySurprise > 0.01) {
+    parts.add('hf=${ev.highFrequencySurprise.toStringAsFixed(3)}');
+  }
+  parts.add('i=${ev.integrity.toStringAsFixed(2)}');
+  if (ev.higherOrderLift > 0.02) {
+    parts.add('ho=${ev.higherOrderLift.toStringAsFixed(3)}');
+  }
+  if (ev.reducibilityGap > 0.02) {
+    parts.add('rg=${ev.reducibilityGap.toStringAsFixed(3)}');
+  }
+  final witnessLabels = <String>[
+    for (final witness in ev.witnesses.take(3))
+      formatLogosEvidenceWitness(
+        witness,
+        includeNote: includeWitnessNotes,
+        includeSource: false,
+      ),
+  ];
+  if (witnessLabels.isNotEmpty) {
+    parts.add('wit=${witnessLabels.join('|')}');
+  }
+  final sidecarLabels = <String>[
+    for (final sidecar in ev.sidecars.take(2))
+      formatLogosMetricSidecar(sidecar, includeNote: false),
+  ];
+  if (sidecarLabels.isNotEmpty) {
+    parts.add('sc=${sidecarLabels.join('|')}');
+  }
+  return parts;
+}
+
+String _collectLogosTopology(
+  LogosDiffusionResult? logos, {
+  required int budgetChars,
+}) {
+  if (budgetChars <= 80 || logos == null) return '';
+  final evidence = logos.evidence;
+  if (evidence == null) return '';
+  final rollup = rollupEvidenceTopology(evidence.ranked, maxEntries: 12);
+  final regime = LogosRegime.classify(
+    fileCount: logos.probe.stats.primaryCount,
+    coherence: logos.probe.stats.coherence,
+  );
+  final lines = <String>[];
+  final queryParts = <String>[
+    if (evidence.sourceAlignment != null)
+      'sourceAlign=${evidence.sourceAlignment!.toStringAsFixed(2)}',
+    if (evidence.fieldAlignment != null)
+      'fieldAlign=${evidence.fieldAlignment!.toStringAsFixed(2)}',
+    if (evidence.sourceSurprise != null)
+      'sourceSurp=${evidence.sourceSurprise!.toStringAsFixed(2)}',
+    if (evidence.fieldSurprise != null)
+      'fieldSurp=${evidence.fieldSurprise!.toStringAsFixed(2)}',
+  ];
+  if (queryParts.isNotEmpty) {
+    lines.add('query-field: ${queryParts.join('  ')}');
+  }
+  final flow = evidence.flowDiagnostics;
+  lines.add(
+    'flow: g=${flow.gradientMass.toStringAsFixed(2)}  '
+    'c=${flow.curlMass.toStringAsFixed(2)}  '
+    'h=${flow.harmonicMass.toStringAsFixed(2)}  '
+    'stress=${flow.structuralStress.toStringAsFixed(2)}  '
+    'conf=${flow.confidence.toStringAsFixed(2)}',
+  );
+  final syndrome = evidence.witnessSyndrome;
+  final syndromeParts = <String>[
+    'cov=${syndrome.coverage.toStringAsFixed(2)}',
+    'corr=${syndrome.corroboration.toStringAsFixed(2)}',
+    'dis=${syndrome.disagreement.toStringAsFixed(2)}',
+    if (syndrome.dominantKinds.isNotEmpty)
+      'dom=${syndrome.dominantKinds.take(3).join('|')}',
+    if (syndrome.missingKinds.isNotEmpty)
+      'miss=${syndrome.missingKinds.take(3).join('|')}',
+  ];
+  lines.add('syndrome: ${syndromeParts.join('  ')}');
+  if (evidence.metricSidecars.isNotEmpty) {
+    lines.add(
+      'sidecars: ${[
+        for (final sidecar in evidence.metricSidecars)
+          formatLogosMetricSidecar(sidecar, includeNote: false),
+      ].join('  ')}',
+    );
+  }
+  final transportParts = <String>[
+    if (evidence.transport.pull > 0.02)
+      'pull=${evidence.transport.pull.toStringAsFixed(3)}',
+    if (evidence.transport.dominantEdgeLanes(limit: 4).isNotEmpty)
+      'lanes=${evidence.transport.dominantEdgeLanes(limit: 4).join('|')}'
+    else if (evidence.transport.dominantLanes(limit: 4).isNotEmpty)
+      'lanes=${evidence.transport.dominantLanes(limit: 4).join('|')}',
+    if (evidence.transport.frontierPathsFromEdges(limit: 4).isNotEmpty)
+      'frontier=${evidence.transport.frontierPathsFromEdges(limit: 4).join('|')}'
+    else if (evidence.transport.frontierPaths.isNotEmpty)
+      'frontier=${evidence.transport.frontierPaths.take(4).join('|')}',
+    if (evidence.transport.frontierEdges.isNotEmpty)
+      'edges=${evidence.transport.frontierEdges.take(3).map((e) => formatLogosTransportFlowEdge(e, includePull: false)).join('|')}',
+  ];
+  if (transportParts.isNotEmpty) {
+    lines.add('transport: ${transportParts.join('  ')}');
+  }
+  final motion = evidence.semanticMotion;
+  final motionParts = <String>[
+    'warp=${motion.warpCoverage.toStringAsFixed(3)}',
+    'innov=${motion.innovationMass.toStringAsFixed(3)}',
+    'ratio=${motion.compensatedChangeRatio.toStringAsFixed(3)}',
+    'cut=${motion.sceneCut ? '1' : '0'}',
+    if (motion.innovationFrontier.isNotEmpty)
+      'frontier=${motion.innovationFrontier.take(4).join('|')}',
+  ];
+  lines.add('motion: ${motionParts.join('  ')}');
+  final witnessResidual = evidence.witnessResidual;
+  if (witnessResidual.predictedMass > 0.02 ||
+      witnessResidual.residualMass > 0.02) {
+    final witnessParts = <String>[
+      'pred=${witnessResidual.predictedMass.toStringAsFixed(3)}',
+      'res=${witnessResidual.residualMass.toStringAsFixed(3)}',
+      'cov=${witnessResidual.coverage.toStringAsFixed(3)}',
+      if (witnessResidual.dominantKinds.isNotEmpty)
+        'kinds=${witnessResidual.dominantKinds.take(4).join('|')}',
+      if (witnessResidual.frontierPaths.isNotEmpty)
+        'frontier=${witnessResidual.frontierPaths.take(4).join('|')}',
+    ];
+    lines.add('witness: ${witnessParts.join('  ')}');
+  }
+  if (evidence.inquiryPlan.steps.isNotEmpty) {
+    lines.add(
+      'inquiry: ${evidence.inquiryPlan.steps.take(4).map(formatLogosInquiryStep).join('  |  ')}',
+    );
+  }
+  final spectrumParts = <String>[
+    if (rollup.transportPull > 0.02)
+      'tp=${rollup.transportPull.toStringAsFixed(3)}',
+    'lf=${rollup.lowFrequencySupport.toStringAsFixed(3)}',
+    'hf=${rollup.highFrequencySurprise.toStringAsFixed(3)}',
+    if (rollup.higherOrderLift > 0.01)
+      'ho=${rollup.higherOrderLift.toStringAsFixed(3)}',
+    if (rollup.reducibilityGap > 0.01)
+      'rg=${rollup.reducibilityGap.toStringAsFixed(3)}',
+  ];
+  lines.add('spectrum: ${spectrumParts.join('  ')}');
+  final topologyParts = <String>[
+    'coh=${evidence.coherence.toStringAsFixed(2)}',
+    'stab=${evidence.stability.toStringAsFixed(2)}',
+    'regime=${regime.name}',
+    't=${logos.resolvedT.toStringAsFixed(2)}',
+  ];
+  final witnessKinds = rollup.topWitnessKinds(limit: 3);
+  if (witnessKinds.isNotEmpty) {
+    topologyParts.add('wit=${witnessKinds.join('|')}');
+  }
+  lines.add('topology: ${topologyParts.join('  ')}');
+
+  final buf = StringBuffer();
+  for (final line in lines) {
+    final rendered = '$line\n';
+    if (buf.length + rendered.length > budgetChars) break;
+    buf.write(rendered);
+  }
+  return buf.toString().trimRight();
 }
 
 /// Build a compact outline of a large file — class/function/method signatures
@@ -5575,7 +6156,8 @@ Future<_DiffPromptBundle> _buildDiffPromptBundle(
 /// (binary/mode-only/rename visibility under the unified pipeline)
 /// that it deserves direct unit coverage.
 @visibleForTesting
-Map<String, List<String>> extractMetadataOnlyChangesForTesting(String fullDiff) =>
+Map<String, List<String>> extractMetadataOnlyChangesForTesting(
+        String fullDiff) =>
     _extractMetadataOnlyChanges(fullDiff);
 
 /// Walk a unified-diff and capture file-level metadata that the hunk
@@ -5605,6 +6187,7 @@ Map<String, List<String>> _extractMetadataOnlyChanges(String fullDiff) {
       out[currentPath!] = List.unmodifiable(currentMetadata);
     }
   }
+
   bool isMeaningful(String line) {
     // Drop `index`, `--- `, `+++ `. Keep mode/binary/rename/copy/
     // similarity/dissimilarity/new file/deleted file lines.
@@ -5614,6 +6197,7 @@ Map<String, List<String>> _extractMetadataOnlyChanges(String fullDiff) {
     if (line.trim().isEmpty) return false;
     return true;
   }
+
   for (final line in fullDiff.split('\n')) {
     // diffHeaderPath covers both the unquoted and C-string-quoted
     // header forms — single source of truth in git.dart.
@@ -5658,8 +6242,7 @@ String _formatMetadataOnlyBlock(
   // binary marker, or rename source/target + similarity). Allow up
   // to ~400 chars per file before truncating that file's slice.
   const perFileCap = 400;
-  final headerLine =
-      '<header_metadata count=${metadataOnly.length}>\n';
+  final headerLine = '<header_metadata count=${metadataOnly.length}>\n';
   const closeLine = '</header_metadata>';
   // Reserve room for the open + close tags before admitting entries.
   var remaining = maxChars - headerLine.length - closeLine.length;
@@ -6314,7 +6897,8 @@ _ParsedReviewResult? _parseDraftReview(String raw) {
   // Was strict `int.tryParse(scoreRaw.trim())` which broke on any
   // formatting variation the model decided to add.
   final scoreDigits = RegExp(r'\d+').firstMatch(scoreRaw);
-  final score = scoreDigits == null ? null : int.tryParse(scoreDigits.group(0)!);
+  final score =
+      scoreDigits == null ? null : int.tryParse(scoreDigits.group(0)!);
   if (score == null) {
     return null;
   }
@@ -6968,8 +7552,8 @@ String _normalizeProviderError(_ProviderKind kind, String raw) {
 String _scrubSecrets(String input) {
   var s = input;
   // Authorization: Bearer … (HTTP auth header in stderr)
-  s = s.replaceAll(
-      RegExp(r'([Bb]earer\s+)[A-Za-z0-9._\-]+', multiLine: true), r'$1[redacted]');
+  s = s.replaceAll(RegExp(r'([Bb]earer\s+)[A-Za-z0-9._\-]+', multiLine: true),
+      r'$1[redacted]');
   // Google API keys (AIza…, 39 chars)
   s = s.replaceAll(
       RegExp(r'AIza[0-9A-Za-z_\-]{35}'), '[redacted:google-api-key]');
@@ -6983,7 +7567,8 @@ String _scrubSecrets(String input) {
   s = s.replaceAll(RegExp(r'AKIA[0-9A-Z]{16}'), '[redacted:aws-akid]');
   // JWT-ish triplets (base64.base64.base64)
   s = s.replaceAll(
-      RegExp(r'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'),
+      RegExp(
+          r'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'),
       '[redacted:jwt]');
   return s;
 }
@@ -7411,19 +7996,35 @@ String? _geminiApiAccessToken;
 DateTime? _geminiApiTokenExpiry;
 String? _geminiApiProjectId;
 
-/// Map display aliases to actual API model names.
+const _geminiApiPreviewProModel = 'gemini-3-pro-preview';
+const _geminiApiPreviewFlashModel = 'gemini-3-flash-preview';
+const _geminiApiPreview31ProModel = 'gemini-3.1-pro-preview';
+const _geminiApiPreview31FlashLiteModel = 'gemini-3.1-flash-lite-preview';
+const _geminiApiStableProModel = 'gemini-2.5-pro';
+
+/// Map local Gemini aliases to concrete model ids accepted by the Code Assist
+/// API. The official Gemini CLI supports auto/pro/flash aliases client-side;
+/// this endpoint expects concrete model ids.
 String _geminiApiModelName(String alias) {
-  switch (alias.toLowerCase()) {
+  switch (alias.trim().toLowerCase()) {
     case 'pro':
-      return 'gemini-2.5-pro';
+      return _geminiApiPreviewProModel;
     case 'flash':
-      return 'gemini-2.5-flash';
+      return _geminiApiPreviewFlashModel;
     case 'flash-lite':
-      return 'gemini-2.5-flash-lite';
+      return _geminiApiPreview31FlashLiteModel;
     case 'auto':
-      return 'gemini-2.5-flash';
+    case 'auto-gemini-3':
+      return _geminiApiPreviewProModel;
+    case 'auto-gemini-2.5':
+      return _geminiApiStableProModel;
+    case 'gemini-3.1-pro-preview-customtools':
+      // The public Gemini CLI may surface this internal variant, but the
+      // Code Assist endpoint this app calls accepts the plain 3.1 pro preview
+      // model id instead.
+      return _geminiApiPreview31ProModel;
     default:
-      // Already a full model name (e.g. 'gemini-2.5-pro').
+      // Already a full model name (e.g. 'gemini-3-pro-preview').
       return alias;
   }
 }

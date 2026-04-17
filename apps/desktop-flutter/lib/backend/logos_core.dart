@@ -125,7 +125,10 @@ class CsrGraph {
     required this.indptr,
     required this.indices,
     required this.values,
-  });
+    Float64List? degreeInvSqrt,
+    Float64List? rawWeights,
+  })  : degreeInvSqrt = degreeInvSqrt ?? Float64List(0),
+        rawWeights = rawWeights ?? Float64List(0);
 
   /// Number of nodes.
   final int n;
@@ -139,6 +142,324 @@ class CsrGraph {
 
   /// Pre-fused normalised edge weights (`D^{-1/2}·W·D^{-1/2}`).
   final Float64List values;
+
+  /// `D^{-1/2}[i]` — per-node normalisation factor, stored alongside
+  /// [values] so rank-1 updates ([withNodeAppended], [withNodeRemoved])
+  /// can re-fuse the affected rows without needing the caller to supply
+  /// it separately. Empty (length-0) on graphs built without providing
+  /// it; rank-1 ops on such graphs throw [StateError] rather than
+  /// silently producing an asymmetric Laplacian.
+  final Float64List degreeInvSqrt;
+
+  /// Raw (un-normalised) edge weights `W[i,j]`, parallel to [values].
+  /// Present when the graph was built with rank-1 updates in mind;
+  /// empty otherwise. Lets [withNodeAppended] correctly un-fuse and
+  /// re-fuse neighbour rows whose degrees change.
+  final Float64List rawWeights;
+
+  bool get supportsRankOneUpdates =>
+      degreeInvSqrt.length == n && rawWeights.length == values.length;
+
+  /// Return a new graph with one additional node appended at id `n`.
+  /// The new node's edges are `edges` — each tuple is `(targetId,
+  /// rawWeight)`, with symmetric counterparts added automatically.
+  ///
+  /// Re-fuses `D^{-1/2}` for the new row and every existing row that
+  /// received a new edge (their degree changed). Rows untouched by the
+  /// update keep their fused values byte-identical to the input graph.
+  ///
+  /// Requires [supportsRankOneUpdates]; throws [StateError] otherwise.
+  /// Cost is `O(|edges| + Σ_{i∈incident} deg(i))` — i.e. linear in the
+  /// perturbation footprint, not the graph size. That's the whole
+  /// point of rank-1: adding one file costs proportional to its local
+  /// neighbourhood, not to the whole repository.
+  CsrGraph withNodeAppended({
+    required List<(int, double)> edges,
+    double selfMass = 0.0,
+  }) {
+    if (!supportsRankOneUpdates) {
+      throw StateError(
+        'CsrGraph.withNodeAppended requires both degreeInvSqrt and rawWeights '
+        'to be populated (build via `buildFromStats` with rank-1 support, or '
+        'use `CsrGraph.rawFused` to seed them from raw weights).',
+      );
+    }
+    if (!selfMass.isFinite || selfMass < 0) {
+      // Negative or non-finite selfMass would flow into sqrt(newNodeDeg)
+      // and produce a NaN D^{-1/2} that silently contaminates every
+      // subsequent diffusion — fail loudly instead.
+      throw ArgumentError.value(
+        selfMass,
+        'selfMass',
+        'must be finite and non-negative',
+      );
+    }
+    // Validate + dedupe edges. A repeated target folds into a single
+    // edge with summed weight so the caller can safely compose deltas.
+    final edgeByTarget = <int, double>{};
+    for (final (target, w) in edges) {
+      if (target < 0 || target >= n) {
+        throw RangeError.range(target, 0, n - 1, 'target');
+      }
+      if (!w.isFinite || w <= 0) continue;
+      edgeByTarget.update(target, (old) => old + w, ifAbsent: () => w);
+    }
+
+    final newN = n + 1;
+    // New degree for the appended node = sum of its raw edge weights
+    // plus any self-mass (matches the row-stochastic convention used
+    // by `buildFromStats`).
+    var newNodeDeg = selfMass;
+    for (final w in edgeByTarget.values) {
+      newNodeDeg += w;
+    }
+    final newNodeDInv = newNodeDeg > 0 ? 1.0 / math.sqrt(newNodeDeg) : 0.0;
+
+    // Recompute D^{-1/2} for every existing node that gained an edge.
+    final newDegreeInvSqrt = Float64List(newN);
+    newDegreeInvSqrt.setRange(0, n, degreeInvSqrt);
+    newDegreeInvSqrt[n] = newNodeDInv;
+    // For each incident existing node, old degree = 1 / (D^{-1/2})^2.
+    for (final entry in edgeByTarget.entries) {
+      final i = entry.key;
+      final added = entry.value;
+      final oldDInv = degreeInvSqrt[i];
+      final oldDeg = oldDInv > 0 ? 1.0 / (oldDInv * oldDInv) : 0.0;
+      final newDeg = oldDeg + added;
+      newDegreeInvSqrt[i] = newDeg > 0 ? 1.0 / math.sqrt(newDeg) : 0.0;
+    }
+
+    // Allocate new CSR buffers. Existing edges survive; each incident
+    // row gains one edge (to the new node) at the end; a fresh row is
+    // appended for the new node itself.
+    final oldNnz = indptr[n];
+    final edgesPerIncident = 1; // one new edge per incident existing row
+    final addedToExisting = edgeByTarget.length * edgesPerIncident;
+    final newRowSize = edgeByTarget.length;
+    final newNnz = oldNnz + addedToExisting + newRowSize;
+
+    final newIndptr = Int32List(newN + 1);
+    final newIndices = Int32List(newNnz);
+    final newValues = Float64List(newNnz);
+    final newRaw = Float64List(newNnz);
+
+    var writePos = 0;
+    for (var i = 0; i < n; i++) {
+      newIndptr[i] = writePos;
+      final start = indptr[i];
+      final end = indptr[i + 1];
+      final rowChangedDInv = edgeByTarget.containsKey(i);
+      final dInvI = newDegreeInvSqrt[i];
+      for (var k = start; k < end; k++) {
+        final j = indices[k];
+        newIndices[writePos] = j;
+        final raw = rawWeights[k];
+        newRaw[writePos] = raw;
+        // If either endpoint's D^{-1/2} changed, re-fuse. The only
+        // endpoints whose D^{-1/2} changed are i itself (when incident)
+        // and any neighbour that's also incident. For j ≥ n (can't
+        // happen since j was a valid column before append) this is a
+        // no-op branch.
+        final dInvJ = newDegreeInvSqrt[j];
+        if (rowChangedDInv || edgeByTarget.containsKey(j)) {
+          newValues[writePos] = dInvI * raw * dInvJ;
+        } else {
+          newValues[writePos] = values[k];
+        }
+        writePos++;
+      }
+      // Append the new edge (i → newNode) for incident rows.
+      if (rowChangedDInv) {
+        final raw = edgeByTarget[i]!;
+        newIndices[writePos] = n;
+        newRaw[writePos] = raw;
+        newValues[writePos] = dInvI * raw * newNodeDInv;
+        writePos++;
+      }
+    }
+
+    // New node's row: edges to each existing incident node, in
+    // ascending column order (keeps later SpMV-friendly monotonicity).
+    newIndptr[n] = writePos;
+    final sortedTargets = edgeByTarget.keys.toList()..sort();
+    for (final j in sortedTargets) {
+      final raw = edgeByTarget[j]!;
+      newIndices[writePos] = j;
+      newRaw[writePos] = raw;
+      newValues[writePos] = newNodeDInv * raw * newDegreeInvSqrt[j];
+      writePos++;
+    }
+    newIndptr[newN] = writePos;
+
+    return CsrGraph(
+      n: newN,
+      indptr: newIndptr,
+      indices: newIndices,
+      values: newValues,
+      degreeInvSqrt: newDegreeInvSqrt,
+      rawWeights: newRaw,
+    );
+  }
+
+  /// Return a new graph with node [id] removed. All existing references
+  /// to nodes `> id` are shifted down by one. Rows incident to the
+  /// removed node have their `D^{-1/2}` re-fused to reflect the lower
+  /// degree. Requires [supportsRankOneUpdates].
+  CsrGraph withNodeRemoved(int id) {
+    if (!supportsRankOneUpdates) {
+      throw StateError('CsrGraph.withNodeRemoved requires rank-1 support.');
+    }
+    if (id < 0 || id >= n) {
+      throw RangeError.range(id, 0, n - 1, 'id');
+    }
+    final newN = n - 1;
+    if (newN == 0) {
+      return CsrGraph(
+        n: 0,
+        indptr: Int32List(1),
+        indices: Int32List(0),
+        values: Float64List(0),
+        degreeInvSqrt: Float64List(0),
+        rawWeights: Float64List(0),
+      );
+    }
+
+    // Pass 1: tally degree loss per incident neighbour and count edges
+    // that survive.
+    final degreeLoss = <int, double>{};
+    final removedStart = indptr[id];
+    final removedEnd = indptr[id + 1];
+    for (var k = removedStart; k < removedEnd; k++) {
+      final j = indices[k];
+      degreeLoss[j] = (degreeLoss[j] ?? 0) + rawWeights[k];
+    }
+    var survivingNnz = 0;
+    for (var i = 0; i < n; i++) {
+      if (i == id) continue;
+      final start = indptr[i];
+      final end = indptr[i + 1];
+      for (var k = start; k < end; k++) {
+        if (indices[k] == id) continue;
+        survivingNnz++;
+      }
+    }
+
+    // Recompute D^{-1/2} for incident rows; carry others over.
+    final newDegreeInvSqrt = Float64List(newN);
+    var writeRow = 0;
+    for (var i = 0; i < n; i++) {
+      if (i == id) continue;
+      final oldDInv = degreeInvSqrt[i];
+      final loss = degreeLoss[i];
+      if (loss == null) {
+        newDegreeInvSqrt[writeRow] = oldDInv;
+      } else {
+        final oldDeg = oldDInv > 0 ? 1.0 / (oldDInv * oldDInv) : 0.0;
+        final newDeg = oldDeg - loss;
+        newDegreeInvSqrt[writeRow] =
+            newDeg > 0 ? 1.0 / math.sqrt(newDeg) : 0.0;
+      }
+      writeRow++;
+    }
+
+    final newIndptr = Int32List(newN + 1);
+    final newIndices = Int32List(survivingNnz);
+    final newValues = Float64List(survivingNnz);
+    final newRaw = Float64List(survivingNnz);
+
+    var writePos = 0;
+    var rowOut = 0;
+    for (var i = 0; i < n; i++) {
+      if (i == id) continue;
+      newIndptr[rowOut] = writePos;
+      final start = indptr[i];
+      final end = indptr[i + 1];
+      final dInvI = newDegreeInvSqrt[rowOut];
+      final rowChangedDInv = degreeLoss.containsKey(i);
+      for (var k = start; k < end; k++) {
+        final j = indices[k];
+        if (j == id) continue;
+        // Column indices > id must shift down by one.
+        final newCol = j > id ? j - 1 : j;
+        newIndices[writePos] = newCol;
+        final raw = rawWeights[k];
+        newRaw[writePos] = raw;
+        final dInvJ = newDegreeInvSqrt[newCol];
+        if (rowChangedDInv || degreeLoss.containsKey(j)) {
+          newValues[writePos] = dInvI * raw * dInvJ;
+        } else {
+          newValues[writePos] = values[k];
+        }
+        writePos++;
+      }
+      rowOut++;
+    }
+    newIndptr[newN] = writePos;
+
+    return CsrGraph(
+      n: newN,
+      indptr: newIndptr,
+      indices: newIndices,
+      values: newValues,
+      degreeInvSqrt: newDegreeInvSqrt,
+      rawWeights: newRaw,
+    );
+  }
+
+  /// Factory: build a CSR graph from raw symmetric edges, computing
+  /// `D^{-1/2}` and fusing into `values` in one pass. Emits a graph
+  /// with full rank-1 support ([supportsRankOneUpdates] = true).
+  ///
+  /// `edgesPerNode[i]` is a list of `(targetId, rawWeight)` pairs for
+  /// node i. The caller must ensure the edges are symmetric (if i→j
+  /// exists with weight w then j→i must also exist with weight w) —
+  /// this is checked in assertions but not in release. Self-loops are
+  /// allowed and contribute to the node's degree.
+  factory CsrGraph.fromRawEdges({
+    required int n,
+    required List<List<(int, double)>> edgesPerNode,
+  }) {
+    assert(edgesPerNode.length == n);
+    // Degrees = sum of raw outgoing weights per row (includes self-loops).
+    final degrees = Float64List(n);
+    var nnz = 0;
+    for (var i = 0; i < n; i++) {
+      for (final (_, w) in edgesPerNode[i]) {
+        degrees[i] += w;
+        nnz++;
+      }
+    }
+    final dInv = Float64List(n);
+    for (var i = 0; i < n; i++) {
+      dInv[i] = degrees[i] > 0 ? 1.0 / math.sqrt(degrees[i]) : 0.0;
+    }
+    final indptr = Int32List(n + 1);
+    final indices = Int32List(nnz);
+    final values = Float64List(nnz);
+    final raw = Float64List(nnz);
+    var pos = 0;
+    for (var i = 0; i < n; i++) {
+      indptr[i] = pos;
+      // Sort by column index for SpMV monotonicity — small lists so
+      // insertion-sort via List.sort is fine.
+      final row = [...edgesPerNode[i]]..sort((a, b) => a.$1.compareTo(b.$1));
+      for (final (j, w) in row) {
+        indices[pos] = j;
+        raw[pos] = w;
+        values[pos] = dInv[i] * w * dInv[j];
+        pos++;
+      }
+    }
+    indptr[n] = pos;
+    return CsrGraph(
+      n: n,
+      indptr: indptr,
+      indices: indices,
+      values: values,
+      degreeInvSqrt: dInv,
+      rawWeights: raw,
+    );
+  }
 
   /// Apply `L_sym = I − D^{-1/2} W D^{-1/2}` to vector `v`. Since
   /// [values] is pre-fused with `D^{-1/2}` on both sides, the matvec
@@ -669,6 +990,64 @@ Float64List recombineHeatPhi({
     out[i] = v.abs() < _subnormalFloor ? 0.0 : v;
   }
   return out;
+}
+
+/// Elementwise geometric mean of three non-negative φ vectors.
+/// `blended[i] = ((max(0,a[i]) + eps) · (max(0,b[i]) + eps) · (max(0,c[i]) + eps))^(1/3)`
+/// with `blended[i] = 0` when the entry is zero at every scale.
+///
+/// Used by the multi-scale diffusion blenders in `logos_hunks.dart`,
+/// `logos_chunks.dart`, and `features/history/commit_tagger.dart` —
+/// all three run diffusion at three temperatures (0.5, 1.0, 2.0) and
+/// fuse via geometric mean so a node only scores high if it's
+/// prominent at more than one scale. The ε term stabilises the log-
+/// space average: a node present at exactly one scale contributes a
+/// small but non-zero residue rather than being annihilated by the
+/// other two zeros.
+Float64List geometricMeanBlend3(
+  Float64List phiA,
+  Float64List phiB,
+  Float64List phiC, {
+  double eps = 1e-12,
+}) {
+  assert(phiA.length == phiB.length && phiB.length == phiC.length,
+      'phi vectors must share length');
+  final n = phiA.length;
+  final out = Float64List(n);
+  for (var i = 0; i < n; i++) {
+    final a = phiA[i] > 0 ? phiA[i] : 0.0;
+    final b = phiB[i] > 0 ? phiB[i] : 0.0;
+    final c = phiC[i] > 0 ? phiC[i] : 0.0;
+    if (a + b + c <= 0) continue;
+    out[i] = math.pow((a + eps) * (b + eps) * (c + eps), 1.0 / 3).toDouble();
+  }
+  return out;
+}
+
+/// Multi-scale heat-kernel blend — the canonical hunk/chunk ranker
+/// pipeline in one call. Builds the Chebyshev basis once, recombines at
+/// `{0.5, 1.0, 2.0}`, then fuses via [geometricMeanBlend3].
+///
+/// Total cost: one `O(K·|E|)` basis pass (the matvec chain) plus three
+/// `O(K·n)` recombines plus one `O(n)` blend. That's the shape of the
+/// multi-temperature trick documented in `logos_hunks.dart` and
+/// `logos_chunks.dart`; extracting it lets both call-sites collapse
+/// ~20 lines of boilerplate into one call.
+Float64List tripleTemperatureBlend({
+  required CsrGraph graph,
+  required Float64List rho,
+  int K = kDefaultChebyshevK,
+  double eps = 1e-12,
+}) {
+  if (graph.n == 0) return Float64List(0);
+  final basis = chebyshevBasis(graph: graph, rho: rho, K: K);
+  final phi05 =
+      recombineHeatPhi(graph: graph, basis: basis, t: 0.5, K: K);
+  final phi10 =
+      recombineHeatPhi(graph: graph, basis: basis, t: 1.0, K: K);
+  final phi20 =
+      recombineHeatPhi(graph: graph, basis: basis, t: 2.0, K: K);
+  return geometricMeanBlend3(phi05, phi10, phi20, eps: eps);
 }
 
 /// Copy a Float64List view into a fresh owned Float64List. Used when

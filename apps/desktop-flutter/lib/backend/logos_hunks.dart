@@ -1,30 +1,30 @@
-// LOGOS HUNKS — hunk-level heat-kernel diffusion
+// LOGOS HUNKS â€” hunk-level heat-kernel diffusion
 //
 // Sits parallel to LogosGit's file graph. Nodes are HUNKS inside one diff;
 // edges are the geometric bonds between them:
 //
-//   H_sym  — shared non-trivial identifiers (Jaccard via inverted index)
-//   H_file — parent-file coupling. Within-file = 1. Cross-file borrows
-//            the already-computed file-φ from the LogosGit engine. This
-//            is the factorisation trick — file-graph ⊗ hunk-graph —
+//   H_sym  â€” shared non-trivial identifiers (Jaccard via inverted index)
+//   H_file â€” parent-file coupling. Within-file = 1. Cross-file borrows
+//            the already-computed file-Ï† from the LogosGit engine. This
+//            is the factorisation trick â€” file-graph âŠ— hunk-graph â€”
 //            so cross-file hunk coupling costs ~zero.
-//   H_prox — within-file proximity kernel exp(-|Δline|/σ_file) where
-//            σ_file is the median line-gap inside that file (self-derived)
-//   H_vol  — add/delete balance similarity; pure-add hunks cluster with
+//   H_prox â€” within-file proximity kernel exp(-|Î”line|/Ïƒ_file) where
+//            Ïƒ_file is the median line-gap inside that file (self-derived)
+//   H_vol  â€” add/delete balance similarity; pure-add hunks cluster with
 //            pure-add, pure-delete with pure-delete, balanced with balanced
 //
 // Weights compose as a convex blend; edges sparsified top-K per node;
 // Laplacian normalised; heat-kernel via Chebyshev polynomial expansion
 // (same math as logos_git.dart, just a smaller graph).
 //
-// Source mass ρ per hunk = log(1+bytes). Every hunk is a source — the
+// Source mass Ï per hunk = log(1+bytes). Every hunk is a source â€” the
 // diffusion measures centrality relative to the diff as a whole.
 //
 // Recombines at three temperatures (0.5, 1.0, 2.0) and blends via
-// geometric mean — the three-temperature-blend trick from commit_tagger.
+// geometric mean â€” the three-temperature-blend trick from commit_tagger.
 //
 // Used by ai.dart's diff prompt packer: when the full diff overflows
-// the budget, hunks are emitted in φ-desc order at full content. Logos
+// the budget, hunks are emitted in Ï†-desc order at full content. Logos
 // picks which hunks matter most; peripheral mass-edit noise drops off.
 
 import 'dart:isolate';
@@ -34,7 +34,12 @@ import 'dart:typed_data';
 import 'engram_bootstrap.dart' show EngramAssets;
 import 'engram_hunk_encoder.dart';
 import 'logos_core.dart';
-import 'logos_git.dart' show LogosGit;
+import 'logos_git.dart'
+    show
+        LogosEvidenceWitness,
+        LogosGit,
+        LogosResidualView,
+        formatLogosEvidenceWitness;
 
 // Data model
 
@@ -84,6 +89,12 @@ class HunkRanking {
     required this.rank,
     this.wellName,
     this.wellDistance,
+    this.transportPull = 0.0,
+    this.transportedSupport = 0.0,
+    this.innovationResidual = 0.0,
+    this.witnessResidual = 0.0,
+    this.fileEvidenceWitnesses = const [],
+    this.fileWitnesses = const [],
   });
   final DiffHunk hunk;
   final double phi;
@@ -93,15 +104,28 @@ class HunkRanking {
   /// Null when engram assets weren't loaded, the brain had zero wells, or
   /// the hunk didn't have enough in-vocab sub-tokens to fit an AR(2).
   /// Surfaced in the prompt bundle so the model sees feature-cluster
-  /// membership alongside φ.
+  /// membership alongside Ï†.
   final String? wellName;
 
   /// Raw RMS distance to the nearest well centroid in K-space. Lower =
   /// stronger domain match. Present whenever [wellName] is.
   final double? wellDistance;
+
+  /// Canonical parent-file residual channels inherited from LogosGit.
+  final double transportPull;
+  final double transportedSupport;
+  final double innovationResidual;
+  final double witnessResidual;
+
+  /// Structured parent-file witnesses inherited from LogosGit evidence.
+  final List<LogosEvidenceWitness> fileEvidenceWitnesses;
+
+  /// Parent-file witness labels inherited from LogosGit evidence. This
+  /// carries file-level admission rationale down into hunk emission.
+  final List<String> fileWitnesses;
 }
 
-// Parser — unified diff → List<DiffHunk>
+// Parser â€” unified diff â†’ List<DiffHunk>
 
 List<DiffHunk> parseDiffHunks(String diffText) {
   final result = <DiffHunk>[];
@@ -173,6 +197,88 @@ List<DiffHunk> parseDiffHunks(String diffText) {
   return result;
 }
 
+/// Scoped variant of [parseDiffHunks] that only materialises hunks for
+/// [filePath]. Skips over other files' sections without allocating their
+/// bodies so a 22k-line multi-file diff can be walked in a fraction of the
+/// time when only one file's hunks are needed (fallback path in
+/// `DiffFileContextRequest` when the session has no pre-parsed cache).
+///
+/// `filePath` must be the post-rename (`b/`) path — same convention as
+/// the headers git emits (`diff --git a/old b/new`). If the caller
+/// supplies the pre-rename path it will silently not match and this
+/// function returns an empty list.
+List<DiffHunk> parseDiffHunksForFile(String diffText, String filePath) {
+  final result = <DiffHunk>[];
+  final lines = diffText.split('\n');
+  var inTarget = false;
+  var fileHunkIndex = 0;
+  StringBuffer? hunkBuf;
+  String? hunkHeader;
+  var hunkOldStart = 0;
+  var hunkNewStart = 0;
+  var hunkAdds = 0;
+  var hunkDels = 0;
+
+  void flushHunk() {
+    final header = hunkHeader;
+    final buf = hunkBuf;
+    if (!inTarget || buf == null || header == null) {
+      hunkBuf = null;
+      hunkHeader = null;
+      hunkAdds = 0;
+      hunkDels = 0;
+      return;
+    }
+    result.add(DiffHunk(
+      filePath: filePath,
+      hunkIndex: fileHunkIndex,
+      header: header,
+      body: buf.toString(),
+      oldStart: hunkOldStart,
+      newStart: hunkNewStart,
+      additions: hunkAdds,
+      deletions: hunkDels,
+    ));
+    fileHunkIndex++;
+    hunkBuf = null;
+    hunkHeader = null;
+    hunkAdds = 0;
+    hunkDels = 0;
+  }
+
+  final headerRe = RegExp(r'^@@\s*-(\d+)(?:,\d+)?\s*\+(\d+)(?:,\d+)?\s*@@');
+
+  for (final line in lines) {
+    if (line.startsWith('diff --git ')) {
+      flushHunk();
+      final path = _pathFromDiffHeader(line);
+      inTarget = path == filePath;
+      fileHunkIndex = 0;
+      continue;
+    }
+    if (!inTarget) continue;
+    if (line.startsWith('@@')) {
+      flushHunk();
+      final m = headerRe.firstMatch(line);
+      hunkOldStart = m != null ? int.tryParse(m.group(1)!) ?? 0 : 0;
+      hunkNewStart = m != null ? int.tryParse(m.group(2)!) ?? 0 : 0;
+      hunkHeader = line.trim();
+      hunkBuf = StringBuffer()..writeln(line);
+      continue;
+    }
+    if (line.startsWith('+++ ') || line.startsWith('--- ')) continue;
+    if (hunkBuf == null) continue;
+    hunkBuf!.writeln(line);
+    if (line.startsWith('+')) {
+      hunkAdds++;
+    } else if (line.startsWith('-')) {
+      hunkDels++;
+    }
+  }
+  flushHunk();
+  return result;
+}
+
 String _pathFromDiffHeader(String line) {
   final parts = line.split(' ');
   if (parts.length < 4) return 'unknown';
@@ -180,16 +286,15 @@ String _pathFromDiffHeader(String line) {
   return candidate.startsWith('b/') ? candidate.substring(2) : candidate;
 }
 
-// Identifier tokenisation — camelCase + snake_case + separators.
+// Identifier tokenisation â€” camelCase + snake_case + separators.
 // Deliberately matches the commit-tagger basename tokenizer so identifiers
 // coupling here are the same kind logos treats as meaningful elsewhere.
 
 final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
-final _camelBoundary =
-    RegExp(r'(?<=[\p{Ll}\p{N}])(?=[\p{Lu}])', unicode: true);
+final _camelBoundary = RegExp(r'(?<=[\p{Ll}\p{N}])(?=[\p{Lu}])', unicode: true);
 
-/// Horizon multiplier for H_prox: pairs with `d ≥ σ · ratio` contribute
-/// `exp(-ratio) ≈ 1e-6` — below the noise floor after D^{-1/2} Laplacian
+/// Horizon multiplier for H_prox: pairs with `d â‰¥ Ïƒ Â· ratio` contribute
+/// `exp(-ratio) â‰ˆ 1e-6` â€” below the noise floor after D^{-1/2} Laplacian
 /// normalisation and Chebyshev basis truncation. Precomputed as `ln(1e6)`
 /// since `math.log` isn't a const expression in Dart; tightening the
 /// floor is a literal change.
@@ -198,7 +303,7 @@ const double _proxHorizonLnRatio = 13.815510557964274;
 /// Maximum hunk-pair edges materialised per (file_a, file_b) cross-file
 /// coupling pass. Above this, the loop samples a deterministic stride
 /// of representative pairs that preserves the file pair's total mass
-/// without paying for the |A|·|B| explosion. Picked to stay within an
+/// without paying for the |A|Â·|B| explosion. Picked to stay within an
 /// order of magnitude of the per-node top-K fanout the symmetriser
 /// keeps anyway, so larger values would do redundant work.
 const int _kCrossFileFanoutCap = 32;
@@ -236,7 +341,7 @@ Set<String> _deriveStopTokens(List<Set<String>> perHunkTokens) {
   final minV = sorted.last.value.toDouble();
   final spread = maxV - minV;
   if (spread <= 0) return const {};
-  // Kneedle — bend of the descending curve (0,1)→(1,0).
+  // Kneedle â€” bend of the descending curve (0,1)â†’(1,0).
   var kneeIdx = 0;
   var bestDist = -1.0;
   for (var i = 0; i < n; i++) {
@@ -257,7 +362,7 @@ Set<String> _deriveStopTokens(List<Set<String>> perHunkTokens) {
   return stop;
 }
 
-/// Only the +/- payload contributes to hunk identifier tokens — that's
+/// Only the +/- payload contributes to hunk identifier tokens â€” that's
 /// the *change*, not the unchanged context.
 Set<String> _hunkChangeTokens(DiffHunk hunk) {
   final buf = StringBuffer();
@@ -273,14 +378,14 @@ Set<String> _hunkChangeTokens(DiffHunk hunk) {
   return _tokensOf(buf.toString());
 }
 
-// Hunk-graph construction. Diffusion math lives in logos_core.dart —
+// Hunk-graph construction. Diffusion math lives in logos_core.dart â€”
 // this file only owns the hunk-specific axis blend (H_sym / H_file /
 // H_prox / H_vol) and the source-mass model.
 
 /// Build the hunk graph.
 /// [fileCoupling] is an optional map that gives, for each non-source file,
-/// the file-φ score from LogosGit. When building cross-file hunk edges we
-/// multiply by this to get hunk-level cross-file weight for free — the
+/// the file-Ï† score from LogosGit. When building cross-file hunk edges we
+/// multiply by this to get hunk-level cross-file weight for free â€” the
 /// factorisation trick.
 CsrGraph _buildHunkGraph({
   required List<DiffHunk> hunks,
@@ -299,8 +404,8 @@ CsrGraph _buildHunkGraph({
     );
   }
 
-  // Inverted token index → candidate pair generator. We only score pairs
-  // that share ≥1 token; this is O(Σ bucket_size²) which is small in
+  // Inverted token index â†’ candidate pair generator. We only score pairs
+  // that share â‰¥1 token; this is O(Î£ bucket_sizeÂ²) which is small in
   // practice thanks to the stop-list and the min-length filter.
   final tokenBuckets = <String, List<int>>{};
   for (var i = 0; i < n; i++) {
@@ -309,8 +414,8 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  // Precompute per-file statistics for H_prox (line-gap σ). Sort each
-  // file's hunk-id list by newStart once here — downstream consumers
+  // Precompute per-file statistics for H_prox (line-gap Ïƒ). Sort each
+  // file's hunk-id list by newStart once here â€” downstream consumers
   // (fileSigma gap statistics, H_prox horizon break) both require
   // ordered line positions, and H_file / H_vol are order-independent
   // pair iterations so the sort has no side effect on them.
@@ -329,7 +434,7 @@ CsrGraph _buildHunkGraph({
     if (ids.length < 2) continue;
     final gaps = <int>[];
     for (var k = 1; k < ids.length; k++) {
-      // ids is sorted by newStart, so b ≥ a and abs() is redundant.
+      // ids is sorted by newStart, so b â‰¥ a and abs() is redundant.
       final g = hunks[ids[k]].newStart - hunks[ids[k - 1]].newStart;
       if (g > 0) gaps.add(g);
     }
@@ -340,7 +445,7 @@ CsrGraph _buildHunkGraph({
     fileSigma[entry.key] = median > 0 ? median : 1.0;
   }
 
-  // Axis weights — convex blend. Chosen by order-of-magnitude balance,
+  // Axis weights â€” convex blend. Chosen by order-of-magnitude balance,
   // not tuned: identifier coupling is the strongest signal, parent-file
   // and proximity are structural priors, volume-balance is a soft
   // regulariser. A future iteration could self-derive these from the
@@ -365,7 +470,7 @@ CsrGraph _buildHunkGraph({
   // For each bucket of hunks sharing a token, add pair contributions
   // weighted by 1/bucket_size. Repeated across all shared tokens this
   // converges to the proper Jaccard numerator; the denominator is
-  // |tokens[i] ∪ tokens[j]| ≈ |tokens[i]| + |tokens[j]| - overlap.
+  // |tokens[i] âˆª tokens[j]| â‰ˆ |tokens[i]| + |tokens[j]| - overlap.
   // We approximate by tallying numerator first, then normalising at
   // the end.
   final symNumerator = <int, Map<int, int>>{};
@@ -388,33 +493,33 @@ CsrGraph _buildHunkGraph({
 
   // Engram-augmented H_sym blend.
   //
-  // When engram assets are loaded, each hunk has a K-vector ∈ ℂ^P that
+  // When engram assets are loaded, each hunk has a K-vector âˆˆ â„‚^P that
   // encodes its semantic position in Alexandria's GloVe-seeded well
-  // geometry. Cosine similarity between two hunk K-vectors ∈ [0,1]
+  // geometry. Cosine similarity between two hunk K-vectors âˆˆ [0,1]
   // captures "shared concept space" even when no identifier strings
-  // overlap — a hunk using `dispatchEvent` and one using `emitSignal`
+  // overlap â€” a hunk using `dispatchEvent` and one using `emitSignal`
   // share zero Jaccard but ~0.7 K-cosine. That's the feature-cluster
   // signal Jaccard misses.
   //
   // **Blend is evidence-weighted, not magic-constant-weighted.** Each
-  // signal contributes in proportion to `log1p(evidence)` — the same
+  // signal contributes in proportion to `log1p(evidence)` â€” the same
   // nats-of-information metric the Born mixer uses elsewhere in the
   // engine. A hunk with many shared tokens leans Jaccard; a hunk with
   // many in-vocab GloVe hits leans engram. Neither axis gets an
-  // arbitrary weight floor or ceiling — their evidence decides.
+  // arbitrary weight floor or ceiling â€” their evidence decides.
   //
-  //   w_jac = log1p(|tokens_i| + |tokens_j|)   — larger bag → better Jaccard
-  //   w_eng = log1p(min(hits_i, hits_j))      — more hits → tighter K-vector
-  //   blended = (w_jac·jaccard + w_eng·cos) / (w_jac + w_eng)
+  //   w_jac = log1p(|tokens_i| + |tokens_j|)   â€” larger bag â†’ better Jaccard
+  //   w_eng = log1p(min(hits_i, hits_j))      â€” more hits â†’ tighter K-vector
+  //   blended = (w_jacÂ·jaccard + w_engÂ·cos) / (w_jac + w_eng)
   //
   // Pairs with neither Jaccard overlap nor an engram connection drop
-  // out entirely — preserving graph sparsity. Pairs with engram signal
+  // out entirely â€” preserving graph sparsity. Pairs with engram signal
   // but no Jaccard still enter the graph: we seed those via the
   // file-level H_file coupling below when both files have touched
   // hunks, and via an e-decay thresholded engram-only pass here when
   // they don't.
   //
-  // The engram-only admission threshold is `1/e ≈ 0.368` — the natural
+  // The engram-only admission threshold is `1/e â‰ˆ 0.368` â€” the natural
   // exponential decay floor. Below 1/e the cosine has decayed past one
   // e-folding from perfect alignment; that's the classical "signal has
   // faded to noise" boundary, not a hand-picked decimal.
@@ -438,9 +543,7 @@ CsrGraph _buildHunkGraph({
               math.log(1.0 + (tokens[i].length + tokens[j].length).toDouble());
           // log1p of min vocab hits = engram's evidence in nats.
           final engramEvidence = math.log(1.0 +
-              (kvi.vocabHits < kvj.vocabHits
-                  ? kvi.vocabHits
-                  : kvj.vocabHits)
+              (kvi.vocabHits < kvj.vocabHits ? kvi.vocabHits : kvj.vocabHits)
                   .toDouble());
           final totalEvidence = jaccardEvidence + engramEvidence;
           final blended = totalEvidence > 0
@@ -449,7 +552,7 @@ CsrGraph _buildHunkGraph({
               : jaccard;
           weight = wSym * blended;
         } else {
-          // One or both hunks couldn't be encoded — fall back to pure
+          // One or both hunks couldn't be encoded â€” fall back to pure
           // Jaccard so H_sym degrades gracefully per hunk.
           weight = wSym * jaccard;
         }
@@ -462,12 +565,12 @@ CsrGraph _buildHunkGraph({
 
   // Pass 2: engram-only edges. Walk every pair that has K-vectors but
   // did NOT share any tokens, and admit those clearing the 1/e cosine
-  // floor. This is O(N²) on hunks that have K-vectors — we bound it
-  // by the hunk count (already ≤ hundreds in practice) and skip
+  // floor. This is O(NÂ²) on hunks that have K-vectors â€” we bound it
+  // by the hunk count (already â‰¤ hundreds in practice) and skip
   // entirely when engram isn't loaded. The engram-only weight uses
   // pure engram evidence (no Jaccard term, by definition there's no
   // Jaccard overlap on these pairs), scaled by `w_eng / (w_eng + 1)`
-  // — a self-normalising factor derivable from the evidence blend
+  // â€” a self-normalising factor derivable from the evidence blend
   // with the Jaccard evidence held at its "zero overlap, single
   // witness" baseline of log(1+1) = ln(2).
   if (engramKVectors != null) {
@@ -487,9 +590,9 @@ CsrGraph _buildHunkGraph({
                 .toDouble());
         // Self-normalised engram-only weight. With Jaccard evidence =
         // ln(2) (the zero-overlap baseline), the blend collapses to:
-        //   weight = cos · engEvidence / (engEvidence + ln2)
+        //   weight = cos Â· engEvidence / (engEvidence + ln2)
         // which tends to `cos` as evidence grows and to `0` when
-        // evidence is tiny — exactly the "confidence-gated signal"
+        // evidence is tiny â€” exactly the "confidence-gated signal"
         // shape the Born mixer uses on its axes.
         final selfNorm = engEvidence / (engEvidence + math.ln2);
         addEdge(i, j, wSym * cos * selfNorm);
@@ -504,13 +607,13 @@ CsrGraph _buildHunkGraph({
       }
     }
   }
-  // Cross-file hunk coupling via LogosGit file-φ. We treat the file
-  // with the higher φ contribution as the "host" and multiply the pair
-  // weight by the lesser of their φ values (conservative).
+  // Cross-file hunk coupling via LogosGit file-Ï†. We treat the file
+  // with the higher Ï† contribution as the "host" and multiply the pair
+  // weight by the lesser of their Ï† values (conservative).
   //
-  // Fanout cap: the original |A|·|B| double loop allocated up to
-  // ~|A|·|B| edge entries per file pair, then the top-K sparsifier
-  // discarded the bulk. On a 20-file × 10-hunk diff that was ~200k
+  // Fanout cap: the original |A|Â·|B| double loop allocated up to
+  // ~|A|Â·|B| edge entries per file pair, then the top-K sparsifier
+  // discarded the bulk. On a 20-file Ã— 10-hunk diff that was ~200k
   // wasted addEdge calls. We now cap the per-pair fanout at
   // [_kCrossFileFanoutCap]: once the product exceeds the cap, sample
   // a deterministic subset of representative pairs that preserves the
@@ -543,7 +646,7 @@ CsrGraph _buildHunkGraph({
         } else {
           // Sample _kCrossFileFanoutCap pairs deterministically along
           // a stride that visits both lists' index spaces uniformly.
-          // Each kept edge carries `(fanout / cap)`× the per-pair
+          // Each kept edge carries `(fanout / cap)`Ã— the per-pair
           // weight so the summed mass over the file pair matches the
           // full-fanout case.
           final massScale = fanout / _kCrossFileFanoutCap;
@@ -558,14 +661,14 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  // Edges land inside the σ-scaled horizon; beyond it `exp(-d/σ)` is
-  // below [_proxFloor] — numerically indistinguishable from zero after
-  // D^{-1/2} normalisation — so we break the inner loop. Because `ids`
+  // Edges land inside the Ïƒ-scaled horizon; beyond it `exp(-d/Ïƒ)` is
+  // below [_proxFloor] â€” numerically indistinguishable from zero after
+  // D^{-1/2} normalisation â€” so we break the inner loop. Because `ids`
   // is sorted by newStart (monotone non-decreasing), the first `b` that
   // exceeds the horizon proves all later `b` do too. The horizon is
-  // derived from the floor (not a magic constant): `exp(-d/σ) ≥ ε ⟺
-  // d ≤ σ·ln(1/ε)`. On a file with 50 scattered hunks this collapses
-  // exp() calls from 1225 to roughly `hunks × horizon / median-gap`.
+  // derived from the floor (not a magic constant): `exp(-d/Ïƒ) â‰¥ Îµ âŸº
+  // d â‰¤ ÏƒÂ·ln(1/Îµ)`. On a file with 50 scattered hunks this collapses
+  // exp() calls from 1225 to roughly `hunks Ã— horizon / median-gap`.
   for (final entry in fileToHunks.entries) {
     final ids = entry.value;
     if (ids.length < 2) continue;
@@ -574,15 +677,15 @@ CsrGraph _buildHunkGraph({
     for (var a = 0; a < ids.length; a++) {
       final la = hunks[ids[a]].newStart;
       for (var b = a + 1; b < ids.length; b++) {
-        final d = hunks[ids[b]].newStart - la; // sorted ⇒ ≥ 0
+        final d = hunks[ids[b]].newStart - la; // sorted â‡’ â‰¥ 0
         if (d >= horizon) break;
         addEdge(ids[a], ids[b], wProx * math.exp(-d / sigma));
       }
     }
   }
 
-  // balance_i = (adds - dels) / (adds + dels + 1) ∈ [-1, 1]
-  // similarity_ij = 1 - |balance_i - balance_j| / 2 ∈ [0, 1]
+  // balance_i = (adds - dels) / (adds + dels + 1) âˆˆ [-1, 1]
+  // similarity_ij = 1 - |balance_i - balance_j| / 2 âˆˆ [0, 1]
   // Only contribute within-file (balance across unrelated files is
   // meaningless noise). This is a tiny signal; it breaks ties between
   // structurally-similar hunks by preferring same-character edits.
@@ -590,12 +693,12 @@ CsrGraph _buildHunkGraph({
     if (group.length < 2) continue;
     for (var a = 0; a < group.length; a++) {
       final ha = hunks[group[a]];
-      final balA = (ha.additions - ha.deletions) /
-          (ha.additions + ha.deletions + 1);
+      final balA =
+          (ha.additions - ha.deletions) / (ha.additions + ha.deletions + 1);
       for (var b = a + 1; b < group.length; b++) {
         final hb = hunks[group[b]];
-        final balB = (hb.additions - hb.deletions) /
-            (hb.additions + hb.deletions + 1);
+        final balB =
+            (hb.additions - hb.deletions) / (hb.additions + hb.deletions + 1);
         final sim = 1.0 - ((balA - balB).abs() / 2.0);
         addEdge(group[a], group[b], wVol * sim);
       }
@@ -604,9 +707,8 @@ CsrGraph _buildHunkGraph({
 
   final trimmedRows = List<List<_Edge>>.generate(n, (_) => <_Edge>[]);
   edges.forEach((i, row) {
-    final list = row.entries
-        .map((e) => _Edge(e.key, e.value))
-        .toList(growable: false);
+    final list =
+        row.entries.map((e) => _Edge(e.key, e.value)).toList(growable: false);
     list.sort((x, y) => y.w.compareTo(x.w));
     final cap = math.min(topK, list.length);
     for (var k = 0; k < cap; k++) {
@@ -672,10 +774,10 @@ class _Edge {
 }
 
 // Chebyshev/Bessel math + heat-kernel diffusion live in logos_core.dart
-// — see [chebyshevBasis], [recombineHeatPhi], and [kChebyshevSmallGraph]
+// â€” see [chebyshevBasis], [recombineHeatPhi], and [kChebyshevSmallGraph]
 // for the polynomial-order policy this engine shares with logos_chunks.
 
-// Public API — rank hunks by semantic centrality φ in this diff.
+// Public API â€” rank hunks by semantic centrality Ï† in this diff.
 
 class HunkDiffusionResult {
   HunkDiffusionResult({
@@ -683,7 +785,7 @@ class HunkDiffusionResult {
     required this.fellBackToChurn,
   });
 
-  /// Hunks in descending φ order. First = most central.
+  /// Hunks in descending Ï† order. First = most central.
   final List<HunkRanking> rankings;
 
   /// True when the graph was degenerate (empty, single-hunk, or zero mass)
@@ -692,30 +794,106 @@ class HunkDiffusionResult {
   final bool fellBackToChurn;
 }
 
+class HunkFileEvidence {
+  final Map<String, double> coupling;
+  final Map<String, LogosResidualView> residualByPath;
+  final Map<String, List<String>> witnessLabelsByPath;
+  final Map<String, List<LogosEvidenceWitness>> evidenceWitnessesByPath;
+
+  const HunkFileEvidence({
+    required this.coupling,
+    required this.residualByPath,
+    required this.witnessLabelsByPath,
+    required this.evidenceWitnessesByPath,
+  });
+}
+
+HunkFileEvidence buildHunkFileEvidenceFromResiduals(
+  Map<String, LogosResidualView> residualByPath, {
+  Iterable<String>? touchedPaths,
+}) {
+  final touched = touchedPaths?.toSet();
+  final coupling = <String, double>{};
+  final filteredResiduals = <String, LogosResidualView>{};
+  final witnessLabelsByPath = <String, List<String>>{};
+  final evidenceWitnessesByPath = <String, List<LogosEvidenceWitness>>{};
+
+  for (final entry in residualByPath.entries) {
+    final path = entry.key;
+    if (touched != null && !touched.contains(path)) continue;
+    final signal = entry.value;
+    filteredResiduals[path] = signal;
+    final baseSupport =
+        (signal.support * signal.integrity).clamp(0.0, 1.0).toDouble();
+    final transportSignal = signal.transportSignal;
+    final residualSignal = signal.residualSignal;
+    final inherited = math.max(
+      baseSupport,
+      (0.60 * baseSupport + 0.35 * transportSignal + 0.50 * residualSignal)
+          .clamp(0.0, 1.0)
+          .toDouble(),
+    );
+    if (inherited > 0) coupling[path] = inherited;
+    if (signal.witnesses.isNotEmpty) {
+      evidenceWitnessesByPath[path] =
+          signal.witnesses.take(3).toList(growable: false);
+    }
+    final labels = <String>[
+      for (final witness in signal.witnesses.take(3))
+        formatLogosEvidenceWitness(
+          witness,
+          includeNote: true,
+          includeSource: true,
+        ),
+      if (signal.transportedSupport > 0.05)
+        'transported=${signal.transportedSupport.toStringAsFixed(2)}',
+      if (signal.witnessResidual > 0.05)
+        'missing-witness=${signal.witnessResidual.toStringAsFixed(2)}',
+      if (signal.innovationResidual > 0.05)
+        'innovation=${signal.innovationResidual.toStringAsFixed(2)}',
+    ];
+    if (labels.isNotEmpty) {
+      witnessLabelsByPath[path] = labels;
+    }
+  }
+
+  return HunkFileEvidence(
+    coupling: coupling,
+    residualByPath: filteredResiduals,
+    witnessLabelsByPath: witnessLabelsByPath,
+    evidenceWitnessesByPath: evidenceWitnessesByPath,
+  );
+}
+
 /// Rank [hunks] by heat-kernel centrality.
 /// If a [logosEngine] is provided we use it to compute the cross-file
-/// coupling prior for the H_file axis — the factorisation trick. If it's
+/// coupling prior for the H_file axis â€” the factorisation trick. If it's
 /// null (cold repo, no engine yet), within-file coupling still works and
 /// the rest of the axes carry the load; cross-file edges simply don't
-/// get the file-φ boost.
+/// get the file-Ï† boost.
 HunkDiffusionResult rankHunksByPhi({
   required List<DiffHunk> hunks,
   LogosGit? logosEngine,
   EngramAssets? engramAssets,
+  HunkFileEvidence? fileEvidence,
 }) {
   // Resolve the engine-side coupling prior on the calling thread (it
   // touches the engine, which we don't want to ship across an isolate).
   // Then dispatch the heavy graph build + Chebyshev to the pure-data
   // core path.
-  final fileCoupling = _resolveFileCoupling(hunks, logosEngine);
+  final resolvedFileEvidence =
+      fileEvidence ?? _resolveFileCoupling(hunks, logosEngine);
   return _rankHunksByPhiCore(
     hunks: hunks,
-    fileCoupling: fileCoupling,
+    fileCoupling: resolvedFileEvidence.coupling,
+    fileResidualByPath: resolvedFileEvidence.residualByPath,
+    fileWitnessesByPath: resolvedFileEvidence.witnessLabelsByPath,
+    fileEvidenceWitnessesByPath: resolvedFileEvidence.evidenceWitnessesByPath,
     engramAssets: engramAssets,
   );
 }
 
-/// Async variant — runs the graph build + 3-temperature recombination
+/// Async variant â€” runs the graph build + 3-temperature recombination
 /// on a background isolate so a diff with hundreds of hunks doesn't
 /// hitch the UI on every diff-panel switch. Engine touches still
 /// happen on the calling thread (cheap diffuseWeighted), then the
@@ -728,45 +906,71 @@ Future<HunkDiffusionResult> rankHunksByPhiAsync({
   required List<DiffHunk> hunks,
   LogosGit? logosEngine,
   EngramAssets? engramAssets,
+  HunkFileEvidence? fileEvidence,
 }) async {
-  final fileCoupling = _resolveFileCoupling(hunks, logosEngine);
-  // Trivial cases — skip the isolate hop's serialisation cost.
+  final resolvedFileEvidence =
+      fileEvidence ?? _resolveFileCoupling(hunks, logosEngine);
+  // Trivial cases â€” skip the isolate hop's serialisation cost.
   if (hunks.length <= 1) {
     return _rankHunksByPhiCore(
       hunks: hunks,
-      fileCoupling: fileCoupling,
+      fileCoupling: resolvedFileEvidence.coupling,
+      fileResidualByPath: resolvedFileEvidence.residualByPath,
+      fileWitnessesByPath: resolvedFileEvidence.witnessLabelsByPath,
+      fileEvidenceWitnessesByPath: resolvedFileEvidence.evidenceWitnessesByPath,
       engramAssets: engramAssets,
     );
   }
   return Isolate.run<HunkDiffusionResult>(
     () => _rankHunksByPhiCore(
       hunks: hunks,
-      fileCoupling: fileCoupling,
+      fileCoupling: resolvedFileEvidence.coupling,
+      fileResidualByPath: resolvedFileEvidence.residualByPath,
+      fileWitnessesByPath: resolvedFileEvidence.witnessLabelsByPath,
+      fileEvidenceWitnessesByPath: resolvedFileEvidence.evidenceWitnessesByPath,
       engramAssets: engramAssets,
     ),
     debugName: 'rankHunksByPhi',
   );
 }
 
-Map<String, double> _resolveFileCoupling(
-    List<DiffHunk> hunks, LogosGit? engine) {
+HunkFileEvidence _resolveFileCoupling(List<DiffHunk> hunks, LogosGit? engine) {
   final coupling = <String, double>{};
-  if (engine == null) return coupling;
+  final residualByPath = <String, LogosResidualView>{};
+  final witnessLabelsByPath = <String, List<String>>{};
+  final evidenceWitnessesByPath = <String, List<LogosEvidenceWitness>>{};
+  if (engine == null) {
+    return HunkFileEvidence(
+      coupling: coupling,
+      residualByPath: residualByPath,
+      witnessLabelsByPath: witnessLabelsByPath,
+      evidenceWitnessesByPath: evidenceWitnessesByPath,
+    );
+  }
   final touchedFiles = <String>{for (final h in hunks) h.filePath};
-  if (touchedFiles.isEmpty) return coupling;
+  if (touchedFiles.isEmpty) {
+    return HunkFileEvidence(
+      coupling: coupling,
+      residualByPath: residualByPath,
+      witnessLabelsByPath: witnessLabelsByPath,
+      evidenceWitnessesByPath: evidenceWitnessesByPath,
+    );
+  }
   try {
     final weights = <String, double>{for (final p in touchedFiles) p: 1.0};
     final evidence = engine.gatherEvidence(
       focusWeights: weights,
       excludePaths: const {},
+      includeSpectrum: false,
+      detailBudget: 24,
+      includeSupportAttribution: false,
+      includeSummaryDiagnostics: false,
     );
     if (evidence != null) {
-      for (final s in evidence.ranked) {
-        if (touchedFiles.contains(s.path)) {
-          final inherited = s.support * s.integrity;
-          if (inherited > 0) coupling[s.path] = inherited;
-        }
-      }
+      return buildHunkFileEvidenceFromResiduals(
+        evidence.residualByPath,
+        touchedPaths: touchedFiles,
+      );
     } else {
       final scores = engine.diffuseWeighted(weights);
       for (final s in scores) {
@@ -778,12 +982,20 @@ Map<String, double> _resolveFileCoupling(
   } catch (_) {
     // Graceful: engine errors never block the diff packer.
   }
-  return coupling;
+  return HunkFileEvidence(
+    coupling: coupling,
+    residualByPath: residualByPath,
+    witnessLabelsByPath: witnessLabelsByPath,
+    evidenceWitnessesByPath: evidenceWitnessesByPath,
+  );
 }
 
 HunkDiffusionResult _rankHunksByPhiCore({
   required List<DiffHunk> hunks,
   required Map<String, double> fileCoupling,
+  required Map<String, LogosResidualView> fileResidualByPath,
+  required Map<String, List<String>> fileWitnessesByPath,
+  required Map<String, List<LogosEvidenceWitness>> fileEvidenceWitnessesByPath,
   EngramAssets? engramAssets,
 }) {
   final n = hunks.length;
@@ -792,7 +1004,24 @@ HunkDiffusionResult _rankHunksByPhiCore({
   }
   if (n == 1) {
     return HunkDiffusionResult(
-      rankings: [HunkRanking(hunk: hunks[0], phi: 1.0, rank: 0)],
+      rankings: [
+        HunkRanking(
+          hunk: hunks[0],
+          phi: 1.0,
+          rank: 0,
+          transportPull:
+              fileResidualByPath[hunks[0].filePath]?.transportPull ?? 0.0,
+          transportedSupport:
+              fileResidualByPath[hunks[0].filePath]?.transportedSupport ?? 0.0,
+          innovationResidual:
+              fileResidualByPath[hunks[0].filePath]?.innovationResidual ?? 0.0,
+          witnessResidual:
+              fileResidualByPath[hunks[0].filePath]?.witnessResidual ?? 0.0,
+          fileEvidenceWitnesses:
+              fileEvidenceWitnessesByPath[hunks[0].filePath] ?? const [],
+          fileWitnesses: fileWitnessesByPath[hunks[0].filePath] ?? const [],
+        ),
+      ],
       fellBackToChurn: false,
     );
   }
@@ -810,7 +1039,7 @@ HunkDiffusionResult _rankHunksByPhiCore({
   // Optional engram H_sym augmentation. Build the encoder from the
   // already-transferred byte blobs (cheap inside this isolate) and
   // encode every hunk to a K-vector. Returns a list aligned with
-  // `hunks` — entries stay null for hunks that couldn't be encoded
+  // `hunks` â€” entries stay null for hunks that couldn't be encoded
   // (too few in-vocab sub-tokens to fit AR(2)); H_sym falls back to
   // pure Jaccard for those.
   List<HunkKVector?>? engramKVectors;
@@ -833,7 +1062,7 @@ HunkDiffusionResult _rankHunksByPhiCore({
     engramKVectors: engramKVectors,
   );
 
-  // Source mass ρ = log(1+bytes). Normalised to unit mass inside the
+  // Source mass Ï = log(1+bytes). Normalised to unit mass inside the
   // basis builder (we normalise here too for consistency).
   final rho = Float64List(n);
   var totalMass = 0.0;
@@ -843,12 +1072,31 @@ HunkDiffusionResult _rankHunksByPhiCore({
     totalMass += rho[i];
   }
   if (totalMass <= 0 || graph.n == 0) {
-    // Degenerate — no mass or no nodes. Fall back to churn order.
+    // Degenerate â€” no mass or no nodes. Fall back to churn order.
     final fallback = [...hunks]..sort((a, b) => b.churn.compareTo(a.churn));
     return HunkDiffusionResult(
       rankings: [
         for (var i = 0; i < fallback.length; i++)
-          HunkRanking(hunk: fallback[i], phi: 0.0, rank: i),
+          HunkRanking(
+            hunk: fallback[i],
+            phi: 0.0,
+            rank: i,
+            transportPull:
+                fileResidualByPath[fallback[i].filePath]?.transportPull ?? 0.0,
+            transportedSupport:
+                fileResidualByPath[fallback[i].filePath]?.transportedSupport ??
+                    0.0,
+            innovationResidual:
+                fileResidualByPath[fallback[i].filePath]?.innovationResidual ??
+                    0.0,
+            witnessResidual:
+                fileResidualByPath[fallback[i].filePath]?.witnessResidual ??
+                    0.0,
+            fileEvidenceWitnesses:
+                fileEvidenceWitnessesByPath[fallback[i].filePath] ?? const [],
+            fileWitnesses:
+                fileWitnessesByPath[fallback[i].filePath] ?? const [],
+          ),
       ],
       fellBackToChurn: true,
     );
@@ -857,27 +1105,13 @@ HunkDiffusionResult _rankHunksByPhiCore({
     rho[i] /= totalMass;
   }
 
-  // Build the Chebyshev basis once, recombine at three temperatures.
-  // Build the Chebyshev basis once via the shared core, then recombine
-  // at three temperatures for the geometric-mean blend.
-  final basis = chebyshevBasis(graph: graph, rho: rho, K: kChebyshevSmallGraph);
-
-  final phi05 = recombineHeatPhi(graph: graph, basis: basis, t: 0.5, K: kChebyshevSmallGraph);
-  final phi10 = recombineHeatPhi(graph: graph, basis: basis, t: 1.0, K: kChebyshevSmallGraph);
-  final phi20 = recombineHeatPhi(graph: graph, basis: basis, t: 2.0, K: kChebyshevSmallGraph);
-
-  const eps = 1e-12;
-  final blended = Float64List(n);
-  for (var i = 0; i < n; i++) {
-    final a = phi05[i] > 0 ? phi05[i] : 0.0;
-    final b = phi10[i] > 0 ? phi10[i] : 0.0;
-    final c = phi20[i] > 0 ? phi20[i] : 0.0;
-    if (a + b + c <= 0) {
-      blended[i] = 0.0;
-      continue;
-    }
-    blended[i] = math.pow((a + eps) * (b + eps) * (c + eps), 1.0 / 3).toDouble();
-  }
+  // Three-temperature geometric-mean blend — canonical multi-scale
+  // ranker shared with `logos_chunks.dart`. See [tripleTemperatureBlend].
+  final blended = tripleTemperatureBlend(
+    graph: graph,
+    rho: rho,
+    K: kChebyshevSmallGraph,
+  );
 
   final indexed = List<int>.generate(n, (i) => i);
   indexed.sort((a, b) => blended[b].compareTo(blended[a]));
@@ -892,6 +1126,17 @@ HunkDiffusionResult _rankHunksByPhiCore({
       rank: r,
       wellName: kv?.well?.name,
       wellDistance: kv?.well?.rawDistance,
+      transportPull:
+          fileResidualByPath[hunks[id].filePath]?.transportPull ?? 0.0,
+      transportedSupport:
+          fileResidualByPath[hunks[id].filePath]?.transportedSupport ?? 0.0,
+      innovationResidual:
+          fileResidualByPath[hunks[id].filePath]?.innovationResidual ?? 0.0,
+      witnessResidual:
+          fileResidualByPath[hunks[id].filePath]?.witnessResidual ?? 0.0,
+      fileEvidenceWitnesses:
+          fileEvidenceWitnessesByPath[hunks[id].filePath] ?? const [],
+      fileWitnesses: fileWitnessesByPath[hunks[id].filePath] ?? const [],
     ));
   }
   return HunkDiffusionResult(
@@ -900,7 +1145,7 @@ HunkDiffusionResult _rankHunksByPhiCore({
   );
 }
 
-// Prompt packing — emit full hunk bodies greedily under a byte budget.
+// Prompt packing â€” emit full hunk bodies greedily under a byte budget.
 
 class HunkPackResult {
   HunkPackResult({
@@ -913,9 +1158,9 @@ class HunkPackResult {
   final List<DiffHunk> skipped;
 }
 
-/// Pack hunks into a prompt-safe body in φ-desc order. Emits full hunk
+/// Pack hunks into a prompt-safe body in Ï†-desc order. Emits full hunk
 /// bodies; hunks that don't fit the remaining budget are skipped rather
-/// than truncated (a partial hunk is worse than no hunk — it breaks
+/// than truncated (a partial hunk is worse than no hunk â€” it breaks
 /// git-apply and confuses the model).
 /// The output is wrapped with a `<logos_packed_diff>` tag carrying
 /// honest metadata: how many hunks admitted vs skipped, and the skipped
@@ -932,7 +1177,7 @@ HunkPackResult packHunksUnderBudget({
   final admitted = <DiffHunk>[];
   final skipped = <DiffHunk>[];
   // Cache ranking metadata per-hunk so we can annotate the emitted
-  // diff with φ + well labels without re-walking `rankings`.
+  // diff with Ï† + well labels without re-walking `rankings`.
   final byHunk = <DiffHunk, HunkRanking>{
     for (final r in rankings) r.hunk: r,
   };
@@ -941,7 +1186,7 @@ HunkPackResult packHunksUnderBudget({
   // builds when assets aren't loaded).
   final anyWells = rankings.any((r) => r.wellName != null);
   // Budget cost of an in-diff annotation line, in characters. Grows
-  // with each emitted hunk — approximately `<!-- engram well=NAME
+  // with each emitted hunk â€” approximately `<!-- engram well=NAME
   // phi=0.NN -->\n` which is ~40-50 chars per hunk.
   int hunkAnnotationCost(HunkRanking r) {
     if (r.wellName == null) return 0;
@@ -954,7 +1199,8 @@ HunkPackResult packHunksUnderBudget({
   final perFile = <String, List<DiffHunk>>{};
 
   // Header overhead per file: `diff --git a/<p> b/<p>\n--- a/<p>\n+++ b/<p>\n`
-  int headerCost(String p) => 'diff --git a/$p b/$p\n--- a/$p\n+++ b/$p\n'.length;
+  int headerCost(String p) =>
+      'diff --git a/$p b/$p\n--- a/$p\n+++ b/$p\n'.length;
   // Overhead for the wrapping tag and metadata line.
   const wrapOverhead = 200;
   var remaining = budgetChars - wrapOverhead;
@@ -979,20 +1225,48 @@ HunkPackResult packHunksUnderBudget({
   }
 
   // Emit in file-then-hunk-index order (natural diff order) within the
-  // admitted set. φ ranking governs ADMISSION; emission order restores
+  // admitted set. Ï† ranking governs ADMISSION; emission order restores
   // the normal diff reading shape so the model doesn't have to re-sort.
   final fileOrder = perFile.keys.toList()..sort();
   final buf = StringBuffer();
   buf.writeln(
-      '<logos_packed_diff admitted=${admitted.length} skipped=${skipped.length}>');
+      '<logos_packed_diff admitted="${admitted.length}" skipped="${skipped.length}">');
   for (final fp in fileOrder) {
-    final group = perFile[fp]!..sort((a, b) => a.hunkIndex.compareTo(b.hunkIndex));
+    final group = perFile[fp]!
+      ..sort((a, b) => a.hunkIndex.compareTo(b.hunkIndex));
+    HunkRanking? fileRanking;
+    for (final h in group) {
+      final candidate = byHunk[h];
+      if (candidate == null) continue;
+      if (fileRanking == null || candidate.phi > fileRanking.phi) {
+        fileRanking = candidate;
+      }
+    }
     buf.writeln('diff --git a/$fp b/$fp');
     buf.writeln('--- a/$fp');
     buf.writeln('+++ b/$fp');
+    if (fileRanking != null && fileRanking.fileEvidenceWitnesses.isNotEmpty) {
+      final evidenceLabels = [
+        for (final witness in fileRanking.fileEvidenceWitnesses.take(3))
+          formatLogosEvidenceWitness(
+            witness,
+            includeNote: true,
+            includeSource: true,
+          ),
+      ];
+      if (evidenceLabels.isNotEmpty) {
+        buf.writeln(
+          '<!-- file-evidence-witnesses ${evidenceLabels.join(" | ")} -->',
+        );
+      }
+    }
+    if (fileRanking != null && fileRanking.fileWitnesses.isNotEmpty) {
+      buf.writeln(
+          '<!-- file-witnesses ${fileRanking.fileWitnesses.join(" | ")} -->');
+    }
     for (final h in group) {
       final ranking = byHunk[h];
-      // Annotate with the nearest Alexandria well and φ — a feature-
+      // Annotate with the nearest Alexandria well and Ï† â€” a feature-
       // cluster hint for the LLM. Wrapped in an HTML-style comment so
       // most diff renderers just show it inline; `git apply` ignores
       // lines between hunks, so the output stays applicable when

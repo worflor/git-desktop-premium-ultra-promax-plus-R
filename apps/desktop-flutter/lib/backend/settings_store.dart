@@ -55,6 +55,12 @@ class AppSettingsSnapshot {
   /// True once the user has finished (or dismissed) the onboarding flow.
   /// Defaults to false — first launch with a missing key shows onboarding.
   final bool onboardingComplete;
+  /// Experimental bond surface gate. Defaults false so older installs do
+  /// not light up the feature accidentally.
+  final bool bondExperimentEnabled;
+  /// One-shot affordance bit: once the bond dock has been opened, discovery
+  /// UI should stay silent.
+  final bool bondDockOpenedOnce;
 
   const AppSettingsSnapshot({
     required this.guardrailValue,
@@ -84,6 +90,8 @@ class AppSettingsSnapshot {
     required this.logosPadY,
     required this.appShortName,
     required this.onboardingComplete,
+    required this.bondExperimentEnabled,
+    required this.bondDockOpenedOnce,
   });
 
   Map<String, dynamic> toJson() => {
@@ -114,6 +122,8 @@ class AppSettingsSnapshot {
         'logosPadY': logosPadY,
         'appShortName': appShortName,
         'onboardingComplete': onboardingComplete,
+        'bondExperimentEnabled': bondExperimentEnabled,
+        'bondDockOpenedOnce': bondDockOpenedOnce,
       };
 
   factory AppSettingsSnapshot.defaults() => const AppSettingsSnapshot(
@@ -144,6 +154,8 @@ class AppSettingsSnapshot {
         logosPadY: 0.5,
         appShortName: 'Manifold',
         onboardingComplete: false,
+        bondExperimentEnabled: false,
+        bondDockOpenedOnce: false,
       );
 
   factory AppSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -268,6 +280,14 @@ class AppSettingsSnapshot {
         json['onboardingComplete'],
         defaults.onboardingComplete,
       ),
+      bondExperimentEnabled: SettingsStore._boolOr(
+        json['bondExperimentEnabled'],
+        defaults.bondExperimentEnabled,
+      ),
+      bondDockOpenedOnce: SettingsStore._boolOr(
+        json['bondDockOpenedOnce'],
+        defaults.bondDockOpenedOnce,
+      ),
     );
   }
 
@@ -299,6 +319,8 @@ class AppSettingsSnapshot {
     double? logosPadY,
     String? appShortName,
     bool? onboardingComplete,
+    bool? bondExperimentEnabled,
+    bool? bondDockOpenedOnce,
   }) {
     return AppSettingsSnapshot(
       guardrailValue: guardrailValue ?? this.guardrailValue,
@@ -334,6 +356,9 @@ class AppSettingsSnapshot {
       logosPadY: logosPadY ?? this.logosPadY,
       appShortName: appShortName ?? this.appShortName,
       onboardingComplete: onboardingComplete ?? this.onboardingComplete,
+      bondExperimentEnabled:
+          bondExperimentEnabled ?? this.bondExperimentEnabled,
+      bondDockOpenedOnce: bondDockOpenedOnce ?? this.bondDockOpenedOnce,
     );
   }
 }

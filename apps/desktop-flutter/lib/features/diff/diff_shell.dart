@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show listEquals, mapEquals, setEquals;
+import 'package:flutter/gestures.dart' show kPrimaryButton, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -11,20 +13,20 @@ import 'package:provider/provider.dart';
 import '../../app/preferences_state.dart';
 import '../../ui/motion.dart';
 import '../../ui/material_surface.dart';
-import '../../ui/morph_text.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/status_view.dart';
 import '../../ui/tokens.dart';
+import '../../backend/diff_logos_facade.dart';
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
-import '../../backend/engram_bootstrap.dart';
-import '../../backend/engram_text_kspace.dart';
 import '../../backend/file_coupling.dart' show FileCouplingMatrix;
-import '../../backend/logos_git_resolver.dart' show resolveLogosGit;
+import '../../backend/lru_cache.dart';
 import '../../components/icons/app_icons.dart';
 import '../../diagnostics/diagnostics_state.dart';
+import 'diff_document.dart';
 import 'diff_models.dart';
 import 'edit_units.dart';
+import 'manifold/manifold_pane.dart';
 import 'motion_policy.dart';
 import 'patch_engine.dart';
 
@@ -44,7 +46,6 @@ const double _kStageCellWidth = 16.0;
 const double _kLeftReserveWidth = _kRibbonWidth + _kStageCellWidth;
 const double _kLineItemExtent = 18.0;
 
-
 class _AgeRange {
   final DateTime min;
   final DateTime max;
@@ -53,54 +54,42 @@ class _AgeRange {
 
 class _HunkHeader {
   final int lineIndex;
+  final String filePath;
+  final int fileHunkIndex;
   final String label;
+
   /// Additions + deletions, kept separate so the inline hint reads
   /// `+12 −4` rather than just a fused `16`. Total churn is their
   /// sum and drives the hot-zone strength.
   final int additions;
   final int deletions;
   int get churn => additions + deletions;
-  const _HunkHeader(this.lineIndex, this.label, this.additions, this.deletions);
+  const _HunkHeader(
+    this.lineIndex,
+    this.filePath,
+    this.fileHunkIndex,
+    this.label,
+    this.additions,
+    this.deletions,
+  );
 }
 
-// Parser lives in `diff_models.dart` as `parseUnifiedDiff` so any
-// surface that needs to read a diff (changes panel, patch engine, PR
-// detail) shares the same model.
+class _TrailViewState {
+  final String diffContent;
+  final List<ParsedLine> lines;
+  final List<_HunkHeader> hunks;
+  final Set<int> pairedAddFastKeys;
+  final Map<int, EditUnit> unitByFastKey;
+  final double maxLineWidth;
 
-List<_HunkHeader> _extractHunks(List<ParsedLine> lines) {
-  final result = <_HunkHeader>[];
-  // Two-pass: first locate every hunk header; then walk the body
-  // lines between consecutive headers to tally additions + deletions.
-  // Single pass would entangle the churn accumulator with regex work
-  // on header lines; splitting it is cheaper mentally and identical
-  // in cost (O(n) either way).
-  final headerIndices = <int>[];
-  for (int i = 0; i < lines.length; i++) {
-    if (lines[i].kind == LineKind.hunk) headerIndices.add(i);
-  }
-  for (int h = 0; h < headerIndices.length; h++) {
-    final start = headerIndices[h];
-    final end = h + 1 < headerIndices.length
-        ? headerIndices[h + 1]
-        : lines.length;
-    var additions = 0;
-    var deletions = 0;
-    for (var i = start + 1; i < end; i++) {
-      final k = lines[i].kind;
-      if (k == LineKind.added) additions++;
-      else if (k == LineKind.deleted) deletions++;
-    }
-    final text = lines[start].text;
-    final m = RegExp(r'^(@@ [^ ]+ [^ ]+ @@)(.*)$').firstMatch(text);
-    final label =
-        m != null ? (m.group(1)! + (m.group(2)?.trimRight() ?? '')) : text;
-    result.add(_HunkHeader(
-        start,
-        label.length > 60 ? '${label.substring(0, 57)}...' : label,
-        additions,
-        deletions));
-  }
-  return result;
+  const _TrailViewState({
+    required this.diffContent,
+    required this.lines,
+    required this.hunks,
+    required this.pairedAddFastKeys,
+    required this.unitByFastKey,
+    required this.maxLineWidth,
+  });
 }
 
 String _formatBlameTime(String timestamp) {
@@ -130,10 +119,10 @@ String? _diffDisplayDirectory(String filePath) {
   return parts.sublist(0, parts.length - 1).join('/');
 }
 
-
 class DiffShell extends StatefulWidget {
   final String filePath;
   final String? diffContent;
+  final DiffDocument? document;
   final bool loading;
   final String? error;
   final AppTokens tokens;
@@ -153,16 +142,26 @@ class DiffShell extends StatefulWidget {
   final VoidCallback? onStagingApplied;
 
   /// Optional file coupling matrix — enables the "coupled with" row
-  /// in the pinned-line context panel (right-click a line to pin).
+  /// in the pinned-line context panel (click a line to pin).
   /// When null, that section is omitted; everything else in the
   /// panel still works (K-nearest, well, blame, rhymes-in-diff).
   final FileCouplingMatrix? couplingMatrix;
+  final Map<String, Map<String, double>> symbolCoupling;
+  final String? revisionRef;
+  final DiffLogosSession? logosSession;
+  final ValueChanged<String>? onOpenRelatedPath;
+  final String? toolbarFilePath;
+  final String? toolbarLabel;
+  final String? toolbarTooltip;
+  final VoidCallback? toolbarOnTap;
+  final bool? toolbarActive;
 
   const DiffShell({
     super.key,
     required this.filePath,
     required this.tokens,
     this.diffContent,
+    this.document,
     this.loading = false,
     this.error,
     this.repositoryPath,
@@ -172,6 +171,15 @@ class DiffShell extends StatefulWidget {
     this.enableStaging = false,
     this.onStagingApplied,
     this.couplingMatrix,
+    this.symbolCoupling = const {},
+    this.revisionRef,
+    this.logosSession,
+    this.onOpenRelatedPath,
+    this.toolbarFilePath,
+    this.toolbarLabel,
+    this.toolbarTooltip,
+    this.toolbarOnTap,
+    this.toolbarActive,
   });
 
   @override
@@ -181,7 +189,8 @@ class DiffShell extends StatefulWidget {
 class _DiffShellState extends State<DiffShell> {
   static const int _kAnimatedDiffMaxChangedLines = 24;
   static const int _kAnimatedDiffMaxPayloadBytes = 4 * 1024;
-  static const Duration _kInitialFrameCaptureWindow = Duration(milliseconds: 1500);
+  static const Duration _kInitialFrameCaptureWindow =
+      Duration(milliseconds: 1500);
   static const Duration _kBlameHoverDelay = Duration(milliseconds: 180);
   static const int _kModeAMaxChangedLines = 15000;
   static const int _kModeAMaxPayloadBytes = 3 * 1024 * 1024;
@@ -204,6 +213,8 @@ class _DiffShellState extends State<DiffShell> {
   final Map<String, Map<int, BlameLineData>> _blameByFile = {};
   final Set<String> _blameFetchedFiles = {};
   final Set<String> _blameFetchingFiles = {};
+  final Set<String> _blamePrewarmingFiles = {};
+  final Set<String> _blameUnavailableFiles = {};
   bool _sessionFlushed = false;
   double? _sessionFirstPaintMs;
   DateTime? _lastScrollEventAt;
@@ -212,7 +223,10 @@ class _DiffShellState extends State<DiffShell> {
   bool _useAnimatedTextMode = false;
   int _sessionChangedLines = 0;
   int _sessionPayloadBytes = 0;
+  String? _currentDiffContent;
+  DiffDocument? _currentDocument;
   List<ParsedLine> _displayLines = const [];
+
   /// Index map for O(1) fastKey → display index lookup. Rebuilt
   /// whenever [_displayLines] changes. Keyed on `fastKey` (integer
   /// content hash) rather than object identity because `ParsedLine`
@@ -233,6 +247,7 @@ class _DiffShellState extends State<DiffShell> {
   /// -1 marks "hunk's header line was filtered from display" (shouldn't
   /// happen for hunks, but defensive).
   List<int> _hunkDisplayRows = const [];
+
   /// Fast filter: fastKeys of `added` lines that are the new-side of a
   /// replace pair and should be hidden from display (the fused row shows
   /// at the delete position and carries the add via `unit.newLines.first`).
@@ -248,13 +263,7 @@ class _DiffShellState extends State<DiffShell> {
   /// operate on raw ParsedLines via `_lines`; units are a *view* with
   /// stable integer identity.
   Map<int, EditUnit> _unitByFastKey = const {};
-  /// Source-line list with paired-add entries already filtered out. Derived
-  /// once per real diff change (not per staging toggle) since unit
-  /// identity is stable across staging — only `isStaged` flags mutate on
-  /// the underlying ParsedLines. Cached so `_refreshDisplayLines` can
-  /// skip the entire unit / pair / map rebuild and just apply the search
-  /// filter on every keystroke + staging toggle.
-  List<ParsedLine> _filteredNoSearch = const [];
+
   Timer? _blameHoverTimer;
   Timer? _sessionFlushTimer;
   late final TimingsCallback _frameTimingsCallback;
@@ -268,14 +277,20 @@ class _DiffShellState extends State<DiffShell> {
   bool _trailLoading = false;
   String? _trailSelectedHash;
   String? _originalDiffContent;
+  _TrailViewState? _trailNowView;
   // Resolved file path AT the currently-selected trail commit. Tracks the
   // file's pre-rename name when viewing historical stops so diff/blame
   // queries use the correct path for that point in time.
   String? _trailSelectedPath;
+  Timer? _trailScrubDebounce;
+  int _trailLoadSeq = 0;
+  final LinkedHashMap<String, _TrailViewState> _trailViewCache =
+      LinkedHashMap<String, _TrailViewState>();
   int? _hoveredLine; // the lineNumNew being hovered
 
   // Hunk navigation
   List<_HunkHeader> _hunks = [];
+  Map<int, _HunkHeader> _hunkHeaderByFastKey = const {};
   List<ParsedLine> _lines = [];
 
   // Preference snapshots, refreshed every build so async callbacks
@@ -285,6 +300,8 @@ class _DiffShellState extends State<DiffShell> {
   bool _instantBlameHover = false;
 
   static const Duration _kApplyDebounce = Duration(milliseconds: 250);
+  static const Duration _kTrailScrubDebounce = Duration(milliseconds: 32);
+  static const int _kTrailViewCacheLimit = 40;
   final FocusNode _stagingFocus = FocusNode(debugLabel: 'DiffShellStaging');
   Timer? _applyDebounce;
   bool _applying = false;
@@ -320,20 +337,21 @@ class _DiffShellState extends State<DiffShell> {
   static final LinkedHashMap<String, int> _lastVisitedByFile =
       LinkedHashMap<String, int>();
 
-  static void _touchTemporalMark(String filePath, int unitId) {
-    _lastVisitedByFile.remove(filePath);
-    _lastVisitedByFile[filePath] = unitId;
+  static void _touchTemporalMark(String scopeKey, int unitId) {
+    _lastVisitedByFile.remove(scopeKey);
+    _lastVisitedByFile[scopeKey] = unitId;
     while (_lastVisitedByFile.length > _kTemporalMarkCap) {
       _lastVisitedByFile.remove(_lastVisitedByFile.keys.first);
     }
   }
 
-  static int? _readTemporalMark(String filePath) {
-    final v = _lastVisitedByFile.remove(filePath);
+  static int? _readTemporalMark(String scopeKey) {
+    final v = _lastVisitedByFile.remove(scopeKey);
     if (v == null) return null;
-    _lastVisitedByFile[filePath] = v; // promote on read
+    _lastVisitedByFile[scopeKey] = v; // promote on read
     return v;
   }
+
   int? _restoredPulseUnitId;
   Timer? _restoredPulseTimer;
   bool _temporalRestoreDone = false;
@@ -384,11 +402,13 @@ class _DiffShellState extends State<DiffShell> {
   // panel at the bottom of the shell shows logos-powered context for
   // the pinned line: K-space nearest files, semantic well, simhash
   // rhymes within this diff, blame, coupling partners.
+  int? _pinnedFastKey;
   int? _pinnedDisplayIdx;
-  _PinnedLineContext? _pinnedCtx;
+  DiffPinnedContextModel? _pinnedCtx;
   // Monotonic counter so a new pin cancels in-flight async work
   // from the previous one — no "slow pin overwrites fast pin" race.
   int _pinSeq = 0;
+
   /// Max churn across the current file's hunks, cached at hunk
   /// extraction so the hot-zone check is O(1) per scroll tick.
   int _maxHunkChurn = 0;
@@ -403,6 +423,21 @@ class _DiffShellState extends State<DiffShell> {
   // ~5× faster than the old Set<String> and allocate zero heap strings
   // on the per-row-per-frame `add` call in itemBuilder.
   final Set<int> _seenUnitIds = <int>{};
+  DiffLogosSession? _ownedLogosSession;
+  DiffLogosSession? _logosSession;
+  bool _logosLoading = false;
+  Set<String> _subscribedLogosFiles = const {};
+  int _appliedLogosSnapshotVersion = 0;
+  int _appliedLogosContextRevision = 0;
+
+  String? get _effectiveDiffContent =>
+      _currentDiffContent ?? _currentDocument?.rawContent ?? widget.diffContent;
+
+  String? get _effectiveDocumentId =>
+      _currentDocument?.documentId ??
+      ((_effectiveDiffContent == null || _effectiveDiffContent!.isEmpty)
+          ? null
+          : '${widget.filePath}:${_effectiveDiffContent.hashCode}');
 
   @override
   void initState() {
@@ -410,6 +445,7 @@ class _DiffShellState extends State<DiffShell> {
     _frameTimingsCallback = _handleFrameTimings;
     SchedulerBinding.instance.addTimingsCallback(_frameTimingsCallback);
     _scrollCtrl.addListener(_handleScrollTelemetry);
+    _scrollCtrl.addListener(_syncLogosSubscriptions);
     _scrollCtrl.addListener(_recordTemporalMark);
     _scrollCtrl.addListener(_markScrollActive);
     _rebuild();
@@ -419,10 +455,21 @@ class _DiffShellState extends State<DiffShell> {
   @override
   void didUpdateWidget(DiffShell old) {
     super.didUpdateWidget(old);
-    if (old.diffContent != widget.diffContent ||
-        old.filePath != widget.filePath) {
+    final oldDocumentId = old.document?.documentId;
+    final newDocumentId = widget.document?.documentId;
+    final diffOrPathChanged = old.diffContent != widget.diffContent ||
+        oldDocumentId != newDocumentId ||
+        old.filePath != widget.filePath;
+    final repositoryChanged = old.repositoryPath != widget.repositoryPath;
+    final diffScopeChanged = diffOrPathChanged || repositoryChanged;
+    final logosInputsChanged = diffScopeChanged ||
+        old.revisionRef != widget.revisionRef ||
+        !mapEquals(old.symbolCoupling, widget.symbolCoupling);
+    if (diffScopeChanged) {
       _blameFetchedFiles.clear();
       _blameFetchingFiles.clear();
+      _blamePrewarmingFiles.clear();
+      _blameUnavailableFiles.clear();
       _blameByFile.clear();
       _hoveredLine = null;
       // Reset trail state — the underlying diff changed, so any active
@@ -433,8 +480,13 @@ class _DiffShellState extends State<DiffShell> {
       _trailSelectedHash = null;
       _trailSelectedPath = null;
       _originalDiffContent = null;
+      _trailNowView = null;
+      _trailScrubDebounce?.cancel();
+      _trailScrubDebounce = null;
+      _trailLoadSeq++;
+      _trailViewCache.clear();
       _rebuild();
-      if (old.filePath != widget.filePath) {
+      if (old.filePath != widget.filePath || repositoryChanged) {
         // Arm restore for the new file; the helper jumps-to-top when the
         // file has no stored position, otherwise scrolls to the remembered
         // unit and pulses it.
@@ -446,83 +498,112 @@ class _DiffShellState extends State<DiffShell> {
         widget.jumpToLineIndex != null) {
       _jumpToLineIndex(widget.jumpToLineIndex!);
     }
-  }
-
-  void _rebuild() {
-    if (widget.diffContent != null && widget.diffContent!.isNotEmpty) {
-      // Capture existing stage state to re-hydrate after parse. Keys are
-      // [ParsedLine.fastKey] — content-derived and stable across reparse
-      // of the same diff bytes, so the integer set round-trips exactly
-      // the old string stagingKey semantics with no allocation.
-      final stagedKeys = <int>{
-        for (final l in _lines)
-          if (l.isStaged) l.fastKey,
-      };
-
-      final parsedLines = parseUnifiedDiff(widget.diffContent!);
-      var newLines = widget.showFileHeader
-          ? _trimLeadingMetaLines(parsedLines)
-          : parsedLines;
-
-      // Re-hydrate isStaged state
-      if (stagedKeys.isNotEmpty) {
-        newLines = newLines.map((l) {
-          if (stagedKeys.contains(l.fastKey)) {
-            return l.copyWith(isStaged: true);
-          }
-          return l;
-        }).toList();
+    if (widget.logosSession != old.logosSession) {
+      _bindLogosSession(widget.logosSession, disposeOldOwned: false);
+    }
+    if (!diffScopeChanged &&
+        (logosInputsChanged || widget.logosSession != old.logosSession)) {
+      _syncLogosRuntime(forceRefresh: logosInputsChanged);
+      if (_pinnedFastKey != null) {
+        _schedulePinnedContextRefresh();
       }
-
-      _lines = newLines;
-      _hunks = _extractHunks(_lines);
-      _maxHunkChurn = _hunks.fold<int>(0, (m, h) => h.churn > m ? h.churn : m);
-      // Any cached hot-hunk index refers to the OLD `_hunks` list;
-      // clear before the item builder can paint a stale halo.
-      _hotHunkIdx = null;
-      _hotHunkStrength = 0.0;
-      _hotHunkSeenAt = null;
-      // Any pin refers to an index into the OLD display line list;
-      // drop it so the panel doesn't paint stale context for a line
-      // that doesn't exist in the new diff.
-      _pinnedDisplayIdx = null;
-      _pinnedCtx = null;
-      _pinSeq++;
-      // Fresh diff content — unit identities may have shifted, so drop the
-      // first-appearance set so the new units play their one-shot reveal
-      // once. Per-file temporal marks survive (they're indexed by filePath,
-      // cleared elsewhere on filePath change).
-      _seenUnitIds.clear();
-      // Structural recompute — runs expensive Rabin-Karp + SimHash
-      // move detection ONCE per diff parse, caches units / pair maps /
-      // unitMap so every subsequent _refreshDisplayLines (per keystroke
-      // + per staging toggle) stays a cheap filter pass.
-      _recomputeUnits();
-      _refreshDisplayLines();
-      _computeMaxLineWidth();
-      _revalidateKeyboardCursor();
-      _beginTelemetrySession();
-    } else {
-      _flushRenderMetrics();
-      _lines = [];
-      _hunks = [];
-      _maxHunkChurn = 0;
-      _pairedAddFastKeys = const {};
-      _unitByFastKey = const {};
-      _filteredNoSearch = const [];
-      _hunkDisplayRows = const [];
-      _setDisplayLines(const []);
-      _keyboardLineIndex = null;
-      _lastToggledLineIndex = null;
-      _useAnimatedTextMode = false;
-      _sessionChangedLines = 0;
-      _sessionPayloadBytes = 0;
-      _maxLineWidth = 800.0;
     }
   }
 
+  void _rebuild() {
+    _profileUiSync(
+      'diff.shell.rebuild',
+      () {
+        final document = widget.document ??
+            ((widget.diffContent != null && widget.diffContent!.isNotEmpty)
+                ? DiffDocument.fromRawContent(
+                    rawContent: widget.diffContent!,
+                    pathHint: widget.filePath,
+                    trimLeadingMeta: widget.showFileHeader,
+                  )
+                : null);
+        if (document != null && !document.isEmpty) {
+          final stagedKeys = <int>{
+            for (final line in _lines)
+              if (line.isStaged) line.fastKey,
+          };
+          _applyDocument(document, stagedKeys: stagedKeys);
+          _beginTelemetrySession();
+          _syncLogosRuntime(forceRefresh: true);
+        } else {
+          _flushRenderMetrics();
+          _lines = [];
+          _hunks = [];
+          _hunkHeaderByFastKey = const {};
+          _maxHunkChurn = 0;
+          _pairedAddFastKeys = const {};
+          _unitByFastKey = const {};
+          _hunkDisplayRows = const [];
+          _setDisplayLines(const []);
+          _keyboardLineIndex = null;
+          _lastToggledLineIndex = null;
+          _useAnimatedTextMode = false;
+          _sessionChangedLines = 0;
+          _sessionPayloadBytes = 0;
+          _currentDiffContent = widget.diffContent;
+          _currentDocument = null;
+          _maxLineWidth = 800.0;
+          _logosLoading = false;
+          _bindLogosSession(null, disposeOldOwned: true);
+        }
+      },
+      errorCode: 'diff.shell.rebuild_failed',
+    );
+  }
+
+  void _applyDocument(
+    DiffDocument document, {
+    Set<int> stagedKeys = const <int>{},
+  }) {
+    _profileUiSync(
+      'diff.shell.apply-document',
+      () {
+        _currentDocument = document;
+        _currentDiffContent = document.rawContent;
+        _lines = stagedKeys.isEmpty
+            ? List<ParsedLine>.of(document.lines)
+            : document.lines.map((line) {
+                if (stagedKeys.contains(line.fastKey)) {
+                  return line.copyWith(isStaged: true);
+                }
+                return line;
+              }).toList(growable: false);
+        _hunks = [
+          for (final hunk in document.hunks)
+            _HunkHeader(
+              hunk.lineIndex,
+              hunk.filePath,
+              hunk.fileHunkIndex,
+              hunk.label,
+              hunk.additions,
+              hunk.deletions,
+            ),
+        ];
+        _rebuildHunkHeaderLookup();
+        _pairedAddFastKeys = document.pairedAddFastKeys;
+        _unitByFastKey = document.unitByFastKey;
+        _maxLineWidth = _measureMaxLineWidth(document.maxLineLength);
+        _maxHunkChurn =
+            _hunks.fold<int>(0, (m, h) => h.churn > m ? h.churn : m);
+        _hotHunkIdx = null;
+        _hotHunkStrength = 0.0;
+        _hotHunkSeenAt = null;
+        _clearPinnedLine();
+        _seenUnitIds.clear();
+        _refreshDisplayLines();
+        _revalidateKeyboardCursor();
+      },
+      errorCode: 'diff.shell.apply-document_failed',
+    );
+  }
+
   void _beginTelemetrySession() {
-    _sessionDiffId = '${widget.filePath}:${widget.diffContent.hashCode}';
+    _sessionDiffId = _effectiveDocumentId;
     _sessionStopwatch
       ..reset()
       ..start();
@@ -534,21 +615,23 @@ class _DiffShellState extends State<DiffShell> {
     _lastScrollEventAt = null;
     _sessionFlushed = false;
     _sessionSearchActivated = _searchTerm.isNotEmpty;
-    _sessionPayloadBytes = widget.diffContent == null
-        ? 0
-        : utf8.encode(widget.diffContent!).length;
-    _sessionChangedLines = _lines
-        .where((line) =>
-            line.kind == LineKind.added || line.kind == LineKind.deleted)
-        .length;
+    _sessionPayloadBytes = _currentDocument?.payloadBytes ??
+        (_effectiveDiffContent == null
+            ? 0
+            : utf8.encode(_effectiveDiffContent!).length);
+    _sessionChangedLines = _currentDocument?.changedLines ??
+        _lines
+            .where((line) =>
+                line.kind == LineKind.added || line.kind == LineKind.deleted)
+            .length;
     _useAnimatedTextMode = !_sessionSearchActivated &&
         _sessionChangedLines <= _kAnimatedDiffMaxChangedLines &&
         _sessionPayloadBytes <= _kAnimatedDiffMaxPayloadBytes;
     _armRenderMetricsFlush(_kInitialFrameCaptureWindow);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
-          widget.diffContent == null ||
-          widget.diffContent!.isEmpty ||
+          _effectiveDiffContent == null ||
+          _effectiveDiffContent!.isEmpty ||
           _sessionFirstPaintMs != null) {
         return;
       }
@@ -605,8 +688,8 @@ class _DiffShellState extends State<DiffShell> {
   void _flushRenderMetrics() {
     if (_sessionFlushed ||
         _sessionDiffId == null ||
-        widget.diffContent == null ||
-        widget.diffContent!.isEmpty) {
+        _effectiveDiffContent == null ||
+        _effectiveDiffContent!.isEmpty) {
       return;
     }
     _sessionFlushTimer?.cancel();
@@ -674,6 +757,64 @@ class _DiffShellState extends State<DiffShell> {
     return 'canvas';
   }
 
+  void _recordUiTimingIfSlow({
+    required String event,
+    required Stopwatch stopwatch,
+    String phase = 'compute',
+    bool ok = true,
+    String? errorCode,
+    double minMs = 8,
+  }) {
+    if (stopwatch.isRunning) {
+      stopwatch.stop();
+    }
+    final durationMs = stopwatch.elapsedMicroseconds / 1000;
+    if (!durationMs.isFinite || durationMs < minMs) {
+      return;
+    }
+    unawaited(
+      DiagnosticsState.instance
+          .recordUiTiming(
+            event: event,
+            phase: phase,
+            durationMs: durationMs,
+            ok: ok,
+            errorCode: ok ? null : errorCode,
+          )
+          .catchError((_) => null),
+    );
+  }
+
+  T _profileUiSync<T>(
+    String event,
+    T Function() body, {
+    String phase = 'compute',
+    String? errorCode,
+    double minMs = 8,
+  }) {
+    final stopwatch = Stopwatch()..start();
+    try {
+      final result = body();
+      _recordUiTimingIfSlow(
+        event: event,
+        stopwatch: stopwatch,
+        phase: phase,
+        minMs: minMs,
+      );
+      return result;
+    } catch (_) {
+      _recordUiTimingIfSlow(
+        event: event,
+        stopwatch: stopwatch,
+        phase: phase,
+        ok: false,
+        errorCode: errorCode,
+        minMs: minMs,
+      );
+      rethrow;
+    }
+  }
+
   @override
   void dispose() {
     // Defer the metrics flush to a microtask: notifyListeners() inside
@@ -686,11 +827,18 @@ class _DiffShellState extends State<DiffShell> {
     _blameHoverTimer?.cancel();
     _sessionFlushTimer?.cancel();
     _applyDebounce?.cancel();
+    _trailScrubDebounce?.cancel();
     _restoredPulseTimer?.cancel();
     _scrollIdleTimer?.cancel();
     // Capture the final position so closing without scrolling still records
     // a mark. Read BEFORE disposing the scroll controller.
     _recordTemporalMark();
+    _logosSession?.removeListener(_handleLogosSessionChanged);
+    if (_ownedLogosSession != null &&
+        identical(_ownedLogosSession, _logosSession)) {
+      _ownedLogosSession!.dispose();
+      _ownedLogosSession = null;
+    }
     _stagingFocus.dispose();
     SchedulerBinding.instance.removeTimingsCallback(_frameTimingsCallback);
     _searchCtrl.dispose();
@@ -703,47 +851,121 @@ class _DiffShellState extends State<DiffShell> {
   /// at a historical commit are different data sets, and both can be viewed
   /// during a single DiffShell session when the Paper Trail is active.
   String _blameKey(String filePath, String? revision) =>
-      revision == null ? filePath : '$filePath@$revision';
+      '${widget.repositoryPath ?? ''}\u0000$filePath${revision == null ? '' : '@$revision'}';
+
+  String? get _activeRevisionRef => widget.revisionRef ?? _trailSelectedHash;
+
+  String _normalizedDiffPath(String filePath) => filePath.replaceAll('\\', '/');
+
+  String _effectiveBlamePathFor(String filePath) {
+    final revision = _activeRevisionRef;
+    final scopedPath = (revision != null && _trailSelectedPath != null)
+        ? _trailSelectedPath!
+        : filePath;
+    return _normalizedDiffPath(scopedPath);
+  }
+
+  String _blameLookupKey(String filePath, String? revision) =>
+      _blameKey(_effectiveBlamePathFor(filePath), revision);
+
+  String _temporalMarkScopeKey(String filePath) {
+    return _blameLookupKey(filePath, _activeRevisionRef);
+  }
+
+  bool _hasQueuedOrFetchedBlame(String key) =>
+      _blameFetchedFiles.contains(key) ||
+      _blameFetchingFiles.contains(key) ||
+      _blamePrewarmingFiles.contains(key) ||
+      _blameUnavailableFiles.contains(key);
+
+  bool _isBlameEligiblePath(String filePath) {
+    final normalizedPath = _normalizedDiffPath(filePath);
+    final raw = _currentDocument?.rawDiffByPath[normalizedPath];
+    if (raw == null || raw.isEmpty) {
+      final diffPaths = _uniqueFilePathsInDiff();
+      if (diffPaths.length > 1 && !diffPaths.contains(normalizedPath)) {
+        return false;
+      }
+      return normalizedPath.isNotEmpty;
+    }
+    // Fresh files and synthetic untracked patches have no committed ancestor
+    // in HEAD, so `git blame` is guaranteed to fail for this session.
+    if (raw.contains('\nnew file mode ') || raw.contains('--- /dev/null')) {
+      return false;
+    }
+    return true;
+  }
 
   Future<void> _loadBlame(String filePath, int lineNum) async {
-    final repo = widget.repositoryPath;
-    if (repo == null) return;
+    if (widget.repositoryPath == null) return;
     // When viewing a historical stop via the Paper Trail, blame must be
     // computed AS OF that commit — otherwise hovering a line shows the
     // current-HEAD author instead of who last touched it at that point.
     // For renamed files, also use the path AT that commit (pre-rename).
-    final revision = _trailSelectedHash;
-    final queryPath = (revision != null && _trailSelectedPath != null)
-        ? _trailSelectedPath!
-        : filePath;
-    final key = _blameKey(filePath, revision);
-    if (_blameFetchedFiles.contains(key) ||
-        _blameFetchingFiles.contains(key)) return;
+    final revision = _activeRevisionRef;
+    final queryPath = _effectiveBlamePathFor(filePath);
+    final key = _blameKey(queryPath, revision);
+    if (!_isBlameEligiblePath(filePath)) {
+      _blameUnavailableFiles.add(key);
+      return;
+    }
+    if (_hasQueuedOrFetchedBlame(key)) return;
 
-    setState(() {
-      _blameFetchingFiles.add(key);
-      _hoveredLine = lineNum;
-    });
-    final r = await getFileBlame(repo, queryPath, commitRef: revision);
-    if (!mounted) return;
-    setState(() {
-      _blameFetchingFiles.remove(key);
-      _blameFetchedFiles.add(key);
+    final shouldNotify = lineNum > 0 || _wearMapVisible;
+    if (shouldNotify) {
+      setState(() {
+        _blameFetchingFiles.add(key);
+        if (lineNum > 0) {
+          _hoveredLine = lineNum;
+        }
+      });
+    } else {
+      _blamePrewarmingFiles.add(key);
+    }
+    List<BlameLineData>? blameData;
+    var blameFailed = false;
+    try {
+      final r = await getFileBlame(
+        widget.repositoryPath!,
+        queryPath,
+        commitRef: revision,
+      );
       if (r.ok) {
+        blameData = r.data;
+      } else {
+        blameFailed = true;
+      }
+    } catch (_) {
+      blameFailed = true;
+    }
+    if (!mounted) return;
+    void applyResult() {
+      _blameFetchingFiles.remove(key);
+      _blamePrewarmingFiles.remove(key);
+      if (blameData != null) {
+        _blameFetchedFiles.add(key);
         final map = <int, BlameLineData>{};
-        for (final entry in r.data!) {
+        for (final entry in blameData) {
           map[entry.lineNumber] = entry;
         }
         _blameByFile[key] = map;
+      } else if (blameFailed) {
+        _blameUnavailableFiles.add(key);
       }
-    });
+    }
+
+    if (shouldNotify) {
+      setState(applyResult);
+    } else {
+      applyResult();
+    }
   }
 
   BlameLineData? _blameFor(String? filePath, int lineNum) {
     if (filePath == null) return null;
-    return _blameByFile[_blameKey(filePath, _trailSelectedHash)]?[lineNum];
+    return _blameByFile[_blameLookupKey(filePath, _activeRevisionRef)]
+        ?[lineNum];
   }
-
 
   Set<String> _uniqueFilePathsInDiff() {
     final paths = <String>{};
@@ -754,6 +976,320 @@ class _DiffShellState extends State<DiffShell> {
     // Fallback for single-file diffs where parser didn't see a diff --git header.
     if (paths.isEmpty) paths.add(widget.filePath);
     return paths;
+  }
+
+  void _bindLogosSession(
+    DiffLogosSession? session, {
+    required bool disposeOldOwned,
+  }) {
+    if (identical(_logosSession, session)) {
+      _logosLoading = session?.loading ?? false;
+      return;
+    }
+    final previous = _logosSession;
+    previous?.removeListener(_handleLogosSessionChanged);
+    if (disposeOldOwned &&
+        _ownedLogosSession != null &&
+        identical(previous, _ownedLogosSession)) {
+      _ownedLogosSession!.dispose();
+      _ownedLogosSession = null;
+    }
+    _logosSession = session;
+    _logosLoading = session?.loading ?? false;
+    _subscribedLogosFiles = const {};
+    _appliedLogosSnapshotVersion = 0;
+    _appliedLogosContextRevision = 0;
+    session?.addListener(_handleLogosSessionChanged);
+  }
+
+  void _handleLogosSessionChanged() {
+    _applyLatestLogosState();
+  }
+
+  void _syncLogosRuntime({required bool forceRefresh}) {
+    _profileUiSync(
+      'diff.shell.logos-sync',
+      () {
+        final externalSession = widget.logosSession;
+        if (externalSession != null) {
+          _bindLogosSession(externalSession, disposeOldOwned: true);
+          _applyLatestLogosState();
+          _syncLogosSubscriptions();
+          return;
+        }
+
+        final repoPath = widget.repositoryPath;
+        final diffText = _effectiveDiffContent;
+        if (repoPath == null || diffText == null || diffText.isEmpty) {
+          _bindLogosSession(null, disposeOldOwned: true);
+          if (mounted) {
+            setState(() {
+              _logosLoading = false;
+              _refreshDisplayLines();
+            });
+          }
+          return;
+        }
+
+        final request = DiffLogosRequest(
+          repositoryPath: repoPath,
+          diffText: diffText,
+          parsedLines: _lines,
+          parsedMetadata: DiffLogosParsedMetadata(
+            touchedPaths: _uniqueFilePathsInDiff(),
+            hunkCount: _hunks.length,
+          ),
+          symbolCoupling: widget.symbolCoupling,
+          revisionRef: _activeRevisionRef,
+          couplingMatrix: widget.couplingMatrix,
+          warmEngine: _logosSession?.logos?.engine,
+        );
+        final session = _ownedLogosSession ??=
+            DiffLogosFacade.instance.createSession(request);
+        _bindLogosSession(session, disposeOldOwned: false);
+        _applyLatestLogosState();
+        if (_logosSession == session &&
+            (forceRefresh || session.cacheKey.isEmpty)) {
+          unawaited(session.refresh(request).catchError((_) => null));
+        }
+        _syncLogosSubscriptions();
+      },
+      errorCode: 'diff.shell.logos-sync_failed',
+    );
+  }
+
+  void _applyLatestLogosState() {
+    if (!mounted) {
+      return;
+    }
+    final session = _logosSession;
+    final nextLoading = session?.loading ?? false;
+    final snapshotVersion = session?.snapshotVersion ?? 0;
+    final contextRevision = session?.contextRevision ?? 0;
+    final snapshotChanged = snapshotVersion != _appliedLogosSnapshotVersion;
+    final contextChanged = contextRevision != _appliedLogosContextRevision;
+    if (!snapshotChanged && !contextChanged && nextLoading == _logosLoading) {
+      return;
+    }
+    setState(() {
+      _logosLoading = nextLoading;
+      if (contextChanged && _searchTerm.isEmpty) {
+        _refreshDisplayLines();
+      }
+      _appliedLogosSnapshotVersion = snapshotVersion;
+      _appliedLogosContextRevision = contextRevision;
+    });
+    if ((snapshotChanged || contextChanged) && _pinnedFastKey != null) {
+      _schedulePinnedContextRefresh();
+    }
+  }
+
+  Set<String> _desiredLogosSubscriptionPaths() {
+    if (_displayLines.isEmpty) {
+      return _uniqueFilePathsInDiff();
+    }
+    final desired = <String>{};
+    final viewport =
+        _scrollCtrl.hasClients ? _scrollCtrl.position.viewportDimension : 0.0;
+    final start =
+        ((_scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0) / _kLineItemExtent)
+            .floor()
+            .clamp(0, _displayLines.length - 1);
+    final end = (((_scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0) +
+                math.max(viewport, _kLineItemExtent * 24)) /
+            _kLineItemExtent)
+        .ceil()
+        .clamp(0, _displayLines.length);
+    for (var i = start; i < end; i++) {
+      final path = _displayLines[i].filePath ?? widget.filePath;
+      if (path.isNotEmpty) {
+        desired.add(path);
+      }
+    }
+    final pinnedIdx = _pinnedDisplayIdx;
+    if (pinnedIdx != null &&
+        pinnedIdx >= 0 &&
+        pinnedIdx < _displayLines.length) {
+      final pinnedPath = _displayLines[pinnedIdx].filePath ?? widget.filePath;
+      if (pinnedPath.isNotEmpty) {
+        desired.add(pinnedPath);
+      }
+    }
+    if (desired.isEmpty) {
+      desired.addAll(_uniqueFilePathsInDiff());
+    }
+    return desired;
+  }
+
+  void _syncLogosSubscriptions() {
+    final session = _logosSession;
+    if (session == null) {
+      _subscribedLogosFiles = const {};
+      return;
+    }
+    final next = _desiredLogosSubscriptionPaths();
+    if (setEquals(_subscribedLogosFiles, next)) {
+      return;
+    }
+    _subscribedLogosFiles = next;
+    session.replaceFileSubscriptions(next);
+  }
+
+  ParsedLine _buildFoldMarkerLine({
+    required String filePath,
+    required int hunkIndex,
+    required int hiddenCount,
+    int? startLine,
+    int? endLine,
+  }) {
+    final range = switch ((startLine, endLine)) {
+      (final int start?, final int end?) when start == end => ' at $start',
+      (final int start?, final int end?) => ' $start-$end',
+      _ => '',
+    };
+    final text = '... $hiddenCount unchanged lines$range ...';
+    return ParsedLine(
+      text: text,
+      lowerText: text.toLowerCase(),
+      kind: LineKind.meta,
+      filePath: filePath,
+      hunkIndex: hunkIndex,
+      lineNumNew: startLine,
+      lineNumOld: startLine,
+    );
+  }
+
+  List<ParsedLine> _applyAdaptiveContext(List<ParsedLine> source) {
+    if (_logosSession == null) {
+      return source;
+    }
+    final output = <ParsedLine>[];
+    DiffFileContextPlan? currentPlan;
+    String? currentPath;
+    var hiddenCount = 0;
+    int? hiddenStart;
+    int? hiddenEnd;
+    String? hiddenFilePath;
+    int hiddenHunk = -1;
+
+    void flushHidden() {
+      if (hiddenCount <= 0 || hiddenFilePath == null) return;
+      output.add(
+        _buildFoldMarkerLine(
+          filePath: hiddenFilePath!,
+          hunkIndex: hiddenHunk,
+          hiddenCount: hiddenCount,
+          startLine: hiddenStart,
+          endLine: hiddenEnd,
+        ),
+      );
+      hiddenCount = 0;
+      hiddenStart = null;
+      hiddenEnd = null;
+      hiddenFilePath = null;
+      hiddenHunk = -1;
+    }
+
+    for (final line in source) {
+      final filePath = line.filePath ?? widget.filePath;
+      final plan = currentPath == filePath
+          ? currentPlan
+          : (() {
+              currentPath = filePath;
+              currentPlan = _logosSession?.contextPlanFor(filePath);
+              return currentPlan;
+            })();
+      final hideContext = line.kind == LineKind.context &&
+          plan != null &&
+          !plan.visibleFastKeys.contains(line.fastKey);
+      if (!hideContext) {
+        flushHidden();
+        output.add(line);
+        continue;
+      }
+      if (hiddenFilePath != null &&
+          (hiddenFilePath != filePath || hiddenHunk != line.hunkIndex)) {
+        flushHidden();
+      }
+      hiddenFilePath = filePath;
+      hiddenHunk = line.hunkIndex;
+      hiddenCount++;
+      hiddenStart ??= line.lineNumNew ?? line.lineNumOld;
+      hiddenEnd = line.lineNumNew ?? line.lineNumOld;
+    }
+    flushHidden();
+    return output;
+  }
+
+  DiffFileContextPlan? _contextPlanForLine(ParsedLine line) =>
+      _logosSession?.contextPlanFor(line.filePath ?? widget.filePath);
+
+  DiffContextBand? _contextBandForLine(ParsedLine line) {
+    if (line.kind == LineKind.added || line.kind == LineKind.deleted) {
+      return DiffContextBand.changed;
+    }
+    if (line.kind != LineKind.context) {
+      return null;
+    }
+    return _contextPlanForLine(line)?.bandByFastKey[line.fastKey];
+  }
+
+  _HunkHeader? _headerForDisplayLine(ParsedLine line) {
+    return _hunkHeaderByFastKey[line.fastKey];
+  }
+
+  DiffLogosHunkSignal? _logosSignalForHeader(_HunkHeader header) =>
+      _logosSession?.hunkFor(header.filePath, header.fileHunkIndex);
+
+  DiffLogosFileSignal? _logosFileSignalForHeader(_HunkHeader header) =>
+      _logosSession?.filesByPath[header.filePath];
+
+  DiffLineResidualSignal? _logosResidualForLine(ParsedLine line) =>
+      _contextPlanForLine(line)?.residualByFastKey[line.fastKey];
+
+  double _semanticStrength({
+    required double importance,
+    double transportPull = 0.0,
+    double transportedSupport = 0.0,
+    double innovationResidual = 0.0,
+    double witnessResidual = 0.0,
+  }) =>
+      math
+          .max(
+            importance,
+            math.max(
+              math.max(transportPull, transportedSupport),
+              math.max(innovationResidual, witnessResidual),
+            ),
+          )
+          .clamp(0.0, 1.0)
+          .toDouble();
+
+  double _importanceForHunkIndex(int hunkIdx) {
+    if (hunkIdx < 0 || hunkIdx >= _hunks.length) return 0.0;
+    final header = _hunks[hunkIdx];
+    final signal = _logosSignalForHeader(header);
+    if (signal != null) {
+      return _semanticStrength(
+        importance: signal.importance,
+        transportPull: signal.transportPull ?? 0.0,
+        transportedSupport: signal.transportedSupport ?? 0.0,
+        innovationResidual: signal.innovationResidual ?? 0.0,
+        witnessResidual: signal.witnessResidual ?? 0.0,
+      );
+    }
+    final fileSignal = _logosFileSignalForHeader(header);
+    if (fileSignal != null) {
+      return _semanticStrength(
+        importance: fileSignal.importance,
+        transportPull: fileSignal.transportPull ?? 0.0,
+        transportedSupport: fileSignal.transportedSupport ?? 0.0,
+        innovationResidual: fileSignal.innovationResidual ?? 0.0,
+        witnessResidual: fileSignal.witnessResidual ?? 0.0,
+      );
+    }
+    if (_maxHunkChurn <= 0) return 0.0;
+    return (_hunks[hunkIdx].churn / _maxHunkChurn).clamp(0.0, 1.0);
   }
 
   void _toggleWearMap() {
@@ -769,16 +1305,16 @@ class _DiffShellState extends State<DiffShell> {
   /// processes on large multi-file diffs. Bails if wear map is toggled off
   /// mid-load, or if the trail selection changes.
   Future<void> _batchLoadWearBlame() async {
-    final revisionAtStart = _trailSelectedHash;
+    final revisionAtStart = _activeRevisionRef;
     for (final path in _uniqueFilePathsInDiff()) {
       if (!mounted) return;
       if (!_wearMapVisible) return;
       // If the user navigated the trail to a different revision while we
       // were loading, let the next scheduler handle it.
-      if (_trailSelectedHash != revisionAtStart) return;
-      final key = _blameKey(path, revisionAtStart);
-      if (_blameFetchedFiles.contains(key) ||
-          _blameFetchingFiles.contains(key)) continue;
+      if (_activeRevisionRef != revisionAtStart) return;
+      if (!_isBlameEligiblePath(path)) continue;
+      final key = _blameLookupKey(path, revisionAtStart);
+      if (_hasQueuedOrFetchedBlame(key)) continue;
       await _loadBlame(path, 0);
     }
   }
@@ -822,7 +1358,8 @@ class _DiffShellState extends State<DiffShell> {
     final entry = _blameFor(filePath, lineNum);
     if (entry == null) return null;
     // Age ranges are cached by the same (file, revision) key as blame.
-    final range = _ageRangesByFile()[_blameKey(filePath, _trailSelectedHash)];
+    final range =
+        _ageRangesByFile()[_blameLookupKey(filePath, _activeRevisionRef)];
     if (range == null) return null;
     try {
       final d = DateTime.parse(entry.authoredAt);
@@ -833,6 +1370,119 @@ class _DiffShellState extends State<DiffShell> {
     } catch (_) {
       return null;
     }
+  }
+
+  _PinnedPastContext? _buildPinnedPastContext(DiffPinnedContextModel? context) {
+    if (context == null) return null;
+    final line = context.line;
+    final filePath = line.filePath ?? widget.filePath;
+    final lineNum = line.lineNumNew;
+    final lineBlame = context.blame;
+    final blameMap =
+        _blameByFile[_blameLookupKey(filePath, _activeRevisionRef)];
+
+    String? lastTouchLabel;
+    if (lineBlame != null) {
+      lastTouchLabel =
+          '${lineBlame.authorName} / ${_formatBlameTime(lineBlame.authoredAt)} / ${lineBlame.shortHash}';
+    }
+    if (lineNum == null || blameMap == null || blameMap.isEmpty) {
+      if (lastTouchLabel == null) return null;
+      return _PinnedPastContext(
+        tempoLabel: 'history loading',
+        lastTouchLabel: lastTouchLabel,
+        nearbyAuthors: const [],
+        lineHeatSamples: const [],
+      );
+    }
+
+    final nearby = <BlameLineData>[];
+    for (var candidate = lineNum - 8; candidate <= lineNum + 8; candidate++) {
+      final blame = blameMap[candidate];
+      if (blame != null) {
+        nearby.add(blame);
+      }
+    }
+    if (nearby.isEmpty) {
+      return _PinnedPastContext(
+        tempoLabel: 'history loading',
+        lastTouchLabel: lastTouchLabel,
+        nearbyAuthors: const [],
+        lineHeatSamples: const [],
+      );
+    }
+
+    final authorCounts = <String, int>{};
+    DateTime? newest;
+    DateTime? oldest;
+    for (final blame in nearby) {
+      authorCounts[blame.authorName] =
+          (authorCounts[blame.authorName] ?? 0) + 1;
+      try {
+        final authored = DateTime.parse(blame.authoredAt);
+        if (newest == null || authored.isAfter(newest)) newest = authored;
+        if (oldest == null || authored.isBefore(oldest)) oldest = authored;
+      } catch (_) {
+        // Ignore parse failures; other signals still render.
+      }
+    }
+
+    final total = nearby.length;
+    final authors = authorCounts.entries.toList()
+      ..sort((a, b) {
+        final byCount = b.value.compareTo(a.value);
+        if (byCount != 0) return byCount;
+        return a.key.compareTo(b.key);
+      });
+    final topShare = authors.isEmpty ? 0.0 : authors.first.value / total;
+    final newestAgeDays =
+        newest == null ? 9999 : DateTime.now().difference(newest).inDays;
+    final ageSpreadDays = newest == null || oldest == null
+        ? 0
+        : newest.difference(oldest).inDays.abs();
+    final spanSeconds = newest == null || oldest == null
+        ? 0
+        : newest.difference(oldest).inSeconds.abs();
+    final tempoLabel = newestAgeDays <= 21
+        ? (topShare >= 0.65 ? 'hot owner lane' : 'active seam')
+        : (topShare >= 0.65
+            ? 'stable owner lane'
+            : ageSpreadDays >= 120
+                ? 'shared long-lived seam'
+                : 'shared lane');
+    final lineHeatSamples = <double>[];
+    for (var candidate = lineNum - 8; candidate <= lineNum + 8; candidate++) {
+      final blame = blameMap[candidate];
+      if (blame == null) {
+        lineHeatSamples.add(0.0);
+        continue;
+      }
+      try {
+        final authored = DateTime.parse(blame.authoredAt);
+        if (newest == null || oldest == null || spanSeconds <= 0) {
+          lineHeatSamples.add(0.65);
+          continue;
+        }
+        final heat = authored.difference(oldest).inSeconds /
+            spanSeconds.clamp(1, 1 << 30);
+        lineHeatSamples.add((0.18 + 0.82 * heat).clamp(0.0, 1.0));
+      } catch (_) {
+        lineHeatSamples.add(0.25);
+      }
+    }
+
+    return _PinnedPastContext(
+      tempoLabel: tempoLabel,
+      lastTouchLabel: lastTouchLabel,
+      nearbyAuthors: [
+        for (final author in authors.take(2))
+          _PinnedAuthorShare(
+            name: author.key,
+            share: author.value / total,
+          ),
+      ],
+      lineHeatSamples: lineHeatSamples,
+    );
   }
 
   // Blame is loaded lazily per-file on hover, so the session caps
@@ -847,8 +1497,7 @@ class _DiffShellState extends State<DiffShell> {
       return;
     }
     _blameHoverTimer?.cancel();
-    final delay =
-        _instantBlameHover ? Duration.zero : _kBlameHoverDelay;
+    final delay = _instantBlameHover ? Duration.zero : _kBlameHoverDelay;
     _blameHoverTimer = Timer(delay, () {
       if (!mounted || _hoveredLine != lineNum) {
         return;
@@ -856,7 +1505,6 @@ class _DiffShellState extends State<DiffShell> {
       _loadBlame(filePath, lineNum);
     });
   }
-
 
   bool get _stagingEnabled =>
       widget.enableStaging && widget.repositoryPath != null;
@@ -957,7 +1605,6 @@ class _DiffShellState extends State<DiffShell> {
     _scheduleApply();
   }
 
-
   void _beginPaint(ParsedLine line) {
     final idx = _lines.indexWhere((l) => identical(l, line));
     if (idx < 0) return;
@@ -1008,37 +1655,50 @@ class _DiffShellState extends State<DiffShell> {
 
   final GlobalKey _listViewKey = GlobalKey();
 
-
   KeyEventResult _handleKey(FocusNode _, KeyEvent event) {
-    if (!_stagingEnabled) return KeyEventResult.ignored;
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
     final key = event.logicalKey;
-    final isShift =
-        HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.shiftLeft) ||
-            HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.shiftRight);
+    final isShift = HardwareKeyboard.instance
+            .isLogicalKeyPressed(LogicalKeyboardKey.shiftLeft) ||
+        HardwareKeyboard.instance
+            .isLogicalKeyPressed(LogicalKeyboardKey.shiftRight);
 
-    if (key == LogicalKeyboardKey.arrowDown ||
-        key == LogicalKeyboardKey.keyJ) {
+    if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.keyJ) {
       _moveKeyboardCursor(1);
       return KeyEventResult.handled;
     }
-    if (key == LogicalKeyboardKey.arrowUp ||
-        key == LogicalKeyboardKey.keyK) {
+    if (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.keyK) {
       _moveKeyboardCursor(-1);
       return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.keyP && _keyboardLineIndex != null) {
+      final displayIdx = _displayLineIndex[_lines[_keyboardLineIndex!].fastKey];
+      if (displayIdx != null) {
+        _togglePinLine(displayIdx);
+        return KeyEventResult.handled;
+      }
+    }
     if (key == LogicalKeyboardKey.space && _keyboardLineIndex != null) {
+      if (!_stagingEnabled) {
+        return KeyEventResult.ignored;
+      }
       final line = _lines[_keyboardLineIndex!];
       _handleSigilTap(line, shift: isShift, alt: false);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.keyH && _keyboardLineIndex != null) {
+      if (!_stagingEnabled) {
+        return KeyEventResult.ignored;
+      }
       _handleHunkDoubleTap(_lines[_keyboardLineIndex!].hunkIndex);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.keyF) {
+      if (!_stagingEnabled) {
+        return KeyEventResult.ignored;
+      }
       _handleFileStageToggle();
       return KeyEventResult.handled;
     }
@@ -1139,12 +1799,10 @@ class _DiffShellState extends State<DiffShell> {
     // Thresholds in pixels. Line extent is 18px — a velocity under half
     // a line per tick and a small-magnitude acceleration opposing the
     // motion direction is a robust "approaching settle" signal.
-    const double kVSettle = 9.0;   // ~half a row per scroll event
-    const double kAThresh = 4.0;   // jerk magnitude bound
+    const double kVSettle = 9.0; // ~half a row per scroll event
+    const double kAThresh = 4.0; // jerk magnitude bound
     final decelerating = v * a <= 0.0;
-    final nearSettle = v.abs() < kVSettle &&
-        a.abs() < kAThresh &&
-        decelerating;
+    final nearSettle = v.abs() < kVSettle && a.abs() < kAThresh && decelerating;
 
     if (nearSettle && !_blameWarmedThisScroll) {
       _blameWarmedThisScroll = true;
@@ -1173,9 +1831,7 @@ class _DiffShellState extends State<DiffShell> {
     // wherever we are; treat "you've arrived" as the landing so the
     // halo can light on the hunk you actually stopped near.
     if (v.abs() < 4.0) {
-      return (pos / _lineItemExtent)
-          .round()
-          .clamp(0, _displayLines.length - 1);
+      return (pos / _lineItemExtent).round().clamp(0, _displayLines.length - 1);
     }
     if (v * a > 0) return null; // accelerating — not approaching rest
     if (a.abs() < 0.3) {
@@ -1209,7 +1865,7 @@ class _DiffShellState extends State<DiffShell> {
     required double a,
     required double currentOffset,
   }) {
-    if (_hunks.isEmpty || _maxHunkChurn <= 0) {
+    if (_hunks.isEmpty) {
       _clearHotHunk();
       return;
     }
@@ -1242,8 +1898,7 @@ class _DiffShellState extends State<DiffShell> {
       _clearHotHunk();
       return;
     }
-    final churn = _hunks[bestHunk].churn;
-    final strength = (churn / _maxHunkChurn).clamp(0.0, 1.0);
+    final strength = _importanceForHunkIndex(bestHunk);
     // Relative-churn gate. 0.20 keeps single-line hunks quiet
     // (a 1-line hunk among a 30-line one scores ~0.03 and stays
     // dim) while still firing on any hunk that's plausibly in
@@ -1252,8 +1907,7 @@ class _DiffShellState extends State<DiffShell> {
       _clearHotHunk();
       return;
     }
-    if (_hotHunkIdx == bestHunk &&
-        (strength - _hotHunkStrength).abs() < 0.05) {
+    if (_hotHunkIdx == bestHunk && (strength - _hotHunkStrength).abs() < 0.05) {
       return; // nothing visibly changed; skip rebuild
     }
     _hotHunkIdx = bestHunk;
@@ -1290,141 +1944,158 @@ class _DiffShellState extends State<DiffShell> {
   /// row again unpins; clicking a different row swaps.
   Future<void> _togglePinLine(int displayIdx) async {
     if (displayIdx < 0 || displayIdx >= _displayLines.length) return;
-    if (_pinnedDisplayIdx == displayIdx) {
+    final fastKey = _displayLines[displayIdx].fastKey;
+    if (_pinnedFastKey == fastKey) {
       setState(() {
-        _pinnedDisplayIdx = null;
-        _pinnedCtx = null;
+        _clearPinnedLine();
       });
       return;
     }
     final seq = ++_pinSeq;
     setState(() {
+      _pinnedFastKey = fastKey;
       _pinnedDisplayIdx = displayIdx;
       _pinnedCtx = null; // reset to loading state
     });
     final ctx = await _computePinContext(displayIdx);
     if (!mounted || seq != _pinSeq) return;
     setState(() {
+      _pinnedFastKey = fastKey;
+      _pinnedDisplayIdx = _displayLineIndex[fastKey];
       _pinnedCtx = ctx;
     });
   }
 
-  Future<_PinnedLineContext> _computePinContext(int displayIdx) async {
+  Future<DiffPinnedContextModel> _computePinContext(int displayIdx) async {
     final line = _displayLines[displayIdx];
-    final repoPath = widget.repositoryPath;
-
-    // Blame is cheap — read from the cache if present. For an unfetched
-    // blame we skip rather than block the panel; the hover tooltip will
-    // still load it on demand.
     BlameLineData? blame;
     if (line.lineNumNew != null) {
       blame = _blameFor(line.filePath ?? widget.filePath, line.lineNumNew!);
-    }
-
-    // SimHash rhymes inside THIS diff — one linear scan comparing each
-    // display row's 64-bit simhash against the pinned line's, threshold
-    // tuned so identical / near-identical edits surface without
-    // saturating on trivial tokens.
-    final rhymes = <int>[];
-    final srcHash = line.simHash;
-    if (srcHash != 0) {
-      for (var i = 0; i < _displayLines.length; i++) {
-        if (i == displayIdx) continue;
-        final h = _displayLines[i].simHash;
-        if (h == 0) continue;
-        final hamming = ParsedLine.hamming64(srcHash, h);
-        // 64-bit simhash: ≤ 8 differing bits ≈ strong rhyme.
-        if (hamming <= 8) rhymes.add(i);
-        if (rhymes.length >= 8) break; // cap display
+      if (blame == null && widget.repositoryPath != null) {
+        await _loadBlame(line.filePath ?? widget.filePath, line.lineNumNew!);
+        blame = _blameFor(line.filePath ?? widget.filePath, line.lineNumNew!);
       }
     }
-
-    // K-space encode the line's identifier tokens → nearest files +
-    // nearest well. Needs the engram encoder and the LogosGit engine's
-    // per-file K-table. Both may be unavailable (cold start, small
-    // repo, no engram assets); every branch degrades gracefully.
-    String? wellName;
-    double? wellDistance;
-    final nearest = <_NearFile>[];
-    if (repoPath != null && line.text.trim().isNotEmpty) {
-      try {
-        final encoder = await EngramRuntime.instance.mainEncoder();
-        final engine = await resolveLogosGit(repoPath);
-        if (encoder != null && engine != null) {
-          final kv = encodeProse(line.text, encoder);
-          if (kv != null && kv.vocabHits >= 3) {
-            wellName = kv.well?.name;
-            wellDistance = kv.well?.rawDistance;
-            final table = engine.perFileKVectors;
-            if (!table.isEmpty) {
-              final top = nearestRowsInTable(
-                table,
-                qRe: kv.kRe,
-                qIm: kv.kIm,
-                topK: 6,
-                minSimilarity: 0.35,
-              );
-              // Drop self-matches — a line in foo.dart matching foo.dart
-              // is an uninteresting result. Cap at 5 entries for the
-              // panel so the layout stays tight.
-              final self = line.filePath ?? widget.filePath;
-              for (final m in top) {
-                if (m.path == self) continue;
-                nearest.add(_NearFile(m.path, m.similarity));
-                if (nearest.length >= 5) break;
-              }
-            }
-          }
-        }
-      } catch (_) {
-        // Best-effort — engram may be mid-init, assets missing, etc.
-      }
-    }
-
-    // File coupling siblings — Jaccard-ordered co-change partners.
-    // Only populated when the parent provided a matrix.
-    final coupled = <_CoupledFile>[];
-    final matrix = widget.couplingMatrix;
-    final selfPath = line.filePath ?? widget.filePath;
-    if (matrix != null && matrix.containsPath(selfPath)) {
-      final entries = matrix.jaccardEntriesOf(selfPath).toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-      for (final e in entries.take(5)) {
-        if (e.value <= 0) continue;
-        coupled.add(_CoupledFile(e.key, e.value));
-      }
-    }
-
-    return _PinnedLineContext(
-      line: line,
-      wellName: wellName,
-      wellDistance: wellDistance,
-      nearestFiles: nearest,
-      rhymeDisplayIdxs: rhymes,
-      blame: blame,
-      coupledFiles: coupled,
+    return DiffLogosFacade.instance.analyzePinnedLine(
+      DiffPinnedLineRequest(
+        repositoryPath: widget.repositoryPath,
+        filePath: widget.filePath,
+        line: line,
+        displayLines: _displayLines,
+        displayIndex: displayIdx,
+        couplingMatrix: widget.couplingMatrix,
+        revisionRef: _activeRevisionRef,
+        queryPathOverride:
+            (_activeRevisionRef != null && _trailSelectedPath != null)
+                ? _trailSelectedPath
+                : (line.filePath ?? widget.filePath),
+        warmEngine: _logosSession?.logos?.engine,
+        session: _logosSession,
+        blame: blame,
+      ),
     );
   }
 
-  /// Kick off blame fetches for every file represented in the current
-  /// diff — one git call per file, skipped if the cache already has that
-  /// (filePath, revision) pair. Runs at most once per scroll settle
-  /// prediction (gated by [_blameWarmedThisScroll]). Cost when the caches
-  /// are cold is bounded by the number of files in the diff (typically
-  /// 1-3); when warm it's a no-op.
-  /// This is the payoff for the engram — by the time the user's hover
-  /// timer fires, blame for their current file is already loaded, so
-  /// the chip + ghost appear with no git-roundtrip latency.
+  void _clearPinnedLine() {
+    _pinnedFastKey = null;
+    _pinnedDisplayIdx = null;
+    _pinnedCtx = null;
+    _pinSeq++;
+  }
+
+  bool _sourceContainsFastKey(int fastKey) =>
+      _lines.any((line) => line.fastKey == fastKey);
+
+  void _reconcilePinnedLine() {
+    final fastKey = _pinnedFastKey;
+    if (fastKey == null) {
+      _pinnedDisplayIdx = null;
+      return;
+    }
+    final previousDisplayIdx = _pinnedDisplayIdx;
+    _pinnedDisplayIdx = _displayLineIndex[fastKey];
+    if (_pinnedDisplayIdx != null || _sourceContainsFastKey(fastKey)) {
+      if (_pinnedDisplayIdx != null &&
+          previousDisplayIdx != _pinnedDisplayIdx) {
+        scheduleMicrotask(_schedulePinnedContextRefresh);
+      }
+      return;
+    }
+    _clearPinnedLine();
+  }
+
+  void _schedulePinnedContextRefresh() {
+    final fastKey = _pinnedFastKey;
+    if (fastKey == null) return;
+    final displayIdx = _displayLineIndex[fastKey];
+    if (displayIdx == null) {
+      if (!_sourceContainsFastKey(fastKey) && mounted) {
+        setState(_clearPinnedLine);
+      }
+      return;
+    }
+    final seq = ++_pinSeq;
+    _computePinContext(displayIdx).then((ctx) {
+      if (!mounted || seq != _pinSeq) return;
+      final resolvedIdx = _displayLineIndex[fastKey];
+      if (resolvedIdx == null && !_sourceContainsFastKey(fastKey)) {
+        setState(_clearPinnedLine);
+        return;
+      }
+      setState(() {
+        _pinnedFastKey = fastKey;
+        _pinnedDisplayIdx = resolvedIdx;
+        _pinnedCtx = ctx;
+      });
+    });
+  }
+
+  List<String> _warmBlameCandidatePaths() {
+    if (_displayLines.isEmpty) return const <String>[];
+    final candidates = <String>[];
+    final seenKeys = <String>{};
+
+    void addCandidate(String? filePath) {
+      if (filePath == null || filePath.isEmpty) return;
+      if (!_isBlameEligiblePath(filePath)) return;
+      final key = _blameLookupKey(filePath, _activeRevisionRef);
+      if (!seenKeys.add(key)) return;
+      if (_hasQueuedOrFetchedBlame(key)) return;
+      candidates.add(filePath);
+    }
+
+    if (_scrollCtrl.hasClients) {
+      final topIndex = (_scrollCtrl.offset / _lineItemExtent)
+          .floor()
+          .clamp(0, _displayLines.length - 1);
+      addCandidate(_displayLines[topIndex].filePath ?? widget.filePath);
+    }
+
+    if (_hotHunkIdx != null &&
+        _hotHunkIdx! >= 0 &&
+        _hotHunkIdx! < _hunks.length) {
+      addCandidate(_hunks[_hotHunkIdx!].filePath);
+    }
+
+    if (candidates.isEmpty) {
+      addCandidate(widget.filePath);
+    }
+
+    return candidates;
+  }
+
+  /// Warm blame for the file the reader is about to land on, not the whole
+  /// diff. A single-file prefetch hides hover latency; a full-file fanout
+  /// on large multi-diffs just creates a process storm after settle.
   void _eagerlyWarmBlame() {
     if (!_canShowInlineBlame) return;
-    for (final path in _uniqueFilePathsInDiff()) {
-      final key = _blameKey(path, _trailSelectedHash);
-      if (_blameFetchedFiles.contains(key)) continue;
-      if (_blameFetchingFiles.contains(key)) continue;
-      // lineNum = 0 is the "warm the whole file" entry point; the load
-      // function runs blame across the file regardless of the hint.
-      _loadBlame(path, 0);
-    }
+    final candidates = _warmBlameCandidatePaths();
+    if (candidates.isEmpty) return;
+    unawaited(() async {
+      for (final path in candidates) {
+        await _loadBlame(path, 0);
+      }
+    }());
   }
 
   /// Capture which unit is currently at the top of the viewport so a later
@@ -1435,15 +2106,16 @@ class _DiffShellState extends State<DiffShell> {
     if (!_scrollCtrl.hasClients || _displayLines.isEmpty) return;
     final filePath = widget.filePath;
     if (filePath.isEmpty) return;
+    final scopeKey = _temporalMarkScopeKey(filePath);
     final topIdx = (_scrollCtrl.offset / _lineItemExtent)
         .floor()
         .clamp(0, _displayLines.length - 1);
     final line = _displayLines[topIdx];
     final unit = _unitByFastKey[line.fastKey];
     if (unit == null) return;
-    final stored = _lastVisitedByFile[filePath];
+    final stored = _lastVisitedByFile[scopeKey];
     if (stored == unit.id) return;
-    _touchTemporalMark(filePath, unit.id);
+    _touchTemporalMark(scopeKey, unit.id);
   }
 
   /// Schedule a post-frame scroll-to-last-visited + pulse. Idempotent per
@@ -1456,9 +2128,11 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   void _runTemporalRestore() {
+    final stopwatch = Stopwatch()..start();
     if (!mounted || !_scrollCtrl.hasClients) return;
     final filePath = widget.filePath;
-    final savedUnitId = _readTemporalMark(filePath);
+    final scopeKey = _temporalMarkScopeKey(filePath);
+    final savedUnitId = _readTemporalMark(scopeKey);
     if (savedUnitId == null) {
       // No memory → default to top. Matches prior behaviour for fresh files.
       _scrollCtrl.jumpTo(0);
@@ -1475,7 +2149,7 @@ class _DiffShellState extends State<DiffShell> {
     if (targetIdx == null) {
       // Stored unit no longer present (file was rewritten) — drop the mark
       // and fall back to the top.
-      _lastVisitedByFile.remove(filePath);
+      _lastVisitedByFile.remove(scopeKey);
       _scrollCtrl.jumpTo(0);
       return;
     }
@@ -1493,6 +2167,11 @@ class _DiffShellState extends State<DiffShell> {
       if (!mounted) return;
       setState(() => _restoredPulseUnitId = null);
     });
+    _recordUiTimingIfSlow(
+      event: 'diff.shell.temporal-restore',
+      stopwatch: stopwatch,
+      phase: 'interaction',
+    );
   }
 
   bool _onScrollEnd(ScrollEndNotification n) {
@@ -1569,7 +2248,6 @@ class _DiffShellState extends State<DiffShell> {
           curve: Curves.easeOut);
     }
   }
-
 
   void _scheduleApply() {
     if (!_stagingEnabled) return;
@@ -1651,86 +2329,13 @@ class _DiffShellState extends State<DiffShell> {
     }
   }
 
-  /// Build the unit stream, pair maps, unit index, and the pre-search
-  /// filtered view — all the structural work that depends on the raw
-  /// ParsedLine identities (stable across staging toggles, only changes
-  /// when the underlying diff bytes change). Called from `_rebuild`, not
-  /// from every `_refreshDisplayLines`. This is where the expensive
-  /// Rabin-Karp + SimHash move-detection pass runs; moving it out of the
-  /// per-keystroke path was a prerequisite for enabling the fuzzy
-  /// matcher without each stage-toggle paying its cost.
-  void _recomputeUnits() {
-    final sourceLines =
-        widget.showFileHeader ? _trimLeadingMetaLines(_lines) : _lines;
-
-    // Canonical unit stream — one semantic change per entry. Derived from
-    // raw ParsedLines so the patch engine contract is unchanged. The
-    // move-detection pass inside buildEditUnits runs BOTH exact-block
-    // (Rabin-Karp) AND fuzzy (SimHash Hamming) matching.
-    final units = buildEditUnits(sourceLines, detectMoves: true);
-
-    // Unit index + paired-add filter in one walk. Every ParsedLine
-    // surviving into display (old or new side) maps back to its unit via
-    // `_unitByFastKey`; the add-half of each replace pair also lands in
-    // `_pairedAddFastKeys` so the display filter and keyboard-cursor skip
-    // can reject it via one integer-set probe. The delete-side → paired
-    // add relationship is no longer stored as a separate map — it's
-    // already addressable through `unit.newLines.first` at the one call
-    // site that needs it (the row renderer).
-    final unitMap = <int, EditUnit>{};
-    final addKeys = <int>{};
-    for (final u in units) {
-      for (final l in u.oldLines) {
-        unitMap[l.fastKey] = u;
-      }
-      for (final l in u.newLines) {
-        unitMap[l.fastKey] = u;
-      }
-      if (u.kind == EditKind.replace &&
-          u.oldLines.isNotEmpty &&
-          u.newLines.isNotEmpty) {
-        addKeys.add(u.newLines.first.fastKey);
-      }
-    }
-    _unitByFastKey = unitMap;
-    _pairedAddFastKeys = addKeys;
-
-    _filteredNoSearch = addKeys.isEmpty
-        ? sourceLines
-        : sourceLines
-            .where((l) => !addKeys.contains(l.fastKey))
-            .toList();
-
-    // Per-hunk display-row index. `_hunks[i].lineIndex` is an index into
-    // `_lines`, but the sticky hunk header compares against the scroll
-    // controller's offset which indexes `_displayLines` (no paired adds).
-    // Translate once now so the sticky's hot loop is an O(1) subscript
-    // instead of a re-computed lookup per frame. Sticky is suppressed
-    // during search, so the no-search filtered list is the right basis.
-    if (_hunks.isEmpty) {
-      _hunkDisplayRows = const [];
-    } else {
-      final rows = List<int>.filled(_hunks.length, -1);
-      // Build a fastKey → index map over the no-search filtered list.
-      // (Cheaper than repeatedly calling indexOf, O(hunks + filtered).)
-      final filteredIdx = <int, int>{};
-      for (int i = 0; i < _filteredNoSearch.length; i++) {
-        filteredIdx[_filteredNoSearch[i].fastKey] = i;
-      }
-      for (int i = 0; i < _hunks.length; i++) {
-        final hi = _hunks[i].lineIndex;
-        if (hi < 0 || hi >= _lines.length) continue;
-        final row = filteredIdx[_lines[hi].fastKey];
-        if (row != null) rows[i] = row;
-      }
-      _hunkDisplayRows = rows;
-    }
-  }
-
   void _refreshDisplayLines() {
-    // Unit / pair / unitMap are built in `_recomputeUnits` (once per diff),
-    // so here we just apply the search filter.
-    final filtered = _filteredNoSearch;
+    final stopwatch = Stopwatch()..start();
+    final filtered = _pairedAddFastKeys.isEmpty
+        ? _lines
+        : _lines
+            .where((line) => !_pairedAddFastKeys.contains(line.fastKey))
+            .toList(growable: false);
     final unitMap = _unitByFastKey;
 
     // Un-staged lines are no longer filtered out completely. They remain in the UI
@@ -1738,6 +2343,11 @@ class _DiffShellState extends State<DiffShell> {
     final term = _searchTerm.toLowerCase();
     if (term.isEmpty) {
       _setDisplayLines(filtered);
+      _recordUiTimingIfSlow(
+        event: 'diff.shell.refresh-display',
+        stopwatch: stopwatch,
+        errorCode: 'diff.shell.refresh-display_failed',
+      );
       return;
     }
     // Polyphonic search — a fused pair matches if EITHER side contains the
@@ -1767,6 +2377,11 @@ class _DiffShellState extends State<DiffShell> {
       if ((unit.bigramBits & termBi) != termBi) return false;
       return unit.searchText.contains(term);
     }).toList());
+    _recordUiTimingIfSlow(
+      event: 'diff.shell.refresh-display',
+      stopwatch: stopwatch,
+      errorCode: 'diff.shell.refresh-display_failed',
+    );
   }
 
   /// Assign [_displayLines] and rebuild the fastKey → display-index
@@ -1774,22 +2389,35 @@ class _DiffShellState extends State<DiffShell> {
   /// `_displayLines = x` should go through here so the index never
   /// goes stale.
   void _setDisplayLines(List<ParsedLine> lines) {
-    _displayLines = lines;
+    _displayLines = _searchTerm.isEmpty ? _applyAdaptiveContext(lines) : lines;
     if (lines.isEmpty) {
       _displayLineIndex = const {};
+      _hunkDisplayRows = const [];
+      _reconcilePinnedLine();
+      _syncLogosSubscriptions();
       return;
     }
     final idx = <int, int>{};
-    for (var i = 0; i < lines.length; i++) {
-      idx[lines[i].fastKey] = i;
+    for (var i = 0; i < _displayLines.length; i++) {
+      idx[_displayLines[i].fastKey] = i;
     }
     _displayLineIndex = idx;
+    if (_hunks.isEmpty) {
+      _hunkDisplayRows = const [];
+      return;
+    }
+    final rows = List<int>.filled(_hunks.length, -1);
+    for (var i = 0; i < _hunks.length; i++) {
+      final hi = _hunks[i].lineIndex;
+      if (hi < 0 || hi >= _lines.length) continue;
+      rows[i] = idx[_lines[hi].fastKey] ?? -1;
+    }
+    _hunkDisplayRows = rows;
+    _reconcilePinnedLine();
+    _syncLogosSubscriptions();
   }
 
-  void _computeMaxLineWidth() {
-    // Gutter is 56px wide; horizontal padding inside lineContent is 8px each side.
-    // JetBrains Mono at 12px — measure real char width via TextPainter so this
-    // stays accurate if the font size or family ever changes.
+  double _measureMaxLineWidth(int maxChars) {
     final painter = TextPainter(
       text: const TextSpan(
         text: 'M',
@@ -1799,43 +2427,54 @@ class _DiffShellState extends State<DiffShell> {
       maxLines: 1,
     )..layout();
     final charWidth = painter.width > 0 ? painter.width : 7.5;
-
     const gutterW = 56.0;
-    const sidePad = 16.0; // 8px × 2
+    const sidePad = 16.0;
     const minW = 400.0;
     const maxW = 12000.0;
-
-    // Compute from _lines (all lines) so the scroll range doesn't jump
-    // when the user filters with search.
-    int maxChars = 0;
-    for (final line in _lines) {
-      if (line.text.length > maxChars) maxChars = line.text.length;
-    }
-    _maxLineWidth = (gutterW + sidePad + maxChars * charWidth).clamp(minW, maxW);
-  }
-
-  List<ParsedLine> _trimLeadingMetaLines(List<ParsedLine> lines) {
-    var firstContentIndex = 0;
-    while (firstContentIndex < lines.length &&
-        lines[firstContentIndex].kind == LineKind.meta) {
-      firstContentIndex++;
-    }
-    return firstContentIndex == 0 ? lines : lines.sublist(firstContentIndex);
+    return (gutterW + sidePad + maxChars * charWidth).clamp(minW, maxW);
   }
 
   void _jumpToHunkIndex(int hunkIdx) {
     if (hunkIdx < 0 || hunkIdx >= _hunks.length) return;
-    final lineIdx = _hunks[hunkIdx].lineIndex;
-    _jumpToLineIndex(lineIdx);
+    final displayIdx =
+        hunkIdx < _hunkDisplayRows.length ? _hunkDisplayRows[hunkIdx] : -1;
+    if (displayIdx >= 0) {
+      _jumpToDisplayIndex(displayIdx);
+      return;
+    }
+    _jumpToLineIndex(_hunks[hunkIdx].lineIndex);
   }
 
   void _jumpToLineIndex(int lineIdx) {
+    if (lineIdx < 0 || lineIdx >= _lines.length) return;
+    for (var delta = 0; delta < _lines.length; delta++) {
+      final forward = lineIdx + delta;
+      if (forward < _lines.length) {
+        final displayIdx = _displayLineIndex[_lines[forward].fastKey];
+        if (displayIdx != null) {
+          _jumpToDisplayIndex(displayIdx);
+          return;
+        }
+      }
+      if (delta == 0) continue;
+      final backward = lineIdx - delta;
+      if (backward >= 0) {
+        final displayIdx = _displayLineIndex[_lines[backward].fastKey];
+        if (displayIdx != null) {
+          _jumpToDisplayIndex(displayIdx);
+          return;
+        }
+      }
+    }
+  }
+
+  void _jumpToDisplayIndex(int displayIdx) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollCtrl.hasClients) {
         return;
       }
       const lineH = 18.0;
-      final targetOffset = (lineIdx * lineH).clamp(
+      final targetOffset = (displayIdx * lineH).clamp(
         0.0,
         _scrollCtrl.position.maxScrollExtent,
       );
@@ -1847,7 +2486,6 @@ class _DiffShellState extends State<DiffShell> {
       );
     });
   }
-
 
   // Regex matches our own synthetic multi-file label: "N selected files".
   static final RegExp _multiFileLabelRe = RegExp(r'^\d+ selected files?$');
@@ -1867,21 +2505,147 @@ class _DiffShellState extends State<DiffShell> {
     return only;
   }
 
+  String _trailCacheKey(String commitHash, String pathAt) =>
+      '$commitHash\u0000$pathAt';
+
+  _TrailViewState _captureTrailView() {
+    return _TrailViewState(
+      diffContent: _effectiveDiffContent ?? '',
+      lines: List<ParsedLine>.of(_lines),
+      hunks: List<_HunkHeader>.of(_hunks),
+      pairedAddFastKeys: Set<int>.of(_pairedAddFastKeys),
+      unitByFastKey: Map<int, EditUnit>.of(_unitByFastKey),
+      maxLineWidth: _maxLineWidth,
+    );
+  }
+
+  void _restoreTrailView(_TrailViewState view) {
+    _currentDiffContent = view.diffContent;
+    _currentDocument = null;
+    _lines = view.lines;
+    _hunks = view.hunks;
+    _rebuildHunkHeaderLookup();
+    _pairedAddFastKeys = view.pairedAddFastKeys;
+    _unitByFastKey = view.unitByFastKey;
+    _seenUnitIds.clear();
+    _refreshDisplayLines();
+    _maxLineWidth = view.maxLineWidth;
+    _revalidateKeyboardCursor();
+    _syncLogosRuntime(forceRefresh: true);
+  }
+
+  void _rebuildHunkHeaderLookup() {
+    if (_hunks.isEmpty || _lines.isEmpty) {
+      _hunkHeaderByFastKey = const {};
+      return;
+    }
+    final byFastKey = <int, _HunkHeader>{};
+    for (final header in _hunks) {
+      final lineIndex = header.lineIndex;
+      if (lineIndex < 0 || lineIndex >= _lines.length) {
+        continue;
+      }
+      byFastKey[_lines[lineIndex].fastKey] = header;
+    }
+    _hunkHeaderByFastKey = byFastKey;
+  }
+
+  void _rememberTrailView(String key, _TrailViewState view) {
+    _trailViewCache.remove(key);
+    _trailViewCache[key] = view;
+    while (_trailViewCache.length > _kTrailViewCacheLimit) {
+      _trailViewCache.remove(_trailViewCache.keys.first);
+    }
+  }
+
+  void _scheduleTrailStopLoad({
+    required String commitHash,
+    required String pathAt,
+    required String? previousHash,
+    required String? previousPath,
+  }) {
+    _trailScrubDebounce?.cancel();
+    final cacheKey = _trailCacheKey(commitHash, pathAt);
+    final cachedView = _trailViewCache[cacheKey];
+    if (cachedView != null) {
+      _trailLoadSeq++;
+      setState(() {
+        _restoreTrailView(cachedView);
+      });
+      _schedulePinnedContextRefresh();
+      if (_wearMapVisible) {
+        _batchLoadWearBlame();
+      }
+      return;
+    }
+    _trailScrubDebounce = Timer(_kTrailScrubDebounce, () {
+      _loadTrailStop(
+        commitHash: commitHash,
+        pathAt: pathAt,
+        previousHash: previousHash,
+        previousPath: previousPath,
+      );
+    });
+  }
+
+  Future<void> _loadTrailStop({
+    required String commitHash,
+    required String pathAt,
+    required String? previousHash,
+    required String? previousPath,
+  }) async {
+    _trailScrubDebounce = null;
+    final repo = widget.repositoryPath;
+    if (repo == null) return;
+    if (_trailSelectedHash != commitHash || _trailSelectedPath != pathAt) {
+      return;
+    }
+    final seq = ++_trailLoadSeq;
+    final result = await getFileDiffAtRevision(repo, pathAt, commitHash);
+    if (!mounted ||
+        seq != _trailLoadSeq ||
+        _trailSelectedHash != commitHash ||
+        _trailSelectedPath != pathAt) {
+      return;
+    }
+    if (result.ok) {
+      final cacheKey = _trailCacheKey(commitHash, pathAt);
+      setState(() {
+        _reparse(result.data!);
+        _rememberTrailView(cacheKey, _captureTrailView());
+      });
+      _schedulePinnedContextRefresh();
+      if (_wearMapVisible) {
+        _batchLoadWearBlame();
+      }
+      return;
+    }
+    setState(() {
+      _trailSelectedHash = previousHash;
+      _trailSelectedPath = previousPath;
+    });
+  }
+
   void _toggleTrail() {
     if (_trailVisible) {
-      // Collapse trail, restore the original (working) diff content
-      // by re-parsing it back into the visible lines.
+      _trailScrubDebounce?.cancel();
+      _trailScrubDebounce = null;
+      _trailLoadSeq++;
       final original = _originalDiffContent;
+      final nowView = _trailNowView;
       setState(() {
         _trailVisible = false;
         _trailHistory = const [];
         _trailSelectedHash = null;
         _trailSelectedPath = null;
         _originalDiffContent = null;
-        if (original != null) {
+        if (nowView != null) {
+          _restoreTrailView(nowView);
+        } else if (original != null) {
           _reparse(original);
         }
       });
+      _schedulePinnedContextRefresh();
       return;
     }
     final repo = widget.repositoryPath;
@@ -1891,7 +2655,8 @@ class _DiffShellState extends State<DiffShell> {
     setState(() {
       _trailVisible = true;
       _trailLoading = true;
-      _originalDiffContent = widget.diffContent;
+      _originalDiffContent = _effectiveDiffContent;
+      _trailNowView = _captureTrailView();
     });
     listFileHistoryWithPaths(repo, trailPath).then((result) {
       if (!mounted) return;
@@ -1911,14 +2676,23 @@ class _DiffShellState extends State<DiffShell> {
       (e) => e.commit.commitHash == commitHash,
       orElse: () => FileHistoryEntry(
         commit: CommitHistoryEntry(
-          commitHash: '', shortHash: '', parentHashes: const [],
-          refNames: const [], isMerge: false, subject: '',
-          authorName: '', authorEmail: '', authoredAt: '',
+          commitHash: '',
+          shortHash: '',
+          parentHashes: const [],
+          refNames: const [],
+          isMerge: false,
+          subject: '',
+          authorName: '',
+          authorEmail: '',
+          authoredAt: '',
         ),
         pathAtRevision: _resolvedTrailFilePath() ?? widget.filePath,
       ),
     );
     final pathAt = historyEntry.pathAtRevision;
+    if (_trailSelectedHash == commitHash && _trailSelectedPath == pathAt) {
+      return;
+    }
     // Snapshot the previous selection so we can roll back on failure —
     // avoids the UI showing a selected hash whose diff never loaded.
     final previousHash = _trailSelectedHash;
@@ -1927,12 +2701,13 @@ class _DiffShellState extends State<DiffShell> {
       _trailSelectedHash = commitHash;
       _trailSelectedPath = pathAt;
     });
-    getFileDiffAtRevision(repo, pathAt, commitHash).then((result) {
-      if (!mounted || _trailSelectedHash != commitHash) return;
-      if (result.ok) {
-        setState(() {
-          _reparse(result.data!);
-        });
+    _scheduleTrailStopLoad(
+      commitHash: commitHash,
+      pathAt: pathAt,
+      previousHash: previousHash,
+      previousPath: previousPath,
+    );
+    /*
         // Wear map is keyed by revision — if it's active, kick off a
         // blame load for the new revision so the heatmap stays populated
         // instead of blanking out until the user hovers each line.
@@ -1948,32 +2723,43 @@ class _DiffShellState extends State<DiffShell> {
         });
       }
     });
+    */
   }
 
   void _selectTrailNow() {
+    if (_trailSelectedHash == null && _trailSelectedPath == null) {
+      return;
+    }
+    _trailScrubDebounce?.cancel();
+    _trailScrubDebounce = null;
+    _trailLoadSeq++;
+    final nowView = _trailNowView;
     setState(() {
       _trailSelectedHash = null;
       _trailSelectedPath = null;
-      if (_originalDiffContent != null) {
+      if (nowView != null) {
+        _restoreTrailView(nowView);
+      } else if (_originalDiffContent != null) {
         _reparse(_originalDiffContent!);
       }
     });
-    // Re-populate wear map against HEAD (key null) when returning to "now".
+    _schedulePinnedContextRefresh();
     if (_wearMapVisible) {
       _batchLoadWearBlame();
     }
   }
 
   void _reparse(String content) {
-    final parsed = parseUnifiedDiff(content);
-    _lines = widget.showFileHeader ? _trimLeadingMetaLines(parsed) : parsed;
-    _hunks = _extractHunks(_lines);
+    _applyDocument(
+      DiffDocument.fromRawContent(
+        rawContent: content,
+        pathHint: widget.filePath,
+        trimLeadingMeta: widget.showFileHeader,
+      ),
+    );
     // _lines changed → unit/pair/unitMap caches are stale. Recompute
     // before the search filter pass reads them.
-    _seenUnitIds.clear();
-    _recomputeUnits();
-    _refreshDisplayLines();
-    _computeMaxLineWidth();
+    _syncLogosRuntime(forceRefresh: true);
   }
 
   @override
@@ -1987,7 +2773,14 @@ class _DiffShellState extends State<DiffShell> {
     _motionRate = prefs.motionRate;
     _instantBlameHover = prefs.instantBlameHover;
     final hasContent =
-        widget.diffContent != null && widget.diffContent!.isNotEmpty;
+        (_effectiveDiffContent != null && _effectiveDiffContent!.isNotEmpty) ||
+            _lines.isNotEmpty;
+    final toolbarFilePath = widget.toolbarFilePath ?? widget.filePath;
+    final toolbarOnTap = widget.toolbarOnTap ??
+        ((widget.repositoryPath != null && _resolvedTrailFilePath() != null)
+            ? _toggleTrail
+            : null);
+    final toolbarActive = widget.toolbarActive ?? _trailVisible;
 
     if (widget.loading && !hasContent) {
       return const AppStatusView.loading(
@@ -2089,18 +2882,16 @@ class _DiffShellState extends State<DiffShell> {
               // hunk nav + blame chip to the right. Hides entirely
               // when search opens so the input has the full width.
               const SizedBox(width: 10),
-              Flexible(
+              Expanded(
                 child: _ToolbarFileNameChip(
                   tokens: t,
-                  filePath: widget.filePath,
-                  onTap: (widget.repositoryPath != null &&
-                          _resolvedTrailFilePath() != null)
-                      ? _toggleTrail
-                      : null,
-                  trailActive: _trailVisible,
+                  filePath: toolbarFilePath,
+                  label: widget.toolbarLabel,
+                  tooltip: widget.toolbarTooltip,
+                  onTap: toolbarOnTap,
+                  trailActive: toolbarActive,
                 ),
               ),
-              const Spacer(),
             ],
 
             // Hunk navigation
@@ -2151,6 +2942,12 @@ class _DiffShellState extends State<DiffShell> {
               ),
           ]),
         ),
+        if (!_searchVisible && (_logosLoading || _logosSession != null))
+          _DiffShapeStrip(
+            tokens: t,
+            session: _logosSession,
+            loading: _logosLoading,
+          ),
 
         Expanded(
           child: Stack(
@@ -2167,245 +2964,296 @@ class _DiffShellState extends State<DiffShell> {
                     child: ScrollConfiguration(
                       behavior: ScrollConfiguration.of(context)
                           .copyWith(scrollbars: true),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    // Content is at least as wide as the viewport so there's
-                    // no unnecessary horizontal scroll when lines are short.
-                    final contentWidth = _maxLineWidth > constraints.maxWidth
-                        ? _maxLineWidth
-                        : constraints.maxWidth;
-                    return SingleChildScrollView(
-                          controller: _hScrollCtrl,
-                          scrollDirection: Axis.horizontal,
-                          physics: const ClampingScrollPhysics(),
-                          child: SizedBox(
-                            width: contentWidth,
-                            child: NotificationListener<ScrollEndNotification>(
-                              onNotification: _onScrollEnd,
-                              child: ListView.builder(
-                          key: _listViewKey,
-                          controller: _searchVisible ? null : _scrollCtrl,
-                          padding: const EdgeInsets.only(bottom: 16),
-                          itemCount: displayLines.length,
-                          itemExtent: _lineItemExtent,
-                          itemBuilder: (ctx, i) {
-                            final line = displayLines[i];
-                            final lineFile = line.filePath ?? widget.filePath;
-                            final kbFocused = _stagingEnabled &&
-                                _keyboardLineIndex != null &&
-                                _keyboardLineIndex! >= 0 &&
-                                _keyboardLineIndex! < _lines.length &&
-                                identical(_lines[_keyboardLineIndex!], line);
-                            // Hot-zone bridge: the scroll engram has
-                            // predicted we're about to land on this
-                            // hunk AND it's a high-churn one. A thin
-                            // accent wash + rail on the row renders
-                            // the anticipation.
-                            final hotHunkIdx = _hotHunkIdx;
-                            final isHotHunkRow = hotHunkIdx != null &&
-                                line.kind == LineKind.hunk &&
-                                hotHunkIdx < _hunks.length &&
-                                _hunks[hotHunkIdx].lineIndex >= 0 &&
-                                _hunks[hotHunkIdx].lineIndex < _lines.length &&
-                                identical(
-                                    line,
-                                    _lines[_hunks[hotHunkIdx].lineIndex]);
-                            final rowFastKey = line.fastKey;
-                            final rowUnit = _unitByFastKey[rowFastKey];
-                            final pulseActive = _restoredPulseUnitId != null &&
-                                rowUnit?.id == _restoredPulseUnitId;
-                            // Lineage animation gate: play one-shot reveals
-                            // ONLY the first time a given unit id appears in
-                            // this diff session. Scroll-recycle re-mounts
-                            // don't replay anything → the diff stays static
-                            // during scroll instead of strobing.
-                            final firstAppearance = rowUnit != null &&
-                                _seenUnitIds.add(rowUnit.id);
-                            final lineView = DiffLineView(
-                              // Key on fastKey (integer content hash, stable
-                              // across stage toggles). Replaces the old
-                              // stagingKey-string key which allocated a ~40
-                              // char String per visible row per frame. Integer
-                              // ValueKey is zero-alloc and hashes in one cycle.
-                              key: ValueKey<int>(rowFastKey),
-                              line: line,
-                              editUnit: rowUnit,
-                              pulseActive: pulseActive,
-                              firstAppearance: firstAppearance,
-                              // Scroll-stress overrides the user's rate
-                              // (rows flooding into view during fast scroll
-                              // would otherwise fire a storm of temperature
-                              // sweeps / melts / ghost fades). At rest, the
-                              // user's chosen rate takes over — so a tuned
-                              // rate of 0.5 still plays reveals, just slower.
-                              //
-                              // Two const instances cover the "no motion"
-                              // (scroll or reduce) and "full" (rate=1)
-                              // cases without allocation; intermediate rates
-                              // allocate per-build but only when the user
-                              // has actually tuned the slider away from 1.0.
-                              motionPolicy: _scrolling || _reduceMotion
-                                  ? MotionPolicy.reduced
-                                  : (_motionRate == 1.0
-                                      ? MotionPolicy.full
-                                      : MotionPolicy(rate: _motionRate)),
-                              tokens: t,
-                              blameEntry: line.lineNumNew != null
-                                  ? _blameFor(lineFile, line.lineNumNew!)
-                                  : null,
-                              hovered: _hoveredLine == line.lineNumNew &&
-                                  line.lineNumNew != null,
-                              onGutterEnter: _canShowInlineBlame &&
-                                      line.lineNumNew != null
-                                  ? () {
-                                      // Suppress blame trigger while
-                                      // scrolling: with whole-row hover, a
-                                      // stationary cursor fires onEnter on
-                                      // every row that scrolls under it.
-                                      // Only a deliberate hover (viewport at
-                                      // rest + cursor on the row) should
-                                      // load blame and show the chip.
-                                      if (_scrolling) return;
-                                      setState(() =>
-                                          _hoveredLine = line.lineNumNew!);
-                                      _scheduleBlameLoad(
-                                          lineFile, line.lineNumNew!);
-                                    }
-                                  : null,
-                              onGutterExit: () {
-                                _blameHoverTimer?.cancel();
-                                setState(() => _hoveredLine = null);
-                              },
-                              searchTerm: _searchTerm,
-                              useAnimatedTextMode:
-                                  _useAnimatedTextMode && !_reduceMotion,
-                              wearIntensity: _wearMapVisible &&
-                                      line.lineNumNew != null
-                                  ? _wearIntensityFor(
-                                      lineFile, line.lineNumNew!)
-                                  : null,
-                              stageCellWidth: _stageCellWidth,
-                              stagingEnabled: _stagingEnabled,
-                              keyboardFocused: kbFocused,
-                              onSigilTap: _stagingEnabled
-                                  ? (shift, alt) {
-                                      _stagingFocus.requestFocus();
-                                      _handleSigilTap(line,
-                                          shift: shift, alt: alt);
-                                    }
-                                  : null,
-                              onPaintStart: _stagingEnabled
-                                  ? () {
-                                      _stagingFocus.requestFocus();
-                                      _beginPaint(line);
-                                    }
-                                  : null,
-                              onPaintMove:
-                                  _stagingEnabled ? _paintUpdate : null,
-                              onPaintEnd: _stagingEnabled ? _endPaint : null,
-                              onHunkDoubleTap: _stagingEnabled
-                                  ? () {
-                                      _stagingFocus.requestFocus();
-                                      _handleHunkDoubleTap(line.hunkIndex);
-                                    }
-                                  : null,
-                            );
-                            // Left-click any row → pin it for the
-                            // logos context panel. Listener sits at
-                            // `translucent` so text-selection drags
-                            // inside SelectableText still start; a
-                            // tap-down pins on the press.
-                            final isPinned = _pinnedDisplayIdx == i;
-                            Widget wrapped = Listener(
-                              behavior: HitTestBehavior.translucent,
-                              onPointerDown: (e) {
-                                // Left mouse button only. `e.buttons`
-                                // bit 1 = primary. Ignore the sigil
-                                // column (tiny ± cell near the left
-                                // gutter) so stage clicks still do
-                                // their job without stealing a pin.
-                                if ((e.buttons & 0x01) == 0) return;
-                                if (e.localPosition.dx < _stageCellWidth) {
-                                  return;
-                                }
-                                _togglePinLine(i);
-                              },
-                              child: lineView,
-                            );
-                            if (isPinned) {
-                              wrapped = DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: t.accentBright
-                                      .withValues(alpha: 0.08),
-                                  border: Border(
-                                    left: BorderSide(
-                                      color: t.accentBright,
-                                      width: 3,
-                                    ),
-                                  ),
-                                ),
-                                child: wrapped,
-                              );
-                            }
-                            // Inline hunk-context hint — IDE-style
-                            // inlay rendered at the right edge of
-                            // every hunk header row, showing weight
-                            // (+A −D), position in the file (3/8),
-                            // and — when the scroll engram has
-                            // predicted a landing here — a faint
-                            // "approaching" marker. The prediction
-                            // drives EMPHASIS, not a phantom halo.
-                            if (line.kind != LineKind.hunk) return wrapped;
-                            int? hunkOrdinal;
-                            int? hunkAdditions;
-                            int? hunkDeletions;
-                            for (var hi = 0; hi < _hunks.length; hi++) {
-                              final h = _hunks[hi];
-                              if (h.lineIndex < 0 ||
-                                  h.lineIndex >= _lines.length) continue;
-                              if (identical(line, _lines[h.lineIndex])) {
-                                hunkOrdinal = hi + 1;
-                                hunkAdditions = h.additions;
-                                hunkDeletions = h.deletions;
-                                break;
-                              }
-                            }
-                            if (hunkOrdinal == null) return wrapped;
-                            final totalHunks = _hunks.length;
-                            return Stack(
-                              children: [
-                                wrapped,
-                                Positioned(
-                                  right: 14,
-                                  top: 0,
-                                  bottom: 0,
-                                  child: IgnorePointer(
-                                    child: Align(
-                                      alignment: Alignment.centerRight,
-                                      child: _HunkInlineHint(
-                                        additions: hunkAdditions!,
-                                        deletions: hunkDeletions!,
-                                        ordinal: hunkOrdinal,
-                                        total: totalHunks,
-                                        tokens: t,
-                                        approaching: isHotHunkRow,
-                                        approachStrength: _hotHunkStrength,
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          // Content is at least as wide as the viewport so there's
+                          // no unnecessary horizontal scroll when lines are short.
+                          final contentWidth =
+                              _maxLineWidth > constraints.maxWidth
+                                  ? _maxLineWidth
+                                  : constraints.maxWidth;
+                          return SingleChildScrollView(
+                            controller: _hScrollCtrl,
+                            scrollDirection: Axis.horizontal,
+                            physics: const ClampingScrollPhysics(),
+                            child: SizedBox(
+                              width: contentWidth,
+                              child:
+                                  NotificationListener<ScrollEndNotification>(
+                                onNotification: _onScrollEnd,
+                                child: ListView.builder(
+                                  key: _listViewKey,
+                                  controller:
+                                      _searchVisible ? null : _scrollCtrl,
+                                  padding: const EdgeInsets.only(bottom: 16),
+                                  itemCount: displayLines.length,
+                                  itemExtent: _lineItemExtent,
+                                  itemBuilder: (ctx, i) {
+                                    final line = displayLines[i];
+                                    final lineFile =
+                                        line.filePath ?? widget.filePath;
+                                    final kbFocused = _stagingEnabled &&
+                                        _keyboardLineIndex != null &&
+                                        _keyboardLineIndex! >= 0 &&
+                                        _keyboardLineIndex! < _lines.length &&
+                                        identical(
+                                            _lines[_keyboardLineIndex!], line);
+                                    // Hot-zone bridge: the scroll engram has
+                                    // predicted we're about to land on this
+                                    // hunk AND it's a high-churn one. A thin
+                                    // accent wash + rail on the row renders
+                                    // the anticipation.
+                                    final hotHunkIdx = _hotHunkIdx;
+                                    final isHotHunkRow = hotHunkIdx != null &&
+                                        line.kind == LineKind.hunk &&
+                                        hotHunkIdx < _hunks.length &&
+                                        _hunks[hotHunkIdx].lineIndex >= 0 &&
+                                        _hunks[hotHunkIdx].lineIndex <
+                                            _lines.length &&
+                                        identical(
+                                            line,
+                                            _lines[
+                                                _hunks[hotHunkIdx].lineIndex]);
+                                    final rowFastKey = line.fastKey;
+                                    final rowUnit = _unitByFastKey[rowFastKey];
+                                    final hunkHeader =
+                                        line.kind == LineKind.hunk
+                                            ? _headerForDisplayLine(line)
+                                            : null;
+                                    final hunkSignal = hunkHeader == null
+                                        ? null
+                                        : _logosSignalForHeader(hunkHeader);
+                                    final lineResidual =
+                                        _logosResidualForLine(line);
+                                    final pulseActive =
+                                        _restoredPulseUnitId != null &&
+                                            rowUnit?.id == _restoredPulseUnitId;
+                                    final isPinnedRhyme = _pinnedCtx != null &&
+                                        _pinnedDisplayIdx != null &&
+                                        i != _pinnedDisplayIdx &&
+                                        _pinnedCtx!.rhymeDisplayIdxs
+                                            .contains(i);
+                                    // Lineage animation gate: play one-shot reveals
+                                    // ONLY the first time a given unit id appears in
+                                    // this diff session. Scroll-recycle re-mounts
+                                    // don't replay anything → the diff stays static
+                                    // during scroll instead of strobing.
+                                    final firstAppearance = rowUnit != null &&
+                                        _seenUnitIds.add(rowUnit.id);
+                                    final lineView = DiffLineView(
+                                      // Key on fastKey (integer content hash, stable
+                                      // across stage toggles). Replaces the old
+                                      // stagingKey-string key which allocated a ~40
+                                      // char String per visible row per frame. Integer
+                                      // ValueKey is zero-alloc and hashes in one cycle.
+                                      key: ValueKey<int>(rowFastKey),
+                                      line: line,
+                                      editUnit: rowUnit,
+                                      pulseActive: pulseActive,
+                                      firstAppearance: firstAppearance,
+                                      // Scroll-stress overrides the user's rate
+                                      // (rows flooding into view during fast scroll
+                                      // would otherwise fire a storm of temperature
+                                      // sweeps / melts / ghost fades). At rest, the
+                                      // user's chosen rate takes over — so a tuned
+                                      // rate of 0.5 still plays reveals, just slower.
+                                      //
+                                      // Two const instances cover the "no motion"
+                                      // (scroll or reduce) and "full" (rate=1)
+                                      // cases without allocation; intermediate rates
+                                      // allocate per-build but only when the user
+                                      // has actually tuned the slider away from 1.0.
+                                      motionPolicy: _scrolling || _reduceMotion
+                                          ? MotionPolicy.reduced
+                                          : (_motionRate == 1.0
+                                              ? MotionPolicy.full
+                                              : MotionPolicy(
+                                                  rate: _motionRate)),
+                                      tokens: t,
+                                      blameEntry: line.lineNumNew != null
+                                          ? _blameFor(
+                                              lineFile, line.lineNumNew!)
+                                          : null,
+                                      hovered:
+                                          _hoveredLine == line.lineNumNew &&
+                                              line.lineNumNew != null,
+                                      onGutterEnter: _canShowInlineBlame &&
+                                              line.lineNumNew != null
+                                          ? () {
+                                              // Suppress blame trigger while
+                                              // scrolling: with whole-row hover, a
+                                              // stationary cursor fires onEnter on
+                                              // every row that scrolls under it.
+                                              // Only a deliberate hover (viewport at
+                                              // rest + cursor on the row) should
+                                              // load blame and show the chip.
+                                              if (_scrolling) return;
+                                              setState(() => _hoveredLine =
+                                                  line.lineNumNew!);
+                                              _scheduleBlameLoad(
+                                                  lineFile, line.lineNumNew!);
+                                            }
+                                          : null,
+                                      onGutterExit: () {
+                                        _blameHoverTimer?.cancel();
+                                        setState(() => _hoveredLine = null);
+                                      },
+                                      searchTerm: _searchTerm,
+                                      useAnimatedTextMode:
+                                          _useAnimatedTextMode &&
+                                              !_reduceMotion,
+                                      contextBand: _contextBandForLine(line),
+                                      hunkImportance: math.max(
+                                        hunkSignal?.importance ?? 0.0,
+                                        lineResidual?.importance ?? 0.0,
                                       ),
-                                    ),
-                                  ),
+                                      hunkTag: hunkSignal?.tag,
+                                      hunkHeaderHint: hunkSignal?.headerHint,
+                                      hunkTransportPull: math.max(
+                                        hunkSignal?.transportPull ?? 0.0,
+                                        lineResidual?.transportPull ?? 0.0,
+                                      ),
+                                      hunkTransportedSupport: math.max(
+                                        hunkSignal?.transportedSupport ?? 0.0,
+                                        lineResidual?.transportedSupport ?? 0.0,
+                                      ),
+                                      hunkInnovationResidual: math.max(
+                                        hunkSignal?.innovationResidual ?? 0.0,
+                                        lineResidual?.innovationResidual ?? 0.0,
+                                      ),
+                                      hunkWitnessResidual: math.max(
+                                        hunkSignal?.witnessResidual ?? 0.0,
+                                        lineResidual?.witnessResidual ?? 0.0,
+                                      ),
+                                      relatedRhyme: isPinnedRhyme,
+                                      wearIntensity: _wearMapVisible &&
+                                              line.lineNumNew != null
+                                          ? _wearIntensityFor(
+                                              lineFile, line.lineNumNew!)
+                                          : null,
+                                      stageCellWidth: _stageCellWidth,
+                                      stagingEnabled: _stagingEnabled,
+                                      keyboardFocused: kbFocused,
+                                      onSigilTap: _stagingEnabled
+                                          ? (shift, alt) {
+                                              _stagingFocus.requestFocus();
+                                              _handleSigilTap(line,
+                                                  shift: shift, alt: alt);
+                                            }
+                                          : null,
+                                      onPaintStart: _stagingEnabled
+                                          ? () {
+                                              _stagingFocus.requestFocus();
+                                              _beginPaint(line);
+                                            }
+                                          : null,
+                                      onPaintMove:
+                                          _stagingEnabled ? _paintUpdate : null,
+                                      onPaintEnd:
+                                          _stagingEnabled ? _endPaint : null,
+                                      onHunkDoubleTap: _stagingEnabled
+                                          ? () {
+                                              _stagingFocus.requestFocus();
+                                              _handleHunkDoubleTap(
+                                                  line.hunkIndex);
+                                            }
+                                          : null,
+                                    );
+                                    // Primary or secondary click any row →
+                                    // pin it for the Logos context panel.
+                                    // Listener sits at `translucent` so
+                                    // text-selection drags inside
+                                    // SelectableText still start; tap-down
+                                    // pins on the press.
+                                    final isPinned = _pinnedDisplayIdx == i;
+                                    Widget wrapped = Listener(
+                                      behavior: HitTestBehavior.translucent,
+                                      onPointerDown: (e) {
+                                        final isPrimary =
+                                            (e.buttons & kPrimaryButton) != 0;
+                                        final isSecondary =
+                                            (e.buttons & kSecondaryButton) != 0;
+                                        if (!isPrimary && !isSecondary) {
+                                          return;
+                                        }
+                                        // Ignore the sigil column (tiny ± cell
+                                        // near the left gutter) so stage
+                                        // clicks still do their job without
+                                        // stealing a pin.
+                                        if (e.localPosition.dx <
+                                            _stageCellWidth) {
+                                          return;
+                                        }
+                                        _togglePinLine(i);
+                                      },
+                                      child: lineView,
+                                    );
+                                    if (isPinned) {
+                                      wrapped = DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          color: t.accentBright
+                                              .withValues(alpha: 0.08),
+                                          border: Border(
+                                            left: BorderSide(
+                                              color: t.accentBright,
+                                              width: 3,
+                                            ),
+                                          ),
+                                        ),
+                                        child: wrapped,
+                                      );
+                                    }
+                                    // Inline hunk-context hint — IDE-style
+                                    // inlay rendered at the right edge of
+                                    // every hunk header row, showing weight
+                                    // (+A −D), position in the file (3/8),
+                                    // and — when the scroll engram has
+                                    // predicted a landing here — a faint
+                                    // "approaching" marker. The prediction
+                                    // drives EMPHASIS, not a phantom halo.
+                                    if (line.kind != LineKind.hunk)
+                                      return wrapped;
+                                    if (hunkHeader == null) return wrapped;
+                                    final hunkOrdinal =
+                                        _hunks.indexOf(hunkHeader) + 1;
+                                    final totalHunks = _hunks.length;
+                                    return Stack(
+                                      children: [
+                                        wrapped,
+                                        Positioned(
+                                          right: 14,
+                                          top: 0,
+                                          bottom: 0,
+                                          child: IgnorePointer(
+                                            child: Align(
+                                              alignment: Alignment.centerRight,
+                                              child: _HunkInlineHint(
+                                                additions: hunkHeader.additions,
+                                                deletions: hunkHeader.deletions,
+                                                ordinal: hunkOrdinal,
+                                                total: totalHunks,
+                                                tag: hunkSignal?.tag,
+                                                hint: hunkSignal?.headerHint,
+                                                tokens: t,
+                                                approaching: isHotHunkRow,
+                                                approachStrength:
+                                                    _hotHunkStrength,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
-                              ],
-                            );
-                          },
-                        ),
                               ),
+                            ),
+                          );
+                        },
                       ),
-                    );
-                  },
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ),
               ),
               // Sticky hunk header — pins the current @@ label at the top
               // when you're scrolled deep inside a hunk. Suppressed during
@@ -2448,15 +3296,21 @@ class _DiffShellState extends State<DiffShell> {
         // Pinned-line context panel. Docks at the bottom when a row
         // has been right-clicked; collapses cleanly when the pin is
         // cleared so the diff list reclaims its space.
-        if (_pinnedDisplayIdx != null)
+        if (_pinnedFastKey != null && _pinnedDisplayIdx != null)
           _PinnedContextPanel(
             tokens: t,
             context: _pinnedCtx,
-            loading: _pinnedCtx == null,
+            past: _buildPinnedPastContext(_pinnedCtx),
+            loading: _pinnedDisplayIdx != null && _pinnedCtx == null,
+            onOpenRelatedPath: widget.onOpenRelatedPath,
             onClose: () {
               setState(() {
-                _pinnedDisplayIdx = null;
-                _pinnedCtx = null;
+                _clearPinnedLine();
+              });
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  _stagingFocus.requestFocus();
+                }
               });
             },
             onRhymeTap: (targetIdx) {
@@ -2488,9 +3342,9 @@ class _DiffShellState extends State<DiffShell> {
   }
 }
 
-
 class DiffLineView extends StatefulWidget {
   final ParsedLine line;
+
   /// Semantic unit this line belongs to — carries move-target pointers, unit
   /// kind, constituent lines, and the stable id used for animation keys.
   /// For replace units the paired add sits at `editUnit.newLines.first`;
@@ -2498,15 +3352,18 @@ class DiffLineView extends StatefulWidget {
   /// Optional so the line row still works if a unit couldn't be resolved
   /// (always resolves in current code, tolerance is cheap insurance).
   final EditUnit? editUnit;
+
   /// Temporal mark — when true, this row briefly pulses an accent overlay to
   /// signal "you're back here" after a restore. Parent owns the timer; the
   /// row just animates the fade.
   final bool pulseActive;
+
   /// True the first time the parent has seen this row's unit id in the
   /// current diff session. Gates one-shot lineage animations (pair melt)
   /// so they play once per unit, not every time a row scrolls back into
   /// view. Owner: [_DiffShellState._seenUnitIds].
   final bool firstAppearance;
+
   /// Central motion-gating policy. Every animation in this row routes through
   /// it; reduce-motion users get the final state without the ornaments, but
   /// keep confirmation/attention motion in softened form.
@@ -2519,6 +3376,15 @@ class DiffLineView extends StatefulWidget {
   final String searchTerm;
   final bool useAnimatedTextMode;
   final double? wearIntensity;
+  final DiffContextBand? contextBand;
+  final double hunkImportance;
+  final String? hunkTag;
+  final String? hunkHeaderHint;
+  final double hunkTransportPull;
+  final double hunkTransportedSupport;
+  final double hunkInnovationResidual;
+  final double hunkWitnessResidual;
+  final bool relatedRhyme;
 
   // Staging
   final double stageCellWidth;
@@ -2551,6 +3417,15 @@ class DiffLineView extends StatefulWidget {
     required this.searchTerm,
     required this.useAnimatedTextMode,
     this.wearIntensity,
+    this.contextBand,
+    this.hunkImportance = 0.0,
+    this.hunkTag,
+    this.hunkHeaderHint,
+    this.hunkTransportPull = 0.0,
+    this.hunkTransportedSupport = 0.0,
+    this.hunkInnovationResidual = 0.0,
+    this.hunkWitnessResidual = 0.0,
+    this.relatedRhyme = false,
     this.stageCellWidth = 16.0,
     this.stagingEnabled = false,
     this.keyboardFocused = false,
@@ -2579,6 +3454,9 @@ class _DiffLineState extends State<DiffLineView> {
     final isAdded = l.kind == LineKind.added;
     final isDeleted = l.kind == LineKind.deleted;
     final isHunk = l.kind == LineKind.hunk;
+    final isFoldMarker = isMeta &&
+        l.text.startsWith('... ') &&
+        l.text.contains('unchanged lines');
     final isStageable = isAdded || isDeleted;
     // Semantic unit for this row (replace, move, insert, delete, context,
     // hunk, meta). Single source of truth for row-kind decisions — pair
@@ -2602,6 +3480,30 @@ class _DiffLineState extends State<DiffLineView> {
     final bool isMove = unit?.kind == EditKind.move;
     final bool isMoveFrom = isMove && (unit?.oldLines.isNotEmpty ?? false);
     final bool isMoveTo = isMove && (unit?.newLines.isNotEmpty ?? false);
+    final transportSignal = math
+        .max(
+          widget.hunkTransportPull,
+          widget.hunkTransportedSupport,
+        )
+        .clamp(0.0, 1.0);
+    final residualSignal = math
+        .max(
+          widget.hunkInnovationResidual,
+          widget.hunkWitnessResidual,
+        )
+        .clamp(0.0, 1.0);
+    final semanticSignal = math
+        .max(
+          widget.hunkImportance.clamp(0.0, 1.0),
+          math.max(transportSignal, residualSignal),
+        )
+        .clamp(0.0, 1.0);
+    final Color semanticColor = widget.hunkWitnessResidual >=
+            math.max(widget.hunkInnovationResidual, transportSignal)
+        ? t.stateConflicted
+        : widget.hunkInnovationResidual >= transportSignal
+            ? t.accentBright
+            : t.chromeAccent;
 
     // Tint strength: staged lines get a slightly stronger wash so their
     // membership is unmistakable without dimming text contrast.
@@ -2623,16 +3525,45 @@ class _DiffLineState extends State<DiffLineView> {
         sigilColor = t.stateDeleted;
         break;
       case LineKind.hunk:
-        lineBg = t.chromeAccent.withValues(alpha: 0.07);
-        textColor = t.accentBright;
+        final importance = widget.hunkImportance.clamp(0.0, 1.0);
+        final semanticMix =
+            math.max(importance, 0.35 * semanticSignal).clamp(0.0, 1.0);
+        lineBg = Color.lerp(
+          t.chromeAccent.withValues(alpha: 0.04),
+          semanticColor.withValues(alpha: 0.08 + 0.08 * semanticSignal),
+          semanticMix,
+        );
+        textColor = Color.lerp(
+              t.accentBright.withValues(alpha: 0.85),
+              semanticColor,
+              (0.20 + 0.25 * semanticSignal).clamp(0.0, 1.0),
+            ) ??
+            t.accentBright;
         break;
       case LineKind.meta:
-        lineBg = t.surface0.withValues(alpha: 0.18);
-        textColor = t.textMuted.withValues(alpha: 0.72);
+        lineBg = isFoldMarker
+            ? t.surface0.withValues(alpha: 0.08)
+            : t.surface0.withValues(alpha: 0.18);
+        textColor = isFoldMarker
+            ? t.textFaint.withValues(alpha: 0.8)
+            : t.textMuted.withValues(alpha: 0.72);
         break;
       case LineKind.context:
-        lineBg = null;
-        textColor = t.textNormal;
+        switch (widget.contextBand) {
+          case DiffContextBand.near:
+            lineBg = t.surface0.withValues(alpha: 0.05);
+            textColor = t.textNormal.withValues(alpha: 0.82);
+            break;
+          case DiffContextBand.far:
+            lineBg = t.surface0.withValues(alpha: 0.025);
+            textColor = t.textMuted.withValues(alpha: 0.68);
+            break;
+          case DiffContextBand.changed:
+          case null:
+            lineBg = null;
+            textColor = t.textNormal;
+            break;
+        }
         break;
     }
 
@@ -2657,6 +3588,24 @@ class _DiffLineState extends State<DiffLineView> {
       lineBg = t.hyperChromatic1.withValues(alpha: tintAlpha * 1.1);
       textColor = t.textNormal;
       sigilColor = t.hyperChromatic1;
+    } else if (!isMeta && semanticSignal > 0) {
+      sigilColor = Color.lerp(
+            sigilColor,
+            semanticColor,
+            (0.12 + 0.28 * semanticSignal).clamp(0.0, 1.0),
+          ) ??
+          sigilColor;
+      if (lineBg != null &&
+          (isAdded ||
+              isDeleted ||
+              isHunk ||
+              widget.contextBand == DiffContextBand.near)) {
+        lineBg = Color.lerp(
+          lineBg,
+          semanticColor.withValues(alpha: 0.04 + 0.05 * semanticSignal),
+          (0.10 + 0.22 * semanticSignal).clamp(0.0, 1.0),
+        );
+      }
     }
 
     // Build gutter text (old | new line numbers or hunk marker). Move rows
@@ -2704,7 +3653,7 @@ class _DiffLineState extends State<DiffLineView> {
                     t.surface1.withValues(alpha: 0.5)));
 
     final gutterCell = Container(
-      width: isMeta ? 40 : 56,
+      width: isMeta && !isFoldMarker ? 40 : 56,
       padding: const EdgeInsets.only(right: 8),
       alignment: Alignment.centerRight,
       color: gutterBg,
@@ -2739,12 +3688,10 @@ class _DiffLineState extends State<DiffLineView> {
     // keeps the raw form for the patch engine / staging key. Uses the
     // shared [stripDiffLineSign] helper so renderer and unit-detection
     // layers cannot drift on what "pure content" means.
-    final String displayText = (isAdded || isDeleted)
-        ? stripDiffLineSign(l.text)
-        : l.text;
+    final String displayText =
+        (isAdded || isDeleted) ? stripDiffLineSign(l.text) : l.text;
     final String? pairFromText = isPair ? stripDiffLineSign(l.text) : null;
-    final String? pairToText =
-        isPair ? stripDiffLineSign(addPart!.text) : null;
+    final String? pairToText = isPair ? stripDiffLineSign(addPart!.text) : null;
 
     final useAnimatedText = widget.useAnimatedTextMode &&
         widget.searchTerm.isEmpty &&
@@ -2763,9 +3710,8 @@ class _DiffLineState extends State<DiffLineView> {
       textChild = _DiffMeltText(
         text: pairToText!.isEmpty ? ' ' : pairToText,
         color: t.stateAdded,
-        seedFrom: allowMelt
-            ? (pairFromText!.isEmpty ? ' ' : pairFromText)
-            : null,
+        seedFrom:
+            allowMelt ? (pairFromText!.isEmpty ? ' ' : pairFromText) : null,
         seedFromColor: allowMelt ? t.stateDeleted : null,
       );
     } else if (useAnimatedText) {
@@ -2779,6 +3725,8 @@ class _DiffLineState extends State<DiffLineView> {
         textColor,
         t,
         widget.searchTerm,
+        semanticTint: semanticColor,
+        semanticSignal: semanticSignal,
         fontSize: isMeta ? 11 : 12,
         height: isMeta ? 1.3 : 1.5,
       );
@@ -2838,9 +3786,44 @@ class _DiffLineState extends State<DiffLineView> {
     // "lighting" during scroll. Scroll should be static. The pair-melt
     // transition is preserved as the only lineage animation and is gated
     // by firstAppearance + MotionPolicy so it also never replays on recycle.
+    final showSemanticBorder = semanticSignal > 0 &&
+        (isHunk ||
+            isAdded ||
+            isDeleted ||
+            widget.contextBand == DiffContextBand.near);
+    final Border? semanticBorder = showSemanticBorder
+        ? Border(
+            left: BorderSide(
+              color: semanticColor.withValues(
+                alpha: 0.14 + 0.46 * semanticSignal.clamp(0.0, 1.0),
+              ),
+              width: isHunk ? 2 : 1.5,
+            ),
+          )
+        : widget.relatedRhyme
+            ? Border(
+                left: BorderSide(
+                  color: t.accentBright.withValues(alpha: 0.32),
+                  width: 1.5,
+                ),
+                right: BorderSide(
+                  color: t.accentBright.withValues(alpha: 0.10),
+                  width: 1,
+                ),
+              )
+            : null;
+    if (widget.relatedRhyme && !showSemanticBorder) {
+      lineBg = Color.alphaBlend(
+        t.accentBright.withValues(alpha: 0.05),
+        lineBg ?? Colors.transparent,
+      );
+    }
     Widget lineContent = Expanded(
       child: Container(
-        color: lineBg,
+        decoration: BoxDecoration(
+          color: lineBg,
+          border: semanticBorder,
+        ),
         padding: EdgeInsets.symmetric(horizontal: isMeta ? 12 : 8),
         alignment: Alignment.centerLeft,
         child: textChild,
@@ -2902,9 +3885,8 @@ class _DiffLineState extends State<DiffLineView> {
     // anything. Pushing the trigger to the whole row makes blame ambient.
     // The inner gutter MouseRegion still fires (no-op on duplicate enter).
     final Widget interactiveRow = MouseRegion(
-      onEnter: widget.onGutterEnter != null
-          ? (_) => widget.onGutterEnter!()
-          : null,
+      onEnter:
+          widget.onGutterEnter != null ? (_) => widget.onGutterEnter!() : null,
       onExit: (_) => widget.onGutterExit(),
       child: interactiveRowBase,
     );
@@ -2941,80 +3923,80 @@ class _DiffLineState extends State<DiffLineView> {
 
     return _wrapWithPulse(
         Stack(clipBehavior: Clip.none, children: [
-      interactiveRow,
-      // (Parallax ghost plane removed — a 44pt letter clipped to an 18px
-      // row rendered letters like `W` as three stroke-fragments, reading as
-      // a vertical-line artifact instead of an identity. The blame chip
-      // below carries the author + hash + time cleanly; no need for a
-      // second plane when there isn't vertical room for it to breathe.)
-      Positioned(
-        left: 0,
-        top: 0,
-        bottom: 0,
-        child: IgnorePointer(
-          child: AnimatedSlide(
-            // Suppress the chip while the cursor is on the stage sigil —
-            // that's a distinct interactive zone (click = stage, drag =
-            // paint) and a chip floating over it reads as noise. Slides
-            // back in the moment the cursor moves off the sigil onto
-            // code text.
-            offset: (widget.hovered && !_lineHover)
-                ? Offset.zero
-                : const Offset(-0.06, 0),
-            duration: const Duration(milliseconds: 120),
-            curve: Curves.easeOutCubic,
-            child: AnimatedOpacity(
-              opacity: (widget.hovered && !_lineHover) ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 100),
-              curve: Curves.easeOutCubic,
-              child: IntrinsicWidth(
-                child: Container(
-                  constraints: const BoxConstraints(minWidth: 96),
-                  // Tab-cut-from-the-gutter silhouette: hairline border on
-                  // top/right/bottom only, no left border — the chip shares
-                  // its left edge with the gutter it slid out of. Contrast
-                  // is structural (defined silhouette + theme-calibrated
-                  // hairline), not luminance- or glow-based.
-                  decoration: BoxDecoration(
-                    color: t.surface2,
-                    border: Border(
-                      top: BorderSide(color: t.chromeBorder, width: 1),
-                      right: BorderSide(color: t.chromeBorder, width: 1),
-                      bottom: BorderSide(color: t.chromeBorder, width: 1),
+          interactiveRow,
+          // (Parallax ghost plane removed — a 44pt letter clipped to an 18px
+          // row rendered letters like `W` as three stroke-fragments, reading as
+          // a vertical-line artifact instead of an identity. The blame chip
+          // below carries the author + hash + time cleanly; no need for a
+          // second plane when there isn't vertical room for it to breathe.)
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: IgnorePointer(
+              child: AnimatedSlide(
+                // Suppress the chip while the cursor is on the stage sigil —
+                // that's a distinct interactive zone (click = stage, drag =
+                // paint) and a chip floating over it reads as noise. Slides
+                // back in the moment the cursor moves off the sigil onto
+                // code text.
+                offset: (widget.hovered && !_lineHover)
+                    ? Offset.zero
+                    : const Offset(-0.06, 0),
+                duration: const Duration(milliseconds: 120),
+                curve: Curves.easeOutCubic,
+                child: AnimatedOpacity(
+                  opacity: (widget.hovered && !_lineHover) ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 100),
+                  curve: Curves.easeOutCubic,
+                  child: IntrinsicWidth(
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 96),
+                      // Tab-cut-from-the-gutter silhouette: hairline border on
+                      // top/right/bottom only, no left border — the chip shares
+                      // its left edge with the gutter it slid out of. Contrast
+                      // is structural (defined silhouette + theme-calibrated
+                      // hairline), not luminance- or glow-based.
+                      decoration: BoxDecoration(
+                        color: t.surface2,
+                        border: Border(
+                          top: BorderSide(color: t.chromeBorder, width: 1),
+                          right: BorderSide(color: t.chromeBorder, width: 1),
+                          bottom: BorderSide(color: t.chromeBorder, width: 1),
+                        ),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        // Metabolism stripe IS the chip's leading edge — a
+                        // semantic seam between gutter and chip, not a
+                        // floating dot inside it.
+                        Container(width: 2, color: metaColor),
+                        const SizedBox(width: 8),
+                        Text(initial,
+                            style: TextStyle(
+                                color: t.textNormal,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            '${b.shortHash}  $timeStr',
+                            style: TextStyle(
+                              color: t.hyperChromatic1,
+                              fontSize: 9,
+                              fontFamily: 'JetBrainsMono',
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ]),
                     ),
                   ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    // Metabolism stripe IS the chip's leading edge — a
-                    // semantic seam between gutter and chip, not a
-                    // floating dot inside it.
-                    Container(width: 2, color: metaColor),
-                    const SizedBox(width: 8),
-                    Text(initial,
-                        style: TextStyle(
-                            color: t.textNormal,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        '${b.shortHash}  $timeStr',
-                        style: TextStyle(
-                          color: t.hyperChromatic1,
-                          fontSize: 9,
-                          fontFamily: 'JetBrainsMono',
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ]),
                 ),
               ),
             ),
           ),
-        ),
-      ),
-    ]),
+        ]),
         t);
   }
 
@@ -3029,8 +4011,8 @@ class _DiffLineState extends State<DiffLineView> {
   /// duration is scaled so the signal reads as feedback, not ornament.
   Widget _wrapWithPulse(Widget child, AppTokens t) {
     if (!widget.pulseActive) return child;
-    final duration = widget.motionPolicy
-        .scale(const Duration(milliseconds: 900));
+    final duration =
+        widget.motionPolicy.scale(const Duration(milliseconds: 900));
     return Stack(
       fit: StackFit.passthrough,
       children: [
@@ -3082,9 +4064,8 @@ class _StageSigil extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final glyph = kind == LineKind.added ? '+' : '−';
-    final Color effective = hovered || staged
-        ? color
-        : color.withValues(alpha: 0.55);
+    final Color effective =
+        hovered || staged ? color : color.withValues(alpha: 0.55);
 
     // Hover border — crisp 1px ring around the sigil glyph that says
     // "this is a button." Only when the left zone is hovered AND the line
@@ -3134,10 +4115,10 @@ class _StageSigil extends StatelessWidget {
   }
 }
 
-
 class _DiffMeltText extends StatefulWidget {
   final String text;
   final Color color;
+
   /// Optional seed: when non-null, the widget boots with `seedFrom` on screen
   /// and immediately animates to `text`. Used by replacement pairs so the
   /// delete→add transition plays once on first appearance.
@@ -3169,7 +4150,9 @@ class _DiffMeltTextState extends State<_DiffMeltText>
   void initState() {
     super.initState();
     final seeded = widget.seedFrom != null;
-    _fromText = seeded ? (widget.seedFrom!.isEmpty ? ' ' : widget.seedFrom!) : _displayText;
+    _fromText = seeded
+        ? (widget.seedFrom!.isEmpty ? ' ' : widget.seedFrom!)
+        : _displayText;
     _toText = _displayText;
     _fromColor = widget.seedFromColor ?? widget.color;
     _toColor = widget.color;
@@ -3228,6 +4211,8 @@ Widget _buildPlainDiffText(
   Color baseColor,
   AppTokens t,
   String searchTerm, {
+  Color? semanticTint,
+  double semanticSignal = 0.0,
   double fontSize = 12,
   double height = 1.5,
   FontWeight? fontWeight,
@@ -3239,18 +4224,30 @@ Widget _buildPlainDiffText(
       baseColor,
       t,
       searchTerm,
+      semanticTint: semanticTint,
+      semanticSignal: semanticSignal,
       fontSize: fontSize,
       height: height,
       fontWeight: fontWeight,
       fontStyle: fontStyle,
     );
   }
+  final semanticMix = semanticTint == null
+      ? 0.0
+      : (0.10 + 0.18 * semanticSignal).clamp(0.0, 0.24).toDouble();
+  final effectiveBaseColor = semanticTint == null
+      ? baseColor
+      : (Color.lerp(baseColor, semanticTint, semanticMix) ?? baseColor);
   return Text(
     displayText,
     maxLines: 1,
     overflow: TextOverflow.clip,
     style: TextStyle(
-      color: baseColor,
+      color: effectiveBaseColor,
+      backgroundColor: semanticTint == null || semanticSignal < 0.14
+          ? null
+          : semanticTint.withValues(
+              alpha: (0.015 + 0.035 * semanticSignal).clamp(0.0, 0.06)),
       fontSize: fontSize,
       fontFamily: 'JetBrainsMono',
       height: height,
@@ -3265,11 +4262,23 @@ Widget _buildSearchText(
   Color baseColor,
   AppTokens t,
   String searchTerm, {
+  Color? semanticTint,
+  double semanticSignal = 0.0,
   double fontSize = 12,
   double height = 1.5,
   FontWeight? fontWeight,
   FontStyle? fontStyle,
 }) {
+  final semanticMix = semanticTint == null
+      ? 0.0
+      : (0.10 + 0.18 * semanticSignal).clamp(0.0, 0.24).toDouble();
+  final effectiveBaseColor = semanticTint == null
+      ? baseColor
+      : (Color.lerp(baseColor, semanticTint, semanticMix) ?? baseColor);
+  final effectiveBackground = semanticTint == null || semanticSignal < 0.14
+      ? null
+      : semanticTint.withValues(
+          alpha: (0.015 + 0.035 * semanticSignal).clamp(0.0, 0.06));
   final lower = displayText.toLowerCase();
   final termLower = searchTerm.toLowerCase();
   final spans = <TextSpan>[];
@@ -3280,7 +4289,8 @@ Widget _buildSearchText(
       spans.add(TextSpan(
           text: displayText.substring(start, idx),
           style: TextStyle(
-            color: baseColor,
+            color: effectiveBaseColor,
+            backgroundColor: effectiveBackground,
             fontWeight: fontWeight,
             fontStyle: fontStyle,
           )));
@@ -3288,8 +4298,16 @@ Widget _buildSearchText(
     spans.add(TextSpan(
       text: displayText.substring(idx, idx + termLower.length),
       style: TextStyle(
-        color: t.bg0,
-        backgroundColor: t.accentBright.withValues(alpha: 0.8),
+        color: semanticTint == null
+            ? t.bg0
+            : (Color.lerp(t.bg0, semanticTint, 0.12 * semanticSignal) ?? t.bg0),
+        backgroundColor: (Color.lerp(
+                  t.accentBright.withValues(alpha: 0.8),
+                  semanticTint,
+                  0.12 * semanticSignal,
+                ) ??
+                t.accentBright)
+            .withValues(alpha: 0.8),
         fontWeight: fontWeight,
         fontStyle: fontStyle,
       ),
@@ -3301,7 +4319,8 @@ Widget _buildSearchText(
     spans.add(TextSpan(
         text: displayText.substring(start),
         style: TextStyle(
-          color: baseColor,
+          color: effectiveBaseColor,
+          backgroundColor: effectiveBackground,
           fontWeight: fontWeight,
           fontStyle: fontStyle,
         )));
@@ -3321,6 +4340,51 @@ Widget _buildSearchText(
     overflow: TextOverflow.clip,
     maxLines: 1,
   );
+}
+
+/// Shared TextPainter LRU across every [_DiffMeltTextPainter] instance.
+///
+/// Each diff row was paying for a fresh `TextPainter(...).layout()` on every
+/// `paint(canvas)` — cheap in isolation, catastrophic at 60 Hz over a
+/// virtualised list of thousands of lines. The layout is pure: given
+/// identical (text, color, font) the resulting Paragraph is byte-identical,
+/// so we cache the laid-out painter and just replay `.paint()`.
+///
+/// Cache is sized for multi-screenful scroll: viewport holds ~40–60 rows,
+/// but rapid scroll can touch several hundred unique rows between cache
+/// evictions. 384 entries ≈ 150 KB of retained state, inside L2.
+///
+/// Callers: use only from the REST path where (text, color) is stable
+/// across frames. Animation paths with alpha-modulated colors change the
+/// key every frame and would churn the LRU with zero hit rate — they
+/// allocate fresh `TextPainter`s instead (see `_paintRun`).
+final LruCache<int, TextPainter> _diffTextPainterCache =
+    LruCache<int, TextPainter>(maxSize: 384);
+
+TextPainter _cachedDiffLineTextPainter({
+  required String text,
+  required TextStyle style,
+}) {
+  final color = style.color;
+  final key = Object.hash(
+    text,
+    // TextStyle itself isn't a stable hash source (color, fontSize, etc.
+    // are captured explicitly).
+    color == null ? 0 : color.toARGB32(),
+    style.fontSize,
+    style.fontFamily,
+    style.height,
+    style.fontWeight?.value,
+  );
+  final cached = _diffTextPainterCache.get(key);
+  if (cached != null) return cached;
+  final built = TextPainter(
+    text: TextSpan(text: text, style: style),
+    textDirection: TextDirection.ltr,
+    maxLines: 1,
+  )..layout();
+  _diffTextPainterCache.put(key, built);
+  return built;
 }
 
 class _DiffMeltTextPainter extends CustomPainter {
@@ -3356,7 +4420,12 @@ class _DiffMeltTextPainter extends CustomPainter {
     final charWidth = _measureCharWidth();
 
     if (progress >= 0.999) {
-      _paintRun(canvas, toText, toColor, Offset(0, baselineY));
+      // Rest path — stable (text, color) tuple, so the shared
+      // TextPainter cache hits reliably. Animation paths below
+      // receive alpha-modulated colors that change every frame and
+      // would churn the cache with near-zero hit rate, so they use
+      // the direct (uncached) helper.
+      _paintRunCached(canvas, toText, toColor, Offset(0, baselineY));
       canvas.restore();
       return;
     }
@@ -3520,6 +4589,18 @@ class _DiffMeltTextPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// Cached variant: only safe when (text, color) repeats frame over
+  /// frame. Used exclusively by the rest path above.
+  void _paintRunCached(Canvas canvas, String text, Color color, Offset offset) {
+    if (text.isEmpty || color.a <= 0) return;
+    final painter =
+        _cachedDiffLineTextPainter(text: text, style: _style(color));
+    painter.paint(canvas, offset);
+  }
+
+  /// Animation path: alpha-modulated color produces a unique cache key
+  /// every frame. Allocating fresh keeps the shared cache free of churn
+  /// so the rest path's hot entries aren't evicted.
   void _paintRun(Canvas canvas, String text, Color color, Offset offset) {
     if (text.isEmpty || color.a <= 0) return;
     final painter = TextPainter(
@@ -3548,7 +4629,6 @@ class _DiffMeltTextPainter extends CustomPainter {
         oldDelegate.progress != progress;
   }
 }
-
 
 /// A horizontal node-style rail for the file's commit history.
 /// Mirrors the visual language of `_MultiDiffProgressRail` in changes_page —
@@ -3587,8 +4667,7 @@ class _TrailStrip extends StatelessWidget {
 
   int get _currentIndex {
     if (selectedHash == null) return 0; // "now"
-    final idx =
-        history.indexWhere((e) => e.commit.commitHash == selectedHash);
+    final idx = history.indexWhere((e) => e.commit.commitHash == selectedHash);
     return idx < 0 ? 0 : idx + 1;
   }
 
@@ -3606,6 +4685,7 @@ class _TrailStrip extends StatelessWidget {
   }
 
   void _selectByIndex(int index) {
+    if (index == _currentIndex) return;
     if (index == 0) {
       onSelectNow();
     } else {
@@ -3710,6 +4790,7 @@ class _TrailRail extends StatelessWidget {
     final usable = (width - horizontalInset * 2).clamp(1.0, double.infinity);
     final ratio = ((localDx - horizontalInset) / usable).clamp(0.0, 1.0);
     final index = total == 1 ? 0 : (ratio * (total - 1)).round();
+    if (index == currentIndex) return;
     onSelectIndex(index);
   }
 }
@@ -3792,6 +4873,7 @@ class _ToolbarBtn extends StatefulWidget {
   final bool active;
   final AppTokens t;
   final VoidCallback onTap;
+
   /// Optional explicit icon tint that overrides the default
   /// active/inactive coloring. Passed through verbatim — used to
   /// match the diff status dot's accent when we want the icon to
@@ -3852,12 +4934,16 @@ class _ToolbarBtnState extends State<_ToolbarBtn> {
 class _ToolbarFileNameChip extends StatefulWidget {
   final AppTokens tokens;
   final String filePath;
+  final String? label;
+  final String? tooltip;
   final VoidCallback? onTap;
   final bool trailActive;
 
   const _ToolbarFileNameChip({
     required this.tokens,
     required this.filePath,
+    this.label,
+    this.tooltip,
     required this.onTap,
     required this.trailActive,
   });
@@ -3874,6 +4960,9 @@ class _ToolbarFileNameChipState extends State<_ToolbarFileNameChip> {
     final t = widget.tokens;
     final directory = _diffDisplayDirectory(widget.filePath);
     final canTap = widget.onTap != null;
+    final label = widget.label ?? _diffDisplayName(widget.filePath);
+    final tooltip =
+        widget.tooltip ?? (directory != null ? widget.filePath : null);
 
     return MouseRegion(
       cursor: canTap ? SystemMouseCursors.click : SystemMouseCursors.basic,
@@ -3882,13 +4971,13 @@ class _ToolbarFileNameChipState extends State<_ToolbarFileNameChip> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: MainAxisSize.max,
           children: [
             Flexible(
               child: Tooltip(
-                message: directory != null ? widget.filePath : '',
+                message: tooltip ?? '',
                 child: Text(
-                  _diffDisplayName(widget.filePath),
+                  label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -3898,8 +4987,7 @@ class _ToolbarFileNameChipState extends State<_ToolbarFileNameChip> {
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     decoration: _hovered ? TextDecoration.underline : null,
-                    decorationColor:
-                        t.accentBright.withValues(alpha: 0.5),
+                    decorationColor: t.accentBright.withValues(alpha: 0.5),
                   ),
                 ),
               ),
@@ -3921,7 +5009,6 @@ class _ToolbarFileNameChipState extends State<_ToolbarFileNameChip> {
     );
   }
 }
-
 
 class _HunkDropdown extends StatelessWidget {
   final List<_HunkHeader> hunks;
@@ -3974,6 +5061,103 @@ class _HunkDropdown extends StatelessWidget {
   }
 }
 
+class _DiffShapeStrip extends StatelessWidget {
+  final AppTokens tokens;
+  final DiffLogosSession? session;
+  final bool loading;
+
+  const _DiffShapeStrip({
+    required this.tokens,
+    required this.session,
+    required this.loading,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final s = session;
+    if (loading && s == null) {
+      return Container(
+        height: 28,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: t.surface0.withValues(alpha: 0.2),
+          border: Border(
+            bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.12)),
+          ),
+        ),
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'reading topology',
+          style: TextStyle(
+            color: t.textFaint,
+            fontSize: 10.5,
+            fontFamily: 'JetBrainsMono',
+          ),
+        ),
+      );
+    }
+    if (s == null) return const SizedBox.shrink();
+    final related = s.relatedJumps
+        .take(3)
+        .map((jump) => _diffDisplayName(jump.path))
+        .toList();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: t.surface0.withValues(alpha: 0.14),
+        border: Border(
+          bottom: BorderSide(color: t.chromeBorder.withValues(alpha: 0.08)),
+        ),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          _shapeChip(t, s.shape.regime.name),
+          Text(
+            s.shape.touchedSummary(),
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10.5,
+              fontFamily: 'JetBrainsMono',
+            ),
+          ),
+          if (related.isNotEmpty)
+            Text(
+              'next ${related.join('  ')}',
+              style: TextStyle(
+                color: t.textFaint,
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono',
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _shapeChip(AppTokens t, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: t.surface1.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.18)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: t.textStrong,
+          fontSize: 10,
+          fontFamily: 'JetBrainsMono',
+        ),
+      ),
+    );
+  }
+}
+
 //
 // While scrolled deep inside a hunk, the natural `@@ ... @@` header scrolls
 // away. This overlay pins the current hunk's label at the top of the viewport
@@ -3981,43 +5165,28 @@ class _HunkDropdown extends StatelessWidget {
 // top of the hunk. Rendered as a single-line strip styled like the real
 // hunk row so the transition is seamless.
 
-class _NearFile {
-  final String path;
-  final double similarity;
-  const _NearFile(this.path, this.similarity);
-}
+class _PinnedAuthorShare {
+  final String name;
+  final double share;
 
-class _CoupledFile {
-  final String path;
-  final double jaccard;
-  const _CoupledFile(this.path, this.jaccard);
-}
-
-class _PinnedLineContext {
-  final ParsedLine line;
-  final String? wellName;
-  final double? wellDistance;
-  final List<_NearFile> nearestFiles;
-  final List<int> rhymeDisplayIdxs;
-  final BlameLineData? blame;
-  final List<_CoupledFile> coupledFiles;
-
-  const _PinnedLineContext({
-    required this.line,
-    required this.wellName,
-    required this.wellDistance,
-    required this.nearestFiles,
-    required this.rhymeDisplayIdxs,
-    required this.blame,
-    required this.coupledFiles,
+  const _PinnedAuthorShare({
+    required this.name,
+    required this.share,
   });
+}
 
-  bool get hasAnything =>
-      wellName != null ||
-      nearestFiles.isNotEmpty ||
-      rhymeDisplayIdxs.isNotEmpty ||
-      blame != null ||
-      coupledFiles.isNotEmpty;
+class _PinnedPastContext {
+  final String tempoLabel;
+  final String? lastTouchLabel;
+  final List<_PinnedAuthorShare> nearbyAuthors;
+  final List<double> lineHeatSamples;
+
+  const _PinnedPastContext({
+    required this.tempoLabel,
+    required this.lastTouchLabel,
+    required this.nearbyAuthors,
+    required this.lineHeatSamples,
+  });
 }
 
 /// Floating panel at the bottom of DiffShell showing logos-powered
@@ -4027,340 +5196,25 @@ class _PinnedLineContext {
 /// or the close button.
 class _PinnedContextPanel extends StatefulWidget {
   final AppTokens tokens;
-  final _PinnedLineContext? context;
+  final DiffPinnedContextModel? context;
+  final _PinnedPastContext? past;
   final bool loading;
+  final ValueChanged<String>? onOpenRelatedPath;
   final VoidCallback onClose;
   final void Function(int displayIdx) onRhymeTap;
 
   const _PinnedContextPanel({
     required this.tokens,
     required this.context,
+    required this.past,
     required this.loading,
+    this.onOpenRelatedPath,
     required this.onClose,
     required this.onRhymeTap,
   });
 
   @override
-  State<_PinnedContextPanel> createState() => _PinnedContextPanelState();
-}
-
-class _PinnedContextPanelState extends State<_PinnedContextPanel> {
-  /// The well appears only when the user taps the pinned-line
-  /// snippet at the top of the drawer. Kept hidden by default so
-  /// the neighbour list is the visual anchor; the well is the
-  /// answer to a deliberate "what concept is this?" question.
-  bool _showWell = false;
-
-  // Reset the gated-reveal whenever the underlying context object
-  // changes — a fresh pin shouldn't carry the previous line's
-  // reveal state.
-  @override
-  void didUpdateWidget(_PinnedContextPanel old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.context, widget.context)) {
-      _showWell = false;
-    }
-  }
-
-  @override
-  Widget build(BuildContext ctx) {
-    final t = widget.tokens;
-    final c = widget.context;
-    final loading = widget.loading;
-    final onClose = widget.onClose;
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 220),
-      decoration: BoxDecoration(
-        color: t.surface1,
-        border: Border(
-          top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.4)),
-        ),
-      ),
-      padding: const EdgeInsets.fromLTRB(18, 14, 10, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: c == null
-                    ? Text('…', style: TextStyle(color: t.textFaint))
-                    : InkWell(
-                        onTap: c.wellName != null
-                            ? () => setState(() => _showWell = !_showWell)
-                            : null,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 2),
-                          child: Text(
-                            c.line.text.trim(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: t.textMuted,
-                              fontSize: 11,
-                              fontFamily: 'monospace',
-                              letterSpacing: 0.1,
-                            ),
-                          ),
-                        ),
-                      ),
-              ),
-              const SizedBox(width: 8),
-              InkWell(
-                onTap: onClose,
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child:
-                      Icon(Icons.close, size: 14, color: t.textFaint),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (loading && c == null)
-            _loadingRow(t)
-          else if (c != null)
-            Flexible(child: _body(t, c)),
-        ],
-      ),
-    );
-  }
-
-  Widget _loadingRow(AppTokens t) {
-    return Row(
-      children: [
-        Container(
-          width: 6, height: 6,
-          decoration: BoxDecoration(
-            color: t.textFaint.withValues(alpha: 0.5),
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Text('reading neighbourhood',
-            style: TextStyle(
-              color: t.textFaint,
-              fontSize: 11,
-              letterSpacing: 0.4,
-              fontStyle: FontStyle.italic,
-            )),
-      ],
-    );
-  }
-
-  /// The body packs three pieces, typographically ranked:
-  ///   1. the well name as the single visual anchor (biggest)
-  ///   2. neighbour files listed with size scaling to blended rank
-  ///      — the strongest signal reads biggest, the weakest smallest,
-  ///      no score columns required
-  ///   3. the blame line as a faint footer
-  Widget _body(AppTokens t, _PinnedLineContext c) {
-    // Merge the two neighbour signal streams into a single ranked
-    // list. Both scores live in roughly [0, 1]; a shared ranking
-    // lets typography carry the weight instead of parallel columns.
-    final ranked = <_RankedNeighbour>[];
-    for (final n in c.nearestFiles) {
-      ranked.add(_RankedNeighbour(
-        path: n.path,
-        score: n.similarity,
-        kind: _NeighbourKind.semantic,
-      ));
-    }
-    for (final cp in c.coupledFiles) {
-      // Dedupe — if a file appears in both, keep the stronger score
-      // and mark as dual-source (shown via a subtle indicator).
-      final existing = ranked.indexWhere((r) => r.path == cp.path);
-      if (existing >= 0) {
-        final prev = ranked[existing];
-        ranked[existing] = _RankedNeighbour(
-          path: cp.path,
-          score: math.max(prev.score, cp.jaccard),
-          kind: _NeighbourKind.both,
-        );
-      } else {
-        ranked.add(_RankedNeighbour(
-          path: cp.path,
-          score: cp.jaccard,
-          kind: _NeighbourKind.coupled,
-        ));
-      }
-    }
-    ranked.sort((a, b) => b.score.compareTo(a.score));
-    final top = ranked.take(6).toList();
-    final maxScore =
-        top.isEmpty ? 1.0 : top.first.score.clamp(0.0001, 1.0);
-
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (c.wellName != null && _showWell) _wellLine(t, c),
-          if (top.isNotEmpty) ...[
-            if (c.wellName != null && _showWell) const SizedBox(height: 12),
-            for (final n in top) _neighbourLine(t, n, maxScore),
-          ],
-          if (c.blame != null) ...[
-            const SizedBox(height: 12),
-            _blameLine(t, c.blame!),
-          ],
-          if (!c.hasAnything)
-            Text('no neighbourhood surfaced',
-                style: TextStyle(
-                    color: t.textFaint,
-                    fontSize: 11,
-                    fontStyle: FontStyle.italic)),
-        ],
-      ),
-    );
-  }
-
-  /// Well line: the one-word concept anchor, typographically the
-  /// hero of the panel. A small accent dot on the left sits in
-  /// place of a label — it IS the label.
-  Widget _wellLine(AppTokens t, _PinnedLineContext c) {
-    // Tightness indicator — how close is the line to the well
-    // centroid? Small disc sized by 1 - distance; closer = fuller.
-    // This communicates "confident match" vs "distant cousin"
-    // without spelling out a d=0.89 scalar.
-    final d = c.wellDistance ?? 1.0;
-    final tightness = (1.0 - (d / 1.5)).clamp(0.0, 1.0);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        SizedBox(
-          width: 10, height: 10,
-          child: CustomPaint(
-            painter: _WellDotPainter(
-              colour: t.accentBright,
-              fill: tightness,
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Flexible(
-          child: Text(
-            c.wellName!,
-            style: TextStyle(
-              color: t.textStrong,
-              fontSize: 17,
-              fontWeight: FontWeight.w300,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// A single neighbour file. Font-size gradient by blended rank —
-  /// top-ranked items render larger, down-ranked items smaller.
-  /// Coupling vs semantic vs both is expressed as a thin coloured
-  /// leader-mark on the left, not as a column.
-  Widget _neighbourLine(AppTokens t, _RankedNeighbour n, double maxScore) {
-    final relative = (n.score / maxScore).clamp(0.0, 1.0);
-    // 11.5 (min) → 13.5 (top) — modest range; too steep turns the
-    // list into a waterfall.
-    final fontSize = 11.5 + 2.0 * relative;
-    // Opacity echoes the rank too — the weakest rows fade toward
-    // the chrome, reading as "further out in the neighbourhood".
-    final alpha = 0.55 + 0.45 * relative;
-    // Source indicator: coupling (history) = chrome line; semantic
-    // (content) = accent line; both = fused accent.
-    final Color markColor;
-    final double markOpacity;
-    switch (n.kind) {
-      case _NeighbourKind.coupled:
-        markColor = t.textMuted;
-        markOpacity = 0.55 * relative + 0.2;
-      case _NeighbourKind.semantic:
-        markColor = t.accentBright;
-        markOpacity = 0.55 * relative + 0.2;
-      case _NeighbourKind.both:
-        markColor = t.accentBright;
-        markOpacity = 0.7 * relative + 0.3;
-    }
-    final basename = n.path.split('/').last.split('\\').last;
-    final dir = n.path.length > basename.length
-        ? n.path.substring(0, n.path.length - basename.length - 1)
-        : '';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2.5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: n.kind == _NeighbourKind.both ? 4 : 2,
-            height: fontSize + 2,
-            decoration: BoxDecoration(
-              color: markColor.withValues(alpha: markOpacity),
-              borderRadius: BorderRadius.circular(1),
-            ),
-          ),
-          const SizedBox(width: 10),
-          if (dir.isNotEmpty) ...[
-            Flexible(
-              child: Text(
-                dir,
-                style: TextStyle(
-                  color: t.textFaint.withValues(alpha: alpha * 0.8),
-                  fontSize: fontSize - 1.5,
-                  fontFamily: 'monospace',
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            Text(
-              '/',
-              style: TextStyle(
-                color: t.textFaint.withValues(alpha: alpha * 0.5),
-                fontSize: fontSize - 1.5,
-                fontFamily: 'monospace',
-              ),
-            ),
-          ],
-          Text(
-            basename,
-            style: TextStyle(
-              color: t.textStrong.withValues(alpha: alpha),
-              fontSize: fontSize,
-              fontFamily: 'monospace',
-              fontWeight: relative > 0.85 ? FontWeight.w500 : FontWeight.w400,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _blameLine(AppTokens t, BlameLineData blame) {
-    return Opacity(
-      opacity: 0.7,
-      child: Text(
-        '${blame.authorName}  ·  ${_formatBlameTime(blame.authoredAt)}',
-        style: TextStyle(
-          color: t.textFaint,
-          fontSize: 10.5,
-          letterSpacing: 0.3,
-          fontStyle: FontStyle.italic,
-        ),
-      ),
-    );
-  }
-}
-
-enum _NeighbourKind { semantic, coupled, both }
-
-class _RankedNeighbour {
-  final String path;
-  final double score;
-  final _NeighbourKind kind;
-  const _RankedNeighbour({
-    required this.path,
-    required this.score,
-    required this.kind,
-  });
+  State<_PinnedContextPanel> createState() => _PinnedContextDossierState();
 }
 
 /// Small painter for the well tightness disc. Outer ring is always
@@ -4391,6 +5245,1500 @@ class _WellDotPainter extends CustomPainter {
       old.colour != colour || old.fill != fill;
 }
 
+class _PinnedContextDossierState extends State<_PinnedContextPanel> {
+  int _page = 0;
+  int? _lastPage;
+  final FocusNode _focusNode = FocusNode(debugLabel: 'PinnedContextPanel');
+  Timer? _copiedFeedbackTimer;
+  bool _copiedLine = false;
+
+  @override
+  void didUpdateWidget(covariant _PinnedContextPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.context, widget.context)) {
+      _copiedFeedbackTimer?.cancel();
+      _copiedLine = false;
+      final opening = oldWidget.context == null && widget.context != null;
+      if (opening) {
+        _page = 0;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _focusNode.requestFocus();
+          }
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _copiedFeedbackTimer?.cancel();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext ctx) {
+    final t = widget.tokens;
+    final c = widget.context;
+    final tone = c == null ? _PinnedPanelTone.stable : _toneFor(c, widget.past);
+    final future =
+        c == null ? const <(String, String)>[] : _futureDestinations(c);
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 304),
+      decoration: BoxDecoration(
+        color: t.surface1,
+        border: Border(
+          top: BorderSide(color: t.chromeBorder.withValues(alpha: 0.4)),
+        ),
+      ),
+      child: Focus(
+        focusNode: _focusNode,
+        autofocus: widget.context != null,
+        onKeyEvent: (_, event) => _handleKeyEvent(event, c),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 6, 10, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      if (c != null) ...[
+                        _toneBadge(t, tone),
+                        const SizedBox(width: 8),
+                      ],
+                      Expanded(
+                        child: c == null
+                            ? const SizedBox.shrink()
+                            : _pinnedLinePreview(t, c),
+                      ),
+                      if (c != null) ...[
+                        const SizedBox(width: 10),
+                        _pageSwitch(t),
+                      ],
+                      const SizedBox(width: 6),
+                      InkWell(
+                        onTap: widget.onClose,
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.all(4),
+                          child:
+                              Icon(Icons.close, size: 14, color: t.textFaint),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (c != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _summarySentence(c, widget.past),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: t.textStrong.withValues(alpha: 0.92),
+                        fontSize: 12.2,
+                        height: 1.22,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    _quickActionRow(t, c, future),
+                  ],
+                ],
+              ),
+            ),
+            if (widget.loading && c == null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 10, 12),
+                child: _loadingRow(t),
+              )
+            else if (c != null)
+              Flexible(child: _body(t, c)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  KeyEventResult _handleKeyEvent(KeyEvent event, DiffPinnedContextModel? c) {
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape) {
+      widget.onClose();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.keyM) {
+      _setPage(0);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.keyE ||
+        key == LogicalKeyboardKey.keyS) {
+      _setPage(1);
+      return KeyEventResult.handled;
+    }
+    if (c != null &&
+        key == LogicalKeyboardKey.keyC &&
+        !HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isMetaPressed) {
+      _copyPinnedLine(c);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Future<void> _copyPinnedLine(DiffPinnedContextModel c) async {
+    await Clipboard.setData(ClipboardData(text: _copyablePinnedLineText(c)));
+    if (!mounted) return;
+    setState(() {
+      _copiedLine = true;
+    });
+    _copiedFeedbackTimer?.cancel();
+    _copiedFeedbackTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (!mounted) return;
+      setState(() {
+        _copiedLine = false;
+      });
+    });
+  }
+
+  Widget _pinnedLinePreview(AppTokens t, DiffPinnedContextModel c) {
+    final text = c.line.text.trim().isNotEmpty ? c.line.text.trim() : '...';
+    final style = TextStyle(
+      color: t.textFaint.withValues(alpha: 0.74),
+      fontSize: 10.5,
+      fontFamily: 'monospace',
+      letterSpacing: 0.08,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final child = Text(
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: style,
+        );
+        final maxWidth = constraints.maxWidth;
+        if (!maxWidth.isFinite || maxWidth <= 0) {
+          return child;
+        }
+        final painter = TextPainter(
+          text: TextSpan(text: text, style: style),
+          textDirection: Directionality.of(context),
+          maxLines: 1,
+          ellipsis: '…',
+        )..layout(maxWidth: maxWidth);
+        if (!painter.didExceedMaxLines) {
+          return child;
+        }
+        return Tooltip(message: text, child: child);
+      },
+    );
+  }
+
+  String _copyablePinnedLineText(DiffPinnedContextModel c) {
+    switch (c.line.kind) {
+      case LineKind.added:
+      case LineKind.deleted:
+        return stripDiffLineSign(c.line.text);
+      default:
+        return c.line.text;
+    }
+  }
+
+  Widget _loadingRow(AppTokens t) {
+    return Row(
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          decoration: BoxDecoration(
+            color: t.textFaint.withValues(alpha: 0.5),
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          'loading pinned context',
+          style: TextStyle(
+            color: t.textFaint,
+            fontSize: 11,
+            letterSpacing: 0.4,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _body(AppTokens t, DiffPinnedContextModel c) {
+    final future = _futureDestinations(c);
+    final accent = _toneColor(t, _toneFor(c, widget.past));
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final Widget content = switch (_page) {
+          0 => ManifoldPane(
+              context: c,
+              tokens: t,
+              onOpenRelatedPath: widget.onOpenRelatedPath,
+              onRhymeTap: widget.onRhymeTap,
+            ),
+          _ => SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _overviewPage(t, c, accent, constraints.maxWidth),
+                  const SizedBox(height: 12),
+                  _evidencePage(t, c, future, accent, constraints.maxWidth),
+                ],
+              ),
+            ),
+        };
+        return Align(
+          alignment: Alignment.topLeft,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 170),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) {
+              final lastPage = _lastPage ?? _page;
+              final forward = _page >= lastPage;
+              final offset = Tween<Offset>(
+                begin: Offset(forward ? 0.03 : -0.03, 0),
+                end: Offset.zero,
+              ).animate(animation);
+              return FadeTransition(
+                opacity: animation,
+                child: SlideTransition(
+                  position: offset,
+                  child: child,
+                ),
+              );
+            },
+            child: KeyedSubtree(
+              key: ValueKey('pinned-page-$_page'),
+              child: content,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _setPage(int nextPage) {
+    final clamped = nextPage.clamp(0, 1);
+    if (clamped == _page) {
+      return;
+    }
+    setState(() {
+      _lastPage = _page;
+      _page = clamped;
+    });
+  }
+
+  Widget _pageSwitch(AppTokens t) {
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: t.surface0.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _pageChip(t, page: 0, label: 'Manifold'),
+          const SizedBox(width: 2),
+          _pageChip(t, page: 1, label: 'Signals'),
+        ],
+      ),
+    );
+  }
+
+  Widget _pageChip(
+    AppTokens t, {
+    required int page,
+    required String label,
+  }) {
+    final active = _page == page;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _setPage(page),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: active
+                ? t.accentBright.withValues(alpha: 0.24)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: active
+                  ? t.accentBright.withValues(alpha: 0.4)
+                  : Colors.transparent,
+            ),
+            boxShadow: active
+                ? [
+                    BoxShadow(
+                      color: t.accentBright.withValues(alpha: 0.12),
+                      blurRadius: 8,
+                      spreadRadius: 0,
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active
+                  ? t.accentBright.withValues(alpha: 0.98)
+                  : t.textFaint.withValues(alpha: 0.8),
+              fontSize: 10.1,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _overviewPage(
+    AppTokens t,
+    DiffPinnedContextModel c,
+    Color accent,
+    double width,
+  ) {
+    final compact = width < 760;
+    if (c.rhymePreviews.isEmpty) {
+      return Column(
+        key: const ValueKey('context-page-solo'),
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _mapHeroPane(
+            t,
+            c,
+            accent,
+            compact: compact,
+          ),
+        ],
+      );
+    }
+    return Column(
+      key: const ValueKey('context-page-echoes'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _mapHeroPane(t, c, accent, compact: compact),
+        const SizedBox(height: 8),
+        _echoTimelinePane(
+          t,
+          accent,
+          c.rhymePreviews,
+          compact: compact,
+          title: 'Echoes',
+        ),
+      ],
+    );
+  }
+
+  Widget _evidencePage(
+    AppTokens t,
+    DiffPinnedContextModel c,
+    List<(String, String)> future,
+    Color accent,
+    double width,
+  ) {
+    final stories = _presentStories(c);
+    final dense = width < 760;
+    final maxLinked =
+        dense ? (stories.length >= 2 ? 2 : 3) : (stories.length >= 2 ? 3 : 4);
+    final linked = future.take(maxLinked).toList();
+    final remainingLinked = math.max(0, future.length - linked.length);
+    final hasStories = stories.isNotEmpty;
+    final hasLinked = linked.isNotEmpty;
+    return Column(
+      key: ValueKey('signals-page-${hasStories ? 1 : 0}-${hasLinked ? 1 : 0}'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (hasStories) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 10, 4),
+            child: _microLabel(t, 'Technical Ledger'),
+          ),
+          ...stories.map(
+            (s) => Padding(
+              padding:
+                  EdgeInsets.fromLTRB(14, dense ? 3 : 4, 10, dense ? 3 : 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: dense ? 74 : 80,
+                    child: Text(
+                      s.$1.toUpperCase(),
+                      style: TextStyle(
+                        color: accent.withValues(alpha: 0.7),
+                        fontSize: 8.5,
+                        fontWeight: FontWeight.w700,
+                        fontFamily: 'monospace',
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      s.$2,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: t.textMuted, fontSize: 10.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ] else if (!hasLinked)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 10, 0),
+            child: Text(
+              'No secondary cues detected.',
+              style: TextStyle(color: t.textFaint, fontSize: 10.5),
+            ),
+          ),
+        if (hasLinked) ...[
+          if (hasStories) const SizedBox(height: 10),
+          _moduleShell(
+            t,
+            accent: accent,
+            padding:
+                EdgeInsets.fromLTRB(14, dense ? 8 : 10, 10, dense ? 10 : 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _moduleTitleRow(
+                  t,
+                  'Linked Paths',
+                  accent: accent,
+                  badge: remainingLinked > 0 ? '+$remainingLinked more' : null,
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final destination in linked)
+                      _linkedPathChip(
+                        t,
+                        destination.$1,
+                        destination.$2,
+                        accent,
+                        compact: dense,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _mapHeroPane(
+    AppTokens t,
+    DiffPinnedContextModel c,
+    Color accent, {
+    required bool compact,
+  }) {
+    final concept = _conceptLabel(c) ?? 'Local seam';
+    return SizedBox(
+      width: double.infinity,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 10, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CustomPaint(
+                    painter: _WellDotPainter(
+                      colour: accent,
+                      fill: (1.0 - ((c.wellDistance ?? 1.0) / 1.4))
+                          .clamp(0.0, 1.0)
+                          .toDouble(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    concept.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: t.textStrong.withValues(alpha: 0.9),
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                _signalMeterRow(t, c, accent, width: compact ? 122 : 140),
+              ],
+            ),
+            SizedBox(height: compact ? 12 : 14),
+            _historyRibbon(t, accent),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _historyRibbon(
+    AppTokens t,
+    Color accent,
+  ) {
+    final past = widget.past;
+    final owner = (past?.nearbyAuthors.isNotEmpty ?? false)
+        ? past!.nearbyAuthors.first.name
+        : 'shared ownership';
+    final secondary = past?.lastTouchLabel != null
+        ? _compactLastTouch(past!.lastTouchLabel!)
+        : owner;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: 100,
+          height: 24,
+          child: CustomPaint(
+            painter: _PinnedHistorySeismographPainter(
+              samples: past?.lineHeatSamples ?? const [],
+              color: accent,
+              faint: t.textFaint,
+              chrome: t.chromeBorder,
+            ),
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                past == null ? 'History warming up' : _tempoTagline(past),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 10.5,
+                  height: 1.1,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                secondary.toUpperCase(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: t.textFaint.withValues(alpha: 0.74),
+                  fontSize: 9.0,
+                  fontFamily: 'monospace',
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _echoTimelinePane(
+    AppTokens t,
+    Color accent,
+    List<DiffPinnedRhymePreview> echoes, {
+    required bool compact,
+    required String title,
+  }) {
+    final visibleEchoes = echoes.take(3).toList();
+    return _moduleShell(
+      t,
+      accent: accent,
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _moduleTitleRow(
+            t,
+            title,
+            badge: echoes.isEmpty ? null : '${echoes.length} TOTAL',
+            accent: accent,
+            onBadgeTap: echoes.isEmpty
+                ? null
+                : () => widget.onRhymeTap(echoes.first.displayIndex),
+          ),
+          const SizedBox(height: 10),
+          if (visibleEchoes.isEmpty)
+            Text('No echoes in this diff.',
+                style: TextStyle(color: t.textFaint, fontSize: 10.0))
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < visibleEchoes.length; i++) ...[
+                  Expanded(
+                    child: _echoTimelineNode(
+                      t,
+                      visibleEchoes[i],
+                      accent,
+                      prominent: i == 0,
+                    ),
+                  ),
+                  if (i != visibleEchoes.length - 1) const SizedBox(width: 8),
+                ],
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _echoTimelineNode(
+    AppTokens t,
+    DiffPinnedRhymePreview preview,
+    Color accent, {
+    required bool prominent,
+  }) {
+    final title = preview.lineNumber == null
+        ? _diffDisplayName(preview.filePath)
+        : '${_diffDisplayName(preview.filePath)}:${preview.lineNumber}';
+    return InkWell(
+      borderRadius: BorderRadius.circular(4),
+      onTap: () => widget.onRhymeTap(preview.displayIndex),
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: t.surface0.withValues(alpha: prominent ? 0.22 : 0.12),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color: accent.withValues(alpha: prominent ? 0.14 : 0.08),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: t.textStrong.withValues(alpha: prominent ? 0.96 : 0.8),
+                fontSize: 9.5,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              preview.text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 9.0,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _signalMeterRow(AppTokens t, DiffPinnedContextModel c, Color accent,
+      {double? width}) {
+    final history = _historyStrength(widget.past);
+    final novelty = _noveltyStrength(c);
+    final reach = _reachStrength(c);
+    final row = Row(
+      children: [
+        _signalMeter(t, 'T', history, accent),
+        const SizedBox(width: 8),
+        _signalMeter(t, 'N', novelty, accent),
+        const SizedBox(width: 8),
+        _signalMeter(t, 'R', reach, accent),
+      ],
+    );
+    return width == null ? row : SizedBox(width: width, child: row);
+  }
+
+  Widget _signalMeter(
+    AppTokens t,
+    String label,
+    double value,
+    Color accent,
+  ) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: t.textFaint.withValues(alpha: 0.75),
+              fontSize: 8.0,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Container(
+            height: 3,
+            decoration: BoxDecoration(
+              color: t.surface0.withValues(alpha: 0.28),
+              borderRadius: BorderRadius.circular(2),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FractionallySizedBox(
+                widthFactor: value.clamp(0.0, 1.0),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.4 + 0.45 * value),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double _historyStrength(_PinnedPastContext? past) {
+    final label = past?.tempoLabel ?? '';
+    switch (label) {
+      case 'hot owner lane':
+        return 0.95;
+      case 'active seam':
+        return 0.86;
+      case 'stable owner lane':
+        return 0.54;
+      case 'shared long-lived seam':
+        return 0.48;
+      case 'shared lane':
+        return 0.38;
+      default:
+        return 0.18;
+    }
+  }
+
+  double _noveltyStrength(DiffPinnedContextModel c) {
+    if (c.witnesses
+        .any((w) => _normalizedSignal(w).contains('high-frequency'))) {
+      return 0.92;
+    }
+    if (c.witnesses.any((w) => _normalizedSignal(w).contains('residual'))) {
+      return 0.78;
+    }
+    if (c.integrityReasons.any((r) => _normalizedSignal(r).contains('novel'))) {
+      return 0.72;
+    }
+    return c.witnesses.isEmpty ? 0.22 : 0.5;
+  }
+
+  double _reachStrength(DiffPinnedContextModel c) {
+    final raw = c.transportEdges.length * 0.34 + c.relatedFiles.length * 0.12;
+    return raw.clamp(0.0, 1.0).toDouble();
+  }
+
+  Widget _microLabel(AppTokens t, String text) {
+    return Text(
+      text.toUpperCase(),
+      style: TextStyle(
+        color: t.textFaint.withValues(alpha: 0.85),
+        fontSize: 9.0,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.6,
+      ),
+    );
+  }
+
+  Widget _moduleTitleRow(
+    AppTokens t,
+    String label, {
+    String? badge,
+    Color? accent,
+    VoidCallback? onBadgeTap,
+    String? badgeTooltip,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(child: _microLabel(t, label)),
+        if (badge != null && badge.trim().isNotEmpty)
+          _moduleBadge(
+            t,
+            badge,
+            accent: accent,
+            onTap: onBadgeTap,
+            tooltip: badgeTooltip,
+          ),
+      ],
+    );
+  }
+
+  Widget _moduleBadge(
+    AppTokens t,
+    String text, {
+    Color? accent,
+    VoidCallback? onTap,
+    String? tooltip,
+  }) {
+    final badgeColor = accent ?? t.textFaint;
+    final child = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: badgeColor.withValues(
+          alpha: onTap != null ? 0.14 : (accent == null ? 0.06 : 0.09),
+        ),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: badgeColor.withValues(alpha: onTap != null ? 0.2 : 0.12),
+        ),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: badgeColor.withValues(alpha: onTap != null ? 0.94 : 0.82),
+          fontSize: 9.2,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.3,
+        ),
+      ),
+    );
+    if (onTap == null) {
+      return tooltip == null ? child : Tooltip(message: tooltip, child: child);
+    }
+    final wrapped = Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(4),
+        onTap: onTap,
+        child: child,
+      ),
+    );
+    return tooltip == null
+        ? wrapped
+        : Tooltip(message: tooltip, child: wrapped);
+  }
+
+  Widget _linkedPathChip(AppTokens t, String path, String reason, Color accent,
+      {bool compact = false}) {
+    final basename = _diffDisplayName(path);
+    final child = Container(
+      constraints: BoxConstraints(
+        minWidth: compact ? 92 : 96,
+        maxWidth: compact ? 164 : 180,
+      ),
+      padding: EdgeInsets.fromLTRB(8, compact ? 5 : 6, 8, compact ? 5 : 6),
+      decoration: BoxDecoration(
+        color: t.surface0.withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: accent.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            reason.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: t.textFaint.withValues(alpha: 0.82),
+              fontSize: compact ? 8.1 : 8.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            basename,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: compact ? 9.8 : 10.2,
+              fontFamily: 'monospace',
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+    if (widget.onOpenRelatedPath == null) {
+      return child;
+    }
+    return Tooltip(
+      message: 'Open related file ${_diffDisplayName(path)}',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(4),
+          onTap: () => widget.onOpenRelatedPath?.call(path),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  String _tempoTagline(_PinnedPastContext past) {
+    switch (past.tempoLabel) {
+      case 'hot owner lane':
+        return 'Recent movement with one strong owner nearby.';
+      case 'active seam':
+        return 'Recent movement from multiple hands nearby.';
+      case 'stable owner lane':
+        return 'Long-lived lane with one dominant owner.';
+      case 'shared long-lived seam':
+        return 'Shared seam that has accumulated over time.';
+      case 'shared lane':
+        return 'Shared lane with no single dominant owner.';
+      default:
+        return 'History is still resolving around this line.';
+    }
+  }
+
+  String _compactLastTouch(String label) {
+    final parts = label.split('/').map((part) => part.trim()).toList();
+    if (parts.length >= 2) {
+      return '${parts[0]} / ${parts[1]}';
+    }
+    return label;
+  }
+
+  Widget _quickActionRow(
+    AppTokens t,
+    DiffPinnedContextModel c,
+    List<(String, String)> future,
+  ) {
+    final nextPath = future.isEmpty ? null : future.first.$1;
+    final firstEcho =
+        c.rhymePreviews.isEmpty ? null : c.rhymePreviews.first.displayIndex;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        if (nextPath != null && widget.onOpenRelatedPath != null)
+          _quickActionChip(
+            t,
+            icon: Icons.north_east,
+            label: 'inspect ${_diffDisplayName(nextPath)}',
+            tooltip: 'Open the most relevant related file',
+            onTap: () => widget.onOpenRelatedPath?.call(nextPath),
+          ),
+        if (firstEcho != null)
+          _quickActionChip(
+            t,
+            icon: Icons.alt_route,
+            label: 'jump echo',
+            tooltip: 'Jump to the first matching echo in this diff',
+            onTap: () => widget.onRhymeTap(firstEcho),
+          ),
+        _quickActionChip(
+          t,
+          icon: _copiedLine ? Icons.check : Icons.content_copy_outlined,
+          label: _copiedLine ? 'copied' : 'copy line',
+          tooltip: 'Copy the pinned line text (C)',
+          onTap: () => _copyPinnedLine(c),
+        ),
+      ],
+    );
+  }
+
+  Widget _quickActionChip(
+    AppTokens t, {
+    required IconData icon,
+    required String label,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    final child = Container(
+      padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
+      decoration: BoxDecoration(
+        color: t.surface0.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: t.textFaint.withValues(alpha: 0.9)),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 9.9,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  Widget _toneBadge(AppTokens t, _PinnedPanelTone tone) {
+    final color = _toneColor(t, tone);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(7, 4, 7, 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.14)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.86),
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            _toneLabel(tone),
+            style: TextStyle(
+              color: color.withValues(alpha: 0.88),
+              fontSize: 9.4,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.16,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _moduleShell(
+    AppTokens t, {
+    required Widget child,
+    Color? accent,
+    EdgeInsetsGeometry padding = const EdgeInsets.fromLTRB(14, 14, 10, 14),
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: padding,
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(
+            color: (accent ?? t.chromeBorder).withValues(alpha: 0.12),
+            width: 1,
+          ),
+        ),
+      ),
+      child: child,
+    );
+  }
+
+  _PinnedPanelTone _toneFor(
+    DiffPinnedContextModel c,
+    _PinnedPastContext? past,
+  ) {
+    final pastLabel = past?.tempoLabel ?? '';
+    if (c.integrityReasons.isNotEmpty) {
+      final integrity = c.integrityReasons.first.toLowerCase();
+      if (integrity.contains('unstable') ||
+          integrity.contains('tension') ||
+          integrity.contains('contested')) {
+        return _PinnedPanelTone.contested;
+      }
+    }
+    if (pastLabel.contains('hot') || pastLabel.contains('active')) {
+      return _PinnedPanelTone.hot;
+    }
+    if (c.witnesses.any((w) => _normalizedSignal(w).contains('residual'))) {
+      return _PinnedPanelTone.novel;
+    }
+    if (c.transportEdges.isNotEmpty || c.relatedFiles.length >= 3) {
+      return _PinnedPanelTone.spreading;
+    }
+    return _PinnedPanelTone.stable;
+  }
+
+  Color _toneColor(AppTokens t, _PinnedPanelTone tone) {
+    switch (tone) {
+      case _PinnedPanelTone.hot:
+        return const Color(0xFFE2A23B);
+      case _PinnedPanelTone.novel:
+        return t.accentBright;
+      case _PinnedPanelTone.contested:
+        return const Color(0xFFDD6B6B);
+      case _PinnedPanelTone.spreading:
+        return const Color(0xFF72C29A);
+      case _PinnedPanelTone.stable:
+        return t.textMuted;
+    }
+  }
+
+  String _toneLabel(_PinnedPanelTone tone) {
+    switch (tone) {
+      case _PinnedPanelTone.hot:
+        return 'Hot';
+      case _PinnedPanelTone.novel:
+        return 'Novel';
+      case _PinnedPanelTone.contested:
+        return 'Contested';
+      case _PinnedPanelTone.spreading:
+        return 'Spreading';
+      case _PinnedPanelTone.stable:
+        return 'Stable';
+    }
+  }
+
+  String _summarySentence(
+    DiffPinnedContextModel c,
+    _PinnedPastContext? past,
+  ) {
+    final concept = _conceptLabel(c);
+    final owner = past != null && past.nearbyAuthors.isNotEmpty
+        ? past.nearbyAuthors.first.name
+        : null;
+    final echoes = c.rhymePreviews.length;
+    final future = _futureDestinations(c);
+    final nextPath =
+        future.isNotEmpty ? _diffDisplayName(future.first.$1) : null;
+    final nextReason = future.isNotEmpty ? future.first.$2 : null;
+    final fragments = <String>[];
+    if (concept != null) {
+      fragments.add('Lives in $concept');
+    } else {
+      fragments.add('Sits in a local seam');
+    }
+    if (owner != null) {
+      fragments.add('worked mostly by $owner nearby');
+    }
+    if (echoes > 0) {
+      fragments.add(
+          'echoes in $echoes ${echoes == 1 ? 'other spot' : 'other spots'}');
+    }
+    if (nextPath != null) {
+      final detail = nextReason == null ? '' : ' (${nextReason.toLowerCase()})';
+      fragments.add('inspect $nextPath next$detail');
+    }
+    return '${fragments.join(', ')}.';
+  }
+
+  String? _conceptLabel(DiffPinnedContextModel c) {
+    if (c.wellName != null && c.wellName!.trim().isNotEmpty) {
+      final tightness = _wellTightnessLabel(c.wellDistance);
+      final concept = _friendlySignalLabel(c.wellName!);
+      return tightness == null ? concept : '$concept ($tightness)';
+    }
+    if (c.dominantAxis != null && c.dominantAxis!.trim().isNotEmpty) {
+      return _axisStory(c.dominantAxis!);
+    }
+    return null;
+  }
+
+  String? _wellTightnessLabel(double? distance) {
+    if (distance == null) return null;
+    if (distance <= 0.35) return 'tight fit';
+    if (distance <= 0.7) return 'close fit';
+    return 'loose fit';
+  }
+
+  List<(String, String)> _presentStories(DiffPinnedContextModel c) {
+    final stories = <(String, String)>[];
+    if (c.witnesses.isNotEmpty) {
+      final translated = _translateWitness(c.witnesses.first);
+      if (translated.isNotEmpty) {
+        stories.add(('Why this matters', translated));
+      }
+    }
+    if (c.integrityReasons.isNotEmpty) {
+      stories
+          .add(('Confidence', _translateIntegrity(c.integrityReasons.first)));
+    }
+    if (c.witnesses.length > 1) {
+      final translated = _translateWitness(c.witnesses[1]);
+      if (translated.isNotEmpty) {
+        stories.add(('Secondary signal', translated));
+      }
+    }
+    if (stories.isEmpty && c.relatedFiles.isNotEmpty) {
+      stories.add((
+        'Neighbourhood',
+        'This line sits close to ${_diffDisplayName(c.relatedFiles.first.path)} in the current codebase field.',
+      ));
+    }
+    return stories.take(3).toList();
+  }
+
+  List<(String, String)> _futureDestinations(DiffPinnedContextModel c) {
+    final currentPath = c.line.filePath ?? widget.context?.line.filePath ?? '';
+    final destinations = <(String, String)>[];
+    final seen = <String>{};
+    for (final edge in c.transportEdges) {
+      final candidate =
+          edge.targetPath == currentPath ? edge.sourcePath : edge.targetPath;
+      if (candidate.isEmpty ||
+          candidate == currentPath ||
+          !seen.add(candidate)) {
+        continue;
+      }
+      final lane = edge.laneLabel?.trim();
+      final reason = lane == null || lane.isEmpty
+          ? 'Propagation lane'
+          : 'Propagation lane: ${_friendlySignalLabel(lane)}';
+      destinations.add((candidate, reason));
+    }
+    for (final related in c.relatedFiles) {
+      if (!seen.add(related.path)) continue;
+      destinations.add((related.path, _relatedReason(related, currentPath)));
+    }
+    return destinations;
+  }
+
+  String _translateWitness(String raw) {
+    final normalized = _normalizedSignal(raw);
+    if (normalized.contains('multiscale') && normalized.contains('support')) {
+      return 'Nearby support · ${_friendlySignalLabel(raw)}';
+    }
+    if (normalized.contains('high-frequency') &&
+        normalized.contains('residual')) {
+      return 'Localized move · ${_friendlySignalLabel(raw)}';
+    }
+    if (normalized.contains('residual')) {
+      return 'Surprising move · ${_friendlySignalLabel(raw)}';
+    }
+    if (normalized.contains('support')) {
+      return 'Nearby support · ${_friendlySignalLabel(raw)}';
+    }
+    return _friendlySignalLabel(raw);
+  }
+
+  String _translateIntegrity(String raw) {
+    final normalized = _normalizedSignal(raw);
+    if (normalized.contains('stable')) {
+      return 'Stable structure';
+    }
+    if (normalized.contains('contested') || normalized.contains('tension')) {
+      return 'Conflicting signals';
+    }
+    if (normalized.contains('novel')) {
+      return 'Novel shape';
+    }
+    return _friendlySignalLabel(raw);
+  }
+
+  String _relatedReason(DiffPinnedRelatedFile related, String currentPath) {
+    if (_looksLikeTestPair(currentPath, related.path)) {
+      return 'Test mirror';
+    }
+    if (related.semantic && related.coupled) {
+      return 'Semantic + history sibling';
+    }
+    if (related.coupled) {
+      return 'Recent co-change';
+    }
+    if (related.semantic) {
+      return 'Semantic sibling';
+    }
+    return 'Related structure';
+  }
+
+  bool _looksLikeTestPair(String a, String b) {
+    final left = a.replaceAll('\\', '/').toLowerCase();
+    final right = b.replaceAll('\\', '/').toLowerCase();
+    final leftStem =
+        left.replaceAll('_test.dart', '.dart').replaceAll('/test/', '/lib/');
+    final rightStem =
+        right.replaceAll('_test.dart', '.dart').replaceAll('/test/', '/lib/');
+    return leftStem == rightStem ||
+        (left.contains('/test/') &&
+            right.contains('/lib/') &&
+            leftStem == right) ||
+        (right.contains('/test/') &&
+            left.contains('/lib/') &&
+            rightStem == left);
+  }
+
+  String _axisStory(String raw) {
+    final normalized = _normalizedSignal(raw);
+    if (normalized.contains('history')) {
+      return 'history trail';
+    }
+    if (normalized.contains('test')) {
+      return 'test mirror lane';
+    }
+    if (normalized.contains('topology') || normalized.contains('structure')) {
+      return 'structural lane';
+    }
+    if (normalized.contains('semantic')) {
+      return 'semantic neighbourhood';
+    }
+    return _friendlySignalLabel(raw);
+  }
+
+  String _friendlySignalLabel(String raw) {
+    final prepared = raw
+        .replaceAllMapped(
+          RegExp(r'([a-z0-9])([A-Z])'),
+          (match) => '${match.group(1)} ${match.group(2)}',
+        )
+        .replaceAll('_', ' ')
+        .replaceAll('-', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return prepared.isEmpty
+        ? raw
+        : prepared[0].toUpperCase() + prepared.substring(1);
+  }
+
+  String _normalizedSignal(String raw) =>
+      raw.toLowerCase().replaceAll('_', '-');
+}
+
+class _PinnedHistorySeismographPainter extends CustomPainter {
+  final List<double> samples;
+  final Color color;
+  final Color faint;
+  final Color chrome;
+
+  const _PinnedHistorySeismographPainter({
+    required this.samples,
+    required this.color,
+    required this.faint,
+    required this.chrome,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (samples.isEmpty) {
+      // Draw a subtle skeleton state: 3 tiny faint bars
+      for (var i = 0; i < 3; i++) {
+        final h = 4.0 + (i == 1 ? 3.0 : 0.0);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(8.0 + i * 8.0, size.height - h - 6, 4, h),
+            const Radius.circular(1),
+          ),
+          Paint()..color = faint.withValues(alpha: 0.12),
+        );
+      }
+      return;
+    }
+
+    final track = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      const Radius.circular(10),
+    );
+    canvas.drawRRect(
+      track,
+      Paint()..color = chrome.withValues(alpha: 0.08),
+    );
+
+    final count = samples.length;
+    final gap = count <= 12 ? 2.0 : 1.0;
+    final barWidth =
+        ((size.width - gap * (count - 1)) / count).clamp(1.0, 10.0).toDouble();
+    final baseY = size.height - 8;
+    final points = <Offset>[];
+
+    for (var i = 0; i < count; i++) {
+      final sample = samples[i].clamp(0.0, 1.0);
+      final barHeight = 8 + sample * (size.height - 18);
+      final x = i * (barWidth + gap);
+      final rect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(x, baseY - barHeight, barWidth, barHeight),
+        const Radius.circular(2),
+      );
+      canvas.drawRRect(
+        rect,
+        Paint()..color = color.withValues(alpha: 0.16 + 0.62 * sample),
+      );
+      points.add(Offset(x + barWidth / 2, baseY - barHeight));
+    }
+
+    final centreIndex = count ~/ 2;
+    final centreX = centreIndex * (barWidth + gap) + barWidth / 2;
+    canvas.drawLine(
+      Offset(centreX, 2),
+      Offset(centreX, size.height - 2),
+      Paint()
+        ..color = color.withValues(alpha: 0.18)
+        ..strokeWidth = 1,
+    );
+
+    if (points.length >= 2) {
+      final path = Path()..moveTo(points.first.dx, points.first.dy);
+      for (var i = 0; i < points.length - 1; i++) {
+        final current = points[i];
+        final next = points[i + 1];
+        final midX = (current.dx + next.dx) / 2;
+        final midY = (current.dy + next.dy) / 2;
+        path.quadraticBezierTo(current.dx, current.dy, midX, midY);
+      }
+      path.lineTo(points.last.dx, points.last.dy);
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.15
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..color = color.withValues(alpha: 0.4);
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PinnedHistorySeismographPainter old) =>
+      !listEquals(old.samples, samples) ||
+      old.color != color ||
+      old.faint != faint ||
+      old.chrome != chrome;
+}
+
+enum _PinnedPanelTone { stable, hot, novel, contested, spreading }
+
 /// Ghost-text inlay at the right edge of a hunk header row.
 /// Always shows `+adds −dels · N/total`; when the scroll engram has
 /// predicted a landing on this hunk, the text steps up in weight and
@@ -4401,6 +6749,8 @@ class _HunkInlineHint extends StatelessWidget {
   final int deletions;
   final int ordinal;
   final int total;
+  final String? tag;
+  final String? hint;
   final AppTokens tokens;
   final bool approaching;
   final double approachStrength;
@@ -4410,6 +6760,8 @@ class _HunkInlineHint extends StatelessWidget {
     required this.deletions,
     required this.ordinal,
     required this.total,
+    this.tag,
+    this.hint,
     required this.tokens,
     required this.approaching,
     required this.approachStrength,
@@ -4458,6 +6810,26 @@ class _HunkInlineHint extends StatelessWidget {
           Text('landing', style: textStyle),
           const SizedBox(width: 8),
         ],
+        if (tag != null && tag!.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: t.surface1.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: t.chromeBorder.withValues(alpha: 0.22),
+              ),
+            ),
+            child: Text(
+              hint ?? tag!,
+              style: textStyle.copyWith(
+                fontSize: 9.5,
+                color: baseColor.withValues(alpha: baseAlpha * 0.9),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
         if (additions > 0) ...[
           Text('+$additions', style: textStyle.copyWith(color: addColor)),
           const SizedBox(width: 4),
@@ -4475,6 +6847,7 @@ class _HunkInlineHint extends StatelessWidget {
 class _StickyHunkHeader extends StatelessWidget {
   final AppTokens tokens;
   final List<_HunkHeader> hunks;
+
   /// Parallel to [hunks]: each entry is the display-row index (into the
   /// list the scroll controller actually views) of the corresponding
   /// hunk's header line. Required because `hunks[i].lineIndex` is an

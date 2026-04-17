@@ -49,6 +49,9 @@ import 'git.dart' show extractDiffTouchedPaths;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart';
 
+final Map<String, Future<DiffProbe>> _inflightProbeBuilds = {};
+final Map<String, Future<Set<String>>> _inflightPickaxeLookups = {};
+
 /// A weighted source distribution for diffusion. Built from the diff
 /// plus any structural enrichment axes (M, Ab).
 class DiffProbe {
@@ -96,6 +99,7 @@ class ProbeStats {
   final int abMatches;
   final int mSymbols;
   final double coherence;
+
   /// Number of files surfaced via the symbol-overlap axis — new/untracked
   /// files whose identifier overlap with change-set peers was the signal.
   /// Tracked so SSE can calibrate symbol-axis utility per regime.
@@ -191,10 +195,10 @@ class LogosGitProbeBuilder {
     final utilities = sseStore == null
         ? const <LogosAxis, double>{}
         : await sseStore!.projectedUtilitiesFor(provisionalRegime);
-    final learnedMScale =
-        (utilities[LogosAxis.m] ?? 1.0).clamp(_sseUtilityScaleMin, _sseUtilityScaleMax);
-    final learnedAbScale =
-        (utilities[LogosAxis.ab] ?? 1.0).clamp(_sseUtilityScaleMin, _sseUtilityScaleMax);
+    final learnedMScale = (utilities[LogosAxis.m] ?? 1.0)
+        .clamp(_sseUtilityScaleMin, _sseUtilityScaleMax);
+    final learnedAbScale = (utilities[LogosAxis.ab] ?? 1.0)
+        .clamp(_sseUtilityScaleMin, _sseUtilityScaleMax);
     final effectiveMWeight = mWeight * learnedMScale;
     final effectiveAbWeight = abWeight * learnedAbScale;
 
@@ -338,7 +342,6 @@ class LogosGitProbeBuilder {
     return (1.0 + sizeScale + cohShift).clamp(0.3, 3.0);
   }
 
-
   Set<String> _extractTouchedPaths(String diffText) =>
       extractDiffTouchedPaths(diffText);
 
@@ -375,12 +378,40 @@ class LogosGitProbeBuilder {
   /// 2–3 letter tokens, so this only kicks in for 4+).
   bool _isReservedOrBoring(String id) {
     const blocklist = {
-      'return', 'function', 'const', 'class', 'import', 'export',
-      'public', 'private', 'static', 'final', 'void', 'null',
-      'true', 'false', 'this', 'super', 'async', 'await',
-      'string', 'number', 'boolean', 'object', 'value', 'result',
-      'error', 'length', 'push', 'pop', 'forEach', 'map',
-      'filter', 'reduce', 'toString', 'valueOf',
+      'return',
+      'function',
+      'const',
+      'class',
+      'import',
+      'export',
+      'public',
+      'private',
+      'static',
+      'final',
+      'void',
+      'null',
+      'true',
+      'false',
+      'this',
+      'super',
+      'async',
+      'await',
+      'string',
+      'number',
+      'boolean',
+      'object',
+      'value',
+      'result',
+      'error',
+      'length',
+      'push',
+      'pop',
+      'forEach',
+      'map',
+      'filter',
+      'reduce',
+      'toString',
+      'valueOf',
     };
     return blocklist.contains(id);
   }
@@ -407,6 +438,22 @@ class LogosGitProbeBuilder {
   }
 
   Future<Set<String>> _pickaxeSingle({
+    required String repoPath,
+    required String symbol,
+  }) async {
+    final cacheKey = '$repoPath|$symbol';
+    final inflight = _inflightPickaxeLookups[cacheKey];
+    if (inflight != null) return inflight;
+    final future = _pickaxeSingleImpl(
+      repoPath: repoPath,
+      symbol: symbol,
+    );
+    _inflightPickaxeLookups[cacheKey] = future;
+    future.whenComplete(() => _inflightPickaxeLookups.remove(cacheKey));
+    return future;
+  }
+
+  Future<Set<String>> _pickaxeSingleImpl({
     required String repoPath,
     required String symbol,
   }) async {
@@ -548,13 +595,20 @@ Future<DiffProbe> buildDiffProbe({
   required String diffText,
   required LogosGit engine,
 }) {
-  return LogosGitProbeBuilder(
+  final key =
+      '$repoPath|${diffText.hashCode}|${engine.stats.totalCommits}|${engine.nodePaths.length}|${engine.symbolEdges.length}';
+  final inflight = _inflightProbeBuilds[key];
+  if (inflight != null) return inflight;
+  final future = LogosGitProbeBuilder(
     sseStore: LogosSseStore(repoPath),
   ).build(
     repoPath: repoPath,
     diffText: diffText,
     engine: engine,
   );
+  _inflightProbeBuilds[key] = future;
+  future.whenComplete(() => _inflightProbeBuilds.remove(key));
+  return future;
 }
 
 /// Diffuse from a [DiffProbe]. Unlike the engine's `diffuse(Set<String>)`,
@@ -587,6 +641,8 @@ List<RelevanceScore> diffuseFromProbe({
     axisLabelByPath: axisLabels,
     t: t,
     excludePaths: probe.primaryPaths,
+    includeSupportAttribution: false,
+    includeSummaryDiagnostics: false,
   );
   if (evidence != null && evidence.ranked.isNotEmpty) {
     return [
@@ -675,14 +731,15 @@ class LogosGitProbeTestAccess {
     required double baseMWeight,
     required double learnedUtility,
   }) {
-    return baseMWeight * learnedUtility.clamp(_sseUtilityScaleMin, _sseUtilityScaleMax);
+    return baseMWeight *
+        learnedUtility.clamp(_sseUtilityScaleMin, _sseUtilityScaleMax);
   }
 
   static double effectiveAbWeightFor({
     required double baseAbWeight,
     required double learnedUtility,
   }) {
-    return baseAbWeight * learnedUtility.clamp(_sseUtilityScaleMin, _sseUtilityScaleMax);
+    return baseAbWeight *
+        learnedUtility.clamp(_sseUtilityScaleMin, _sseUtilityScaleMax);
   }
 }
-

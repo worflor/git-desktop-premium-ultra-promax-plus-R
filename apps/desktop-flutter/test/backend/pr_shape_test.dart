@@ -199,10 +199,120 @@ void main() {
       expect(shape.stability, greaterThanOrEqualTo(0));
       expect(shape.stability, lessThanOrEqualTo(1));
       expect(shape.metabolismRisk, greaterThan(0));
+      expect(shape.sourceAlignment, isNotNull);
+      expect(shape.sourceAlignment!, greaterThanOrEqualTo(0.0));
+      expect(shape.sourceAlignment!, lessThanOrEqualTo(1.0));
+      expect(shape.sourceSurprise, isNotNull);
+      expect(shape.sourceSurprise!, greaterThanOrEqualTo(0.0));
+      expect(shape.sourceSurprise!, lessThanOrEqualTo(1.0));
+      expect(shape.lowFrequencySupport, greaterThanOrEqualTo(0.0));
+      expect(shape.highFrequencySurprise, greaterThanOrEqualTo(0.0));
+      expect(shape.higherOrderLift, greaterThanOrEqualTo(0.0));
+      expect(shape.reducibilityGap, greaterThanOrEqualTo(0.0));
+      expect(shape.flow.gradientMass, greaterThanOrEqualTo(0.0));
+      expect(shape.flow.gradientMass, lessThanOrEqualTo(1.0));
+      expect(shape.flow.curlMass, greaterThanOrEqualTo(0.0));
+      expect(shape.flow.curlMass, lessThanOrEqualTo(1.0));
+      expect(shape.flow.harmonicMass, greaterThanOrEqualTo(0.0));
+      expect(shape.flow.harmonicMass, lessThanOrEqualTo(1.0));
+      expect(shape.flow.structuralStress, greaterThanOrEqualTo(0.0));
+      expect(shape.flow.structuralStress, lessThanOrEqualTo(1.0));
+      if (shape.witnessKindFractions.isNotEmpty) {
+        final witnessMass = shape.witnessKindFractions.values
+            .fold<double>(0.0, (a, b) => a + b);
+        expect(witnessMass, closeTo(1.0, 1e-6));
+      }
       // Single-axis collapse → axisMassFractions has exactly one entry
       // summing to 1.
       expect(shape.axisMassFractions.values.fold<double>(0, (a, b) => a + b),
           closeTo(1.0, 1e-9));
+    });
+
+    test('transport summary survives into PR shape', () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'lib/generated/foo.g.dart': 12,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'lib/generated/foo.g.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 0.1,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/foo.dart': {'lib/generated/foo.g.dart': 0.2},
+            'lib/generated/foo.g.dart': {'lib/foo.dart': 0.2},
+          },
+          headHash: 'pr-shape-transport',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final shape = PrShapeComputer.compute(
+        engine: engine,
+        prFiles: const [
+          PrFile(path: 'lib/foo.dart', additions: 8, deletions: 1),
+        ],
+      );
+      expect(shape, isNotNull);
+      expect(shape!.transportPull, greaterThan(0.0));
+      expect(shape.transportLanes, contains('source->generated'));
+      expect(shape.transportFrontier, contains('lib/generated/foo.g.dart'));
+      expect(shape.transportEdges, isNotEmpty);
+      final edge = shape.transportEdges.firstWhere(
+        (e) => e.targetPath == 'lib/generated/foo.g.dart',
+      );
+      expect(edge.sourcePath, 'lib/foo.dart');
+      expect(edge.laneLabel, 'source->generated');
+    });
+
+    test('preserves witness residual summary for predicted test companions', () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'test/foo_test.dart': 4,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'test/foo_test.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 1.0,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/foo.dart': {
+              'test/foo_test.dart': 0.08,
+            },
+            'test/foo_test.dart': {
+              'lib/foo.dart': 0.08,
+            },
+          },
+          headHash: 'shape-witness-residual',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final shape = PrShapeComputer.compute(
+        engine: engine,
+        prFiles: const [
+          PrFile(path: 'lib/foo.dart', additions: 8, deletions: 1),
+        ],
+      );
+      expect(shape, isNotNull);
+      expect(shape!.witnessResidualPredictedMass, greaterThan(0.0));
+      expect(shape.witnessResidualMass, greaterThan(0.0));
+      expect(shape.witnessResidualCoverage, lessThan(1.0));
+      expect(shape.witnessResidualFrontier, contains('test/foo_test.dart'));
+      expect(
+        shape.witnessResidualKinds,
+        anyOf(contains('source->test'), contains('source-test')),
+      );
     });
 
     test('field alignment is bound [0, 1] when field is provided', () {
@@ -220,6 +330,9 @@ void main() {
       expect(shape!.fieldAlignment, isNotNull);
       expect(shape.fieldAlignment!, greaterThanOrEqualTo(0.0));
       expect(shape.fieldAlignment!, lessThanOrEqualTo(1.0));
+      expect(shape.fieldSurprise, isNotNull);
+      expect(shape.fieldSurprise!, greaterThanOrEqualTo(0.0));
+      expect(shape.fieldSurprise!, lessThanOrEqualTo(1.0));
       expect(shape.orientation, isNotNull);
     });
 

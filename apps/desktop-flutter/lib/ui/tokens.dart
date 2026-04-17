@@ -236,7 +236,6 @@ class AppTokens {
   final Color surface0;
   final Color surface1;
   final Color surface2;
-  final Color surfaceAccent;
   final Color textStrong;
   final Color textNormal;
   final Color textMuted;
@@ -246,13 +245,10 @@ class AppTokens {
   final Color stateDeleted;
   final Color stateConflicted;
   final Color stateStaged;
-  final Color stateUnstaged;
-  final Color focusRing;
   final Color accentBright;
   final Color eventStartTone;
   final Color chromeBorder;
   final Color chromeAccent;
-  final Color danger;
   final Color dangerOverlay;
   final Color panelOverlay;
   final Color panelOverlayStrong;
@@ -264,11 +260,9 @@ class AppTokens {
   final Color btnText;
   final Color inputBg;
   final Color inputBorder;
-  final Color inputFocusBorder;
   final Color sliderTrack;
   final Color sliderThumb;
   final Color sliderThumbBorder;
-  final Color secondaryBtnBg;
   final Color itemHoverBg;
   final Color itemActiveBg;
   final Color itemActiveBorder;
@@ -276,14 +270,15 @@ class AppTokens {
   final Color secondaryBtnHoverBg;
   final Color rowBg;
   final Color scrollbarThumb;
-  final Color scrollbarHover;
-  final Color selectionBg;
   final Color shadowElev;
   final Color hyperChromatic1;
   final Color hyperChromatic2;
   final Color hyperCore;
   final Color hypercubePositive;
   final Color hypercubeNegative;
+  final Color? _focusRingOverride;
+  final Color? _dangerOverride;
+  final Color? _inputFocusBorderOverride;
   final Color? themeAmbient;
   final double themeSparkOpacity;
   final Duration themeSparkSpeed;
@@ -292,10 +287,18 @@ class AppTokens {
   final List<Color> appGradientColors;
   final List<AlignmentGeometry> appGradientAlignments;
 
+  // These tokens share semantic defaults unless a theme opts out.
+  Color get focusRing => _focusRingOverride ?? accentBright;
+  Color get danger => _dangerOverride ?? stateDeleted;
+  Color get inputFocusBorder => _inputFocusBorderOverride ?? focusRing;
+
   AppTokens._({
     required this.id,
     required this.isDark,
     required List<int> colors,
+    int? focusRingOverride,
+    int? dangerOverride,
+    int? inputFocusBorderOverride,
     required this.themeAmbient,
     required this.themeSparkOpacity,
     required this.themeSparkSpeed,
@@ -303,61 +306,61 @@ class AppTokens {
     required this.backdropSaturate,
     required this.appGradientColors,
     required this.appGradientAlignments,
-  })  : bg0 = Color(colors[0]),
+  })  : assert(colors.length == 47),
+        bg0 = Color(colors[0]),
         bg1 = Color(colors[1]),
         bg2 = Color(colors[2]),
         bg3 = Color(colors[3]),
         surface0 = Color(colors[4]),
         surface1 = Color(colors[5]),
         surface2 = Color(colors[6]),
-        surfaceAccent = Color(colors[7]),
-        textStrong = Color(colors[8]),
-        textNormal = Color(colors[9]),
-        textMuted = Color(colors[10]),
-        stateAdded = Color(colors[11]),
-        stateModified = Color(colors[12]),
-        stateDeleted = Color(colors[13]),
-        stateConflicted = Color(colors[14]),
-        stateStaged = Color(colors[15]),
-        stateUnstaged = Color(colors[16]),
-        focusRing = Color(colors[17]),
-        accentBright = Color(colors[18]),
-        chromeBorder = Color(colors[19]),
-        chromeAccent = Color(colors[20]),
-        danger = Color(colors[21]),
-        panelOverlay = Color(colors[22]),
-        panelOverlayStrong = Color(colors[23]),
-        inputOverlay = Color(colors[24]),
-        diffOverlay = Color(colors[25]),
-        btnBg = Color(colors[26]),
-        btnHoverBg = Color(colors[27]),
-        btnBorder = Color(colors[28]),
-        btnText = Color(colors[29]),
-        inputBg = Color(colors[30]),
-        inputBorder = Color(colors[31]),
-        inputFocusBorder = Color(colors[32]),
-        itemHoverBg = Color(colors[33]),
-        itemActiveBg = Color(colors[34]),
-        itemActiveBorder = Color(colors[35]),
-        secondaryBtnBorder = Color(colors[36]),
-        secondaryBtnHoverBg = Color(colors[37]),
-        rowBg = Color(colors[38]),
-        scrollbarThumb = Color(colors[39]),
-        selectionBg = Color(colors[40]),
-        shadowElev = Color(colors[41]),
-        hyperChromatic1 = Color(colors[42]),
-        hyperChromatic2 = Color(colors[43]),
-        hyperCore = Color(colors[44]),
-        hypercubePositive = Color(colors[45]),
-        hypercubeNegative = Color(colors[46]),
-        textFaint = Color(colors[47]),
-        scrollbarHover = Color(colors[48]),
-        secondaryBtnBg = Color(colors[49]),
-        sliderTrack = Color(colors[50]),
-        sliderThumb = Color(colors[51]),
-        sliderThumbBorder = Color(colors[52]),
-        dangerOverlay = Color(colors[53]),
-        eventStartTone = Color(colors[54]);
+        textStrong = Color(colors[7]),
+        textNormal = Color(colors[8]),
+        textMuted = Color(colors[9]),
+        stateAdded = Color(colors[10]),
+        stateModified = Color(colors[11]),
+        stateDeleted = Color(colors[12]),
+        stateConflicted = Color(colors[13]),
+        stateStaged = Color(colors[14]),
+        accentBright = Color(colors[15]),
+        chromeBorder = Color(colors[16]),
+        chromeAccent = Color(colors[17]),
+        panelOverlay = Color(colors[18]),
+        panelOverlayStrong = Color(colors[19]),
+        inputOverlay = Color(colors[20]),
+        diffOverlay = Color(colors[21]),
+        btnBg = Color(colors[22]),
+        btnHoverBg = Color(colors[23]),
+        btnBorder = Color(colors[24]),
+        btnText = Color(colors[25]),
+        inputBg = Color(colors[26]),
+        inputBorder = Color(colors[27]),
+        itemHoverBg = Color(colors[28]),
+        itemActiveBg = Color(colors[29]),
+        itemActiveBorder = Color(colors[30]),
+        secondaryBtnBorder = Color(colors[31]),
+        secondaryBtnHoverBg = Color(colors[32]),
+        rowBg = Color(colors[33]),
+        scrollbarThumb = Color(colors[34]),
+        shadowElev = Color(colors[35]),
+        hyperChromatic1 = Color(colors[36]),
+        hyperChromatic2 = Color(colors[37]),
+        hyperCore = Color(colors[38]),
+        hypercubePositive = Color(colors[39]),
+        hypercubeNegative = Color(colors[40]),
+        textFaint = Color(colors[41]),
+        sliderTrack = Color(colors[42]),
+        sliderThumb = Color(colors[43]),
+        sliderThumbBorder = Color(colors[44]),
+        dangerOverlay = Color(colors[45]),
+        eventStartTone = Color(colors[46]),
+        _focusRingOverride = focusRingOverride == null
+            ? null
+            : Color(focusRingOverride),
+        _dangerOverride = dangerOverride == null ? null : Color(dangerOverride),
+        _inputFocusBorderOverride = inputFocusBorderOverride == null
+            ? null
+            : Color(inputFocusBorderOverride);
 
   static AppTokens fromId(AppThemeId id) =>
       _tokens[id] ?? _tokens[defaultThemeId]!;
@@ -375,7 +378,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0x85FFFFFF,
       0xC7FFFFFF,
       0xEBFFFFFF,
-      0x47EBD7B4,
       0xFF322B24,
       0xFF4D453B,
       0xFF8E8579,
@@ -384,14 +386,11 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFCA5A56,
       0xFFD87C50,
       0xFF41B98D,
-      0xFF7E95A1,
-      0xFFD4AF37, // 17 focusRing — was pale cream (invisible on cream bg);
                   //                  gold matches the theme accent and is
                   //                  legible as a focus indicator.
       0xFFD4AF37,
       0xFFEBDEC9,
       0xFFEBD7B4,
-      0xFFCA5A56,
       0xD1FFFEFC,
       0xE6FFFDF8,
       0x26FFFFFF,
@@ -402,7 +401,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF4D453B,
       0x4CFFFFFF,
       0x1AD4AF37,
-      0xFFEBDFCC,
       0x1AF3E5AB,
       0x2EF3E5AB,
       0x40D4AF37,
@@ -410,15 +408,14 @@ final _tokens = <AppThemeId, AppTokens>{
       0xCCFFFFFF,
       0x40FFFFFF,
       0x1AD4AF37,
-      0x4CEBD7B4,
       0x14184B0B,
       0xFFD4AF37,
-      0xFFEDC9AF, // 43 hyperChromatic2 — rose-gold (was textNormal brown,
+      0xFFEDC9AF, // 37 hyperChromatic2 — rose-gold (was textNormal brown,
                   //                       which made the cybercube animation
                   //                       just two gold/brown colors with no
                   //                       chromatic split — divine palette
                   //                       wants warm-pink + gold + halo white)
-      0xFFE89B4F, // 44 hyperCore — sunset amber-gold. Halo wants RADIANT,
+      0xFFE89B4F, // 38 hyperCore — sunset amber-gold. Halo wants RADIANT,
                   //                  not aged — pearl-white blended into the
                   //                  cream bg, deep brass read as ancient,
                   //                  this is the saturated warm "burning
@@ -430,8 +427,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF4D453B,
       0xFFD4AF37,
       0xFFB6AD9F,
-      0x33D4AF37,
-      0x80FFFFFF,
       0x33EBD7B4,
       0xFFEBDFCC,
       0xFFFFFFFF,
@@ -465,7 +460,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xD90A0A0C,
       0xEB0F0F12,
       0xFA141418,
-      0x2600F0FF,
       0xFFFFFFFF,
       0xFFCCCCCC,
       0xFF777777,
@@ -474,12 +468,9 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFFF3333,
       0xFFFF7700,
       0xFF00FF88,
-      0xFF666666,
-      0xFF00F0FF,
       0xFF00F0FF,
       0xFF28282D,
       0xFF00F0FF,
-      0xFFFF3333,
       0x99000000,
       0xCC000000,
       0x0D00F0FF,
@@ -490,7 +481,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF00F0FF,
       0xFF050505,
       0xFF28282C,
-      0xFF00F0FF,
       0x0800F0FF,
       0x1400F0FF,
       0xFF00F0FF,
@@ -498,10 +488,9 @@ final _tokens = <AppThemeId, AppTokens>{
       0xCC1E1E23,
       0x660A0A0C,
       0xFF28282C,
-      0x3300F0FF,
       0xCC000000,
       0xFF00F0FF,
-      0xFFFF00CC, // 43 hyperChromatic2 — magenta (was green-cyan, which made
+      0xFFFF00CC, // 37 hyperChromatic2 — magenta (was green-cyan, which made
                   //                       hyper1+hyper2 both blue-greens with
                   //                       no split — true cyan/magenta CRT
                   //                       aberration is what nightwalker's
@@ -510,8 +499,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF00FFAA,
       0xFF00F0FF,
       0xFF444444,
-      0xFF333336,
-      0x00000000,
       0xFF1A1A1C,
       0xFF00F0FF,
       0xFF050505,
@@ -537,7 +524,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xE6F8FBFC,
       0xEDF2F7F9,
       0xF2E8F0F4,
-      0x336C9DB1,
       0xFF23323D,
       0xFF40515F,
       0xFF70818F,
@@ -546,12 +532,9 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFC25752,
       0xFFD47A31,
       0xFF37A987,
-      0xFF6F8294,
-      0xFF6CA3BB,
       0xFF4B95AF,
       0xFF8199AA,
       0xFF5D98B2,
-      0xFFC25752,
       0xC7F4F9FB,
       0xD6ECF4F8,
       0xD6EFF6F9,
@@ -562,7 +545,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF40515F,
       0x0F8199AA,
       0x408199AA,
-      0x805D98B2,
       0x1A8199AA,
       0x1F5D98B2,
       0x4C5D98B2,
@@ -570,7 +552,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0x1F8199AA,
       0x0F8199AA,
       0x408199AA,
-      0x4C5D98B2,
       0x3337495A,
       0xFF4B95AF,
       0xFF40515F,
@@ -578,14 +559,14 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF40515F,
       0xFF4B95AF,
       0xFF9AA7B2,
-      0x738199AA,
-      0x00000000,
       0x338199AA,
       0xFF4B95AF,
       0x00000000,
       0xDBFBE7E6,
       0xFF7E98A7,
     ],
+    focusRingOverride: 0xFF6CA3BB,
+    inputFocusBorderOverride: 0x805D98B2,
     themeAmbient: const Color(0xFF5D98B2),
     themeSparkOpacity: 0.05,
     themeSparkSpeed: const Duration(seconds: 36),
@@ -613,7 +594,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xE6FAF6ED,
       0xF0F5EEE2,
       0xF2E9DCC4,
-      0x33C48F40,
       0xFF2F2519,
       0xFF49372A,
       0xFF755F4C,
@@ -622,12 +602,9 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFBE463F,
       0xFFD24F22,
       0xFF2F9F71,
-      0xFF6D7F95,
-      0xFF4E7F5E,
       0xFF0F8F74,
       0xFFA58A6E,
       0xFFCD7F2D,
-      0xFFBE463F,
       0xC7FCF7EF,
       0xD6FBF4EA,
       0xD6F8EFE3,
@@ -638,7 +615,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF49372A,
       0x14A58A6E,
       0x40A58A6E,
-      0x80CD7F2D,
       0x1AA58A6E,
       0x1FCD7F2D,
       0x4CCD7F2D,
@@ -646,24 +622,23 @@ final _tokens = <AppThemeId, AppTokens>{
       0x1FA58A6E,
       0x0FA58A6E,
       0x40A58A6E,
-      0x4CCD7F2D,
       0x3D5C4524,
       0xFFCD7F2D,
       0xFF4E7F5E,
-      0xFFFFCC66, // 44 hyperCore — warm honey (was dark brown text, which
+      0xFFFFCC66, // 38 hyperCore — warm honey (was dark brown text, which
                   //                  made the hypercube core invisible at
                   //                  small sizes and identical to chrome)
-      0xFF0F8F5E, // 45 hypercubePositive — rich deep emerald
-      0xFF4E7F5E, // 46 hypercubeNegative — muted sage (previous positive)
+      0xFF0F8F5E, // 39 hypercubePositive — rich deep emerald
+      0xFF4E7F5E, // 40 hypercubeNegative — muted sage (previous positive)
       0xFF9B835D,
-      0x73A58A6E,
-      0x00000000,
       0x33A58A6E,
       0xFF0F8F74,
       0x00000000,
       0xD6FFE6E0,
       0xFF9B835D,
     ],
+    focusRingOverride: 0xFF4E7F5E,
+    inputFocusBorderOverride: 0x80CD7F2D,
     themeAmbient: const Color(0xFF8D7F4A),
     themeSparkOpacity: 0.09,
     themeSparkSpeed: const Duration(seconds: 34),
@@ -696,63 +671,55 @@ final _tokens = <AppThemeId, AppTokens>{
       0x99FFFAF2, // 4  surface0      — high translucency: iridescent bleeds through
       0xC4FBF5EC, // 5  surface1
       0xE0F8F0E2, // 6  surface2
-      0x33B8A6E8, // 7  surfaceAccent — lavender wash
-      0xFF1F1A2A, // 8  textStrong    — deep ink with a violet hint
-      0xFF3A3447, // 9  textNormal
-      0xFF6F6878, // 10 textMuted
-      0xFF3FA98E, // 11 stateAdded    — sea green
-      0xFFC58A4E, // 12 stateModified — amber
-      0xFFC44A6F, // 13 stateDeleted  — rose
-      0xFFD8643F, // 14 stateConflicted — coral
-      0xFF4FB39A, // 15 stateStaged
-      0xFF8E8898, // 16 stateUnstaged
-      0xFFB89BE6, // 17 focusRing     — opal lavender
-      0xFFB89BE6, // 18 accentBright
-      0xFFD8CCDC, // 19 chromeBorder  — pale violet hairline
-      0xFFB89BE6, // 20 chromeAccent
-      0xFFC44A6F, // 21 danger
-      0xB8FAF4EC, // 22 panelOverlay
-      0xD4F7EFE3, // 23 panelOverlayStrong
-      0x80FFFAF2, // 24 inputOverlay
-      0xCCFAF4EC, // 25 diffOverlay
-      0xFFF7EEDF, // 26 btnBg
-      0xFFEFE3D0, // 27 btnHoverBg
-      0x4DD8CCDC, // 28 btnBorder — translucent (was 0xFFD8CCDC fully opaque,
+      0xFF1F1A2A, // 7  textStrong    — deep ink with a violet hint
+      0xFF3A3447, // 8  textNormal
+      0xFF6F6878, // 9 textMuted
+      0xFF3FA98E, // 10 stateAdded    — sea green
+      0xFFC58A4E, // 11 stateModified — amber
+      0xFFC44A6F, // 12 stateDeleted  — rose
+      0xFFD8643F, // 13 stateConflicted — coral
+      0xFF4FB39A, // 14 stateStaged
+      0xFFB89BE6, // 15 accentBright
+      0xFFD8CCDC, // 16 chromeBorder  — pale violet hairline
+      0xFFB89BE6, // 17 chromeAccent
+      0xB8FAF4EC, // 18 panelOverlay
+      0xD4F7EFE3, // 19 panelOverlayStrong
+      0x80FFFAF2, // 20 inputOverlay
+      0xCCFAF4EC, // 21 diffOverlay
+      0xFFF7EEDF, // 22 btnBg
+      0xFFEFE3D0, // 23 btnHoverBg
+      0x4DD8CCDC, // 24 btnBorder — translucent (was 0xFFD8CCDC fully opaque,
                   //                  which stamped a hard violet box around
                   //                  every button and fought Nacre's soft
                   //                  pearl character; ~30% lets buttons
                   //                  whisper instead of shout)
-      0xFF3A3447, // 29 btnText
-      0xFFFCF6EC, // 30 inputBg
-      0x66D8CCDC, // 31 inputBorder — translucent for the same reason; inputs
+      0xFF3A3447, // 25 btnText
+      0xFFFCF6EC, // 26 inputBg
+      0x66D8CCDC, // 27 inputBorder — translucent for the same reason; inputs
                   //                    should melt into the surface, not box
                   //                    out of it. ~40% reads as defined-but-soft.
-      0xFFB89BE6, // 32 inputFocusBorder
-      0x22B89BE6, // 33 itemHoverBg
-      0x40B89BE6, // 34 itemActiveBg
-      0xFFB89BE6, // 35 itemActiveBorder
-      0x4DD8CCDC, // 36 secondaryBtnBorder — same translucent treatment as
+      0x22B89BE6, // 28 itemHoverBg
+      0x40B89BE6, // 29 itemActiveBg
+      0xFFB89BE6, // 30 itemActiveBorder
+      0x4DD8CCDC, // 31 secondaryBtnBorder — same translucent treatment as
                   //                          btnBorder; ghost buttons in the
                   //                          X-Ray header used the full-alpha
                   //                          version and looked stamped-on
-      0x14B89BE6, // 37 secondaryBtnHoverBg
-      0xFFFAF4EC, // 38 rowBg
-      0xFFC8BCD2, // 39 scrollbarThumb
-      0x44B89BE6, // 40 selectionBg
-      0x33B89BE6, // 41 shadowElev    — soft opal glow
-      0xFF8FD3FF, // 42 hyperChromatic1 — cyan shimmer
-      0xFFFF9CD9, // 43 hyperChromatic2 — pink shimmer
-      0xFFB89BE6, // 44 hyperCore       — lavender (logo glow)
-      0xFF3FA98E, // 45 hypercubePositive
-      0xFFC44A6F, // 46 hypercubeNegative
-      0xFFA59EB0, // 47 textFaint
-      0xFFAA9DBC, // 48 scrollbarHover
-      0xFFFCF6EC, // 49 secondaryBtnBg
-      0xFFEFE3D0, // 50 sliderTrack
-      0xFFFFFFFF, // 51 sliderThumb
-      0xFFB89BE6, // 52 sliderThumbBorder
-      0xCCFCEFE9, // 53 dangerOverlay
-      0xFFB89BE6, // 54 eventStartTone
+      0x14B89BE6, // 32 secondaryBtnHoverBg
+      0xFFFAF4EC, // 33 rowBg
+      0xFFC8BCD2, // 34 scrollbarThumb
+      0x33B89BE6, // 35 shadowElev    — soft opal glow
+      0xFF8FD3FF, // 36 hyperChromatic1 — cyan shimmer
+      0xFFFF9CD9, // 37 hyperChromatic2 — pink shimmer
+      0xFFB89BE6, // 38 hyperCore       — lavender (logo glow)
+      0xFF3FA98E, // 39 hypercubePositive
+      0xFFC44A6F, // 40 hypercubeNegative
+      0xFFA59EB0, // 41 textFaint
+      0xFFEFE3D0, // 42 sliderTrack
+      0xFFFFFFFF, // 43 sliderThumb
+      0xFFB89BE6, // 44 sliderThumbBorder
+      0xCCFCEFE9, // 45 dangerOverlay
+      0xFFB89BE6, // 46 eventStartTone
     ],
     themeAmbient: const Color(0xFFE8D9F2),
     themeSparkOpacity: 0.25,
@@ -783,54 +750,46 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF120A0E, // 4  surface0      — solid; iridescent texture paints on top
       0xFF180E14, // 5  surface1      — solid
       0xFF1E1218, // 6  surface2      — solid
-      0x33FF6EB4, // 7  surfaceAccent — rose blush wash (~20%)
-      0xFFF0E8FF, // 8  textStrong    — near-white, lavender-tinted
-      0xFFD4C8F0, // 9  textNormal    — lavender-white
-      0xFF9080B8, // 10 textMuted     — medium lavender
-      0xFF5ECC9B, // 11 stateAdded    — mint
-      0xFFE8A84E, // 12 stateModified — amber
-      0xFFFF6B8A, // 13 stateDeleted  — rose-red
-      0xFFFF7A5C, // 14 stateConflicted — coral
-      0xFF7ADEB8, // 15 stateStaged
-      0xFF7A6A9B, // 16 stateUnstaged — dim lavender
-      0xFFFF6EB4, // 17 focusRing     — hot pink
-      0xFFFF6EB4, // 18 accentBright  — hot pink (identity colour)
-      0xFFB09AE0, // 19 chromeBorder  — lavender hairline
-      0xFFFF6EB4, // 20 chromeAccent  — hot pink
-      0xFFFF6B8A, // 21 danger        — rose-red
-      0xFF120A0E, // 22 panelOverlay        — solid
-      0xFF180E14, // 23 panelOverlayStrong  — solid
-      0xFF100E1A, // 24 inputOverlay        — solid
-      0xFF180E14, // 25 diffOverlay         — solid
-      0xFF1A1014, // 26 btnBg
-      0xFF221418, // 27 btnHoverBg
-      0x44FF6EB4, // 28 btnBorder     — translucent pink; whisper treatment
-      0xFFD4C8F0, // 29 btnText
-      0xFF160E12, // 30 inputBg
-      0x55B09AE0, // 31 inputBorder   — translucent lavender; melts into surface
-      0xFFFF6EB4, // 32 inputFocusBorder — hot pink
-      0x22FF6EB4, // 33 itemHoverBg   — 13% pink
-      0x40FF6EB4, // 34 itemActiveBg  — 25% pink
-      0xFFFF6EB4, // 35 itemActiveBorder
-      0x44B09AE0, // 36 secondaryBtnBorder — translucent lavender
-      0x1AFF6EB4, // 37 secondaryBtnHoverBg
-      0xFF120B0F, // 38 rowBg
-      0xFF6A5490, // 39 scrollbarThumb — dim lavender
-      0x44FF6EB4, // 40 selectionBg
-      0x55FF6EB4, // 41 shadowElev    — pink glow shadow
-      0xFFC4A8F5, // 42 hyperChromatic1 — soft lavender shimmer
-      0xFFFF6EB4, // 43 hyperChromatic2 — hot pink shimmer
-      0xFFFF6EB4, // 44 hyperCore       — pink logo glow
-      0xFF4DE0F0, // 45 hypercubePositive — cyan (full CMYK with the pink)
-      0xFFF5E050, // 46 hypercubeNegative — yellow
-      0xFF5A4E7A, // 47 textFaint      — deep lavender (ghosted)
-      0xFF8A70BA, // 48 scrollbarHover
-      0xFF150C10, // 49 secondaryBtnBg
-      0xFF221418, // 50 sliderTrack
-      0xFFFFFFFF, // 51 sliderThumb
-      0xFFFF6EB4, // 52 sliderThumbBorder — pink
-      0xCC1A0812, // 53 dangerOverlay  — dark rose tint
-      0xFFFF6EB4, // 54 eventStartTone
+      0xFFF0E8FF, // 7  textStrong    — near-white, lavender-tinted
+      0xFFD4C8F0, // 8  textNormal    — lavender-white
+      0xFF9080B8, // 9 textMuted     — medium lavender
+      0xFF5ECC9B, // 10 stateAdded    — mint
+      0xFFE8A84E, // 11 stateModified — amber
+      0xFFFF6B8A, // 12 stateDeleted  — rose-red
+      0xFFFF7A5C, // 13 stateConflicted — coral
+      0xFF7ADEB8, // 14 stateStaged
+      0xFFFF6EB4, // 15 accentBright  — hot pink (identity colour)
+      0xFFB09AE0, // 16 chromeBorder  — lavender hairline
+      0xFFFF6EB4, // 17 chromeAccent  — hot pink
+      0xFF120A0E, // 18 panelOverlay        — solid
+      0xFF180E14, // 19 panelOverlayStrong  — solid
+      0xFF100E1A, // 20 inputOverlay        — solid
+      0xFF180E14, // 21 diffOverlay         — solid
+      0xFF1A1014, // 22 btnBg
+      0xFF221418, // 23 btnHoverBg
+      0x44FF6EB4, // 24 btnBorder     — translucent pink; whisper treatment
+      0xFFD4C8F0, // 25 btnText
+      0xFF160E12, // 26 inputBg
+      0x55B09AE0, // 27 inputBorder   — translucent lavender; melts into surface
+      0x22FF6EB4, // 28 itemHoverBg   — 13% pink
+      0x40FF6EB4, // 29 itemActiveBg  — 25% pink
+      0xFFFF6EB4, // 30 itemActiveBorder
+      0x44B09AE0, // 31 secondaryBtnBorder — translucent lavender
+      0x1AFF6EB4, // 32 secondaryBtnHoverBg
+      0xFF120B0F, // 33 rowBg
+      0xFF6A5490, // 34 scrollbarThumb — dim lavender
+      0x55FF6EB4, // 35 shadowElev    — pink glow shadow
+      0xFFC4A8F5, // 36 hyperChromatic1 — soft lavender shimmer
+      0xFFFF6EB4, // 37 hyperChromatic2 — hot pink shimmer
+      0xFFFF6EB4, // 38 hyperCore       — pink logo glow
+      0xFF4DE0F0, // 39 hypercubePositive — cyan (full CMYK with the pink)
+      0xFFF5E050, // 40 hypercubeNegative — yellow
+      0xFF5A4E7A, // 41 textFaint      — deep lavender (ghosted)
+      0xFF221418, // 42 sliderTrack
+      0xFFFFFFFF, // 43 sliderThumb
+      0xFFFF6EB4, // 44 sliderThumbBorder — pink
+      0xCC1A0812, // 45 dangerOverlay  — dark rose tint
+      0xFFFF6EB4, // 46 eventStartTone
     ],
     themeAmbient: const Color(0xFFFF6EB4),
     themeSparkOpacity: 0.30,
@@ -859,7 +818,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xBD0B0F16,
       0xC710161F,
       0xD1151D29,
-      0x1F7693FF,
       0xFFF1F4FA,
       0xFFCFD7E7,
       0xFF8C98AD,
@@ -868,12 +826,9 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFE97571,
       0xFFF29A62,
       0xFF65CFA7,
-      0xFF91A0BD,
-      0xFF90A7FF,
       0xFF9DB2FF,
       0xFF51617E,
       0xFF7899FF,
-      0xFFE97571,
       0xB80C1118,
       0xCC0E131C,
       0xDB0A0E15,
@@ -884,7 +839,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFCFD7E7,
       0x0F51617E,
       0x4051617E,
-      0x807899FF,
       0x1A51617E,
       0x1F7899FF,
       0x4C7899FF,
@@ -892,7 +846,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0x1F51617E,
       0x0F51617E,
       0x4051617E,
-      0x4C7899FF,
       0x99080A1C,
       0xFFFF00FF,
       0xFF00FFFF,
@@ -900,14 +853,14 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF00FFFF,
       0xFFFF00FF,
       0xFF5F6B7E,
-      0x7351617E,
-      0x00000000,
       0x3351617E,
       0xFF9DB2FF,
       0x00000000,
       0xDB3B181D,
       0xFF96A6CB,
     ],
+    focusRingOverride: 0xFF90A7FF,
+    inputFocusBorderOverride: 0x807899FF,
     themeAmbient: const Color(0xFF7899FF),
     themeSparkOpacity: 0.12,
     themeSparkSpeed: const Duration(seconds: 28),
@@ -935,7 +888,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xA6030805,
       0xB0060E09,
       0xBA0A140E,
-      0x1F00FF88,
       0xFFF0FFF4,
       0xFFC7D6CC,
       0xFF7A8C81,
@@ -944,12 +896,9 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFFF4A4A,
       0xFFFF9900,
       0xFF00FFAA,
-      0xFF667766,
-      0xFF00FF88,
       0xFF00FFAA,
       0xFF192D23,
       0xFF00FF88,
-      0xFFFF4A4A,
       0x8C020504,
       0xA6030706,
       0x0500FF88,
@@ -960,7 +909,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF00FF88,
       0x0F192D23,
       0x40192D23,
-      0x8000FF88,
       0x0A00FF88,
       0x1400FF88,
       0xFF00FF88,
@@ -968,25 +916,24 @@ final _tokens = <AppThemeId, AppTokens>{
       0x990A190F,
       0x4D050C08,
       0xFF1A3A25,
-      0x3300FF88,
       0xB300120C,
       0xFF00FF88,
       0xFF00E0FF,
-      0xFFFF00CC, // 43 hyperChromatic2 — magenta (was pure white, which
+      0xFFFF00CC, // 37 hyperChromatic2 — magenta (was pure white, which
                   //                       isn't chromatic at all — quanta's
                   //                       cybercube needs cyan + magenta to
                   //                       split into actual aberration)
-      0xFFFFFFFF, // 44 hyperCore — pure white (was duplicate of chromatic1)
+      0xFFFFFFFF, // 38 hyperCore — pure white (was duplicate of chromatic1)
       0xFF00FF88,
       0xFF445249,
-      0xFF224A30,
-      0x66050F0A,
       0x33192D23,
       0xFF00FFAA,
       0x00000000,
       0x1A280505,
       0xFF7EA68A,
     ],
+    focusRingOverride: 0xFF00FF88,
+    inputFocusBorderOverride: 0x8000FF88,
     themeAmbient: const Color(0xFF00FF88),
     themeSparkOpacity: 0.45,
     themeSparkSpeed: const Duration(seconds: 10),
@@ -1014,26 +961,22 @@ final _tokens = <AppThemeId, AppTokens>{
       0x4C0A0306,
       0xA612050A,
       0xD91E0A12,
-      0x40FF0044,
       0xFFFFF5F7,
       0xFFD9B8C0,
       0xFF8C6A72,
       0xFF00FF88,
-      0xFFFFCC44, // 12 stateModified — warm amber (was theme red 0xFFFF0044
+      0xFFFFCC44, // 11 stateModified — warm amber (was theme red 0xFFFF0044
                   //                     which conflicted with deleted's
                   //                     destructive semantics; modified is
                   //                     in-between, deserves a distinct hue)
-      0xFFFF0044, // 13 stateDeleted — theme red (was 0xFF3D2A2E dark mauve,
+      0xFFFF0044, // 12 stateDeleted — theme red (was 0xFF3D2A2E dark mauve,
                   //                    completely invisible on dark bg —
                   //                    "deleted" should be the strong negative
                   //                    color, which IS the redshift signature)
       0xFFFF7700,
       0xFF00FFAA,
-      0xFF665555,
-      0xFFFF0044,
       0xFFFF3366,
       0xFF782832,
-      0xFFFF0044,
       0xFFFF0044,
       0x4C030001,
       0xD9050203,
@@ -1045,7 +988,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFFF0044,
       0x99050203,
       0xFF220B12,
-      0x80FF0044,
       0x0DFF0044,
       0x1AFF0044,
       0x4CFF0044,
@@ -1053,7 +995,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xB214080C,
       0x0F782832,
       0xFF1C0A0F,
-      0x40FF0044,
       0xCC160408,
       0xFFFF0044,
       0xFFFF7700,
@@ -1061,14 +1002,14 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFFF7700,
       0xFFFF0044,
       0xFF433236,
-      0xFF2A0F18,
-      0x800A0406,
       0x33782832,
       0xFFFF3366,
       0x00000000,
       0x4C280508,
       0xFFA67E8A,
     ],
+    focusRingOverride: 0xFFFF0044,
+    inputFocusBorderOverride: 0x80FF0044,
     themeAmbient: const Color(0xFFFF0040),
     themeSparkOpacity: 0.60,
     themeSparkSpeed: const Duration(seconds: 15),
@@ -1100,54 +1041,48 @@ final _tokens = <AppThemeId, AppTokens>{
       0xCCF2EAC6, // 4  surface0     — lifted page
       0xE6F8F1D6, // 5  surface1     — clean page area
       0xFFFCF6E0, // 6  surface2     — cleanest paper highlight
-      0x40FFD300, // 7  surfaceAccent — process-yellow wash
-      0xFF14141A, // 8  textStrong   — process black ink
-      0xFF24242C, // 9  textNormal
-      0xFF5A5040, // 10 textMuted    — old-newsprint muted
-      0xFF6B9F3D, // 11 stateAdded   — pulled CMYK green
-      0xFFB8860B, // 12 stateModified — darkgoldenrod (process yellow on
+      0xFF14141A, // 7  textStrong   — process black ink
+      0xFF24242C, // 8  textNormal
+      0xFF5A5040, // 9 textMuted    — old-newsprint muted
+      0xFF6B9F3D, // 10 stateAdded   — pulled CMYK green
+      0xFFB8860B, // 11 stateModified — darkgoldenrod (process yellow on
                   //                    cream paper would be invisible; this
                   //                    is the "yellow ink baked into newsprint
                   //                    for 50 years" version: same hue family,
                   //                    finally readable on bg0)
-      0xFFE63946, // 13 stateDeleted — comic spot red
-      0xFFFF8C42, // 14 stateConflicted — printed orange
-      0xFF00ACC8, // 15 stateStaged  — process cyan
-      0xFF8A7E68, // 16 stateUnstaged — paper-aged gray
-      0xFFE91E5F, // 17 focusRing    — process magenta (POW!)
-      0xFF00ACC8, // 18 accentBright — process cyan (the cool accent)
-      0xFF14141A, // 19 chromeBorder — INK LINE — every panel border
-      0xFFE91E5F, // 20 chromeAccent — magenta highlight
-      0xFFE63946, // 21 danger
-      0xCCF2EAC6, // 22 panelOverlay
-      0xE6E5D8AC, // 23 panelOverlayStrong
-      0x99FCF6E0, // 24 inputOverlay
-      0xCCF2EAC6, // 25 diffOverlay
-      0xFFF8F1D6, // 26 btnBg        — clean page
-      0xFFFFD300, // 27 btnHoverBg   — process yellow on hover (POW)
-      0xFF14141A, // 28 btnBorder    — INK
-      0xFF14141A, // 29 btnText      — INK
-      0xFFFCF6E0, // 30 inputBg
-      0xFF14141A, // 31 inputBorder
-      0xFFE91E5F, // 32 inputFocusBorder — magenta
-      0x40FFD300, // 33 itemHoverBg  — yellow wash
-      0x66FFD300, // 34 itemActiveBg
-      0xFF14141A, // 35 itemActiveBorder — INK
-      0xFF14141A, // 36 secondaryBtnBorder
-      0x33FFD300, // 37 secondaryBtnHoverBg
-      0xFFF8F1D6, // 38 rowBg
-      0xFF5A5040, // 39 scrollbarThumb
-      0x66FFD300, // 40 selectionBg
-      0x99000000, // 41 shadowElev   — hard ink-shadow drop
-      0xFFE91E5F, // 42 hyperChromatic1 — magenta plate
-      0xFF00ACC8, // 43 hyperChromatic2 — cyan plate
-      0xFF14141A, // 44 hyperCore — process black (K of CMYK). Yellow plate
+      0xFFE63946, // 12 stateDeleted — comic spot red
+      0xFFFF8C42, // 13 stateConflicted — printed orange
+      0xFF00ACC8, // 14 stateStaged  — process cyan
+      0xFF00ACC8, // 15 accentBright — process cyan (the cool accent)
+      0xFF14141A, // 16 chromeBorder — INK LINE — every panel border
+      0xFFE91E5F, // 17 chromeAccent — magenta highlight
+      0xCCF2EAC6, // 18 panelOverlay
+      0xE6E5D8AC, // 19 panelOverlayStrong
+      0x99FCF6E0, // 20 inputOverlay
+      0xCCF2EAC6, // 21 diffOverlay
+      0xFFF8F1D6, // 22 btnBg        — clean page
+      0xFFFFD300, // 23 btnHoverBg   — process yellow on hover (POW)
+      0xFF14141A, // 24 btnBorder    — INK
+      0xFF14141A, // 25 btnText      — INK
+      0xFFFCF6E0, // 26 inputBg
+      0xFF14141A, // 27 inputBorder
+      0x40FFD300, // 28 itemHoverBg  — yellow wash
+      0x66FFD300, // 29 itemActiveBg
+      0xFF14141A, // 30 itemActiveBorder — INK
+      0xFF14141A, // 31 secondaryBtnBorder
+      0x33FFD300, // 32 secondaryBtnHoverBg
+      0xFFF8F1D6, // 33 rowBg
+      0xFF5A5040, // 34 scrollbarThumb
+      0x99000000, // 35 shadowElev   — hard ink-shadow drop
+      0xFFE91E5F, // 36 hyperChromatic1 — magenta plate
+      0xFF00ACC8, // 37 hyperChromatic2 — cyan plate
+      0xFF14141A, // 38 hyperCore — process black (K of CMYK). Yellow plate
                   //                  was invisible on cream paper bg; black
                   //                  ink IS the defining color of the comic
                   //                  aesthetic and matches every chromeBorder
                   //                  in the theme. Cyan/magenta chromatic
                   //                  edges now wrap a true inked silhouette.
-      0xFFC9272E, // 45 hypercubePositive — Marvel newsprint hero red.
+      0xFFC9272E, // 39 hypercubePositive — Marvel newsprint hero red.
                   //                       Eyedropped from the Spider-Man
                   //                       chest on Amazing Fantasy #15
                   //                       and Cap's stripes on Tales of
@@ -1155,22 +1090,21 @@ final _tokens = <AppThemeId, AppTokens>{
                   //                       newsprint, NOT modern-screen
                   //                       saturated — sits on the cream
                   //                       paper bg without screaming.
-      0xFF2A4A98, // 46 hypercubeNegative — Marvel newsprint hero blue.
+      0xFF2A4A98, // 40 hypercubeNegative — Marvel newsprint hero blue.
                   //                       Spider-Man's web-suit blue,
                   //                       Cap's field, Reed Richards'
                   //                       uniform — same plate, same era.
                   //                       Slightly purple-tinted from
                   //                       the magenta bleed printers
                   //                       got on absorbent stock.
-      0xFF8A7E68, // 47 textFaint
-      0xFF8A7E68, // 48 scrollbarHover
-      0xFFF8F1D6, // 49 secondaryBtnBg
-      0xFFD2C18A, // 50 sliderTrack
-      0xFF14141A, // 51 sliderThumb
-      0xFF14141A, // 52 sliderThumbBorder
-      0xCCFCE5E0, // 53 dangerOverlay
-      0xFF00ACC8, // 54 eventStartTone — cyan
+      0xFF8A7E68, // 41 textFaint
+      0xFFD2C18A, // 42 sliderTrack
+      0xFF14141A, // 43 sliderThumb
+      0xFF14141A, // 44 sliderThumbBorder
+      0xCCFCE5E0, // 45 dangerOverlay
+      0xFF00ACC8, // 46 eventStartTone — cyan
     ],
+    focusRingOverride: 0xFFE91E5F,
     themeAmbient: const Color(0xFFF0C040), // yellow ambient
     themeSparkOpacity: 0,
     themeSparkSpeed: const Duration(seconds: 30),
@@ -1201,7 +1135,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF141416,
       0xFF141416,
       0xFF141416,
-      0x1F7693FF,
       0xFFFFFFFF,
       0xFFE6E6EB,
       0xFF9BA0A5,
@@ -1210,17 +1143,14 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFE97571,
       0xFFF29A62,
       0xFF65CFA7,
-      0xFF91A0BD,
-      0xFF90A7FF,
       0xFFFFFFFF,
       0xFFDCDCE1,
       0xFF96D2FF,
-      0xFFFF828C,
-      0x66FFFFFF, // 22 panelOverlay — chalk wash. Was 5% (invisible), then
+      0x66FFFFFF, // 18 panelOverlay — chalk wash. Was 5% (invisible), then
                   //                    20% (still too sheer). 40% lifts the
                   //                    panel without making content fight
                   //                    the workspace bleed-through.
-      0xB3FFFFFF, // 23 panelOverlayStrong — heavy chalk wash for the X-Ray
+      0xB3FFFFFF, // 19 panelOverlayStrong — heavy chalk wash for the X-Ray
                   //                          and other content panels. 70%
                   //                          reads as a distinct surface
                   //                          with a hint of slate behind.
@@ -1232,7 +1162,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFE6E6EB,
       0x00000000,
       0x4CFFFFFF,
-      0xFFFFFFFF,
       0x0DFFFFFF,
       0x1A96D2FF,
       0x6696D2FF,
@@ -1240,26 +1169,26 @@ final _tokens = <AppThemeId, AppTokens>{
       0x0DFFFFFF,
       0x00000000,
       0x33FFFFFF,
-      0x40FFFFFF,
       0x00000000,
       0xFF96D2FF,
-      0xFFFFFFFF, // 42 hyperChromatic1 — white chalk
-      0xFF96D2FF, // 43 hyperChromatic2 — blue chalk (was white — three white
+      0xFFFFFFFF, // 36 hyperChromatic1 — white chalk
+      0xFF96D2FF, // 37 hyperChromatic2 — blue chalk (was white — three white
                   //                       slots gave the cybercube no
                   //                       chromatic separation; chalkboards
                   //                       are about COLORED chalks)
-      0xFFFFFFCC, // 44 hyperCore — yellow chalk (warm cream, distinct from
+      0xFFFFFFCC, // 38 hyperCore — yellow chalk (warm cream, distinct from
                   //                  pure white so the core glows)
       0xFF96D2FF,
       0xFF5F6368,
-      0x66FFFFFF,
-      0x00000000,
       0x26FFFFFF,
       0xFFFFFFFF,
       0xFFFFFFFF,
       0x1AFF7896,
       0xFF96A6CB,
     ],
+    focusRingOverride: 0xFF90A7FF,
+    dangerOverride: 0xFFFF828C,
+    inputFocusBorderOverride: 0xFFFFFFFF,
     themeAmbient: const Color(0xFFF0F5FA),
     themeSparkOpacity: 0.30,
     themeSparkSpeed: const Duration(seconds: 12),
@@ -1279,7 +1208,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF29211C,
       0xFF3F342D,
       0xFF4C4038,
-      0x1F7693FF,
       0xFFFEFEFE,
       0xFFDCD4C8,
       0xFFA4968C,
@@ -1288,12 +1216,9 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFE97571,
       0xFFF29A62,
       0xFF65CFA7,
-      0xFF91A0BD,
-      0xFF90A7FF,
       0xFF70D655,
       0xFF100906,
       0xFF55AF41,
-      0xFFE83C3C,
       0xCC17110E,
       0xE6100906,
       0xE61C1511,
@@ -1304,7 +1229,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFFFFFFFF,
       0xFF1C1511,
       0xFF584C44,
-      0xFF70D655,
       0xFF3F342D,
       0xFF4C4038,
       0xFF70D655,
@@ -1312,7 +1236,6 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF4C4038,
       0xFF1C1511,
       0xFF3D2918,
-      0x6670D655,
       0xCC000000,
       0xFF8B5A2B,
       0xFF70D655,
@@ -1320,14 +1243,15 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF70D655,
       0xFF8B5A2B,
       0xFF7A6E66,
-      0xFF584C44,
-      0xFF29211C,
       0xFF1C1511,
       0xFF55AF41,
       0xFF3D2918,
       0xD95A1414,
       0xFF96A6CB,
     ],
+    focusRingOverride: 0xFF90A7FF,
+    dangerOverride: 0xFFE83C3C,
+    inputFocusBorderOverride: 0xFF70D655,
     themeAmbient: const Color(0xFF55AF41),
     themeSparkOpacity: 0,
     themeSparkSpeed: const Duration(seconds: 10),
@@ -1352,60 +1276,52 @@ final _tokens = <AppThemeId, AppTokens>{
       0xCC020806, // 4  surface0     — translucent dark
       0xE6092113, // 5  surface1     — visibly-lifted surface
       0xFF0C2918, // 6  surface2     — most-lifted surface
-      0x3300FF66, // 7  surfaceAccent — green wash
-      0xFF7CFF99, // 8  textStrong   — bright phosphor — slightly desaturated
+      0xFF7CFF99, // 7  textStrong   — bright phosphor — slightly desaturated
                   //                    so it doesn't burn the eye
-      0xFF55CC77, // 9  textNormal   — phosphor body — readable, restful
-      0xFF3D8855, // 10 textMuted    — dim phosphor
-      0xFF77FF44, // 11 stateAdded   — bright lime
-      0xFFFFB000, // 12 stateModified — amber (the OTHER CRT color)
-      0xFFFF3344, // 13 stateDeleted — alarm red
-      0xFFFF6622, // 14 stateConflicted — orange alert
-      0xFF00DD55, // 15 stateStaged  — phosphor green
-      0xFF005522, // 16 stateUnstaged — dim
-      0xFFFFB000, // 17 focusRing    — amber focus ring
-      0xFFFFB000, // 18 accentBright — amber (secondary CRT phosphor)
-      0xFF005522, // 19 chromeBorder — dim green hairline
-      0xFF00FF66, // 20 chromeAccent — bright green
-      0xFFFF3344, // 21 danger
-      0xCC020806, // 22 panelOverlay
-      0xE6051A0E, // 23 panelOverlayStrong
-      0x99030D08, // 24 inputOverlay
-      0xCC020806, // 25 diffOverlay
-      0xFF03100A, // 26 btnBg
-      0xFF0A2418, // 27 btnHoverBg   — slight phosphor bloom
-      0xFF00853A, // 28 btnBorder    — dim green
-      0xFF00FF66, // 29 btnText      — bright phosphor
-      0xFF030D08, // 30 inputBg
-      0xFF005522, // 31 inputBorder
-      0xFFFFB000, // 32 inputFocusBorder — amber
-      0x2200FF66, // 33 itemHoverBg  — green wash
-      0x4400FF66, // 34 itemActiveBg — stronger
-      0xFF00FF66, // 35 itemActiveBorder
-      0xFF005522, // 36 secondaryBtnBorder
-      0x1100FF66, // 37 secondaryBtnHoverBg
-      0xFF030D08, // 38 rowBg
-      0xFF00853A, // 39 scrollbarThumb
-      0x4400FF66, // 40 selectionBg
-      0xCC00FF66, // 41 shadowElev   — phosphor glow shadow
-      0xFF00FF66, // 42 hyperChromatic1 — phosphor green
-      0xFFFFB000, // 43 hyperChromatic2 — amber
-      0xFF7CFF99, // 44 hyperCore       — light phosphor (logo glow)
-      0xFF77FF44, // 45 hypercubePositive — P1 lime phosphor
+      0xFF55CC77, // 8  textNormal   — phosphor body — readable, restful
+      0xFF3D8855, // 9 textMuted    — dim phosphor
+      0xFF77FF44, // 10 stateAdded   — bright lime
+      0xFFFFB000, // 11 stateModified — amber (the OTHER CRT color)
+      0xFFFF3344, // 12 stateDeleted — alarm red
+      0xFFFF6622, // 13 stateConflicted — orange alert
+      0xFF00DD55, // 14 stateStaged  — phosphor green
+      0xFFFFB000, // 15 accentBright — amber (secondary CRT phosphor)
+      0xFF005522, // 16 chromeBorder — dim green hairline
+      0xFF00FF66, // 17 chromeAccent — bright green
+      0xCC020806, // 18 panelOverlay
+      0xE6051A0E, // 19 panelOverlayStrong
+      0x99030D08, // 20 inputOverlay
+      0xCC020806, // 21 diffOverlay
+      0xFF03100A, // 22 btnBg
+      0xFF0A2418, // 23 btnHoverBg   — slight phosphor bloom
+      0xFF00853A, // 24 btnBorder    — dim green
+      0xFF00FF66, // 25 btnText      — bright phosphor
+      0xFF030D08, // 26 inputBg
+      0xFF005522, // 27 inputBorder
+      0x2200FF66, // 28 itemHoverBg  — green wash
+      0x4400FF66, // 29 itemActiveBg — stronger
+      0xFF00FF66, // 30 itemActiveBorder
+      0xFF005522, // 31 secondaryBtnBorder
+      0x1100FF66, // 32 secondaryBtnHoverBg
+      0xFF030D08, // 33 rowBg
+      0xFF00853A, // 34 scrollbarThumb
+      0xCC00FF66, // 35 shadowElev   — phosphor glow shadow
+      0xFF00FF66, // 36 hyperChromatic1 — phosphor green
+      0xFFFFB000, // 37 hyperChromatic2 — amber
+      0xFF7CFF99, // 38 hyperCore       — light phosphor (logo glow)
+      0xFF77FF44, // 39 hypercubePositive — P1 lime phosphor
                   //                       (primary CRT emission)
-      0xFFFFB000, // 46 hypercubeNegative — P3 amber phosphor
+      0xFFFFB000, // 40 hypercubeNegative — P3 amber phosphor
                   //                       (the other commercial CRT
                   //                       coating; same accent the
                   //                       theme already uses across
                   //                       focus rings + accentBright)
-      0xFF005522, // 47 textFaint
-      0xFF00DD55, // 48 scrollbarHover
-      0xFF03100A, // 49 secondaryBtnBg
-      0xFF0A1814, // 50 sliderTrack
-      0xFF00FF66, // 51 sliderThumb
-      0xFF00853A, // 52 sliderThumbBorder
-      0xCC1A0606, // 53 dangerOverlay
-      0xFFFFB000, // 54 eventStartTone — amber
+      0xFF005522, // 41 textFaint
+      0xFF0A1814, // 42 sliderTrack
+      0xFF00FF66, // 43 sliderThumb
+      0xFF00853A, // 44 sliderThumbBorder
+      0xCC1A0606, // 45 dangerOverlay
+      0xFFFFB000, // 46 eventStartTone — amber
     ],
     themeAmbient: const Color(0xFF00FF66), // phosphor green
     themeSparkOpacity: 0,
@@ -1836,3 +1752,5 @@ extension ClusterColors on AppTokens {
     return base.withValues(alpha: alpha);
   }
 }
+
+

@@ -46,7 +46,7 @@ class LogosGitEvent {
   }
 }
 
-enum LogosGitEventKind { build, cacheHit, failure, diffuse }
+enum LogosGitEventKind { build, cacheHit, failure, diffuse, flow }
 
 class LogosGitDiagnostics {
   LogosGitDiagnostics._();
@@ -101,6 +101,25 @@ class LogosGitDiagnostics {
       kind: LogosGitEventKind.diffuse,
       duration: duration,
       message: 'sources=$sourceCount t=${temperature.toStringAsFixed(2)}',
+    ));
+  }
+
+  void recordFlow({
+    required String repoPath,
+    required String scope,
+    required String identity,
+    required double gradientMass,
+    required double curlMass,
+    required double harmonicMass,
+    required double structuralStress,
+    double? confidence,
+  }) {
+    _push(LogosGitEvent(
+      at: DateTime.now(),
+      repoPath: repoPath,
+      kind: LogosGitEventKind.flow,
+      message:
+          '$scope=$identity g=${gradientMass.toStringAsFixed(2)} c=${curlMass.toStringAsFixed(2)} h=${harmonicMass.toStringAsFixed(2)} stress=${structuralStress.toStringAsFixed(2)}${confidence == null ? '' : ' conf=${confidence.toStringAsFixed(2)}'}',
     ));
   }
 

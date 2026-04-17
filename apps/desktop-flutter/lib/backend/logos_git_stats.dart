@@ -84,6 +84,7 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   final perFileCommitIndices = <String, List<int>>{};
   final perFileCommitClock = <String, List<double>>{};
   final ritualMassByPath = <String, double>{};
+  final hyperedgesByPath = <String, List<LogosCommitHyperedge>>{};
   var totalCommits = 0;
   var semanticCommitMass = 0.0;
 
@@ -119,6 +120,17 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
       paths: paths,
     );
     final step = meaningfulness.weight.clamp(0.0, 1.0);
+    if (step > 0 && paths.length >= 3 && paths.length <= 8) {
+      final ordered = paths.toList()..sort();
+      final edge = LogosCommitHyperedge(
+        paths: ordered,
+        weight: step,
+        summary: b.subject.isEmpty ? null : b.subject,
+      );
+      for (final path in ordered) {
+        (hyperedgesByPath[path] ??= <LogosCommitHyperedge>[]).add(edge);
+      }
+    }
     semanticClock += step;
     semanticCommitMass += step;
     for (final stat in b.numstatLines) {
@@ -191,6 +203,12 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   };
   final semanticTotalCommits =
       semanticCommitMass > 0 ? math.max(1, semanticCommitMass.round()) : 0;
+  final compactedHyperedges = <String, List<LogosCommitHyperedge>>{};
+  hyperedgesByPath.forEach((path, edges) {
+    edges.sort((a, b) => b.weight.compareTo(a.weight));
+    compactedHyperedges[path] =
+        edges.length > 24 ? edges.sublist(0, 24) : List<LogosCommitHyperedge>.from(edges);
+  });
 
   return GitResult.ok(LogosGitStats(
     touches: semanticTouches,
@@ -208,6 +226,7 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     ritualnessByPath: integrityProfile.ritualnessByPath,
     integrityByPath: integrityProfile.integrityByPath,
     integrityReasonsByPath: integrityProfile.reasonsByPath,
+    hyperedgesByPath: compactedHyperedges,
   ));
 }
 

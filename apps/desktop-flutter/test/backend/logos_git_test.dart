@@ -18,10 +18,103 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/file_coupling.dart';
+import 'package:git_desktop/backend/logos_core.dart';
 import 'package:git_desktop/backend/logos_git.dart';
+import 'package:git_desktop/backend/logos_git_integrity.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  double csrWeight(dynamic graph, int from, int to) {
+    for (var k = graph.indptr[from]; k < graph.indptr[from + 1]; k++) {
+      if (graph.indices[k] == to) return graph.values[k];
+    }
+    return 0.0;
+  }
+
+  test('RelevanceScore.toString uses ASCII phi label', () {
+    expect(
+      const RelevanceScore('lib/foo.dart', 0.125).toString(),
+      'lib/foo.dart  phi=0.1250',
+    );
+  });
+
+  group('flow diagnostics + typed witnesses', () {
+    test('structured flow prefers harmonic over curl for coherent evidence', () {
+      final flow = computeLogosFlowDiagnostics(
+        coherence: 0.92,
+        stability: 0.88,
+        sourceAlignment: 0.86,
+        fieldAlignment: 0.82,
+        lowFrequencySupport: 0.74,
+        highFrequencySurprise: 0.08,
+        higherOrderLift: 0.10,
+        reducibilityGap: 0.06,
+        witnessKindFractions: const {
+          'axis': 0.5,
+          'transport': 0.3,
+          'spectrum': 0.2,
+        },
+      );
+
+      expect(flow.gradientMass, inInclusiveRange(0.0, 1.0));
+      expect(flow.curlMass, inInclusiveRange(0.0, 1.0));
+      expect(flow.harmonicMass, inInclusiveRange(0.0, 1.0));
+      expect(flow.structuralStress, inInclusiveRange(0.0, 1.0));
+      expect(flow.harmonicMass, greaterThan(flow.curlMass));
+    });
+
+    test('relation descriptor and transport lane preserve direction roles', () {
+      final relation = logosRelationDescriptor(
+        'lib/model.dart',
+        'lib/generated/model.g.dart',
+      );
+      final transport = logosTransportLane(
+        'lib/generated/model.g.dart',
+        'lib/model.dart',
+      );
+
+      expect(relation, isNotNull);
+      expect(relation!.label, 'source-generated');
+      expect(relation.directional, isTrue);
+      expect(relation.sourceRole, 'source');
+      expect(relation.targetRole, 'generated');
+
+      expect(transport, isNotNull);
+      expect(transport!.label, 'generated->source');
+      expect(transport.directional, isTrue);
+      expect(transport.sourceRole, 'generated');
+      expect(transport.targetRole, 'source');
+    });
+
+    test('witness syndrome reports coverage and missing kinds', () {
+      final syndrome = computeLogosWitnessSyndrome(
+        const LogosEvidenceRollup(
+          transportPull: 0.18,
+          lowFrequencySupport: 0.4,
+          highFrequencySurprise: 0.2,
+          higherOrderLift: 0.1,
+          reducibilityGap: 0.05,
+          witnessKindFractions: {
+            'relation': 0.35,
+            'transport': 0.30,
+            'integrity': 0.20,
+            'axis': 0.15,
+          },
+        ),
+        witnessEntropy: 0.42,
+      );
+
+      expect(syndrome.coverage, closeTo(0.75, 1e-9));
+      expect(syndrome.corroboration, closeTo(0.65, 1e-9));
+      expect(syndrome.disagreement, closeTo(0.42, 1e-9));
+      expect(
+        syndrome.dominantKinds,
+        containsAll(<String>['relation', 'transport']),
+      );
+      expect(syndrome.missingKinds, contains('spectrum'));
+    });
+  });
 
 
   group('path-graph analytic reference', () {
@@ -469,6 +562,32 @@ void main() {
       expect(engine.diffuse({'anything.dart'}), isEmpty);
     });
 
+    test('gatherEvidence returns null for empty and all-unknown focus', () {
+      final emptyEngine = LogosGit.buildFromStats(LogosGitStats(
+        touches: const {},
+        totalCommits: 0,
+        volatility: const {},
+        volMean: 0,
+        volStddev: 0,
+        coupling: FileCouplingMatrix.empty,
+        perFileCommitIndices: const {},
+      ));
+      expect(
+        emptyEngine.gatherEvidence(
+          focusWeights: const {'lib/anything.dart': 1.0},
+        ),
+        isNull,
+      );
+
+      final engine = LogosGit.buildFromStats(_canonicalCoChangeStats());
+      expect(
+        engine.gatherEvidence(
+          focusWeights: const {'lib/unknown.dart': 1.0},
+        ),
+        isNull,
+      );
+    });
+
     test('CSR is symmetric — W[i,j] == W[j,i] for every materialised edge',
         () {
       final engine = LogosGit.buildFromStats(_canonicalCoChangeStats());
@@ -491,6 +610,77 @@ void main() {
           expect(back, closeTo(forward, 1e-9),
               reason: 'asymmetric edge ($i,$j): $forward vs ($j,$i): $back');
         }
+      }
+    });
+
+    test('transport graph can be asymmetric while main graph stays symmetric',
+        () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'lib/generated/foo.g.dart': 12,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'lib/generated/foo.g.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 0.1,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/foo.dart': {'lib/generated/foo.g.dart': 0.2},
+            'lib/generated/foo.g.dart': {'lib/foo.dart': 0.2},
+          },
+          headHash: 'transport-directionality',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final sourceId = engine.pathToId['lib/foo.dart']!;
+      final generatedId = engine.pathToId['lib/generated/foo.g.dart']!;
+
+      final graphForward = csrWeight(engine.graphForTesting, sourceId, generatedId);
+      final graphBackward = csrWeight(
+        engine.graphForTesting,
+        generatedId,
+        sourceId,
+      );
+      final transportForward = csrWeight(
+        engine.transportGraph,
+        sourceId,
+        generatedId,
+      );
+      final transportBackward = csrWeight(
+        engine.transportGraph,
+        generatedId,
+        sourceId,
+      );
+      final forwardLane = logosTransportLane(
+        'lib/foo.dart',
+        'lib/generated/foo.g.dart',
+      );
+      final backwardLane = logosTransportLane(
+        'lib/generated/foo.g.dart',
+        'lib/foo.dart',
+      );
+
+      expect(graphBackward, closeTo(graphForward, 1e-9));
+      expect(forwardLane, isNotNull);
+      expect(backwardLane, isNotNull);
+      expect(
+        forwardLane!.strength,
+        isNot(closeTo(backwardLane!.strength, 1e-9)),
+      );
+      expect(transportForward, closeTo(forwardLane.strength, 1e-9));
+      expect(transportBackward, closeTo(backwardLane.strength, 1e-9));
+      if (forwardLane.strength > backwardLane.strength) {
+        expect(transportForward, greaterThan(0.0));
+        expect(transportForward, greaterThan(transportBackward));
+      } else {
+        expect(transportBackward, greaterThan(0.0));
+        expect(transportBackward, greaterThan(transportForward));
       }
     });
 
@@ -800,6 +990,680 @@ void main() {
           engine.coherence(const ['same/dir/x.dart', 'other/far.dart']);
       // Siblings should edge out strangers on SP alone — even with zero CC.
       expect(siblingCoh, greaterThanOrEqualTo(strangerCoh));
+    });
+  });
+
+  group('gatherEvidence — higher-order sidecar', () {
+    test('candidate self-membership does not inflate lift or witness sources', () {
+      const triad = LogosCommitHyperedge(
+        paths: ['lib/a.dart', 'lib/b.dart', 'lib/c.dart'],
+        weight: 1.0,
+        summary: 'triad witness',
+      );
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/a.dart': 12,
+          'lib/b.dart': 12,
+          'lib/c.dart': 12,
+          'lib/unrelated.dart': 1,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/a.dart': 3.0,
+          'lib/b.dart': 3.0,
+          'lib/c.dart': 3.0,
+          'lib/unrelated.dart': 1.0,
+        },
+        volMean: 2.5,
+        volStddev: 1.0,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/a.dart': {
+              'lib/b.dart': 0.2,
+              'lib/c.dart': 0.2,
+              'lib/unrelated.dart': 0.02,
+            },
+            'lib/b.dart': {
+              'lib/a.dart': 0.2,
+              'lib/c.dart': 0.2,
+              'lib/unrelated.dart': 0.02,
+            },
+            'lib/c.dart': {
+              'lib/a.dart': 0.2,
+              'lib/b.dart': 0.2,
+              'lib/unrelated.dart': 0.02,
+            },
+            'lib/unrelated.dart': {
+              'lib/a.dart': 0.02,
+              'lib/b.dart': 0.02,
+              'lib/c.dart': 0.02,
+            },
+          },
+          headHash: 'hyper',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+        hyperedgesByPath: const {
+          'lib/a.dart': [triad],
+          'lib/b.dart': [triad],
+          'lib/c.dart': [triad],
+        },
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final result = engine.gatherEvidence(
+        focusWeights: const {
+          'lib/a.dart': 1.0,
+          'lib/b.dart': 1.0,
+          'lib/c.dart': 1.0,
+        },
+        topK: 10,
+      );
+      expect(result, isNotNull);
+      final c = result!.ranked.firstWhere((e) => e.path == 'lib/c.dart');
+      expect(c.higherOrderLift, lessThanOrEqualTo(1.0 + 1e-9));
+
+      final hyperWitness = c.witnesses.firstWhere(
+        (w) => w.label == 'commit-hyperedge',
+      );
+      expect(hyperWitness.sourcePaths, isNot(contains('lib/c.dart')));
+      expect(hyperWitness.sourcePaths.toSet(), containsAll({'lib/a.dart', 'lib/b.dart'}));
+
+      final reducibilityWitness = c.witnesses.firstWhere(
+        (w) => w.label == 'pairwise-loss',
+      );
+      expect(reducibilityWitness.kind, LogosWitnessKind.reducibility);
+    });
+
+    test('self-focused generated file does not create self transport witnesses', () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'lib/generated/foo.g.dart': 12,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'lib/generated/foo.g.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 0.1,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/foo.dart': {'lib/generated/foo.g.dart': 0.3},
+            'lib/generated/foo.g.dart': {'lib/foo.dart': 0.3},
+          },
+          headHash: 'self-transport',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final result = engine.gatherEvidence(
+        focusWeights: const {'lib/generated/foo.g.dart': 1.0},
+        topK: 5,
+      );
+      expect(result, isNotNull);
+      final self = result!.ranked.firstWhere(
+        (e) => e.path == 'lib/generated/foo.g.dart',
+      );
+      expect(
+        self.witnesses.where((w) =>
+            w.kind == LogosWitnessKind.transport ||
+            w.kind == LogosWitnessKind.relation),
+        isEmpty,
+      );
+    });
+
+    test('generated/source focus pair emits a generated-source metric sidecar', () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'lib/generated/foo.g.dart': 12,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'lib/generated/foo.g.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 0.1,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/foo.dart': {'lib/generated/foo.g.dart': 0.3},
+            'lib/generated/foo.g.dart': {'lib/foo.dart': 0.3},
+          },
+          headHash: 'generated-sidecar',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final result = engine.gatherEvidence(
+        focusWeights: const {
+          'lib/foo.dart': 1.0,
+          'lib/generated/foo.g.dart': 1.0,
+        },
+        topK: 5,
+      );
+      expect(result, isNotNull);
+      expect(
+        result!.metricSidecars.map((s) => s.label),
+        contains('generated-source-map'),
+      );
+      expect(
+        result.transport.dominantLanes(),
+        containsAll(<String>['source->generated', 'generated->source']),
+      );
+      expect(
+        result.transport.frontierPaths,
+        containsAll(<String>['lib/foo.dart', 'lib/generated/foo.g.dart']),
+      );
+      expect(result.transport.frontierEdges, isNotEmpty);
+      expect(
+        result.transport.frontierEdges.map((e) => e.laneLabel),
+        containsAll(<String>['source->generated', 'generated->source']),
+      );
+      expect(
+        result.transportPullByPath.keys,
+        containsAll(<String>['lib/foo.dart', 'lib/generated/foo.g.dart']),
+      );
+      final transportPulls = <double>[];
+      for (final path in const ['lib/foo.dart', 'lib/generated/foo.g.dart']) {
+        final score = result.ranked.firstWhere((e) => e.path == path);
+        transportPulls.add(score.transportPull);
+        expect(
+          result.transportPullByPath[path],
+          closeTo(score.transportPull, 1e-9),
+        );
+        expect(
+          score.sidecars.map((s) => s.label),
+          contains('generated-source-map'),
+        );
+      }
+      expect(
+        transportPulls.reduce(math.max),
+        greaterThan(0.0),
+      );
+    });
+
+    test('transport lane can admit generated companion from source-only focus', () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'lib/generated/foo.g.dart': 12,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'lib/generated/foo.g.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 0.1,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/foo.dart': {'lib/generated/foo.g.dart': 0.2},
+            'lib/generated/foo.g.dart': {'lib/foo.dart': 0.2},
+          },
+          headHash: 'transport-admit',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final result = engine.gatherEvidence(
+        focusWeights: const {'lib/foo.dart': 1.0},
+        topK: 10,
+      );
+      expect(result, isNotNull);
+      final generated = result!.ranked.firstWhere(
+        (e) => e.path == 'lib/generated/foo.g.dart',
+      );
+      expect(generated.transportPull, greaterThan(0.0));
+      expect(
+        result.transport.dominantLanes(),
+        contains('source->generated'),
+      );
+      expect(
+        result.transport.frontierPaths,
+        contains('lib/generated/foo.g.dart'),
+      );
+      expect(result.transport.frontierEdges, isNotEmpty);
+      final edge = result.transport.frontierEdges.firstWhere(
+        (e) => e.targetPath == 'lib/generated/foo.g.dart',
+      );
+      expect(edge.sourcePath, 'lib/foo.dart');
+      expect(edge.laneLabel, 'source->generated');
+      expect(edge.directional, isTrue);
+      expect(edge.pull, closeTo(generated.transportPull, 1e-9));
+      expect(
+        result.transportPullByPath['lib/generated/foo.g.dart'],
+        closeTo(generated.transportPull, 1e-9),
+      );
+      expect(
+        generated.sidecars.map((s) => s.label),
+        contains('generated-source-map'),
+      );
+      expect(generated.transportedSupport, greaterThan(0.0));
+      expect(generated.innovationResidual, closeTo(0.0, 1e-9));
+      expect(result.inquiryPlan.steps, isNotEmpty);
+      final inquiry = result.inquiryPlan.steps.firstWhere(
+        (step) => step.path == 'lib/generated/foo.g.dart',
+      );
+      expect(inquiry.kind, LogosInquiryActionKind.inspectCompanion);
+      expect(inquiry.viaPath, 'lib/foo.dart');
+      expect(inquiry.laneLabel, 'source->generated');
+    });
+
+    test('semantic motion separates transported companions from innovation residuals', () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'lib/generated/foo.g.dart': 10,
+          'lib/neighbor.dart': 10,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'lib/generated/foo.g.dart': 2.0,
+          'lib/neighbor.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 0.1,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/foo.dart': {
+              'lib/generated/foo.g.dart': 0.2,
+              'lib/neighbor.dart': 0.8,
+            },
+            'lib/generated/foo.g.dart': {'lib/foo.dart': 0.2},
+            'lib/neighbor.dart': {'lib/foo.dart': 0.8},
+          },
+          headHash: 'semantic-motion',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final result = engine.gatherEvidence(
+        focusWeights: const {'lib/foo.dart': 1.0},
+        topK: 10,
+      );
+      expect(result, isNotNull);
+      final generated = result!.ranked.firstWhere(
+        (e) => e.path == 'lib/generated/foo.g.dart',
+      );
+      final neighbor = result.ranked.firstWhere(
+        (e) => e.path == 'lib/neighbor.dart',
+      );
+      expect(generated.transportedSupport, greaterThan(0.0));
+      expect(generated.innovationResidual, lessThanOrEqualTo(1e-9));
+      expect(neighbor.transportedSupport, closeTo(0.0, 1e-9));
+      expect(neighbor.innovationResidual, greaterThan(0.0));
+      expect(result.semanticMotion.warpCoverage, greaterThan(0.0));
+      expect(result.semanticMotion.innovationMass, greaterThan(0.0));
+      expect(
+        result.semanticMotion.innovationFrontier,
+        contains('lib/neighbor.dart'),
+      );
+    });
+
+    test('witness-from-carrier surfaces missing test witness residuals', () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'test/foo_test.dart': 4,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'test/foo_test.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 1.0,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/foo.dart': {
+              'test/foo_test.dart': 0.08,
+            },
+            'test/foo_test.dart': {
+              'lib/foo.dart': 0.08,
+            },
+          },
+          headHash: 'witness-residual',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final result = engine.gatherEvidence(
+        focusWeights: const {'lib/foo.dart': 1.0},
+        detailBudget: 4,
+      );
+      expect(result, isNotNull);
+      final testScore = result!.ranked.firstWhere(
+        (e) => e.path == 'test/foo_test.dart',
+      );
+      expect(testScore.transportedSupport, greaterThan(0.0));
+      expect(testScore.witnessResidual, greaterThan(0.0));
+      final residual = result.residualByPath['test/foo_test.dart'];
+      expect(residual, isNotNull);
+      expect(residual!.transportedSupport, closeTo(testScore.transportedSupport, 1e-9));
+      expect(residual.witnessResidual, closeTo(testScore.witnessResidual, 1e-9));
+      expect(result.witnessResidual.predictedMass, greaterThan(0.0));
+      expect(result.witnessResidual.residualMass, greaterThan(0.0));
+      expect(
+        result.witnessResidual.frontierPaths,
+        contains('test/foo_test.dart'),
+      );
+      expect(
+        result.witnessResidual.dominantKinds,
+        anyOf(contains('source->test'), contains('source-test')),
+      );
+      expect(
+        testScore.sidecars.map((s) => s.label),
+        contains('test-witness-map'),
+      );
+      final inquiry = result.inquiryPlan.steps.firstWhere(
+        (step) => step.path == 'test/foo_test.dart',
+      );
+      expect(inquiry.rationale, contains('missing'));
+    });
+
+    test('transport seeding materializes taxonomy-backed companions without structural coupling', () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'test/foo_test.dart': 4,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'test/foo_test.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 1.0,
+        coupling: FileCouplingMatrix(
+          jaccard: {},
+          headHash: 'transport-seed-only',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats);
+      final result = engine.gatherEvidence(
+        focusWeights: const {'lib/foo.dart': 1.0},
+        detailBudget: 4,
+      );
+      expect(result, isNotNull);
+      final testScore = result!.ranked.firstWhere(
+        (e) => e.path == 'test/foo_test.dart',
+      );
+      expect(testScore.support, closeTo(0.0, 1e-9));
+      expect(testScore.transportedSupport, greaterThan(0.0));
+      expect(testScore.witnessResidual, greaterThan(0.0));
+      expect(
+        result.transport.frontierEdges.any(
+          (edge) =>
+              edge.sourcePath == 'lib/foo.dart' &&
+              edge.targetPath == 'test/foo_test.dart',
+        ),
+        isTrue,
+      );
+    });
+
+    test('derived transport is interpolated from the operator field', () {
+      final stats = LogosGitStats(
+        touches: const {
+          'lib/foo.dart': 12,
+          'lib/generated/foo.g.dart': 12,
+        },
+        totalCommits: 20,
+        volatility: const {
+          'lib/foo.dart': 2.0,
+          'lib/generated/foo.g.dart': 2.0,
+        },
+        volMean: 2.0,
+        volStddev: 0.1,
+        coupling: FileCouplingMatrix(
+          jaccard: const {
+            'lib/foo.dart': {'lib/generated/foo.g.dart': 0.2},
+            'lib/generated/foo.g.dart': {'lib/foo.dart': 0.2},
+          },
+          headHash: 'transport-derived',
+          commitsAnalyzed: 20,
+        ),
+        perFileCommitIndices: const {},
+      );
+      final engine = LogosGit.buildFromStats(stats).withSymbolEdges(const {
+        'lib/generated/foo.extra.dart': {
+          'lib/generated/foo.g.dart': 1.0,
+        },
+      });
+      final result = engine.gatherEvidence(
+        focusWeights: const {'lib/foo.dart': 1.0},
+        topK: 10,
+      );
+      expect(result, isNotNull);
+      final known = result!.ranked.firstWhere(
+        (e) => e.path == 'lib/generated/foo.g.dart',
+      );
+      final derived = result.ranked.firstWhere(
+        (e) => e.path == 'lib/generated/foo.extra.dart',
+      );
+      expect(derived.transportPull, greaterThan(0.0));
+      expect(
+        derived.transportPull,
+        closeTo(known.transportPull, 1e-9),
+      );
+      expect(
+        result.transportPullByPath['lib/generated/foo.extra.dart'],
+        closeTo(derived.transportPull, 1e-9),
+      );
+    });
+
+    test('low t still preserves near-vs-far ordering for spectrum fields', () {
+      final engine = LogosGit.buildFromStats(_canonicalCoChangeStats());
+      final result = engine.gatherEvidence(
+        focusWeights: const {'lib/a.dart': 1.0},
+        t: 0.05,
+        topK: 8,
+      );
+      expect(result, isNotNull);
+      final source = result!.ranked.firstWhere((e) => e.path == 'lib/a.dart');
+      expect(source.lowFrequencySupport, greaterThanOrEqualTo(0.0));
+      expect(source.highFrequencySurprise, greaterThan(0.0));
+    });
+  });
+
+  group('integrity relation helpers', () {
+    test('generated-source lane is directional and explicit', () {
+      final lane = logosTransportLane(
+        'lib/generated/foo.g.dart',
+        'lib/foo.dart',
+      );
+      expect(lane, isNotNull);
+      expect(lane!.label, 'generated->source');
+      expect(lane.strength, greaterThan(0.4));
+    });
+
+    test('fixture and vendor relations carry non-zero strength', () {
+      expect(
+        logosRelationStrength('test/fixtures/foo.json', 'lib/foo.dart'),
+        greaterThan(0.0),
+      );
+      expect(
+        logosRelationStrength('packages/vendor/pkg/foo.dart', 'lib/foo.dart'),
+        greaterThan(0.0),
+      );
+    });
+  });
+
+  group('CsrGraph rank-1 updates', () {
+    // Small symmetric fixture: 3 nodes in a triangle with weights
+    //   0-1 = 0.6,  1-2 = 0.4,  0-2 = 0.2.
+    CsrGraph buildTriangle() => CsrGraph.fromRawEdges(
+          n: 3,
+          edgesPerNode: const [
+            [(1, 0.6), (2, 0.2)],
+            [(0, 0.6), (2, 0.4)],
+            [(0, 0.2), (1, 0.4)],
+          ],
+        );
+
+    test('fromRawEdges fuses D^{-1/2} symmetrically', () {
+      final g = buildTriangle();
+      // L_sym symmetry: values[i→j] == values[j→i].
+      expect(csrWeight(g, 0, 1), closeTo(csrWeight(g, 1, 0), 1e-12));
+      expect(csrWeight(g, 1, 2), closeTo(csrWeight(g, 2, 1), 1e-12));
+      expect(csrWeight(g, 0, 2), closeTo(csrWeight(g, 2, 0), 1e-12));
+      expect(g.supportsRankOneUpdates, isTrue);
+    });
+
+    test('withNodeAppended preserves Laplacian symmetry', () {
+      final base = buildTriangle();
+      final augmented = base.withNodeAppended(
+        edges: const [(0, 0.3), (2, 0.7)],
+      );
+      expect(augmented.n, 4);
+      // Symmetry must hold across every edge, old or new.
+      for (var i = 0; i < augmented.n; i++) {
+        for (var j = 0; j < augmented.n; j++) {
+          if (i == j) continue;
+          expect(
+            csrWeight(augmented, i, j),
+            closeTo(csrWeight(augmented, j, i), 1e-12),
+            reason: 'L_sym must be symmetric at ($i,$j)',
+          );
+        }
+      }
+    });
+
+    test('withNodeAppended matches full rebuild via fromRawEdges', () {
+      // Start from triangle; append a 4th node connected to 0 and 2.
+      final incremental = buildTriangle().withNodeAppended(
+        edges: const [(0, 0.3), (2, 0.7)],
+      );
+      // Full rebuild of the same 4-node graph from raw edges.
+      final fullRebuild = CsrGraph.fromRawEdges(
+        n: 4,
+        edgesPerNode: const [
+          [(1, 0.6), (2, 0.2), (3, 0.3)],
+          [(0, 0.6), (2, 0.4)],
+          [(0, 0.2), (1, 0.4), (3, 0.7)],
+          [(0, 0.3), (2, 0.7)],
+        ],
+      );
+      // Every fused value should match byte-for-byte modulo float eps.
+      for (var i = 0; i < 4; i++) {
+        for (var j = 0; j < 4; j++) {
+          if (i == j) continue;
+          expect(
+            csrWeight(incremental, i, j),
+            closeTo(csrWeight(fullRebuild, i, j), 1e-12),
+            reason: 'values diverge at ($i,$j)',
+          );
+        }
+      }
+      // D^{-1/2} must match too.
+      for (var i = 0; i < 4; i++) {
+        expect(
+          incremental.degreeInvSqrt[i],
+          closeTo(fullRebuild.degreeInvSqrt[i], 1e-12),
+        );
+      }
+    });
+
+    test('withNodeAppended keeps spectrum in [0, 2]', () {
+      final augmented = buildTriangle().withNodeAppended(
+        edges: const [(0, 0.3), (2, 0.7)],
+      );
+      final lambdaMax = augmented.estimateSpectralRadius(iterations: 32);
+      // Normalised Laplacian's analytic bound is 2; allow a small slack
+      // for power-iteration truncation.
+      expect(lambdaMax, lessThanOrEqualTo(2.0 + 1e-6));
+    });
+
+    test('withNodeRemoved matches full rebuild via fromRawEdges', () {
+      // Start from a 4-node graph, remove node 1.
+      final base = CsrGraph.fromRawEdges(
+        n: 4,
+        edgesPerNode: const [
+          [(1, 0.6), (2, 0.2), (3, 0.3)],
+          [(0, 0.6), (2, 0.4)],
+          [(0, 0.2), (1, 0.4), (3, 0.7)],
+          [(0, 0.3), (2, 0.7)],
+        ],
+      );
+      final removed = base.withNodeRemoved(1);
+      expect(removed.n, 3);
+      // After removing node 1, the node formerly at id 2 is at id 1
+      // and the node formerly at id 3 is at id 2. The remaining raw
+      // edges are {(0→1=0.2), (0→2=0.3), (1→2=0.7)}.
+      final rebuilt = CsrGraph.fromRawEdges(
+        n: 3,
+        edgesPerNode: const [
+          [(1, 0.2), (2, 0.3)],
+          [(0, 0.2), (2, 0.7)],
+          [(0, 0.3), (1, 0.7)],
+        ],
+      );
+      for (var i = 0; i < 3; i++) {
+        for (var j = 0; j < 3; j++) {
+          if (i == j) continue;
+          expect(
+            csrWeight(removed, i, j),
+            closeTo(csrWeight(rebuilt, i, j), 1e-12),
+            reason: 'mismatch at ($i,$j)',
+          );
+        }
+      }
+    });
+
+    test('append then remove is a no-op (round-trip identity)', () {
+      final base = buildTriangle();
+      final roundTripped = base
+          .withNodeAppended(edges: const [(0, 0.3), (2, 0.7)])
+          .withNodeRemoved(3);
+      // Round trip must reconstruct the original triangle's fused values.
+      expect(roundTripped.n, base.n);
+      for (var i = 0; i < base.n; i++) {
+        for (var j = 0; j < base.n; j++) {
+          if (i == j) continue;
+          expect(
+            csrWeight(roundTripped, i, j),
+            closeTo(csrWeight(base, i, j), 1e-12),
+            reason: 'round trip diverges at ($i,$j)',
+          );
+        }
+      }
+    });
+
+    test('rank-1 path preserves heat-kernel diffusion values', () {
+      // The whole point of rank-1 updates is that downstream diffusion
+      // gives the same answer as if the caller had rebuilt from scratch.
+      // Check φ(t) numerically agrees on the triangle vs. triangle+1.
+      final augmented = buildTriangle().withNodeAppended(
+        edges: const [(0, 0.3), (2, 0.7)],
+      );
+      final fullRebuild = CsrGraph.fromRawEdges(
+        n: 4,
+        edgesPerNode: const [
+          [(1, 0.6), (2, 0.2), (3, 0.3)],
+          [(0, 0.6), (2, 0.4)],
+          [(0, 0.2), (1, 0.4), (3, 0.7)],
+          [(0, 0.3), (2, 0.7)],
+        ],
+      );
+      final rho = Float64List.fromList(const [1.0, 0.0, 0.0, 0.0]);
+      final phiA = Float64List(4);
+      final phiB = Float64List(4);
+      diffuseChebyshevForTesting(
+          graph: augmented, rho: rho, phi: phiA, t: 1.0);
+      diffuseChebyshevForTesting(
+          graph: fullRebuild, rho: rho, phi: phiB, t: 1.0);
+      for (var i = 0; i < 4; i++) {
+        expect(phiA[i], closeTo(phiB[i], 1e-9));
+      }
     });
   });
 }

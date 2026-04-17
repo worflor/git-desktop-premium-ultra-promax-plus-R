@@ -96,6 +96,82 @@ class PrShape {
   /// `null` when the field hasn't been computed yet.
   final double? fieldAlignment;
 
+  /// Overlap of the PR's source weights with the repo's semantic ambient
+  /// activity weights before diffusion. Lets callers distinguish
+  /// "ordinary touched files" from "ordinary neighborhood after
+  /// diffusion".
+  final double? sourceAlignment;
+
+  /// Surprise = `1 - sourceAlignment` when the source-vs-field overlap
+  /// exists. High = the PR's touched files are themselves off-field.
+  final double? sourceSurprise;
+
+  /// Surprise = `1 - fieldAlignment` when a field alignment is available.
+  /// High = the diffused neighborhood lives away from the repo's recent
+  /// activity field.
+  final double? fieldSurprise;
+
+  /// Support-weighted aggregate of the PR bloom's low-frequency support.
+  /// High = the PR's neighborhood is coherent across larger diffusion
+  /// scales.
+  final double lowFrequencySupport;
+
+  /// Support-weighted directional transport pull from the PR sources into
+  /// their candidate neighborhood. High = typed transport lanes are
+  /// actively carrying evidence beyond plain pairwise proximity.
+  final double transportPull;
+
+  /// Support-weighted aggregate of the PR bloom's high-frequency residual.
+  /// High = the PR's neighborhood contains sharp local anomalies or
+  /// fine-scale residues.
+  final double highFrequencySurprise;
+
+  /// Support-weighted higher-order pressure from the commit hyperedge
+  /// sidecar.
+  final double higherOrderLift;
+
+  /// Support-weighted gap between higher-order lift and pairwise support.
+  /// High = the pairwise projection is losing structure in this PR's
+  /// neighborhood.
+  final double reducibilityGap;
+
+  /// Support-weighted witness-kind composition across the PR bloom's top
+  /// evidence candidates. Fractions sum to ~1 when non-empty.
+  final Map<String, double> witnessKindFractions;
+
+  /// Shared flow diagnostics derived from the PR's support/surprise
+  /// geometry.
+  final LogosFlowDiagnostics flow;
+
+  /// Query-level metric sidecars carried by the PR evidence query.
+  /// These are compact transport-law hints the scalar field could not
+  /// fully express on its own.
+  final List<String> metricSidecars;
+
+  /// Dominant transport lanes from the evidence query. These are the
+  /// typed directional channels actually carrying pull in the PR's
+  /// neighborhood, not reconstructed sink tags.
+  final List<String> transportLanes;
+
+  /// Top frontier paths by directional transport pull.
+  final List<String> transportFrontier;
+
+  /// Explicit directed transport frontier edges from the evidence query.
+  final List<LogosTransportFlowEdge> transportEdges;
+
+  /// Motion-compensation summary: how much of the PR bloom is transported
+  /// structure vs unexplained innovation.
+  final double motionWarpCoverage;
+  final double motionInnovationMass;
+  final double motionCompensatedChangeRatio;
+  final bool motionSceneCut;
+  final List<String> motionInnovationFrontier;
+  final double witnessResidualPredictedMass;
+  final double witnessResidualMass;
+  final double witnessResidualCoverage;
+  final List<String> witnessResidualFrontier;
+  final List<String> witnessResidualKinds;
+
   /// Bucketed [fieldAlignment]. `null` when alignment is null.
   final FieldOrientation? orientation;
 
@@ -116,6 +192,30 @@ class PrShape {
     required this.stability,
     required this.metabolismRisk,
     required this.fieldAlignment,
+    this.sourceAlignment,
+    this.sourceSurprise,
+    this.fieldSurprise,
+    this.transportPull = 0.0,
+    this.lowFrequencySupport = 0.0,
+    this.highFrequencySurprise = 0.0,
+    this.higherOrderLift = 0.0,
+    this.reducibilityGap = 0.0,
+    this.witnessKindFractions = const {},
+    required this.flow,
+    this.metricSidecars = const [],
+    this.transportLanes = const [],
+    this.transportFrontier = const [],
+    this.transportEdges = const [],
+    this.motionWarpCoverage = 0.0,
+    this.motionInnovationMass = 0.0,
+    this.motionCompensatedChangeRatio = 0.0,
+    this.motionSceneCut = false,
+    this.motionInnovationFrontier = const [],
+    this.witnessResidualPredictedMass = 0.0,
+    this.witnessResidualMass = 0.0,
+    this.witnessResidualCoverage = 0.0,
+    this.witnessResidualFrontier = const [],
+    this.witnessResidualKinds = const [],
     required this.orientation,
     required this.axisMassFractions,
     required this.computedAt,
@@ -168,12 +268,22 @@ class PrShapeComputer {
     final axisLabels = <String, String>{
       for (final p in touches.keys) p: _prShapeAxis,
     };
-    final attr = engine.diffuseWithAttribution(
+    final evidence = engine.gatherEvidence(
+      focusWeights: touches,
+      axisLabelByPath: axisLabels,
+      t: t,
+      topK: 20,
+    );
+    final attr = evidence?.supportAttribution ?? engine.diffuseWithAttribution(
       weightsByPath: touches,
       axisLabelByPath: axisLabels,
       t: t,
     );
     if (attr == null) return null;
+    final evidenceRollup = rollupEvidenceTopology(
+      evidence?.ranked ?? const <LogosEvidenceScore>[],
+      maxEntries: 12,
+    );
 
     // Dense φ — single-axis case, perAxisPhi has exactly one entry.
     final phi = attr.perAxisPhi.values.first;
@@ -190,7 +300,7 @@ class PrShapeComputer {
     final coh = engine.stats.coupling.coherenceFor(touches.keys);
 
     // Stability — robustness of top-K under weight perturbation.
-    final stab = engine.diffuseStability(touches, t: t);
+    final stab = evidence?.stability ?? engine.diffuseStability(touches, t: t);
 
     // Metabolism risk — Σ curvature(path) × touches[path] over PR files
     // that are actually in the graph (curvature(p) returns 1.0 for
@@ -210,13 +320,75 @@ class PrShapeComputer {
       orient = bucketAlignment(align);
     }
 
+    final transportEdges =
+        evidence?.transport.frontierEdges.toList(growable: false) ?? const [];
+    final transportLanes = evidence == null
+        ? const <String>[]
+        : (() {
+            final fromEdges = evidence.transport.dominantEdgeLanes(limit: 4);
+            if (fromEdges.isNotEmpty) return fromEdges;
+            return evidence.transport.dominantLanes(limit: 4);
+          })();
+    final transportFrontier = evidence == null
+        ? const <String>[]
+        : (() {
+            final fromEdges = evidence.transport.frontierPathsFromEdges(limit: 4);
+            if (fromEdges.isNotEmpty) return fromEdges;
+            return evidence.transport.frontierPaths;
+          })();
+
     return PrShape(
       phi: phi,
       topK: attr.combined.take(20).toList(),
-      coherence: coh,
+      coherence: evidence?.coherence ?? coh,
       stability: stab,
       metabolismRisk: metab,
       fieldAlignment: align,
+      sourceAlignment: evidence?.sourceAlignment,
+      sourceSurprise: evidence?.sourceSurprise,
+      fieldSurprise: align == null
+          ? evidence?.fieldSurprise
+          : (1.0 - align).clamp(0.0, 1.0).toDouble(),
+      transportPull: evidenceRollup.transportPull,
+      lowFrequencySupport: evidenceRollup.lowFrequencySupport,
+      highFrequencySurprise: evidenceRollup.highFrequencySurprise,
+      higherOrderLift: evidenceRollup.higherOrderLift,
+      reducibilityGap: evidenceRollup.reducibilityGap,
+      witnessKindFractions: evidenceRollup.witnessKindFractions,
+      flow: evidence?.flowDiagnostics ??
+          computeLogosFlowDiagnostics(
+            coherence: evidence?.coherence ?? coh,
+            stability: stab,
+            sourceAlignment: evidence?.sourceAlignment,
+            fieldAlignment: align,
+            lowFrequencySupport: evidenceRollup.lowFrequencySupport,
+            highFrequencySurprise: evidenceRollup.highFrequencySurprise,
+            higherOrderLift: evidenceRollup.higherOrderLift,
+            reducibilityGap: evidenceRollup.reducibilityGap,
+            witnessKindFractions: evidenceRollup.witnessKindFractions,
+          ),
+      metricSidecars: [
+        for (final sidecar in evidence?.metricSidecars ?? const <LogosMetricSidecar>[])
+          formatLogosMetricSidecar(sidecar, includeNote: false),
+      ],
+      transportLanes: transportLanes,
+      transportFrontier: transportFrontier,
+      transportEdges: transportEdges,
+      motionWarpCoverage: evidence?.semanticMotion.warpCoverage ?? 0.0,
+      motionInnovationMass: evidence?.semanticMotion.innovationMass ?? 0.0,
+      motionCompensatedChangeRatio:
+          evidence?.semanticMotion.compensatedChangeRatio ?? 0.0,
+      motionSceneCut: evidence?.semanticMotion.sceneCut ?? false,
+      motionInnovationFrontier:
+          evidence?.semanticMotion.innovationFrontier ?? const [],
+      witnessResidualPredictedMass:
+          evidence?.witnessResidual.predictedMass ?? 0.0,
+      witnessResidualMass: evidence?.witnessResidual.residualMass ?? 0.0,
+      witnessResidualCoverage: evidence?.witnessResidual.coverage ?? 0.0,
+      witnessResidualFrontier:
+          evidence?.witnessResidual.frontierPaths ?? const [],
+      witnessResidualKinds:
+          evidence?.witnessResidual.dominantKinds ?? const [],
       orientation: orient,
       axisMassFractions: attr.axisMassFractions(),
       computedAt: DateTime.now(),

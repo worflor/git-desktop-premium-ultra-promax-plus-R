@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -40,6 +41,7 @@ import '../../app/repository_state.dart';
 import '../../app/worktree_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../branches/branches_page.dart' show showPatchPreviewDialog;
+import '../diff/diff_document.dart';
 import '../diff/diff_shell.dart';
 import '../diff/diff_models.dart';
 import 'file_constellation.dart';
@@ -94,14 +96,18 @@ class _ChangesPageState extends State<ChangesPage> {
   String? _selectedDiffPath;
   String? _inspectionDiffPath;
   String? _visibleDiffPath;
-  String? _diffContent;
+  DiffDocument? _diffDocument;
   bool _diffLoading = false;
   String? _diffError;
   String? _multiDiffScopeKey;
-  String? _multiDiffContent;
+  DiffDocument? _multiDiffDocument;
   bool _multiDiffLoading = false;
   String? _multiDiffError;
   List<_CombinedDiffSection> _multiDiffSections = const [];
+  final LinkedHashMap<String, _CachedMultiDiff> _multiDiffCache =
+      LinkedHashMap();
+  final LinkedHashMap<String, DiffFileDocument> _diffFileDocumentCache =
+      LinkedHashMap();
   String? _multiDiffCurrentPath;
   int? _multiDiffJumpLineIndex;
   int _multiDiffJumpRequestId = 0;
@@ -141,6 +147,8 @@ class _ChangesPageState extends State<ChangesPage> {
   double _leftPanelWidth = 320.0;
   static const _minLeftPanelWidth = 220.0;
   static const _maxLeftPanelWidth = 520.0;
+  static const int _kMaxMultiDiffCacheEntries = 12;
+  static const int _kMaxFileDiffCacheEntries = 256;
   bool _commitOnlyMode = false;
   bool _mergeResolving = false;
   bool _shaping = false;
@@ -216,6 +224,10 @@ class _ChangesPageState extends State<ChangesPage> {
   // repo in this session" so we don't spam the provider on every rebuild.
   String? _couplingKickedOffFor;
   int? _stashPeekIndex;
+  String? _appliedLogosRerankKey;
+  List<String>? _appliedLogosRerankPaths;
+  String? _pendingLogosRerankKey;
+  int _logosRerankRequestId = 0;
 
   @override
   void initState() {
@@ -243,11 +255,112 @@ class _ChangesPageState extends State<ChangesPage> {
     }
   }
 
+  Future<void> _recordUiTimingSample({
+    required String event,
+    required Stopwatch stopwatch,
+    String phase = 'interaction',
+    bool ok = true,
+    String? errorCode,
+    double minMs = 8,
+  }) async {
+    if (stopwatch.isRunning) {
+      stopwatch.stop();
+    }
+    final durationMs = stopwatch.elapsedMicroseconds / 1000;
+    if (!durationMs.isFinite || durationMs < minMs) {
+      return;
+    }
+    await DiagnosticsState.instance.recordUiTiming(
+      event: event,
+      phase: phase,
+      durationMs: durationMs,
+      ok: ok,
+      errorCode: ok ? null : errorCode,
+    );
+  }
+
   Future<void> _toggleAtlasOpen() async {
     final next = !_constellationOpen;
     setState(() => _constellationOpen = next);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kAtlasOpenKey, next);
+  }
+
+  void _cancelPendingLogosRerank() {
+    _pendingLogosRerankKey = null;
+    _logosRerankRequestId++;
+  }
+
+  String _logosRerankKey({
+    required LogosGit engine,
+    required FileClusters clusters,
+    required Set<String> sources,
+    required double t,
+    required double coherenceGate,
+    required bool inverted,
+  }) {
+    final orderedDigest = Object.hashAll(clusters.orderedPaths);
+    final sortedSources = sources.toList()..sort();
+    final sourceDigest = Object.hashAll(sortedSources);
+    final engineDigest = Object.hash(
+      engine.nodePaths.length,
+      engine.stats.totalCommits,
+      engine.symbolEdges.length,
+    );
+    return [
+      engineDigest,
+      _symbolCouplingFetchedForKey ?? '',
+      orderedDigest,
+      sourceDigest,
+      t.toStringAsFixed(3),
+      coherenceGate.toStringAsFixed(3),
+      inverted ? 1 : 0,
+    ].join('|');
+  }
+
+  void _scheduleLogosRerank({
+    required String requestKey,
+    required FileClusters clusters,
+    required LogosGit engine,
+    required Set<String> sources,
+    required double t,
+    required double coherenceGate,
+    required bool inverted,
+  }) {
+    if (_pendingLogosRerankKey == requestKey) {
+      return;
+    }
+    _pendingLogosRerankKey = requestKey;
+    final requestId = ++_logosRerankRequestId;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || _pendingLogosRerankKey != requestKey) {
+        return;
+      }
+      final stopwatch = Stopwatch()..start();
+      final next = await _computeLogosRerankedOrder(
+        clusters: clusters,
+        engine: engine,
+        sources: sources,
+        t: t,
+        coherenceGate: coherenceGate,
+        inverted: inverted,
+      );
+      await _recordUiTimingSample(
+        event: 'changes.logos.rerank.compute',
+        stopwatch: stopwatch,
+        phase: 'compute',
+      );
+      if (!mounted ||
+          _logosRerankRequestId != requestId ||
+          _pendingLogosRerankKey != requestKey) {
+        return;
+      }
+      setState(() {
+        _appliedLogosRerankKey = requestKey;
+        _appliedLogosRerankPaths = next;
+        _pendingLogosRerankKey = null;
+      });
+    });
   }
 
   /// Resolve the git directory for a repo. Handles worktrees and submodules
@@ -539,25 +652,148 @@ class _ChangesPageState extends State<ChangesPage> {
 
   Future<void> _loadDiff(String repo, String path) async {
     final stopwatch = Stopwatch()..start();
+    final cachedDocument = _cachedSingleDiffDocument(path);
+    if (cachedDocument != null) {
+      setState(() {
+        _hideReviewPane();
+        _selectedDiffPath = path;
+        _visibleDiffPath = path;
+        _diffLoading = false;
+        _diffError = null;
+        _diffDocument = cachedDocument;
+      });
+      await _recordUiTimingSample(
+        event: 'changes.diff.cache-hit',
+        stopwatch: stopwatch,
+        phase: 'interaction',
+        minMs: 0,
+      );
+      await DiagnosticsState.instance.recordUiTiming(
+        event: 'changes.diff.load',
+        phase: 'interaction',
+        durationMs: stopwatch.elapsedMicroseconds / 1000,
+        ok: true,
+      );
+      return;
+    }
     setState(() {
       _hideReviewPane();
       _selectedDiffPath = path;
       _diffLoading = true;
       _diffError = null;
     });
-    final r = await getFileDiff(repo, path);
+    // Four-stage diff fetch so clicking a related file surfaced by
+    // the Logos engine always lands on real content. Blank panes are
+    // never a useful answer — we'd rather show the file's history or
+    // its current content than tell the user "nothing here."
+    //   1. unstaged working-tree changes
+    //   2. staged index changes (file might be fully staged)
+    //   3. last committed change (history handles renames)
+    //   4. synthesize a new-file diff from the file on disk (handles
+    //      untracked / newly-added / gitignored files that the engine
+    //      still knows about)
+    final fetchStopwatch = Stopwatch()..start();
+    var r = await getFileDiff(repo, path);
     if (!mounted || _selectedDiffPath != path) {
       return;
     }
+    if (r.ok && (r.data ?? '').isEmpty) {
+      final staged = await getFileDiff(repo, path, staged: true);
+      if (!mounted || _selectedDiffPath != path) {
+        return;
+      }
+      if (staged.ok && (staged.data ?? '').isNotEmpty) {
+        r = staged;
+      } else {
+        // Last committed change for this file, handling renames via
+        // pathAtRevision. First entry of the history log is the most
+        // recent commit touching the file.
+        final history = await listFileHistoryWithPaths(repo, path, limit: 1);
+        if (!mounted || _selectedDiffPath != path) {
+          return;
+        }
+        if (history.ok && history.data != null && history.data!.isNotEmpty) {
+          final entry = history.data!.first;
+          final hist = await getFileDiffAtRevision(
+            repo,
+            entry.pathAtRevision,
+            entry.commit.commitHash,
+          );
+          if (!mounted || _selectedDiffPath != path) {
+            return;
+          }
+          if (hist.ok && (hist.data ?? '').isNotEmpty) {
+            r = hist;
+          }
+        }
+      }
+    }
+
+    // Final fallback — if no git-visible diff exists for this path,
+    // read the file from disk and render it as a synthesized new-file
+    // diff so the user sees something real.
+    String? syntheticDiff;
+    if (r.ok && (r.data ?? '').isEmpty) {
+      syntheticDiff = await _readFileAsSyntheticDiff(repo, path);
+      if (!mounted || _selectedDiffPath != path) {
+        return;
+      }
+    }
+    await _recordUiTimingSample(
+      event: 'changes.diff.fetch',
+      stopwatch: fetchStopwatch,
+      phase: 'compute',
+    );
+
+    double? documentBuildMs;
     setState(() {
       _diffLoading = false;
       if (r.ok) {
-        _visibleDiffPath = path;
-        _diffContent = r.data;
+        final data = syntheticDiff ?? (r.data ?? '');
+        if (data.isEmpty) {
+          // Truly nothing to show — path doesn't exist on disk, has
+          // no history, and has no changes. Rare edge case (stale
+          // engine reference, or a binary that couldn't be read).
+          _visibleDiffPath = path;
+          _diffDocument = null;
+          _diffError = 'Nothing to show for $path.';
+        } else {
+          _visibleDiffPath = path;
+          final buildStopwatch = Stopwatch()..start();
+          final document = DiffDocument.fromRawContent(
+            rawContent: data,
+            pathHint: path,
+            trimLeadingMeta: true,
+            documentId: 'single:$path:${data.hashCode}',
+          );
+          buildStopwatch.stop();
+          documentBuildMs = buildStopwatch.elapsedMicroseconds / 1000;
+          _diffDocument = document;
+          final statusFile = context
+              .read<RepositoryState>()
+              .status
+              ?.files
+              .where((file) => file.path == path)
+              .firstOrNull;
+          if (statusFile != null && document.files.isNotEmpty) {
+            _rememberDiffFileDocument(
+              _buildMultiDiffFileKey(statusFile),
+              document.files.first,
+            );
+          }
+        }
       } else {
+        _diffDocument = null;
         _diffError = r.error;
       }
     });
+    if (documentBuildMs != null && documentBuildMs! >= 8) {
+      await DiagnosticsState.instance.recordUiTiming(
+        event: 'changes.diff.document-build',
+        phase: 'compute',
+        durationMs: documentBuildMs!,
+      );
+    }
     stopwatch.stop();
     await DiagnosticsState.instance.recordUiTiming(
       event: 'changes.diff.load',
@@ -576,25 +812,290 @@ class _ChangesPageState extends State<ChangesPage> {
     unawaited(_loadDiff(repo, path));
   }
 
+  /// Read the file from disk and synthesize a new-file unified diff
+  /// so the user sees something real even when git has nothing to
+  /// say about this path (untracked, gitignored, brand new). Returns
+  /// null on any failure (missing, binary, too large) so callers can
+  /// fall through to the rare "nothing to show" error state.
+  Future<String?> _readFileAsSyntheticDiff(String repo, String path) async {
+    try {
+      final absPath = p.isAbsolute(path) ? path : p.join(repo, path);
+      final file = File(absPath);
+      if (!await file.exists()) return null;
+      final stat = await file.stat();
+      // Cap at 1 MB — beyond that the diff viewer chokes and the user
+      // probably doesn't want to scan a huge file as a "diff" anyway.
+      if (stat.size > 1024 * 1024) return null;
+      final content = await file.readAsString();
+      if (content.isEmpty) return null;
+      final hasTrailingNewline = content.endsWith('\n');
+      final rawLines = content.split('\n');
+      // split leaves an empty trailing element when the string ended
+      // with \n; drop it so the hunk header's line count is accurate.
+      final lines = hasTrailingNewline
+          ? rawLines.sublist(0, rawLines.length - 1)
+          : rawLines;
+      final buf = StringBuffer()
+        ..writeln('diff --git a/$path b/$path')
+        ..writeln('new file mode 100644')
+        ..writeln('--- /dev/null')
+        ..writeln('+++ b/$path')
+        ..writeln('@@ -0,0 +1,${lines.length} @@');
+      for (final line in lines) {
+        buf
+          ..write('+')
+          ..writeln(line);
+      }
+      if (!hasTrailingNewline) {
+        buf.writeln('\\ No newline at end of file');
+      }
+      return buf.toString();
+    } catch (_) {
+      // Binary content, permission error, encoding failure — fall
+      // through so the UI reaches the explicit "nothing to show"
+      // state rather than crashing on a bad read.
+      return null;
+    }
+  }
+
   String _buildMultiDiffScopeKey(List<RepositoryStatusFile> files) {
     return files
         .map((file) => '${file.path}|${file.stagedCode}|${file.unstagedCode}')
         .join('||');
   }
 
+  String _buildMultiDiffFileKey(RepositoryStatusFile file) =>
+      '${file.path}|${file.stagedCode}|${file.unstagedCode}';
+
+  DiffDocument _singleDocumentFromFileDocument(
+    DiffFileDocument fileDocument, {
+    required String path,
+  }) {
+    return DiffDocument.fromFiles(
+      files: [fileDocument],
+      trimLeadingMeta: true,
+      documentId: 'single:$path:${fileDocument.cacheKey}',
+    );
+  }
+
+  DiffDocument? _cachedSingleDiffDocument(String path) {
+    final multiFileDocument = _multiDiffDocument?.filesByPath[path];
+    if (multiFileDocument != null) {
+      return _singleDocumentFromFileDocument(
+        multiFileDocument,
+        path: path,
+      );
+    }
+    final statusFile = context
+        .read<RepositoryState>()
+        .status
+        ?.files
+        .where((file) => file.path == path)
+        .firstOrNull;
+    if (statusFile == null) {
+      return null;
+    }
+    final fileDocument =
+        _diffFileDocumentCache[_buildMultiDiffFileKey(statusFile)];
+    if (fileDocument == null) {
+      return null;
+    }
+    return _singleDocumentFromFileDocument(
+      fileDocument,
+      path: path,
+    );
+  }
+
+  void _rememberDiffFileDocument(String fileKey, DiffFileDocument document) {
+    _diffFileDocumentCache.remove(fileKey);
+    _diffFileDocumentCache[fileKey] = document;
+    while (_diffFileDocumentCache.length > _kMaxFileDiffCacheEntries) {
+      _diffFileDocumentCache.remove(_diffFileDocumentCache.keys.first);
+    }
+  }
+
+  DiffDocument _documentFromFiles(
+    List<RepositoryStatusFile> files, {
+    required String scopeKey,
+  }) {
+    final documents = <DiffFileDocument>[];
+    for (final file in files) {
+      final fileKey = _buildMultiDiffFileKey(file);
+      final document = _diffFileDocumentCache[fileKey];
+      if (document != null) {
+        documents.add(document);
+      }
+    }
+    return DiffDocument.fromFiles(
+      files: documents,
+      trimLeadingMeta: false,
+      documentId: 'multi:$scopeKey',
+    );
+  }
+
+  void _rememberMultiDiff(_CachedMultiDiff entry) {
+    _multiDiffCache.remove(entry.scopeKey);
+    _multiDiffCache[entry.scopeKey] = entry;
+    while (_multiDiffCache.length > _kMaxMultiDiffCacheEntries) {
+      _multiDiffCache.remove(_multiDiffCache.keys.first);
+    }
+  }
+
+  _CachedMultiDiff _cacheMultiDiffSnapshot(
+    String scopeKey,
+    List<RepositoryStatusFile> files,
+    String content,
+  ) {
+    final diffByPath = sliceDiffByFile(content);
+    for (final file in files) {
+      final section = diffByPath[file.path];
+      if (section == null) {
+        continue;
+      }
+      final fileKey = _buildMultiDiffFileKey(file);
+      _rememberDiffFileDocument(
+        fileKey,
+        DiffFileDocument.fromRawContent(
+          rawContent: section,
+          pathHint: file.path,
+          cacheKey: fileKey,
+        ),
+      );
+    }
+    final document = _documentFromFiles(files, scopeKey: scopeKey);
+    final entry = _CachedMultiDiff(
+      scopeKey: scopeKey,
+      document: document,
+      fileKeyByPath: {
+        for (final file in files) file.path: _buildMultiDiffFileKey(file),
+      },
+    );
+    _rememberMultiDiff(entry);
+    return entry;
+  }
+
+  _CachedMultiDiff? _cachedMultiDiffFor(
+    List<RepositoryStatusFile> files, {
+    String? scopeKey,
+  }) {
+    if (files.isEmpty) {
+      return const _CachedMultiDiff(
+        scopeKey: '',
+        document: null,
+        fileKeyByPath: <String, String>{},
+      );
+    }
+    final resolvedScopeKey = scopeKey ?? _buildMultiDiffScopeKey(files);
+    final exact = _multiDiffCache[resolvedScopeKey];
+    if (exact != null) {
+      _rememberMultiDiff(exact);
+      return exact;
+    }
+
+    for (final candidate in _multiDiffCache.values.toList().reversed) {
+      var coversAllFiles = true;
+      for (final file in files) {
+        final fileKey = _buildMultiDiffFileKey(file);
+        if (candidate.fileKeyByPath[file.path] != fileKey) {
+          coversAllFiles = false;
+          break;
+        }
+      }
+      if (!coversAllFiles) {
+        continue;
+      }
+
+      for (final file in files) {
+        final cachedDoc = candidate.document?.filesByPath[file.path];
+        if (cachedDoc != null) {
+          _rememberDiffFileDocument(_buildMultiDiffFileKey(file), cachedDoc);
+          continue;
+        }
+        if (!_diffFileDocumentCache.containsKey(_buildMultiDiffFileKey(file))) {
+          coversAllFiles = false;
+          break;
+        }
+      }
+      if (!coversAllFiles) {
+        continue;
+      }
+      final derived = _CachedMultiDiff(
+        scopeKey: resolvedScopeKey,
+        document: _documentFromFiles(files, scopeKey: resolvedScopeKey),
+        fileKeyByPath: {
+          for (final file in files) file.path: _buildMultiDiffFileKey(file),
+        },
+      );
+      _rememberMultiDiff(derived);
+      return derived;
+    }
+    return null;
+  }
+
+  void _applyMultiDiffSnapshot(
+    _CachedMultiDiff snapshot,
+    List<RepositoryStatusFile> requestFiles,
+  ) {
+    final document = snapshot.document;
+    final sections = document?.sections
+            .map((section) => _CombinedDiffSection(
+                  path: section.path,
+                  displayName: section.displayName,
+                  index: section.index,
+                  startLine: section.startLine,
+                ))
+            .toList(growable: false) ??
+        const <_CombinedDiffSection>[];
+    final currentPath = _multiDiffCurrentPath;
+    final hasCurrent = currentPath != null &&
+        requestFiles.any((file) => file.path == currentPath);
+    final nextPath = hasCurrent
+        ? currentPath
+        : (sections.isNotEmpty
+            ? sections.first.path
+            : (requestFiles.isEmpty ? null : requestFiles.first.path));
+    final nextJumpLine = nextPath == null
+        ? null
+        : _currentTimelineSectionForPath(sections, nextPath)?.startLine;
+    setState(() {
+      _multiDiffScopeKey = snapshot.scopeKey;
+      _multiDiffLoading = false;
+      _multiDiffError = null;
+      _multiDiffDocument = document;
+      _multiDiffSections = sections;
+      _multiDiffCurrentPath = nextPath;
+      _multiDiffJumpLineIndex = nextJumpLine ?? 0;
+      _multiDiffJumpRequestId++;
+    });
+  }
+
   Future<void> _loadMultiDiff(
     String repo,
     List<RepositoryStatusFile> files,
   ) async {
+    final stopwatch = Stopwatch()..start();
     final requestFiles = List<RepositoryStatusFile>.from(files);
     final scopeKey = _buildMultiDiffScopeKey(requestFiles);
+    final cached = _cachedMultiDiffFor(requestFiles, scopeKey: scopeKey);
+    if (cached != null) {
+      _applyMultiDiffSnapshot(cached, requestFiles);
+      await _recordUiTimingSample(
+        event: 'changes.multi-diff.cache-hit',
+        stopwatch: stopwatch,
+        phase: 'interaction',
+        minMs: 0,
+      );
+      return;
+    }
     setState(() {
       _multiDiffScopeKey = scopeKey;
       _multiDiffLoading = true;
       _multiDiffError = null;
-      _multiDiffSections = const [];
-      _multiDiffCurrentPath =
-          requestFiles.isEmpty ? null : requestFiles.first.path;
+      final currentPath = _multiDiffCurrentPath;
+      _multiDiffCurrentPath = currentPath != null &&
+              requestFiles.any((file) => file.path == currentPath)
+          ? currentPath
+          : (requestFiles.isEmpty ? null : requestFiles.first.path);
     });
 
     final result = await getSelectionDiff(repo, requestFiles);
@@ -605,24 +1106,41 @@ class _ChangesPageState extends State<ChangesPage> {
     setState(() {
       _multiDiffLoading = false;
       if (result.ok) {
-        _multiDiffContent = result.data;
+        final snapshot =
+            _cacheMultiDiffSnapshot(scopeKey, requestFiles, result.data ?? '');
+        final currentPath = _multiDiffCurrentPath;
+        final hasCurrent = currentPath != null &&
+            requestFiles.any((file) => file.path == currentPath);
+        final nextPath = hasCurrent
+            ? currentPath
+            : (snapshot.sections.isNotEmpty
+                ? snapshot.sections.first.path
+                : (requestFiles.isEmpty ? null : requestFiles.first.path));
+        final nextJumpLine = nextPath == null
+            ? null
+            : _currentTimelineSectionForPath(snapshot.sections, nextPath)
+                ?.startLine;
+        _multiDiffDocument = snapshot.document;
         _multiDiffError = null;
-        _multiDiffSections = _parseCombinedDiffSections(result.data ?? '');
-        _multiDiffCurrentPath = _multiDiffSections.isNotEmpty
-            ? _multiDiffSections.first.path
-            : (requestFiles.isEmpty ? null : requestFiles.first.path);
-        _multiDiffJumpLineIndex = _multiDiffSections.isNotEmpty
-            ? _multiDiffSections.first.startLine
-            : 0;
+        _multiDiffSections = snapshot.sections;
+        _multiDiffCurrentPath = nextPath;
+        _multiDiffJumpLineIndex = nextJumpLine ?? 0;
         _multiDiffJumpRequestId++;
       } else {
-        _multiDiffContent = null;
+        _multiDiffDocument = null;
         _multiDiffError = result.error;
         _multiDiffSections = const [];
         _multiDiffCurrentPath = null;
         _multiDiffJumpLineIndex = null;
       }
     });
+    await _recordUiTimingSample(
+      event: 'changes.multi-diff.load',
+      stopwatch: stopwatch,
+      phase: 'interaction',
+      ok: result.ok,
+      errorCode: result.ok ? null : 'changes.multi-diff.load_failed',
+    );
   }
 
   void _primeMultiDiff(
@@ -634,7 +1152,7 @@ class _ChangesPageState extends State<ChangesPage> {
       return;
     }
     if (_multiDiffScopeKey == scopeKey &&
-        (_multiDiffContent != null || _multiDiffError != null)) {
+        (_multiDiffDocument != null || _multiDiffError != null)) {
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -774,6 +1292,13 @@ class _ChangesPageState extends State<ChangesPage> {
         _topCompanionsFor(context, repoPath, file.path, limit: 3);
 
     final engine = context.read<LogosGitState>().engineFor(repoPath);
+    final rippleItems = engine == null
+        ? const <AppContextMenuItem>[]
+        : _buildRippleSubmenu(engine, repoPath, file.path);
+    final rhythmCommitIndices =
+        engine?.stats.perFileCommitIndices[file.path] ?? const <int>[];
+    final rhythmTotalCommits = engine?.stats.totalCommits ?? 0;
+    final hasRhythm = rhythmTotalCommits > 0 && rhythmCommitIndices.isNotEmpty;
 
     // Mutable set the submenu mutates on each checkbox toggle; the
     // parent row's click reads this at action time so the "Include"
@@ -836,28 +1361,26 @@ class _ChangesPageState extends State<ChangesPage> {
       // on first hover with no spinner needed. Each submenu entry
       // carries a φ-weighted bar alongside the path so the reader
       // sees relative forecast weight at a glance.
-      if (engine != null)
+      if (rippleItems.isNotEmpty)
         AppContextMenuItem(
           icon: Icons.waves_outlined,
           label: 'Ripple',
           onTap: () {}, // hover-only; submenu drives the action
-          submenuBuilder: () =>
-              _buildRippleSubmenu(engine, repoPath, file.path),
+          submenuBuilder: () => rippleItems,
         ),
       // Rhythm — inline sparkline derived from the file's commit
       // touch pattern over the engine's analysed window. Silent,
       // non-interactive; the row IS the information. Answers "is
       // this file warm or cold right now?" at a glance.
-      if (engine != null)
+      if (hasRhythm)
         AppContextMenuItem(
           icon: Icons.graphic_eq_outlined,
           label: 'Rhythm',
           onTap: () {},
           inert: true,
           trailing: _RhythmSpark(
-            commitIndices:
-                engine.stats.perFileCommitIndices[file.path] ?? const [],
-            totalCommits: engine.stats.totalCommits,
+            commitIndices: rhythmCommitIndices,
+            totalCommits: rhythmTotalCommits,
             tokens: t,
           ),
         ),
@@ -1754,7 +2277,7 @@ class _ChangesPageState extends State<ChangesPage> {
                   ? p
                   : '$repoPath${Platform.pathSeparator}$p')
               .readAsString();
-          snapshots.add((path: p, content: text));
+          snapshots.add((path: p, content: _extractConflictExcerpts(text)));
         } catch (_) {
           // Skip unreadable files; the prompt will just not include them.
         }
@@ -2080,7 +2603,7 @@ class _ChangesPageState extends State<ChangesPage> {
         '  5. Output format: unified diff only. No code fences, no prose, no explanations.');
     buf.writeln();
     buf.writeln(
-        'Files (each shown with current on-disk contents, markers included):');
+        'Files (shown as current conflict excerpts with surrounding context, not full files):');
     buf.writeln();
     for (final f in files) {
       buf.writeln('--- file: ${f.path} ---');
@@ -2091,6 +2614,67 @@ class _ChangesPageState extends State<ChangesPage> {
     buf.writeln(
         'Output the unified diff that resolves every conflict across all files above.');
     return buf.toString();
+  }
+
+  String _extractConflictExcerpts(String content) {
+    final normalized = content.replaceAll('\r\n', '\n');
+    final lines = normalized.split('\n');
+    final ranges = <({int start, int end})>[];
+    const contextLines = 28;
+    int? conflictStart;
+
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (line.startsWith('<<<<<<< ')) {
+        conflictStart ??= i;
+        continue;
+      }
+      if (conflictStart != null && line.startsWith('>>>>>>> ')) {
+        ranges.add((
+          start: math.max(0, conflictStart - contextLines),
+          end: math.min(lines.length, i + contextLines + 1),
+        ));
+        conflictStart = null;
+      }
+    }
+
+    if (conflictStart != null) {
+      ranges.add((
+        start: math.max(0, conflictStart - contextLines),
+        end: lines.length,
+      ));
+    }
+
+    if (ranges.isEmpty) {
+      return normalized;
+    }
+
+    ranges.sort((a, b) => a.start.compareTo(b.start));
+    final merged = <({int start, int end})>[];
+    for (final range in ranges) {
+      if (merged.isEmpty || range.start > merged.last.end) {
+        merged.add(range);
+        continue;
+      }
+      final last = merged.removeLast();
+      merged.add((start: last.start, end: math.max(last.end, range.end)));
+    }
+
+    final buf = StringBuffer();
+    var cursor = 0;
+    for (final range in merged) {
+      if (range.start > cursor) {
+        buf.writeln('... omitted lines ${cursor + 1}-${range.start} ...');
+      }
+      buf.writeln(
+          '@@ conflict excerpt lines ${range.start + 1}-${range.end} @@');
+      buf.writeln(lines.sublist(range.start, range.end).join('\n'));
+      cursor = range.end;
+    }
+    if (cursor < lines.length) {
+      buf.writeln('... omitted lines ${cursor + 1}-${lines.length} ...');
+    }
+    return buf.toString().trim();
   }
 
   Future<void> _generateCommitMessage(
@@ -2882,10 +3466,25 @@ class _ChangesPageState extends State<ChangesPage> {
     final t = context.tokens;
     final aiSettings = context.watch<AiSettingsState>();
     final preferences = context.watch<PreferencesState>();
-    final repo = context.watch<RepositoryState>();
-    final coupling = context.watch<FileCouplingState>();
-    final repoPath = repo.activePath;
-    final status = repo.status;
+    final repo = context.read<RepositoryState>();
+    final repoPath =
+        context.select<RepositoryState, String?>((state) => state.activePath);
+    final couplingMatrix = repoPath == null
+        ? null
+        : context.select<FileCouplingState, FileCouplingMatrix?>(
+            (state) => state.matrixFor(repoPath),
+          );
+    final corpusIndex = repoPath == null
+        ? null
+        : context.select<SymbolFrequencyState, SymbolFrequencyIndex?>(
+            (state) => state.indexFor(repoPath),
+          );
+    final status = context
+        .select<RepositoryState, RepositoryStatus?>((state) => state.status);
+    final statusError =
+        context.select<RepositoryState, String?>((state) => state.statusError);
+    final statusLoading =
+        context.select<RepositoryState, bool>((state) => state.statusLoading);
 
     // Seed the stash drawer from the user's "default expanded" preference
     // once per session, as soon as we actually have shelves to show. After
@@ -2917,11 +3516,12 @@ class _ChangesPageState extends State<ChangesPage> {
         // ignore: use_build_context_synchronously
         final symbolFreqState = context.read<SymbolFrequencyState>();
         // Kick off BOTH in parallel — the co-change matrix reads git log,
-        // the corpus frequency index reads file contents. Independent I/O.
-        await Future.wait([
-          couplingState.loadForRepo(repoPath),
-          symbolFreqState.loadForRepo(repoPath),
-        ]);
+        // the corpus frequency index reads file contents. But Logos only
+        // depends on the coupling matrix, so don't hold engine warm-up
+        // behind the slower corpus scan.
+        final couplingFuture = couplingState.loadForRepo(repoPath);
+        unawaited(symbolFreqState.loadForRepo(repoPath));
+        await couplingFuture;
         if (!mounted) return;
         // Chain: once the coupling matrix is warm, immediately warm the
         // LogosGit engine too — it needs the matrix for the CC axis and
@@ -2965,8 +3565,6 @@ class _ChangesPageState extends State<ChangesPage> {
     //
     // Also re-fires when the corpus index key changes — so the first
     // time the index finishes warming, we recompute with the better IDF.
-    final symbolFreqStateRead = context.watch<SymbolFrequencyState>();
-    final corpusIndex = symbolFreqStateRead.indexFor(repoPath);
     final symbolFetchKey =
         '$couplingStateKey|corpus=${corpusIndex?.totalDocuments ?? 0}';
     if (_symbolCouplingFetchedForKey != symbolFetchKey) {
@@ -3008,10 +3606,10 @@ class _ChangesPageState extends State<ChangesPage> {
         _loadStashes(repoPath);
       });
     }
-    if (repo.statusError != null) {
+    if (statusError != null) {
       return AppStatusView.error(
         title: 'Repository status unavailable',
-        message: repo.statusError!,
+        message: statusError,
       );
     }
     if (status == null) {
@@ -3074,8 +3672,8 @@ class _ChangesPageState extends State<ChangesPage> {
                         child: Text(
                           candidateData.isNotEmpty &&
                                   candidateData.first?.isStash == true
-                              ? 'drop to dump this shelf here'
-                              : 'drop to dump this desk here',
+                              ? 'drop to bring changes from this shelf here'
+                              : 'drop to bring changes from this desk here',
                           style: TextStyle(
                             color: t.textStrong,
                             fontSize: 12,
@@ -3102,7 +3700,6 @@ class _ChangesPageState extends State<ChangesPage> {
 
     // Coupling clusters for the current change set. Computed once per build;
     // falls back to "all isolated" when the matrix isn't ready yet.
-    final couplingMatrix = coupling.matrixFor(repoPath);
     final _currentPaths = status.files.map((f) => f.path).toList();
 
     // Universal: gather merge-conflict paths. Any file with 'U' on either
@@ -3168,9 +3765,14 @@ class _ChangesPageState extends State<ChangesPage> {
     // participate in diffusion — both as sources (proxy injection) and
     // as results (derived φ). withSymbolEdges is a shallow copy; the
     // underlying graph is shared and unchanged.
+    final logosTabActive = TickerMode.valuesOf(context).enabled;
     final logosEngineBase =
         preferences.fileSortGuide == FileSortGuide.relatedProximity
-            ? context.watch<LogosGitState>().engineFor(repoPath)
+            ? (logosTabActive
+                ? context.select<LogosGitState, LogosGit?>(
+                    (state) => state.engineFor(repoPath),
+                  )
+                : context.read<LogosGitState>().engineFor(repoPath))
             : null;
     final logosEngine = (logosEngineBase != null && _symbolCoupling.isNotEmpty)
         ? logosEngineBase.withSymbolEdges(_symbolCoupling)
@@ -3190,15 +3792,36 @@ class _ChangesPageState extends State<ChangesPage> {
     final logosCoherenceGate =
         0.35 - (preferences.logosPadX.clamp(0.0, 1.0) * 0.20);
 
-    final orderedPaths = (logosEngine != null && _includedPaths.isNotEmpty)
-        ? _logosRerankedOrder(
-            clusters: clusters,
-            engine: logosEngine,
-            sources: _includedPaths,
-            t: logosT,
-            coherenceGate: logosCoherenceGate,
-            inverted: preferences.fileSortInverted,
-          )
+    String? logosRerankKey;
+    if (logosTabActive && logosEngine != null && _includedPaths.isNotEmpty) {
+      logosRerankKey = _logosRerankKey(
+        engine: logosEngine,
+        clusters: clusters,
+        sources: _includedPaths,
+        t: logosT,
+        coherenceGate: logosCoherenceGate,
+        inverted: preferences.fileSortInverted,
+      );
+      if (_appliedLogosRerankKey != logosRerankKey &&
+          _pendingLogosRerankKey != logosRerankKey) {
+        _scheduleLogosRerank(
+          requestKey: logosRerankKey,
+          clusters: clusters,
+          engine: logosEngine,
+          sources: _includedPaths,
+          t: logosT,
+          coherenceGate: logosCoherenceGate,
+          inverted: preferences.fileSortInverted,
+        );
+      }
+    } else {
+      _cancelPendingLogosRerank();
+    }
+
+    final orderedPaths = logosRerankKey != null &&
+            _appliedLogosRerankKey == logosRerankKey &&
+            _appliedLogosRerankPaths != null
+        ? _appliedLogosRerankPaths!
         : clusters.orderedPaths;
 
     final inspectionOverridePath = _inspectionDiffPath;
@@ -3895,6 +4518,12 @@ class _ChangesPageState extends State<ChangesPage> {
                           error: null,
                           tokens: t,
                           repositoryPath: repoPath,
+                          couplingMatrix: context
+                              .read<FileCouplingState>()
+                              .matrixFor(repoPath),
+                          symbolCoupling: _symbolCoupling,
+                          onOpenRelatedPath: (path) =>
+                              _inspectSingleDiff(repoPath, path),
                         );
                       }
                       if (_museActive) {
@@ -3930,11 +4559,10 @@ class _ChangesPageState extends State<ChangesPage> {
                         );
                       }
                       if (_reviewActive) {
-                        final contentForStats =
-                            showMultiDiff ? _multiDiffContent : _diffContent;
-                        final stats = contentForStats != null
-                            ? DiffStats.fromRawDiff(contentForStats)
-                            : const DiffStats();
+                        final stats =
+                            (showMultiDiff ? _multiDiffDocument : _diffDocument)
+                                    ?.stats ??
+                                const DiffStats();
 
                         return MaterialSurface(
                           tone: AppMaterialTone.surface0,
@@ -3985,6 +4613,21 @@ class _ChangesPageState extends State<ChangesPage> {
                         _primeMultiDiff(repoPath, includedFiles);
                         final timelineSections = _buildTimelineSections(
                             includedFiles, _multiDiffSections);
+                        final currentTimelineSection =
+                            _currentTimelineSectionForPath(
+                          timelineSections,
+                          _multiDiffCurrentPath,
+                        );
+                        final currentTimelineIndex =
+                            currentTimelineSection == null
+                                ? null
+                                : timelineSections.indexOf(
+                                    currentTimelineSection,
+                                  );
+                        final multiDiffToolbarLabel = currentTimelineSection ==
+                                null
+                            ? '${includedFiles.length} selected files'
+                            : '${currentTimelineSection.displayName} | ${currentTimelineIndex! + 1} of ${timelineSections.length}';
                         return MaterialSurface(
                           tone: AppMaterialTone.surface0,
                           radius: 0,
@@ -4049,12 +4692,16 @@ class _ChangesPageState extends State<ChangesPage> {
                                     return false;
                                   },
                                   child: DiffShell(
-                                    key: ValueKey(
-                                      _multiDiffScopeKey ?? 'multi-diff',
-                                    ),
+                                    key: const ValueKey('multi-diff-shell'),
                                     filePath:
                                         '${includedFiles.length} selected files',
-                                    diffContent: _multiDiffContent,
+                                    toolbarFilePath: currentTimelineSection
+                                            ?.path ??
+                                        '${includedFiles.length} selected files',
+                                    toolbarLabel: multiDiffToolbarLabel,
+                                    toolbarTooltip:
+                                        currentTimelineSection?.path,
+                                    document: _multiDiffDocument,
                                     loading: _multiDiffLoading,
                                     error: _multiDiffError,
                                     tokens: t,
@@ -4067,6 +4714,15 @@ class _ChangesPageState extends State<ChangesPage> {
                                     couplingMatrix: context
                                         .read<FileCouplingState>()
                                         .matrixFor(repoPath),
+                                    symbolCoupling: _symbolCoupling,
+                                    onOpenRelatedPath: (path) {
+                                      if (includedFiles
+                                          .any((file) => file.path == path)) {
+                                        _jumpToMultiDiffPath(path);
+                                        return;
+                                      }
+                                      _inspectSingleDiff(repoPath, path);
+                                    },
                                     onStagingApplied: () {
                                       unawaited(_loadMultiDiff(
                                         repoPath,
@@ -4095,12 +4751,9 @@ class _ChangesPageState extends State<ChangesPage> {
                                 compact: true,
                               )
                             : DiffShell(
-                                key: ValueKey(
-                                  _visibleDiffPath ?? _selectedDiffPath!,
-                                ),
                                 filePath:
                                     _visibleDiffPath ?? _selectedDiffPath!,
-                                diffContent: _diffContent,
+                                document: _diffDocument,
                                 loading: _diffLoading,
                                 error: _diffError,
                                 tokens: t,
@@ -4109,6 +4762,19 @@ class _ChangesPageState extends State<ChangesPage> {
                                 couplingMatrix: context
                                     .read<FileCouplingState>()
                                     .matrixFor(repoPath),
+                                symbolCoupling: _symbolCoupling,
+                                onOpenRelatedPath: (path) {
+                                  if (includedFiles
+                                      .any((file) => file.path == path)) {
+                                    _jumpToMultiDiffPath(path);
+                                    return;
+                                  }
+                                  if (includedFiles.length > 1) {
+                                    _inspectSingleDiff(repoPath, path);
+                                    return;
+                                  }
+                                  unawaited(_loadDiff(repoPath, path));
+                                },
                                 onStagingApplied: () {
                                   final path =
                                       _visibleDiffPath ?? _selectedDiffPath;
@@ -4129,7 +4795,7 @@ class _ChangesPageState extends State<ChangesPage> {
               left: 0,
               right: 0,
               child: AnimatedOpacity(
-                opacity: repo.statusLoading ? 1 : 0,
+                opacity: statusLoading ? 1 : 0,
                 duration: const Duration(milliseconds: 80),
                 child: TopProgressLine(color: t.accentBright),
               ),
@@ -4178,7 +4844,7 @@ class _ChangesPageState extends State<ChangesPage> {
                         border: Border.all(color: t.accentBright, width: 1),
                       ),
                       child: Text(
-                        'drop to dump this desk here',
+                        'drop to bring changes from this desk here',
                         style: TextStyle(
                           color: t.textStrong,
                           fontSize: 12,
@@ -4353,6 +5019,29 @@ class _CombinedDiffSection {
   });
 }
 
+class _CachedMultiDiff {
+  final String scopeKey;
+  final DiffDocument? document;
+  final Map<String, String> fileKeyByPath;
+
+  const _CachedMultiDiff({
+    required this.scopeKey,
+    required this.document,
+    required this.fileKeyByPath,
+  });
+
+  List<_CombinedDiffSection> get sections =>
+      document?.sections
+          .map((section) => _CombinedDiffSection(
+                path: section.path,
+                displayName: section.displayName,
+                index: section.index,
+                startLine: section.startLine,
+              ))
+          .toList(growable: false) ??
+      const <_CombinedDiffSection>[];
+}
+
 /// Re-rank `clusters.orderedPaths` within each cluster by diffusion pull
 /// from the currently-staged file set. Cluster boundaries are preserved
 /// so the visual grouping (cluster stripes) stays intact; only the
@@ -4380,19 +5069,24 @@ List<String> _logosRerankedOrder({
     for (final s in scores) s.path: s.phi,
   };
 
-  // Walk the original ordering once, collecting cluster runs on first
-  // encounter of each cluster ID. Sort each run by (isSource desc, φ desc
-  // with `inverted` flipping the φ direction).
-  final seen = <int>{};
+  // Group cluster members in one pass. Re-scanning the full ordered list
+  // for every cluster turns selection churn into quadratic work in the UI
+  // path.
+  final clusterOrder = <int>[];
+  final membersByCluster = <int, List<String>>{};
+  for (final path in clusters.orderedPaths) {
+    final cid = clusters.byPath[path] ?? FileClusters.clusterIdIsolated;
+    final members = membersByCluster.putIfAbsent(cid, () {
+      clusterOrder.add(cid);
+      return <String>[];
+    });
+    members.add(path);
+  }
+
   final result = <String>[];
-  for (final p in clusters.orderedPaths) {
-    final cid = clusters.byPath[p] ?? FileClusters.clusterIdIsolated;
-    if (seen.contains(cid)) continue;
-    seen.add(cid);
-    final members = [
-      for (final q in clusters.orderedPaths)
-        if ((clusters.byPath[q] ?? FileClusters.clusterIdIsolated) == cid) q,
-    ]..sort((a, b) {
+  for (final cid in clusterOrder) {
+    final members = membersByCluster[cid]!
+      ..sort((a, b) {
         final aIsSource = sources.contains(a);
         final bIsSource = sources.contains(b);
         if (aIsSource != bIsSource) return aIsSource ? -1 : 1;
@@ -4405,50 +5099,26 @@ List<String> _logosRerankedOrder({
   return result;
 }
 
-List<_CombinedDiffSection> _parseCombinedDiffSections(String diffContent) {
-  if (diffContent.trim().isEmpty) {
-    return const [];
-  }
-
-  final sections = <_CombinedDiffSection>[];
-  final lines = diffContent.split('\n');
-  var renderedLineIndex = 0;
-  for (var i = 0; i < lines.length; i++) {
-    final line = lines[i];
-    final match = RegExp(r'^diff --git a/(.+) b/(.+)$').firstMatch(line);
-    if (match == null) {
-      if (!_isHiddenCombinedDiffPreamble(line)) {
-        renderedLineIndex++;
-      }
-      continue;
-    }
-    final path = match.group(2) ?? match.group(1) ?? '';
-    final normalized = path.trim();
-    if (normalized.isEmpty) {
-      if (!_isHiddenCombinedDiffPreamble(line)) {
-        renderedLineIndex++;
-      }
-      continue;
-    }
-    final displayName = normalized.split('/').last;
-    sections.add(
-      _CombinedDiffSection(
-        path: normalized,
-        displayName: displayName,
-        index: sections.length,
-        startLine: renderedLineIndex,
-      ),
-    );
-    if (!_isHiddenCombinedDiffPreamble(line)) {
-      renderedLineIndex++;
-    }
-  }
-
-  return sections;
+Future<List<String>> _computeLogosRerankedOrder({
+  required FileClusters clusters,
+  required LogosGit engine,
+  required Set<String> sources,
+  required double t,
+  required double coherenceGate,
+  required bool inverted,
+}) async {
+  // Offloading rerank looked attractive on paper, but in practice it
+  // copies the full Logos engine into the isolate. That transfer dwarfs
+  // the actual diffuse() cost and shows up as multi-second stalls.
+  return _logosRerankedOrder(
+    clusters: clusters,
+    engine: engine,
+    sources: sources,
+    t: t,
+    coherenceGate: coherenceGate,
+    inverted: inverted,
+  );
 }
-
-bool _isHiddenCombinedDiffPreamble(String line) =>
-    line.startsWith('diff ') || line.startsWith('index ');
 
 List<_CombinedDiffSection> _buildTimelineSections(
   List<RepositoryStatusFile> files,
@@ -4487,6 +5157,18 @@ List<_CombinedDiffSection> _buildTimelineSections(
   return sections;
 }
 
+_CombinedDiffSection? _currentTimelineSectionForPath(
+  List<_CombinedDiffSection> sections,
+  String? currentPath,
+) {
+  if (sections.isEmpty) return null;
+  if (currentPath == null) return sections.first;
+  return sections.firstWhere(
+    (section) => section.path == currentPath,
+    orElse: () => sections.first,
+  );
+}
+
 class _MultiDiffTimelineStrip extends StatelessWidget {
   final AppTokens tokens;
   final List<_CombinedDiffSection> sections;
@@ -4506,11 +5188,10 @@ class _MultiDiffTimelineStrip extends StatelessWidget {
         ? 0
         : sections.indexWhere((section) => section.path == currentPath);
     final effectiveIndex = currentIndex < 0 ? 0 : currentIndex;
-    final currentSection = sections.isEmpty ? null : sections[effectiveIndex];
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(
@@ -4518,32 +5199,11 @@ class _MultiDiffTimelineStrip extends StatelessWidget {
           ),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Tooltip(
-            message: currentSection?.path,
-            child: Text(
-              currentSection == null
-                  ? '${sections.length} selected files'
-                  : '${currentSection.displayName} | ${effectiveIndex + 1} of ${sections.length}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: tokens.textStrong,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(height: 7),
-          _MultiDiffProgressRail(
-            tokens: tokens,
-            sections: sections,
-            currentIndex: effectiveIndex,
-            onSelectPath: onSelectPath,
-          ),
-        ],
+      child: _MultiDiffProgressRail(
+        tokens: tokens,
+        sections: sections,
+        currentIndex: effectiveIndex,
+        onSelectPath: onSelectPath,
       ),
     );
   }
@@ -7045,12 +7705,16 @@ class _ShelfControl extends StatefulWidget {
 
 class _ShelfControlState extends State<_ShelfControl> {
   int _hoverSegment = 0; // 0 none, 1 toggle, 2 shelve
+  bool _isHoveringWholePill = false;
 
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final hasShelves = widget.count > 0;
-    final borderColor = t.chromeBorder.withValues(alpha: 0.25);
+    final borderColor =
+        t.chromeBorder.withValues(alpha: _isHoveringWholePill ? 0.35 : 0.25);
+    final backgroundColor =
+        t.bg1.withValues(alpha: _isHoveringWholePill ? 0.95 : 0.0);
 
     Widget segment({
       required String text,
@@ -7091,14 +7755,35 @@ class _ShelfControlState extends State<_ShelfControl> {
       );
     }
 
+    Widget pill(Widget child) {
+      return MouseRegion(
+        onEnter: (_) => setState(() => _isHoveringWholePill = true),
+        onExit: (_) => setState(() => _isHoveringWholePill = false),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOutCubic,
+          decoration: BoxDecoration(
+            color: backgroundColor,
+            border: Border.all(color: borderColor),
+            borderRadius: BorderRadius.circular(4),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black
+                    .withValues(alpha: _isHoveringWholePill ? 0.12 : 0.0),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: child,
+        ),
+      );
+    }
+
     if (!hasShelves && !widget.loading) {
       // Single-purpose pill: just shelve.
-      return Container(
-        decoration: BoxDecoration(
-          border: Border.all(color: borderColor),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: segment(
+      return pill(
+        segment(
           text: '↓ shelve',
           onTap: widget.canShelve ? widget.onShelve : null,
           id: 2,
@@ -7109,12 +7794,8 @@ class _ShelfControlState extends State<_ShelfControl> {
     }
 
     // Two-segment pill with hairline divider.
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: borderColor),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: IntrinsicHeight(
+    return pill(
+      IntrinsicHeight(
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -7919,7 +8600,7 @@ class _FileRowState extends State<_FileRow> {
                   duration: const Duration(milliseconds: 80),
                   margin: const EdgeInsets.symmetric(vertical: 2),
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                   decoration: BoxDecoration(
                     color: widget.isDiffSelected
                         ? t.chromeBorder.withValues(alpha: 0.1)

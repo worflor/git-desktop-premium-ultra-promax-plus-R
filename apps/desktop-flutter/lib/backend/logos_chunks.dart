@@ -25,6 +25,8 @@ import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'logos_git.dart'
+    show LogosEvidenceWitness, LogosResidualView, formatLogosEvidenceWitness;
 import 'logos_core.dart';
 
 // Chunker — split a source file on signature-line boundaries.
@@ -52,7 +54,8 @@ bool _isSigLine(String line) {
 
 int _leadingIndent(String line) {
   var i = 0;
-  while (i < line.length && (line.codeUnitAt(i) == 0x20 || line.codeUnitAt(i) == 0x09)) {
+  while (i < line.length &&
+      (line.codeUnitAt(i) == 0x20 || line.codeUnitAt(i) == 0x09)) {
     i++;
   }
   return i;
@@ -119,7 +122,8 @@ List<SourceChunk> chunkSourceFile(String content) {
       chunkIndex: idx++,
       headerLine: header ?? firstLine.trim(),
       startLine: from + 1,
-      endLine: toExclusive, // 1-based inclusive == toExclusive when from is 0-based
+      endLine:
+          toExclusive, // 1-based inclusive == toExclusive when from is 0-based
       body: body,
       startIndent: _leadingIndent(firstLine),
     ));
@@ -177,8 +181,7 @@ List<SourceChunk> chunkSourceFile(String content) {
 // stop-list). Duplicated by convention so this module stays self-contained.
 
 final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
-final _camelBoundary =
-    RegExp(r'(?<=[\p{Ll}\p{N}])(?=[\p{Lu}])', unicode: true);
+final _camelBoundary = RegExp(r'(?<=[\p{Ll}\p{N}])(?=[\p{Lu}])', unicode: true);
 
 Set<String> _tokensOf(String text) {
   if (text.isEmpty) return const {};
@@ -339,9 +342,8 @@ CsrGraph _buildChunkGraph({
   // Top-K + symmetrise (same policy as logos_hunks / logos_git).
   final trimmedRows = List<List<_Edge>>.generate(n, (_) => <_Edge>[]);
   edges.forEach((i, row) {
-    final list = row.entries
-        .map((e) => _Edge(e.key, e.value))
-        .toList(growable: false);
+    final list =
+        row.entries.map((e) => _Edge(e.key, e.value)).toList(growable: false);
     list.sort((x, y) => y.w.compareTo(x.w));
     final cap = math.min(topK, list.length);
     for (var k = 0; k < cap; k++) {
@@ -450,7 +452,23 @@ Future<ChunkPackResult> packRelevantChunksAsync({
   required String content,
   required List<TouchedLineRange> touchedRanges,
   required int budgetChars,
+  double fileTransportedSupport = 0.0,
+  double fileInnovationResidual = 0.0,
+  double fileWitnessResidual = 0.0,
+  List<String> fileEvidenceTags = const [],
+  List<String> fileEvidenceWitnessLabels = const [],
+  List<LogosEvidenceWitness> fileEvidenceWitnesses = const [],
 }) async {
+  final resolvedWitnessLabels = fileEvidenceWitnessLabels.isNotEmpty
+      ? fileEvidenceWitnessLabels
+      : [
+          for (final witness in fileEvidenceWitnesses.take(3))
+            formatLogosEvidenceWitness(
+              witness,
+              includeNote: true,
+              includeSource: true,
+            ),
+        ];
   // Trivially small inputs — skip the isolate's serialisation cost.
   if (budgetChars <= 0 || content.isEmpty || content.length < 4096) {
     return packRelevantChunks(
@@ -458,6 +476,11 @@ Future<ChunkPackResult> packRelevantChunksAsync({
       content: content,
       touchedRanges: touchedRanges,
       budgetChars: budgetChars,
+      fileTransportedSupport: fileTransportedSupport,
+      fileInnovationResidual: fileInnovationResidual,
+      fileWitnessResidual: fileWitnessResidual,
+      fileEvidenceTags: fileEvidenceTags,
+      fileEvidenceWitnessLabels: resolvedWitnessLabels,
     );
   }
   return Isolate.run<ChunkPackResult>(
@@ -466,6 +489,11 @@ Future<ChunkPackResult> packRelevantChunksAsync({
       content: content,
       touchedRanges: touchedRanges,
       budgetChars: budgetChars,
+      fileTransportedSupport: fileTransportedSupport,
+      fileInnovationResidual: fileInnovationResidual,
+      fileWitnessResidual: fileWitnessResidual,
+      fileEvidenceTags: fileEvidenceTags,
+      fileEvidenceWitnessLabels: resolvedWitnessLabels,
     ),
     debugName: 'packRelevantChunks',
   );
@@ -477,6 +505,12 @@ ChunkPackResult packRelevantChunks({
   required String content,
   required List<TouchedLineRange> touchedRanges,
   required int budgetChars,
+  double fileTransportedSupport = 0.0,
+  double fileInnovationResidual = 0.0,
+  double fileWitnessResidual = 0.0,
+  List<String> fileEvidenceTags = const [],
+  List<String> fileEvidenceWitnessLabels = const [],
+  List<LogosEvidenceWitness> fileEvidenceWitnesses = const [],
 }) {
   if (budgetChars <= 0 || content.isEmpty) {
     return ChunkPackResult(
@@ -501,8 +535,24 @@ ChunkPackResult packRelevantChunks({
   // Trivially small file — no need to diffuse, just emit the whole thing
   // if it fits the budget.
   final lineCount = chunks.last.endLine;
+  final witnessLabels = fileEvidenceWitnessLabels.isNotEmpty
+      ? fileEvidenceWitnessLabels
+      : [
+          for (final witness in fileEvidenceWitnesses.take(3))
+            formatLogosEvidenceWitness(
+              witness,
+              includeNote: true,
+              includeSource: true,
+            ),
+        ];
+  final wholeFileEvidence = fileEvidenceTags.isEmpty
+      ? ''
+      : '<!-- file-evidence ${fileEvidenceTags.join(' ')} -->\n';
+  final wholeFileWitnesses = witnessLabels.isEmpty
+      ? ''
+      : '<!-- file-witnesses ${witnessLabels.join(' | ')} -->\n';
   final wholeFileBlock =
-      '--- $filePath ($lineCount lines, full) ---\n$content\n';
+      '--- $filePath ($lineCount lines, full) ---\n$wholeFileEvidence$wholeFileWitnesses$content\n';
   if (wholeFileBlock.length <= budgetChars) {
     return ChunkPackResult(
       body: wholeFileBlock,
@@ -561,42 +611,75 @@ ChunkPackResult packRelevantChunks({
   final topK = math.max(4, math.sqrt(n).ceil());
   final graph = _buildChunkGraph(chunks: chunks, tokens: tokens, topK: topK);
 
-  // Three-temperature blend (geometric mean) — same trick as logos_hunks.
-  // Basis built once via the shared core, then recombined at three t's.
-  final basis = chebyshevBasis(graph: graph, rho: rho, K: kChebyshevSmallGraph);
-  final phi05 =
-      recombineHeatPhi(graph: graph, basis: basis, t: 0.5, K: kChebyshevSmallGraph);
-  final phi10 =
-      recombineHeatPhi(graph: graph, basis: basis, t: 1.0, K: kChebyshevSmallGraph);
-  final phi20 =
-      recombineHeatPhi(graph: graph, basis: basis, t: 2.0, K: kChebyshevSmallGraph);
-  const eps = 1e-12;
-  final blended = Float64List(n);
+  // Three-temperature geometric-mean blend — canonical multi-scale
+  // ranker shared with `logos_hunks.dart`. See [tripleTemperatureBlend].
+  final blended = tripleTemperatureBlend(
+    graph: graph,
+    rho: rho,
+    K: kChebyshevSmallGraph,
+  );
+  final residualView = LogosResidualView(
+    path: '',
+    support: 0.0,
+    ambient: 0.0,
+    utility: 0.0,
+    integrity: 1.0,
+    transportPull: 0.0,
+    transportedSupport: fileTransportedSupport,
+    innovationResidual: fileInnovationResidual,
+    witnessResidual: fileWitnessResidual,
+    lowFrequencySupport: 0.0,
+    highFrequencySurprise: 0.0,
+    higherOrderLift: 0.0,
+    reducibilityGap: 0.0,
+    dominantAxis: null,
+  );
+  final transportSignal = residualView.transportSignal;
+  final residualSignal = residualView.residualMass;
+  final contextWeight = (1.0 + 0.80 * transportSignal - 0.35 * residualSignal)
+      .clamp(0.55, 1.85)
+      .toDouble();
+  final localWeight = (1.0 + 1.10 * residualSignal - 0.45 * transportSignal)
+      .clamp(0.55, 2.10)
+      .toDouble();
+  final spreadWeight = (0.90 * transportSignal) - (1.10 * residualSignal);
+  final untouchedCostScale =
+      (1.0 + 1.20 * residualSignal - 0.45 * transportSignal)
+          .clamp(0.65, 2.10)
+          .toDouble();
+  final ranked = Float64List(n);
   for (var i = 0; i < n; i++) {
-    final a = phi05[i] > 0 ? phi05[i] : 0.0;
-    final b = phi10[i] > 0 ? phi10[i] : 0.0;
-    final c = phi20[i] > 0 ? phi20[i] : 0.0;
-    if (a + b + c <= 0) {
-      blended[i] = 0.0;
-      continue;
-    }
-    blended[i] =
-        math.pow((a + eps) * (b + eps) * (c + eps), 1.0 / 3).toDouble();
+    final spreadMass = math.max(0.0, blended[i] - rho[i]);
+    ranked[i] = math.max(
+      0.0,
+      (contextWeight * blended[i]) +
+          (localWeight * rho[i]) +
+          (spreadWeight * spreadMass),
+    );
   }
 
   // Greedy φ-desc admission within budget. We track admitted indices in
   // a set to detect adjacency at emission time.
   final order = List<int>.generate(n, (i) => i);
-  order.sort((a, b) => blended[b].compareTo(blended[a]));
+  order.sort((a, b) => ranked[b].compareTo(ranked[a]));
 
   final admitted = <int>{};
   // Per-chunk overhead for a non-stitched block: header line.
   String headerFor(SourceChunk c) =>
-      '--- $filePath  L${c.startLine}-${c.endLine}  φ=${blended[c.chunkIndex].toStringAsFixed(3)} ---';
+      '--- $filePath  L${c.startLine}-${c.endLine}  φ=${ranked[c.chunkIndex].toStringAsFixed(3)} ---';
   // File-level wrapper header so the AI knows this is excerpts not full.
   final wrapHeader =
       '--- $filePath ($lineCount lines, $n chunks, relevance excerpts) ---\n';
-  var remaining = budgetChars - wrapHeader.length;
+  final evidenceHeader = fileEvidenceTags.isEmpty
+      ? ''
+      : '<!-- file-evidence ${fileEvidenceTags.join(' ')} -->\n';
+  final witnessHeader = witnessLabels.isEmpty
+      ? ''
+      : '<!-- file-witnesses ${witnessLabels.join(' | ')} -->\n';
+  var remaining = budgetChars -
+      wrapHeader.length -
+      evidenceHeader.length -
+      witnessHeader.length;
   if (remaining <= 0) {
     return ChunkPackResult(
       body: '',
@@ -616,9 +699,12 @@ ChunkPackResult packRelevantChunks({
     final hasLeftAdjacent = admitted.contains(i - 1);
     final headerCost = hasLeftAdjacent ? 0 : (headerFor(c).length + 1);
     final bodyCost = c.body.length + 1; // trailing newline
-    if (headerCost + bodyCost > remaining) continue;
+    final costScale = rho[i] > 1e-9 ? 1.0 : untouchedCostScale;
+    final effectiveCost =
+        math.max(1, ((headerCost + bodyCost) * costScale).ceil());
+    if (effectiveCost > remaining) continue;
     admitted.add(i);
-    remaining -= (headerCost + bodyCost);
+    remaining -= effectiveCost;
   }
 
   if (admitted.isEmpty) {
@@ -634,6 +720,12 @@ ChunkPackResult packRelevantChunks({
   final ordered = admitted.toList()..sort();
   final buf = StringBuffer();
   buf.write(wrapHeader);
+  if (evidenceHeader.isNotEmpty) {
+    buf.write(evidenceHeader);
+  }
+  if (witnessHeader.isNotEmpty) {
+    buf.write(witnessHeader);
+  }
   for (var k = 0; k < ordered.length; k++) {
     final i = ordered[k];
     final c = chunks[i];
@@ -659,7 +751,13 @@ List<TouchedLineRange> touchedRangesFromDiff({
   required String filePath,
   required String diffText,
 }) {
-  final ranges = <TouchedLineRange>[];
+  return touchedRangesByFileFromDiff(diffText)[filePath] ?? const [];
+}
+
+Map<String, List<TouchedLineRange>> touchedRangesByFileFromDiff(
+  String diffText,
+) {
+  final byFile = <String, List<TouchedLineRange>>{};
   final lines = diffText.split('\n');
   String? currentFile;
   int? hunkNewStart;
@@ -668,10 +766,11 @@ List<TouchedLineRange> touchedRangesFromDiff({
   int? hunkRangeEnd;
 
   void flushHunk() {
-    if (currentFile == filePath &&
-        hunkRangeStart != null &&
-        hunkRangeEnd != null) {
-      ranges.add(TouchedLineRange(hunkRangeStart!, hunkRangeEnd!));
+    final filePath = currentFile;
+    if (filePath != null && hunkRangeStart != null && hunkRangeEnd != null) {
+      (byFile[filePath] ??= <TouchedLineRange>[]).add(
+        TouchedLineRange(hunkRangeStart!, hunkRangeEnd!),
+      );
     }
     hunkRangeStart = null;
     hunkRangeEnd = null;
@@ -701,14 +800,14 @@ List<TouchedLineRange> touchedRangesFromDiff({
     if (line.startsWith('+') && !line.startsWith('+++')) {
       hunkRangeStart ??= hunkNewLine;
       hunkRangeEnd = hunkNewLine;
-      hunkNewLine = hunkNewLine! + 1;
+      hunkNewLine = hunkNewLine + 1;
     } else if (line.startsWith('-') && !line.startsWith('---')) {
       // Deletion: doesn't advance new-line counter, doesn't widen range.
     } else {
       // Context line — advances the new-line counter.
-      hunkNewLine = hunkNewLine! + 1;
+      hunkNewLine = hunkNewLine + 1;
     }
   }
   flushHunk();
-  return ranges;
+  return byFile;
 }

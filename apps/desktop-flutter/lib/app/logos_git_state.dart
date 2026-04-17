@@ -19,6 +19,7 @@ class LogosGitState extends ChangeNotifier {
   // UI's benefit. One cache, one source of truth, no race with ai.dart.
   final Map<String, LogosGit> _engineByRepo = {};
   final Set<String> _loading = {};
+  final Set<String> _loadingWithCoupling = {};
   final Map<String, String?> _errors = {};
 
   LogosGit? engineFor(String repoPath) => _engineByRepo[repoPath];
@@ -31,6 +32,7 @@ class LogosGitState extends ChangeNotifier {
     if (repoPath == null) {
       _engineByRepo.clear();
       _loading.clear();
+      _loadingWithCoupling.clear();
       _errors.clear();
       resolver.invalidateAllLogosGit();
       notifyListeners();
@@ -40,6 +42,7 @@ class LogosGitState extends ChangeNotifier {
         _loading.any((k) => k != repoPath);
     _engineByRepo.removeWhere((k, _) => k != repoPath);
     _loading.removeWhere((k) => k != repoPath);
+    _loadingWithCoupling.removeWhere((k) => k != repoPath);
     _errors.removeWhere((k, _) => k != repoPath);
     if (hadOthers) notifyListeners();
   }
@@ -51,9 +54,16 @@ class LogosGitState extends ChangeNotifier {
     String repoPath, {
     FileCouplingMatrix? coupling,
   }) async {
-    if (_loading.contains(repoPath)) return;
+    final wantsCoupling = coupling != null;
+    if (_loading.contains(repoPath) &&
+        (!wantsCoupling || _loadingWithCoupling.contains(repoPath))) {
+      return;
+    }
 
     _loading.add(repoPath);
+    if (wantsCoupling) {
+      _loadingWithCoupling.add(repoPath);
+    }
     _errors.remove(repoPath);
     notifyListeners();
 
@@ -69,7 +79,12 @@ class LogosGitState extends ChangeNotifier {
     } catch (e) {
       _errors[repoPath] = e.toString();
     } finally {
-      _loading.remove(repoPath);
+      if (wantsCoupling) {
+        _loadingWithCoupling.remove(repoPath);
+      }
+      if (!_loadingWithCoupling.contains(repoPath)) {
+        _loading.remove(repoPath);
+      }
       notifyListeners();
     }
   }
@@ -77,6 +92,11 @@ class LogosGitState extends ChangeNotifier {
   void invalidateRepo(String repoPath) {
     resolver.invalidateLogosGit(repoPath);
     final removed = _engineByRepo.remove(repoPath) != null;
-    if (removed) notifyListeners();
+    final wasLoading = _loading.remove(repoPath);
+    final hadCoupledLoading = _loadingWithCoupling.remove(repoPath);
+    final hadError = _errors.remove(repoPath) != null;
+    if (removed || wasLoading || hadCoupledLoading || hadError) {
+      notifyListeners();
+    }
   }
 }

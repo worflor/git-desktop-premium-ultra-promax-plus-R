@@ -24,6 +24,7 @@ class ParsedLine {
   final int hunkIndex;
   final String? filePath;
   final bool isStaged;
+
   /// True when git emitted `\ No newline at end of file` immediately
   /// after this line in the unified diff. Applies to whichever side
   /// (old or new) this line participates in. Persisted here (rather
@@ -167,8 +168,7 @@ class ParsedLine {
   /// Build the bigram SWAR bitmap for a query term — mirror of
   /// [_computeBigramBits]. Returns 0 for queries shorter than 2 characters,
   /// signalling the caller to skip the bigram stage (char-stage only).
-  static int queryBigramBits(String lowerTerm) =>
-      _computeBigramBits(lowerTerm);
+  static int queryBigramBits(String lowerTerm) => _computeBigramBits(lowerTerm);
 
   /// SimHash computation. Implements the sign-of-weighted-sum projection:
   ///   1. For each character trigram `(c₀, c₁, c₂)` in lowerText, hash via
@@ -226,6 +226,7 @@ class ParsedLine {
   ParsedLine copyWith({
     bool? isStaged,
     bool? noNewlineAtEof,
+    String? filePath,
   }) {
     return ParsedLine(
       text: text,
@@ -234,7 +235,7 @@ class ParsedLine {
       lineNumOld: lineNumOld,
       lineNumNew: lineNumNew,
       hunkIndex: hunkIndex,
-      filePath: filePath,
+      filePath: filePath ?? this.filePath,
       isStaged: isStaged ?? this.isStaged,
       noNewlineAtEof: noNewlineAtEof ?? this.noNewlineAtEof,
     );
@@ -270,12 +271,14 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
   final result = <ParsedLine>[];
   int oldLine = 0, newLine = 0, hunkIdx = -1;
   String? currentFile;
+  String? pendingOldFile;
 
   final diffHeaderRe = RegExp(r'^diff --git a/(.+) b/(.+)$');
   for (final line in rawLines) {
     if (line.startsWith('diff --git')) {
       final m = diffHeaderRe.firstMatch(line);
       if (m != null) currentFile = m.group(2) ?? m.group(1);
+      pendingOldFile = null;
       continue;
     }
     if (line.startsWith('diff ') || line.startsWith('index ')) {
@@ -318,6 +321,23 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
         final prev = result.removeLast();
         result.add(prev.copyWith(noNewlineAtEof: true));
       }
+    } else if (line.startsWith('--- ')) {
+      pendingOldFile = _patchSidePath(line, preferredPrefix: 'a');
+      result.add(ParsedLine(
+          text: line,
+          lowerText: line.toLowerCase(),
+          kind: LineKind.meta,
+          filePath: currentFile ?? pendingOldFile));
+    } else if (line.startsWith('+++ ')) {
+      currentFile = _patchSidePath(line, preferredPrefix: 'b') ??
+          pendingOldFile ??
+          currentFile;
+      pendingOldFile = null;
+      result.add(ParsedLine(
+          text: line,
+          lowerText: line.toLowerCase(),
+          kind: LineKind.meta,
+          filePath: currentFile));
     } else if (line.startsWith('new file mode ') ||
         line.startsWith('deleted file mode ') ||
         line.startsWith('old mode ') ||
@@ -326,9 +346,7 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
         line.startsWith('rename from ') ||
         line.startsWith('rename to ') ||
         line.startsWith('Binary files ') ||
-        line.startsWith('GIT binary patch') ||
-        line.startsWith('--- ') ||
-        line.startsWith('+++ ')) {
+        line.startsWith('GIT binary patch')) {
       result.add(ParsedLine(
           text: line,
           lowerText: line.toLowerCase(),
@@ -372,6 +390,10 @@ List<ParsedLine> parseUnifiedDiff(String diff) {
 /// pick whichever representation they need.
 Map<String, String> sliceDiffByFile(String raw) {
   if (raw.isEmpty) return const {};
+  if (!raw.contains('diff --git ')) {
+    return _sliceBareUnifiedDiffByFile(raw);
+  }
+
   final lines = raw.split('\n');
   final result = <String, String>{};
   final diffHeaderRe = RegExp(r'^diff --git a/(.+) b/(.+)$');
@@ -379,8 +401,7 @@ Map<String, String> sliceDiffByFile(String raw) {
   String? currentPath;
   void flush(int endExclusive) {
     if (sectionStart < 0 || currentPath == null) return;
-    result[currentPath!] =
-        lines.sublist(sectionStart, endExclusive).join('\n');
+    result[currentPath!] = lines.sublist(sectionStart, endExclusive).join('\n');
   }
 
   for (var i = 0; i < lines.length; i++) {
@@ -394,6 +415,50 @@ Map<String, String> sliceDiffByFile(String raw) {
   }
   flush(lines.length);
   return result;
+}
+
+Map<String, String> _sliceBareUnifiedDiffByFile(String raw) {
+  final lines = raw.split('\n');
+  final result = <String, String>{};
+  var sectionStart = -1;
+  String? currentPath;
+
+  void flush(int endExclusive) {
+    if (sectionStart < 0 || currentPath == null) return;
+    result[currentPath!] = lines.sublist(sectionStart, endExclusive).join('\n');
+  }
+
+  for (var i = 0; i < lines.length - 1; i++) {
+    final minus = lines[i];
+    final plus = lines[i + 1];
+    if (!minus.startsWith('--- ') || !plus.startsWith('+++ ')) {
+      continue;
+    }
+
+    flush(i);
+    sectionStart = i;
+    currentPath = _patchSidePath(plus, preferredPrefix: 'b') ??
+        _patchSidePath(minus, preferredPrefix: 'a');
+    i++;
+  }
+
+  flush(lines.length);
+  return result;
+}
+
+String? _patchSidePath(String headerLine, {required String preferredPrefix}) {
+  final marker = headerLine.length >= 4 ? headerLine.substring(0, 4) : '';
+  if (marker != '--- ' && marker != '+++ ') return null;
+  var value = headerLine.substring(4).trim();
+  if (value.isEmpty || value == '/dev/null') return null;
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    value = value.substring(1, value.length - 1);
+  }
+  final prefixed = '$preferredPrefix/';
+  if (value.startsWith(prefixed)) {
+    return value.substring(prefixed.length);
+  }
+  return value;
 }
 
 /// Returns the index of the paired add/delete line for an edit-in-place,

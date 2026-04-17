@@ -393,9 +393,9 @@ class DiagnosticsState extends ChangeNotifier {
   static const int _maxRecentCommandSamples = 20;
   static const int _maxRetainedDiffSessions = 600;
   static const int _maxRecentDiffSessions = 20;
-  static const int _maxRetainedUiSamples = 800;
-  static const int _maxRecentUiSamples = 40;
-  static const int _maxRetainedLifecycleEvents = 240;
+  static const int _maxRetainedUiSamples = 1600;
+  static const int _maxRecentUiSamples = 120;
+  static const int _maxRetainedLifecycleEvents = 480;
   static const int _defaultRetentionDays = 30;
   static const int _defaultRetentionMb = 128;
   static const int _minRetentionDays = 1;

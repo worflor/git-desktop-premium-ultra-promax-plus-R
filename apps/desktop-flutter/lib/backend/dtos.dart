@@ -634,6 +634,30 @@ class RepositoryXrayMetabolismData {
   );
 }
 
+class RepositoryXrayFlowData {
+  final double gradientMass;
+  final double curlMass;
+  final double harmonicMass;
+  final double structuralStress;
+  final double confidence;
+
+  const RepositoryXrayFlowData({
+    required this.gradientMass,
+    required this.curlMass,
+    required this.harmonicMass,
+    required this.structuralStress,
+    required this.confidence,
+  });
+
+  static const empty = RepositoryXrayFlowData(
+    gradientMass: 0,
+    curlMass: 0,
+    harmonicMass: 0,
+    structuralStress: 0,
+    confidence: 0,
+  );
+}
+
 class RepositoryXraySnapshotData {
   final RepositoryXrayHeaderData header;
   final RepositoryXraySignalIntegrityData signalIntegrity;
@@ -648,6 +672,7 @@ class RepositoryXraySnapshotData {
   final List<RepositoryXrayPivotCommitData> pivots;
   final List<RepositoryXrayPivotCommitData> rawPivots;
   final RepositoryXrayMetabolismData metabolism;
+  final RepositoryXrayFlowData flow;
 
   const RepositoryXraySnapshotData({
     required this.header,
@@ -663,6 +688,7 @@ class RepositoryXraySnapshotData {
     required this.pivots,
     required this.rawPivots,
     this.metabolism = RepositoryXrayMetabolismData.empty,
+    this.flow = RepositoryXrayFlowData.empty,
   });
 }
 
