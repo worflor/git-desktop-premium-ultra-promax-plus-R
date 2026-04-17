@@ -78,7 +78,10 @@ import 'engram_file_ktable.dart';
 import 'engram_fit.dart';
 import 'file_coupling.dart';
 import 'logos_core.dart';
+import 'spectral_kizuna.dart';
+import 'spectral_ricci.dart';
 import 'spectral_spacetime.dart';
+import 'spectral_state.dart';
 import 'spectral_walks.dart';
 import 'logos_git_calibration.dart' show LogosAxis;
 import 'logos_git_integrity.dart';
@@ -507,6 +510,25 @@ const int _defaultStabilitySeed = 0xABDE;
 /// the Chebyshev K to avoid confusion - this K is graph sparsity, not
 /// polynomial order.
 const int _defaultEdgeDensity = 24;
+
+/// Additive boost applied to a file's utility score for its
+/// high-frequency-spectral "surprise" signal — the portion of a
+/// file's diffused mass that lives in modes above the Fiedler scale.
+/// Value chosen in the same order of magnitude as the transport-pull
+/// boost below, deliberately kept smaller than 1 so that the base
+/// `surplus * integrity` score dominates for high-support files. This
+/// is a compositional tuning constant (hand-picked, not derived); if
+/// tuning via an ablation study, expect a range of 0.10–0.25 to
+/// behave similarly.
+const double _utilityHfSurpriseWeight = 0.15;
+
+/// Additive boost applied to a file's utility score for its
+/// transport-pull signal — the strength of the directed-flow heat
+/// arriving at the file from semantically linked neighbours. Same
+/// compositional-constant class as [_utilityHfSurpriseWeight]; its
+/// smaller magnitude reflects that transport pull is already
+/// indirectly in `surplus` via the transport graph.
+const double _utilityTransportPullWeight = 0.10;
 
 // (besselCoeffs / adaptiveK / chebyshevDiffuse live in logos_core.dart.)
 
@@ -1603,6 +1625,76 @@ class LogosGit {
     if (tm == null) return null;
     _spacetimeBasis = SpacetimeBasis(space: sp, time: tm);
     return _spacetimeBasis;
+  }
+
+  /// Produce a [LogosState] — an immutable value capturing this
+  /// engine's full spectral identity at the current moment. One int
+  /// comparison (`stateA.signature == stateB.signature`) tells you
+  /// whether two engines are in the same state.
+  ///
+  /// The snapshot is lazy: spectra are materialised on demand via the
+  /// existing accessors (`spectralBasis`, `commitSpectralBasis`,
+  /// `spacetimeBasis`), each of which returns null when its graph is
+  /// below the spectral amortisation threshold. The resulting state
+  /// carries whatever was populated; observers can test `isEmpty` or
+  /// inspect individual fields.
+  ///
+  /// Use [LogosState.diff] to localise divergence between two
+  /// snapshots — fast-path by signature, then per-factor, then
+  /// per-file Hamming on the 8-bit fingerprint.
+  LogosState snapshot({int k = kDefaultSpectralBasisK}) => LogosState(
+        fileSpectrum: spectralBasis(k: k),
+        commitSpectrum: commitSpectralBasis(k: k),
+        joint: spacetimeBasis(kSpace: k, kTime: k),
+        revision: manifoldRevision,
+      );
+
+  /// Ollivier-Ricci curvature field of this engine's file graph.
+  /// Computed lazily via Sinkhorn-Knopp entropic Wasserstein (see
+  /// [RicciField.sinkhorn]). Each edge carries a signed scalar:
+  /// negative = bottleneck / bridge, positive = community-like,
+  /// ~0 = expander. [RicciField.depth] is the deepest bottleneck
+  /// scalar; [RicciField.mostNegativeEdges] returns the top-k bridge
+  /// candidates for review-salience ranking or refactor surfacing.
+  ///
+  /// Cost is O(|E| · Sinkhorn_per_edge). Typical repos land in the
+  /// seconds range; callers should cache the result per engine
+  /// instance via [manifoldRevision].
+  RicciField ricciField({double epsilon = 0.05, int iterations = 100}) {
+    return RicciField.sinkhorn(
+      graph,
+      epsilon: epsilon,
+      iterations: iterations,
+      graphSignatureHint:
+          Signature(lo: manifoldRevision & 0x7fffffff, hi: 0),
+    );
+  }
+
+  /// 25D Kizuna bond fingerprint of this engine's joint (file ×
+  /// commit) fingerprint histogram. Requires both [spectralBasis] and
+  /// [commitSpectralBasis] to be materialisable with at least 9 modes
+  /// each (8 non-trivial + the zero mode); returns null otherwise.
+  ///
+  /// The bond is the graded Walsh-Hadamard basis on (Z/2)^16: 8 lower
+  /// marginals of the commit byte, 8 upper marginals of the file
+  /// byte, 8 cross-coupling coefficients (one per mode-by-mode
+  /// diagonal), plus the global FFFF parity. See
+  /// [KizunaBond25D] for operations and
+  /// [KizunaBond25D.familyProfile] for the 4-D compact signature.
+  KizunaBond25D? kizunaBond() {
+    final fileSpec = spectralBasis();
+    final commitSpec = commitSpectralBasis();
+    if (fileSpec == null || commitSpec == null) return null;
+    if (fileSpec.k < 9 || commitSpec.k < 9) return null;
+    final touchesPerFile = List<List<int>>.generate(
+      nodePaths.length,
+      (fileId) => stats.perFileCommitIndices[nodePaths[fileId]] ?? const [],
+    );
+    return kizunaBondOfSpectra(
+      fileSpectrum: fileSpec,
+      commitSpectrum: commitSpec,
+      touchesPerFile: touchesPerFile,
+    );
   }
 
   /// Construct the engine from per-file statistics. Nodes are all files
@@ -2884,11 +2976,6 @@ class LogosGit {
         recentActivityWeights(halfLifeCommits: ambientHalfLifeCommits);
     final ambientRho =
         ambientWeights.isEmpty ? null : _buildRho(ambientWeights);
-    final nearTBase = math.max(0.35, t * 0.55);
-    final farTBase = math.min(4.0, math.max(t, t * 1.85));
-    final nearT = math.min(nearTBase, farTBase);
-    final farT = math.max(nearTBase, farTBase);
-
     final axisOrder = perAxisRhos.keys.toList(growable: false);
     final hasAxes = attribWanted && axisOrder.isNotEmpty;
 
@@ -2904,6 +2991,22 @@ class LogosGit {
     // Chebyshev path with the basis-fusion / attribution batching that
     // [_buildFocusAndAxisRhos] sets up.
     final spectral = _getOrBuildSpectralBasis(kDefaultSpectralBasisK);
+
+    // Pick near/far temperatures from the graph's own heat-capacity
+    // peaks via `flankingScales`. When the amortised spectral basis
+    // exists we use it; otherwise we build a one-shot lightweight
+    // basis just for scale derivation (cheap on small graphs where
+    // the amortised path isn't warranted). Bounds [0.35, 4.0] are
+    // retained to keep the output within the diffusion regime the
+    // rest of `gatherEvidence` is tuned for.
+    final scaleBasis = spectral ??
+        SpectralBasis.fromGraph(
+          graph,
+          math.min(kDefaultSpectralBasisK, graph.n),
+        );
+    final flank = scaleBasis.flankingScales(t);
+    final nearT = math.max(0.35, math.min(flank.nearT, t));
+    final farT = math.min(4.0, math.max(flank.farT, t));
 
     final Float64List focusPhi;
     final Float64List nearPhi;
@@ -3133,8 +3236,8 @@ class LogosGit {
         integrity: integrity,
         utility: math.max(
           surplus * integrity +
-              0.15 * highFrequencySurprise +
-              0.10 * transportPull,
+              _utilityHfSurpriseWeight * highFrequencySurprise +
+              _utilityTransportPullWeight * transportPull,
           rescue,
         ),
         higherOrderLift: 0.0,
@@ -3205,8 +3308,8 @@ class LogosGit {
         integrity: integrity,
         utility: math.max(
           surplus * integrity +
-              0.15 * highFrequencySurprise +
-              0.10 * transportPull,
+              _utilityHfSurpriseWeight * highFrequencySurprise +
+              _utilityTransportPullWeight * transportPull,
           rescue,
         ),
         higherOrderLift: 0.0,

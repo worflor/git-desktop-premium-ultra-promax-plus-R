@@ -138,6 +138,7 @@ Duration _durationFor(ThemeInteraction mode) => switch (mode) {
       ThemeInteraction.vibration => const Duration(milliseconds: 180),
       ThemeInteraction.chalk => const Duration(milliseconds: 200),
       ThemeInteraction.inkSplat => const Duration(milliseconds: 220),
+      ThemeInteraction.blockBreak => const Duration(milliseconds: 460),
       ThemeInteraction.none => Duration.zero,
     };
 
@@ -163,6 +164,8 @@ CustomPainter _feedbackPainter({
       return _ChalkPainter(origin: origin, color: accent, t: progress);
     case ThemeInteraction.inkSplat:
       return _InkSplatPainter(origin: origin, t: progress);
+    case ThemeInteraction.blockBreak:
+      return _BlockBreakPainter(origin: origin, accent: accent, t: progress);
     case ThemeInteraction.none:
       return _NoopPainter();
   }
@@ -431,4 +434,86 @@ class _NoopPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(CustomPainter oldDelegate) => false;
+}
+
+/// Block-break burst. Taps spawn a handful of small voxel shards at
+/// the click point; each is a tiny rotated square with an outward-
+/// upward initial velocity, a slow spin, and gravity pulling it back
+/// down. Half the shards take the dirt-brown side, half take the
+/// theme accent, so the burst reads as "a block shattered here"
+/// rather than a generic ripple.
+class _BlockBreakPainter extends CustomPainter {
+  final Offset origin;
+  final Color accent;
+  final double t;
+
+  _BlockBreakPainter({
+    required this.origin,
+    required this.accent,
+    required this.t,
+  });
+
+  // Pre-computed deterministic shard fan. Fixed seed so every tap
+  // lands with the same shape — cheaper than allocating random
+  // numbers per frame and gives the effect a consistent silhouette.
+  // Each tuple: (angleRadians, speed, size, spin, palette-index)
+  static const List<(double, double, double, double, int)> _shards = [
+    (-2.80, 48, 3.5, 3.2, 0),
+    (-2.25, 56, 2.8, -2.6, 1),
+    (-1.90, 64, 3.2, 2.0, 0),
+    (-1.55, 72, 2.5, -3.4, 1),
+    (-1.20, 60, 3.0, 2.8, 0),
+    (-0.85, 52, 2.7, -2.2, 1),
+    (-0.50, 66, 3.4, 3.0, 0),
+    (-0.15, 58, 2.6, -1.8, 1),
+  ];
+
+  // Dirt-tone brown — one of two shard palettes so the burst has
+  // visual variety without depending on per-theme color lookups.
+  static const Color _dirt = Color(0xFF6B4A2C);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Gravity + duration tuned so shards arc up briefly then fall.
+    // `physicalT` is normalized [0, 1]; gravity is expressed as
+    // px-per-unit² so it scales with the progress timeline.
+    const gravityPx = 180.0;
+    final alpha = (1.0 - t * t).clamp(0.0, 1.0);
+    if (alpha <= 0.01) return;
+
+    final paint = Paint()
+      ..isAntiAlias = false
+      ..style = PaintingStyle.fill;
+
+    for (final shard in _shards) {
+      final angle = shard.$1;
+      final speed = shard.$2;
+      final size = shard.$3 * (1.0 - t * 0.25);
+      final spin = shard.$4;
+      final palette = shard.$5;
+
+      final vx = math.cos(angle) * speed;
+      final vy = math.sin(angle) * speed;
+      final dx = vx * t;
+      final dy = vy * t + 0.5 * gravityPx * t * t;
+
+      final rotation = spin * t;
+      final color = (palette == 0 ? _dirt : accent)
+          .withValues(alpha: alpha * 0.85);
+
+      canvas.save();
+      canvas.translate(origin.dx + dx, origin.dy + dy);
+      canvas.rotate(rotation);
+      paint.color = color;
+      canvas.drawRect(
+        Rect.fromCenter(center: Offset.zero, width: size, height: size),
+        paint,
+      );
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BlockBreakPainter old) =>
+      old.t != t || old.origin != origin || old.accent != accent;
 }

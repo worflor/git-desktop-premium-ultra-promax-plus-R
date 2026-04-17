@@ -150,6 +150,11 @@ class DiffShell extends StatefulWidget {
   final String? revisionRef;
   final DiffLogosSession? logosSession;
   final ValueChanged<String>? onOpenRelatedPath;
+  /// Fires with the file path of a newly-pinned line. Parents that
+  /// host a side-list of files wire this to keep their selection
+  /// scrolled alongside the user's focus — pinning a line is an
+  /// explicit "this is what I'm looking at" signal.
+  final ValueChanged<String>? onPinnedFileFocused;
   /// When non-null, renders a `<` back button in the toolbar's
   /// leading slot (before the search toggle). Wired by parents that
   /// maintain a navigation stack — clicking it pops one layer. Null
@@ -180,6 +185,7 @@ class DiffShell extends StatefulWidget {
     this.revisionRef,
     this.logosSession,
     this.onOpenRelatedPath,
+    this.onPinnedFileFocused,
     this.onNavigateBack,
     this.toolbarFilePath,
     this.toolbarLabel,
@@ -228,6 +234,11 @@ class _DiffShellState extends State<DiffShell> {
   final Set<String> _blameFetchingFiles = {};
   final Set<String> _blamePrewarmingFiles = {};
   final Set<String> _blameUnavailableFiles = {};
+  /// Shared per-key in-flight futures so concurrent `_loadBlame`
+  /// callers join one fetch. Without this the pinned-context
+  /// refresh could resolve against an empty cache mid-fetch and
+  /// commit a null blame.
+  final Map<String, Future<void>> _blameLoadFutures = {};
   bool _sessionFlushed = false;
   double? _sessionFirstPaintMs;
   DateTime? _lastScrollEventAt;
@@ -334,6 +345,12 @@ class _DiffShellState extends State<DiffShell> {
   // guard prevents the snap animation from re-triggering itself.
   static const double _kGravityLineRadius = 3.0;
   bool _gravitySnapping = false;
+  /// True between a programmatic `_jumpToDisplayIndex` call and the
+  /// ScrollEndNotification that fires when its animation finishes.
+  /// Gravity-snap is user-intent-only; the jump already landed where
+  /// the caller asked, so snapping to the nearest hunk would yank it
+  /// back. Consumed by the first post-jump ScrollEnd.
+  bool _programmaticScrollInFlight = false;
 
   // Temporal marks — where the reader left off, per file. LRU-bounded so
   // long sessions can't leak unbounded state. Backed by a LinkedHashMap so
@@ -483,6 +500,7 @@ class _DiffShellState extends State<DiffShell> {
       _blameFetchingFiles.clear();
       _blamePrewarmingFiles.clear();
       _blameUnavailableFiles.clear();
+      _blameLoadFutures.clear();
       _blameByFile.clear();
       _hoveredLine = null;
       // Reset trail state — the underlying diff changed, so any active
@@ -888,11 +906,14 @@ class _DiffShellState extends State<DiffShell> {
     return _blameLookupKey(filePath, _activeRevisionRef);
   }
 
+  /// Cheap "already handled" check for prewarm loops that don't
+  /// need to await the result — just to avoid re-queuing.
   bool _hasQueuedOrFetchedBlame(String key) =>
       _blameFetchedFiles.contains(key) ||
       _blameFetchingFiles.contains(key) ||
       _blamePrewarmingFiles.contains(key) ||
-      _blameUnavailableFiles.contains(key);
+      _blameUnavailableFiles.contains(key) ||
+      _blameLoadFutures.containsKey(key);
 
   bool _isBlameEligiblePath(String filePath) {
     final normalizedPath = _normalizedDiffPath(filePath);
@@ -925,65 +946,82 @@ class _DiffShellState extends State<DiffShell> {
       _blameUnavailableFiles.add(key);
       return;
     }
-    if (_hasQueuedOrFetchedBlame(key)) return;
-
-    final shouldNotify = lineNum > 0 || _wearMapVisible;
-    if (shouldNotify) {
-      setState(() {
-        _blameFetchingFiles.add(key);
-        if (lineNum > 0) {
-          _hoveredLine = lineNum;
-        }
-      });
-    } else {
-      _blamePrewarmingFiles.add(key);
+    if (_blameFetchedFiles.contains(key) ||
+        _blameUnavailableFiles.contains(key)) {
+      return;
     }
-    List<BlameLineData>? blameData;
-    var blameFailed = false;
+    // Join an in-flight fetch for the same key if one exists.
+    final inflight = _blameLoadFutures[key];
+    if (inflight != null) {
+      return inflight;
+    }
+
+    // First caller. Store a completer so joiners have something to
+    // await; resolve it in finally no matter how we exit.
+    final completer = Completer<void>();
+    _blameLoadFutures[key] = completer.future;
     try {
-      final r = await getFileBlame(
-        widget.repositoryPath!,
-        queryPath,
-        commitRef: revision,
-      );
-      if (r.ok) {
-        blameData = r.data;
+      final shouldNotify = lineNum > 0 || _wearMapVisible;
+      if (shouldNotify) {
+        setState(() {
+          _blameFetchingFiles.add(key);
+          if (lineNum > 0) {
+            _hoveredLine = lineNum;
+          }
+        });
       } else {
+        _blamePrewarmingFiles.add(key);
+      }
+      List<BlameLineData>? blameData;
+      var blameFailed = false;
+      try {
+        final r = await getFileBlame(
+          widget.repositoryPath!,
+          queryPath,
+          commitRef: revision,
+        );
+        if (r.ok) {
+          blameData = r.data;
+        } else {
+          blameFailed = true;
+        }
+      } catch (_) {
         blameFailed = true;
       }
-    } catch (_) {
-      blameFailed = true;
-    }
-    if (!mounted) return;
-    void applyResult() {
-      _blameFetchingFiles.remove(key);
-      _blamePrewarmingFiles.remove(key);
-      if (blameData != null) {
-        _blameFetchedFiles.add(key);
-        final map = <int, BlameLineData>{};
-        for (final entry in blameData) {
-          map[entry.lineNumber] = entry;
+      if (!mounted) return;
+      void applyResult() {
+        _blameFetchingFiles.remove(key);
+        _blamePrewarmingFiles.remove(key);
+        if (blameData != null) {
+          _blameFetchedFiles.add(key);
+          final map = <int, BlameLineData>{};
+          for (final entry in blameData) {
+            map[entry.lineNumber] = entry;
+          }
+          // Evict stale entries before inserting so the newest arrival
+          // is always at the most-recent end of the LRU order.
+          _blameByFile.remove(key);
+          _blameByFile[key] = map;
+          while (_blameByFile.length > _kBlameCacheMaxFiles) {
+            final oldest = _blameByFile.keys.first;
+            _blameByFile.remove(oldest);
+            // Also drop the companion tracking-set entry so a future
+            // fetch of the evicted file refreshes cleanly.
+            _blameFetchedFiles.remove(oldest);
+          }
+        } else if (blameFailed) {
+          _blameUnavailableFiles.add(key);
         }
-        // Evict stale entries before inserting so the newest arrival
-        // is always at the most-recent end of the LRU order.
-        _blameByFile.remove(key);
-        _blameByFile[key] = map;
-        while (_blameByFile.length > _kBlameCacheMaxFiles) {
-          final oldest = _blameByFile.keys.first;
-          _blameByFile.remove(oldest);
-          // Also drop the companion tracking-set entry so a future
-          // fetch of the evicted file refreshes cleanly.
-          _blameFetchedFiles.remove(oldest);
-        }
-      } else if (blameFailed) {
-        _blameUnavailableFiles.add(key);
       }
-    }
 
-    if (shouldNotify) {
-      setState(applyResult);
-    } else {
-      applyResult();
+      if (shouldNotify) {
+        setState(applyResult);
+      } else {
+        applyResult();
+      }
+    } finally {
+      _blameLoadFutures.remove(key);
+      if (!completer.isCompleted) completer.complete();
     }
   }
 
@@ -1344,23 +1382,58 @@ class _DiffShellState extends State<DiffShell> {
     }
   }
 
-  /// Load blame for every file in the diff AS OF the current trail revision.
-  /// Sequential (not concurrent) to avoid spawning a storm of `git blame`
-  /// processes on large multi-file diffs. Bails if wear map is toggled off
-  /// mid-load, or if the trail selection changes.
+  /// Parallel workers for the wear-map blame batch. Bounded so we
+  /// don't spawn a subprocess storm on large diffs.
+  static const int _kWearBlameConcurrency = 6;
+
+  /// Load blame for every file in the diff at the current trail
+  /// revision. Viewport files go first so colors paint where the
+  /// user is looking. Bails if wear toggles off, the trail moves,
+  /// or the widget unmounts.
   Future<void> _batchLoadWearBlame() async {
     final revisionAtStart = _activeRevisionRef;
-    for (final path in _uniqueFilePathsInDiff()) {
-      if (!mounted) return;
-      if (!_wearMapVisible) return;
-      // If the user navigated the trail to a different revision while we
-      // were loading, let the next scheduler handle it.
-      if (_activeRevisionRef != revisionAtStart) return;
-      if (!_isBlameEligiblePath(path)) continue;
-      final key = _blameLookupKey(path, revisionAtStart);
-      if (_hasQueuedOrFetchedBlame(key)) continue;
-      await _loadBlame(path, 0);
+
+    // Visible files first, rest after — viewport gets priority on
+    // the worker pool.
+    final allPaths = _uniqueFilePathsInDiff().toList();
+    final visible = <String>{};
+    if (_scrollCtrl.hasClients && _displayLines.isNotEmpty) {
+      final viewport = _scrollCtrl.position.viewportDimension;
+      final top = (_scrollCtrl.offset / _lineItemExtent)
+          .floor()
+          .clamp(0, _displayLines.length - 1);
+      final bottom = ((_scrollCtrl.offset + viewport) / _lineItemExtent)
+          .ceil()
+          .clamp(0, _displayLines.length - 1);
+      for (var i = top; i <= bottom; i++) {
+        final p = _displayLines[i].filePath ?? widget.filePath;
+        visible.add(p);
+      }
     }
+    final ordered = <String>[
+      ...allPaths.where(visible.contains),
+      ...allPaths.where((p) => !visible.contains(p)),
+    ];
+
+    final pending = Queue<String>.from([
+      for (final path in ordered)
+        if (_isBlameEligiblePath(path) &&
+            !_hasQueuedOrFetchedBlame(_blameLookupKey(path, revisionAtStart)))
+          path,
+    ]);
+    if (pending.isEmpty) return;
+
+    Future<void> worker() async {
+      while (pending.isNotEmpty) {
+        if (!mounted || !_wearMapVisible) return;
+        if (_activeRevisionRef != revisionAtStart) return;
+        final path = pending.removeFirst();
+        await _loadBlame(path, 0);
+      }
+    }
+
+    final workerCount = math.min(_kWearBlameConcurrency, pending.length);
+    await Future.wait([for (var i = 0; i < workerCount; i++) worker()]);
   }
 
   // Cached per-file age range: oldest and newest authoredAt per file.
@@ -2001,6 +2074,11 @@ class _DiffShellState extends State<DiffShell> {
       _pinnedDisplayIdx = displayIdx;
       _pinnedCtx = null; // reset to loading state
     });
+    // Explicit focus signal — pinning a line means the user is
+    // actively looking at this file. Parent can use it to keep a
+    // side-list of files anchored to the user's attention.
+    final pinnedPath = _displayLines[displayIdx].filePath ?? widget.filePath;
+    widget.onPinnedFileFocused?.call(pinnedPath);
     final ctx = await _computePinContext(displayIdx);
     if (!mounted || seq != _pinSeq) return;
     setState(() {
@@ -2220,6 +2298,13 @@ class _DiffShellState extends State<DiffShell> {
 
   bool _onScrollEnd(ScrollEndNotification n) {
     if (_gravitySnapping) return false;
+    // Skip hunk-gravity snap when we just landed from a programmatic
+    // jump — the jump target was explicit, snapping would yank it
+    // back. Consume the flag so subsequent user scrolls snap normally.
+    if (_programmaticScrollInFlight) {
+      _programmaticScrollInFlight = false;
+      return false;
+    }
     if (!_scrollCtrl.hasClients) return false;
     if (_hunks.isEmpty) return false;
     // Only react to the vertical ListView; the outer SingleChildScrollView's
@@ -2522,6 +2607,7 @@ class _DiffShellState extends State<DiffShell> {
         0.0,
         _scrollCtrl.position.maxScrollExtent,
       );
+      _programmaticScrollInFlight = true;
       _scrollCtrl.motionAnimateTo(
         targetOffset,
         context: context,

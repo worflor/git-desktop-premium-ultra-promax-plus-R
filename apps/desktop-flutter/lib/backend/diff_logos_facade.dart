@@ -892,18 +892,10 @@ class DiffPinnedContextModel {
 ///
 /// Returns null when the basis has fewer than 4 modes or the node
 /// id is out of range — callers fall back to a deterministic hash.
-/// 💀 Off-isolate wrapper around [LogosGit.gatherEvidence]. The
-/// evidence pass runs multi-source heat diffusion with axis
-/// attribution — O(k·n) per query plus the first-call Lanczos
-/// (O(k·|E|)) on repo-scale graphs — which was the primary source
-/// of UI-thread blocks in `diff.logos.refresh` (p95 13.7s per
-/// telemetry).
-///
-/// Falls back to a synchronous call if the engine or its internals
-/// aren't sendable across the isolate boundary (some collaborator
-/// types may hold non-transferable state). On fallback, behavior is
-/// identical to the pre-fix path — correct, just blocking — so the
-/// worst case is "no regression".
+/// Runs [LogosGit.gatherEvidence] on a background isolate so the
+/// UI thread doesn't block on its diffusion pass. Falls back to a
+/// sync call if the engine isn't sendable across the isolate
+/// boundary.
 Future<LogosEvidenceQueryResult?> _gatherEvidenceOffThread({
   required LogosGit engine,
   required Map<String, double> focusWeights,
@@ -924,10 +916,6 @@ Future<LogosEvidenceQueryResult?> _gatherEvidenceOffThread({
       debugName: 'gatherEvidence',
     );
   } catch (_) {
-    // Sendability error (or any isolate-layer failure) — run on the
-    // calling isolate so correctness is preserved even though the UI
-    // pays the block. Telemetry still captures the timing via the
-    // outer diff.logos.refresh event so regressions stay visible.
     return engine.gatherEvidence(
       focusWeights: focusWeights,
       axisLabelByPath: axisLabelByPath,

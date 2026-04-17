@@ -308,6 +308,30 @@ const double _proxHorizonLnRatio = 13.815510557964274;
 /// keeps anyway, so larger values would do redundant work.
 const int _kCrossFileFanoutCap = 32;
 
+/// Weights for the hunk-file inherited-coupling formula in
+/// [buildHunkFileEvidenceFromResiduals]. Each term represents a
+/// distinct *channel* by which a file's evidence signal can transmit
+/// to its hunks:
+///
+/// - [_hfBaseSupportWeight] — direct support×integrity; the default
+///   coupling when no transport or residual signal is present.
+/// - [_hfTransportSignalWeight] — pull through the co-change /
+///   semantic-link transport graph; a file whose related files have
+///   evidence should inherit some of it.
+/// - [_hfResidualSignalWeight] — unexplained innovation / witness
+///   residuals; a file flagged as architecturally surprising
+///   propagates that surprise to its hunks.
+///
+/// The three weights sum to 1.45 — an intentional overcount,
+/// clamped by the surrounding `math.max(baseSupport, ...)` and the
+/// `[0, 1]` bound. The overcount means any single strong channel
+/// can dominate, while two weaker channels can still combine to
+/// beat a solo base. Compositional constants (hand-picked, not
+/// derived); ablation-study range is ~±0.1 per weight.
+const double _hfBaseSupportWeight = 0.60;
+const double _hfTransportSignalWeight = 0.35;
+const double _hfResidualSignalWeight = 0.50;
+
 Set<String> _tokensOf(String text) {
   if (text.isEmpty) return const {};
   final tokens = <String>{};
@@ -864,7 +888,9 @@ HunkFileEvidence buildHunkFileEvidenceFromResiduals(
     final residualSignal = signal.residualSignal;
     final inherited = math.max(
       baseSupport,
-      (0.60 * baseSupport + 0.35 * transportSignal + 0.50 * residualSignal)
+      (_hfBaseSupportWeight * baseSupport +
+              _hfTransportSignalWeight * transportSignal +
+              _hfResidualSignalWeight * residualSignal)
           .clamp(0.0, 1.0)
           .toDouble(),
     );
@@ -1142,10 +1168,23 @@ HunkDiffusionResult _rankHunksByPhiCore({
 
   // Three-temperature geometric-mean blend — canonical multi-scale
   // ranker shared with `logos_chunks.dart`. See [tripleTemperatureBlend].
+  //
+  // On graphs with enough nodes to have meaningful heat-capacity
+  // structure (n ≥ 32), derive the three temperatures from the graph's
+  // own spectrum via `naturalScales`. On small graphs, fall through to
+  // the default log-spaced triplet — their heat-capacity curves are
+  // too noisy for peak detection to help.
+  List<double>? derivedTemps;
+  if (graph.n >= 32) {
+    final basis =
+        SpectralBasis.fromGraph(graph, math.min(16, graph.n));
+    derivedTemps = tripleBlendTemperaturesFromPeaks(basis.naturalScales());
+  }
   final blended = tripleTemperatureBlend(
     graph: graph,
     rho: rho,
     K: kChebyshevSmallGraph,
+    temperatures: derivedTemps,
   );
 
   final indexed = List<int>.generate(n, (i) => i);

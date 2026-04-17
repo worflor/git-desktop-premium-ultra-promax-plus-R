@@ -104,6 +104,17 @@ class _ChangesPageState extends State<ChangesPage> {
   /// single-file diff restores that file in single-diff mode even
   /// if the user originally came from a multi-diff context.
   final List<String> _diffNavStack = <String>[];
+
+  /// Scroll + keying infrastructure for the file list. A single
+  /// ScrollController lets `_ensureFileVisibleInChangesList` bring
+  /// any file row into view on explicit navigation events (rail
+  /// click, file-tree click, related-path open, pinned line). Row
+  /// keys give us a direct `Scrollable.ensureVisible` path when the
+  /// target is already built; an offset-estimate fallback handles
+  /// off-screen targets.
+  final ScrollController _changesListCtrl = ScrollController();
+  final Map<String, GlobalKey> _fileRowKeys = {};
+  List<String> _changesListPaths = const [];
   DiffDocument? _diffDocument;
   bool _diffLoading = false;
   String? _diffError;
@@ -690,6 +701,7 @@ class _ChangesPageState extends State<ChangesPage> {
     _commitMsgFocusNode.dispose();
     _shapeCtrl.dispose();
     _shapeFocus.dispose();
+    _changesListCtrl.dispose();
     super.dispose();
   }
 
@@ -1037,6 +1049,47 @@ class _ChangesPageState extends State<ChangesPage> {
     // _inspectSingleDiff rather than _pushAndInspectSingleDiff so the
     // pop doesn't immediately re-push and trap the user in a cycle.
     _inspectSingleDiff(repo, prev);
+  }
+
+  /// Bring the row for [path] into the file list's viewport. Called
+  /// from explicit-navigation events only (rail click, tree click,
+  /// related-path open, pinned-line focus). Passive diff scrolling
+  /// deliberately does NOT trigger this — yanking the list while the
+  /// user is passively reading would be aggressive.
+  ///
+  /// Uses [Scrollable.ensureVisible] when the target row is already
+  /// laid out (variable row heights handled natively). Falls back to
+  /// an index-× average-row-height estimate for off-screen rows so
+  /// the list at least animates to the right neighborhood.
+  void _ensureFileVisibleInChangesList(String path) {
+    final key = _fileRowKeys[path];
+    final rowCtx = key?.currentContext;
+    const duration = Duration(milliseconds: 220);
+    const curve = Curves.easeInOutCubic;
+    if (rowCtx != null) {
+      Scrollable.ensureVisible(
+        rowCtx,
+        alignment: 0.25,
+        duration: duration,
+        curve: curve,
+      );
+      return;
+    }
+    if (!_changesListCtrl.hasClients) return;
+    final idx = _changesListPaths.indexOf(path);
+    if (idx < 0) return;
+    final pos = _changesListCtrl.position;
+    final totalCount = _changesListPaths.length;
+    if (totalCount == 0) return;
+    // Average row height across the rendered list. Coarse but fine
+    // for off-screen targets — once the scroll lands, the target
+    // row builds and any subsequent ensureVisible call (e.g., from
+    // a follow-up event) refines the position.
+    final avgRowH =
+        (pos.maxScrollExtent + pos.viewportDimension) / totalCount;
+    final target =
+        (idx * avgRowH - pos.viewportDimension * 0.25).clamp(0.0, pos.maxScrollExtent);
+    _changesListCtrl.animateTo(target, duration: duration, curve: curve);
   }
 
   /// Read the file from disk and synthesize a new-file unified diff
@@ -1425,6 +1478,11 @@ class _ChangesPageState extends State<ChangesPage> {
         _multiDiffJumpLineIndex = jumpLine;
         _multiDiffJumpRequestId++;
       }
+    });
+    // Sync the side list after the setState so layout has landed by
+    // the time ensureVisible runs against a freshly-built tree.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _ensureFileVisibleInChangesList(path);
     });
   }
 
@@ -4279,7 +4337,16 @@ class _ChangesPageState extends State<ChangesPage> {
                                             _loadDiff(repoPath, path),
                                       );
                                     }
+                                    // Keep the path lookup used by
+                                    // `_ensureFileVisibleInChangesList` in
+                                    // sync with whatever the list is
+                                    // currently rendering. Cheap — same
+                                    // order the ListView is about to iterate.
+                                    _changesListPaths = [
+                                      for (final f in ordered) f.path,
+                                    ];
                                     return ListView.builder(
+                                      controller: _changesListCtrl,
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 8),
                                       itemCount: ordered.length,
@@ -4400,13 +4467,25 @@ class _ChangesPageState extends State<ChangesPage> {
                                               _showFileContextMenu(
                                                   context, pos, file, repoPath),
                                         );
+                                        // Key the row so
+                                        // `_ensureFileVisibleInChangesList`
+                                        // can find it for ensureVisible.
+                                        // The key is keyed by file.path
+                                        // (stable across rebuilds) so the
+                                        // same GlobalKey follows the row
+                                        // as list ordering changes.
+                                        final keyed = KeyedSubtree(
+                                          key: _fileRowKeys.putIfAbsent(
+                                              file.path, () => GlobalKey()),
+                                          child: row,
+                                        );
                                         if (showGap) {
                                           return Column(children: [
                                             const SizedBox(height: 4),
-                                            row,
+                                            keyed,
                                           ]);
                                         }
-                                        return row;
+                                        return keyed;
                                       },
                                     );
                                   }),
@@ -4929,14 +5008,20 @@ class _ChangesPageState extends State<ChangesPage> {
                                       }
                                       return false;
                                     }
-                                    // On scroll end (both user-driven and
-                                    // programmatic), finalize currentPath against
-                                    // the settled offset so we reflect where we
-                                    // actually landed.
+                                    // On scroll end, only recompute currentPath
+                                    // if the scroll was user-driven. A
+                                    // programmatic jump (click in the file tree,
+                                    // tap on the timeline rail) already set the
+                                    // path explicitly — the probe-offset logic
+                                    // would otherwise flip it to the NEXT file
+                                    // when the target file is short (< viewport
+                                    // probe distance).
                                     if (notification is ScrollEndNotification) {
-                                      _handleMultiDiffScroll(
-                                        notification.metrics,
-                                      );
+                                      if (_multiDiffUserDriving) {
+                                        _handleMultiDiffScroll(
+                                          notification.metrics,
+                                        );
+                                      }
                                       _multiDiffUserDriving = false;
                                       return false;
                                     }
@@ -4985,6 +5070,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                       _pushAndInspectSingleDiff(
                                           repoPath, path);
                                     },
+                                    onPinnedFileFocused:
+                                        _ensureFileVisibleInChangesList,
                                     onNavigateBack: _diffNavStack.isEmpty
                                         ? null
                                         : () => _navigateBackDiff(repoPath),
@@ -5049,6 +5136,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                   }
                                   unawaited(_loadDiff(repoPath, path));
                                 },
+                                onPinnedFileFocused:
+                                    _ensureFileVisibleInChangesList,
                                 onNavigateBack: _diffNavStack.isEmpty
                                     ? null
                                     : () => _navigateBackDiff(repoPath),

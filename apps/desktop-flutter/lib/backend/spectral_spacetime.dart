@@ -153,12 +153,23 @@ class SpacetimeBasis {
   /// A spacetime basis is identity-equal to another iff both factors
   /// match, so combining the factor signatures with a stable mixer
   /// gives the composite identity.
-  int get signature {
-    // FNV-style 62-bit mix of the two factor signatures.
-    var h = 0x811c9dc5 ^ space.signature;
-    h = ((h * 0x01000193) ^ (h >> 13)) & 0x3fffffff;
-    h = (h ^ time.signature) & 0x3fffffff;
-    return ((h * 0x01000193) ^ (h >> 13)) & 0x3fffffff;
+  Signature get signature {
+    const mask = 0x7fffffff;
+    var hLo = 0x811c9dc5 ^ space.signature.lo;
+    var hHi = 0xdeadbeef ^ space.signature.hi;
+    hLo = (hLo ^ space.signature.hi) & mask;
+    hLo = ((hLo * 0x01000193) ^ (hLo >> 13)) & mask;
+    hLo = (hLo ^ time.signature.lo) & mask;
+    hLo = ((hLo * 0x01000193) ^ (hLo >> 13)) & mask;
+    hLo = (hLo ^ time.signature.hi) & mask;
+    hLo = ((hLo * 0x01000193) ^ (hLo >> 13)) & mask;
+    hHi = (hHi ^ space.signature.lo ^ 0x5a5a5a5a) & mask;
+    hHi = ((hHi * 0x01000193) ^ (hHi >> 13)) & mask;
+    hHi = (hHi ^ time.signature.hi) & mask;
+    hHi = ((hHi * 0x01000193) ^ (hHi >> 13)) & mask;
+    hHi = (hHi ^ time.signature.lo) & mask;
+    hHi = ((hHi * 0x01000193) ^ (hHi >> 13)) & mask;
+    return Signature(lo: hLo, hi: hHi);
   }
 }
 

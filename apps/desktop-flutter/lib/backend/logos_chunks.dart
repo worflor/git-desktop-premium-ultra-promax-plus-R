@@ -703,10 +703,21 @@ ChunkPackResult packRelevantChunks({
 
   // Three-temperature geometric-mean blend — canonical multi-scale
   // ranker shared with `logos_hunks.dart`. See [tripleTemperatureBlend].
+  //
+  // Derive temperatures from the chunk graph's own natural scales when
+  // the graph has enough nodes for peak detection to be informative.
+  // Small graphs use the default log-spaced triplet.
+  List<double>? derivedTemps;
+  if (graph.n >= 32) {
+    final basis =
+        SpectralBasis.fromGraph(graph, math.min(16, graph.n));
+    derivedTemps = tripleBlendTemperaturesFromPeaks(basis.naturalScales());
+  }
   final blended = tripleTemperatureBlend(
     graph: graph,
     rho: rho,
     K: kChebyshevSmallGraph,
+    temperatures: derivedTemps,
   );
   final residualView = LogosResidualView(
     path: '',

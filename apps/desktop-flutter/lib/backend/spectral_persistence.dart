@@ -39,8 +39,8 @@ class SpectralBasisCache {
   /// Directory the cache owns. Created lazily on first write.
   final Directory directory;
 
-  String _pathFor(int signature) =>
-      p.join(directory.path, '${_hex(signature)}.logos-basis');
+  String _pathFor(Signature signature) =>
+      p.join(directory.path, '${signature.toHex()}.logos-basis');
 
   /// Persist [basis] to disk. Overwrites any existing entry with the
   /// same signature (which by definition would carry identical bytes).
@@ -61,7 +61,7 @@ class SpectralBasisCache {
   /// Attempt to read a basis blob by its [signature]. Returns null on
   /// cache miss, corrupt file, or read error. Callers should always
   /// have a rebuild path for the null case.
-  Future<SpectralBasis?> read(int signature) async {
+  Future<SpectralBasis?> read(Signature signature) async {
     try {
       final file = File(_pathFor(signature));
       if (!await file.exists()) return null;
@@ -75,7 +75,7 @@ class SpectralBasisCache {
   /// Synchronous read — for paths where we need the result before the
   /// next UI frame and are willing to accept whatever latency the
   /// filesystem gives us.
-  SpectralBasis? readSync(int signature) {
+  SpectralBasis? readSync(Signature signature) {
     try {
       final file = File(_pathFor(signature));
       if (!file.existsSync()) return null;
@@ -89,10 +89,12 @@ class SpectralBasisCache {
   /// Delete every cached blob whose signature isn't in [keep]. Use
   /// after HEAD moves to evict stale spectra. Best-effort; never
   /// throws.
-  Future<void> prune(Set<int> keep) async {
+  Future<void> prune(Set<Signature> keep) async {
     try {
       if (!await directory.exists()) return;
-      final keepNames = <String>{for (final s in keep) '${_hex(s)}.logos-basis'};
+      final keepNames = <String>{
+        for (final s in keep) '${s.toHex()}.logos-basis'
+      };
       await for (final entity in directory.list()) {
         if (entity is! File) continue;
         final name = p.basename(entity.path);
@@ -124,11 +126,3 @@ class SpectralBasisCache {
   }
 }
 
-/// 16-char lowercase hex representation of a 64-bit-ish integer. The
-/// signature hash is a positive int that fits in ≤62 bits; padding to
-/// 16 hex chars is harmless and keeps filenames uniform for ls/find.
-String _hex(int v) {
-  final s = v.toRadixString(16);
-  if (s.length >= 16) return s;
-  return '0' * (16 - s.length) + s;
-}

@@ -1161,29 +1161,60 @@ Float64List geometricMeanBlend3(
 }
 
 /// Multi-scale heat-kernel blend — the canonical hunk/chunk ranker
-/// pipeline in one call. Builds the Chebyshev basis once, recombines at
-/// `{0.5, 1.0, 2.0}`, then fuses via [geometricMeanBlend3].
+/// pipeline in one call. Builds the Chebyshev basis once, recombines
+/// at three temperatures, then fuses via [geometricMeanBlend3].
 ///
-/// Total cost: one `O(K·|E|)` basis pass (the matvec chain) plus three
-/// `O(K·n)` recombines plus one `O(n)` blend. That's the shape of the
-/// multi-temperature trick documented in `logos_hunks.dart` and
-/// `logos_chunks.dart`; extracting it lets both call-sites collapse
-/// ~20 lines of boilerplate into one call.
+/// Default temperatures are `[0.5, 1.0, 2.0]` — a log-spaced triplet
+/// that covers local / moderate / wide diffusion on most graphs.
+/// Callers that have a `SpectralBasis` for the same graph can derive
+/// temperatures from the graph's own heat-capacity peaks via
+/// [tripleBlendTemperaturesFromPeaks] and pass them through the
+/// [temperatures] parameter — the triplet then aligns with the
+/// graph's actual phase transitions instead of a heuristic.
+///
+/// Total cost: one `O(K·|E|)` basis pass plus three `O(K·n)`
+/// recombines plus one `O(n)` blend.
 Float64List tripleTemperatureBlend({
   required CsrGraph graph,
   required Float64List rho,
   int K = kDefaultChebyshevK,
   double eps = 1e-12,
+  List<double>? temperatures,
 }) {
   if (graph.n == 0) return Float64List(0);
+  final ts = temperatures ?? const [0.5, 1.0, 2.0];
+  assert(ts.length == 3, 'tripleTemperatureBlend needs exactly 3 temperatures');
   final basis = chebyshevBasis(graph: graph, rho: rho, K: K);
-  final phi05 =
-      recombineHeatPhi(graph: graph, basis: basis, t: 0.5, K: K);
-  final phi10 =
-      recombineHeatPhi(graph: graph, basis: basis, t: 1.0, K: K);
-  final phi20 =
-      recombineHeatPhi(graph: graph, basis: basis, t: 2.0, K: K);
-  return geometricMeanBlend3(phi05, phi10, phi20, eps: eps);
+  final phi0 = recombineHeatPhi(graph: graph, basis: basis, t: ts[0], K: K);
+  final phi1 = recombineHeatPhi(graph: graph, basis: basis, t: ts[1], K: K);
+  final phi2 = recombineHeatPhi(graph: graph, basis: basis, t: ts[2], K: K);
+  return geometricMeanBlend3(phi0, phi1, phi2, eps: eps);
+}
+
+/// Derive a 3-temperature triplet for [tripleTemperatureBlend] from a
+/// list of heat-capacity peaks (e.g. `SpectralBasis.naturalScales()`).
+///
+/// Behaviour by peak count:
+/// - `>= 3`: pick the lowest, the median, and the highest peak —
+///   spans the widest informative range while landing on three
+///   actual phase transitions of the graph.
+/// - `2`: bracket around the midpoint between the two peaks.
+/// - `1`: spread ratio-spaced around the single peak (`p/2, p, p*2`).
+/// - `0`: fall back to the default `[0.5, 1.0, 2.0]`.
+List<double> tripleBlendTemperaturesFromPeaks(List<double> peaks) {
+  if (peaks.isEmpty) return const [0.5, 1.0, 2.0];
+  if (peaks.length == 1) {
+    final p = peaks[0];
+    return [p * 0.5, p, p * 2.0];
+  }
+  if (peaks.length == 2) {
+    final lo = peaks[0];
+    final hi = peaks[1];
+    return [lo, (lo + hi) / 2.0, hi];
+  }
+  // >= 3 peaks: lowest, median, highest. Sorted ascending on input
+  // (naturalScales returns sorted).
+  return [peaks.first, peaks[peaks.length ~/ 2], peaks.last];
 }
 
 /// Copy a Float64List view into a fresh owned Float64List. Used when
@@ -1561,14 +1592,17 @@ class SpectralBasis {
   /// when [nodePaths] is set and [pathToId] wasn't provided directly.
   final Map<String, int>? pathToId;
 
-  /// Cheap 64-bit identity hash. Derived from the eigenvalue bit
-  /// patterns — two bases produced from structurally-identical
-  /// graphs have identical signatures. Used for:
-  /// - Cache keys (hashing the basis as a whole)
-  /// - Ratchet `diagnose` fast-path (sig match → bases are identical)
-  /// - CRDT merges (sig divergence → need fingerprint-level localise)
-  /// - Wire transfers (signature as the short id for a long blob)
-  final int signature;
+  /// 62-bit content fingerprint over the eigenvalue bit patterns.
+  /// Two bases with identical eigenvalue sequences have identical
+  /// signatures. Collisions are vanishingly rare (~1e-11 at 10^4
+  /// states); callers needing exact equality still compare full
+  /// spectra, but `signature` equality is sufficient for caching,
+  /// CRDT merge fast-path, and wire-transfer short-IDs.
+  ///
+  /// Stored as a [Signature] value — two 31-bit halves so the identity
+  /// is bit-for-bit equal on Dart VM and Dart Web. See [Signature] for
+  /// equality, hashCode, ordering, and 8-byte serialisation.
+  final Signature signature;
 
   SpectralBasis({
     required this.n,
@@ -1577,7 +1611,7 @@ class SpectralBasis {
     required this.eigenvectors,
     this.nodePaths,
     Map<String, int>? pathToId,
-    int? signature,
+    Signature? signature,
   })  : pathToId = pathToId ??
             (nodePaths != null
                 ? <String, int>{
@@ -1618,7 +1652,7 @@ class SpectralBasis {
       (other is SpectralBasis && signature == other.signature);
 
   @override
-  int get hashCode => signature;
+  int get hashCode => signature.hashCode;
 
   /// Return a new [SpectralBasis] with node labels attached. Shares
   /// the underlying Float64List storage (O(1) rewrap) so labelling
@@ -1672,10 +1706,8 @@ class SpectralBasis {
     // Magic: "LGS\0" + version 1 at bytes 4..7.
     bd.setUint32(0, 0x4c475300, Endian.little);
     bd.setUint32(4, 1, Endian.little);
-    // We encode signature as little-endian pair because Dart's int
-    // on web lacks native 64-bit semantics.
-    bd.setUint32(8, signature & 0xffffffff, Endian.little);
-    bd.setUint32(12, (signature >> 32) & 0xffffffff, Endian.little);
+    // Signature as two little-endian 31-bit halves (see [Signature]).
+    signature.writeBytes(bd, 8);
     bd.setUint32(16, n, Endian.little);
     bd.setUint32(20, k, Endian.little);
     bd.setUint32(24, labelCount, Endian.little);
@@ -1711,9 +1743,7 @@ class SpectralBasis {
     if (magic != 0x4c475300 || version != 1) {
       throw const FormatException('SpectralBasis.fromBytes: bad magic/version');
     }
-    final sigLo = bd.getUint32(8, Endian.little);
-    final sigHi = bd.getUint32(12, Endian.little);
-    final signature = (sigHi << 32) | sigLo;
+    final signature = Signature.readBytes(bd, 8);
     final n = bd.getUint32(16, Endian.little);
     final k = bd.getUint32(20, Endian.little);
     final labelCount = bd.getUint32(24, Endian.little);
@@ -1751,6 +1781,24 @@ class SpectralBasis {
   }
 
   // ── Labeled queries ──────────────────────────────────────────────
+
+  /// Convenience: return a [SpectralProjection] noun instead of the
+  /// raw `Float64List` coefficients. Same math as [project], but the
+  /// result carries its basis reference and exposes `.diffuseAt(t)`,
+  /// `.phiForPath(...)`, `.entropy(t)`, `.freeEnergy(t)`, and
+  /// CRDT-friendly `+` / `.scale(...)` operators on the coefficient
+  /// vector.
+  SpectralProjection projectSource(Float64List rho) =>
+      SpectralProjection(basis: this, coefficients: project(rho));
+
+  /// Labeled-input twin of [projectSource]. Uses [labelProject] under
+  /// the hood, so it requires the basis to be labeled.
+  SpectralProjection projectLabeledSource(
+          Map<String, double> weightsByPath) =>
+      SpectralProjection(
+        basis: this,
+        coefficients: labelProject(weightsByPath),
+      );
 
   /// Labeled variant of [project] — accepts a `path → weight` map,
   /// builds a sparse ρ via [pathToId], projects onto the eigenbasis.
@@ -2128,6 +2176,174 @@ class SpectralBasis {
     return eigenvalues[1] - eigenvalues[0];
   }
 
+  /// Mixing time of the random walk underlying the heat kernel,
+  /// `≈ 1 / λ₁`. The characteristic time for a delta distribution to
+  /// thermalise to the stationary distribution — the natural unit of
+  /// diffusion temperature for this graph. Returns `double.infinity`
+  /// when the graph is disconnected (λ₁ → 0).
+  ///
+  /// **Reading**: the principled value for `t = 1.0`. Every "canonical
+  /// heat query" in the engine that hard-coded `t = 1.0` was really
+  /// asking for "one mixing time"; wire this in when you want the
+  /// temperature to scale with the graph's natural speed instead of
+  /// a magic constant.
+  double get mixingTime {
+    final gap = spectralGap;
+    if (gap <= _subnormalFloor) return double.infinity;
+    return 1.0 / gap;
+  }
+
+  /// Spectral chaos — `log(λ_top / λ₁)`, the dynamic range of the
+  /// Laplacian spectrum. Low chaos (~1) = uniform dynamics across
+  /// modes, expander-like. High chaos (≳5) = long spectrum, path-like
+  /// or highly hierarchical. Completes the thermodynamic pantheon
+  /// alongside [spectralGap], [mixingTime], [cheegerUpperBound], and
+  /// [heatCapacity].
+  ///
+  /// Returns `0.0` when the basis has fewer than 2 modes and
+  /// `double.infinity` when the graph is disconnected (`λ₁ → 0`).
+  ///
+  /// **Reading**: how heterogeneous is diffusion on this graph? A repo
+  /// with chaos ≈ 1 is essentially uniform — every file equidistant
+  /// under the heat metric. Chaos ≈ 7 is a codebase strung out along
+  /// a long structural axis (monolithic-linear, not clustered).
+  double get spectralChaos {
+    if (k < 2) return 0.0;
+    final l1 = eigenvalues[1];
+    if (l1 <= _subnormalFloor) return double.infinity;
+    final lTop = eigenvalues[k - 1];
+    if (lTop <= 0) return 0.0;
+    return math.log(lTop / l1);
+  }
+
+  /// Von Neumann entropy of the normalized Laplacian treated as a
+  /// density matrix: `S = −Σ p_j log p_j` where `p_j = λ_j / Σ λ`
+  /// (zero mode excluded). Maximal value `log(k − 1)` is achieved by
+  /// `K_n` (complete graph); regular expanders approach it; path and
+  /// highly-structured graphs sit below.
+  ///
+  /// **Reading**: a single-scalar quantum-information readout of how
+  /// *spectrally diverse* the graph is. Analogous to the density
+  /// matrix entropy in quantum statistical mechanics; here the
+  /// "microstates" are eigenmodes weighted by their Laplacian energy.
+  double get vonNeumannEntropy {
+    if (k < 2) return 0.0;
+    // Sum of positive eigenvalues (skip zero mode(s)).
+    var total = 0.0;
+    for (var j = 0; j < k; j++) {
+      if (eigenvalues[j] > _subnormalFloor) {
+        total += eigenvalues[j];
+      }
+    }
+    if (total <= _subnormalFloor) return 0.0;
+    final invT = 1.0 / total;
+    var s = 0.0;
+    for (var j = 0; j < k; j++) {
+      if (eigenvalues[j] > _subnormalFloor) {
+        final p = eigenvalues[j] * invT;
+        s -= p * math.log(p);
+      }
+    }
+    return s;
+  }
+
+  /// Inverse participation ratio per eigenvector: `IPR_j = Σᵢ |uⱼ[i]|⁴`.
+  /// Small (~1/n) = delocalized / extended mode; large (→1) = localized
+  /// on one node. The "effective support" of mode j is `1 / IPR_j`.
+  ///
+  /// **Reading**: which modes can see the whole graph and which are
+  /// trapped in a local region. Dumbbell graphs develop near-degenerate
+  /// localized modes at the mobility edge; disordered/random-like
+  /// graphs mostly produce extended modes. Bulk behavior is a window
+  /// into the Anderson-localization regime of the graph's heat flow.
+  ///
+  /// Returned array has length [k].
+  Float64List inverseParticipationRatios() {
+    final out = Float64List(k);
+    if (n == 0 || k == 0) return out;
+    for (var j = 0; j < k; j++) {
+      final base = j * n;
+      var s = 0.0;
+      for (var i = 0; i < n; i++) {
+        final v = eigenvectors[base + i];
+        final v2 = v * v;
+        s += v2 * v2;
+      }
+      out[j] = s;
+    }
+    return out;
+  }
+
+  /// Spectral dimension estimated from the decay of the heat-kernel
+  /// return probability `P_t = (1/n) · tr(exp(−t·L)) = (1/k) Σⱼ e^{−t·λⱼ}`.
+  /// For a graph that resembles ℝ^d at long wavelengths,
+  /// `P_t ~ t^{−d/2}` for moderate-to-large t; fitting log(P_t) vs
+  /// log(t) in the decay window recovers `d_s`.
+  ///
+  /// Returns `double.nan` when the decay window is too short to fit.
+  /// Uses a geometric grid of `samples` values of t in `[tMin, tMax]`.
+  ///
+  /// **Reading**: a chain reads ≈1, a grid ≈2, an expander climbs
+  /// higher. For a repo: 2 ≈ architectural mesh, <2 ≈ tree-like,
+  /// >2 ≈ dense coupling or small-world.
+  double spectralDimension({
+    double tMin = 0.5,
+    double tMax = 50.0,
+    int samples = 16,
+    double pFloor = 0.01,
+  }) {
+    if (k == 0) return double.nan;
+    final logMin = math.log(tMin);
+    final logMax = math.log(tMax);
+    final step = (logMax - logMin) / (samples - 1);
+    final ts = <double>[];
+    final ps = <double>[];
+    for (var s = 0; s < samples; s++) {
+      final t = math.exp(logMin + s * step);
+      var sum = 0.0;
+      for (var j = 0; j < k; j++) {
+        sum += math.exp(-t * eigenvalues[j]);
+      }
+      final p = sum / k;
+      if (p > pFloor) {
+        ts.add(t);
+        ps.add(p);
+      }
+    }
+    if (ts.length < 3) return double.nan;
+    // Linear fit of log(p) vs log(t).
+    var sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+    final n2 = ts.length;
+    for (var i = 0; i < n2; i++) {
+      final x = math.log(ts[i]);
+      final y = math.log(ps[i]);
+      sumX += x;
+      sumY += y;
+      sumXX += x * x;
+      sumXY += x * y;
+    }
+    final meanX = sumX / n2;
+    final meanY = sumY / n2;
+    final denom = sumXX - n2 * meanX * meanX;
+    if (denom.abs() < 1e-18) return double.nan;
+    final slope = (sumXY - n2 * meanX * meanY) / denom;
+    return -2.0 * slope;
+  }
+
+  /// Cheeger upper bound on the graph's edge-expansion constant:
+  /// `h(G) ≤ √(2·λ₁)`. Makes the Fiedler vector's "deepest cleavage"
+  /// claim quantitative — the tightest cut the graph can be bisected
+  /// along carries at most this fraction of the total edge weight.
+  ///
+  /// **Reading**: when this number is small, the graph is a
+  /// near-bisection — you can cut it cleanly. When it's big, the
+  /// graph resists bisection; it's genuinely one connected blob.
+  double get cheegerUpperBound {
+    final gap = spectralGap;
+    if (gap <= 0.0) return 0.0;
+    return math.sqrt(2.0 * gap);
+  }
+
   /// Stationary distribution of the random walk `D⁻¹·W`. For the
   /// normalised Laplacian the zero-mode eigenvector `u₀` satisfies
   /// `u₀ ∝ D^{1/2}·𝟙`, so on a connected graph `π_i = u₀[i]²` is
@@ -2230,7 +2446,16 @@ class SpectralBasis {
     int samples = 64,
     double minPeakRatio = 0.25,
   }) {
-    if (k == 0 || samples < 3) return const [];
+    // Default to the mixing-time scale if the basis can't be probed
+    // or the heat-capacity curve is too flat for peaks. Callers can
+    // then rely on a non-empty list invariant — three ad-hoc
+    // fallbacks at three callsites collapse to one principled one.
+    List<double> fallback() {
+      final mix = mixingTime;
+      return mix.isFinite && mix > 0.0 ? [mix] : const [1.0];
+    }
+
+    if (k == 0 || samples < 3) return fallback();
     final logMin = math.log(tMin);
     final logMax = math.log(tMax);
     final step = (logMax - logMin) / (samples - 1);
@@ -2244,7 +2469,7 @@ class SpectralBasis {
       cs[s] = c;
       if (c > globalMax) globalMax = c;
     }
-    if (globalMax <= _subnormalFloor) return const [];
+    if (globalMax <= _subnormalFloor) return fallback();
     final threshold = globalMax * minPeakRatio;
     final peaks = <double>[];
     // Interior local maxima only — endpoint detection would bias
@@ -2255,7 +2480,39 @@ class SpectralBasis {
         peaks.add(ts[s]);
       }
     }
-    return peaks;
+    return peaks.isEmpty ? fallback() : peaks;
+  }
+
+  /// Bracket a query temperature `t` with two flanking temperatures
+  /// `(nearT, farT)` where `nearT <= t <= farT`. Uses the peaks of
+  /// [naturalScales] — `nearT` is the largest peak at or below `t`,
+  /// `farT` is the smallest peak above `t`.
+  ///
+  /// When `naturalScales` returns no peak on one side of `t`, the
+  /// missing end falls back to `t / ratio` (for nearT) or `t * ratio`
+  /// (for farT). This mirrors the old hand-picked brackets
+  /// `0.55·t` / `1.85·t` but uses the engine's own phase transitions
+  /// instead of a constant.
+  ///
+  /// Intended as the principled replacement for the hardcoded bracket
+  /// formula previously used in evidence-temperature selection.
+  ({double nearT, double farT}) flankingScales(double t, {double ratio = 1.85}) {
+    final peaks = naturalScales();
+    double? below;
+    double? above;
+    for (final p in peaks) {
+      if (p <= t) {
+        if (below == null || p > below) below = p;
+      } else {
+        if (above == null || p < above) above = p;
+      }
+    }
+    final nearT = below ?? t / ratio;
+    final farT = above ?? t * ratio;
+    return (
+      nearT: math.min(nearT, t),
+      farT: math.max(farT, t),
+    );
   }
 
   /// 8-bit spectral fingerprint of node `i` — the binary representation
@@ -2523,26 +2780,114 @@ class SpectralBasis {
   }
 }
 
-/// 64-bit FNV-1a-style mixer over the bit patterns of a Float64List.
-/// Used to derive [SpectralBasis.signature] — two bases with the same
-/// eigenvalue sequence produce the same signature, enabling cheap
-/// identity comparison. Truncates to 62 bits to stay inside Dart's
-/// safe-integer range on web (where ints are JS doubles with a 53-bit
-/// mantissa, but 62 bits fits via subtle bit-masking in AOT).
-int _fingerprintEigenvalues(Float64List values) {
-  if (values.isEmpty) return 0;
-  final bd = values.buffer.asByteData(values.offsetInBytes, values.lengthInBytes);
-  var h = 0x811c9dc5 ^ values.length;
+/// 62-bit content fingerprint, represented as two 31-bit halves so
+/// it is bit-for-bit identical on Dart VM and Dart Web. A single-int
+/// representation would overflow JS `Number.MAX_SAFE_INTEGER = 2^53 − 1`
+/// on the web and silently round; callers that rely on signatures for
+/// CRDT merges, cache keys, or wire transfers would see state divergence
+/// between web and desktop clients.
+///
+/// Equality is structural (both halves equal). `hashCode` combines the
+/// halves into a Dart int safely (xor). Serialization is 8 bytes,
+/// little-endian, `lo` first then `hi`.
+///
+/// Zero signature ([Signature.zero]) is the identity element — used as
+/// the default for empty or uninitialised state.
+class Signature implements Comparable<Signature> {
+  const Signature({required this.lo, required this.hi})
+      : assert(lo >= 0 && lo <= 0x7fffffff,
+            'lo must fit in 31 unsigned bits'),
+        assert(hi >= 0 && hi <= 0x7fffffff,
+            'hi must fit in 31 unsigned bits');
+
+  /// Identity element. Equality with `isZero` is an engine-wide
+  /// "uninitialised / empty" marker.
+  static const Signature zero = Signature(lo: 0, hi: 0);
+
+  /// Low 31 bits. Always non-negative and < 2^31.
+  final int lo;
+
+  /// High 31 bits. Always non-negative and < 2^31.
+  final int hi;
+
+  /// True iff both halves are zero.
+  bool get isZero => lo == 0 && hi == 0;
+
+  /// 16-character lowercase hex, `hi` first then `lo`, zero-padded.
+  /// Suitable for filename-safe cache keys.
+  String toHex() {
+    final hiStr = hi.toRadixString(16).padLeft(8, '0');
+    final loStr = lo.toRadixString(16).padLeft(8, '0');
+    return '$hiStr$loStr';
+  }
+
+  /// Write as 8 little-endian bytes at [offset].
+  void writeBytes(ByteData out, int offset) {
+    out.setUint32(offset, lo, Endian.little);
+    out.setUint32(offset + 4, hi, Endian.little);
+  }
+
+  /// Read 8 little-endian bytes starting at [offset].
+  factory Signature.readBytes(ByteData bd, int offset) {
+    final lo = bd.getUint32(offset, Endian.little);
+    final hi = bd.getUint32(offset + 4, Endian.little);
+    // uint32 can be up to 2^32 − 1; mask to 31 bits since our hash
+    // producer guarantees that range. (Old serialised values are
+    // backward-compatible because they were always < 2^31.)
+    return Signature(lo: lo & 0x7fffffff, hi: hi & 0x7fffffff);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is Signature && lo == other.lo && hi == other.hi);
+
+  @override
+  int get hashCode => lo ^ (hi * 2654435769) & 0x7fffffff;
+
+  @override
+  int compareTo(Signature other) {
+    final dh = hi.compareTo(other.hi);
+    return dh != 0 ? dh : lo.compareTo(other.lo);
+  }
+
+  @override
+  String toString() => 'Signature(0x${toHex()})';
+}
+
+/// 62-bit FNV-1a-style fingerprint over the bit patterns of a
+/// Float64List. Two independent 31-bit streams with different seeds
+/// and per-word salts, combined into a [Signature] pair. All arithmetic
+/// stays within JS-int safe range; the two halves are returned as a
+/// structured [Signature] rather than multiplied together, so the
+/// output is bit-for-bit identical on every Dart target.
+///
+/// Birthday collision probability at 10^4 distinct states ≈ 1e-11
+/// — safe for CRDT-style state comparison.
+Signature fingerprintFloat64(Float64List values) {
+  if (values.isEmpty) return Signature.zero;
+  final bd =
+      values.buffer.asByteData(values.offsetInBytes, values.lengthInBytes);
+  var hLo = 0x811c9dc5 ^ values.length;
+  var hHi = 0xdeadbeef ^ values.length;
+  const mask = 0x7fffffff;
   for (var i = 0; i < values.length; i++) {
     final lo = bd.getInt32(i * 8, Endian.little);
     final hi = bd.getInt32(i * 8 + 4, Endian.little);
-    h = (h ^ lo) & 0x3fffffff;
-    h = ((h * 0x01000193) ^ (h >> 13)) & 0x3fffffff;
-    h = (h ^ hi) & 0x3fffffff;
-    h = ((h * 0x01000193) ^ (h >> 13)) & 0x3fffffff;
+    hLo = (hLo ^ lo) & mask;
+    hLo = ((hLo * 0x01000193) ^ (hLo >> 13)) & mask;
+    hLo = (hLo ^ hi) & mask;
+    hLo = ((hLo * 0x01000193) ^ (hLo >> 13)) & mask;
+    hHi = (hHi ^ lo ^ 0x5a5a5a5a) & mask;
+    hHi = ((hHi * 0x01000193) ^ (hHi >> 13)) & mask;
+    hHi = (hHi ^ hi ^ 0xa5a5a5a5) & mask;
+    hHi = ((hHi * 0x01000193) ^ (hHi >> 13)) & mask;
   }
-  return h;
+  return Signature(lo: hLo, hi: hHi);
 }
+
+Signature _fingerprintEigenvalues(Float64List values) =>
+    fingerprintFloat64(values);
 
 /// Universal name for the object the tower collapses into — every
 /// level of the tower (file, hunk, chunk, commit, spacetime) returns
@@ -2558,6 +2903,190 @@ int _fingerprintEigenvalues(Float64List values) {
 /// methods give you the readouts. This is the singularity: one type,
 /// many readouts, no hidden state.
 typedef SpectralIdentity = SpectralBasis;
+
+/// A source distribution expressed in the spectral coordinates of a
+/// specific [SpectralBasis]. This is the noun for `Uᵀ·ρ` — the k
+/// projection coefficients you get back from `basis.project(rho)`.
+///
+/// Before this type existed, callers passed a `Float64List` of length
+/// `k` around and had to remember which basis it belonged to. Now:
+///
+///   final source = basis.projectSource(rho);
+///   source.diffuseAt(t);           // temperature sweep, basis implicit
+///   source.phiForPath('lib/x.dart', t);
+///   source.entropy(t);
+///   source.freeEnergy(t);
+///
+/// The type carries its basis reference so projections can't be
+/// accidentally applied against the wrong spectrum. Identity checks
+/// go through [SpectralBasis.signature]; cross-basis operations
+/// throw when signatures don't match.
+class SpectralProjection {
+  const SpectralProjection({
+    required this.basis,
+    required this.coefficients,
+  });
+
+  /// The basis this projection is expressed against.
+  final SpectralBasis basis;
+
+  /// The `Uᵀ·ρ` coefficient vector of length [SpectralBasis.k].
+  final Float64List coefficients;
+
+  /// Signature of the underlying basis. Two projections with matching
+  /// signatures refer to the same spectrum; they can be linearly
+  /// combined without re-projection.
+  Signature get basisSignature => basis.signature;
+
+  /// Diffuse at temperature [t] — same contract as
+  /// `basis.recombineFromProjection(coefficients, t)` but the noun
+  /// carries its own basis reference so the caller doesn't have to
+  /// thread `basis` through every call.
+  Float64List diffuseAt(double t) =>
+      basis.recombineFromProjection(coefficients, t);
+
+  /// Read the diffused mass at a specific labeled path at scale [t].
+  /// O(k). Throws if the basis isn't labeled.
+  double phiForPath(String path, double t) =>
+      basis.phiForPath(coefficients, path, t);
+
+  /// Reconstruct the source ρ that produced this projection. Useful
+  /// when the caller needs to reuse the same source through a
+  /// different basis (rare, but necessary for cross-level lifts).
+  /// Equivalent to `diffuseAt(0.0)` modulo Lanczos-truncation residue.
+  Float64List reconstructSource() => diffuseAt(0.0);
+
+  /// Spectral participation entropy at temperature [t]. See
+  /// [SpectralBasis.spectralEntropy] for semantics; this variant
+  /// reuses the cached projection instead of re-running `project`.
+  double entropy(double t) {
+    final k = basis.k;
+    if (k == 0) return 0.0;
+    var z = 0.0;
+    final weighted = Float64List(k);
+    for (var j = 0; j < k; j++) {
+      final w = math.exp(-t * basis.eigenvalues[j]) *
+          coefficients[j] *
+          coefficients[j];
+      weighted[j] = w;
+      z += w;
+    }
+    if (z <= _subnormalFloor) return 0.0;
+    final invZ = 1.0 / z;
+    var s = 0.0;
+    for (var j = 0; j < k; j++) {
+      final p = weighted[j] * invZ;
+      if (p > _subnormalFloor) s -= p * math.log(p);
+    }
+    return s;
+  }
+
+  /// Free energy at temperature [t]: `F = −log Z(ρ, t)` where
+  /// `Z(ρ, t) = Σⱼ e^{−t·λⱼ}·cⱼ²`. Reuses the cached coefficients
+  /// — no re-projection.
+  double freeEnergy(double t) {
+    final k = basis.k;
+    var z = 0.0;
+    for (var j = 0; j < k; j++) {
+      z += math.exp(-t * basis.eigenvalues[j]) *
+          coefficients[j] *
+          coefficients[j];
+    }
+    if (z <= _subnormalFloor) return double.infinity;
+    return -math.log(z);
+  }
+
+  /// Symmetric KL (Jeffreys) divergence between two thermal
+  /// mode-probability distributions at temperature [t]:
+  /// `J = Σⱼ (pⱼ − qⱼ) · log(pⱼ / qⱼ)` where
+  /// `pⱼ = e^{−t·λⱼ}·cⱼ²/Z_p` and similarly for `q`.
+  ///
+  /// **Scale invariance**: ρ and α·ρ produce identical probabilities
+  /// `p` (the normaliser absorbs α), so this divergence reads the
+  /// *shape* of the focus in spectral coordinates, ignoring total
+  /// mass. This is the structural complement to the L² mass-sensitive
+  /// [SpectralBasis.spectralDivergence]: two PRs that touch the same
+  /// structural region at different scales differ loudly in L² but
+  /// are identical in Jeffreys.
+  ///
+  /// Returns `0.0` when either projection's partition function
+  /// underflows. Throws [StateError] when the bases don't match.
+  double jeffreysDivergence(SpectralProjection other, double t) {
+    if (basis.signature != other.basis.signature) {
+      throw StateError(
+        'jeffreysDivergence: basis signatures must match '
+        '(${basis.signature} vs ${other.basis.signature})',
+      );
+    }
+    final k = basis.k;
+    if (k == 0) return 0.0;
+    final pa = Float64List(k);
+    final pb = Float64List(k);
+    var za = 0.0;
+    var zb = 0.0;
+    for (var j = 0; j < k; j++) {
+      final decay = math.exp(-t * basis.eigenvalues[j]);
+      final wa = decay * coefficients[j] * coefficients[j];
+      final wb = decay * other.coefficients[j] * other.coefficients[j];
+      pa[j] = wa;
+      pb[j] = wb;
+      za += wa;
+      zb += wb;
+    }
+    if (za <= _subnormalFloor || zb <= _subnormalFloor) return 0.0;
+    final invA = 1.0 / za;
+    final invB = 1.0 / zb;
+    var s = 0.0;
+    for (var j = 0; j < k; j++) {
+      final p = pa[j] * invA;
+      final q = pb[j] * invB;
+      if (p > _subnormalFloor && q > _subnormalFloor) {
+        s += (p - q) * math.log(p / q);
+      }
+    }
+    return s;
+  }
+
+  /// Squared-L² norm of the projection — equals the squared-L² norm
+  /// of the original ρ if the basis is full-rank. Useful for
+  /// normalization, fidelity checks, and detecting basis-truncation
+  /// loss.
+  double get squaredNorm {
+    var s = 0.0;
+    for (var j = 0; j < basis.k; j++) {
+      s += coefficients[j] * coefficients[j];
+    }
+    return s;
+  }
+
+  /// Linear superposition of two projections against the same basis.
+  /// Throws [StateError] if signatures don't match — you can't
+  /// meaningfully add coefficients in different spectral coordinates.
+  /// This is the CRDT-friendly operator: two source coords with the
+  /// same basis signature merge by vector addition.
+  SpectralProjection operator +(SpectralProjection other) {
+    if (basis.signature != other.basis.signature) {
+      throw StateError(
+        'SpectralProjection + : basis signatures must match '
+        '(${basis.signature} vs ${other.basis.signature})',
+      );
+    }
+    final out = Float64List(basis.k);
+    for (var j = 0; j < basis.k; j++) {
+      out[j] = coefficients[j] + other.coefficients[j];
+    }
+    return SpectralProjection(basis: basis, coefficients: out);
+  }
+
+  /// Scalar scaling.
+  SpectralProjection scale(double s) {
+    final out = Float64List(basis.k);
+    for (var j = 0; j < basis.k; j++) {
+      out[j] = coefficients[j] * s;
+    }
+    return SpectralProjection(basis: basis, coefficients: out);
+  }
+}
 
 /// 8-bit popcount via the standard bit-tricks reduction. Three shifts,
 /// three masks. Compiles to a few integer ops on AOT; no tables.

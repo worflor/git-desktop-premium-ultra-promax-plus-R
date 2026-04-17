@@ -144,20 +144,35 @@ class MaterialSurface extends StatelessWidget {
     if (this.border != null) {
       resolvedBorder = this.border;
     } else if (inkOutline) {
-      // Variable line weight — the #1 thing that separates a real
-      // comic-book ink line from a CAD stroke. Top+left are the
-      // lightest (rim of the form catching key light), right is
-      // heavier (shadow side), bottom is heaviest (the line carries
-      // the form's weight, settles into the page). This 1:1.4:2 ratio
-      // is roughly what you'd see in a Coipel or Maleev panel.
       final w = shader.outlineWidth;
-      final rimColor = t.accentBright;
-      resolvedBorder = Border(
-        top: BorderSide(color: rimColor, width: w * 0.5),
-        left: BorderSide(color: rimColor, width: w * 0.5),
-        right: BorderSide(color: border, width: w * 1.2),
-        bottom: BorderSide(color: border, width: w * 1.5),
-      );
+      if (shader.geometry.pixelated) {
+        // Block-face bevel — lighter top + left (sunlit face), darker
+        // bottom + right (shaded face). Every Minecraft GUI slot
+        // renders this way; borrowing it here makes any pixelated
+        // theme read as "stacks of blocks" rather than flat panels.
+        final lightFace = Colors.white.withValues(alpha: 0.10);
+        final shadowFace = Colors.black.withValues(alpha: 0.40);
+        resolvedBorder = Border(
+          top: BorderSide(color: lightFace, width: w),
+          left: BorderSide(color: lightFace, width: w),
+          right: BorderSide(color: shadowFace, width: w),
+          bottom: BorderSide(color: shadowFace, width: w),
+        );
+      } else {
+        // Variable line weight — the #1 thing that separates a real
+        // comic-book ink line from a CAD stroke. Top+left are the
+        // lightest (rim of the form catching key light), right is
+        // heavier (shadow side), bottom is heaviest (the line carries
+        // the form's weight, settles into the page). This 1:1.4:2 ratio
+        // is roughly what you'd see in a Coipel or Maleev panel.
+        final rimColor = t.accentBright;
+        resolvedBorder = Border(
+          top: BorderSide(color: rimColor, width: w * 0.5),
+          left: BorderSide(color: rimColor, width: w * 0.5),
+          right: BorderSide(color: border, width: w * 1.2),
+          bottom: BorderSide(color: border, width: w * 1.5),
+        );
+      }
     } else {
       resolvedBorder =
           Border.all(color: border.withValues(alpha: borderAlpha));

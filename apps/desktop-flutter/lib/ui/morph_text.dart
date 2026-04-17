@@ -130,7 +130,14 @@ class _ThemeMorphTextState extends State<ThemeMorphText>
 
   @override
   Widget build(BuildContext context) {
-    final style = widget.style ?? DefaultTextStyle.of(context).style;
+    // Merge widget.style over the ambient DefaultTextStyle so unset
+    // fields — notably `shadows` — inherit from the theme. A plain
+    // `??` fallback drops shadows whenever a caller supplies any
+    // style, which is most call sites.
+    final defaultStyle = DefaultTextStyle.of(context).style;
+    final style = widget.style == null
+        ? defaultStyle
+        : defaultStyle.merge(widget.style);
     final dir = widget.textDirection ?? Directionality.of(context);
 
     // LayoutBuilder lets us honour the parent's width constraint. Without
@@ -455,6 +462,24 @@ class _MorphPainter extends CustomPainter {
               1.0, null, burst, 0);
           continue;
         }
+        if (effect == ThemeTextEffect.blockify) {
+          // Place: the glyph arrives from above with a small
+          // easeOutBack bounce on landing. Starts invisible until the
+          // break window passes, then slams in at full alpha — blocks
+          // don't fade, they appear.
+          const placeStart = 0.35;
+          if (t < placeStart) continue;
+          final localT =
+              ((t - placeStart) / (1.0 - placeStart)).clamp(0.0, 1.0);
+          final curve = Curves.easeOutBack.transform(localT);
+          final dy = -9.0 * (1.0 - curve);
+          // Scale starts slightly large and settles to 1.0 — like the
+          // block compressing on landing.
+          final scale = 1.0 + 0.18 * (1.0 - localT);
+          final p = to.positions[op.toIdx] + Offset(0, dy);
+          _paintGlyph(canvas, to.glyphs[op.toIdx], p, 1.0, null, scale, 0);
+          continue;
+        }
         if (effect == ThemeTextEffect.chalk) {
           // Chalk: progressively DRAW the glyph L→R with a bright
           // chalk-tip highlight at the reveal edge. The char isn't
@@ -483,6 +508,26 @@ class _MorphPainter extends CustomPainter {
           _paintGlyph(canvas, from.glyphs[op.fromIdx],
               from.positions[op.fromIdx], 1 - (t * 2).clamp(0.0, 1.0), null,
               burst, 0);
+          continue;
+        }
+        if (effect == ThemeTextEffect.blockify) {
+          // Break: the glyph is a shattered block — falls with
+          // gravity, spins (alternating direction per-index so a
+          // row of chars doesn't all tumble the same way), fades
+          // out over the first half of the transition.
+          const breakEnd = 0.55;
+          if (t > breakEnd) continue;
+          final localT = (t / breakEnd).clamp(0.0, 1.0);
+          // Parabolic fall — gravity dominates, feels weighty.
+          final dy = 14.0 * localT * localT;
+          // Chirality from index parity so adjacent chars tumble in
+          // opposite directions.
+          final spin =
+              (op.fromIdx.isEven ? 1.0 : -1.0) * 0.55 * localT;
+          final alpha = 1.0 - localT;
+          final p = from.positions[op.fromIdx] + Offset(0, dy);
+          _paintGlyph(canvas, from.glyphs[op.fromIdx], p, alpha, null,
+              1.0, 0, spin);
           continue;
         }
         if (effect == ThemeTextEffect.chalk) {
@@ -562,12 +607,13 @@ class _MorphPainter extends CustomPainter {
   /// right, and the main glyph on top.
   void _paintGlyph(Canvas canvas, TextPainter glyph, Offset pos,
       double opacity, Color? tint,
-      [double scale = 1.0, double aberration = 0]) {
+      [double scale = 1.0, double aberration = 0, double rotation = 0]) {
     final a = opacity.clamp(0.0, 1.0);
     if (a <= 0.01) return;
     final hasTint = tint != null && tint.a > 0.01;
     final hasScale = (scale - 1.0).abs() > 0.001;
     final hasAberration = aberration > 0.1;
+    final hasRotation = rotation.abs() > 0.001;
 
     // Chromatic aberration — paint red + blue ghosts around the main
     // glyph to mimic a misconverged CRT. Ghosts are painted BEFORE the
@@ -626,14 +672,16 @@ class _MorphPainter extends CustomPainter {
           a * 0.4);
     }
 
-    // Main glyph. Optional scale is applied around the glyph's center
-    // so the character grows/shrinks in place.
+    // Main glyph. Scale + rotation are applied around the glyph's
+    // center so the character transforms in place.
     Offset paintPos = pos;
-    if (hasScale) {
+    final needsTransform = hasScale || hasRotation;
+    if (needsTransform) {
       final center = pos + Offset(glyph.size.width / 2, glyph.size.height / 2);
       canvas.save();
       canvas.translate(center.dx, center.dy);
-      canvas.scale(scale);
+      if (hasRotation) canvas.rotate(rotation);
+      if (hasScale) canvas.scale(scale);
       canvas.translate(-center.dx, -center.dy);
     }
 
@@ -655,7 +703,7 @@ class _MorphPainter extends CustomPainter {
       canvas.restore();
     }
 
-    if (hasScale) canvas.restore();
+    if (needsTransform) canvas.restore();
   }
 
   /// Paint a color-shifted ghost copy of a glyph for chromatic
@@ -989,6 +1037,7 @@ class _MorphPainter extends CustomPainter {
         }
         return null;
       case ThemeTextEffect.pop:
+      case ThemeTextEffect.blockify:
       case ThemeTextEffect.none:
         return null;
     }

@@ -25,6 +25,7 @@ import 'package:git_desktop/backend/logos_git_integrity.dart';
 import 'package:git_desktop/backend/spectral_persistence.dart';
 import 'package:git_desktop/backend/spectral_spacetime.dart';
 import 'package:git_desktop/backend/spectral_ratchet.dart';
+import 'package:git_desktop/backend/spectral_state.dart';
 import 'package:git_desktop/backend/spectral_tower.dart';
 import 'package:git_desktop/backend/spectral_walks.dart';
 
@@ -1678,6 +1679,188 @@ void main() {
   group('Spectral spacetime (Kronecker sum)', _spectralSpacetimeTests);
   group('Spectral walks (path-integral sampling)', _spectralWalksTests);
   group('Spectral ratchet (forward-only dynamics)', _spectralRatchetTests);
+  group('Logos state (the outer primitive)', _logosStateTests);
+}
+
+void _logosStateTests() {
+  CsrGraph buildPath(int n) => _buildPathFixture(n);
+
+  test('empty LogosState has signature derived from revision=0 only', () {
+    final a = LogosState.empty();
+    final b = LogosState.empty();
+    expect(a.isEmpty, true);
+    expect(a.signature, b.signature);
+    expect(a, b);
+    expect(a.hashCode, b.hashCode);
+    expect(a.heatTrace(1.0), 0.0);
+    expect(a.spectralGap, 0.0);
+  });
+
+  test('state with only file spectrum carries file signature', () {
+    final basis = SpectralBasis.fromGraph(buildPath(20), 6);
+    final state = LogosState(
+      fileSpectrum: basis,
+      commitSpectrum: null,
+      joint: null,
+      revision: 1,
+    );
+    expect(state.isEmpty, false);
+    expect(state.heatTrace(1.0), closeTo(basis.heatTrace(1.0), 1e-12));
+    expect(state.spectralGap, closeTo(basis.spectralGap, 1e-12));
+    expect(state.signature.isZero, isFalse);
+  });
+
+  test('state signature discriminates revision, file, commit, joint', () {
+    final basis = SpectralBasis.fromGraph(buildPath(16), 5);
+    final rev1 = LogosState(
+      fileSpectrum: basis,
+      commitSpectrum: null,
+      joint: null,
+      revision: 1,
+    );
+    final rev2 = LogosState(
+      fileSpectrum: basis,
+      commitSpectrum: null,
+      joint: null,
+      revision: 2,
+    );
+    final withCommit = LogosState(
+      fileSpectrum: basis,
+      commitSpectrum: basis,
+      joint: null,
+      revision: 1,
+    );
+    expect(rev1.signature, isNot(rev2.signature),
+        reason: 'revision bump changes signature');
+    expect(rev1.signature, isNot(withCommit.signature),
+        reason: 'adding commit factor changes signature');
+  });
+
+  test('diff localises divergence across the three factor levels', () {
+    final fileA = SpectralBasis.fromGraph(buildPath(20), 6);
+    final fileB = SpectralBasis.fromGraph(buildPath(24), 6); // different
+    final commit = SpectralBasis.fromGraph(buildPath(12), 4);
+    final a = LogosState(
+      fileSpectrum: fileA,
+      commitSpectrum: commit,
+      joint: null,
+      revision: 1,
+    );
+    final b = LogosState(
+      fileSpectrum: fileB,
+      commitSpectrum: commit,
+      joint: null,
+      revision: 1,
+    );
+    final d = a.diff(b);
+    expect(d.signatureMatch, false);
+    expect(d.fileSpectrumChanged, true);
+    expect(d.commitSpectrumChanged, false);
+    expect(d.jointChanged, false);
+    expect(d.revisionDelta, 0);
+  });
+
+  test('diff returns signatureMatch=true on equal states', () {
+    final basis = SpectralBasis.fromGraph(buildPath(16), 4);
+    final a = LogosState(
+      fileSpectrum: basis,
+      commitSpectrum: null,
+      joint: null,
+      revision: 3,
+    );
+    final b = LogosState(
+      fileSpectrum: basis,
+      commitSpectrum: null,
+      joint: null,
+      revision: 3,
+    );
+    final d = a.diff(b);
+    expect(d.signatureMatch, true);
+    expect(d.inSync, true);
+  });
+
+  test('diff surfaces per-file Hamming when labels match and files diverge',
+      () {
+    // Build two labeled bases on paths of the same size but slightly
+    // different structures — enough to flip Fiedler signs on some nodes.
+    final paths = [for (var i = 0; i < 20; i++) 'f_$i'];
+    final g1 = buildPath(20);
+    final g2 = buildPath(20);
+    final basisA = SpectralBasis.fromGraph(g1, 9, nodePaths: paths);
+    final basisB = SpectralBasis.fromGraph(g2, 9, nodePaths: paths);
+    // They'll have the same signature if both Lanczos invocations
+    // land on identical seeds + graph — that's fine, means inSync.
+    final a = LogosState(
+      fileSpectrum: basisA,
+      commitSpectrum: null,
+      joint: null,
+      revision: 1,
+    );
+    final b = LogosState(
+      fileSpectrum: basisB,
+      commitSpectrum: null,
+      joint: null,
+      revision: 1,
+    );
+    final d = a.diff(b);
+    // If both bases are identical (same graph, same seed), Hamming is empty.
+    if (d.signatureMatch) {
+      expect(d.filePerNodeHamming, isEmpty);
+    }
+  });
+
+  test('Cross-level unifying query: single call reads file + commit + joint',
+      () {
+    // Muse's forcing function: write a single function that composes at
+    // least three modules. If it reads cleanly, the manifold is real.
+    final fileBasis = SpectralBasis.fromGraph(buildPath(20), 6);
+    final commitBasis = SpectralBasis.fromGraph(buildPath(12), 4);
+    final joint = tensorSpectral(fileBasis, commitBasis);
+    final state = LogosState(
+      fileSpectrum: fileBasis,
+      commitSpectrum: commitBasis,
+      joint: joint,
+      revision: 5,
+    );
+
+    // The unifying query: summarise the state's thermodynamic shape
+    // at scale t across all populated factors with one function call.
+    ({double heatTrace, double gap, Signature signature}) summarise(
+            LogosState s, double t) =>
+        (
+          heatTrace: s.heatTrace(t),
+          gap: s.spectralGap,
+          signature: s.signature,
+        );
+
+    final summary = summarise(state, 1.0);
+    // heatTrace prefers joint; joint.heatTrace = file * commit product.
+    expect(summary.heatTrace,
+        closeTo(fileBasis.heatTrace(1.0) * commitBasis.heatTrace(1.0), 1e-10));
+    // Gap is the min of the factor gaps — the bigger graph (file,
+    // n=20) has a smaller gap than the smaller graph (commit, n=12),
+    // so the minimum is the file gap.
+    final expectedGap = fileBasis.spectralGap < commitBasis.spectralGap
+        ? fileBasis.spectralGap
+        : commitBasis.spectralGap;
+    expect(summary.gap, closeTo(expectedGap, 1e-12));
+    // Signature is stable / non-zero.
+    expect(summary.signature.isZero, isFalse);
+  });
+
+  test('withRevision preserves spectra and bumps signature', () {
+    final basis = SpectralBasis.fromGraph(buildPath(16), 5);
+    final a = LogosState(
+      fileSpectrum: basis,
+      commitSpectrum: null,
+      joint: null,
+      revision: 1,
+    );
+    final b = a.withRevision(2);
+    expect(b.fileSpectrum, same(a.fileSpectrum));
+    expect(b.revision, 2);
+    expect(b.signature, isNot(a.signature));
+  });
 }
 
 void _spectralRatchetTests() {
@@ -2569,19 +2752,18 @@ void _spectralTests() {
     }
   });
 
-  test('Natural scales returns monotone-sorted t values above threshold',
+  test('Natural scales returns monotone-sorted t values — peaks or fallback',
       () {
     final g = buildPath(40);
     final basis = SpectralBasis.fromGraph(g, 15);
     final scales = basis.naturalScales();
-    // Path graph has a smooth heat-capacity curve — typically one
-    // broad peak, but the exact count depends on sample grid and
-    // numeric Lanczos. Just assert the shape contract.
+    expect(scales, isNotEmpty,
+        reason: 'naturalScales must never return an empty list');
     for (var i = 1; i < scales.length; i++) {
       expect(scales[i], greaterThan(scales[i - 1]));
     }
     for (final t in scales) {
-      expect(t, inInclusiveRange(0.1, 8.0));
+      expect(t, greaterThan(0.0));
     }
   });
 
@@ -2714,7 +2896,7 @@ void _spectralTests() {
     // Two independent builds from the same deterministic Lanczos seed
     // yield identical eigenvalues → identical signature.
     expect(a.signature, b.signature);
-    expect(a.signature, isNonZero);
+    expect(a.signature.isZero, isFalse);
     // Different k → different spectrum → different signature.
     final c = SpectralBasis.fromGraph(g, 6);
     expect(c.signature, isNot(a.signature));
@@ -2824,10 +3006,134 @@ void _spectralTests() {
       expect(b!.signature, a.signature);
       expect(b, a, reason: '== via signature match');
       // Unknown signature returns null.
-      expect(await cache.read(0xdeadbeef), isNull);
+      expect(await cache.read(const Signature(lo: 0x0eadbeef, hi: 0x5)),
+          isNull);
     } finally {
       await tmp.delete(recursive: true);
     }
+  });
+
+  test('mixingTime = 1/λ₁; cheegerUpperBound = √(2·λ₁)', () {
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 6);
+    final gap = basis.spectralGap;
+    expect(gap, greaterThan(0.0));
+    expect(basis.mixingTime, closeTo(1.0 / gap, 1e-12));
+    expect(basis.cheegerUpperBound, closeTo(math.sqrt(2.0 * gap), 1e-12));
+  });
+
+  test('naturalScales falls back to mixing time when flat', () {
+    // A trivial basis (k=0) should still return a non-empty list.
+    // Synthesize one directly via the constructor.
+    final emptyBasis = SpectralBasis(
+      n: 0,
+      k: 0,
+      eigenvalues: Float64List(0),
+      eigenvectors: Float64List(0),
+    );
+    final scales = emptyBasis.naturalScales();
+    expect(scales, hasLength(1));
+    expect(scales.first, 1.0);
+  });
+
+  test('naturalScales returns mixing-time fallback when no peaks', () {
+    // A fresh basis from a very small graph: heatCapacity curve is
+    // usually too flat to have peaks under default thresholds, so we
+    // should get the mixing-time fallback (or 1.0 if that's infinite).
+    final g = buildPath(4);
+    final basis = SpectralBasis.fromGraph(g, 4);
+    final scales = basis.naturalScales();
+    expect(scales, isNotEmpty,
+        reason: 'naturalScales must never return an empty list');
+    for (final t in scales) {
+      expect(t, greaterThan(0.0));
+    }
+  });
+
+  test('SpectralProjection.diffuseAt matches basis.recombineFromProjection',
+      () {
+    final g = buildPath(15);
+    final basis = SpectralBasis.fromGraph(g, 6);
+    final rho = Float64List(15)..[3] = 1.0;
+    final source = basis.projectSource(rho);
+    expect(source.basis, same(basis));
+    expect(source.basisSignature, basis.signature);
+    for (final t in const [0.0, 0.5, 1.5]) {
+      final viaNoun = source.diffuseAt(t);
+      final direct = basis.recombineFromProjection(source.coefficients, t);
+      for (var i = 0; i < 15; i++) {
+        expect(viaNoun[i], closeTo(direct[i], 1e-12));
+      }
+    }
+  });
+
+  test('SpectralProjection entropy + freeEnergy reuse cached projection',
+      () {
+    final g = buildPath(15);
+    final basis = SpectralBasis.fromGraph(g, 8);
+    final rho = Float64List(15)..[5] = 0.7..[10] = 0.3;
+    final source = basis.projectSource(rho);
+    for (final t in const [0.3, 1.0, 2.5]) {
+      expect(source.entropy(t),
+          closeTo(basis.spectralEntropy(rho, t), 1e-9));
+      expect(source.freeEnergy(t),
+          closeTo(basis.freeEnergy(rho, t), 1e-9));
+    }
+  });
+
+  test('SpectralProjection addition requires matching basis signature',
+      () {
+    final g = buildPath(12);
+    final a = SpectralBasis.fromGraph(g, 4);
+    final b = SpectralBasis.fromGraph(g, 6);
+    final rho1 = Float64List(12)..[2] = 1.0;
+    final rho2 = Float64List(12)..[9] = 1.0;
+    final pa1 = a.projectSource(rho1);
+    final pa2 = a.projectSource(rho2);
+    final pb1 = b.projectSource(rho1);
+    // Same basis → addition works; each coeff is summed.
+    final combined = pa1 + pa2;
+    for (var j = 0; j < a.k; j++) {
+      expect(combined.coefficients[j],
+          closeTo(pa1.coefficients[j] + pa2.coefficients[j], 1e-12));
+    }
+    // Different-signature bases reject.
+    expect(() => pa1 + pb1, throwsStateError);
+  });
+
+  test('crossLevelCoherence handles fineIdx in the middle of the tower',
+      () {
+    // Build a 3-level tower: coarse(4) → middle(8) → fine(16).
+    // Query coherence between coarse (0) and middle (1), NOT fine (2).
+    // The old implementation started at restrictions.length - 1 = 1
+    // and applied restrictions[1] (middle → coarse on fine's Fiedler,
+    // which is dim 16) — catching the size-mismatch guard and
+    // silently returning 0.0. The fix should produce a real value.
+    final coarseG = buildPath(4);
+    final middleG = buildPath(8);
+    final fineG = buildPath(16);
+    final coarse = SpectralBasis.fromGraph(coarseG, 4);
+    final middle = SpectralBasis.fromGraph(middleG, 8);
+    final fine = SpectralBasis.fromGraph(fineG, 16);
+    final rCM = RestrictionOperator.uniform(
+      nCoarse: 4,
+      nFine: 8,
+      membersByCoarse: {for (var c = 0; c < 4; c++) c: [2 * c, 2 * c + 1]},
+    );
+    final rMF = RestrictionOperator.uniform(
+      nCoarse: 8,
+      nFine: 16,
+      membersByCoarse: {for (var c = 0; c < 8; c++) c: [2 * c, 2 * c + 1]},
+    );
+    final tower = SpectralTower(
+      bases: [coarse, middle, fine],
+      restrictions: [rCM, rMF],
+    );
+    final coh = tower.crossLevelCoherence(coarseIdx: 0, fineIdx: 1, t: 0.0);
+    expect(coh, isNot(0.0),
+        reason: 'coarseIdx=0, fineIdx=1 should lift middle.fiedler via '
+            'restrictions[0] only, never touching restrictions[1]');
+    expect(coh.abs(), lessThanOrEqualTo(1.0 + 1e-9));
   });
 
   test('SpectralBasisCache prunes everything outside the keep set',

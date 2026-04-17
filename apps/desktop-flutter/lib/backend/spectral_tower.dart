@@ -221,9 +221,15 @@ class SpectralTower {
     if (coarse.k < 2 || fine.k < 2) return 0.0;
     // Coarse Fiedler at t=0 is just u₁.
     final coarseFiedler = coarse.fiedlerVector!;
-    // Aggregate the fine Fiedler through the restrictions to coarse space.
+    // Aggregate the fine Fiedler through the restrictions to coarse
+    // space. Each `restrictions[i]` maps `bases[i+1] → bases[i]`, so
+    // to lift a vector from `fineIdx` up to `coarseIdx` we apply
+    // `restrictions[fineIdx - 1] → restrictions[coarseIdx]` in order.
+    // The earlier version started at `restrictions.length - 1` and
+    // silently fell through the length-mismatch guard when the fine
+    // level wasn't the bottom of the tower — fixed here.
     Float64List lifted = Float64List.fromList(fine.fiedlerVector!);
-    for (var i = restrictions.length - 1; i >= coarseIdx; i--) {
+    for (var i = fineIdx - 1; i >= coarseIdx; i--) {
       lifted = restrictions[i].restrict(lifted);
     }
     if (lifted.length != coarseFiedler.length) return 0.0;

@@ -64,7 +64,18 @@ enum ThemeParticles {
   inkblots,
 }
 
-enum ThemeInteraction { none, vibration, caustic, etch, warp, chalk, inkSplat }
+enum ThemeInteraction {
+  none,
+  vibration,
+  caustic,
+  etch,
+  warp,
+  chalk,
+  inkSplat,
+  /// Voxel burst on tap — small block shards spawn at the click and
+  /// fall under gravity, rotate, and fade. Crafty.
+  blockBreak,
+}
 
 /// Per-theme flavor layer on top of the base [ThemeMorphText] per-char
 /// morph. Each value adds a small decorative pass during the transition
@@ -76,7 +87,10 @@ enum ThemeTextEffect {
   stamp, // offset drop-shadow settling in on inserted chars (nightwalker)
   burn, // amber glow on leaving chars; cool glow on arriving (redshift)
   chalk, // small dust speckles at changing char positions (blackboard)
-  pop, // single-frame scale snap on inserted chars (crafty)
+  pop, // single-frame scale snap on inserted chars
+  blockify, // crafty: leaving chars fall with gravity + rotate +
+            // fade (breaking); arriving chars drop from above with
+            // a tiny easeOutBack bounce (placing)
   twinkle, // pale star-dots flash near inserted chars (aether)
   sparkle, // twinkle + a diagonal streak at collision (quanta)
   warmth, // amber tint on leaving chars as they fade (helix)
@@ -158,6 +172,11 @@ class SurfaceMaterialShader {
   /// (kirby). Most themes leave this at 0 and use [borderAlpha]
   /// from MaterialSurface for the standard 1px chrome stroke.
   final double outlineWidth;
+  /// Per-theme text drop-shadows. Themes lean into a pixel-font
+  /// identity (Crafty) attach a 1px offset black shadow here; the
+  /// app's TextTheme threads it through every TextStyle so every
+  /// glyph picks it up without widget-level changes.
+  final List<Shadow>? textShadow;
   final SurfaceMaterialGeometry geometry;
 
   const SurfaceMaterialShader({
@@ -175,6 +194,7 @@ class SurfaceMaterialShader {
     this.interaction = ThemeInteraction.none,
     this.textEffect = ThemeTextEffect.none,
     this.outlineWidth = 0,
+    this.textShadow,
     this.geometry = const SurfaceMaterialGeometry(),
   });
 
@@ -453,10 +473,12 @@ final _tokens = <AppThemeId, AppTokens>{
     id: AppThemeId.nightwalker,
     isDark: true,
     colors: const [
-      0xFF080808,
-      0xFF0C0C0E,
-      0xFF141416,
-      0xFF1A1A1C,
+      // Tight surface stepping — big jumps between surface tones read
+      // as seams on this palette's near-black base.
+      0xFF090909,
+      0xFF0B0B0D,
+      0xFF101014,
+      0xFF16161A,
       0xD90A0A0C,
       0xEB0F0F12,
       0xFA141418,
@@ -1204,10 +1226,11 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF1C1511,
       0xFF241C17,
       0xFF29211C,
-      0xFF3F342D,
+      0xFF332821, // tightened from 0xFF3F342D — old step was ~4× the
+                  // earlier bg steps and read as a seam.
       0xFF29211C,
-      0xFF3F342D,
-      0xFF4C4038,
+      0xFF332821,
+      0xFF40342B,
       0xFFFEFEFE,
       0xFFDCD4C8,
       0xFFA4968C,
@@ -1430,7 +1453,11 @@ const themeDefinitions = <AppThemeDefinition>[
       textureOpacity: 0.15,
       motion: ThemeMotion.snappy,
       luminescence: 0.1,
-      parallaxStrength: 0,
+      // Slow golden embers drifting behind the chrome — matches
+      // "honey over expensive emeralds" without being loud.
+      particles: ThemeParticles.embers,
+      parallaxStrength: 0.12,
+      interaction: ThemeInteraction.caustic,
       textEffect: ThemeTextEffect.warmth,
     ),
   ),
@@ -1592,6 +1619,9 @@ const themeDefinitions = <AppThemeDefinition>[
       luminescence: 0.45,
       particles: ThemeParticles.whisps,
       textEffect: ThemeTextEffect.burn,
+      // Warp ripple on tap — the spacetime-distortion metaphor the
+      // rest of the theme is already leaning into.
+      interaction: ThemeInteraction.warp,
       parallaxStrength: 0.35,
       outlineWidth: 0.6, // kirby-style hairline, directional shading
       geometry: SurfaceMaterialGeometry(
@@ -1673,14 +1703,25 @@ const themeDefinitions = <AppThemeDefinition>[
       blurPx: 0,
       saturatePct: 150,
       opacityScale: 1,
-      edgeIntensity: 0.8,
+      edgeIntensity: 1.0,
       texture: ThemeTexture.pixels,
       textureOpacity: 0.15,
       motion: ThemeMotion.snappy,
-      luminescence: 0.4,
+      luminescence: 0.62,
       particles: ThemeParticles.voxels,
-      textEffect: ThemeTextEffect.pop,
+      textEffect: ThemeTextEffect.blockify,
+      interaction: ThemeInteraction.blockBreak,
+      outlineWidth: 1,
       parallaxStrength: 0.3,
+      // Minecraft's signature 1px offset black drop-shadow — every
+      // character in the vanilla UI renders this, and without it the
+      // theme reads as "a retro theme" instead of "Minecraft".
+      textShadow: [
+        Shadow(
+          offset: Offset(1, 1),
+          color: Color(0xCC000000),
+        ),
+      ],
       geometry: SurfaceMaterialGeometry(
         radius: 0,
         pixelated: true,

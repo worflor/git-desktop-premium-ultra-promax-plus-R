@@ -27,7 +27,9 @@
 
 import 'dart:typed_data';
 
+import 'logos_core.dart';
 import 'logos_git.dart';
+import 'spectral_state.dart';
 
 /// An event applied to a [LogosRatchet]. Events are ordered by a
 /// monotonic [sequence] number; the ratchet applies them strictly in
@@ -112,8 +114,8 @@ class RatchetDiagnostics {
 
   final int selfRevision;
   final int peerRevision;
-  final int selfSignature;
-  final int peerSignature;
+  final Signature selfSignature;
+  final Signature peerSignature;
   final double selfHeatTrace;
   final double peerHeatTrace;
 
@@ -281,6 +283,21 @@ class LogosRatchet {
     return _opsSinceRekey >= rekeyInterval;
   }
 
+  /// Produce a [LogosState] snapshot of the current ratchet moment.
+  /// The engine supplies its spectra; the ratchet's revision counter
+  /// overrides the engine's `manifoldRevision` so the snapshot
+  /// reflects ratchet identity, not engine-build identity.
+  ///
+  /// The snapshot is the unit of cross-machine sync, disk cache, and
+  /// historical comparison. When a peer ratchet produces its own
+  /// snapshot, `stateA.diff(stateB)` returns the full hierarchical
+  /// divergence report — same semantics as [diagnose] but as a pure
+  /// value that travels by itself.
+  LogosState snapshot({int k = kDefaultSpectralBasisK}) {
+    final engineState = _engine.snapshot(k: k);
+    return engineState.withRevision(_revision);
+  }
+
   // ── Handshake / integrity primitives ─────────────────────────────
 
   /// Global isospectral witness — the heat trace at scale `t`. Two
@@ -327,8 +344,8 @@ class LogosRatchet {
   RatchetDiagnostics diagnose(LogosRatchet peer, {double t = 1.0}) {
     final selfBasis = _engine.spectralBasis();
     final peerBasis = peer._engine.spectralBasis();
-    final selfSig = selfBasis?.signature ?? 0;
-    final peerSig = peerBasis?.signature ?? 0;
+    final selfSig = selfBasis?.signature ?? Signature.zero;
+    final peerSig = peerBasis?.signature ?? Signature.zero;
     // Both-null (tiny graphs below the spectral threshold) is trivially
     // matching; both-non-null matches when the signatures agree; the
     // mixed case (one has a basis, the other doesn't) is divergent.
