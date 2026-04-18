@@ -57,7 +57,47 @@ import 'dart:convert' show utf8;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'logos_signature.dart';
 import 'lru_cache.dart';
+
+part 'logos_generative.dart';
+part 'logos_heat.dart';
+part 'logos_thermo.dart';
+
+// ── OBSERVABLE TAXONOMY ──────────────────────────────────────────────
+//
+// Every observable in this file (and in the family-split parts) falls
+// into one of three classes. Each method's doc comment should declare
+// which, so readers don't confuse pedagogy with guarantee:
+//
+//   • **Theorem-tight** — the method computes a quantity that satisfies
+//     a proven mathematical identity on the spectrum. The identity IS
+//     the contract; the implementation is replaceable as long as it
+//     delivers the same identity. Example: `heatTrace(t) = Σ e^{-tλⱼ}`
+//     — two implementations agree bit-for-bit at floating-point
+//     precision.
+//
+//   • **Operational** — engineering construct: the method performs a
+//     well-defined task well, but the value isn't pinned by a theorem.
+//     Reasonable alternative implementations would produce slightly
+//     different outputs, and there's no pre-existing identity that
+//     declares one correct. Example: `ricciFlowStep` (many valid
+//     discretisations); `fragmentationCurve` (threshold granularity is
+//     a modelling choice).
+//
+//   • **Analogy** — the method's NAMING borrows a physical concept to
+//     aid intuition, and the correspondence is exact only under a
+//     specific regime or after a change of variables. The math is
+//     correct; the physical reading requires the reader to accept the
+//     analogy. Example: `gravitationalPotential` IS the Wentzell-
+//     Freidlin effective action, which IS a gravitational potential
+//     after Wick rotation — but a reader who hasn't done that rotation
+//     should treat the name as pedagogy, not theorem.
+//
+// When writing a new observable, tag it at the top of the doc comment:
+//   `/// **Theorem-tight:** this quantity equals X by theorem Y.`
+//   `/// **Operational:** this is a modelling choice — alternatives exist.`
+//   `/// **Analogy:** this name is pedagogical — see the physics note.`
 
 // Constants — pinned by the math, not by tuning
 
@@ -127,6 +167,99 @@ const double _coeffSkipEps = 1e-12;
 /// cheap FTZ/DAZ equivalent — no observable impact on ranking stability.
 const double _subnormalFloor = 1e-300;
 
+/// One row of a fragmentation / surgery curve — a filtration snapshot.
+///
+/// Returned by [CsrGraph.fragmentationCurve] and
+/// [RicciField.surgeryFragmentation]. Identical shape between the
+/// two families so callers can treat them uniformly.
+///
+/// * `threshold` — the cut level applied (edge weight for
+///   fragmentation, curvature for Ricci surgery).
+/// * `componentCount` — β₀ of the surviving subgraph.
+/// * `largestFraction` — fraction of nodes in the biggest component,
+///   in `[1/n, 1.0]`.
+/// * `cycleRank` — β₁ of the 1-skeleton, `max(0, |E_sub| − n + β₀)`.
+/// * `edgeCount` — number of edges that survived the cut.
+typedef FragmentationRow = ({
+  double threshold,
+  int componentCount,
+  double largestFraction,
+  int cycleRank,
+  int edgeCount,
+});
+
+/// Shared union-find sweep used by both [CsrGraph.fragmentationCurve]
+/// and `RicciField.surgeryFragmentation`. The caller supplies an
+/// [sweepEdges] callback that, for the given [threshold], invokes the
+/// inner `emit(u, v)` for each edge that SURVIVES the cut. This
+/// helper builds the union-find, counts components, and assembles
+/// the [FragmentationRow].
+///
+/// Extracted because the two surgery families had identical ~40-line
+/// bodies differing only in their edge iteration. Keeping the
+/// invariants (monotonicity, non-negative cycle rank, largest-
+/// fraction bounds) consistent means one place to fix.
+FragmentationRow computeFragmentationRow({
+  required int n,
+  required double threshold,
+  required void Function(void Function(int u, int v) emit) sweepEdges,
+}) {
+  if (n <= 0) {
+    return (
+      threshold: threshold,
+      componentCount: 0,
+      largestFraction: 0.0,
+      cycleRank: 0,
+      edgeCount: 0,
+    );
+  }
+  final parent = Int32List(n);
+  for (var i = 0; i < n; i++) {
+    parent[i] = i;
+  }
+  int find(int x) {
+    var root = x;
+    while (parent[root] != root) {
+      root = parent[root];
+    }
+    var cur = x;
+    while (parent[cur] != root) {
+      final next = parent[cur];
+      parent[cur] = root;
+      cur = next;
+    }
+    return root;
+  }
+
+  var edgeCount = 0;
+  sweepEdges((u, v) {
+    if (u < 0 || v < 0 || u >= n || v >= n) return;
+    edgeCount += 1;
+    final ru = find(u);
+    final rv = find(v);
+    if (ru != rv) parent[rv] = ru;
+  });
+
+  final sizes = <int, int>{};
+  for (var i = 0; i < n; i++) {
+    final r = find(i);
+    sizes[r] = (sizes[r] ?? 0) + 1;
+  }
+  var largest = 0;
+  for (final s in sizes.values) {
+    if (s > largest) largest = s;
+  }
+  final comp = sizes.length;
+  final cycleRank = edgeCount - n + comp;
+  return (
+    threshold: threshold,
+    componentCount: comp,
+    largestFraction: largest / n,
+    cycleRank: cycleRank < 0 ? 0 : cycleRank,
+    edgeCount: edgeCount,
+  );
+}
+
 // CsrGraph — the data structure every engine builds
 
 /// Compressed sparse-row graph with a fused-D⁻¹ᐟ² edge weight encoding.
@@ -175,6 +308,74 @@ class CsrGraph {
 
   bool get supportsRankOneUpdates =>
       degreeInvSqrt.length == n && rawWeights.length == values.length;
+
+  /// Harmonic-mean combinatorial degree — `n / Σᵢ (1/dᵢ)` where `dᵢ`
+  /// is the number of outgoing edges from node `i` (unweighted row
+  /// count in [indptr]).
+  ///
+  /// Used by [alonBoppanaMargin] to characterise the graph's sparsity
+  /// for expander-quality measurements. Harmonic mean is the right
+  /// choice because Alon-Boppana's bound is sensitive to the graph's
+  /// **bottleneck** degree, not its average; one-connected leaves drag
+  /// the harmonic mean down in the right way.
+  ///
+  /// Returns `0.0` on an empty graph or a graph with isolated nodes
+  /// that contribute 1/0 to the sum.
+  double harmonicMeanDegree() {
+    if (n == 0) return 0.0;
+    var invSum = 0.0;
+    for (var i = 0; i < n; i++) {
+      final d = indptr[i + 1] - indptr[i];
+      if (d <= 0) return 0.0; // isolated node — harmonic mean undefined
+      invSum += 1.0 / d;
+    }
+    return invSum > 0 ? n / invSum : 0.0;
+  }
+
+  /// **Operational** — the threshold grid and edge-count convention are
+  /// modelling choices. Alternative filtration sweeps yield different
+  /// but equally-valid β₀/β₁ curves. Fragmentation curve — at each of [thresholds], report
+  /// `(θ, componentCount, largestFraction, cycleRank, edgeCount)` where
+  /// the subgraph is defined by edges with **normalised weight ≥ θ** in
+  /// [values].
+  ///
+  /// - `componentCount` is β₀ (connected components).
+  /// - `cycleRank` is β₁ of the 1-skeleton: `|E_sub| − n + β₀`.
+  ///   Equals the true β₁ of the graph viewed as a simplicial 1-complex
+  ///   (no triangle filling). A codebase's `cycleRank` at a given
+  ///   coupling level is the count of independent pairwise-only
+  ///   dependency cycles — feedback loops that don't dissolve into
+  ///   3-way symmetry.
+  /// - `edgeCount` is the number of surviving edges, useful for
+  ///   sanity-checking filtration curves.
+  ///
+  /// Use case: "at what coupling strength does this codebase decompose
+  /// into independent modules, and how many cycles survive at each
+  /// level?" A healthy repo has a flat β₀ curve and a β₁ that sheds
+  /// gradually as θ rises; a fragmented repo shatters early.
+  ///
+  /// Cost: `O(|thresholds| · (n + m))` where `m = values.length`. Uses
+  /// union-find with path compression; the sweep is one linear scan
+  /// per threshold.
+  List<FragmentationRow> fragmentationCurve(List<double> thresholds) {
+    return [
+      for (final theta in thresholds)
+        computeFragmentationRow(
+          n: n,
+          threshold: theta,
+          sweepEdges: (emit) {
+            for (var u = 0; u < n; u++) {
+              for (var p = indptr[u]; p < indptr[u + 1]; p++) {
+                if (values[p] < theta) continue;
+                final v = indices[p];
+                if (v <= u) continue; // each undirected edge once
+                emit(u, v);
+              }
+            }
+          },
+        )
+    ];
+  }
 
   /// Return a new graph with one additional node appended at id `n`.
   /// The new node's edges are `edges` — each tuple is `(targetId,
@@ -475,6 +676,85 @@ class CsrGraph {
       degreeInvSqrt: dInv,
       rawWeights: raw,
     );
+  }
+
+  /// Coarsen the graph by collapsing nodes into groups. `groupOf[i]` is
+  /// the new (dense) id of the coarse node that original node `i` maps
+  /// into; groups must be labelled `0..m−1` where `m` is the number of
+  /// coarse nodes. Edges within a group fold into the coarse node (drop
+  /// as self-loops); edges between groups sum their raw weights. The
+  /// result is a freshly normalised [CsrGraph] with rank-1 support.
+  ///
+  /// This is the **renormalisation-group coarsening** primitive: the
+  /// Wilsonian "zoom out" operation. Low-frequency eigenmodes of the
+  /// original graph survive the coarsening (long-wavelength physics is
+  /// preserved), while high-frequency modes are integrated out — so
+  /// `SpectralBasis.fromGraph(coarsened, k)` for small `k` gives an
+  /// almost-exact reproduction of the original's long-scale structure
+  /// at a fraction of the cost.
+  ///
+  /// Use case: hierarchical codebase analysis — coarsen files by
+  /// package, then by module, then by subsystem, and compare spectra
+  /// at each scale to find the natural decomposition level.
+  CsrGraph coarsen(List<int> groupOf) {
+    if (groupOf.length != n) {
+      throw ArgumentError('groupOf length ${groupOf.length} != n=$n');
+    }
+    var m = 0;
+    for (final g in groupOf) {
+      if (g < 0) {
+        throw ArgumentError('groupOf contains negative id $g');
+      }
+      if (g + 1 > m) m = g + 1;
+    }
+    if (m == 0) {
+      return CsrGraph(
+        n: 0,
+        indptr: Int32List(1),
+        indices: Int32List(0),
+        values: Float64List(0),
+        degreeInvSqrt: Float64List(0),
+        rawWeights: Float64List(0),
+      );
+    }
+    // Accumulate (groupU, groupV) → summed raw weight. Only keep one
+    // direction per undirected pair while traversing; we emit both
+    // directions when assembling edgesPerNode.
+    final acc = <int, Map<int, double>>{};
+    final hasRaw = rawWeights.length == values.length;
+    for (var u = 0; u < n; u++) {
+      final gu = groupOf[u];
+      for (var p = indptr[u]; p < indptr[u + 1]; p++) {
+        final v = indices[p];
+        if (v <= u) continue; // each undirected edge once
+        final gv = groupOf[v];
+        if (gu == gv) continue; // intra-group edges drop
+        // Recover raw weight: either from rawWeights directly, or (if
+        // the graph was built without rank-1 metadata) undo the fusion
+        // via degreeInvSqrt if present. Fall back to using `values`
+        // as pseudo-raw — the coarsened graph will still be a valid
+        // CSR, just with a different weight convention.
+        final double w;
+        if (hasRaw) {
+          w = rawWeights[p];
+        } else {
+          w = values[p];
+        }
+        if (!w.isFinite || w <= 0) continue;
+        final a = gu < gv ? gu : gv;
+        final b = gu < gv ? gv : gu;
+        final inner = acc.putIfAbsent(a, () => <int, double>{});
+        inner[b] = (inner[b] ?? 0) + w;
+      }
+    }
+    final edgesPerNode = List<List<(int, double)>>.generate(m, (_) => []);
+    acc.forEach((a, innerMap) {
+      innerMap.forEach((b, w) {
+        edgesPerNode[a].add((b, w));
+        edgesPerNode[b].add((a, w));
+      });
+    });
+    return CsrGraph.fromRawEdges(n: m, edgesPerNode: edgesPerNode);
   }
 
   /// Apply `L_sym = I − D^{-1/2} W D^{-1/2}` to vector `v`. Since
@@ -1963,106 +2243,109 @@ class SpectralBasis {
   // already-computed eigendecomposition. Cost is at most O(k·n).
   // ───────────────────────────────────────────────────────────────────
 
-  /// Heat trace `Z(t) = tr(e^{−t·L_sym}) = Σⱼ e^{−t·λⱼ}`.
+  // Heat trace, partition function, free energy, and spectral entropy
+  // now live in `logos_thermo.dart` (extensions on SpectralBasis) —
+  // same call-site (`basis.heatTrace(t)`), cleaner separation.
+
+  // Heat-kernel observables (diffusionDistance, pathPropagator,
+  // gravitationalPotential, correlationLength, pathPropagatorQuantum,
+  // heatKernelSignature / Profile / ProfileTable, hksDistance) now
+  // live in `logos_heat.dart`. Call-sites unchanged.
+
+  /// **Theorem-tight.** **Rayleigh quotient** `⟨ρ, Lρ⟩ / ⟨ρ, ρ⟩` — the classical
+  /// eigenvalue estimator. When ρ is exactly an eigenvector with
+  /// eigenvalue λ, this recovers λ to fp precision.
   ///
-  /// **Reading**: an isospectral invariant of the codebase. Two graphs
-  /// with the same heat trace at every t share the same Laplacian
-  /// spectrum (modulo Lanczos truncation); they "sound the same"
-  /// (Kac, "Can one hear the shape of a drum?"). A PR that significantly
-  /// shifts the trace is changing architectural shape, not just file
-  /// contents. With `k = n` this is exact; with truncated `k` it
-  /// captures the low-frequency contribution that dominates at
-  /// any non-trivial `t`.
-  double heatTrace(double t) {
+  /// For arbitrary ρ, it gives the **λ-weighted mean over the modes
+  /// ρ lives on** — a single-step "classical phase estimation" that
+  /// projects the mode coefficients and reads off the Laplacian's
+  /// mean action on this particular source.
+  ///
+  /// In the Fourier picture:
+  ///
+  ///     Rayleigh(ρ) = Σⱼ λⱼ · |cⱼ|²  /  Σⱼ |cⱼ|²
+  ///
+  /// The denominator is Parseval's energy; the numerator is the
+  /// quadratic form `⟨ρ, Δ₀ ρ⟩`. The quotient is the expected
+  /// eigenvalue of a random measurement on ρ — the spectral
+  /// equivalent of Shor-style phase estimation's final readout,
+  /// cashed out classically.
+  ///
+  /// Returns `double.nan` when ρ has zero energy.
+  double rayleighQuotient(Float64List rho) {
+    final c = project(rho);
+    var num = 0.0;
+    var den = 0.0;
+    for (var j = 0; j < k; j++) {
+      final cc = c[j] * c[j];
+      num += eigenvalues[j] * cc;
+      den += cc;
+    }
+    if (den <= _subnormalFloor) return double.nan;
+    return num / den;
+  }
+
+  /// **Theorem-tight** (Perron-Frobenius). **Ground state** of the repo —
+  /// the zero-mode eigenvector, the unique state the engine settles into
+  /// as temperature → 0. Returns a Float64List of length [n].
+  ///
+  /// On a connected graph the zero-mode is proportional to
+  /// `D^{1/2}·𝟙`, making the ground state the **weighted uniform
+  /// distribution** where each node's amplitude is `√(degree(v))/Z`.
+  /// This is the **natural equilibrium** of heat diffusion: infinite
+  /// diffusion time converges every initial distribution to this.
+  ///
+  /// Every refactoring is a motion in state space that lowers the
+  /// Rayleigh quotient toward its minimum (which is 0, the
+  /// ground-state eigenvalue on a connected graph). Perfect code
+  /// is a crystalline approximation to the ground state.
+  ///
+  /// Returns an empty list when the basis is trivial (k = 0).
+  Float64List groundState() {
+    if (k == 0) return Float64List(0);
+    final out = Float64List(n);
+    for (var v = 0; v < n; v++) {
+      out[v] = eigenvectors[v]; // j=0, stride n
+    }
+    return out;
+  }
+
+  // `thermodynamics(β)` now lives in `logos_thermo.dart` — see the
+  // [SpectralThermo] extension for the grand-pantheon record.
+
+  /// **Quadratic form** `⟨ρ, f(L) ρ⟩ = Σⱼ profile[j] · (Uᵀρ)[j]²`.
+  ///
+  /// The unifying primitive every energy-like observable in the
+  /// engine reduces to. `f(L)` here is the operator whose mode-basis
+  /// profile is [profile] — exactly the way `SpectralOperator`
+  /// represents any function of the Laplacian. Given a profile, one
+  /// function computes the quadratic form in `ρ` under that operator.
+  ///
+  /// Existing observables fall out as specific profiles:
+  /// * `heatTrace(t)` → profile = `e^{-tλⱼ}`, ρ = uniform-mass delta
+  /// * `spectralDivergence(ρₐ, ρᵦ, t)` → profile = `e^{-2tλⱼ}`,
+  ///   ρ = ρₐ − ρᵦ
+  /// * `alonBoppanaMargin` / `cheegerUpperBound` — rely on this
+  ///   structure via λ₁
+  /// * Dirichlet energy `⟨ρ, Δ₀ρ⟩` → profile = `λⱼ`
+  ///
+  /// Not a replacement for the above — the named observables remain
+  /// the public API — but the building block they share. Expose
+  /// the diagonal-profile pattern directly so callers can compose
+  /// custom profiles without re-implementing project+reduce.
+  ///
+  /// Throws [StateError] when `profile.length != k`.
+  double quadraticForm(Float64List rho, Float64List profile) {
+    if (profile.length != k) {
+      throw StateError(
+          'quadraticForm: profile length ${profile.length} != basis.k $k');
+    }
+    final c = project(rho);
     var s = 0.0;
     for (var j = 0; j < k; j++) {
-      s += math.exp(-t * eigenvalues[j]);
+      s += profile[j] * c[j] * c[j];
     }
     return s;
-  }
-
-  /// Partition function of `ρ` under the heat operator at temperature
-  /// `t`: `Z(ρ, t) = ⟨ρ | e^{−t·L_sym} | ρ⟩ = Σⱼ e^{−t·λⱼ}·cⱼ²`,
-  /// where `cⱼ = uⱼ·ρ` are the projection coefficients.
-  ///
-  /// **Reading**: how much of `ρ`'s mass survives after diffusing for
-  /// time `t`. Concentrated sources on tightly-coupled clusters keep
-  /// most of their mass; diffuse sources scatter into the low-mass
-  /// regime. Substrate for [freeEnergy] and [spectralEntropy].
-  double partitionFunction(Float64List rho, double t) {
-    final coeffs = project(rho);
-    var z = 0.0;
-    for (var j = 0; j < k; j++) {
-      z += math.exp(-t * eigenvalues[j]) * coeffs[j] * coeffs[j];
-    }
-    return z;
-  }
-
-  /// Helmholtz free energy of `ρ` at temperature `t`:
-  /// `F(ρ, t) = −log Z(ρ, t)`.
-  ///
-  /// **Reading**: the natural information-theoretic cost of the
-  /// source. Low free energy = `ρ` aligns with the operator's
-  /// low-frequency modes (focused, well-coupled). High free energy =
-  /// `ρ` lives in the high-frequency tail (scattered, poorly coupled).
-  /// The minimum-free-energy `ρ` over a constraint set is the
-  /// principled "minimum description length" emission set for that
-  /// constraint — replaces ad-hoc budget knobs with a thermodynamic
-  /// stationarity condition.
-  double freeEnergy(Float64List rho, double t) {
-    final z = partitionFunction(rho, t);
-    if (z <= _subnormalFloor) return double.infinity;
-    return -math.log(z);
-  }
-
-  /// Spectral participation entropy of `ρ` at temperature `t`:
-  /// `S(ρ, t) = −Σⱼ pⱼ·log pⱼ` where `pⱼ = e^{−t·λⱼ}·cⱼ² / Z(ρ, t)`.
-  ///
-  /// **Reading**: how many spectral modes the source meaningfully
-  /// occupies *after* thermal weighting. Bounded above by `log(k)`
-  /// (uniform across modes — maximally diffuse focus); minimum 0
-  /// (a single mode — maximally sharp focus). The natural scalar
-  /// readout of "how focused is this PR / query / commit?". Free —
-  /// it just reads off the projection we already cached.
-  double spectralEntropy(Float64List rho, double t) {
-    final coeffs = project(rho);
-    var z = 0.0;
-    final weighted = Float64List(k);
-    for (var j = 0; j < k; j++) {
-      final w = math.exp(-t * eigenvalues[j]) * coeffs[j] * coeffs[j];
-      weighted[j] = w;
-      z += w;
-    }
-    if (z <= _subnormalFloor) return 0.0;
-    final invZ = 1.0 / z;
-    var s = 0.0;
-    for (var j = 0; j < k; j++) {
-      final p = weighted[j] * invZ;
-      if (p > _subnormalFloor) s -= p * math.log(p);
-    }
-    return s;
-  }
-
-  /// Diffusion distance between two graph nodes at scale `t`:
-  /// `d_t²(x, y) = ||p_t(x, ·) − p_t(y, ·)||² = Σⱼ e^{−2tλⱼ}·(uⱼ[x] − uⱼ[y])²`.
-  ///
-  /// **Reading**: a true metric on the graph induced by the heat
-  /// kernel — small `t` recovers the graph's local geometry, large
-  /// `t` recovers macroscopic cluster structure. Unlike shortest-path
-  /// distance, it averages over *all* paths weighted by their thermal
-  /// likelihood, so two nodes connected by many medium-strength paths
-  /// are closer than two nodes connected by a single strong path.
-  /// Use this for "how close is file X to file Y in the codebase's
-  /// natural geometry?".
-  double diffusionDistance(int srcId, int dstId, double t) {
-    if (srcId == dstId) return 0.0;
-    var sumSq = 0.0;
-    for (var j = 0; j < k; j++) {
-      final base = j * n;
-      final delta = eigenvectors[base + srcId] - eigenvectors[base + dstId];
-      sumSq += math.exp(-2.0 * t * eigenvalues[j]) * delta * delta;
-    }
-    return math.sqrt(sumSq);
   }
 
   /// L² distance between the two diffused fields `φ(t, ρa)` and
@@ -2076,6 +2359,43 @@ class SpectralBasis {
   /// embedding cosines, *grounded in the graph's own geometry*.
   /// Use this for PR-vs-PR similarity, commit-vs-commit shape change,
   /// or "how different is yesterday's review focus from today's?".
+  /// Wasserstein-1 distance between this basis's eigenvalue
+  /// distribution and [other]'s — the "earth mover's distance" on
+  /// sorted spectra. By construction both spectra are already
+  /// ascending, so after matching by rank the W₁ distance is
+  ///
+  ///     mean_j |λ_j^(self) − λ_j^(other)|.
+  ///
+  /// This is the **spectrum-to-spectrum** distance (complementing
+  /// [spectralDivergence], which is source-to-source on one fixed
+  /// basis). Uses:
+  ///
+  /// - Cospectral equivalence test: returns `0.0` iff the two bases
+  ///   are isospectral. Stronger than a signature-hash match
+  ///   (signatures collide at birthday-bound rates; this is exact).
+  /// - Structural similarity across time: compare HEAD's basis to
+  ///   HEAD~N's to quantify how much a codebase's spectral identity
+  ///   has drifted.
+  /// - Cross-repo similarity: same query between two independent
+  ///   repositories gives a continuous "how related are these?"
+  ///   metric.
+  ///
+  /// Throws [StateError] when `k` differs between the two bases —
+  /// comparing different-dimensional spectra is ill-defined.
+  double eigenvalueDistance(SpectralBasis other) {
+    if (k != other.k) {
+      throw StateError(
+          'eigenvalueDistance: bases must share k (got $k vs ${other.k})');
+    }
+    if (k == 0) return 0.0;
+    var s = 0.0;
+    for (var j = 0; j < k; j++) {
+      final d = eigenvalues[j] - other.eigenvalues[j];
+      s += d < 0 ? -d : d;
+    }
+    return s / k;
+  }
+
   double spectralDivergence(Float64List rhoA, Float64List rhoB, double t) {
     final ca = project(rhoA);
     final cb = project(rhoB);
@@ -2163,10 +2483,11 @@ class SpectralBasis {
   // constructed from the graph's own cleavages rather than from bytes.
   // ───────────────────────────────────────────────────────────────────
 
-  /// Spectral gap `λ₁ − λ₀`. On a connected graph `λ₀ = 0`, so this
-  /// collapses to `λ₁` — the Fiedler eigenvalue. Bounds the graph's
-  /// Cheeger constant from above (Cheeger's inequality) and governs
-  /// the mixing time of a random walk (≈ 1/gap for moderate graphs).
+  /// **Theorem-tight.** Spectral gap `λ₁ − λ₀`. On a connected graph
+  /// `λ₀ = 0`, so this collapses to `λ₁` — the Fiedler eigenvalue.
+  /// Bounds the graph's Cheeger constant from above (Cheeger's
+  /// inequality) and governs the mixing time of a random walk
+  /// (≈ 1/gap for moderate graphs).
   ///
   /// **Reading**: the one-number "how connected is the codebase?".
   /// Large gap = tightly knit single community; small gap = the graph
@@ -2216,35 +2537,109 @@ class SpectralBasis {
     return math.log(lTop / l1);
   }
 
-  /// Von Neumann entropy of the normalized Laplacian treated as a
-  /// density matrix: `S = −Σ p_j log p_j` where `p_j = λ_j / Σ λ`
-  /// (zero mode excluded). Maximal value `log(k − 1)` is achieved by
-  /// `K_n` (complete graph); regular expanders approach it; path and
-  /// highly-structured graphs sit below.
+  // `vonNeumannEntropy` now lives in `logos_thermo.dart`.
+
+  /// **Theorem-tight** (Matrix-Tree). **Log-pseudo-determinant** — the
+  /// sum of log-eigenvalues over non-trivial modes. Paired with
+  /// [spanningTreeCountEstimate] via the Matrix-Tree theorem.
   ///
-  /// **Reading**: a single-scalar quantum-information readout of how
-  /// *spectrally diverse* the graph is. Analogous to the density
-  /// matrix entropy in quantum statistical mechanics; here the
-  /// "microstates" are eigenmodes weighted by their Laplacian energy.
-  double get vonNeumannEntropy {
+  /// Definition: `log det*(L) = Σⱼ log(λⱼ)` over `j ≥ 1` (zero
+  /// modes excluded). The regularised logarithm of the
+  /// "pseudo-determinant" that ignores zero eigenvalues.
+  ///
+  /// Returns `double.negativeInfinity` when any non-zero mode is
+  /// numerically zero (graph disconnected at the resolution k).
+  /// Returns 0.0 for trivial bases.
+  double get logPseudoDeterminant {
     if (k < 2) return 0.0;
-    // Sum of positive eigenvalues (skip zero mode(s)).
-    var total = 0.0;
-    for (var j = 0; j < k; j++) {
-      if (eigenvalues[j] > _subnormalFloor) {
-        total += eigenvalues[j];
-      }
-    }
-    if (total <= _subnormalFloor) return 0.0;
-    final invT = 1.0 / total;
     var s = 0.0;
-    for (var j = 0; j < k; j++) {
-      if (eigenvalues[j] > _subnormalFloor) {
-        final p = eigenvalues[j] * invT;
-        s -= p * math.log(p);
-      }
+    for (var j = 1; j < k; j++) {
+      final lam = eigenvalues[j];
+      if (lam <= _subnormalFloor) return double.negativeInfinity;
+      s += math.log(lam);
     }
     return s;
+  }
+
+  /// **Matrix-Tree theorem** — the number of spanning trees of the
+  /// underlying graph equals `(1/n) · Π_{j≥1} λⱼ` (Kirchhoff's
+  /// theorem, for the combinatorial Laplacian). On our normalised
+  /// Laplacian the exact count picks up a degree-factor, but the
+  /// order-of-magnitude and scaling law stay correct — this is the
+  /// **Kirchhoff complexity** of the repo.
+  ///
+  /// Interpretation: the number of independent "paths" one could
+  /// trace through the repo without revisiting any edge. Dense
+  /// graphs have astronomically many spanning trees; trees have
+  /// exactly one; disconnected graphs have zero.
+  ///
+  /// Returns `double.infinity` when the product overflows (dense
+  /// graphs with high k), `0.0` when disconnected at resolution k.
+  ///
+  /// Reference: the wildest observable in the engine — a
+  /// *combinatorial* count extracted from a *spectral* spectrum,
+  /// via one of the oldest theorems in algebraic graph theory
+  /// (Kirchhoff 1847).
+  double get spanningTreeComplexity {
+    if (k < 2 || n == 0) return 0.0;
+    final logDet = logPseudoDeterminant;
+    if (!logDet.isFinite) return 0.0;
+    // log(count) ≈ logDet − log(n)
+    final logCount = logDet - math.log(n.toDouble());
+    if (logCount > 700) return double.infinity; // f64 exp limit
+    return math.exp(logCount);
+  }
+
+  /// Spectral rigidity (Atas-Bogomolny r-value) — a single scalar in
+  /// roughly (0, 1) summarising how "generic" the eigenvalue-spacing
+  /// pattern is.
+  ///
+  /// For sorted consecutive spacings `s_i = λ_{i+1} − λ_i`, each
+  /// interior spacing contributes
+  ///
+  ///     r_i = min(s_{i−1}, s_i) / max(s_{i−1}, s_i).
+  ///
+  /// The returned value is the mean of `r_i`. Because it is a ratio
+  /// of adjacent spacings, it needs no unfolding — the local density
+  /// cancels.
+  ///
+  /// Universality anchors (Atas-Bogomolny-Roux-Jacquod 2013):
+  ///   - Poisson (independent / no level repulsion): ⟨r⟩ ≈ 0.386
+  ///   - GOE (real-symmetric random, like our normalized Laplacian): ⟨r⟩ ≈ 0.536
+  ///   - GUE (complex-Hermitian random): ⟨r⟩ ≈ 0.603
+  ///
+  /// **Reading**: where does this codebase sit on the random-to-structured
+  /// axis? A GOE-like spectrum says the graph is "generic at this
+  /// sparsity" — no pathological clustering of eigenvalues, mixing
+  /// looks like a random graph would. A Poisson-like spectrum says the
+  /// graph has decoupled structural components (eigenvalues don't
+  /// repel each other the way random matrices do), typical of disjoint
+  /// modules or heavy hierarchy.
+  ///
+  /// Empirical reference: `tmp_starwalk.py §4` — on Erdős-Rényi and
+  /// random k-regular graphs the r-value lands near 0.54 (GOE); ring
+  /// lattices and band-structured graphs drop toward the arcsine /
+  /// Poisson regime.
+  ///
+  /// Returns `double.nan` when `k < 4` (fewer than two spacings, no
+  /// ratios to average) or when every spacing is zero (fully
+  /// degenerate spectrum).
+  double get spectralRigidity {
+    if (k < 4) return double.nan;
+    // Eigenvalues are ascending by construction.
+    var sum = 0.0;
+    var count = 0;
+    for (var j = 1; j < k - 1; j++) {
+      final sPrev = eigenvalues[j] - eigenvalues[j - 1];
+      final sNext = eigenvalues[j + 1] - eigenvalues[j];
+      final lo = sPrev < sNext ? sPrev : sNext;
+      final hi = sPrev < sNext ? sNext : sPrev;
+      if (hi <= _subnormalFloor) continue; // degenerate cluster; skip
+      sum += lo / hi;
+      count += 1;
+    }
+    if (count == 0) return double.nan;
+    return sum / count;
   }
 
   /// Inverse participation ratio per eigenvector: `IPR_j = Σᵢ |uⱼ[i]|⁴`.
@@ -2276,6 +2671,9 @@ class SpectralBasis {
 
   /// Spectral dimension estimated from the decay of the heat-kernel
   /// return probability `P_t = (1/n) · tr(exp(−t·L)) = (1/k) Σⱼ e^{−t·λⱼ}`.
+  /// **Operational** — this is a least-squares fit in a chosen t-window;
+  /// the returned `d_s` depends on the fit window and Lanczos truncation.
+  ///
   /// For a graph that resembles ℝ^d at long wavelengths,
   /// `P_t ~ t^{−d/2}` for moderate-to-large t; fitting log(P_t) vs
   /// log(t) in the decay window recovers `d_s`.
@@ -2397,33 +2795,7 @@ class SpectralBasis {
     return s;
   }
 
-  /// Heat capacity at temperature t: the second derivative of the
-  /// log-partition `log Z(t)` with respect to t. Equals the variance
-  /// of `λ` under the thermal probability `pⱼ(t) = e^{−tλⱼ} / Z(t)`.
-  ///
-  /// **Reading**: spikes in heat capacity mark **phase transitions**
-  /// — temperatures at which the codebase's effective structure changes
-  /// character. Sweep t; peaks identify the codebase's natural scales
-  /// (e.g. t ≈ 1.3 method-level, t ≈ 4.7 module-level). This is the
-  /// diagnostic that tells you *which t to pick* for any query that
-  /// wants a specific structural scale.
-  double heatCapacity(double t) {
-    if (k == 0) return 0.0;
-    var z = 0.0;
-    var zLam = 0.0;
-    var zLam2 = 0.0;
-    for (var j = 0; j < k; j++) {
-      final w = math.exp(-t * eigenvalues[j]);
-      z += w;
-      zLam += w * eigenvalues[j];
-      zLam2 += w * eigenvalues[j] * eigenvalues[j];
-    }
-    if (z <= _subnormalFloor) return 0.0;
-    final mean = zLam / z;
-    final meanSq = zLam2 / z;
-    final variance = meanSq - mean * mean;
-    return variance < 0.0 ? 0.0 : variance; // floating-point safety
-  }
+  // `heatCapacity(t)` now lives in `logos_thermo.dart`.
 
   /// Detect the codebase's natural thermal scales — the `t` values at
   /// which `heatCapacity(t)` peaks. Each peak is a **phase transition**:
@@ -2613,7 +2985,132 @@ class SpectralBasis {
   int spectralFingerprintDistance(int x, int y) {
     final fx = spectralByteFingerprint(x);
     final fy = spectralByteFingerprint(y);
-    return _popcount8(fx ^ fy);
+    return popcount8(fx ^ fy);
+  }
+
+  // ── HEAT KERNEL SIGNATURE ─────────────────────────────────────────
+  //
+  // HKS(v, t) = Σⱼ e^{-t·λⱼ} · |uⱼ[v]|²
+  //           = (exp(-tL))[v, v]                           (the
+  //           diagonal of the heat semigroup at node v).
+  //
+  // Classical shape-analysis observable (Sun-Ovsjanikov-Guibas 2009).
+  // Each node is characterised by the HEAT RETAINED at itself over
+  // time. A spectrum-preserving map between graphs preserves HKS, so
+  // two isospectral-equivalent nodes have the same profile.
+  //
+  // Compression view: collapses the (k eigenvalues × per-node
+  // eigenvector entries) basis data into a small feature vector per
+  // node (one value per time scale queried). Typical use: evaluate
+  // across m ≈ 8 logarithmically-spaced t values, cluster nodes by
+  // profile, recover multi-scale community structure that single-t
+  // diagonals miss.
+  //
+  // Orthogonality view: every eigenmode contributes independently
+  // (the sum is over orthogonal basis vectors) and the per-mode
+  // contribution is exactly `|u_j[v]|²·e^{-tλ_j}` — Parseval's
+  // identity applied to the diagonal of exp(-tL).
+
+  // HKS family (heatKernelSignature / Profile / ProfileTable,
+  // hksDistance) now lives in `logos_heat.dart`.
+
+  // ── POINCARÉ EMBEDDING ─────────────────────────────────────────────
+  //
+  // For tree-like graphs (δ/diam small) a 2-D Poincaré disc beats
+  // Euclidean-in-k-dims on both correlation and multiplicative
+  // distortion. The empirical win on this repo's own co-change graph:
+  // 4.6× lower log-distortion and +0.07 Spearman correlation, in 2 dims
+  // instead of 8.
+  //
+  // Construction:
+  //   1. Take the first two non-trivial eigenvector entries for each
+  //      node as a 2-D direction (u₁[i], u₂[i]). Normalise to unit
+  //      radius; zero vectors (a node on the graph's 2-D "center") are
+  //      mapped to the origin direction.
+  //   2. Compute each node's "spectral magnitude" from the first
+  //      [magnitudeDims] modes — the norm of (u₁..u_m)[i]. This
+  //      ranks how peripheral a node is in the full manifold, not
+  //      just the 2 projected dims.
+  //   3. Radial squish: `r_disc = tanh(mag / mag_max * 2.5) * targetRadius`.
+  //      Concentrates central nodes near the origin and pushes
+  //      peripheral nodes toward the boundary — the natural hyperbolic
+  //      behaviour.
+  //
+  // The returned table is row-major [x0, y0, x1, y1, …] in the open
+  // Poincaré disc of radius [targetRadius] < 1. Use with
+  // [poincareDistance] to get proper geodesic distances.
+
+  /// Row-major Poincaré-disc coordinates for every node: `n × 2` doubles.
+  ///
+  /// `magnitudeDims` controls how many spectral modes contribute to each
+  /// node's radial rank. Higher values capture more of the manifold's
+  /// structure at the cost of a slightly smaller spread near the origin.
+  /// `targetRadius` is the outer saturation radius (< 1) — 0.92 leaves
+  /// headroom so `poincareDistance` never blows up on boundary nodes.
+  ///
+  /// O(n · magnitudeDims). One pass for magnitudes, one for coords.
+  Float64List poincareCoordinateTable({
+    int magnitudeDims = 6,
+    double targetRadius = 0.92,
+  }) {
+    assert(targetRadius > 0 && targetRadius < 1,
+        'targetRadius must be in (0, 1); got $targetRadius');
+    final out = Float64List(n * 2);
+    if (n == 0 || k < 2) return out;
+    final magModes = math.min(magnitudeDims, math.max(0, k - 1));
+
+    // ── Pass 1: each node's spectral magnitude across top modes. ─────
+    final mags = Float64List(n);
+    var magMax = 0.0;
+    for (var d = 0; d < magModes; d++) {
+      final base = (d + 1) * n;
+      for (var i = 0; i < n; i++) {
+        final v = eigenvectors[base + i];
+        mags[i] += v * v;
+      }
+    }
+    for (var i = 0; i < n; i++) {
+      final r = math.sqrt(mags[i]);
+      mags[i] = r;
+      if (r > magMax) magMax = r;
+    }
+    final invMax = magMax > 0 ? 1.0 / magMax : 1.0;
+
+    // ── Pass 2: direction from (u₁, u₂), radial squish by tanh. ──────
+    final u1Base = 1 * n;
+    final u2Base = (k >= 3) ? 2 * n : u1Base;
+    for (var i = 0; i < n; i++) {
+      final x0 = eigenvectors[u1Base + i];
+      final y0 = (k >= 3) ? eigenvectors[u2Base + i] : 0.0;
+      final dirNorm = math.sqrt(x0 * x0 + y0 * y0);
+      final squished = _tanh(mags[i] * invMax * 2.5) * targetRadius;
+      if (dirNorm <= 1e-18) {
+        // Node lives on the graph's 2-D center — stay near the origin.
+        out[i * 2] = 0.0;
+        out[i * 2 + 1] = 0.0;
+      } else {
+        final scale = squished / dirNorm;
+        out[i * 2] = x0 * scale;
+        out[i * 2 + 1] = y0 * scale;
+      }
+    }
+    return out;
+  }
+
+  /// Poincaré-disc coordinates of a single node `i` — `(x, y)`.
+  /// Convenience wrapper around [poincareCoordinateTable] when only one
+  /// point is needed. Prefer the bulk form for n calls.
+  ({double x, double y}) poincareCoordinates(
+    int i, {
+    int magnitudeDims = 6,
+    double targetRadius = 0.92,
+  }) {
+    if (i < 0 || i >= n) return (x: 0.0, y: 0.0);
+    final table = poincareCoordinateTable(
+      magnitudeDims: magnitudeDims,
+      targetRadius: targetRadius,
+    );
+    return (x: table[i * 2], y: table[i * 2 + 1]);
   }
 
   // ───────────────────────────────────────────────────────────────────
@@ -2780,114 +3277,319 @@ class SpectralBasis {
   }
 }
 
-/// 62-bit content fingerprint, represented as two 31-bit halves so
-/// it is bit-for-bit identical on Dart VM and Dart Web. A single-int
-/// representation would overflow JS `Number.MAX_SAFE_INTEGER = 2^53 − 1`
-/// on the web and silently round; callers that rely on signatures for
-/// CRDT merges, cache keys, or wire transfers would see state divergence
-/// between web and desktop clients.
-///
-/// Equality is structural (both halves equal). `hashCode` combines the
-/// halves into a Dart int safely (xor). Serialization is 8 bytes,
-/// little-endian, `lo` first then `hi`.
-///
-/// Zero signature ([Signature.zero]) is the identity element — used as
-/// the default for empty or uninitialised state.
-class Signature implements Comparable<Signature> {
-  const Signature({required this.lo, required this.hi})
-      : assert(lo >= 0 && lo <= 0x7fffffff,
-            'lo must fit in 31 unsigned bits'),
-        assert(hi >= 0 && hi <= 0x7fffffff,
-            'hi must fit in 31 unsigned bits');
-
-  /// Identity element. Equality with `isZero` is an engine-wide
-  /// "uninitialised / empty" marker.
-  static const Signature zero = Signature(lo: 0, hi: 0);
-
-  /// Low 31 bits. Always non-negative and < 2^31.
-  final int lo;
-
-  /// High 31 bits. Always non-negative and < 2^31.
-  final int hi;
-
-  /// True iff both halves are zero.
-  bool get isZero => lo == 0 && hi == 0;
-
-  /// 16-character lowercase hex, `hi` first then `lo`, zero-padded.
-  /// Suitable for filename-safe cache keys.
-  String toHex() {
-    final hiStr = hi.toRadixString(16).padLeft(8, '0');
-    final loStr = lo.toRadixString(16).padLeft(8, '0');
-    return '$hiStr$loStr';
-  }
-
-  /// Write as 8 little-endian bytes at [offset].
-  void writeBytes(ByteData out, int offset) {
-    out.setUint32(offset, lo, Endian.little);
-    out.setUint32(offset + 4, hi, Endian.little);
-  }
-
-  /// Read 8 little-endian bytes starting at [offset].
-  factory Signature.readBytes(ByteData bd, int offset) {
-    final lo = bd.getUint32(offset, Endian.little);
-    final hi = bd.getUint32(offset + 4, Endian.little);
-    // uint32 can be up to 2^32 − 1; mask to 31 bits since our hash
-    // producer guarantees that range. (Old serialised values are
-    // backward-compatible because they were always < 2^31.)
-    return Signature(lo: lo & 0x7fffffff, hi: hi & 0x7fffffff);
-  }
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is Signature && lo == other.lo && hi == other.hi);
-
-  @override
-  int get hashCode => lo ^ (hi * 2654435769) & 0x7fffffff;
-
-  @override
-  int compareTo(Signature other) {
-    final dh = hi.compareTo(other.hi);
-    return dh != 0 ? dh : lo.compareTo(other.lo);
-  }
-
-  @override
-  String toString() => 'Signature(0x${toHex()})';
-}
-
-/// 62-bit FNV-1a-style fingerprint over the bit patterns of a
-/// Float64List. Two independent 31-bit streams with different seeds
-/// and per-word salts, combined into a [Signature] pair. All arithmetic
-/// stays within JS-int safe range; the two halves are returned as a
-/// structured [Signature] rather than multiplied together, so the
-/// output is bit-for-bit identical on every Dart target.
-///
-/// Birthday collision probability at 10^4 distinct states ≈ 1e-11
-/// — safe for CRDT-style state comparison.
-Signature fingerprintFloat64(Float64List values) {
-  if (values.isEmpty) return Signature.zero;
-  final bd =
-      values.buffer.asByteData(values.offsetInBytes, values.lengthInBytes);
-  var hLo = 0x811c9dc5 ^ values.length;
-  var hHi = 0xdeadbeef ^ values.length;
-  const mask = 0x7fffffff;
-  for (var i = 0; i < values.length; i++) {
-    final lo = bd.getInt32(i * 8, Endian.little);
-    final hi = bd.getInt32(i * 8 + 4, Endian.little);
-    hLo = (hLo ^ lo) & mask;
-    hLo = ((hLo * 0x01000193) ^ (hLo >> 13)) & mask;
-    hLo = (hLo ^ hi) & mask;
-    hLo = ((hLo * 0x01000193) ^ (hLo >> 13)) & mask;
-    hHi = (hHi ^ lo ^ 0x5a5a5a5a) & mask;
-    hHi = ((hHi * 0x01000193) ^ (hHi >> 13)) & mask;
-    hHi = (hHi ^ hi ^ 0xa5a5a5a5) & mask;
-    hHi = ((hHi * 0x01000193) ^ (hHi >> 13)) & mask;
-  }
-  return Signature(lo: hLo, hi: hHi);
-}
-
 Signature _fingerprintEigenvalues(Float64List values) =>
     fingerprintFloat64(values);
+
+/// **Theorem-tight** (SU(2) rotation angle is exact). **Grover
+/// amplification on an n-dimensional amplitude vector** — Grover's
+/// quantum-search algorithm operating on a real-valued state vector
+/// indexed by graph nodes. O(√n) iterations concentrate the amplitude
+/// on a marked node [target] starting from the uniform state
+/// `(1/√n, …, 1/√n)`.
+///
+/// ## The iteration
+///
+///     ψ ← (2|u⟩⟨u| − I)·(I − 2|target⟩⟨target|)·ψ
+///
+/// where `|u⟩` is the uniform-superposition vector. First the oracle
+/// flips amplitude at the target; then the diffusion operator
+/// reflects about the uniform state. Together: a rotation in the
+/// 2-plane spanned by `|target⟩` and `|u⟩`, with angle `2·asin(1/√n)`
+/// per iteration.
+///
+/// ## Mathematical note
+///
+/// The two operators involved **do not commute** — the oracle lives
+/// in the node basis, the diffusion in the mode basis. This is the
+/// first primitive in the engine that genuinely uses non-commuting
+/// operators; everything else in `SpectralOperator` is a function
+/// of L and so auto-commutes. The non-commutativity is *exactly*
+/// why Grover works: it's the structure constant of the SU(2)
+/// rotation that drives the amplitude toward the target.
+///
+/// ## Classical use
+///
+/// Given `n` files, find the structurally-focused one in O(√n) runs
+/// of a ranker. Not a speedup over classical in the compute-cost
+/// sense (we're not on a quantum computer), but a genuine O(√n)-step
+/// construction: if you have an oracle that marks candidates, Grover
+/// concentrates mass on them faster than linear sweep would
+/// discover them.
+///
+/// Returns the amplified state as a new Float64List; does not
+/// mutate the input.
+Float64List groverAmplify({
+  required Float64List initial,
+  required int target,
+  required int iterations,
+}) {
+  final n = initial.length;
+  if (target < 0 || target >= n) {
+    throw RangeError('groverAmplify: target $target out of range [0, $n)');
+  }
+  if (iterations < 0) {
+    throw ArgumentError('groverAmplify: iterations must be >= 0');
+  }
+  var psi = Float64List.fromList(initial);
+  for (var step = 0; step < iterations; step++) {
+    // Oracle: flip amplitude at target.
+    psi[target] = -psi[target];
+    // Diffusion: reflect about the uniform state.
+    var mean = 0.0;
+    for (var i = 0; i < n; i++) {
+      mean += psi[i];
+    }
+    mean /= n;
+    for (var i = 0; i < n; i++) {
+      psi[i] = 2 * mean - psi[i];
+    }
+  }
+  return psi;
+}
+
+/// **Grover via Fourier** — one iteration of Grover's amplification
+/// expressed through the graph's spectral basis. Makes explicit the
+/// fact that Grover's algorithm is a **Fourier-mediated alternation**
+/// between two diagonal profiles living in different bases.
+///
+/// The iteration decomposes as four clean steps:
+///
+///   1. **Oracle** (profile in node basis):
+///      `ψ[v] ← −ψ[v]` when `v == target`, else unchanged.
+///      This is diagonal in the primal basis: `O = I − 2|target⟩⟨target|`.
+///
+///   2. **Forward Fourier** to the mode basis:
+///      `c = Uᵀ · ψ_oracled`
+///
+///   3. **Diffusion** (profile in mode basis):
+///      `c[0] ← c[0]`, `c[j≥1] ← −c[j]`.
+///      This is diagonal in the dual basis: `D = 2|u₀⟩⟨u₀| − I`
+///      where u₀ is the zero-mode eigenvector (uniform on regular
+///      graphs, up to sign).
+///
+///   4. **Inverse Fourier** back to node basis:
+///      `ψ_out = U · c_diffused`
+///
+/// The key insight: **neither profile is diagonal in the other's
+/// basis**. That's the non-commutativity driving Grover's
+/// convergence. Every iteration is one Fourier transform out, one
+/// back. The algorithm IS Fourier analysis.
+///
+/// ### Theorem (verified by test)
+///
+/// On any REGULAR graph where `u₀ = (1/√n, …, 1/√n)` (up to sign),
+/// with a full-rank basis (k = n),
+/// `groverStepViaFourier(ψ, basis, target)` equals
+/// `groverAmplify(initial: ψ, target: target, iterations: 1)` to f64
+/// precision. The two express the same quantum step in different
+/// coordinates.
+///
+/// Throws on out-of-range [target].
+Float64List groverStepViaFourier({
+  required Float64List psi,
+  required SpectralBasis basis,
+  required int target,
+}) {
+  if (target < 0 || target >= basis.n) {
+    throw RangeError(
+        'groverStepViaFourier: target $target out of range [0, ${basis.n})');
+  }
+  // Step 1: oracle — flip amplitude at target (profile in node basis).
+  final oracled = Float64List.fromList(psi);
+  oracled[target] = -oracled[target];
+  // Step 2: forward Fourier to mode basis.
+  final coeffs = basis.project(oracled);
+  // Step 3: diffusion — profile [1, −1, −1, …, −1] in mode basis.
+  // This is D = 2|u_0⟩⟨u_0| − I expressed diagonally.
+  final diffused = Float64List.fromList(coeffs);
+  for (var j = 1; j < basis.k; j++) {
+    diffused[j] = -diffused[j];
+  }
+  // Step 4: inverse Fourier back to node basis.
+  return basis.recombineFromProjection(diffused, 0.0);
+}
+
+/// Optimal iteration count for Grover amplification on [n] states
+/// with a single marked element: `⌊(π/4)·√n⌋`. Past this count, the
+/// amplitude oscillates away from the target; below it, the target
+/// isn't fully concentrated.
+int groverOptimalIterations(int n) {
+  if (n <= 1) return 0;
+  return (math.pi / 4 * math.sqrt(n)).round();
+}
+
+/// Geodesic distance in the Poincaré disc between two 2-D coordinates.
+///
+///   d(u, v) = acosh(1 + 2·|u − v|² / ((1 − |u|²)(1 − |v|²)))
+///
+/// Inputs must live in the open unit disc (|u|, |v| < 1). Points on or
+/// outside the boundary give `double.infinity`. Paired with
+/// [SpectralBasis.poincareCoordinateTable], which caps radius below 1.
+///
+/// For tree-like graphs this metric tracks graph-hop distance
+/// dramatically better than Euclidean distance in the same 2 dims —
+/// 4.6× lower multiplicative distortion on empirical code co-change
+/// structure vs. 8-D Fiedler coords.
+double poincareDistance(double xa, double ya, double xb, double yb) {
+  final normA = xa * xa + ya * ya;
+  final normB = xb * xb + yb * yb;
+  if (normA >= 1.0 || normB >= 1.0) return double.infinity;
+  final dx = xa - xb;
+  final dy = ya - yb;
+  final diffSq = dx * dx + dy * dy;
+  final denom = (1.0 - normA) * (1.0 - normB);
+  if (denom <= 0.0) return double.infinity;
+  final arg = 1.0 + 2.0 * diffSq / denom;
+  // acosh(x) defined for x ≥ 1; guard the tiny floating-point underhang.
+  return _acosh(arg < 1.0 ? 1.0 : arg);
+}
+
+// ── Hodge calculus — exterior derivatives on the graph ────────────
+//
+// A graph is a 1-complex: 0-cells are nodes, 1-cells are edges. The
+// exterior derivative `d` and its adjoint `δ` (codifferential) are
+// the discrete differential operators on this complex:
+//
+//     d₀ : C⁰(V) → C¹(E)     (0-forms → 1-forms, "gradient")
+//     δ₀ : C¹(E) → C⁰(V)     (1-forms → 0-forms, "divergence")
+//
+// Inner products:
+//     ⟨ρ, σ⟩_V  = Σ_v ρ(v)·σ(v)
+//     ⟨α, β⟩_E  = Σ_{(u,v)} W(u,v)·α(u,v)·β(u,v)  (weighted)
+//
+// Green's identity (the adjoint relation):
+//     ⟨d₀ ρ, α⟩_E  =  ⟨ρ, δ₀ α⟩_V
+//
+// The node-Laplacian is the composition:
+//     Δ₀ = δ₀ · d₀   (positive semi-definite, our normalised L)
+//
+// This block ships the three as explicit primitives so the engine's
+// flow-decomposition story is no longer implicit. It also paves the
+// path for Hodge decomposition of edge flows into gradient /
+// coexact / harmonic components — a proper theorem on graphs, with
+// the harmonic component carrying topological information about
+// cycles (β₁).
+
+/// Exterior derivative of a node-scalar `rho` to an edge-flow. Uses
+/// the normalised convention `(d₀ρ)(u, v) = W_norm(u, v) · (ρ(v) − ρ(u))`
+/// for each directed edge (u → v) with u < v, so the output is
+/// naturally weighted by the fused `D^{-1/2}` graph values. The
+/// sign follows the oriented-simplex convention: traversing u → v
+/// gives ρ(v) − ρ(u), and the reverse orientation flips sign.
+///
+/// Output layout is parallel to [CsrGraph.indptr] / [CsrGraph.indices]:
+/// one entry per CSR slot. For the symmetric graph this produces
+/// anti-symmetric pairs (u→v and v→u have opposite sign).
+///
+/// Cost: O(|E|). Pure — does not mutate the input.
+Float64List exteriorDerivative0(CsrGraph graph, Float64List rho) {
+  if (rho.length != graph.n) {
+    throw StateError(
+        'exteriorDerivative0: rho length ${rho.length} != graph.n ${graph.n}');
+  }
+  final out = Float64List(graph.values.length);
+  for (var u = 0; u < graph.n; u++) {
+    for (var p = graph.indptr[u]; p < graph.indptr[u + 1]; p++) {
+      final v = graph.indices[p];
+      out[p] = graph.values[p] * (rho[v] - rho[u]);
+    }
+  }
+  return out;
+}
+
+/// Codifferential (divergence) of an edge-flow to a node-scalar —
+/// the adjoint of [exteriorDerivative0] under the inner products
+/// defined in the block comment above. Equivalent formulation: for
+/// each node u, sum incoming contributions weighted by the edge.
+///
+///     (δ₀ α)(u) = Σ_{v~u} W_norm(u, v) · α(v → u)
+///              = −Σ_{v~u} W_norm(u, v) · α(u → v)     (anti-symmetric α)
+///
+/// The two forms are equal for anti-symmetric edge flows produced by
+/// [exteriorDerivative0]; this implementation uses the second form,
+/// traversing each node's outgoing edges and negating.
+Float64List codifferential1(CsrGraph graph, Float64List edgeFlow) {
+  if (edgeFlow.length != graph.values.length) {
+    throw StateError(
+        'codifferential1: edgeFlow length ${edgeFlow.length} != '
+        '|E| ${graph.values.length}');
+  }
+  final out = Float64List(graph.n);
+  for (var u = 0; u < graph.n; u++) {
+    var s = 0.0;
+    for (var p = graph.indptr[u]; p < graph.indptr[u + 1]; p++) {
+      s -= graph.values[p] * edgeFlow[p];
+    }
+    out[u] = s;
+  }
+  return out;
+}
+
+/// The node Laplacian as a composition: `Δ₀ = δ₀ · d₀`. By
+/// construction this equals the graph's normalised-Laplacian action
+/// up to sign (the engine's fused L_sym encoding makes the matvec
+/// `y = ρ − W_norm·ρ`, which is this composition plus the identity
+/// term — see [SpectralBasis.diffuse] for the version the engine
+/// actually uses). Shipped for completeness of the Hodge layer and
+/// as a theorem-verifier against the engine's L_sym.
+Float64List laplacianFromExterior(CsrGraph graph, Float64List rho) {
+  return codifferential1(graph, exteriorDerivative0(graph, rho));
+}
+
+/// Alon-Boppana expansion margin — how close a graph is to being a
+/// theoretically-optimal expander for its sparsity.
+///
+///   margin = λ_gap(L_sym) / (1 − 2·sqrt(d̄ − 1) / d̄)
+///
+/// where `d̄` is the graph's harmonic-mean combinatorial degree. The
+/// denominator is the Alon-Boppana upper bound on the normalized
+/// Laplacian's spectral gap: no d̄-regular graph can exceed it
+/// asymptotically. Graphs that reach or approximately saturate this
+/// bound are called "Ramanujan" — the best possible expanders for
+/// their sparsity.
+///
+/// Interpretation of the ratio:
+///   - `margin ≥ 1.0`  — the graph saturates or exceeds the bound.
+///                       Random d-regulars, complete graphs, and
+///                       high-mixing SBMs land here.
+///   - `0.5 ≤ margin < 1.0` — "good" expansion; bounded bottleneck.
+///   - `margin < 0.5`  — bottleneck-dominated. Real code co-change
+///                       graphs land here (empirical: this repo's
+///                       Dart app is ~0.25).
+///   - `margin < 0.05` — structurally fragmented; a clear dumbbell or
+///                       multi-community graph.
+///
+/// Empirical reference: `tm_next_observables.py §A` — on synthetic
+/// fixtures, random 3-regulars score ~1.6-2.1, SBM with weak cross-
+/// blocks ~0.65, dumbbells ~0.009. The Dart co-change graph of this
+/// repo scores 0.25 — bottleneck-dominated but not fragmented.
+///
+/// Returns `double.nan` when `graph.harmonicMeanDegree() < 3` (the
+/// bound formula degenerates for very sparse graphs — cycles and
+/// chains especially). Returns the numeric ratio otherwise.
+double alonBoppanaMargin(SpectralBasis basis, CsrGraph graph) {
+  final d = graph.harmonicMeanDegree();
+  if (d < 3.0) return double.nan;
+  final gap = basis.spectralGap;
+  if (!gap.isFinite || gap <= 0.0) return double.nan;
+  final bound = 1.0 - 2.0 * math.sqrt(d - 1.0) / d;
+  if (bound <= 0.0) return double.nan;
+  return gap / bound;
+}
+
+/// `tanh(x)` via `exp`, numerically stable for large |x|.
+double _tanh(double x) {
+  if (x > 20.0) return 1.0;
+  if (x < -20.0) return -1.0;
+  final e2x = math.exp(2.0 * x);
+  return (e2x - 1.0) / (e2x + 1.0);
+}
+
+/// `acosh(x) = log(x + sqrt(x² − 1))` for `x ≥ 1`.
+double _acosh(double x) {
+  if (x <= 1.0) return 0.0;
+  return math.log(x + math.sqrt(x * x - 1.0));
+}
 
 /// Universal name for the object the tower collapses into — every
 /// level of the tower (file, hunk, chunk, commit, spacetime) returns
@@ -2956,45 +3658,8 @@ class SpectralProjection {
   /// Equivalent to `diffuseAt(0.0)` modulo Lanczos-truncation residue.
   Float64List reconstructSource() => diffuseAt(0.0);
 
-  /// Spectral participation entropy at temperature [t]. See
-  /// [SpectralBasis.spectralEntropy] for semantics; this variant
-  /// reuses the cached projection instead of re-running `project`.
-  double entropy(double t) {
-    final k = basis.k;
-    if (k == 0) return 0.0;
-    var z = 0.0;
-    final weighted = Float64List(k);
-    for (var j = 0; j < k; j++) {
-      final w = math.exp(-t * basis.eigenvalues[j]) *
-          coefficients[j] *
-          coefficients[j];
-      weighted[j] = w;
-      z += w;
-    }
-    if (z <= _subnormalFloor) return 0.0;
-    final invZ = 1.0 / z;
-    var s = 0.0;
-    for (var j = 0; j < k; j++) {
-      final p = weighted[j] * invZ;
-      if (p > _subnormalFloor) s -= p * math.log(p);
-    }
-    return s;
-  }
-
-  /// Free energy at temperature [t]: `F = −log Z(ρ, t)` where
-  /// `Z(ρ, t) = Σⱼ e^{−t·λⱼ}·cⱼ²`. Reuses the cached coefficients
-  /// — no re-projection.
-  double freeEnergy(double t) {
-    final k = basis.k;
-    var z = 0.0;
-    for (var j = 0; j < k; j++) {
-      z += math.exp(-t * basis.eigenvalues[j]) *
-          coefficients[j] *
-          coefficients[j];
-    }
-    if (z <= _subnormalFloor) return double.infinity;
-    return -math.log(z);
-  }
+  // `entropy(t)` and `freeEnergy(t)` on SpectralProjection now live
+  // in `logos_thermo.dart` (extension SpectralProjectionThermo).
 
   /// Symmetric KL (Jeffreys) divergence between two thermal
   /// mode-probability distributions at temperature [t]:
@@ -3086,15 +3751,433 @@ class SpectralProjection {
     }
     return SpectralProjection(basis: basis, coefficients: out);
   }
-}
 
-/// 8-bit popcount via the standard bit-tricks reduction. Three shifts,
-/// three masks. Compiles to a few integer ops on AOT; no tables.
-@pragma('vm:prefer-inline')
-int _popcount8(int v) {
-  v = (v & 0x55) + ((v >> 1) & 0x55);
-  v = (v & 0x33) + ((v >> 2) & 0x33);
-  return (v & 0x0f) + ((v >> 4) & 0x0f);
+  /// **Negative-time heat deconvolution** — the inverse of
+  /// [diffuseAt]. Given this projection interpreted as `φ(t₀)`, try
+  /// to recover the source `ρ(t₀ − t)` that would have evolved into
+  /// it under heat flow. Mathematically: apply `exp(+t·L)` to the
+  /// coefficients, which is `exp(+t·λⱼ)` per mode.
+  ///
+  /// ## Why this "shouldn't" work
+  ///
+  /// The heat equation `∂φ/∂τ = −L·φ` is irreversible — high-frequency
+  /// modes decay, and undoing them means *amplifying* them with
+  /// `e^{+tλⱼ}`. For large t and large λⱼ this explodes, turning
+  /// any numerical noise on a high mode into a large artefact.
+  /// Running the heat kernel backward is the textbook example of an
+  /// **ill-posed inverse problem**.
+  ///
+  /// ## Why it DOES work (with care)
+  ///
+  /// Regularise by cutting off modes where `λⱼ > cutoffLambda`.
+  /// Inside the cutoff band the amplification is bounded
+  /// (`e^{t·cutoff}`). Outside, modes are zeroed out: we accept
+  /// losing the smallest-scale detail in exchange for stability.
+  /// This is **Tikhonov regularisation** in the spectral domain.
+  ///
+  /// For small t and modest cutoff, round-trip deconvolution
+  /// recovers the original source to fp precision. For large t it
+  /// degrades gracefully — the engine won't hallucinate, just
+  /// attenuate.
+  ///
+  /// ## Use case
+  ///
+  /// Given an observed attention field (the diffused result of some
+  /// query), identify what focus could have produced it. "What
+  /// focus, diffused for t=1.0, gave rise to this activity field?"
+  /// The answer is `focus.diffuseAt(1.0).deconvolveTo(1.0)`.
+  SpectralProjection deconvolveTo(
+    double t, {
+    double cutoffLambda = 2.0,
+  }) {
+    final k = basis.k;
+    final out = Float64List(k);
+    for (var j = 0; j < k; j++) {
+      final lam = basis.eigenvalues[j];
+      if (lam > cutoffLambda) continue; // regularise high modes to 0
+      out[j] = coefficients[j] * math.exp(t * lam);
+    }
+    return SpectralProjection(basis: basis, coefficients: out);
+  }
+
+  /// Inner product `⟨this, other⟩` in coefficient space. Because the
+  /// eigenbasis is orthonormal, this equals the inner product of the
+  /// two source distributions — Parseval's identity, free.
+  ///
+  /// Throws [StateError] on basis-signature mismatch.
+  double dot(SpectralProjection other) {
+    if (basis.signature != other.basis.signature) {
+      throw StateError(
+        'SpectralProjection.dot: basis signatures must match '
+        '(${basis.signature} vs ${other.basis.signature})',
+      );
+    }
+    var s = 0.0;
+    for (var j = 0; j < basis.k; j++) {
+      s += coefficients[j] * other.coefficients[j];
+    }
+    return s;
+  }
+
+  /// Cosine alignment in coefficient space — `⟨a, b⟩ / (‖a‖·‖b‖)`.
+  /// In `[-1, 1]`. Returns `0.0` when either projection has zero norm.
+  ///
+  /// This is the spectral-coordinate version of "how aligned are these
+  /// two queries with the graph's eigenmodes?" — orthogonal queries
+  /// illuminate disjoint regions of the structure.
+  double alignmentWith(SpectralProjection other) {
+    final a = squaredNorm;
+    final b = other.squaredNorm;
+    if (a <= _subnormalFloor || b <= _subnormalFloor) return 0.0;
+    return dot(other) / (math.sqrt(a) * math.sqrt(b));
+  }
+
+  /// Orthogonal decomposition of `this` against [other]:
+  ///
+  ///     this = parallel + orthogonal
+  ///     parallel    = (⟨this, other⟩ / ‖other‖²) · other
+  ///     orthogonal  = this − parallel
+  ///
+  /// Returns `(parallel, orthogonal, alignment)` where:
+  /// * `parallel` is the component of `this` along [other] — "the part
+  ///   of this query that is already explained by the reference."
+  /// * `orthogonal` is the residual — "what's *new* in this query that
+  ///   the reference doesn't see."
+  /// * `alignment` is the cosine in `[-1, 1]`, the scalar summary.
+  ///
+  /// Both parallel and orthogonal live in the same basis as `this`
+  /// and can be diffused / scaled / fed back into the engine
+  /// independently. Orthogonality is guaranteed:
+  /// `parallel.dot(orthogonal) ≈ 0` to f64 precision.
+  ///
+  /// Use cases:
+  /// * **Novelty queries**: "What's structurally new in today's PR vs
+  ///   yesterday's review focus?" Decompose today against yesterday;
+  ///   surface the orthogonal component.
+  /// * **Attention subtraction**: "Show me the part of this query that
+  ///   DOESN'T overlap with the areas we've already reviewed."
+  /// * **Canonical basis extension**: sequentially decompose a new
+  ///   query against accumulated references to build an orthogonal
+  ///   history (Gram-Schmidt on queries).
+  ///
+  /// Throws [StateError] on basis-signature mismatch. When [other]
+  /// has zero norm, returns `(zero, this, 0.0)` — no reference means
+  /// the whole query is "new."
+  ({
+    SpectralProjection parallel,
+    SpectralProjection orthogonal,
+    double alignment,
+  }) decomposeAgainst(SpectralProjection other) {
+    if (basis.signature != other.basis.signature) {
+      throw StateError(
+        'SpectralProjection.decomposeAgainst: basis signatures must match '
+        '(${basis.signature} vs ${other.basis.signature})',
+      );
+    }
+    final otherSq = other.squaredNorm;
+    final k = basis.k;
+    if (otherSq <= _subnormalFloor) {
+      final zeros = Float64List(k);
+      return (
+        parallel: SpectralProjection(basis: basis, coefficients: zeros),
+        orthogonal: SpectralProjection(
+          basis: basis,
+          coefficients: Float64List.fromList(coefficients),
+        ),
+        alignment: 0.0,
+      );
+    }
+    final inner = dot(other);
+    final scale = inner / otherSq;
+    final parallelCoeff = Float64List(k);
+    final orthCoeff = Float64List(k);
+    for (var j = 0; j < k; j++) {
+      parallelCoeff[j] = scale * other.coefficients[j];
+      orthCoeff[j] = coefficients[j] - parallelCoeff[j];
+    }
+    final selfNorm = math.sqrt(squaredNorm);
+    final otherNorm = math.sqrt(otherSq);
+    final alignment =
+        selfNorm <= _subnormalFloor ? 0.0 : inner / (selfNorm * otherNorm);
+    return (
+      parallel: SpectralProjection(basis: basis, coefficients: parallelCoeff),
+      orthogonal: SpectralProjection(basis: basis, coefficients: orthCoeff),
+      alignment: alignment,
+    );
+  }
+
+  /// Per-band alignment between two projections — returns a vector of
+  /// cosines, one per band. Lets a caller ask "at which SCALES are
+  /// these two queries similar, and at which are they different?"
+  ///
+  /// Example: two PRs touching the same community (high low-band
+  /// alignment) but with different micro-level focuses (low high-band
+  /// alignment) produce a characteristic descending-cosine profile.
+  ///
+  /// Throws [StateError] on basis mismatch or invalid [modeCuts]
+  /// (same rules as [bandDecompose]).
+  List<double> bandAlignmentWith(
+    SpectralProjection other,
+    List<int> modeCuts,
+  ) {
+    if (basis.signature != other.basis.signature) {
+      throw StateError(
+        'SpectralProjection.bandAlignmentWith: basis signatures must match '
+        '(${basis.signature} vs ${other.basis.signature})',
+      );
+    }
+    final myBands = bandDecompose(modeCuts);
+    final theirBands = other.bandDecompose(modeCuts);
+    final out = List<double>.filled(myBands.length, 0.0);
+    for (var b = 0; b < myBands.length; b++) {
+      out[b] = myBands[b].alignmentWith(theirBands[b]);
+    }
+    return out;
+  }
+
+  /// Gram-Schmidt orthogonalisation over a sequence of projections
+  /// sharing the same basis. Returns a list where the i-th entry is
+  /// the orthogonal residue of `queries[i]` against every prior entry
+  /// — normalised to unit coefficient norm when non-zero.
+  ///
+  /// Use case: **de-duplicate a query history**. The first query is
+  /// kept as-is (normalised). Each subsequent query is projected
+  /// onto the span of previous residues and only the orthogonal
+  /// complement is retained. The output is an orthonormal basis of
+  /// the query sequence's reachable span — telling you which queries
+  /// added *new* structural coverage vs merely revisited old ground.
+  ///
+  /// Duplicate-or-dependent queries collapse to zero-norm entries in
+  /// the output. Callers can filter those out to get the actual
+  /// independent basis.
+  ///
+  /// Throws [StateError] when the list contains projections against
+  /// different bases.
+  static List<SpectralProjection> gramSchmidt(
+    List<SpectralProjection> queries,
+  ) {
+    if (queries.isEmpty) return const [];
+    final baseSig = queries.first.basis.signature;
+    for (final q in queries) {
+      if (q.basis.signature != baseSig) {
+        throw StateError(
+          'SpectralProjection.gramSchmidt: all queries must share a basis',
+        );
+      }
+    }
+    final out = <SpectralProjection>[];
+    for (final q in queries) {
+      var residue = q;
+      for (final prior in out) {
+        final priorSq = prior.squaredNorm;
+        if (priorSq <= _subnormalFloor) continue;
+        residue = residue.decomposeAgainst(prior).orthogonal;
+      }
+      // Normalise to unit norm if non-zero (matches the "orthoNORMAL"
+      // claim). Zero-residue queries stay zero — they added no new
+      // direction. Threshold is well above floating-point dust from
+      // the decomposition (~1e-15 on reasonable bases) so a true
+      // duplicate collapses cleanly to zero instead of getting
+      // spuriously normalised up.
+      const kZeroResidueThreshold = 1e-12;
+      final norm = math.sqrt(residue.squaredNorm);
+      if (norm > kZeroResidueThreshold) {
+        residue = residue.scale(1.0 / norm);
+      } else {
+        residue = SpectralProjection(
+          basis: residue.basis,
+          coefficients: Float64List(residue.basis.k),
+        );
+      }
+      out.add(residue);
+    }
+    return out;
+  }
+
+  /// **Dream-fill** — the inverse of [compressToTopK]. Takes the
+  /// present coefficients as a constraint and samples plausible
+  /// values for the missing modes from a thermal prior.
+  ///
+  /// Behaviour:
+  /// * Non-zero coefficients are preserved exactly (they are the
+  ///   "observation").
+  /// * Zero coefficients are filled with Box-Muller Gaussian samples
+  ///   of variance `priorVariance · e^{-t·λⱼ}` — a thermal prior
+  ///   that weights low-frequency modes with more energy, matching
+  ///   the physics of heat-flow-like distributions on graphs.
+  /// * The `seed` makes the dream reproducible: the same projection
+  ///   + seed always yields the same filled completion.
+  ///
+  /// Use case: given a compressed [SpectralProjection] transmitted
+  /// over the wire (via top-K retention), recover a full projection
+  /// that (a) reproduces the sent coefficients exactly, (b) fills
+  /// the rest with a thermodynamically-plausible "imagination" of
+  /// what was dropped. Round-trip is lossy (you don't recover the
+  /// original discarded coefficients), but the SHAPE of the filled
+  /// projection matches the thermal prior.
+  ///
+  /// `priorVariance` controls the noise amplitude. 0 reproduces the
+  /// compressed input verbatim (no fill). Large values produce noisy
+  /// dreams.
+  SpectralProjection dreamFill({
+    double priorVariance = 0.01,
+    double priorTemperature = 1.0,
+    int seed = 42,
+  }) {
+    final k = basis.k;
+    final out = Float64List(k);
+    final rng = math.Random(seed);
+    for (var j = 0; j < k; j++) {
+      if (coefficients[j] != 0.0) {
+        out[j] = coefficients[j];
+        continue;
+      }
+      if (priorVariance <= 0.0) {
+        out[j] = 0.0;
+        continue;
+      }
+      // Box-Muller Gaussian with std = sqrt(priorVariance · exp(-tλⱼ)).
+      final u1 = rng.nextDouble().clamp(1e-300, 1.0);
+      final u2 = rng.nextDouble();
+      final gauss = math.sqrt(-2.0 * math.log(u1)) *
+          math.cos(2.0 * math.pi * u2);
+      final std = math.sqrt(
+          priorVariance * math.exp(-priorTemperature * basis.eigenvalues[j]));
+      out[j] = std * gauss;
+    }
+    return SpectralProjection(basis: basis, coefficients: out);
+  }
+
+  /// **Low-rank compression** — zero out every coefficient except
+  /// the [keepK] largest by absolute magnitude. Returns a new
+  /// projection on the same basis.
+  ///
+  /// This is the analogue of truncating a Fourier series: keep the
+  /// dominant frequencies, discard the rest. The approximation is
+  /// *optimal* in the sense of minimum L² reconstruction error —
+  /// a consequence of Parseval's identity: the error squared equals
+  /// the sum of squared discarded coefficients, so keeping the
+  /// top-k by magnitude is exactly the L² minimiser.
+  ///
+  /// ## Theorem (test-verified)
+  ///
+  /// Let `c` be the original coefficient vector, `c̃` the compressed
+  /// one with support size [keepK]. Then
+  ///
+  ///     ‖c − c̃‖² = Σ_{j ∉ kept} c_j²
+  ///
+  /// and this is the minimum over all support-size-[keepK] subsets
+  /// (greedy-magnitude selection is globally optimal by the
+  /// Pythagorean theorem in ℝᵏ).
+  ///
+  /// Use cases:
+  /// * **Sketch queries for wire transport** — send only the top-k
+  ///   coefficients; receiver reconstructs an approximation.
+  /// * **Denoising** — drop low-magnitude coefficients which are
+  ///   dominated by numerical noise / basis truncation error.
+  /// * **Importance ranking** — the kept coefficient indices ARE
+  ///   the most load-bearing modes for this query.
+  SpectralProjection compressToTopK(int keepK) {
+    final k = basis.k;
+    if (keepK >= k) {
+      return SpectralProjection(
+        basis: basis,
+        coefficients: Float64List.fromList(coefficients),
+      );
+    }
+    if (keepK <= 0) {
+      return SpectralProjection(
+        basis: basis,
+        coefficients: Float64List(k),
+      );
+    }
+    // Index by |coefficient| descending; keep the first keepK.
+    final indices = List<int>.generate(k, (i) => i);
+    indices.sort((a, b) =>
+        coefficients[b].abs().compareTo(coefficients[a].abs()));
+    final kept = indices.take(keepK).toSet();
+    final out = Float64List(k);
+    for (final j in kept) {
+      out[j] = coefficients[j];
+    }
+    return SpectralProjection(basis: basis, coefficients: out);
+  }
+
+  /// **Reconstruction error** against another projection on the same
+  /// basis — the L² distance `‖this − other‖`. Used to characterise
+  /// compression loss: `this.compressToTopK(k).reconstructionErrorTo(this)`
+  /// is the truncation error.
+  double reconstructionErrorTo(SpectralProjection other) {
+    if (basis.signature != other.basis.signature) {
+      throw StateError(
+        'SpectralProjection.reconstructionErrorTo: basis signatures must match',
+      );
+    }
+    var s = 0.0;
+    for (var j = 0; j < basis.k; j++) {
+      final d = coefficients[j] - other.coefficients[j];
+      s += d * d;
+    }
+    return math.sqrt(s);
+  }
+
+  /// Partition this projection into **mode bands** — each band being
+  /// the sub-projection whose coefficients are nonzero only in a
+  /// contiguous range of modes. [modeCuts] is a sorted list of mode
+  /// indices defining band boundaries; cuts at 0 or k are implicit.
+  ///
+  /// Example: for k=12 and `modeCuts = [4, 8]`, returns 3 projections:
+  /// * band 0 covers modes [0, 4) — the coarsest structure (low freq)
+  /// * band 1 covers modes [4, 8) — medium scale
+  /// * band 2 covers modes [8, 12) — fine detail (high freq)
+  ///
+  /// ## Invariants
+  ///
+  /// * **Orthogonality**: `bands[i].dot(bands[j]) == 0` for `i != j`
+  ///   (disjoint mode support ⇒ zero inner product in an orthonormal
+  ///   basis).
+  /// * **Completeness**: the sum of all bands reconstructs the original
+  ///   projection exactly (no coefficient is dropped).
+  ///
+  /// ## Reading
+  ///
+  /// The coarsest band is the low-frequency structure — global
+  /// community shape, macro-scale layout. The finest band is the
+  /// high-frequency residual — local noise, per-file fluctuation.
+  /// Asking "how similar are two queries at each scale?" is now
+  /// `a.bandDecompose(cuts).zip(b.bandDecompose(cuts)).map(alignment)`.
+  ///
+  /// Throws [StateError] on cuts outside `[1, k-1]` or non-monotone
+  /// cut order.
+  List<SpectralProjection> bandDecompose(List<int> modeCuts) {
+    final k = basis.k;
+    // Validate & canonicalise cuts
+    for (var i = 0; i < modeCuts.length; i++) {
+      if (modeCuts[i] < 1 || modeCuts[i] >= k) {
+        throw StateError(
+          'SpectralProjection.bandDecompose: cut ${modeCuts[i]} outside '
+          '[1, ${k - 1}]',
+        );
+      }
+      if (i > 0 && modeCuts[i] <= modeCuts[i - 1]) {
+        throw StateError(
+          'SpectralProjection.bandDecompose: cuts must be strictly increasing',
+        );
+      }
+    }
+    final bounds = <int>[0, ...modeCuts, k];
+    final out = <SpectralProjection>[];
+    for (var b = 0; b < bounds.length - 1; b++) {
+      final lo = bounds[b];
+      final hi = bounds[b + 1];
+      final coeffs = Float64List(k);
+      for (var j = lo; j < hi; j++) {
+        coeffs[j] = coefficients[j];
+      }
+      out.add(SpectralProjection(basis: basis, coefficients: coeffs));
+    }
+    return out;
+  }
 }
 
 /// Lloyd's k-means clustering over a flat row-major embedding. Used

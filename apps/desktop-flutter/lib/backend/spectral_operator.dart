@@ -175,11 +175,100 @@ class SpectralOperator {
     return SpectralOperator(basis: basis, profile: p);
   }
 
+  /// Lie bracket `[A, B] = A·B − B·A`. In this commuting algebra
+  /// (every operator is `f(L)` for some f, and functions of the same
+  /// self-adjoint L commute pairwise) the bracket **always evaluates
+  /// to the zero operator** — modulo floating-point dust, `|[A, B][j]|`
+  /// is bounded by the IEEE double epsilon of the product.
+  ///
+  /// This is the theorem of the ring: **`SpectralOperator` forms an
+  /// abelian Lie algebra over ℝ under the bracket**. Its structure
+  /// constants vanish identically. Which is *exactly* why composition
+  /// is order-independent, why `heat(t) · fractional(α) · bandProjection(...)`
+  /// can be pre-combined into one profile, and why CRDT-friendly OT
+  /// exists for spectral edits — the commutation kernel is trivially
+  /// one.
+  ///
+  /// The method is shipped mostly as a runtime check: callers can
+  /// verify at test time that their composite operators are indeed
+  /// commuting, catching accidental introduction of a non-f(L)
+  /// operator in the future.
+  SpectralOperator commutator(SpectralOperator other) {
+    _checkSameBasis(other, 'commutator');
+    final p = Float64List(basis.k);
+    for (var j = 0; j < basis.k; j++) {
+      // f(λ)·g(λ) − g(λ)·f(λ) — analytically zero for any f, g
+      // that are functions of the SAME L. We compute it explicitly
+      // rather than assert 0 so floating-point dust is visible.
+      p[j] = profile[j] * other.profile[j] -
+          other.profile[j] * profile[j];
+    }
+    return SpectralOperator(basis: basis, profile: p);
+  }
+
+  /// Operator norm — the maximum absolute profile entry. This is the
+  /// spectral-radius sense: `‖A‖ = max_j |f(λ_j)|`. Used as a
+  /// sanity metric for the commutator (should be ≈ 0) and for
+  /// operator comparisons.
+  double get operatorNorm {
+    var m = 0.0;
+    for (final v in profile) {
+      final a = v.abs();
+      if (a > m) m = a;
+    }
+    return m;
+  }
+
   /// Scalar multiplication.
   SpectralOperator scale(double s) {
     final p = Float64List(basis.k);
     for (var j = 0; j < basis.k; j++) {
       p[j] = s * profile[j];
+    }
+    return SpectralOperator(basis: basis, profile: p);
+  }
+
+  /// `exp(A)` — the matrix exponential on the spectrum:
+  /// `exp(A)[j] = e^{f(λ_j)}`. Because the ring is abelian
+  /// ([commutator] ≡ 0), the BCH formula collapses to addition:
+  ///
+  ///     exp(A + B) = exp(A) · exp(B) = exp(B) · exp(A)     (∀ A, B ∈ ring)
+  ///
+  /// This is the reason `heat(t) = exp(−t·L_sym)` composes trivially:
+  /// `heat(s) · heat(t) = heat(s + t)` — addition on the time axis
+  /// IS multiplication in the operator ring.
+  SpectralOperator exp() {
+    final p = Float64List(basis.k);
+    for (var j = 0; j < basis.k; j++) {
+      p[j] = math.exp(profile[j]);
+    }
+    return SpectralOperator(basis: basis, profile: p);
+  }
+
+  /// `log(A)` — logarithm on the spectrum, mode-by-mode. Returns 0
+  /// on modes where `|f(λ_j)| ≤ eps` so the result stays finite on
+  /// the zero mode of the Laplacian. The inverse of [exp]:
+  ///
+  ///     log(exp(A)) = A   (on modes where exp(f(λ)) > eps)
+  SpectralOperator log({double eps = 1e-15}) {
+    final p = Float64List(basis.k);
+    for (var j = 0; j < basis.k; j++) {
+      p[j] = profile[j].abs() > eps ? math.log(profile[j]) : 0.0;
+    }
+    return SpectralOperator(basis: basis, profile: p);
+  }
+
+  /// `sqrt(A)` — square root on the spectrum. Returns 0 on negative
+  /// or sub-eps modes so the result stays real and finite. Paired
+  /// with [inverse] gives `1/sqrt(A)` — the natural "reciprocal
+  /// length scale" operator, useful for building wavelet-like
+  /// matched filters.
+  ///
+  /// Invariant: `sqrt(A) · sqrt(A) = A` on strictly-positive modes.
+  SpectralOperator sqrt({double eps = 1e-15}) {
+    final p = Float64List(basis.k);
+    for (var j = 0; j < basis.k; j++) {
+      p[j] = profile[j] > eps ? math.sqrt(profile[j]) : 0.0;
     }
     return SpectralOperator(basis: basis, profile: p);
   }

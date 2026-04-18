@@ -480,6 +480,58 @@ class _MorphPainter extends CustomPainter {
           _paintGlyph(canvas, to.glyphs[op.toIdx], p, 1.0, null, scale, 0);
           continue;
         }
+        if (effect == ThemeTextEffect.emeraldStamp) {
+          // Phase-change stamp — the glyph starts as liquid honey,
+          // crystallizes into emerald through the descent + impact,
+          // then settles to the page's ink color. Color does the
+          // narrative; motion does the weight. No glow anywhere.
+          const stampStart = 0.40;
+          if (t < stampStart) continue;
+          final localT =
+              ((t - stampStart) / (1.0 - stampStart)).clamp(0.0, 1.0);
+
+          const honey = Color(0xFFC49A3B);
+
+          double dy;
+          double scale;
+          Color tint;
+          double tintAlpha;
+          if (localT < 0.55) {
+            // Descent — liquid honey falling. Crystallization starts
+            // partway through so the transit is *visibly* changing
+            // state, not just translating a colored glyph.
+            final descentT = localT / 0.55;
+            final curve = Curves.easeInCubic.transform(descentT);
+            dy = -7.0 * (1.0 - curve);
+            scale = 1.18 - 0.18 * curve;
+            final crystal = curve * 0.6; // 0 → 0.6 through descent
+            tint = Color.lerp(honey, accent, crystal)!;
+            tintAlpha = 0.85;
+          } else if (localT < 0.72) {
+            // Impact — compression rebound as the crystal locks in.
+            // Final 40% of the honey→emerald lerp finishes here.
+            final impactT = (localT - 0.55) / 0.17;
+            dy = 0;
+            scale = 1.0 - 0.06 * math.sin(impactT * math.pi);
+            final crystal = 0.6 + 0.4 * impactT; // 0.6 → 1.0
+            tint = Color.lerp(honey, accent, crystal)!;
+            tintAlpha = 1.0;
+          } else {
+            // Settle — pure emerald crystal fades to reveal the ink
+            // that was under it all along.
+            final settleT = (localT - 0.72) / 0.28;
+            dy = 0;
+            scale = 1.0;
+            tint = accent;
+            tintAlpha = (1.0 - settleT) * 0.65;
+          }
+          final finalTint =
+              tint.withValues(alpha: tintAlpha.clamp(0.0, 1.0));
+          final p = to.positions[op.toIdx] + Offset(0, dy);
+          _paintGlyph(canvas, to.glyphs[op.toIdx], p, 1.0, finalTint,
+              scale, 0);
+          continue;
+        }
         if (effect == ThemeTextEffect.chalk) {
           // Chalk: progressively DRAW the glyph L→R with a bright
           // chalk-tip highlight at the reveal edge. The char isn't
@@ -496,8 +548,11 @@ class _MorphPainter extends CustomPainter {
         // When the effect provides an insert tint, the tint IS the
         // transition — keep the glyph at full opacity so the color
         // change is the visible thing. Without a tint we fall back to
-        // the plain opacity fade-in.
-        final opacity = tint != null ? 1.0 : t;
+        // the plain opacity fade-in. Shimmer is excluded because its
+        // tint is a *passing* band, not a sustained color change —
+        // locking opacity to 1.0 when the band arrives would pop.
+        final opacity =
+            (tint != null && effect != ThemeTextEffect.shimmer) ? 1.0 : t;
         _paintGlyph(canvas, to.glyphs[op.toIdx], p, opacity, tint, scale, ab);
       } else {
         // remove
@@ -530,6 +585,24 @@ class _MorphPainter extends CustomPainter {
               1.0, 0, spin);
           continue;
         }
+        if (effect == ThemeTextEffect.emeraldStamp) {
+          // Amber fade — keeps the honey half of helix's
+          // "honey over expensive emeralds" vibe. The emerald shows
+          // up on arrivals; departures melt warm.
+          const fadeEnd = 0.45;
+          if (t > fadeEnd) continue;
+          final localT = (t / fadeEnd).clamp(0.0, 1.0);
+          final dy = 2.0 * localT;
+          final scale = 1.0 - 0.04 * localT;
+          final alpha = 1.0 - localT;
+          const amber = Color(0xFFC49A3B);
+          final tint =
+              amber.withValues(alpha: math.sin(localT * math.pi) * 0.50);
+          final p = from.positions[op.fromIdx] + Offset(0, dy);
+          _paintGlyph(canvas, from.glyphs[op.fromIdx], p, alpha, tint,
+              scale, 0);
+          continue;
+        }
         if (effect == ThemeTextEffect.chalk) {
           // Chalk remove: erase R→L with the same chalk-tip, but the
           // tip trails a softer smudge behind it.
@@ -545,8 +618,9 @@ class _MorphPainter extends CustomPainter {
         // Same story for removes: while the tint is active the glyph
         // stays fully visible; the last quarter of the transition is
         // where it actually dims and vanishes. Gives the burn/warmth
-        // effects room to read before the glyph leaves.
-        final opacity = tint != null
+        // effects room to read before the glyph leaves. Shimmer is
+        // excluded for the same reason as the insert path.
+        final opacity = (tint != null && effect != ThemeTextEffect.shimmer)
             ? (1 - ((t - 0.75) * 4).clamp(0.0, 1.0))
             : (1 - t);
         _paintGlyph(canvas, from.glyphs[op.fromIdx], p, opacity, tint, scale,
@@ -815,6 +889,23 @@ class _MorphPainter extends CustomPainter {
           return 1.0 + _wavePulse(t, glyphX) * 0.05;
         }
         return 1.0;
+      case ThemeTextEffect.shimmer:
+        // Each glyph bumps up in scale as the sweep passes over it.
+        // Position-driven (same geometry as _tintFor) so lift + tint
+        // share one crest. Gaussian is tighter than the tint so the
+        // bump is a crisp lift, not a wide wobble.
+        final bbox = _cachedBbox;
+        final norm = bbox != null
+            ? ((glyphX - bbox.left) /
+                    (bbox.right - bbox.left).clamp(1.0, double.infinity))
+                .clamp(0.0, 1.0)
+            : 0.5;
+        final bandCenter = -0.2 + 1.4 * t;
+        final d = norm - bandCenter;
+        final pulse = math.exp(-d * d * 32.0);
+        if (isInsert || isRemove) return 1.0 + pulse * 0.12;
+        if (isKeep) return 1.0 + pulse * 0.05;
+        return 1.0;
       default:
         return 1.0;
     }
@@ -1036,8 +1127,33 @@ class _MorphPainter extends CustomPainter {
           return shimmer.withValues(alpha: intensity * 0.7);
         }
         return null;
+      case ThemeTextEffect.shimmer:
+        // Bibble. Gold→magenta band sweeps L→R across the text during
+        // the morph — one pass, one direction, two colors. Not
+        // iridescent (that's a full hue cycle).
+        final bbox = _cachedBbox;
+        final norm = bbox != null
+            ? ((glyphX - bbox.left) /
+                    (bbox.right - bbox.left).clamp(1.0, double.infinity))
+                .clamp(0.0, 1.0)
+            : 0.5;
+        // band enters at -0.2 and exits at 1.2 so every char gets hit
+        final bandCenter = -0.2 + 1.4 * t;
+        final d = norm - bandCenter;
+        final intensity = math.exp(-d * d * 20.0);
+        if (intensity < 0.02) return null;
+        // gold leads, magenta trails, white-hot at the center
+        const gold = Color(0xFFFFC727);
+        const magenta = Color(0xFFE0218A);
+        final mix = (0.5 + d * 2.2).clamp(0.0, 1.0);
+        final base = Color.lerp(gold, magenta, mix)!;
+        final tinted = Color.lerp(base, Colors.white, 0.35)!;
+        final isKeep = op.fromIdx >= 0 && op.toIdx >= 0;
+        final strength = isKeep ? 0.55 : 0.9;
+        return tinted.withValues(alpha: intensity * strength);
       case ThemeTextEffect.pop:
       case ThemeTextEffect.blockify:
+      case ThemeTextEffect.emeraldStamp:
       case ThemeTextEffect.none:
         return null;
     }

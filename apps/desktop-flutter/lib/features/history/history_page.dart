@@ -2398,7 +2398,7 @@ class _CommitRowState extends State<_CommitRow> {
             : (d) => widget.onSecondaryTap!(d.globalPosition),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
-          padding: const EdgeInsets.fromLTRB(0, 10, 12, 10),
+          padding: const EdgeInsets.fromLTRB(0, 9, 12, 9),
           decoration: BoxDecoration(
             color: widget.isSelected
                 ? t.itemActiveBg
@@ -2879,7 +2879,7 @@ class _CommitDetail extends StatelessWidget {
                 autofocus: true,
                 height: 28,
                 fontSize: 12,
-                hintText: 'Tag name...',
+                hintText: 'tag name...',
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 onChanged: onTagChanged,
                 onSubmitted: (_) => onCreateTag(),

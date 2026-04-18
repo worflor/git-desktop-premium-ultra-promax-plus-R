@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/bond_protocol.dart';
 import 'package:git_desktop/backend/logos_core.dart';
+import 'package:git_desktop/backend/logos_signature.dart';
 import 'package:git_desktop/backend/spectral_kizuna.dart';
 
 Signature _sig(int lo, [int hi = 0]) =>

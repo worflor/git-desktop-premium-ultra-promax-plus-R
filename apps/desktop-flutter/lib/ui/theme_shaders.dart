@@ -19,6 +19,8 @@ class ThemeShaders {
   static Future<FragmentProgram>? _loveboyBgFuture;
   static FragmentProgram? _glass;
   static Future<FragmentProgram>? _glassFuture;
+  static FragmentProgram? _plastic;
+  static Future<FragmentProgram>? _plasticFuture;
 
   /// Kicks off loading the kirby fragment program if it hasn't
   /// been loaded yet. Safe to call repeatedly — only the first call
@@ -290,6 +292,68 @@ class ThemeShaders {
       ..setFloat(25, cornerRadius)
       ..setFloat(26, noise)
       ..setFloat(27, anim);
+    return s;
+  }
+
+  /// Plastic-gloss program for Bibble. Mono-hue surface with a moving
+  /// specular band, bottom-right inner shadow, and magenta fresnel
+  /// rim. Distinct from [iridescent] (hue cycles) and [glass]
+  /// (transmissive).
+  static FragmentProgram? plastic() {
+    if (_plastic != null) return _plastic;
+    _plasticFuture ??=
+        FragmentProgram.fromAsset('shaders/plastic.frag').then((p) {
+      _plastic = p;
+      return p;
+    });
+    return null;
+  }
+
+  /// Build a configured `FragmentShader` for plastic-gloss surfaces.
+  /// Uniform order matches the `.frag` declaration sequence:
+  ///   0..1   uSize       (vec2)
+  ///   2      uIntensity
+  ///   3..6   uBase       (vec4 rgba) — surface base
+  ///   7..10  uHighlight  (vec4 rgba) — specular + rim (magenta)
+  ///  11..14  uShadow     (vec4 rgba) — bottom-right inner shadow
+  ///  15..16  uTilt       (vec2) — window-delta tilt [-1..1]
+  ///  17      uTime       (seconds, monotonic)
+  ///  18      uEdgePx     (rim falloff in px)
+  static ui.FragmentShader? plasticShader({
+    required double width,
+    required double height,
+    required double intensity,
+    required ui.Color base,
+    required ui.Color highlight,
+    required ui.Color shadow,
+    double tiltX = 0,
+    double tiltY = 0,
+    double time = 0,
+    double edgePx = 18,
+  }) {
+    final program = plastic();
+    if (program == null) return null;
+    final s = program.fragmentShader();
+    s
+      ..setFloat(0, width)
+      ..setFloat(1, height)
+      ..setFloat(2, intensity)
+      ..setFloat(3, base.r)
+      ..setFloat(4, base.g)
+      ..setFloat(5, base.b)
+      ..setFloat(6, base.a)
+      ..setFloat(7, highlight.r)
+      ..setFloat(8, highlight.g)
+      ..setFloat(9, highlight.b)
+      ..setFloat(10, highlight.a)
+      ..setFloat(11, shadow.r)
+      ..setFloat(12, shadow.g)
+      ..setFloat(13, shadow.b)
+      ..setFloat(14, shadow.a)
+      ..setFloat(15, tiltX)
+      ..setFloat(16, tiltY)
+      ..setFloat(17, time)
+      ..setFloat(18, edgePx);
     return s;
   }
 }

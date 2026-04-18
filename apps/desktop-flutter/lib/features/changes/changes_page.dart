@@ -16,6 +16,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../ui/animated_icons.dart';
 import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/dream_hint.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/morph_text.dart';
 import '../../ui/status_view.dart';
@@ -31,6 +32,11 @@ import '../../backend/file_layout.dart';
 import 'logos_diffusion_canvas.dart';
 import '../../backend/stash_shape.dart';
 import '../../backend/logos_git.dart';
+import '../../backend/logos_dream.dart';
+import '../../backend/logos_field.dart';
+import '../../backend/logos_refactor.dart';
+import '../../backend/logos_spaghetti.dart';
+import '../../ui/logos_glyph_strip.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/file_coupling_state.dart';
 import '../../app/symbol_frequency_state.dart';
@@ -62,6 +68,16 @@ String _guardrailLabelForStage(int stage) {
 
 enum _CommitRunMode { commitOnly, commitAndSync }
 
+/// Payload produced by one dream-compute pass for the commit composer:
+/// the placeholder phrase + the diff's field-character classification.
+/// Paired in a single record so one DreamHintController<_CommitDream>
+/// drives both slots (placeholder text + chrome accent) with one
+/// debounce + one cancellation id.
+typedef _CommitDream = ({
+  String? phrase,
+  LogosFieldCharacter? character,
+});
+
 class _PrimaryCommitAction {
   final String label;
   final String detail;
@@ -85,6 +101,82 @@ class _ChangesPageState extends State<ChangesPage> {
   final Set<String> _includedPaths = {};
   final _commitMsgCtrl = TextEditingController();
   final _commitMsgFocusNode = FocusNode();
+
+  /// Engine-dreamed commit-composer hint. The controller owns the
+  /// debounce, signature short-circuit, and in-flight cancellation;
+  /// the payload here carries both the phrase and the diff's field
+  /// character so one compute drives both the placeholder text and
+  /// any accent chrome that renders alongside it.
+  final DreamHintController<_CommitDream> _commitDream =
+      DreamHintController();
+
+  /// Compose the composer's placeholder hint from the dream payload.
+  /// Silent when nothing's resolved; phrase alone when the character
+  /// is trivial; phrase ·  character otherwise.
+  String _composeHint() {
+    final dream = _commitDream.value;
+    final hint = dream?.phrase ?? 'commit message...';
+    final char = dream?.character;
+    if (char == null || char == LogosFieldCharacter.silent) return hint;
+    return '$hint  ·  ${char.label}';
+  }
+
+  /// Lazy cache of spaghetti reports per engine revision. Context
+  /// menus open frequently; `analyzeSpaghetti` is not cheap, so we
+  /// memoise per [LogosGit.manifoldRevision].
+  final Map<int, SpaghettiReport?> _spaghettiReportCache = {};
+
+  /// Lazy cache of refactor proposals per engine revision.
+  final Map<int, List<RefactorProposal>?> _refactorCache = {};
+
+  /// Look up or compute the spaghetti report for an engine.
+  SpaghettiReport? _reportForEngine(LogosGit engine) {
+    return _spaghettiReportCache.putIfAbsent(
+      engine.manifoldRevision,
+      () => analyzeSpaghetti(engine),
+    );
+  }
+
+  /// Look up or compute the refactor proposals for an engine.
+  List<RefactorProposal>? _proposalsForEngine(LogosGit engine) {
+    return _refactorCache.putIfAbsent(
+      engine.manifoldRevision,
+      () => proposeRefactors(engine),
+    );
+  }
+
+  /// Bundle the file's engine-derived status for the glyph strip.
+  /// Returns a silent status when the engine is null.
+  LogosFileStatus _fileStatus(LogosGit? engine, String path) {
+    if (engine == null) return const LogosFileStatus();
+    final report = _reportForEngine(engine);
+    final proposals = _proposalsForEngine(engine) ?? const <RefactorProposal>[];
+    final tangle = report?.tangleMap.perPath[path] ?? 0.0;
+    final findings = <SpaghettiFinding>[];
+    if (report != null) {
+      for (final f in report.findings) {
+        if (f.path == path) findings.add(f);
+      }
+    }
+    final related = <RefactorProposal>[];
+    for (final p in proposals) {
+      if (p.paths.contains(path)) related.add(p);
+    }
+    // Normalise tangle against the max observed so the bar spans 0..1
+    // even when raw contributions are small. Avoids a flat-looking bar
+    // on well-behaved repos.
+    var maxTangle = 0.05;
+    if (report != null) {
+      for (final v in report.tangleMap.perPath.values) {
+        if (v > maxTangle) maxTangle = v;
+      }
+    }
+    return LogosFileStatus(
+      tangle: (tangle / maxTangle).clamp(0.0, 1.0).toDouble(),
+      findings: findings,
+      proposals: related,
+    );
+  }
 
   String? _draftKey;
   // Per-context (branch|upstream) snapshot of the user's file-inclusion
@@ -171,11 +263,30 @@ class _ChangesPageState extends State<ChangesPage> {
   bool _commitOnlyMode = false;
   bool _mergeResolving = false;
   bool _shaping = false;
+  // Ask-mode answer state. The shape-mode composer infrastructure is
+  // reused for the new "ask the manifold" feature — same field morph,
+  // same Ctrl/Cmd+Enter routing — but the backend returns prose
+  // instead of a patch, and the answer lives inline under the composer
+  // until the user dismisses or asks again.
+  String? _askQuestion;
+  String? _askAnswer;
+  String? _askError;
   // Inline shape-commit mode. When true, the composer field swaps to
   // bind the shape controller (preserving the commit draft in the
   // background) and the bottom split-button morphs into "ask with [cat]"
   // with a chevron that cycles AI categories on each click.
+  /// When true, the composer field rebinds to `_shapeCtrl` so the user
+  /// can type their ask question in-place of the commit draft. The ◈
+  /// toolbar button toggles this.
   bool _shapeMode = false;
+
+  /// When true, the right-hand panel is taken over by `_ShapeAskPane`
+  /// to display the ask result (loading / answer / error). Set by the
+  /// ask submit, cleared by the pane's back chip. Independent from
+  /// [_shapeMode] — you can be in ask-composer mode without an active
+  /// result, and you can view a prior result while the composer is
+  /// back in commit mode.
+  bool _shapeActive = false;
   final TextEditingController _shapeCtrl = TextEditingController();
   final FocusNode _shapeFocus = FocusNode();
   int _shapeCategoryIndex = 0;
@@ -271,6 +382,96 @@ class _ChangesPageState extends State<ChangesPage> {
       unawaited(context.read<AiSettingsState>().refreshProviders());
     });
     _loadAtlasOpenPref();
+    // Re-dream when the composer goes empty again (user deleted their
+    // draft) so the hint repopulates.
+    _commitMsgCtrl.addListener(_onComposerChangedForDream);
+    // Rebuild on dream resolution so the composer picks up the new
+    // hint without the call site having to know anything about it.
+    _commitDream.addListener(_onCommitDreamChanged);
+  }
+
+  void _onCommitDreamChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Fires on every composer keystroke. We only care about the
+  /// empty-transition boundary; when the composer is non-empty, the
+  /// hint isn't visible anyway, so a pending compute would do nothing
+  /// useful either way.
+  void _onComposerChangedForDream() {
+    if (!mounted) return;
+    if (_commitMsgCtrl.text.trim().isEmpty && _commitDream.value != null) {
+      // Composer just emptied. Invalidate the signature so the next
+      // build's schedule call recomputes rather than short-circuits.
+      _commitDream.invalidate();
+    }
+  }
+
+  /// Run the dream + field-character pipeline for the current
+  /// selection and return the paired payload. Closes over `repoPath`
+  /// and `includedPaths` at schedule time so the controller's debounce
+  /// + supersede logic can shepherd a clean lifecycle around it.
+  Future<_CommitDream?> _computeCommitDream({
+    required String repoPath,
+    required List<String> includedPaths,
+  }) async {
+    final engine = context.read<LogosGitState>().engineFor(repoPath);
+    if (engine == null) return null;
+
+    // Small context (-U3) — we need the touched nodes, not the
+    // surrounding function bodies.
+    final diffArgs = [
+      'diff',
+      '-U3',
+      '--no-color',
+      '--patience',
+      '--ignore-cr-at-eol',
+      '--',
+      ...includedPaths,
+    ];
+    final stagedArgs = [
+      'diff',
+      '--cached',
+      '-U3',
+      '--no-color',
+      '--patience',
+      '--ignore-cr-at-eol',
+      '--',
+      ...includedPaths,
+    ];
+
+    final results = await Future.wait([
+      runGitProbe(repoPath, diffArgs),
+      runGitProbe(repoPath, stagedArgs),
+      runGitProbe(repoPath, ['log', '--format=%s', '-100']),
+    ]);
+
+    final unstaged =
+        results[0].exitCode == 0 ? results[0].stdout.toString() : '';
+    final staged =
+        results[1].exitCode == 0 ? results[1].stdout.toString() : '';
+    final diffText = [staged, unstaged]
+        .where((d) => d.trim().isNotEmpty)
+        .join('\n');
+    if (diffText.isEmpty) return null;
+
+    final subjects = results[2].exitCode == 0
+        ? results[2]
+            .stdout
+            .toString()
+            .split('\n')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList()
+        : const <String>[];
+
+    final result = await dreamAndCharacterizeFromDiff(
+      repoPath: repoPath,
+      diffText: diffText,
+      engine: engine,
+      recentSubjects: subjects,
+    );
+    return (phrase: result.phrase, character: result.character);
   }
 
   Future<void> _loadAtlasOpenPref() async {
@@ -697,6 +898,9 @@ class _ChangesPageState extends State<ChangesPage> {
     if (repo != null && text.trim().isNotEmpty) {
       _flushDraft(repo, branch, text);
     }
+    _commitMsgCtrl.removeListener(_onComposerChangedForDream);
+    _commitDream.removeListener(_onCommitDreamChanged);
+    _commitDream.dispose();
     _commitMsgCtrl.dispose();
     _commitMsgFocusNode.dispose();
     _shapeCtrl.dispose();
@@ -714,9 +918,29 @@ class _ChangesPageState extends State<ChangesPage> {
           .map((e) => e.key)
           .toList(growable: false);
 
-  /// Toggles inline shape-commit mode. Focus follows the active field.
+  /// Fire the ask and lift the result into the side panel. The
+  /// takeover happens synchronously (`_shapeActive = true`) before
+  /// `_runShape` awaits anything, so the user sees a loading pane
+  /// instead of a silent pause while the model is contacted.
+  void _askInPanel(
+    String repoPath,
+    RepositoryStatus status,
+    String sentence,
+    String categoryId,
+  ) {
+    setState(() => _shapeActive = true);
+    unawaited(_runShape(repoPath, status, sentence, categoryId));
+  }
+
+  /// Toggle the composer's shape-mode: flips between binding the
+  /// commit draft controller and the ask-question controller. Exiting
+  /// also closes any active result panel — clicking ◈ is the single
+  /// gesture that walks away from the conversation entirely.
   void _toggleShapeMode() {
-    setState(() => _shapeMode = !_shapeMode);
+    setState(() {
+      _shapeMode = !_shapeMode;
+      if (!_shapeMode) _shapeActive = false;
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       (_shapeMode ? _shapeFocus : _commitMsgFocusNode).requestFocus();
@@ -1671,7 +1895,22 @@ class _ChangesPageState extends State<ChangesPage> {
         ),
     ];
 
+    // LogosField glyph strip — the engine's visual read of this file.
+    // Silent (hidden hairline) when the engine has nothing interesting
+    // to say; otherwise a tangle bar + finding / proposal glyphs.
+    final fileStatus = _fileStatus(engine, file.path);
+    final glyphStrip = <AppContextMenuItem>[
+      AppContextMenuItem(
+        icon: Icons.circle, // ignored — custom widget takes over
+        label: '',
+        onTap: () {},
+        inert: true,
+        custom: LogosGlyphStrip(tokens: t, status: fileStatus),
+      ),
+    ];
+
     final sections = <List<AppContextMenuItem>>[
+      if (!fileStatus.isSilent) glyphStrip,
       if (logosSection.isNotEmpty) logosSection,
       [
         AppContextMenuItem(
@@ -2721,62 +2960,44 @@ class _ChangesPageState extends State<ChangesPage> {
         return;
       }
 
-      final prompt = _buildShapePrompt(trimmed, fullDiff);
+      final prompt = _buildAskPrompt(trimmed, fullDiff);
       final secretHit = detectLikelySecretInPrompt(prompt);
       if (secretHit != null) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-                'Blocked — dirty files look like they contain a $secretHit. Stage by hand.'),
+                'Blocked — dirty files look like they contain a $secretHit. Ask by hand.'),
           ),
         );
         return;
       }
-      final r = await generatePatch(
+      final r = await runAsk(
         repositoryPath: repoPath,
         modelValue: modelValue,
         prompt: prompt,
-        commandLabelPrefix: 'ai.shape_stage',
+        commandLabelPrefix: 'ai.ask',
       );
       if (!mounted) return;
       if (!r.ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Shape failed: ${r.error}')),
-        );
+        setState(() {
+          _askQuestion = trimmed;
+          _askAnswer = null;
+          _askError = r.error;
+        });
         return;
       }
-      await showPatchPreviewDialog(
-        context,
-        repoPath: repoPath,
-        rawPatch: r.data!.patch,
-        sourceLabel: '◈ shape → index · "$trimmed"',
-        stageMode: true,
-        onApplied: () {
-          // Successful stage → exit shape-mode, clear the sentence,
-          // move focus to the commit message field so the user can
-          // immediately write the commit for what was just staged.
-          // Without this the user is stranded in an empty (or stale)
-          // shape field and has to click ◈ again, which is ~15 wasted
-          // clicks over a 15-commit marathon session.
-          if (!mounted) return;
-          _shapeCtrl.clear();
-          if (_shapeMode) {
-            setState(() => _shapeMode = false);
-          }
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) _commitMsgFocusNode.requestFocus();
-          });
-        },
-        onRefine: (refinement) async {
-          // Stack refinement onto the original sentence so the AI sees
-          // the cumulative intent. Keeps the UX of "one refinement at
-          // a time" while the prompt itself gets the whole story.
-          if (!mounted) return;
-          final combined = '$trimmed. $refinement';
-          await _runShape(repoPath, status, combined, categoryId);
-        },
-      );
+      // Render the answer inline under the composer. The ask-mode
+      // field stays open so the user can keep asking; clearing the
+      // text leaves the scaffolding but frees the field for the next
+      // question. Escape or the close-chip on the answer card
+      // dismisses.
+      setState(() {
+        _askQuestion = trimmed;
+        _askAnswer = r.data;
+        _askError = null;
+        _shapeCtrl.clear();
+      });
     } finally {
       if (mounted) setState(() => _shaping = false);
     }
@@ -2830,6 +3051,100 @@ class _ChangesPageState extends State<ChangesPage> {
     buf.writeln();
     buf.writeln(
         'Emit the subset unified diff now. Remember: strict subset only.');
+    return buf.toString();
+  }
+
+  /// Hint shown in the ask composer — one short line that shifts
+  /// character with the active guardrail. Longer instructional text
+  /// (⌘↵ to send, Esc to exit) was removed; the field is in focus
+  /// and the keyboard affordances are discoverable without being
+  /// shouted. Tone tracks how skeptical the user has asked the
+  /// model to be about itself.
+  String _askHintForGuardrail(int stage) {
+    switch (stage) {
+      case 0:
+        return 'ask whatever.';
+      case 1:
+        return 'what\'s on your mind?';
+      case 2:
+        return 'let me zoom in on it.';
+      default:
+        return 'i\'ll bring the receipts.';
+    }
+  }
+
+  /// Ask-the-manifold prompt. Grounded prose — the model reads the
+  /// user's question, the working-tree diff, and any pinned context,
+  /// then answers in a few sentences. Explicitly NOT code-gen:
+  /// Manifold doesn't write code, it helps users read and trust what
+  /// already exists. If a fix is warranted, the answer points at
+  /// what to queue (as an issue, out-of-tool) rather than scaffolding
+  /// the change.
+  /// Hard ceiling on the diff slice shipped to the ask backend. Codex
+  /// rejects prompts over 1,048,576 chars outright with a turn/start
+  /// failure; other providers also degrade badly past ~1 MiB. 900K
+  /// leaves ~140K of breathing room for the system prompt, question,
+  /// and XML tags.
+  static const int _kAskPromptDiffBudget = 900000;
+
+  String _buildAskPrompt(String question, String fullDiff) {
+    // Clip oversized diffs at a `diff --git` boundary so the model
+    // sees whole file sections, not a sliced-off hunk. Prepend a
+    // visible marker so the AI knows it's looking at a slice and
+    // doesn't speculate about the omitted tail.
+    var clippedDiff = fullDiff;
+    var truncNote = '';
+    if (fullDiff.length > _kAskPromptDiffBudget) {
+      final boundary =
+          fullDiff.lastIndexOf('\ndiff --git', _kAskPromptDiffBudget);
+      final clip = boundary > 0 ? boundary : _kAskPromptDiffBudget;
+      clippedDiff = fullDiff.substring(0, clip);
+      final omitted = fullDiff.length - clip;
+      truncNote = '\n[diff clipped — $omitted of ${fullDiff.length} '
+          'chars omitted to fit the model\'s input budget]';
+    }
+    final buf = StringBuffer();
+    buf.writeln(
+        'You are a reading assistant embedded in a git client. You help');
+    buf.writeln(
+        'the user understand and trust the code they are looking at. You');
+    buf.writeln(
+        'never generate code, never propose edits in patch form. If a');
+    buf.writeln(
+        'fix is warranted, describe what to queue as an issue instead.');
+    buf.writeln();
+    buf.writeln('Rules:');
+    buf.writeln(
+        '  1. Answer in plain prose, 3-6 sentences. No code blocks unless');
+    buf.writeln(
+        '     quoting a short snippet from the diff to anchor an observation.');
+    buf.writeln(
+        '  2. Ground every claim in the supplied context. If you cannot');
+    buf.writeln(
+        '     ground it, say so; do not fill the gap with speculation.');
+    buf.writeln(
+        '  3. Name specific files, commit hashes, authors, or line numbers');
+    buf.writeln(
+        '     when they are in the context. Use exact references.');
+    buf.writeln(
+        '  4. Match the user\'s register. If they sound frustrated, stay');
+    buf.writeln(
+        '     dry and factual; no corporate empathy theatre.');
+    buf.writeln(
+        '  5. Never write code changes. Never scaffold diffs. Never edit');
+    buf.writeln(
+        '     files. Read, reason, cite, and stop.');
+    buf.writeln();
+    buf.writeln('<question>');
+    buf.writeln(question);
+    buf.writeln('</question>');
+    buf.writeln();
+    buf.writeln('<working_tree_diff>');
+    buf.writeln(clippedDiff);
+    if (truncNote.isNotEmpty) buf.writeln(truncNote);
+    buf.writeln('</working_tree_diff>');
+    buf.writeln();
+    buf.writeln('Answer the question.');
     return buf.toString();
   }
 
@@ -4604,7 +4919,6 @@ class _ChangesPageState extends State<ChangesPage> {
                                 ),
                               ),
                             if (couplingMatrix != null &&
-                                !_shapeMode &&
                                 includedCount > 0 &&
                                 includedCount < status.files.length)
                               Builder(builder: (ctx) {
@@ -4631,9 +4945,28 @@ class _ChangesPageState extends State<ChangesPage> {
                                 if (event is! KeyDownEvent) {
                                   return KeyEventResult.ignored;
                                 }
-                                // Esc: in shape-mode, exit back to the commit
-                                // draft. Sentence is preserved in _shapeCtrl;
-                                // toggling back later restores it.
+                                // Tab-to-accept the dream hint when
+                                // the composer is empty and a phrase
+                                // is waiting. Otherwise Tab passes
+                                // through to normal focus traversal.
+                                if (event.logicalKey ==
+                                        LogicalKeyboardKey.tab &&
+                                    !_shapeMode &&
+                                    _commitMsgCtrl.text.isEmpty) {
+                                  final dreamed =
+                                      _commitDream.value?.phrase;
+                                  if (dreamed != null && dreamed.isNotEmpty) {
+                                    _commitMsgCtrl.text = dreamed;
+                                    _commitMsgCtrl.selection =
+                                        TextSelection.collapsed(
+                                      offset: dreamed.length,
+                                    );
+                                    return KeyEventResult.handled;
+                                  }
+                                }
+                                // Esc in ask-mode → exit back to the
+                                // commit draft. Sentence is preserved
+                                // in _shapeCtrl for next time.
                                 if (event.logicalKey ==
                                         LogicalKeyboardKey.escape &&
                                     _shapeMode) {
@@ -4648,24 +4981,21 @@ class _ChangesPageState extends State<ChangesPage> {
                                         .instance.isControlPressed ||
                                     HardwareKeyboard.instance.isMetaPressed;
                                 if (!ctrlOrMeta) return KeyEventResult.ignored;
-                                // Ctrl/Cmd+Enter routing depends on mode:
-                                //   - shape-mode: fire the shape ask (not
-                                //     commit — that would fire _commit on a
-                                //     stale draft, an incident-class footgun).
-                                //   - commit-mode: run the commit.
+                                // Ctrl/Cmd+Enter routing:
+                                //   - shape-mode → fire the ask
+                                //   - commit-mode → run the commit
                                 if (_shapeMode) {
                                   final text = _shapeCtrl.text.trim();
                                   if (text.isEmpty || _shaping) {
                                     return KeyEventResult.handled;
                                   }
                                   final cats = _shapeCategories(aiSettings);
-                                  if (cats.isEmpty)
+                                  if (cats.isEmpty) {
                                     return KeyEventResult.handled;
-                                  final cat = cats[_shapeCategoryIndex.clamp(
-                                      0, cats.length - 1)];
-                                  // Fire-and-forget — the dialog is modal, the
-                                  // key handler returns immediately.
-                                  _runShape(repoPath, status, text, cat);
+                                  }
+                                  final cat = cats[_shapeCategoryIndex
+                                      .clamp(0, cats.length - 1)];
+                                  _askInPanel(repoPath, status, text, cat);
                                   return KeyEventResult.handled;
                                 }
                                 _commit(
@@ -4677,21 +5007,63 @@ class _ChangesPageState extends State<ChangesPage> {
                                 );
                                 return KeyEventResult.handled;
                               },
-                              child: _CommitComposerField(
+                              child: Builder(builder: (context) {
+                                // Subscribe to engine-ready for this repo
+                                // specifically — when logos finishes
+                                // loading the Builder rebuilds and the
+                                // scheduler re-fires with an updated
+                                // signature, which is how the first dream
+                                // after a cold start actually lands.
+                                final engineReady = context.select<
+                                    LogosGitState, bool>(
+                                  (s) => s.engineFor(repoPath) != null,
+                                );
+                                if (!_shapeMode &&
+                                    _commitMsgCtrl.text.trim().isEmpty &&
+                                    status.files.isNotEmpty) {
+                                  // Intentionally doesn't encode the
+                                  // user's file selection — the phrase
+                                  // is the engine's voice, not a diff
+                                  // summary, and shouldn't re-roll on
+                                  // every include/exclude toggle. Diff
+                                  // content is still what the engine
+                                  // reads at compute time; it just
+                                  // doesn't re-trigger on selection.
+                                  final sig =
+                                      '$repoPath|${engineReady ? 'rdy' : 'wait'}';
+                                  final allPaths = status.files
+                                      .map((f) => f.path)
+                                      .toList();
+                                  _commitDream.schedule(
+                                    sig,
+                                    () => _computeCommitDream(
+                                      repoPath: repoPath,
+                                      includedPaths: allPaths,
+                                    ),
+                                  );
+                                }
+                                return _CommitComposerField(
                                 tokens: t,
-                                // Bind the active controller based on mode.
-                                // The unbound controller keeps its text so
-                                // exiting shape-mode restores the commit
-                                // draft that was being composed.
+                                // Bind the active controller based on
+                                // shape-mode. Unbound controller keeps
+                                // its text so exiting ask-mode restores
+                                // the commit draft in progress.
                                 controller:
                                     _shapeMode ? _shapeCtrl : _commitMsgCtrl,
                                 focusNode: _shapeMode
                                     ? _shapeFocus
                                     : _commitMsgFocusNode,
                                 hintText: _shapeMode
-                                    ? 'describe what to stage  ·  e.g. "only the test changes"  ·  ⌘↵ to ask  ·  Esc to exit'
-                                    : 'Commit message...',
+                                    ? _askHintForGuardrail(
+                                        preferences.guardrailStage)
+                                    : _composeHint(),
                                 shapeMode: _shapeMode,
+                                dreamHint: _shapeMode
+                                    ? null
+                                    : _commitDream.value?.phrase,
+                                dreamCharacter:
+                                    _commitDream.value?.character,
+                                dreamThinking: _commitDream.thinking,
                                 enabled: !_actionRunning,
                                 onChanged: (value) {
                                   if (!_shapeMode) {
@@ -4734,21 +5106,22 @@ class _ChangesPageState extends State<ChangesPage> {
                                   }
                                   _runMuse(repoPath, status);
                                 },
-                                // ◈ shape: now toggles inline shape-mode
-                                // instead of opening a floating popover.
-                                // The composer field morphs in place; the
-                                // bottom split-button morphs too.
+                                // ◈ shape: toggles the composer between
+                                // commit and ask modes. Pressing the ask
+                                // submit button lifts the result into the
+                                // side panel (`_shapeActive = true`).
                                 shapeEnabled: status.files.isNotEmpty &&
                                     !_actionRunning &&
                                     !_shaping,
                                 shapeLoading: _shaping,
                                 shapeTooltip: _shapeMode
                                     ? 'exit · restore your commit draft'
-                                    : 'stage files by describing them',
+                                    : 'ask the manifold',
                                 onToggleShape: status.files.isEmpty
                                     ? null
                                     : _toggleShapeMode,
-                              ),
+                                );
+                              }),
                             ),
                             const SizedBox(height: 8),
                             if (_shapeMode)
@@ -4772,14 +5145,14 @@ class _ChangesPageState extends State<ChangesPage> {
                                       (_shapeCategoryIndex - 1 + cats.length) %
                                           cats.length);
                                 },
-                                onAsk: () async {
+                                onAsk: () {
                                   final text = _shapeCtrl.text.trim();
                                   if (text.isEmpty) return;
                                   final cats = _shapeCategories(aiSettings);
                                   if (cats.isEmpty) return;
-                                  final cat = cats[_shapeCategoryIndex.clamp(
-                                      0, cats.length - 1)];
-                                  await _runShape(repoPath, status, text, cat);
+                                  final cat = cats[_shapeCategoryIndex
+                                      .clamp(0, cats.length - 1)];
+                                  _askInPanel(repoPath, status, text, cat);
                                 },
                               )
                             else
@@ -4864,6 +5237,31 @@ class _ChangesPageState extends State<ChangesPage> {
                           symbolCoupling: _symbolCoupling,
                           onOpenRelatedPath: (path) =>
                               _inspectSingleDiff(repoPath, path),
+                        );
+                      }
+                      if (_shapeActive) {
+                        return MaterialSurface(
+                          tone: AppMaterialTone.surface0,
+                          radius: 0,
+                          borderAlpha: 0,
+                          elevated: false,
+                          child: _ShapeAskPane(
+                            tokens: t,
+                            loading: _shaping,
+                            question: _askQuestion,
+                            answer: _askAnswer,
+                            error: _askError,
+                            onBack: () =>
+                                setState(() => _shapeActive = false),
+                            onDismissAnswer: () => setState(() {
+                              _askQuestion = null;
+                              _askAnswer = null;
+                              _askError = null;
+                            }),
+                            onCitationTap: (path, line) =>
+                                _jumpToMultiDiffPath(path,
+                                    fallbackStartLine: line),
+                          ),
                         );
                       }
                       if (_museActive) {
@@ -6132,6 +6530,123 @@ class _MusePaneState extends State<_MusePane> {
       ),
     );
   }
+}
+
+/// Side-pane result display for an ask-in-flight / ask-completed. The
+/// input lives in the composer (flipped via ◈); this pane only shows
+/// the loading spinner, the answer card, or the error. Matches the
+/// muse / review pane shape so the three AI panes feel like siblings.
+class _ShapeAskPane extends StatelessWidget {
+  final AppTokens tokens;
+  final bool loading;
+  final String? question;
+  final String? answer;
+  final String? error;
+  final VoidCallback onBack;
+  final VoidCallback onDismissAnswer;
+  final void Function(String path, int line) onCitationTap;
+
+  const _ShapeAskPane({
+    required this.tokens,
+    required this.loading,
+    required this.question,
+    required this.answer,
+    required this.error,
+    required this.onBack,
+    required this.onDismissAnswer,
+    required this.onCitationTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final hasResult = answer != null || error != null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome_outlined, size: 16, color: t.textFaint),
+              const SizedBox(width: 8),
+              Text('Ask',
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w500,
+                  )),
+              const Spacer(),
+              InkWell(
+                onTap: onBack,
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Text('close',
+                      style: TextStyle(color: t.textMuted, fontSize: 11)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (loading && !hasResult)
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(t.accentBright),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      question == null
+                          ? 'asking…'
+                          : 'asking · ${_truncate(question!, 60)}',
+                      style: TextStyle(color: t.textMuted, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else if (hasResult)
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: _AskAnswerCard(
+                  tokens: t,
+                  question: question ?? '',
+                  answer: answer,
+                  error: error,
+                  onDismiss: onDismissAnswer,
+                  onCitationTap: onCitationTap,
+                ),
+              ),
+            )
+          else
+            Expanded(
+              child: Center(
+                child: Text(
+                  'type a question in the composer, then press ask.',
+                  style: TextStyle(color: t.textMuted, fontSize: 11),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static String _truncate(String s, int max) =>
+      s.length <= max ? s : '${s.substring(0, max - 1)}…';
 }
 
 class _CommitReviewPane extends StatelessWidget {
@@ -7619,6 +8134,144 @@ class _ActionBtnState extends State<_ActionBtn> {
       ),
     );
   }
+}
+
+/// Inline answer panel for the "ask the manifold" flow. Lives under
+/// the commit composer; renders the last question + its prose answer
+/// (or error) with a single dismiss affordance. Deliberately spare —
+/// the CTA-button layer that ranks entity expansions by information
+/// gain is planned but not shipped; for v1 the prose itself is the
+/// product and the panel just holds it cleanly.
+class _AskCitation {
+  final String path;
+  final int line;
+  const _AskCitation(this.path, this.line);
+}
+
+/// Pull `path:line` tokens out of an ask-answer's prose. Matches forms
+/// like `lib/foo.dart:42`, `test/bar_test.dart:100`, with typical path
+/// characters (letters, digits, underscore, slash, backslash, dot,
+/// hyphen). Dedupes on (path, line) and preserves order of first
+/// occurrence so the chips read left-to-right in citation order.
+List<_AskCitation> _extractAskCitations(String text) {
+  final re = RegExp(r'([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+):(\d+)');
+  final seen = <String>{};
+  final out = <_AskCitation>[];
+  for (final m in re.allMatches(text)) {
+    final path = m.group(1)!;
+    final line = int.tryParse(m.group(2)!);
+    if (line == null) continue;
+    // Guard: require the "path" to actually look like a file — contain
+    // a slash, or be at least 4 chars with a dot before the extension.
+    // Skips false positives like IP addresses with dotted decimals.
+    if (!path.contains('/') && !path.contains('\\') && path.length < 4) continue;
+    final key = '$path:$line';
+    if (!seen.add(key)) continue;
+    out.add(_AskCitation(path, line));
+  }
+  return out;
+}
+
+class _AskAnswerCard extends StatelessWidget {
+  final AppTokens tokens;
+  final String question;
+  final String? answer;
+  final String? error;
+  final VoidCallback onDismiss;
+  final void Function(String path, int line)? onCitationTap;
+
+  const _AskAnswerCard({
+    required this.tokens,
+    required this.question,
+    required this.answer,
+    required this.error,
+    required this.onDismiss,
+    this.onCitationTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasError = error != null;
+    final citations = (hasError || answer == null)
+        ? const <_AskCitation>[]
+        : _extractAskCitations(answer!);
+    return MaterialSurface(
+      tone: AppMaterialTone.panel,
+      padding: const EdgeInsets.fromLTRB(12, 10, 10, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  'asked · $question',
+                  style: TextStyle(
+                    color: tokens.textMuted,
+                    fontSize: 10.5,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+              InkWell(
+                onTap: onDismiss,
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(Icons.close,
+                      size: 12, color: tokens.textFaint),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SelectableText(
+            hasError ? 'ask failed — $error' : (answer ?? ''),
+            style: TextStyle(
+              color: hasError ? tokens.stateConflicted : tokens.textNormal,
+              fontSize: 12.5,
+              height: 1.42,
+            ),
+          ),
+          if (citations.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final c in citations)
+                  GestureDetector(
+                    onTap: onCitationTap == null
+                        ? null
+                        : () => onCitationTap!(c.path, c.line),
+                    child: Text(
+                      '${_askCitationDisplayPath(c.path)}:${c.line}',
+                      style: TextStyle(
+                        color: tokens.textFaint,
+                        fontSize: 10.5,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String _askCitationDisplayPath(String path) {
+  // Strip a leading "lib/" or "test/" for readability when the repo
+  // convention is flat. Full path still passes to the jump handler.
+  final normalised = path.replaceAll('\\', '/');
+  if (normalised.length <= 40) return normalised;
+  final parts = normalised.split('/');
+  if (parts.length <= 2) return normalised;
+  return '…/${parts.sublist(parts.length - 2).join('/')}';
 }
 
 class _SplitCommitBtn extends StatefulWidget {
@@ -9259,6 +9912,57 @@ class _StateBadge extends StatelessWidget {
   }
 }
 
+/// Dreamed placeholder overlay for the commit composer. Renders the
+/// engine-generated phrase with per-character morph transitions
+/// (via `ThemeMorphText`), prefixed by a tiny colored dot encoding
+/// the diff's field character. Fades subtly while the engine is
+/// computing a new hint so the user sees the work happening.
+///
+/// This replaces the plain `InputDecoration.hintText` when the logos
+/// engine has produced a phrase; when it hasn't, the widget isn't
+/// built and the TextField falls back to its default hint.
+class _DreamHintOverlay extends StatelessWidget {
+  final AppTokens tokens;
+  final String phrase;
+  final bool thinking;
+
+  const _DreamHintOverlay({
+    required this.tokens,
+    required this.phrase,
+    required this.thinking,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      opacity: thinking ? 0.42 : 0.72,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 360),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, anim) => FadeTransition(
+          opacity: anim,
+          child: child,
+        ),
+        child: Text(
+          phrase,
+          key: ValueKey(phrase),
+          maxLines: 1,
+          overflow: TextOverflow.clip,
+          softWrap: false,
+          style: TextStyle(
+            color: tokens.textMuted.withValues(alpha: 0.88),
+            fontSize: 12,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CommitComposerField extends StatefulWidget {
   final AppTokens tokens;
   final TextEditingController controller;
@@ -9299,13 +10003,29 @@ class _CommitComposerField extends StatefulWidget {
   /// composer just morphs in place.
   final VoidCallback? onToggleShape;
 
+  /// Dreamed placeholder from the logos engine. When non-null AND the
+  /// bound controller is empty, this renders in place of the plain
+  /// `hintText` with per-character morph transitions. Null = fall back
+  /// to the static `hintText`.
+  final String? dreamHint;
+
+  /// Field-character classification of the current diff. Rendered as a
+  /// tiny colored dot to the left of the dream hint so the engine's
+  /// interpretation is visible without words. Null or `silent` = no dot.
+  final LogosFieldCharacter? dreamCharacter;
+
+  /// Whether the engine is currently thinking about a new hint (debounce
+  /// pending or compute in flight). Subtly fades the overlay so the
+  /// user can tell the engine is working.
+  final bool dreamThinking;
+
   const _CommitComposerField({
     required this.tokens,
     required this.controller,
     required this.focusNode,
     required this.enabled,
     required this.onChanged,
-    this.hintText = 'Commit message...',
+    this.hintText = 'commit message...',
     required this.aiEnabled,
     required this.aiLoading,
     this.aiSuccess = false,
@@ -9327,6 +10047,9 @@ class _CommitComposerField extends StatefulWidget {
     this.shapeLoading = false,
     this.shapeTooltip = '',
     this.onToggleShape,
+    this.dreamHint,
+    this.dreamCharacter,
+    this.dreamThinking = false,
   });
 
   @override
@@ -9474,7 +10197,14 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
-              hintText: widget.hintText,
+              // When the dream overlay is active, skip the plain
+              // hintText — the custom morph overlay paints on top and
+              // would collide with the built-in hint otherwise. Shape
+              // mode still uses plain hintText because the ask panel
+              // doesn't share the dream pipeline.
+              hintText: widget.dreamHint != null && !widget.shapeMode
+                  ? null
+                  : widget.hintText,
               hintStyle: TextStyle(
                 color: tokens.textMuted.withValues(alpha: 0.55),
                 fontSize: 12,
@@ -9538,6 +10268,28 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                   // TextField subtree hoisted via `child:`. See the
                   // comment above the AnimatedBuilder for the rationale.
                   textField!,
+                  // Dream-hint overlay. Positioned to match the
+                  // TextField's contentPadding (10,10,16,10) so the
+                  // morph text sits exactly where a plain hint would
+                  // render. IgnorePointer lets clicks fall through to
+                  // the TextField underneath. Only visible when the
+                  // composer is empty AND the engine has a phrase AND
+                  // we're not in shape mode.
+                  if (!widget.shapeMode &&
+                      !hasText &&
+                      widget.dreamHint != null)
+                    Positioned(
+                      left: 10,
+                      top: 10,
+                      right: 96, // leave room for the toolbar buttons
+                      child: IgnorePointer(
+                        child: _DreamHintOverlay(
+                          tokens: tokens,
+                          phrase: widget.dreamHint!,
+                          thinking: widget.dreamThinking,
+                        ),
+                      ),
+                    ),
                   Positioned(
                     right: 7,
                     bottom: 7,

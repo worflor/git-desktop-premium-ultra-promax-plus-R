@@ -43,11 +43,12 @@ enum AppThemeId {
   kirby,
   blackboard,
   crafty,
+  barbie,
 }
 
 enum SurfaceMaterialMode { solid, glass }
 
-enum ThemeTexture { none, grain, scanlines, pixels, halftone, iridescent, darkIridescent }
+enum ThemeTexture { none, grain, scanlines, pixels, halftone, iridescent, darkIridescent, gloss }
 
 enum ThemeMotion { snappy, fluid, elastic }
 
@@ -62,6 +63,11 @@ enum ThemeParticles {
   quantum,
   whisps,
   inkblots,
+  /// Bibble. 4-point star sprites, alternating gold/magenta, upward
+  /// drift with per-sprite rotation and twinkle. Glitter is *shaped*
+  /// sparkle — distinct from `ethereal`'s diffuse dots or `stardust`'s
+  /// cosmic points.
+  glitter,
 }
 
 enum ThemeInteraction {
@@ -75,6 +81,10 @@ enum ThemeInteraction {
   /// Voxel burst on tap — small block shards spawn at the click and
   /// fall under gravity, rotate, and fade. Crafty.
   blockBreak,
+  /// Bibble. Horizontal specular streak across the pressed element —
+  /// magenta leading edge, gold trailing tail. Plastic catches light
+  /// along a line; it doesn't ripple from a tap like `caustic`.
+  gloss,
 }
 
 /// Per-theme flavor layer on top of the base [ThemeMorphText] per-char
@@ -91,6 +101,11 @@ enum ThemeTextEffect {
   blockify, // crafty: leaving chars fall with gravity + rotate +
             // fade (breaking); arriving chars drop from above with
             // a tiny easeOutBack bounce (placing)
+  emeraldStamp, // helix: leaving chars amber-warm out; arriving chars
+                // plummet onto the page with a hard impact compression
+                // and fade from deep emerald to normal ink. Reads as
+                // stamping a gem into wax — no blur, no glow, just
+                // weight and saturation.
   twinkle, // pale star-dots flash near inserted chars (aether)
   sparkle, // twinkle + a diagonal streak at collision (quanta)
   warmth, // amber tint on leaving chars as they fade (helix)
@@ -99,6 +114,9 @@ enum ThemeTextEffect {
   iridescent, // mother-of-pearl hue cycle through glyphs — every char picks
               // up a shifting cyan→pink→lavender→gold tint sweeping by
               // glyph position + time, so the whole word shimmers (nacre)
+  shimmer,    // bibble: two-color gold→magenta band sweeps L→R across
+              // changed chars, once per morph. not hue-cycling — that's
+              // iridescent's job.
 }
 
 const defaultThemeId = AppThemeId.aether;
@@ -1357,6 +1375,77 @@ final _tokens = <AppThemeId, AppTokens>{
       Alignment.bottomCenter,
     ],
   ),
+  AppThemeId.barbie: AppTokens._(
+    id: AppThemeId.barbie,
+    isDark: false,
+    // Bibble. Text tones stay plum-family (magenta in shadow) so the
+    // palette reads as one world, not pink on top of gray.
+    colors: const [
+      0xFFFFF5F9, // 0  bg0 — strawberry-milk cream
+      0xFFFFEAF2, // 1  bg1
+      0xFFFFDCE9, // 2  bg2
+      0xFFFFC8DC, // 3  bg3
+      0xFFFFF5F9, // 4  surface0
+      0xFFFFEAF2, // 5  surface1
+      0xFFFFDCE9, // 6  surface2
+      0xFF3A1222, // 7  textStrong — plum-black, readable on pink
+      0xFF5E2340, // 8  textNormal
+      0xFFA87090, // 9  textMuted
+      0xFF2EC5C1, // 10 stateAdded — turquoise. green fights the palette.
+      0xFFFFC727, // 11 stateModified — logo yellow
+      0xFFFF4D6D, // 12 stateDeleted — coral, not pure red (fights accent)
+      0xFFFF7A5C, // 13 stateConflicted
+      0xFFFF9EC7, // 14 stateStaged
+      0xFFE0218A, // 15 accentBright — pantone 219c
+      0xFFFF6EB4, // 16 chromeBorder
+      0xFFE0218A, // 17 chromeAccent
+      0xFFFFEAF2, // 18 panelOverlay
+      0xFFFFDCE9, // 19 panelOverlayStrong
+      0xFFFFF0F6, // 20 inputOverlay
+      0xFFFFE8F1, // 21 diffOverlay
+      0xFFFFDCE9, // 22 btnBg
+      0xFFFFC8DC, // 23 btnHoverBg
+      0x55E0218A, // 24 btnBorder
+      0xFF3A1222, // 25 btnText
+      0xFFFFFFFF, // 26 inputBg — pure white so inputs look inset vs bg0
+      0x66E0218A, // 27 inputBorder
+      0x1AE0218A, // 28 itemHoverBg — 10%, base is already pink
+      0x33E0218A, // 29 itemActiveBg
+      0xFFE0218A, // 30 itemActiveBorder
+      0x44E0218A, // 31 secondaryBtnBorder
+      0x1AE0218A, // 32 secondaryBtnHoverBg
+      0xFFFFF0F6, // 33 rowBg
+      0xFFE0218A, // 34 scrollbarThumb
+      0x44E0218A, // 35 shadowElev — colored shadow, not black
+      0xFFFFC727, // 36 hyperChromatic1 — yellow
+      0xFFE0218A, // 37 hyperChromatic2 — magenta
+      0xFFE0218A, // 38 hyperCore
+      0xFF2EC5C1, // 39 hypercubePositive — turquoise (CMY trio)
+      0xFFFFC727, // 40 hypercubeNegative — yellow
+      0xFFD9B0C4, // 41 textFaint
+      0xFFFFDCE9, // 42 sliderTrack
+      0xFFFFFFFF, // 43 sliderThumb
+      0xFFE0218A, // 44 sliderThumbBorder
+      0xCCFFE0EC, // 45 dangerOverlay — pink-tinted so cream doesn't read bloody
+      0xFFE0218A, // 46 eventStartTone
+    ],
+    themeAmbient: const Color(0xFFE0218A),
+    themeSparkOpacity: 0.45,
+    // matches the glitter particle cycle so logo + backdrop share tempo
+    themeSparkSpeed: const Duration(seconds: 14),
+    backdropBlur: 0,
+    backdropSaturate: 1.2,
+    appGradientColors: const [
+      Color(0xFFFFF5F9),
+      Color(0xFFFFEAF2),
+      Color(0xFFFFDCE9),
+    ],
+    appGradientAlignments: const [
+      Alignment.topLeft,
+      Alignment.center,
+      Alignment.bottomRight,
+    ],
+  ),
 };
 
 AppThemeId normalizeThemeId(String value) {
@@ -1458,7 +1547,7 @@ const themeDefinitions = <AppThemeDefinition>[
       particles: ThemeParticles.embers,
       parallaxStrength: 0.12,
       interaction: ThemeInteraction.caustic,
-      textEffect: ThemeTextEffect.warmth,
+      textEffect: ThemeTextEffect.emeraldStamp,
     ),
   ),
   AppThemeDefinition(
@@ -1728,6 +1817,46 @@ const themeDefinitions = <AppThemeDefinition>[
         typography: 'VT323',
         fontScale: 1.2,
         letterSpacingEm: 0.02,
+      ),
+    ),
+  ),
+  AppThemeDefinition(
+    ThemeOption(
+      AppThemeId.barbie,
+      'Bibble',
+      'mipitomipit. fluff, wings, and everything pink.',
+    ),
+    SurfaceMaterialShader(
+      mode: SurfaceMaterialMode.solid,
+      blurPx: 0,
+      saturatePct: 140,
+      opacityScale: 1.0,
+      // strong molded-plastic rim. below 1.5 reads as painted.
+      edgeIntensity: 1.8,
+      texture: ThemeTexture.gloss,
+      textureOpacity: 0.55,
+      // plastic clicks, it doesn't float
+      motion: ThemeMotion.snappy,
+      luminescence: 1.35,
+      particles: ThemeParticles.glitter,
+      textEffect: ThemeTextEffect.shimmer,
+      parallaxStrength: 0.35,
+      interaction: ThemeInteraction.gloss,
+      outlineWidth: 0,
+      // soft pink halo so text doesn't read as flat-printed on pink bg
+      textShadow: [
+        Shadow(
+          color: Color(0x33FF6EB4),
+          offset: Offset(0, 1),
+          blurRadius: 2,
+        ),
+      ],
+      geometry: SurfaceMaterialGeometry(
+        // max. every surface is a pebble.
+        radius: 18,
+        typography: null,
+        fontScale: 1.06,
+        letterSpacingEm: 0.018,
       ),
     ),
   ),

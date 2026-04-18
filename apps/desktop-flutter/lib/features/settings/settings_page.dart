@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -896,7 +896,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   const SizedBox(height: 10),
                   _WrappedAnnotation(
-                    'Includes diagnostics, performance timings, and AI metadata.',
+                    'Includes diagnostics, performance timings, and metadata.',
                     color: t.textMuted,
                   ),
                   const SizedBox(height: 8),

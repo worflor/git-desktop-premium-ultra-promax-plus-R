@@ -449,6 +449,9 @@ class _AppFrameState extends State<_AppFrame> {
 BlendMode _rootTextureBlendMode(AppTokens tokens) {
   return switch (tokens.id) {
     AppThemeId.quanta => BlendMode.srcOver,
+    // plastic shader has a transparent base — overlay would darken
+    // through the transparency holes
+    AppThemeId.barbie => BlendMode.srcOver,
     _ => BlendMode.overlay,
   };
 }
@@ -459,6 +462,10 @@ double _rootTextureOpacity(AppTokens tokens) {
     AppThemeId.quanta => 0.5,
     // Faint shimmer over the dark. Background is otherwise solid.
     AppThemeId.loverboy => 0.06,
+    // full-opacity gloss on a window-sized surface is a plastic bath.
+    // 0.45 keeps the root atmospheric; per-surface gloss still
+    // renders at full strength on cards and buttons.
+    AppThemeId.barbie => 0.45,
     _ => 1,
   };
 }
@@ -743,6 +750,7 @@ bool _particlesAnimate(SurfaceMaterialShader shader) {
     case ThemeParticles.chalkdust:
     case ThemeParticles.whisps:
     case ThemeParticles.inkblots:
+    case ThemeParticles.glitter:
       return true;
     case ThemeParticles.none:
     case ThemeParticles.stardust:
@@ -770,6 +778,9 @@ Duration _particleAnimationDuration(SurfaceMaterialShader shader) {
       // Slow drift across the page. Long period so blots glide rather
       // than zip — keeps the comic-book stillness while still moving.
       return const Duration(seconds: 45);
+    case ThemeParticles.glitter:
+      // matches themeSparkSpeed so logo + backdrop + particles share tempo
+      return const Duration(seconds: 14);
     case ThemeParticles.stardust:
     case ThemeParticles.quantum:
     case ThemeParticles.ethereal:
@@ -845,6 +856,8 @@ class _ParticleBackdropPainter extends CustomPainter {
         _drawWhisps(canvas, size);
       case ThemeParticles.inkblots:
         _drawInkblots(canvas, size);
+      case ThemeParticles.glitter:
+        _drawGlitterLayers(canvas, size);
     }
   }
 
@@ -1188,6 +1201,116 @@ class _ParticleBackdropPainter extends CustomPainter {
         coolBias: 0.34,
       ),
     );
+  }
+
+  /// Bibble glitter field. Two parallax layers of 4-point star sprites
+  /// drifting upward with per-sprite rotation and a sine twinkle on
+  /// alpha. Deep layer gold-weighted + smaller for depth; near layer
+  /// magenta-weighted + larger so the brand hue sits in front.
+  void _drawGlitterLayers(Canvas canvas, Size size) {
+    _drawRepeatedTile(
+      canvas,
+      size,
+      tileSize: 760,
+      opacity: 0.5,
+      offset: Offset(0, -760 * progress) + _layerOffset(0.55),
+      drawTile: (tile, scale) => _drawGlitterTile(
+        tile,
+        seed: 0x0BA12B1E,
+        count: 11,
+        minSize: 3.0,
+        maxSize: 5.5,
+        magentaBias: 0.35, // gold-leaning back layer
+      ),
+    );
+    _drawRepeatedTile(
+      canvas,
+      size,
+      tileSize: 620,
+      opacity: 0.75,
+      offset: Offset(0, -620 * progress * 1.35) + _layerOffset(1.0),
+      drawTile: (tile, scale) => _drawGlitterTile(
+        tile,
+        seed: 0x0BA1B1E2,
+        count: 9,
+        minSize: 5.0,
+        maxSize: 9.0,
+        magentaBias: 0.65, // magenta-leaning front layer
+      ),
+    );
+  }
+
+  /// Paint a 1000x1000 tile of glitter sprites. Deterministic from
+  /// [seed] so the same tile shape repeats across wraps without seams.
+  /// Gold + magenta are hard-coded here — glitter's identity is tied
+  /// to those specific hues, not whatever the theme happens to supply.
+  void _drawGlitterTile(
+    Canvas canvas, {
+    required int seed,
+    required int count,
+    required double minSize,
+    required double maxSize,
+    required double magentaBias,
+  }) {
+    const gold = Color(0xFFFFC727);
+    const magenta = Color(0xFFE0218A);
+    final rng = _SourceRandom(seed);
+    final path = Path();
+    for (var i = 0; i < count; i++) {
+      final baseX = rng.next() * 1000;
+      final baseY = rng.next() * 1000;
+      final sizeRoll = rng.next();
+      final radius = minSize + (maxSize - minSize) * sizeRoll;
+      final hueRoll = rng.next();
+      final color = hueRoll < magentaBias ? magenta : gold;
+      // each sprite gets its own phases so the field scatters rather
+      // than pulsing in lockstep
+      final spinPhase = rng.next() * math.pi * 2;
+      final twinklePhase = rng.next() * math.pi * 2;
+      // 0.35..0.85 rotations per cycle — slow enough to never strobe
+      final spinRate = 0.35 + rng.next() * 0.5;
+
+      final angle =
+          spinPhase + progress * math.pi * 2 * spinRate;
+      // twinkle floor at 0.35 — sprites dim but never vanish
+      final twinkle = 0.35 +
+          0.65 *
+              (0.5 +
+                  0.5 *
+                      math.sin(twinklePhase + progress * math.pi * 2 * 0.9));
+
+      path.reset();
+      const points = 4;
+      final innerR = radius * 0.38;
+      for (var k = 0; k < points * 2; k++) {
+        final r = k.isEven ? radius : innerR;
+        final a = angle + k * math.pi / points;
+        final px = baseX + math.cos(a) * r;
+        final py = baseY + math.sin(a) * r;
+        if (k == 0) {
+          path.moveTo(px, py);
+        } else {
+          path.lineTo(px, py);
+        }
+      }
+      path.close();
+
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = color.withValues(alpha: twinkle),
+      );
+
+      // hot center — reads as a point catching light, not a flat shape
+      canvas.drawCircle(
+        Offset(baseX, baseY),
+        radius * 0.18,
+        Paint()
+          ..style = PaintingStyle.fill
+          ..color = Colors.white.withValues(alpha: twinkle * 0.75),
+      );
+    }
   }
 
   void _drawEmberFieldTile(

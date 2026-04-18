@@ -25,6 +25,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'logos_core.dart';
+import 'logos_signature.dart';
 
 /// 16-bit address space — the joint fingerprint range for an 8-bit file
 /// fingerprint crossed with an 8-bit commit fingerprint.

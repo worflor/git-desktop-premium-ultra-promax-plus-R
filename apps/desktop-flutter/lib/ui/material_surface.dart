@@ -375,6 +375,9 @@ class MaterialRuntimeCache {
       // Low glaze so the dark-iridescent texture and rim/ink carry
       // the luminescence instead of the Kirby-style glaze wash.
       AppThemeId.loverboy => 0.06,
+      // shader already paints rim + specular per surface; glaze on
+      // top would fight the fresnel lip and flatten the read
+      AppThemeId.barbie => 0.08,
       _ => 0.1,
     };
     return SurfaceMaterialRuntime(
@@ -493,11 +496,9 @@ class MaterialTexturePainter extends CustomPainter {
   final SurfaceMaterialShader shader;
   final BlendMode blendMode;
   final double opacityScale;
-  /// Live state from `LiquidGlassProvider`. Only consumed by the
-  /// `iridescent` texture path — drives the shader's time-drift and
-  /// window-tilt parallax. Other texture types ignore it and the
-  /// painter's `shouldRepaint` doesn't trigger on pulse changes for
-  /// them, so they pay nothing.
+  /// Live state from `LiquidGlassProvider` — drives the iridescent /
+  /// gloss shaders' time-drift and window-tilt parallax. Other
+  /// textures ignore it; `shouldRepaint` skips pulse changes for them.
   final LiquidGlassPulse pulse;
 
   const MaterialTexturePainter({
@@ -530,12 +531,9 @@ class MaterialTexturePainter extends CustomPainter {
           canvas.drawCircle(Offset(x, y), 0.35 + (i % 4) * 0.16, paint);
         }
       case ThemeTexture.scanlines:
-        // Scanline color: theme's ambient hue on dark themes (the
-        // phosphor-coating-glows-between-rows effect), or pure black
-        // on light themes (the standard darker-stripe-between-pixels
-        // effect). Both produce visible contrast against the bg
-        // — the old hardcoded black was invisible on dark themes
-        // because dark-on-dark has no contrast.
+        // ambient hue on dark themes (phosphor glow between rows),
+        // black on light themes. fixed color would vanish on one or
+        // the other.
         final scanColor = tokens.isDark
             ? (tokens.themeAmbient ?? tokens.textNormal)
             : Colors.black;
@@ -583,13 +581,9 @@ class MaterialTexturePainter extends CustomPainter {
           );
         }
       case ThemeTexture.iridescent:
-        // GPU shader pass: position-derived hue spectrum + time-drift +
-        // window-tilt parallax. Drawn srcOver (not overlay) at a
-        // controlled alpha so the shimmer reads as the surface's own
-        // optical character. The pulse sourcing comes from
-        // `LiquidGlassProvider` — when the user drags the window, the
-        // tilt vector slides the iridescent gradient like real
-        // mother-of-pearl catching a different angle of light.
+        // srcOver (not overlay) at a controlled alpha so the shimmer
+        // paints as the surface's own optical layer rather than a
+        // blend on top.
         final fragShader = ThemeShaders.iridescentShader(
           width: size.width,
           height: size.height,
@@ -628,6 +622,32 @@ class MaterialTexturePainter extends CustomPainter {
               ..blendMode = BlendMode.srcOver,
           );
         }
+      case ThemeTexture.gloss:
+        // Transparent base so the shader composites its own highlight
+        // + shadow + rim over whatever surface tone lives under it.
+        // Rim scales with corner radius so chips get a tighter lip
+        // than panels.
+        final rimPx = (shader.geometry.radius + 10).clamp(6.0, 28.0);
+        final glossShader = ThemeShaders.plasticShader(
+          width: size.width,
+          height: size.height,
+          intensity: intensity,
+          base: const Color(0x00000000),
+          highlight: tokens.chromeAccent,
+          shadow: tokens.shadowElev,
+          tiltX: pulse.tilt.dx,
+          tiltY: pulse.tilt.dy,
+          time: pulse.time,
+          edgePx: rimPx.toDouble(),
+        );
+        if (glossShader != null) {
+          canvas.drawRect(
+            Offset.zero & size,
+            Paint()
+              ..shader = glossShader
+              ..blendMode = BlendMode.srcOver,
+          );
+        }
       case ThemeTexture.none:
         break;
     }
@@ -646,14 +666,10 @@ class MaterialTexturePainter extends CustomPainter {
       oldDelegate.pulse.tilt != pulse.tilt;
 }
 
-/// Wrapper around `MaterialTexturePainter` that subscribes the
-/// iridescent texture to `LiquidGlassProvider` so the shader's time
-/// drift + window-tilt parallax actually drive repaints. Other texture
-/// kinds (grain, scanlines, pixels, halftone) get a plain CustomPaint
-/// with no pulse subscription — they pay zero cost.
-/// Used both for per-surface texture passes inside `MaterialSurface`
-/// and for the app-root texture backdrop in `main.dart` so iridescent
-/// parallax behaves identically wherever the texture appears.
+/// Wraps `MaterialTexturePainter` and subscribes shader-driven
+/// textures (iridescent, darkIridescent, gloss) to `LiquidGlassProvider`
+/// so time drift + window-tilt parallax drive repaints. Other texture
+/// kinds route through a plain CustomPaint with no subscription.
 class MaterialTextureLayer extends StatelessWidget {
   final AppTokens tokens;
   final SurfaceMaterialShader shader;
@@ -671,7 +687,8 @@ class MaterialTextureLayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (shader.texture == ThemeTexture.iridescent ||
-        shader.texture == ThemeTexture.darkIridescent) {
+        shader.texture == ThemeTexture.darkIridescent ||
+        shader.texture == ThemeTexture.gloss) {
       final pulse = LiquidGlassProvider.of(context);
       return RepaintBoundary(
         child: ValueListenableBuilder<LiquidGlassPulse>(
@@ -699,13 +716,10 @@ class MaterialTextureLayer extends StatelessWidget {
   }
 }
 
-/// Wrapper around `_SurfaceGlazePainter` that subscribes glass-using
-/// nacre surfaces to `LiquidGlassProvider` so the shader's time/tilt
-/// drift drives repaints. Other themes get a plain CustomPaint with no
-/// subscription — they pay zero cost.
-/// `RepaintBoundary` isolates the per-frame glass repaint from the rest
-/// of the surface tree (text, borders, shadows). Without it, every
-/// pulse tick would invalidate the whole surface subtree.
+/// Wraps `_SurfaceGlazePainter`. Nacre's glass shader needs pulse
+/// subscription for time/tilt drift; other themes don't. Wrapped in a
+/// `RepaintBoundary` so per-frame glass repaints don't invalidate the
+/// surrounding surface subtree.
 class _GlazeLayer extends StatelessWidget {
   final AppTokens tokens;
   final SurfaceMaterialRuntime runtime;
@@ -781,16 +795,10 @@ class _SurfaceGlazePainter extends CustomPainter {
     canvas.save();
     canvas.clipRRect(rrect);
 
-    // Nacre uses the real-time liquid-glass fragment shader: rounded-rect
-    // SDF rim with chromatic dispersion, two-term spec (soft body + hot
-    // core) wrapping a faux-dome normal, center darken for thickness,
-    // and time/tilt drift driven by `LiquidGlassProvider`. The pulse's
-    // tilt comes from window-position delta so the spec genuinely
-    // shifts as the user drags the window. Falls back to no glaze on
-    // first frame until the shader program finishes loading.
+    // Nacre uses the liquid-glass fragment shader. First-frame falls
+    // through to no glaze while the shader program loads.
     if (isGlass && tokens.id == AppThemeId.nacre) {
-      // Corner radius scales with the surface radius but biased larger
-      // so the meniscus reads as gloopier than the actual clip rect.
+      // biased larger than clip radius so the meniscus reads gloopier
       final cornerR = math.max(radius * 1.6, 12.0);
       final coolColor = tokens.accentBright;
       final fragShader = ThemeShaders.glassShader(

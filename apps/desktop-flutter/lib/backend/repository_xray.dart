@@ -9,7 +9,7 @@ import '../diagnostics/diagnostics_state.dart';
 import 'dtos.dart';
 import 'engram_fit.dart';
 import 'git_result.dart';
-import 'logos_core.dart' show SpectralBasis;
+import 'logos_core.dart' show SpectralBasis, SpectralHeat, SpectralThermo;
 import 'logos_git.dart';
 import 'logos_git_resolver.dart' show resolveLogosGit;
 
@@ -644,24 +644,12 @@ _SpectralSummary? _buildSpectralSummary(LogosGit? engine) {
     );
   }
 
-  // Heat-kernel diagonal: per-node Σⱼ uⱼ[i]²·e^{−t·λⱼ}. One O(k·n)
-  // pass replaces the whole Jaccard pair walk as our keystone signal.
+  // Heat-kernel diagonal HKS(i, t) = Σⱼ uⱼ[i]²·e^{−t·λⱼ} via the
+  // bulk spectral primitive. One O(k·n) pass; this IS the keystone
+  // signal — per-file thermal retention at the chosen scale.
   final n = basis.n;
   final k = basis.k;
-  final centrality = Float64List(n);
-  final decays = Float64List(k);
-  for (var j = 0; j < k; j++) {
-    decays[j] = math.exp(-_kXraySpectralT * basis.eigenvalues[j]);
-  }
-  for (var j = 0; j < k; j++) {
-    final d = decays[j];
-    if (d == 0.0) continue;
-    final base = j * n;
-    for (var i = 0; i < n; i++) {
-      final u = basis.eigenvectors[base + i];
-      centrality[i] += d * u * u;
-    }
-  }
+  final centrality = basis.heatKernelProfileTable([_kXraySpectralT]);
   final paths = engine.nodePaths;
   final centralityByPath = <String, double>{};
   for (var i = 0; i < n; i++) {

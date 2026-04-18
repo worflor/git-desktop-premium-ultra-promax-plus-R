@@ -19,7 +19,7 @@ import 'git.dart' show runGitProbe;
 import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
 import 'logos_chunks.dart' as chunks;
-import 'logos_core.dart' show SpectralBasis;
+import 'logos_core.dart' show SpectralBasis, SpectralHeat;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart' show LogosAxis, LogosRegime;
 import 'logos_git_probe.dart'
@@ -746,6 +746,12 @@ class DiffPinnedRelatedFile {
   /// File's position in the engine's spectral basis. Null when the
   /// repo graph is too small or the file isn't a graph node.
   final DiffPinnedSpectral? spectral;
+  /// Emergent gravitational potential between this file and the anchor
+  /// (Wentzell-Freidlin effective action at β = entropy temperature):
+  /// low values ⇒ strongly bound (high heat-kernel amplitude); high
+  /// values ⇒ weakly coupled. `null` when the anchor or this file isn't
+  /// a graph node. `double.infinity` when disconnected.
+  final double? gravity;
 
   const DiffPinnedRelatedFile({
     required this.path,
@@ -753,6 +759,7 @@ class DiffPinnedRelatedFile {
     this.semantic = false,
     this.coupled = false,
     this.spectral,
+    this.gravity,
   });
 }
 
@@ -941,12 +948,25 @@ DiffPinnedSpectral? _projectSpectralForNode(
   final y = basis.eigenvectors[2 * basis.n + nodeId] * amplify;
   final z = basis.eigenvectors[3 * basis.n + nodeId] * amplify;
 
-  // Entropy on a 1-hot source — how evenly this node's mass spreads
-  // across the modes after a unit of thermal decay. log(k) is the
-  // maximum; normalize so callers get [0, 1].
-  final rho = Float64List(basis.n);
-  rho[nodeId] = 1.0;
-  final s = basis.spectralEntropy(rho, entropyTemperature);
+  // Entropy on a 1-hot source: coefficients are exactly u_j[nodeId],
+  // so we skip the O(k·n) project() call and read them directly in
+  // O(k). The normaliser log(k) brings reach into [0, 1].
+  var partition = 0.0;
+  final weighted = Float64List(basis.k);
+  for (var j = 0; j < basis.k; j++) {
+    final c = basis.eigenvectors[j * basis.n + nodeId];
+    final w = math.exp(-entropyTemperature * basis.eigenvalues[j]) * c * c;
+    weighted[j] = w;
+    partition += w;
+  }
+  double s = 0.0;
+  if (partition > 1e-300) {
+    final invZ = 1.0 / partition;
+    for (var j = 0; j < basis.k; j++) {
+      final p = weighted[j] * invZ;
+      if (p > 1e-300) s -= p * math.log(p);
+    }
+  }
   final sMax = math.log(basis.k.toDouble());
   final reach = sMax > 0 ? (s / sMax).clamp(0.0, 1.0).toDouble() : 0.0;
 
@@ -1181,9 +1201,16 @@ class DiffLogosFacade {
       if (selfId != null) {
         anchorSpectral = _projectSpectralForNode(basis, selfId);
       }
+      // β for the gravitational potential — keep it in step with the
+      // reach-entropy temperature so the two readings describe the same
+      // thermal regime. A cheap ref-call; no extra projection work.
+      const double gravityBeta = 1.0;
       for (final r in related) {
         final id = engine.pathToId[r.path];
         final sp = id == null ? null : _projectSpectralForNode(basis, id);
+        final grav = (selfId != null && id != null && selfId != id)
+            ? basis.gravitationalPotential(selfId, id, gravityBeta)
+            : null;
         relatedWithSpectral.add(
           DiffPinnedRelatedFile(
             path: r.path,
@@ -1191,6 +1218,7 @@ class DiffLogosFacade {
             semantic: r.semantic,
             coupled: r.coupled,
             spectral: sp,
+            gravity: grav,
           ),
         );
       }

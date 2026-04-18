@@ -148,6 +148,12 @@ class AppContextMenuItem {
   /// row's visual state (checkmark, label suffix) reflects the new
   /// data.
   final bool keepOpen;
+  /// When non-null, the row renders this widget *instead of* the
+  /// standard icon+label+trailing layout. Used for full-width visual
+  /// status strips (glyph rows, sparklines, mini-dashboards) where
+  /// the informational content doesn't fit the "icon · text" pattern.
+  /// Typically pairs with `inert: true`.
+  final Widget? custom;
   const AppContextMenuItem({
     required this.icon,
     required this.label,
@@ -158,6 +164,7 @@ class AppContextMenuItem {
     this.submenuBuilder,
     this.inert = false,
     this.keepOpen = false,
+    this.custom,
   });
 }
 
@@ -307,29 +314,31 @@ class _AppContextMenuRowState extends State<AppContextMenuRow> {
       duration: context.motion(const Duration(milliseconds: 90)),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(color: bg),
-      child: Row(
-        children: [
-          if (widget.item.leading != null)
-            widget.item.leading!
-          else
-            Icon(widget.item.icon, size: 14, color: fg),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              widget.item.label,
-              style: TextStyle(color: fg, fontSize: 12),
+      child: widget.item.custom != null
+          ? widget.item.custom!
+          : Row(
+              children: [
+                if (widget.item.leading != null)
+                  widget.item.leading!
+                else
+                  Icon(widget.item.icon, size: 14, color: fg),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Text(
+                    widget.item.label,
+                    style: TextStyle(color: fg, fontSize: 12),
+                  ),
+                ),
+                if (widget.item.trailing != null) ...[
+                  const SizedBox(width: 10),
+                  widget.item.trailing!,
+                ],
+                if (hasSubmenu) ...[
+                  const SizedBox(width: 8),
+                  Icon(Icons.chevron_right, size: 14, color: t.textFaint),
+                ],
+              ],
             ),
-          ),
-          if (widget.item.trailing != null) ...[
-            const SizedBox(width: 10),
-            widget.item.trailing!,
-          ],
-          if (hasSubmenu) ...[
-            const SizedBox(width: 8),
-            Icon(Icons.chevron_right, size: 14, color: t.textFaint),
-          ],
-        ],
-      ),
     );
     // Inert rows short-circuit: no mouse region, no gesture, no hover
     // state. The row renders flat and is pointer-transparent to clicks.

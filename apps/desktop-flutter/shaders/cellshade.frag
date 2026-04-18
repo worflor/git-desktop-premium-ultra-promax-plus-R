@@ -1,15 +1,6 @@
-// Cellshaded theme — comic-book overlay shader.
-//
-// Two effects fused into one program with a `uMode` switch:
-//   uMode = 0  →  halftone dot pattern
-//   uMode = 1  →  cross-hatch (two diagonal stripe sets ANDed)
-//
-// All math is per-pixel and branchless except the mode switch, which
-// resolves to a single uniform compare per draw — the GPU's branch
-// predictor handles it trivially.
-//
-// Uniforms are kept tight (ten floats) so the per-frame uniform-set
-// cost stays negligible.
+// Kirby comic-book overlay. One program with a uMode switch:
+//   0 → halftone dots
+//   1 → cross-hatch (two diagonal stripe sets ANDed)
 
 #version 460 core
 #include <flutter/runtime_effect.glsl>
@@ -26,11 +17,8 @@ uniform float uHatchAngle;   // radians for cross-hatch rotation
 out vec4 fragColor;
 
 float halftoneMask(vec2 p, float pitch, float density) {
-    // Cell-relative coords. Each cell is `pitch` px on a side, the
-    // dot sits at the centre. Dot RADIUS scales with `density` —
-    // mimics real comic-book shading where darker tones use bigger
-    // dots, not denser dots-of-fixed-size. Density 0 → no dot.
-    // Density 1 → dot fills the cell.
+    // dot radius scales with density (not count) — matches real
+    // comic-book halftones where darker tone = bigger dot
     vec2 cell = floor(p / pitch);
     vec2 uv = (p / pitch) - cell - 0.5;
     float d = length(uv);
@@ -65,8 +53,6 @@ void main() {
 
     float mask;
     if (uMode < 0.5) {
-        // Halftone: dot SIZE responds to intensity. Each cell becomes
-        // a tonal step like CMYK printing — darker tone = larger dot.
         mask = halftoneMask(p, uDotSize, uIntensity);
     } else {
         mask = hatchMask(p, uDotSize, uHatchAngle) * uIntensity;
@@ -74,9 +60,7 @@ void main() {
 
     vec4 col = mix(uPaperColor, uInkColor, mask);
 
-    // Inset edge ink stripe — gives every shaded surface the
-    // signature comic-panel border without the parent having to
-    // know about it.
+    // inset ink stripe = comic-panel border baked in
     float edge = insetEdge(p, uSize, uOutline);
     col = mix(col, uInkColor, edge);
 

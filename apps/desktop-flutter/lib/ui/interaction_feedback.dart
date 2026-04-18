@@ -139,6 +139,7 @@ Duration _durationFor(ThemeInteraction mode) => switch (mode) {
       ThemeInteraction.chalk => const Duration(milliseconds: 200),
       ThemeInteraction.inkSplat => const Duration(milliseconds: 220),
       ThemeInteraction.blockBreak => const Duration(milliseconds: 460),
+      ThemeInteraction.gloss => const Duration(milliseconds: 160),
       ThemeInteraction.none => Duration.zero,
     };
 
@@ -166,6 +167,8 @@ CustomPainter _feedbackPainter({
       return _InkSplatPainter(origin: origin, t: progress);
     case ThemeInteraction.blockBreak:
       return _BlockBreakPainter(origin: origin, accent: accent, t: progress);
+    case ThemeInteraction.gloss:
+      return _GlossPainter(accent: accent, t: progress, lum: luminescence);
     case ThemeInteraction.none:
       return _NoopPainter();
   }
@@ -434,6 +437,90 @@ class _NoopPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(CustomPainter oldDelegate) => false;
+}
+
+/// Bibble gloss feedback. A tilted specular streak sweeps L-to-R
+/// across the whole surface (not from the tap point — plastic catches
+/// light along a line). Magenta leading edge, gold trailing tail,
+/// matching the surface shader's highlight/rim hues.
+class _GlossPainter extends CustomPainter {
+  final Color accent;
+  final double t;
+  final double lum;
+  _GlossPainter({
+    required this.accent,
+    required this.t,
+    required this.lum,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // streak walks from off-left (-25%) to off-right (125%) so it
+    // fully enters and exits. easeOutCubic = fast arrive, slow leave.
+    final travel = Curves.easeOutCubic.transform(t);
+    final cx = -size.width * 0.25 + size.width * 1.5 * travel;
+
+    // 22% of width — narrower reads as cyberpunk scan, wider as spotlight
+    final halfWidth = size.width * 0.11;
+
+    // capped below full opacity — gloss is a reflection, not a brushstroke
+    final env = math.sin(t * math.pi);
+    final peakAlpha = (0.55 * env * lum).clamp(0.0, 0.85);
+
+    final gold = const Color(0xFFFFC727);
+
+    // ~12° tilt so it doesn't read as a flat vertical bar
+    const tilt = 0.2094;
+
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+    canvas.translate(cx, size.height / 2);
+    canvas.rotate(tilt);
+
+    // taller than surface height for rotation bleed
+    final bandH = size.height * 1.4;
+
+    // leading edge, magenta → transparent
+    canvas.drawRect(
+      Rect.fromLTRB(0, -bandH / 2, halfWidth, bandH / 2),
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+          colors: [
+            accent.withValues(alpha: peakAlpha),
+            accent.withValues(alpha: 0),
+          ],
+        ).createShader(
+          Rect.fromLTRB(0, -bandH / 2, halfWidth, bandH / 2),
+        ),
+    );
+    // trailing tail, gold → transparent
+    canvas.drawRect(
+      Rect.fromLTRB(-halfWidth, -bandH / 2, 0, bandH / 2),
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.centerRight,
+          end: Alignment.centerLeft,
+          colors: [
+            gold.withValues(alpha: peakAlpha * 0.85),
+            gold.withValues(alpha: 0),
+          ],
+        ).createShader(
+          Rect.fromLTRB(-halfWidth, -bandH / 2, 0, bandH / 2),
+        ),
+    );
+    // hot white line at the boundary — sells specular vs gradient wash
+    canvas.drawRect(
+      Rect.fromLTRB(-1, -bandH / 2, 1, bandH / 2),
+      Paint()..color = Colors.white.withValues(alpha: peakAlpha * 0.9),
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_GlossPainter old) =>
+      old.t != t || old.accent != accent || old.lum != lum;
 }
 
 /// Block-break burst. Taps spawn a handful of small voxel shards at

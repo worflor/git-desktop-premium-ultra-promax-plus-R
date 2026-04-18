@@ -29,6 +29,7 @@
 import 'dart:typed_data';
 
 import 'logos_core.dart';
+import 'logos_signature.dart';
 import 'spectral_kizuna.dart';
 
 /// Packet a peer sends when opening a bond handshake. Exactly three

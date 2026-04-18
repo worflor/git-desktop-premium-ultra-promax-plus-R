@@ -22,6 +22,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'logos_core.dart';
+import 'logos_signature.dart';
 
 /// Immutable Ollivier-Ricci curvature field over the edges of a graph.
 /// Stored as parallel (u, v, κ) arrays plus a signature hash over the
@@ -84,6 +85,115 @@ class RicciField {
       s += curvatures[i];
     }
     return s / curvatures.length;
+  }
+
+  /// Ricci surgery fragmentation — at each curvature threshold [θ],
+  /// drop every edge with `κ ≤ θ` and report the resulting
+  /// `(threshold, n_components, largest_fraction)` on the graph
+  /// defined by [graphNodeCount] nodes and this field's `(edgeU, edgeV)`.
+  ///
+  /// Theory: Ollivier-Ricci is negative on bridge-like edges (see
+  /// `mostNegativeEdges`), so raising θ from very negative up through
+  /// zero surfaces the graph's community structure one bottleneck at
+  /// a time. The surgery curve is the **Ricci analogue** of
+  /// [CsrGraph.fragmentationCurve]: fragmentation-by-edge-weight says
+  /// "at what coupling does this decompose?"; fragmentation-by-Ricci
+  /// says "along which structural bottlenecks does it decompose?"
+  ///
+  /// Cost: `O(|thresholds| · (n + edges))` via union-find. Edges are
+  /// iterated once per threshold; we don't pre-sort because typical
+  /// threshold lists are short (3–10 entries).
+  ///
+  /// Empirical reference: `tmp_ice_walls_deeper.py §6` — on a 3-block
+  /// SBM (sizes 7/6/11), a single θ ≈ +0.10 cut decomposes the graph
+  /// into components matching the planted block structure.
+  ///
+  /// Returns records with the same shape as [CsrGraph.fragmentationCurve]
+  /// for consistency between the two surgery families.
+  /// See [CsrGraph.fragmentationCurve] for the meaning of each field,
+  /// including `cycleRank` (β₁ of the surviving 1-skeleton).
+  List<FragmentationRow> surgeryFragmentation(
+    int graphNodeCount,
+    List<double> thresholds,
+  ) {
+    return [
+      for (final theta in thresholds)
+        computeFragmentationRow(
+          n: graphNodeCount,
+          threshold: theta,
+          sweepEdges: (emit) {
+            for (var ei = 0; ei < curvatures.length; ei++) {
+              if (curvatures[ei] <= theta) continue;
+              emit(edgeU[ei], edgeV[ei]);
+            }
+          },
+        )
+    ];
+  }
+
+  /// **One step of discrete Ricci flow** on the graph that produced
+  /// this field. Returns a new [CsrGraph] with edge weights updated
+  /// according to the Hamilton-Ricci flow analogue:
+  ///
+  ///     W_{uv}(t + Δt) = W_{uv}(t) · (1 − Δt · κ_{uv})
+  ///
+  /// Positive-κ edges (community/expander) get **weaker**;
+  /// negative-κ edges (bridges/bottlenecks) get **stronger**. The
+  /// flow is a contraction on curvature: iterate enough steps and
+  /// the graph evolves toward a curvature-balanced state where
+  /// every edge carries the same κ.
+  ///
+  /// ## The repo interpretation
+  ///
+  /// "What does this codebase look like if you let its coupling
+  /// self-adjust under its own curvature-stress for Δt?" Bridges
+  /// between loosely-coupled modules get reinforced; redundant
+  /// coupling inside tight communities gets slackened. The
+  /// equilibrium is the repo's **natural balance** — what the
+  /// architecture "wants" to be structurally.
+  ///
+  /// ## Caveats
+  ///
+  /// * Output values are clamped to `[0, +∞)` — a single step
+  ///   cannot flip an edge negative. For stability, keep Δt small
+  ///   relative to `1 / max|κ|`.
+  /// * The updated graph preserves CSR topology (edge count and
+  ///   node count unchanged); only [CsrGraph.values] changes.
+  /// * Rank-one update metadata (`rawWeights`, `degreeInvSqrt`) is
+  ///   *not* carried through — the caller rebuilds if needed.
+  ///
+  /// Empirical reference: `tmp_ice_walls_deeper.py §2` — on a
+  /// dumbbell, one Ricci-flow step raises the bridge from κ ≈ −1.4
+  /// toward 0 over ~14 iterations at Δt = 0.1.
+  CsrGraph ricciFlowStep(CsrGraph graph, {double dt = 0.1}) {
+    if (graph.indptr.length != edgeU.length + 1 &&
+        graph.values.length != edgeU.length * 2) {
+      // Graph encodes each undirected edge twice; fields store each once.
+    }
+    final newValues = Float64List.fromList(graph.values);
+    // Build a quick (u, v) → curvature lookup.
+    final curvLookup = <int, double>{};
+    for (var ei = 0; ei < edgeU.length; ei++) {
+      final a = edgeU[ei], b = edgeV[ei];
+      curvLookup[_pairKey(a, b)] = curvatures[ei];
+      curvLookup[_pairKey(b, a)] = curvatures[ei];
+    }
+    for (var u = 0; u < graph.n; u++) {
+      for (var p = graph.indptr[u]; p < graph.indptr[u + 1]; p++) {
+        final v = graph.indices[p];
+        final kappa = curvLookup[_pairKey(u, v)];
+        if (kappa == null) continue;
+        final factor = 1.0 - dt * kappa;
+        final updated = graph.values[p] * factor;
+        newValues[p] = updated < 0 ? 0 : updated;
+      }
+    }
+    return CsrGraph(
+      n: graph.n,
+      indptr: graph.indptr,
+      indices: graph.indices,
+      values: newValues,
+    );
   }
 
   /// Return the `k` most negative (bridge-like) edges as (u, v, κ)
@@ -469,3 +579,5 @@ Map<int, int> _localBFS(CsrGraph graph, int src, int maxHops) {
 }
 
 Signature _fingerprintFloat64(Float64List values) => fingerprintFloat64(values);
+
+int _pairKey(int a, int b) => a * 0x10000 + b;

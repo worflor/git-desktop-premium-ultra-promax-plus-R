@@ -13,6 +13,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/dream_hint.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
@@ -24,6 +25,7 @@ import '../../backend/gh.dart';
 import '../../backend/git_result.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
+import '../../backend/logos_dream.dart';
 import '../../backend/logos_git.dart';
 import '../../backend/logos_git_diagnostics.dart';
 import '../../backend/pr_shape.dart';
@@ -275,6 +277,7 @@ class _BranchesPageState extends State<BranchesPage> {
   String? _hoveredTag;
 
   final _newBranchCtrl = TextEditingController();
+  final DreamHintController<String> _branchNameDream = DreamHintController();
   bool _actionRunning = false;
   String? _actionError;
 
@@ -529,10 +532,61 @@ class _BranchesPageState extends State<BranchesPage> {
     });
     _loadFilePillsWrapPref();
     _loadPrLastSeen();
+    _branchNameDream.addListener(_onBranchNameDreamChanged);
+  }
+
+  void _onBranchNameDreamChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Dream a branch-name slug from the current working-tree diff.
+  /// Shares the pipeline the commit composer uses; output is
+  /// kebab-cased. Null when there's no diff to dream on.
+  Future<String?> _computeBranchNameDream(String repoPath) async {
+    final engine = context.read<LogosGitState>().engineFor(repoPath);
+    if (engine == null) return null;
+    final results = await Future.wait([
+      runGitProbe(repoPath, [
+        'diff', '-U3', '--no-color', '--patience', '--ignore-cr-at-eol',
+      ]),
+      runGitProbe(repoPath, [
+        'diff', '--cached', '-U3', '--no-color', '--patience',
+        '--ignore-cr-at-eol',
+      ]),
+      runGitProbe(repoPath, ['log', '--format=%s', '-100']),
+    ]);
+    final unstaged =
+        results[0].exitCode == 0 ? results[0].stdout.toString() : '';
+    final staged =
+        results[1].exitCode == 0 ? results[1].stdout.toString() : '';
+    final diffText = [staged, unstaged]
+        .where((d) => d.trim().isNotEmpty)
+        .join('\n');
+    if (diffText.isEmpty) return null;
+    final subjects = results[2].exitCode == 0
+        ? results[2]
+            .stdout
+            .toString()
+            .split('\n')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList()
+        : const <String>[];
+    final phrase = await dreamFromDiff(
+      repoPath: repoPath,
+      diffText: diffText,
+      engine: engine,
+      recentSubjects: subjects,
+    );
+    if (phrase == null) return null;
+    final slug = slugifyForBranch(phrase);
+    return slug.isEmpty ? null : slug;
   }
 
   @override
   void dispose() {
+    _branchNameDream.removeListener(_onBranchNameDreamChanged);
+    _branchNameDream.dispose();
     _newBranchCtrl.dispose();
     _prSearchCtrl.dispose();
     _issueSearchCtrl.dispose();
@@ -743,7 +797,7 @@ class _BranchesPageState extends State<BranchesPage> {
                       fontSize: 12,
                       fontFamily: 'JetBrainsMono'),
                   decoration: InputDecoration(
-                    labelText: 'New name',
+                    labelText: 'new name',
                     labelStyle: TextStyle(color: t.textMuted),
                     border: const OutlineInputBorder(),
                   ),
@@ -2998,24 +3052,42 @@ class _BranchesPageState extends State<BranchesPage> {
                           fontSize: 11,
                           fontWeight: FontWeight.w600)),
                   const SizedBox(height: 12),
-                  // Branch name input
-                  Focus(
-                    onKeyEvent: (node, event) {
-                      if (event is KeyDownEvent &&
-                          event.logicalKey == LogicalKeyboardKey.enter) {
-                        _createBranch(repoPath);
-                        return KeyEventResult.handled;
-                      }
-                      return KeyEventResult.ignored;
-                    },
-                    child: AppTextField(
-                      controller: _newBranchCtrl,
-                      height: 34,
-                      fontSize: 12,
-                      hintText: 'Branch name (e.g. feature/auth)',
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
+                  // Branch name input. Placeholder is dreamed from the
+                  // current working-tree diff when available — same
+                  // engine the commit composer uses, output slugged.
+                  Builder(builder: (context) {
+                    if (_newBranchCtrl.text.trim().isEmpty) {
+                      final engineReady = context.select<
+                          LogosGitState, bool>(
+                        (s) => s.engineFor(repoPath) != null,
+                      );
+                      final sig =
+                          '$repoPath|${engineReady ? 'rdy' : 'wait'}';
+                      _branchNameDream.schedule(
+                        sig,
+                        () => _computeBranchNameDream(repoPath),
+                      );
+                    }
+                    return Focus(
+                      onKeyEvent: (node, event) {
+                        if (event is KeyDownEvent &&
+                            event.logicalKey ==
+                                LogicalKeyboardKey.enter) {
+                          _createBranch(repoPath);
+                          return KeyEventResult.handled;
+                        }
+                        return KeyEventResult.ignored;
+                      },
+                      child: AppTextField(
+                        controller: _newBranchCtrl,
+                        height: 34,
+                        fontSize: 12,
+                        hintText: _branchNameDream.value ??
+                            'branch name (e.g. feature/auth)',
+                        onChanged: (_) => setState(() {}),
+                      ),
+                    );
+                  }),
                   const SizedBox(height: 8),
                   // Create button
                   SizedBox(

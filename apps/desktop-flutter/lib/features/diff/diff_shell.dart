@@ -3007,7 +3007,7 @@ class _DiffShellState extends State<DiffShell> {
                   autofocus: true,
                   height: 24,
                   fontSize: 12,
-                  hintText: 'Search diff...',
+                  hintText: 'search diff...',
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   onChanged: (v) => setState(() {
@@ -6114,6 +6114,12 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   }
 
   double _reachStrength(DiffPinnedContextModel c) {
+    // Spectral participation entropy on the anchor is the real reach
+    // signal — already normalised to [0, 1] via log(k). When the
+    // spectral basis is absent (tiny repos, pre-warm-up), fall back to
+    // the count-based heuristic.
+    final spec = c.anchorSpectral;
+    if (spec != null) return spec.reach.clamp(0.0, 1.0).toDouble();
     final raw = c.transportEdges.length * 0.34 + c.relatedFiles.length * 0.12;
     return raw.clamp(0.0, 1.0).toDouble();
   }
@@ -6301,7 +6307,6 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
             t,
             icon: Icons.north_east,
             label: 'inspect ${_diffDisplayName(nextPath)}',
-            tooltip: 'Open the most relevant related file',
             onTap: () => widget.onOpenRelatedPath?.call(nextPath),
           ),
         if (firstEcho != null)
@@ -6309,14 +6314,12 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
             t,
             icon: Icons.alt_route,
             label: 'jump echo',
-            tooltip: 'Jump to the first matching echo in this diff',
             onTap: () => widget.onRhymeTap(firstEcho),
           ),
         _quickActionChip(
           t,
           icon: _copiedLine ? Icons.check : Icons.content_copy_outlined,
           label: _copiedLine ? 'copied' : 'copy line',
-          tooltip: 'Copy the pinned line text (C)',
           onTap: () => _copyPinnedLine(c),
         ),
       ],
@@ -6327,7 +6330,6 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     AppTokens t, {
     required IconData icon,
     required String label,
-    required String tooltip,
     required VoidCallback onTap,
   }) {
     final child = Container(
@@ -6353,15 +6355,12 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
         ],
       ),
     );
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: onTap,
-          child: child,
-        ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: child,
       ),
     );
   }
@@ -6614,19 +6613,33 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
   }
 
   String _relatedReason(DiffPinnedRelatedFile related, String currentPath) {
+    final String base;
     if (_looksLikeTestPair(currentPath, related.path)) {
-      return 'Test mirror';
+      base = 'Test mirror';
+    } else if (related.semantic && related.coupled) {
+      base = 'Semantic + history sibling';
+    } else if (related.coupled) {
+      base = 'Recent co-change';
+    } else if (related.semantic) {
+      base = 'Semantic sibling';
+    } else {
+      base = 'Related structure';
     }
-    if (related.semantic && related.coupled) {
-      return 'Semantic + history sibling';
+    // Append the gravitational strength — the Wentzell-Freidlin
+    // effective action V(a, b, β) = -log K / β between anchor and this
+    // file. Low V ⇒ strongly bound; high V ⇒ weakly coupled. Thresholds
+    // are empirical but stable across repos because V is β-normalised.
+    final grav = related.gravity;
+    if (grav == null || !grav.isFinite) return base;
+    final String tier;
+    if (grav < 1.5) {
+      tier = 'tightly bound';
+    } else if (grav < 4.0) {
+      tier = 'orbiting';
+    } else {
+      tier = 'weakly coupled';
     }
-    if (related.coupled) {
-      return 'Recent co-change';
-    }
-    if (related.semantic) {
-      return 'Semantic sibling';
-    }
-    return 'Related structure';
+    return '$base · $tier';
   }
 
   bool _looksLikeTestPair(String a, String b) {

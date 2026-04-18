@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../backend/dtos.dart';
 import '../backend/git.dart';
+import '../backend/logos_dream.dart';
+import '../backend/logos_free_energy.dart';
 import '../components/icons/app_icons.dart';
 import '../features/branches/branches_page.dart';
 import '../features/changes/changes_page.dart';
@@ -15,6 +17,8 @@ import '../features/settings/settings_page.dart';
 import '../features/xray/repo_xray_panel.dart';
 import '../ui/animated_icons.dart';
 import '../ui/control_chrome.dart';
+import '../ui/dream_hint.dart';
+import '../ui/hyperhealth_text.dart';
 import '../ui/interaction_feedback.dart';
 import '../ui/material_surface.dart';
 import '../ui/context_menu.dart';
@@ -516,6 +520,16 @@ class _Topbar extends StatelessWidget {
     final repo = context.watch<RepositoryState>();
     final repoName = repo.activeRepoName;
     final status = repo.status;
+    // Free-energy anomaly read — the repo name gets a sheen swoosh
+    // whose strength scales with this continuous 0..1 signal. Colour
+    // of the title stays whatever it was; only the sheen carries the
+    // health indication.
+    final logosState = context.watch<LogosGitState>();
+    final engine = repo.activePath == null
+        ? null
+        : logosState.engineFor(repo.activePath!);
+    final anomaly =
+        engine == null ? 0.0 : (repoAnomalyLevel(engine) ?? 0.0);
 
     return MaterialSurface(
       tone: topbarTone,
@@ -547,6 +561,7 @@ class _Topbar extends StatelessWidget {
                     hasRepo: repoName != null,
                     repoPath: repo.activePath,
                     onRefresh: () => repo.refreshStatus(),
+                    anomaly: anomaly,
                   ),
                   if (status != null) ...[
                     const SizedBox(height: 4),
@@ -701,11 +716,17 @@ class _RepoNameLabel extends StatefulWidget {
   final String? repoPath;
   final VoidCallback onRefresh;
 
+  /// Continuous F-anomaly in `[0, 1]`. 0 = perfectly-stable repo; 1 =
+  /// every bit of free energy on the upper-spectrum modes. Drives the
+  /// title's sheen strength; leaves the base text colour untouched.
+  final double anomaly;
+
   const _RepoNameLabel({
     required this.name,
     required this.hasRepo,
     this.repoPath,
     required this.onRefresh,
+    this.anomaly = 0.0,
   });
 
   @override
@@ -732,6 +753,9 @@ class _RepoNameLabelState extends State<_RepoNameLabel> {
     final t = context.tokens;
     final baseColor =
         widget.hasRepo ? t.textStrong : t.textMuted.withValues(alpha: 0.5);
+    // Hover is the ONLY thing that recolours the title. Health state is
+    // communicated entirely through the sheen; the letters themselves
+    // stay the colour the user's eye expects from pure interaction.
     final color = widget.hasRepo && _hovered ? t.accentBright : baseColor;
 
     return MouseRegion(
@@ -741,15 +765,27 @@ class _RepoNameLabelState extends State<_RepoNameLabel> {
       child: GestureDetector(
         onTap: widget.hasRepo ? _fetch : null,
         child: AnimatedDefaultTextStyle(
-          duration: context.motion(const Duration(milliseconds: 100)),
+          // Base-colour transitions calmly, over ~600ms — slow enough
+          // not to flicker on each rebuild, fast enough to feel live.
+          duration: context.motion(const Duration(milliseconds: 600)),
           style: TextStyle(
             color: _fetching ? t.accentBright.withValues(alpha: 0.6) : color,
             fontSize: 14,
             fontWeight: FontWeight.w600,
           ),
-          child: Text(
-            widget.name,
-            overflow: TextOverflow.ellipsis,
+          child: HyperhealthText(
+            text: widget.name,
+            intensity: widget.anomaly,
+            refreshing: _fetching,
+            // No special "fetching colour" — the refresh sheen itself
+            // is the affordance now, so the base text stays readable
+            // in its hover/default colour while the swoosh does the
+            // job the old dim accent used to do.
+            baseColor: color,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ),
@@ -2806,9 +2842,22 @@ class _NewDeskRowState extends State<_NewDeskRow> {
   bool _expanded = false;
   final _ctrl = TextEditingController();
   final _focusNode = FocusNode();
+  final DreamHintController<String> _branchDream = DreamHintController();
+
+  @override
+  void initState() {
+    super.initState();
+    _branchDream.addListener(_onDreamChanged);
+  }
+
+  void _onDreamChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void dispose() {
+    _branchDream.removeListener(_onDreamChanged);
+    _branchDream.dispose();
     _ctrl.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -2822,10 +2871,71 @@ class _NewDeskRowState extends State<_NewDeskRow> {
     setState(() => _expanded = false);
   }
 
+  /// Compute a dreamed branch-name slug from the current working-tree
+  /// diff. Same pipeline the commit composer uses, with the output
+  /// kebab-cased into a branch-ref-shaped token. Null if there's no
+  /// meaningful diff yet (new branch on a clean tree).
+  Future<String?> _computeBranchNameDream(String repoPath) async {
+    final engine = context.read<LogosGitState>().engineFor(repoPath);
+    if (engine == null) return null;
+    final results = await Future.wait([
+      runGitProbe(repoPath, [
+        'diff', '-U3', '--no-color', '--patience', '--ignore-cr-at-eol',
+      ]),
+      runGitProbe(repoPath, [
+        'diff', '--cached', '-U3', '--no-color', '--patience',
+        '--ignore-cr-at-eol',
+      ]),
+      runGitProbe(repoPath, ['log', '--format=%s', '-100']),
+    ]);
+    final unstaged =
+        results[0].exitCode == 0 ? results[0].stdout.toString() : '';
+    final staged =
+        results[1].exitCode == 0 ? results[1].stdout.toString() : '';
+    final diffText = [staged, unstaged]
+        .where((d) => d.trim().isNotEmpty)
+        .join('\n');
+    if (diffText.isEmpty) return null;
+    final subjects = results[2].exitCode == 0
+        ? results[2]
+            .stdout
+            .toString()
+            .split('\n')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList()
+        : const <String>[];
+    final phrase = await dreamFromDiff(
+      repoPath: repoPath,
+      diffText: diffText,
+      engine: engine,
+      recentSubjects: subjects,
+    );
+    if (phrase == null) return null;
+    final slug = slugifyForBranch(phrase);
+    return slug.isEmpty ? null : slug;
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.t;
     if (_expanded) {
+      // Dream a branch-name slug from the current working-tree diff.
+      // Scheduler short-circuits on unchanged signature so calling on
+      // every rebuild is cheap.
+      final repoPath = context.select<RepositoryState, String?>(
+        (s) => s.activePath,
+      );
+      if (repoPath != null && _ctrl.text.trim().isEmpty) {
+        final engineReady = context.select<LogosGitState, bool>(
+          (s) => s.engineFor(repoPath) != null,
+        );
+        final sig = '$repoPath|${engineReady ? 'rdy' : 'wait'}';
+        _branchDream.schedule(
+          sig,
+          () => _computeBranchNameDream(repoPath),
+        );
+      }
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         child: Row(
@@ -2844,7 +2954,7 @@ class _NewDeskRowState extends State<_NewDeskRow> {
                 ),
                 decoration: InputDecoration(
                   isCollapsed: true,
-                  hintText: 'new-branch-name',
+                  hintText: _branchDream.value ?? 'new-branch-name',
                   hintStyle: TextStyle(
                     color: t.textMuted.withValues(alpha: 0.6),
                     fontSize: 11,

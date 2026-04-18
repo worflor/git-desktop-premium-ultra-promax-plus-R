@@ -26,6 +26,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'logos_core.dart';
+import 'logos_signature.dart';
 
 /// A disk-backed cache for [SpectralBasis] blobs.
 ///

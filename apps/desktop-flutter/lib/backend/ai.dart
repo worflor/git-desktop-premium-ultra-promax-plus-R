@@ -619,6 +619,53 @@ Future<GitResult<AiPatchData>> generatePatch({
   }
 }
 
+/// Prose-returning AI call for the "ask the manifold" feature —
+/// general question-answering where the model's job is explanation,
+/// not code generation. Reuses [generatePatch]'s provider attempt
+/// loop but skips the patch-extraction step; the caller gets the
+/// raw model output text to render inline.
+///
+/// `readOnly` stays true by default — Ask never writes code.
+Future<GitResult<String>> runAsk({
+  required String repositoryPath,
+  required String modelValue,
+  required String prompt,
+  String commandLabelPrefix = 'ai.ask',
+}) async {
+  try {
+    if (prompt.trim().isEmpty) {
+      return GitResult.err('Question is empty.');
+    }
+    final modelParse = _parseModelValue(modelValue);
+    if (!modelParse.ok) {
+      return GitResult.err(modelParse.error!);
+    }
+    final provider = modelParse.data!.provider;
+    final modelId = modelParse.data!.modelId;
+
+    final availability = await _inspectProviderCached(provider);
+    if (!availability.ready || availability.resolution == null) {
+      return GitResult.err(
+        'Provider ${provider.id} is not ready. ${_formatProviderHealth(availability)}',
+      );
+    }
+
+    final result = await _runProviderPrompt(
+      provider: provider,
+      resolution: availability.resolution!,
+      modelId: modelId,
+      prompt: prompt,
+      repositoryPath: repositoryPath,
+    );
+    if (!result.ok || result.output == null) {
+      return GitResult.err(result.error ?? 'Provider returned no answer.');
+    }
+    return GitResult.ok(result.output!.trim());
+  } catch (error) {
+    return GitResult.err('Ask failed: $error');
+  }
+}
+
 /// Paths we will NEVER send to an AI provider, regardless of what the
 /// user asked for. Set-it-and-forget-it defaults — no `.aiignore`, no
 /// settings toggle. Secrets that shouldn't leave the machine by any
@@ -2855,23 +2902,130 @@ Future<_ProviderModelDiscovery?> _discoverProviderModels(
   }
 }
 
-_ProviderModelDiscovery? _discoverCodexModels(
+/// Codex doesn't expose a "list models" subcommand, so discovery
+/// walks the artifacts Codex itself has written:
+///   - `~/.codex/models_cache.json` — Codex's own authoritative model
+///     catalog, fetched from its service and maintained by the CLI.
+///     Each entry has a `slug`, `display_name`, `description`, and a
+///     `visibility` flag. This is the purest self-discovery: the
+///     exact list the Codex CLI itself uses.
+///   - `~/.codex/config.toml` — user-specific extras (preferred model
+///     + `[notice.model_migrations]` entries). Keeps any model the
+///     user has opted into even if it's not in the cache yet.
+///   - `~/.codex/log/codex-tui.log` — fallback scan for model IDs
+///     actually invoked, so a missing/corrupt cache doesn't empty
+///     the dropdown.
+///
+/// Union of all three. No hardcoded list.
+_ProviderModelDiscovery _discoverCodexModels(
   _ProviderResolution? resolution,
 ) {
   final models = <String>{};
   final details = <String, String>{};
-
+  for (final entry in _discoverCodexCacheModels()) {
+    models.add(entry.slug);
+    if (entry.description.isNotEmpty) {
+      details[_normalizeModelKey(entry.slug)] = entry.description;
+    }
+  }
   for (final model in _discoverCodexConfigModels()) {
     models.add(model);
   }
-
-  if (models.isEmpty) {
-    return null;
+  for (final model in _discoverCodexLogModels()) {
+    models.add(model);
   }
   return _ProviderModelDiscovery(
     models: models.toList(),
     modelDetails: details,
   );
+}
+
+/// A model entry read from Codex's own `models_cache.json`.
+class _CodexCacheEntry {
+  final String slug;
+  final String description;
+  const _CodexCacheEntry(this.slug, this.description);
+}
+
+/// Parse `~/.codex/models_cache.json`. Uses structured JSON decoding
+/// (not regex) so nested strings, escaped quotes in long description
+/// blocks, and future schema additions can't break discovery. Filters
+/// to `visibility == "list"` so internal / hidden models don't clutter
+/// the picker — matches what the Codex CLI shows its own users.
+List<_CodexCacheEntry> _discoverCodexCacheModels() {
+  try {
+    final home = _userHomeDir();
+    if (home == null) return const [];
+    final file = File(p.join(home, '.codex', 'models_cache.json'));
+    if (!file.existsSync()) return const [];
+    final raw = file.readAsStringSync();
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return const [];
+    final models = decoded['models'];
+    if (models is! List) return const [];
+    final out = <_CodexCacheEntry>[];
+    for (final item in models) {
+      if (item is! Map) continue;
+      final slug = item['slug'];
+      if (slug is! String || slug.trim().isEmpty) continue;
+      final visibility = item['visibility'];
+      if (visibility is String && visibility != 'list') continue;
+      final description = item['description'];
+      out.add(_CodexCacheEntry(
+        slug.trim(),
+        description is String ? description.trim() : '',
+      ));
+    }
+    return out;
+  } catch (_) {
+    return const [];
+  }
+}
+
+/// JSON-fragment model capture: `"model":"<id>"` or `"model": "<id>"`.
+/// Anchored to the quoted-key form so it can't match prose like
+/// `model: define` or `model: one` that appears inside log messages.
+///
+/// The `id` class is bounded (≤ 200 chars) and starts with an
+/// alphanumeric, so a malformed line with an unterminated quote
+/// can't create a long backtrack path. Dart's RegExp has no atomic
+/// groups or possessive quantifiers, but the literal `"` terminator
+/// caps the capture naturally — `[A-Za-z0-9._/-]` excludes `"`, so
+/// `*` here is already saturated-greedy at the first `"`.
+final _codexLogModelRegex = RegExp(
+  r'"model"\s*:\s*"(?<id>[A-Za-z0-9][A-Za-z0-9._/-]{0,199})"',
+);
+
+/// Scan the TUI log for model IDs that Codex actually invoked. Reads
+/// at most the last 512 KB so startup doesn't pay for a year of logs.
+/// Silent on any IO error — the caller just gets fewer models.
+List<String> _discoverCodexLogModels() {
+  final models = <String>{};
+  try {
+    final home = _userHomeDir();
+    if (home == null) return const [];
+    final logPath = p.join(home, '.codex', 'log', 'codex-tui.log');
+    final file = File(logPath);
+    if (!file.existsSync()) return const [];
+    final length = file.lengthSync();
+    const tailBytes = 512 * 1024;
+    final start = length > tailBytes ? length - tailBytes : 0;
+    final raf = file.openSync();
+    try {
+      raf.setPositionSync(start);
+      final bytes = raf.readSync(length - start);
+      final text = utf8.decode(bytes, allowMalformed: true);
+      for (final match in _codexLogModelRegex.allMatches(text)) {
+        final id = match.namedGroup('id')?.trim() ?? '';
+        if (id.isNotEmpty) models.add(id);
+      }
+    } finally {
+      raf.closeSync();
+    }
+  } catch (_) {
+    // Best-effort — log may be locked, missing, or truncated.
+  }
+  return models.toList();
 }
 
 List<String> _discoverCodexConfigModels() {
@@ -2927,22 +3081,81 @@ void _parseCodexToml(String payload, Set<String> models) {
   }
 }
 
+/// `claude models` isn't a subcommand (the Claude Code CLI treats it
+/// as a chat message), so discovery walks the artifacts Claude Code
+/// has already written on this machine:
+///   - `~/.claude/settings.json` — any `model` key the user configured.
+///   - `~/.claude/projects/<hash>/*.jsonl` — every model ID the CLI
+///     has invoked in recent sessions, captured as `"model":"<id>"`.
+///
+/// No hardcoded aliases. If the user has never run Claude Code, the
+/// settings-only discovery may still surface their configured model;
+/// if they have, the session logs expand the list naturally as new
+/// models get used.
 Future<_ProviderModelDiscovery?> _discoverClaudeModels(
   _ProviderResolution? resolution,
 ) async {
-  // `claude models` is not a valid subcommand — the Claude Code CLI interprets
-  // it as a chat message. Use stable well-known aliases instead.
-  const stableAliases = ['opus', 'sonnet', 'haiku'];
-  final models = <String>{...stableAliases};
-
+  final models = <String>{};
   final configured = _discoverClaudeConfiguredModel();
-  if (configured != null) {
-    models.add(configured);
+  if (configured != null) models.add(configured);
+  for (final id in _discoverClaudeSessionModels()) {
+    models.add(id);
   }
+  if (models.isEmpty) return null;
   return _ProviderModelDiscovery(
     models: models.toList(),
     modelDetails: const {},
   );
+}
+
+/// Scan the most recently touched Claude Code session files for model
+/// IDs actually used. Bounded work: at most 12 recent files, at most
+/// the first 64 KB of each — the model is logged near the top of a
+/// session so the tail isn't useful.
+List<String> _discoverClaudeSessionModels() {
+  final models = <String>{};
+  try {
+    final home = _userHomeDir();
+    if (home == null) return const [];
+    final projects = Directory(p.join(home, '.claude', 'projects'));
+    if (!projects.existsSync()) return const [];
+    final files = <FileSystemEntity>[];
+    for (final proj in projects.listSync()) {
+      if (proj is! Directory) continue;
+      for (final f in proj.listSync()) {
+        if (f is File && f.path.toLowerCase().endsWith('.jsonl')) {
+          files.add(f);
+        }
+      }
+    }
+    files.sort((a, b) {
+      final am = (a as File).lastModifiedSync();
+      final bm = (b as File).lastModifiedSync();
+      return bm.compareTo(am);
+    });
+    const maxFiles = 12;
+    const headBytes = 64 * 1024;
+    for (final f in files.take(maxFiles)) {
+      try {
+        final file = f as File;
+        final raf = file.openSync();
+        try {
+          final toRead = raf.lengthSync() < headBytes
+              ? raf.lengthSync()
+              : headBytes;
+          final bytes = raf.readSync(toRead);
+          final text = utf8.decode(bytes, allowMalformed: true);
+          for (final match in _codexLogModelRegex.allMatches(text)) {
+            final id = match.namedGroup('id')?.trim() ?? '';
+            if (id.isNotEmpty) models.add(id);
+          }
+        } finally {
+          raf.closeSync();
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return models.toList();
 }
 
 String? _discoverClaudeConfiguredModel() {
@@ -8286,6 +8499,14 @@ _ProcessInvocation _buildProcessInvocation(String command, List<String> args) {
       if (nodeInvocation != null) {
         final (nodeExe, nodeFlags, scriptPath) = nodeInvocation;
 
+        // Some packages (current Claude Code) ship a native .exe and
+        // the .cmd just forwards to it — no Node.js involved. Running
+        // node over a native binary fails ("SyntaxError: Invalid or
+        // unexpected token" or similar); invoke the .exe directly.
+        if (scriptPath.toLowerCase().endsWith('.exe')) {
+          return _ProcessInvocation(command: scriptPath, args: args);
+        }
+
         // Some npm packages (e.g. opencode) ship a Node.js launcher that
         // spawnSync's a platform-native binary. Dart's pipes are incompatible
         // with libuv's stdio inheritance (UV_UNKNOWN on Windows), so try to
@@ -8295,10 +8516,10 @@ _ProcessInvocation _buildProcessInvocation(String command, List<String> args) {
           return _ProcessInvocation(command: nativeBinary, args: args);
         }
 
-        // Pure Node.js CLI (gemini, claude, codex, etc.) — run node directly
-        // with an expanded heap limit. AI tools regularly exceed V8's default
-        // ~4 GB ceiling when processing large diffs. Preserve any node flags
-        // from the .cmd wrapper (e.g. --no-warnings=DEP0040 for gemini).
+        // Pure Node.js CLI (gemini, codex, older claude) — run node
+        // directly with an expanded heap limit. AI tools regularly
+        // exceed V8's default ~4 GB ceiling when processing large
+        // diffs. Preserve any node flags from the .cmd wrapper.
         return _ProcessInvocation(
           command: nodeExe,
           args: [

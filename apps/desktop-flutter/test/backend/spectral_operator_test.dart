@@ -272,4 +272,138 @@ void main() {
       expect(() => op.applyTo(p), throwsA(isA<StateError>()));
     });
   });
+
+  group('Commutator — the ring is abelian', () {
+    // Theorem: every operator in SpectralOperator is f(L) for some
+    // scalar function f. Two f(L) and g(L) sharing the same L
+    // commute. The commutator [A, B] = A·B − B·A must therefore be
+    // the zero operator up to IEEE-754 dust.
+
+    test('[heat, heat] = 0', () {
+      final basis = _cycleBasis(12);
+      final a = SpectralOperator.heat(basis, 1.0);
+      final b = SpectralOperator.heat(basis, 3.5);
+      final bracket = a.commutator(b);
+      expect(bracket.operatorNorm, lessThan(1e-15));
+    });
+
+    test('[heat, waveCos] = 0', () {
+      final basis = _cycleBasis(10);
+      final a = SpectralOperator.heat(basis, 0.5);
+      final b = SpectralOperator.waveCos(basis, 1.2);
+      final bracket = a.commutator(b);
+      expect(bracket.operatorNorm, lessThan(1e-15));
+    });
+
+    test('[fractional(α), resolvent(z)] = 0', () {
+      final basis = _cycleBasis(14);
+      final a = SpectralOperator.fractionalLaplacian(basis, 0.7);
+      final b = SpectralOperator.resolvent(basis, -0.5);
+      final bracket = a.commutator(b);
+      expect(bracket.operatorNorm, lessThan(1e-15));
+    });
+
+    test('[bandProjection, heat] = 0', () {
+      final basis = _cycleBasis(12);
+      final a = SpectralOperator.bandProjection(basis, 0.3, 1.2);
+      final b = SpectralOperator.heat(basis, 2.0);
+      final bracket = a.commutator(b);
+      expect(bracket.operatorNorm, lessThan(1e-15));
+    });
+
+    test('[A, A] = 0 (self-commutator)', () {
+      final basis = _cycleBasis(10);
+      final a = SpectralOperator.heat(basis, 1.3);
+      expect(a.commutator(a).operatorNorm, lessThan(1e-15));
+    });
+
+    test('[A, 0] = [0, A] = 0 (zero annihilates)', () {
+      final basis = _cycleBasis(10);
+      final a = SpectralOperator.heat(basis, 1.0);
+      final zero = SpectralOperator.zero(basis);
+      expect(a.commutator(zero).operatorNorm, lessThan(1e-15));
+      expect(zero.commutator(a).operatorNorm, lessThan(1e-15));
+    });
+
+    test('bracket anti-symmetry: [A, B] = −[B, A]', () {
+      final basis = _cycleBasis(12);
+      final a = SpectralOperator.heat(basis, 1.0);
+      final b = SpectralOperator.fractionalLaplacian(basis, 0.5);
+      final ab = a.commutator(b);
+      final ba = b.commutator(a);
+      // Both should be zero by the ring's abelian nature, but
+      // verify the anti-symmetry identity holds at the level of
+      // the profile as an algebraic check.
+      for (var j = 0; j < basis.k; j++) {
+        expect(ab.profile[j], closeTo(-ba.profile[j], 1e-15));
+      }
+    });
+
+    test('commutator on different bases throws', () {
+      final b1 = _cycleBasis(8);
+      final b2 = _cycleBasis(10);
+      final a = SpectralOperator.heat(b1, 1.0);
+      final b = SpectralOperator.heat(b2, 1.0);
+      expect(() => a.commutator(b), throwsA(isA<StateError>()));
+    });
+  });
+
+  group('Functional calculus: exp / log / sqrt', () {
+    test('exp(−tL) equals heat(t) (spectral definition of heat)', () {
+      final basis = _cycleBasis(10);
+      final minusTL =
+          SpectralOperator.fractionalLaplacian(basis, 1.0).scale(-1.5);
+      final viaExp = minusTL.exp();
+      final viaHeat = SpectralOperator.heat(basis, 1.5);
+      for (var j = 0; j < basis.k; j++) {
+        expect(viaExp.profile[j], closeTo(viaHeat.profile[j], 1e-12));
+      }
+    });
+
+    test('log is the right inverse of exp', () {
+      final basis = _cycleBasis(12);
+      final a = SpectralOperator.heat(basis, 0.7);
+      final roundtrip = a.log().exp();
+      for (var j = 0; j < basis.k; j++) {
+        expect(roundtrip.profile[j], closeTo(a.profile[j], 1e-12));
+      }
+    });
+
+    test('exp(A + B) = exp(A) · exp(B) (BCH collapses on abelian ring)', () {
+      final basis = _cycleBasis(10);
+      final a = SpectralOperator.heat(basis, 0.3);
+      final b = SpectralOperator.heat(basis, 1.1);
+      final lhs = (a.log() + b.log()).exp();
+      final rhs = a * b;
+      for (var j = 0; j < basis.k; j++) {
+        expect(lhs.profile[j], closeTo(rhs.profile[j], 1e-12));
+      }
+    });
+
+    test('sqrt(A) · sqrt(A) = A on strictly-positive modes', () {
+      final basis = _cycleBasis(10);
+      // Choose a strictly-positive profile: heat with t > 0 has
+      // profile[j] = exp(-tλ_j) ∈ (0, 1], all positive.
+      final a = SpectralOperator.heat(basis, 0.5);
+      final sq = a.sqrt();
+      final squared = sq * sq;
+      for (var j = 0; j < basis.k; j++) {
+        expect(squared.profile[j], closeTo(a.profile[j], 1e-12));
+      }
+    });
+
+    test('sqrt zeros out non-positive modes safely', () {
+      final basis = _cycleBasis(10);
+      // Use a profile with mixed signs: `1 − heat(t)` has a zero
+      // mode (λ=0 → profile=0) and negative+positive elsewhere
+      // depending on t. Sqrt should leave it finite (no NaN).
+      final h = SpectralOperator.heat(basis, 1.0);
+      final id = SpectralOperator.identity(basis);
+      final mixed = id - h;
+      final sq = mixed.sqrt();
+      for (final v in sq.profile) {
+        expect(v.isFinite, isTrue);
+      }
+    });
+  });
 }

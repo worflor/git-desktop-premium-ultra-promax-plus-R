@@ -1206,6 +1206,17 @@ int _supportBumpFromReach(DiffPinnedSpectral? sp, int maxBump) {
   return (sp.reach * maxBump).round().clamp(0, maxBump);
 }
 
+/// Support bump from the Wentzell-Freidlin gravitational potential
+/// between the anchor and a related file. Low V ⇒ strongly bound ⇒
+/// more support. Bumps in integer tiers so the comet's polyhedron
+/// topology only moves for meaningful coupling strengths.
+int _supportBumpFromGravity(double? grav) {
+  if (grav == null || !grav.isFinite) return 0;
+  if (grav < 1.5) return 2;
+  if (grav < 4.0) return 1;
+  return 0;
+}
+
 _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
   final comets = <Comet>[];
   final roles = <_ChartRole>[];
@@ -1371,12 +1382,14 @@ _ChartData _buildChart(AppTokens t, DiffPinnedContextModel c) {
         .toDouble();
     final double pitch = _pitchForRelated(f);
     // Support = relation-flags + how many transport edges actually
-    // touch this file + spectral reach bump. Both flags set + two
-    // edges + wide spectral reach lands the node on icosa.
+    // touch this file + spectral reach bump + gravitational binding
+    // strength to the anchor. Both flags set + two edges + wide reach +
+    // strong binding lands the node on icosa.
     final relatedSupport = (f.coupled ? 2 : 0) +
         (f.semantic ? 2 : 0) +
         (edgeCountByPath[f.path] ?? 0) +
-        _supportBumpFromReach(f.spectral, 2);
+        _supportBumpFromReach(f.spectral, 2) +
+        _supportBumpFromGravity(f.gravity);
     final relHarmonics = f.spectral == null
         ? const [JustIntonation.tonic, 0.0, 0.0, 0.0]
         : _harmonicsFromSpectral(f.spectral!);

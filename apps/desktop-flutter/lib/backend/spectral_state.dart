@@ -20,6 +20,7 @@
 // states produces distinct signatures.
 
 import 'logos_core.dart';
+import 'logos_signature.dart';
 import 'spectral_spacetime.dart';
 
 /// Immutable snapshot of a Logos engine's spectral state.
@@ -240,7 +241,7 @@ class LogosStateDiff {
       final paths = a.fileSpectrum!.nodePaths!;
       final limit = fpA.length < fpB.length ? fpA.length : fpB.length;
       for (var i = 0; i < limit && i < paths.length; i++) {
-        final d = _popcount8(fpA[i] ^ fpB[i]);
+        final d = popcount8(fpA[i] ^ fpB[i]);
         if (d > 0) perPath[paths[i]] = d;
       }
     }
@@ -281,8 +282,3 @@ Signature _computeSignature(
   return Signature(lo: hLo, hi: hHi);
 }
 
-int _popcount8(int v) {
-  v = (v & 0x55) + ((v >> 1) & 0x55);
-  v = (v & 0x33) + ((v >> 2) & 0x33);
-  return (v & 0x0f) + ((v >> 4) & 0x0f);
-}

@@ -237,6 +237,7 @@ List<String>? _fontFallbackFor(AppThemeId id) {
     case AppThemeId.aether:
     case AppThemeId.quanta:
     case AppThemeId.kirby:
+    case AppThemeId.barbie:
       return const ['Segoe UI', 'Arial', 'sans-serif'];
     case AppThemeId.nacre:
     case AppThemeId.loverboy:
@@ -300,6 +301,13 @@ SliderComponentShape _sliderThumbShape(AppTokens t) => switch (t.id) {
           fillColor: t.bg3.withValues(alpha: 0.75),
           borderColor: t.accentBright,
           glowColor: t.chromeBorder.withValues(alpha: 0.45),
+        ),
+      // white disc + magenta rim. same primitive as halo with the
+      // accent swapped.
+      AppThemeId.barbie => _HaloSliderThumbShape(
+          size: 18,
+          fillColor: Colors.white,
+          borderColor: t.accentBright,
         ),
     };
 
@@ -446,6 +454,20 @@ class _ThemedSliderTrackShape extends SliderTrackShape
           trackRRect,
           tokens.accentBright.withValues(alpha: 0.35),
           width: 0.8,
+        );
+      case AppThemeId.barbie:
+        // colored glow + magenta hairline — plastic-edge light bleed
+        _drawTrackGlow(
+          canvas,
+          trackRRect,
+          tokens.accentBright.withValues(alpha: 0.22),
+          blur: 4,
+        );
+        _strokeTrack(
+          canvas,
+          trackRRect,
+          tokens.accentBright.withValues(alpha: 0.45),
+          width: 0.9,
         );
     }
   }

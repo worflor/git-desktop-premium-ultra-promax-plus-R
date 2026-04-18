@@ -288,6 +288,15 @@ List<BoxShadow> _primaryButtonShadows(
             offset: const Offset(2, 2),
           ),
         ],
+      // soft pink halo under the button — blurred, colored shadow
+      // for "plastic piece placed on the page"
+      AppThemeId.barbie => [
+          BoxShadow(
+            color: t.accentBright.withValues(alpha: 0.18),
+            offset: const Offset(0, 2),
+            blurRadius: 6,
+          ),
+        ],
       _ => [
           BoxShadow(
             color: base.withValues(alpha: t.isDark ? 0.22 : 0.10),
@@ -310,6 +319,15 @@ List<BoxShadow> _primaryButtonShadows(
         BoxShadow(
           color: t.accentBright.withValues(alpha: 0.65),
           offset: const Offset(3, 3),
+        ),
+      ],
+    // hover: deeper halo, slightly pushed down — reads as the piece
+    // lifting toward the cursor
+    AppThemeId.barbie => [
+        BoxShadow(
+          color: t.accentBright.withValues(alpha: 0.35),
+          offset: const Offset(0, 3),
+          blurRadius: 10,
         ),
       ],
     _ => [

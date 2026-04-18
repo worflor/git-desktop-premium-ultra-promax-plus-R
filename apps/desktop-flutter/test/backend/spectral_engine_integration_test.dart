@@ -12,6 +12,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/file_coupling.dart';
+import 'package:git_desktop/backend/logos_core.dart';
 import 'package:git_desktop/backend/logos_git.dart';
 import 'package:git_desktop/backend/spectral_kizuna.dart';
 import 'package:git_desktop/backend/spectral_operator.dart';
@@ -277,6 +278,95 @@ void main() {
       final op = SpectralOperator.heat(basis, 1.0);
       final out = op.applyTo(proj);
       expect(out.basisSignature, equals(proj.basisSignature));
+    });
+  });
+
+  group('Full-stack new-observables sanity check', () {
+    // Confirms that rigidity + AB margin + fragmentation + surgery +
+    // Poincaré + eigenvalueDistance all produce sensible values on an
+    // engine-built basis — the canonical integration path consumers
+    // would drive.
+    final engine = LogosGit.buildFromStats(_largeStats());
+
+    test('rigidity returns a finite scalar on the engine basis', () {
+      final basis = engine.spectralBasis()!;
+      final r = basis.spectralRigidity;
+      expect(r.isFinite, isTrue);
+      expect(r, greaterThan(0.0));
+      expect(r, lessThan(1.0));
+    });
+
+    test('Alon-Boppana margin returns either a finite scalar or NaN',
+        () {
+      final basis = engine.spectralBasis()!;
+      final m = alonBoppanaMargin(basis, engine.graph);
+      // NaN is a valid outcome for very sparse graphs (d̄ < 3); a
+      // finite value must be non-negative.
+      if (m.isFinite) {
+        expect(m, greaterThanOrEqualTo(0.0));
+      } else {
+        expect(m.isNaN, isTrue,
+            reason: 'non-finite result must be NaN, got $m '
+                '(harmonic-mean-degree = ${engine.graph.harmonicMeanDegree()})');
+      }
+    });
+
+    test('fragmentationCurve spans the normalised weight range', () {
+      final curve = engine.graph.fragmentationCurve(const [0.0, 0.1, 1.0]);
+      expect(curve.length, 3);
+      // Monotonic: as θ rises, components non-decreasing; largest
+      // fraction non-increasing.
+      for (var i = 1; i < curve.length; i++) {
+        expect(curve[i].componentCount,
+            greaterThanOrEqualTo(curve[i - 1].componentCount));
+        expect(curve[i].largestFraction,
+            lessThanOrEqualTo(curve[i - 1].largestFraction + 1e-12));
+      }
+      // β₁ is always |E_sub| − n + β₀ at each row.
+      for (final r in curve) {
+        expect(r.cycleRank,
+            equals((r.edgeCount - engine.graph.n + r.componentCount)
+                .clamp(0, 1 << 30)));
+      }
+    });
+
+    test('Poincaré table fits inside the unit disc', () {
+      final basis = engine.spectralBasis()!;
+      final table = basis.poincareCoordinateTable();
+      expect(table.length, basis.n * 2);
+      for (var i = 0; i < basis.n; i++) {
+        final r2 = table[i * 2] * table[i * 2] +
+            table[i * 2 + 1] * table[i * 2 + 1];
+        expect(r2, lessThan(1.0));
+      }
+    });
+
+    test('Ricci surgery fragments a block-structured graph', () {
+      final field = engine.ricciField();
+      final curve = field.surgeryFragmentation(
+        engine.graph.n,
+        const [-1.0, 0.0, 1.0],
+      );
+      // θ = -1.0 keeps everything → one big component for this fixture.
+      // θ = 1.0 cuts all interior edges → very fragmented.
+      expect(curve.first.componentCount,
+          lessThan(curve.last.componentCount));
+    });
+
+    test('eigenvalueDistance from self is zero, from resampled non-zero',
+        () {
+      final basis = engine.spectralBasis()!;
+      expect(basis.eigenvalueDistance(basis), closeTo(0.0, 1e-15));
+      // Second engine built from same stats is deterministic, so
+      // distance remains ~0. Instead build from a slightly different
+      // stat set and expect nonzero.
+      final engine2 = LogosGit.buildFromStats(
+          _largeStats(nFiles: 300, nCommits: 420));
+      final basis2 = engine2.spectralBasis()!;
+      if (basis.k == basis2.k) {
+        final d = basis.eigenvalueDistance(basis2);
+        expect(d, greaterThan(0.0));
+      }
     });
   });
 }

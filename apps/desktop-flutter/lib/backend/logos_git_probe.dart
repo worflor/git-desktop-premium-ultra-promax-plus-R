@@ -623,7 +623,15 @@ List<RelevanceScore> diffuseFromProbe({
   double? temperatureOverride,
 }) {
   if (probe.sourceWeights.isEmpty) return const [];
-  final t = temperatureOverride ?? probe.suggestedTemperature ?? 1.0;
+  final heuristicT = temperatureOverride ?? probe.suggestedTemperature ?? 1.0;
+  // Snap the heuristic temperature to the nearest heat-capacity peak
+  // (a natural scale of the graph). Peaks mark phase transitions —
+  // temperatures at which the codebase's effective structure changes
+  // character. If a peak sits within ±40% of the heuristic, use it;
+  // otherwise keep the heuristic. Preserves sensitivity to diff
+  // regime while pinning the value to the repo's physics when the
+  // two agree.
+  final t = _snapToNaturalScale(engine, heuristicT);
   final symbolPaths = <String>{
     for (final p in engine.symbolEdges.keys)
       if (!engine.pathToId.containsKey(p)) p,
@@ -694,6 +702,34 @@ List<RelevanceScore> _weightedDiffuse({
     t: t,
     excludePaths: probe.primaryPaths,
   );
+}
+
+/// Snap a heuristic temperature to the nearest heat-capacity peak on
+/// the engine's spectral basis, if one sits within ±40% of `t`.
+///
+/// The heuristic in [LogosGitProbeBuilder.adaptiveTemperature] gives a
+/// prior from the diff's own regime; the heat-capacity peaks give the
+/// codebase's actual phase-transition scales. When the two agree to
+/// within a fixed fraction, we use the peak — snapping the diffusion
+/// temperature to a real structural transition rather than a heuristic
+/// interpolation.
+double _snapToNaturalScale(LogosGit engine, double t) {
+  if (t <= 0) return t;
+  final basis = engine.spectralBasis();
+  if (basis == null) return t;
+  final peaks = basis.naturalScales();
+  if (peaks.isEmpty) return t;
+  double best = t;
+  double bestRel = double.infinity;
+  for (final p in peaks) {
+    if (p <= 0) continue;
+    final rel = (p - t).abs() / t;
+    if (rel < bestRel) {
+      bestRel = rel;
+      best = p;
+    }
+  }
+  return bestRel <= 0.4 ? best : t;
 }
 
 // Tests reach into these private helpers via the visible-for-testing

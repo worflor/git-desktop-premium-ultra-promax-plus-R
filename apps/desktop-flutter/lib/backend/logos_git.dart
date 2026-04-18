@@ -78,6 +78,7 @@ import 'engram_file_ktable.dart';
 import 'engram_fit.dart';
 import 'file_coupling.dart';
 import 'logos_core.dart';
+import 'logos_signature.dart';
 import 'spectral_kizuna.dart';
 import 'spectral_ricci.dart';
 import 'spectral_spacetime.dart';

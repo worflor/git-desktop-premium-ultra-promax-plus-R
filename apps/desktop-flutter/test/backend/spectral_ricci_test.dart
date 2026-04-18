@@ -320,4 +320,126 @@ void main() {
       expect(kappa, isNull);
     });
   });
+
+  group('ricciFlowStep — the graph evolves under its own curvature', () {
+    test('shapes the CSR topology unchanged, values only', () {
+      final (graph, _) = _dumbbell(clusterSize: 5, bridgeCount: 1);
+      final field = RicciField.sinkhorn(graph);
+      final evolved = field.ricciFlowStep(graph, dt: 0.05);
+      expect(evolved.n, equals(graph.n));
+      expect(evolved.indptr, equals(graph.indptr));
+      expect(evolved.indices, equals(graph.indices));
+      expect(evolved.values.length, equals(graph.values.length));
+    });
+
+    test('bridge edges get STRONGER relative to clique edges', () {
+      // The headline theorem: Ricci flow smooths curvature. Negative-κ
+      // edges (bridges) get their weights multiplied by (1 − dt·κ_neg),
+      // and −κ is positive so the factor > 1 — bridges boost.
+      // Positive-κ clique edges get multiplied by (1 − dt·κ_pos),
+      // factor < 1 — they shrink.
+      final (graph, bridges) = _dumbbell(clusterSize: 6, bridgeCount: 1);
+      final field = RicciField.sinkhorn(graph);
+      final evolved = field.ricciFlowStep(graph, dt: 0.1);
+      // Locate bridge slot and a clique-internal slot.
+      final (bu, bv) = bridges.first;
+      int? bridgeP;
+      int? cliqueP;
+      for (var p = graph.indptr[bu]; p < graph.indptr[bu + 1]; p++) {
+        if (graph.indices[p] == bv) {
+          bridgeP = p;
+          break;
+        }
+      }
+      // Find a clique-internal edge (both endpoints in the same cluster).
+      for (var p = graph.indptr[0]; p < graph.indptr[1]; p++) {
+        final v = graph.indices[p];
+        if (v != bv && v < 6) {
+          cliqueP = p;
+          break;
+        }
+      }
+      expect(bridgeP, isNotNull);
+      expect(cliqueP, isNotNull);
+      final bridgeRatio = evolved.values[bridgeP!] / graph.values[bridgeP];
+      final cliqueRatio = evolved.values[cliqueP!] / graph.values[cliqueP];
+      expect(bridgeRatio, greaterThan(cliqueRatio),
+          reason: 'Ricci flow should boost bridges relative to cliques');
+    });
+
+    test('dt=0 is identity', () {
+      final (graph, _) = _dumbbell(clusterSize: 4, bridgeCount: 1);
+      final field = RicciField.sinkhorn(graph);
+      final evolved = field.ricciFlowStep(graph, dt: 0.0);
+      for (var p = 0; p < graph.values.length; p++) {
+        expect(evolved.values[p], closeTo(graph.values[p], 1e-12));
+      }
+    });
+
+    test('values stay non-negative for reasonable dt', () {
+      final (graph, _) = _dumbbell(clusterSize: 5, bridgeCount: 1);
+      final field = RicciField.sinkhorn(graph);
+      final evolved = field.ricciFlowStep(graph, dt: 0.1);
+      for (final v in evolved.values) {
+        expect(v, greaterThanOrEqualTo(0.0));
+      }
+    });
+  });
+
+  group('RicciField.surgeryFragmentation', () {
+    test('dumbbell fragments when θ rises above the bridge curvature', () {
+      final (graph, bridges) = _dumbbell(clusterSize: 6, bridgeCount: 1);
+      final field = RicciField.sinkhorn(graph);
+      // Bridge κ is strongly negative (≈ −1.4 per tmp_ice_walls §3).
+      // Pick thresholds that straddle the gap between bridge and cluster κ.
+      final curve = field.surgeryFragmentation(
+        graph.n,
+        [-2.0, -0.5, 0.0],
+      );
+      // θ = -2.0: keep every edge including bridge → one component.
+      expect(curve[0].componentCount, 1);
+      expect(curve[0].largestFraction, closeTo(1.0, 1e-12));
+      // θ = -0.5: bridge cut (κ ≈ -1.4 < -0.5) but cluster edges survive
+      //   (cluster κ ≈ +0.44 > -0.5) → two components, each ~half.
+      expect(curve[1].componentCount, 2);
+      expect(curve[1].largestFraction, closeTo(0.5, 0.05));
+      // θ = 0.0: all edges with κ ≤ 0 gone. Cluster edges (κ ≈ +0.44)
+      //   survive; bridge (negative) long gone → still two clusters,
+      //   still ~half/half. (Some weak cluster edges could fall below 0.)
+      expect(curve[2].componentCount, greaterThanOrEqualTo(2));
+    });
+
+    test('monotone: component count non-decreasing as θ rises', () {
+      final (graph, _) = _dumbbell(clusterSize: 5, bridgeCount: 1);
+      final field = RicciField.sinkhorn(graph);
+      final curve = field.surgeryFragmentation(
+        graph.n,
+        const [-3.0, -1.0, -0.5, 0.0, 0.5, 1.0],
+      );
+      for (var i = 1; i < curve.length; i++) {
+        expect(curve[i].componentCount,
+            greaterThanOrEqualTo(curve[i - 1].componentCount));
+      }
+    });
+
+    test('K_n never fragments — all cluster edges have positive κ', () {
+      final graph = _complete(7);
+      final field = RicciField.sinkhorn(graph);
+      // Even at θ just below min(κ), no bridge exists → one component.
+      final curve = field.surgeryFragmentation(
+        graph.n,
+        [field.depth - 0.01, 0.0, field.depth + 0.01],
+      );
+      expect(curve[0].componentCount, 1,
+          reason: 'no edge has κ below field.depth − ε');
+    });
+
+    test('θ very high → every node isolated', () {
+      final (graph, _) = _dumbbell(clusterSize: 4, bridgeCount: 1);
+      final field = RicciField.sinkhorn(graph);
+      final curve = field.surgeryFragmentation(graph.n, [10.0]);
+      expect(curve.single.componentCount, graph.n);
+      expect(curve.single.largestFraction, closeTo(1.0 / graph.n, 1e-12));
+    });
+  });
 }

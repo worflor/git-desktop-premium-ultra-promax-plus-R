@@ -29,6 +29,7 @@ import 'dart:typed_data';
 
 import 'logos_core.dart';
 import 'logos_git.dart';
+import 'logos_signature.dart';
 import 'spectral_state.dart';
 
 /// An event applied to a [LogosRatchet]. Events are ordered by a
@@ -370,7 +371,7 @@ class LogosRatchet {
           ? selfFp.length
           : peerFp.length;
       for (var i = 0; i < limit && i < selfPaths.length; i++) {
-        final d = _popcount8(selfFp[i] ^ peerFp[i]);
+        final d = popcount8(selfFp[i] ^ peerFp[i]);
         if (d > 0) hamming[selfPaths[i]] = d;
       }
     }
@@ -390,12 +391,3 @@ class LogosRatchet {
   }
 }
 
-/// 8-bit popcount via three mask-add passes. Duplicated from
-/// `logos_core.dart`'s private `_popcount8` — kept local here so
-/// the ratchet module has zero extra import surface beyond
-/// `LogosGit` + `SpectralBasis`.
-int _popcount8(int v) {
-  v = (v & 0x55) + ((v >> 1) & 0x55);
-  v = (v & 0x33) + ((v >> 2) & 0x33);
-  return (v & 0x0f) + ((v >> 4) & 0x0f);
-}

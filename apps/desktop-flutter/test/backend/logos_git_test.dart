@@ -21,6 +21,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/file_coupling.dart';
 import 'package:git_desktop/backend/logos_core.dart';
 import 'package:git_desktop/backend/logos_git.dart';
+import 'package:git_desktop/backend/logos_signature.dart';
 import 'package:git_desktop/backend/logos_git_integrity.dart';
 import 'package:git_desktop/backend/spectral_persistence.dart';
 import 'package:git_desktop/backend/spectral_spacetime.dart';
@@ -3164,5 +3165,167 @@ void _spectralTests() {
       expect(table[i * 3 + 1], closeTo(row[1], 1e-12));
       expect(table[i * 3 + 2], closeTo(row[2], 1e-12));
     }
+  });
+
+  test('Poincaré coordinates live inside the open unit disc', () {
+    final g = buildPath(40);
+    final basis = SpectralBasis.fromGraph(g, 10);
+    final table = basis.poincareCoordinateTable(targetRadius: 0.92);
+    expect(table, hasLength(40 * 2));
+    for (var i = 0; i < 40; i++) {
+      final x = table[i * 2];
+      final y = table[i * 2 + 1];
+      final r = math.sqrt(x * x + y * y);
+      expect(r, lessThan(0.92 + 1e-12),
+          reason: 'node $i breached the targetRadius boundary');
+      expect(r.isFinite, isTrue);
+    }
+  });
+
+  test('Poincaré coordinates are symmetric under graph-endpoint swap', () {
+    // A path graph's spectrum has a sign symmetry — the first Fiedler
+    // mode is monotonic from one end to the other. Nodes at symmetric
+    // positions around the center should sit at symmetric radii.
+    final g = buildPath(20);
+    final basis = SpectralBasis.fromGraph(g, 8);
+    final t = basis.poincareCoordinateTable();
+    for (var i = 0; i < 10; i++) {
+      final rA = math.sqrt(t[i * 2] * t[i * 2] + t[i * 2 + 1] * t[i * 2 + 1]);
+      final j = 19 - i;
+      final rB = math.sqrt(t[j * 2] * t[j * 2] + t[j * 2 + 1] * t[j * 2 + 1]);
+      expect(rA, closeTo(rB, 0.05),
+          reason: 'mirror nodes $i/$j should embed at similar radii');
+    }
+  });
+
+  test('poincareDistance is 0 for same point, finite for distinct', () {
+    expect(poincareDistance(0.3, 0.4, 0.3, 0.4), closeTo(0.0, 1e-12));
+    final d = poincareDistance(0.0, 0.0, 0.5, 0.0);
+    expect(d, greaterThan(0.0));
+    expect(d.isFinite, isTrue);
+    // Boundary: points on/outside unit circle return infinity.
+    expect(poincareDistance(0.0, 0.0, 1.0, 0.0), equals(double.infinity));
+  });
+
+  test('poincareDistance respects triangle inequality on random triples', () {
+    final rng = math.Random(42);
+    for (var trial = 0; trial < 20; trial++) {
+      double pt() => (rng.nextDouble() - 0.5) * 1.6; // radius < 0.8
+      final ax = pt(), ay = pt();
+      final bx = pt(), by = pt();
+      final cx = pt(), cy = pt();
+      if (ax * ax + ay * ay >= 0.81) continue;
+      if (bx * bx + by * by >= 0.81) continue;
+      if (cx * cx + cy * cy >= 0.81) continue;
+      final dab = poincareDistance(ax, ay, bx, by);
+      final dbc = poincareDistance(bx, by, cx, cy);
+      final dac = poincareDistance(ax, ay, cx, cy);
+      expect(dac, lessThanOrEqualTo(dab + dbc + 1e-9),
+          reason: 'triangle inequality failed on trial $trial');
+    }
+  });
+
+  test('Poincaré beats Euclidean distortion on a tree graph', () {
+    // A balanced binary tree is the canonical tree-like (δ = 0) fixture.
+    // Hyperbolic embedding should track hop distance dramatically better
+    // than Euclidean in the same number of dimensions.
+    CsrGraph buildBinaryTree(int depth) {
+      final n = (1 << (depth + 1)) - 1;
+      final indptr = Int32List(n + 1);
+      final indices = <int>[];
+      final values = <double>[];
+      final row = List<List<(int, double)>>.generate(n, (_) => []);
+      for (var i = 0; i < n; i++) {
+        final left = 2 * i + 1;
+        final right = 2 * i + 2;
+        if (left < n) {
+          row[i].add((left, 1.0));
+          row[left].add((i, 1.0));
+        }
+        if (right < n) {
+          row[i].add((right, 1.0));
+          row[right].add((i, 1.0));
+        }
+      }
+      for (var i = 0; i < n; i++) {
+        indptr[i + 1] = indptr[i] + row[i].length;
+        for (final (j, w) in row[i]) {
+          indices.add(j);
+          values.add(w);
+        }
+      }
+      return CsrGraph(
+        n: n,
+        indptr: indptr,
+        indices: Int32List.fromList(indices),
+        values: Float64List.fromList(values),
+      );
+    }
+
+    final g = buildBinaryTree(5); // 63 nodes, depth 5
+    final basis = SpectralBasis.fromGraph(g, 12);
+    final euc2d = basis.nodeCoordinateTable(dims: 2);
+    final hyp = basis.poincareCoordinateTable();
+
+    // Compute ~200 random-pair (euclidean 2D vs hyperbolic 2D) vs a
+    // per-pair "rank proxy" — shared-ancestor depth difference in the
+    // tree. Spearman-style: count how often each metric preserves the
+    // ordering of pair distances vs the true graph distance.
+    final rng = math.Random(0xC0DE);
+    var hypBetter = 0;
+    var eucBetter = 0;
+    for (var t = 0; t < 300; t++) {
+      final a = rng.nextInt(63);
+      final b = rng.nextInt(63);
+      final c = rng.nextInt(63);
+      final d = rng.nextInt(63);
+      if (a == b || c == d) continue;
+      // True distance via path-to-root reconstruction.
+      int treeDist(int u, int v) {
+        final pu = <int>[u];
+        var x = u;
+        while (x > 0) {
+          x = (x - 1) >> 1;
+          pu.add(x);
+        }
+        var y = v;
+        var steps = 0;
+        final seen = pu.toSet();
+        while (!seen.contains(y)) {
+          y = (y - 1) >> 1;
+          steps++;
+        }
+        return steps + pu.indexOf(y);
+      }
+
+      final dAB = treeDist(a, b);
+      final dCD = treeDist(c, d);
+      if (dAB == dCD) continue;
+
+      double euclid(int i, int j) {
+        final dx = euc2d[i * 2] - euc2d[j * 2];
+        final dy = euc2d[i * 2 + 1] - euc2d[j * 2 + 1];
+        return math.sqrt(dx * dx + dy * dy);
+      }
+
+      final eAB = euclid(a, b);
+      final eCD = euclid(c, d);
+      final hAB = poincareDistance(
+          hyp[a * 2], hyp[a * 2 + 1], hyp[b * 2], hyp[b * 2 + 1]);
+      final hCD = poincareDistance(
+          hyp[c * 2], hyp[c * 2 + 1], hyp[d * 2], hyp[d * 2 + 1]);
+      if (!hAB.isFinite || !hCD.isFinite) continue;
+
+      final trueOrder = dAB < dCD ? -1 : 1;
+      final eOrder = eAB < eCD ? -1 : 1;
+      final hOrder = hAB < hCD ? -1 : 1;
+      if (hOrder == trueOrder && eOrder != trueOrder) hypBetter++;
+      if (eOrder == trueOrder && hOrder != trueOrder) eucBetter++;
+    }
+    // On a tree, hyperbolic should win clearly — not a tie.
+    expect(hypBetter, greaterThan(eucBetter),
+        reason:
+            'On a tree, Poincaré must track hop distance better than Euclidean '
+            '(got hypBetter=$hypBetter, eucBetter=$eucBetter)');
   });
 }

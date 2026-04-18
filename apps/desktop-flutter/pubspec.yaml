@@ -82,3 +82,4 @@ flutter:
     - shaders/dark_iridescent.frag
     - shaders/loverboy_bg.frag
     - shaders/glass.frag
+    - shaders/plastic.frag

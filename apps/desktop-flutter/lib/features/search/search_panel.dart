@@ -200,7 +200,7 @@ class _SearchInputState extends State<_SearchInput> {
       controller: widget.controller,
       autofocus: true,
       fontSize: 13,
-      hintText: 'Search commits...',
+      hintText: 'search commits...',
       onChanged: widget.onChanged,
       onSubmitted: widget.onChanged,
       onTapOutside: (_) => FocusScope.of(context).unfocus(),

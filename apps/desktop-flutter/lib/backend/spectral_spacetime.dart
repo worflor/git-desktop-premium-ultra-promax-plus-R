@@ -26,6 +26,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'logos_core.dart';
+import 'logos_signature.dart';
 
 /// Spectrum of a Kronecker-sum operator over two `SpectralBasis`
 /// factors. Holds both factor bases plus the materialised grid of
