@@ -5061,8 +5061,6 @@ class _ChangesPageState extends State<ChangesPage> {
                                 dreamHint: _shapeMode
                                     ? null
                                     : _commitDream.value?.phrase,
-                                dreamCharacter:
-                                    _commitDream.value?.character,
                                 dreamThinking: _commitDream.thinking,
                                 enabled: !_actionRunning,
                                 onChanged: (value) {
@@ -9913,14 +9911,13 @@ class _StateBadge extends StatelessWidget {
 }
 
 /// Dreamed placeholder overlay for the commit composer. Renders the
-/// engine-generated phrase with per-character morph transitions
-/// (via `ThemeMorphText`), prefixed by a tiny colored dot encoding
-/// the diff's field character. Fades subtly while the engine is
-/// computing a new hint so the user sees the work happening.
+/// engine-generated phrase and cross-fades between phrases. Fades
+/// subtly while the engine is computing so the user sees the work
+/// happening.
 ///
-/// This replaces the plain `InputDecoration.hintText` when the logos
-/// engine has produced a phrase; when it hasn't, the widget isn't
-/// built and the TextField falls back to its default hint.
+/// Replaces the plain `InputDecoration.hintText` when the logos engine
+/// has produced a phrase; when it hasn't, the widget isn't built and
+/// the TextField falls back to its default hint.
 class _DreamHintOverlay extends StatelessWidget {
   final AppTokens tokens;
   final String phrase;
@@ -10005,14 +10002,8 @@ class _CommitComposerField extends StatefulWidget {
 
   /// Dreamed placeholder from the logos engine. When non-null AND the
   /// bound controller is empty, this renders in place of the plain
-  /// `hintText` with per-character morph transitions. Null = fall back
-  /// to the static `hintText`.
+  /// `hintText`. Null = fall back to the static `hintText`.
   final String? dreamHint;
-
-  /// Field-character classification of the current diff. Rendered as a
-  /// tiny colored dot to the left of the dream hint so the engine's
-  /// interpretation is visible without words. Null or `silent` = no dot.
-  final LogosFieldCharacter? dreamCharacter;
 
   /// Whether the engine is currently thinking about a new hint (debounce
   /// pending or compute in flight). Subtly fades the overlay so the
@@ -10048,7 +10039,6 @@ class _CommitComposerField extends StatefulWidget {
     this.shapeTooltip = '',
     this.onToggleShape,
     this.dreamHint,
-    this.dreamCharacter,
     this.dreamThinking = false,
   });
 
