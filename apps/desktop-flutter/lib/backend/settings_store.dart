@@ -33,6 +33,24 @@ class AppSettingsSnapshot {
   final double reduceMotionPhase;
   final bool stashCabinetDefaultExpanded;
   final bool instantBlameHover;
+  /// When true, newly tracked or changed files appearing in a status
+  /// refresh are automatically added to the commit selection. Off by
+  /// default — historical behavior is purely subtractive reconciliation.
+  final bool autoSelectNewChanges;
+  /// When true, the branches page fires a background prefetch of PR /
+  /// issue metadata on load. Off = pull on demand (when the user
+  /// switches to that lens). Default on to preserve existing behavior.
+  final bool fetchOnlineIssuesOnBranchLoad;
+  /// When true, in-progress commit drafts (per branch) and the file
+  /// selection snapshot (per branch/upstream context) persist across
+  /// sessions. Off = both get wiped on save and load — clean slate
+  /// each time. Default on to preserve existing behavior.
+  final bool rememberWorkInProgress;
+  /// Duration of the discard-file undo pill, in seconds. 0 = off (no
+  /// pill, discards are immediately final). Canonical UI stops are
+  /// {0, 3, 6, 10, 15}; any value > 15 is a user-typed custom, which
+  /// the slider surfaces as the top stop's label.
+  final int undoWindowSeconds;
   /// Change list sort guide: 'related' | 'alphabetical' | 'impact'.
   final String fileSortGuide;
   /// When true, the active sort guide is applied in reverse per its own
@@ -81,6 +99,10 @@ class AppSettingsSnapshot {
     required this.reduceMotionPhase,
     required this.stashCabinetDefaultExpanded,
     required this.instantBlameHover,
+    required this.autoSelectNewChanges,
+    required this.fetchOnlineIssuesOnBranchLoad,
+    required this.rememberWorkInProgress,
+    required this.undoWindowSeconds,
     required this.fileSortGuide,
     required this.fileSortInverted,
     required this.commitStructure,
@@ -113,6 +135,10 @@ class AppSettingsSnapshot {
         'reduceMotionPhase': reduceMotionPhase,
         'stashCabinetDefaultExpanded': stashCabinetDefaultExpanded,
         'instantBlameHover': instantBlameHover,
+        'autoSelectNewChanges': autoSelectNewChanges,
+        'fetchOnlineIssuesOnBranchLoad': fetchOnlineIssuesOnBranchLoad,
+        'rememberWorkInProgress': rememberWorkInProgress,
+        'undoWindowSeconds': undoWindowSeconds,
         'fileSortGuide': fileSortGuide,
         'fileSortInverted': fileSortInverted,
         'commitStructure': commitStructure,
@@ -145,6 +171,10 @@ class AppSettingsSnapshot {
         reduceMotionPhase: 0.0,
         stashCabinetDefaultExpanded: false,
         instantBlameHover: false,
+        autoSelectNewChanges: false,
+        fetchOnlineIssuesOnBranchLoad: true,
+        rememberWorkInProgress: true,
+        undoWindowSeconds: 6,
         fileSortGuide: 'related',
         fileSortInverted: false,
         commitStructure: 'title_body',
@@ -237,6 +267,22 @@ class AppSettingsSnapshot {
         json['instantBlameHover'],
         defaults.instantBlameHover,
       ),
+      autoSelectNewChanges: SettingsStore._boolOr(
+        json['autoSelectNewChanges'],
+        defaults.autoSelectNewChanges,
+      ),
+      fetchOnlineIssuesOnBranchLoad: SettingsStore._boolOr(
+        json['fetchOnlineIssuesOnBranchLoad'],
+        defaults.fetchOnlineIssuesOnBranchLoad,
+      ),
+      rememberWorkInProgress: SettingsStore._boolOr(
+        json['rememberWorkInProgress'],
+        defaults.rememberWorkInProgress,
+      ),
+      undoWindowSeconds: SettingsStore._intOr(
+        json['undoWindowSeconds'],
+        defaults.undoWindowSeconds,
+      ).clamp(0, 3600),
       fileSortGuide: SettingsStore._normalizeSortGuide(
         SettingsStore._stringOr(
           json['fileSortGuide'],
@@ -310,6 +356,10 @@ class AppSettingsSnapshot {
     double? reduceMotionPhase,
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
+    bool? autoSelectNewChanges,
+    bool? fetchOnlineIssuesOnBranchLoad,
+    bool? rememberWorkInProgress,
+    int? undoWindowSeconds,
     String? fileSortGuide,
     bool? fileSortInverted,
     String? commitStructure,
@@ -347,6 +397,14 @@ class AppSettingsSnapshot {
       stashCabinetDefaultExpanded:
           stashCabinetDefaultExpanded ?? this.stashCabinetDefaultExpanded,
       instantBlameHover: instantBlameHover ?? this.instantBlameHover,
+      autoSelectNewChanges:
+          autoSelectNewChanges ?? this.autoSelectNewChanges,
+      fetchOnlineIssuesOnBranchLoad: fetchOnlineIssuesOnBranchLoad ??
+          this.fetchOnlineIssuesOnBranchLoad,
+      rememberWorkInProgress:
+          rememberWorkInProgress ?? this.rememberWorkInProgress,
+      undoWindowSeconds:
+          undoWindowSeconds ?? this.undoWindowSeconds,
       fileSortGuide: fileSortGuide ?? this.fileSortGuide,
       fileSortInverted: fileSortInverted ?? this.fileSortInverted,
       commitStructure: commitStructure ?? this.commitStructure,

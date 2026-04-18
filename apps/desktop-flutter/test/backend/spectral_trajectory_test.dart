@@ -1103,4 +1103,63 @@ void main() {
       expect(sub.trajectorySignature, equals(subRebuilt.trajectorySignature));
     });
   });
+
+  group('universality trajectory', () {
+    test('universalityCurve populates one reading per resolved point', () {
+      final t = SpectralTrajectory(points: [
+        _point(rev: 1, graph: _pathGraph(24)),
+        _point(rev: 2, graph: _cycleGraph(24)),
+        _point(rev: 3, graph: _completeGraph(24)),
+      ]);
+      final curve = t.universalityCurve();
+      expect(curve.length, 3);
+      // Every resolved snapshot produces a non-null universality
+      // reading, and every distance lives in [0, 1].
+      for (final u in curve) {
+        expect(u, isNotNull);
+        for (final d in [
+          u!.toCrystalline, u.toPoisson, u.toGoe, u.toTree,
+          u.toBulk, u.toModular,
+        ]) {
+          expect(d, inInclusiveRange(0.0, 1.0));
+        }
+      }
+    });
+
+    test('archetypeDrift is zero on a constant trajectory', () {
+      // Same graph at every point → identical basis → identical
+      // universality → zero pairwise distance → zero drift. This is
+      // the load-bearing contract: no drift on no change.
+      final g = _pathGraph(24);
+      final t = SpectralTrajectory(points: [
+        _point(rev: 1, graph: g),
+        _point(rev: 2, graph: g),
+        _point(rev: 3, graph: g),
+      ]);
+      expect(t.archetypeDrift(), equals(0.0));
+    });
+
+    test('archetypeDrift is positive when the repo actually changes', () {
+      // Two structurally-different graphs in sequence → non-zero
+      // universality vector distance.
+      final t = SpectralTrajectory(points: [
+        _point(rev: 1, graph: _pathGraph(24)),
+        _point(rev: 2, graph: _completeGraph(24)),
+      ]);
+      expect(t.archetypeDrift(), greaterThan(0.0));
+    });
+
+    test('archetypeTransitions is empty when all points share archetype',
+        () {
+      // On a constant trajectory every reading is identical → zero
+      // transitions. On a changing one the count may be 0 or more
+      // depending on classifier sensitivity (tested via drift above).
+      final g = _pathGraph(24);
+      final t = SpectralTrajectory(points: [
+        _point(rev: 1, graph: g),
+        _point(rev: 2, graph: g),
+      ]);
+      expect(t.archetypeTransitions(), isEmpty);
+    });
+  });
 }

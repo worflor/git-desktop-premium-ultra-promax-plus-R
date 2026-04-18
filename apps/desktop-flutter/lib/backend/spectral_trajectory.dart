@@ -43,6 +43,7 @@ import 'dart:typed_data';
 import 'logos_core.dart';
 import 'logos_hypercomplex.dart';
 import 'logos_signature.dart';
+import 'logos_spectrogeometry.dart';
 import 'spectral_state.dart';
 
 /// One anchored point on a [SpectralTrajectory]. Holds the engine's
@@ -241,6 +242,72 @@ class SpectralTrajectory {
   /// curve. Missing spectra contribute `0.0`.
   List<double> vonNeumannCurve() =>
       [for (final p in points) p.vonNeumannEntropy];
+
+  /// Per-point universality reading — what archetype the repo most
+  /// resembled at each revision. Basis-only (no coupling graph
+  /// available from a stored snapshot), so `toTree` and the
+  /// persistence-sensitive components degrade to the spectral-dim +
+  /// RMT fallbacks — still meaningful, just less expressive than a
+  /// live-engine reading.
+  ///
+  /// Entries are `null` for points whose file spectrum is absent
+  /// (e.g. repos below the spectral-amortisation threshold when the
+  /// snapshot was taken).
+  List<UniversalityVector?> universalityCurve() {
+    return [
+      for (final p in points)
+        p.state.fileSpectrum == null
+            ? null
+            : spectrogeometryFromBasis(p.state.fileSpectrum!).universality,
+    ];
+  }
+
+  /// Change-points in the archetype trajectory — indices where the
+  /// nearest archetype at point `i+1` differs from the archetype at
+  /// point `i`. Interprets as: "the repo shifted spectral identity
+  /// here." Empty for trajectories shorter than two resolved points
+  /// or with no transitions.
+  List<int> archetypeTransitions() {
+    final curve = universalityCurve();
+    final out = <int>[];
+    String? prevName;
+    for (var i = 0; i < curve.length; i++) {
+      final u = curve[i];
+      if (u == null) continue;
+      final name = u.nearest.name;
+      if (prevName != null && name != prevName) {
+        out.add(i);
+      }
+      prevName = name;
+    }
+    return out;
+  }
+
+  /// Total archetype drift — sum of Euclidean distances between
+  /// consecutive universality vectors, treating each as a 6-D point
+  /// in `[0, 1]^6`. Null entries are skipped. Zero on stable
+  /// trajectories; grows as the repo's spectral identity wanders.
+  double archetypeDrift() {
+    final curve = universalityCurve();
+    var total = 0.0;
+    UniversalityVector? prev;
+    for (final u in curve) {
+      if (u == null) continue;
+      if (prev != null) {
+        final d = math.sqrt(
+          math.pow(u.toCrystalline - prev.toCrystalline, 2) +
+              math.pow(u.toPoisson - prev.toPoisson, 2) +
+              math.pow(u.toGoe - prev.toGoe, 2) +
+              math.pow(u.toTree - prev.toTree, 2) +
+              math.pow(u.toBulk - prev.toBulk, 2) +
+              math.pow(u.toModular - prev.toModular, 2),
+        );
+        total += d;
+      }
+      prev = u;
+    }
+    return total;
+  }
 
   // ── Per-transition curves (length = points.length − 1) ────────────
 

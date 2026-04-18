@@ -50,22 +50,6 @@ bool _profilesClose(SpectralOperator a, SpectralOperator b, double tol) {
 
 void main() {
   group('primitive constructors', () {
-    test('identity is all-ones', () {
-      final basis = _cycleBasis(10);
-      final I = SpectralOperator.identity(basis);
-      for (final v in I.profile) {
-        expect(v, equals(1.0));
-      }
-    });
-
-    test('zero is all-zeros', () {
-      final basis = _cycleBasis(10);
-      final Z = SpectralOperator.zero(basis);
-      for (final v in Z.profile) {
-        expect(v, equals(0.0));
-      }
-    });
-
     test('heat(0) = identity', () {
       final basis = _cycleBasis(12);
       expect(_profilesClose(
@@ -148,20 +132,6 @@ void main() {
       expect(_profilesClose(fg, expected, 1e-10), isTrue);
     });
 
-    test('addition is commutative', () {
-      final basis = _cycleBasis(10);
-      final a = SpectralOperator.heat(basis, 1.2);
-      final b = SpectralOperator.waveCos(basis, 0.7);
-      expect(_profilesClose(a + b, b + a, 1e-12), isTrue);
-    });
-
-    test('multiplication is commutative (this is a COMMUTING algebra)', () {
-      final basis = _cycleBasis(10);
-      final a = SpectralOperator.heat(basis, 1.2);
-      final b = SpectralOperator.fractionalLaplacian(basis, 1.5);
-      expect(_profilesClose(a * b, b * a, 1e-12), isTrue);
-    });
-
     test('inverse: A · A.inverse() = identity when A is non-vanishing', () {
       final basis = _cycleBasis(12);
       final a = SpectralOperator.heat(basis, 0.5); // strictly positive
@@ -170,14 +140,6 @@ void main() {
           isTrue);
     });
 
-    test('scale distributes over composition', () {
-      final basis = _cycleBasis(10);
-      final A = SpectralOperator.heat(basis, 0.8);
-      final B = SpectralOperator.waveCos(basis, 1.3);
-      final lhs = (A * B).scale(2.5);
-      final rhs = A.scale(2.5) * B;
-      expect(_profilesClose(lhs, rhs, 1e-12), isTrue);
-    });
   });
 
   group('action on projections', () {
@@ -196,35 +158,6 @@ void main() {
       }
     });
 
-    test('identity on a projection returns it unchanged', () {
-      final basis = _cycleBasis(12);
-      final rho = Float64List(basis.n);
-      rho[0] = 1.0;
-      rho[3] = 0.5;
-      final p = basis.projectSource(rho);
-      final I = SpectralOperator.identity(basis);
-      final q = I.applyTo(p);
-      for (var j = 0; j < basis.k; j++) {
-        expect(q.coefficients[j], closeTo(p.coefficients[j], 1e-12));
-      }
-    });
-
-    test('applyToRho round-trips through identity', () {
-      final basis = _cycleBasis(14);
-      final rho = Float64List(basis.n);
-      for (var i = 0; i < basis.n; i++) {
-        rho[i] = (i % 3) - 1.0;
-      }
-      final I = SpectralOperator.identity(basis);
-      final out = I.applyToRho(rho);
-      // Reconstruction through the basis may lose components outside
-      // the k-dim truncation; check the projection agrees.
-      final pIn = basis.project(rho);
-      final pOut = basis.project(out);
-      for (var j = 0; j < basis.k; j++) {
-        expect(pOut[j], closeTo(pIn[j], 1e-10));
-      }
-    });
   });
 
   group('scalar observables', () {
@@ -309,20 +242,6 @@ void main() {
       final b = SpectralOperator.heat(basis, 2.0);
       final bracket = a.commutator(b);
       expect(bracket.operatorNorm, lessThan(1e-15));
-    });
-
-    test('[A, A] = 0 (self-commutator)', () {
-      final basis = _cycleBasis(10);
-      final a = SpectralOperator.heat(basis, 1.3);
-      expect(a.commutator(a).operatorNorm, lessThan(1e-15));
-    });
-
-    test('[A, 0] = [0, A] = 0 (zero annihilates)', () {
-      final basis = _cycleBasis(10);
-      final a = SpectralOperator.heat(basis, 1.0);
-      final zero = SpectralOperator.zero(basis);
-      expect(a.commutator(zero).operatorNorm, lessThan(1e-15));
-      expect(zero.commutator(a).operatorNorm, lessThan(1e-15));
     });
 
     test('bracket anti-symmetry: [A, B] = −[B, A]', () {

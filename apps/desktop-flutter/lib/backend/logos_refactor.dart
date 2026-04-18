@@ -17,10 +17,10 @@
 // masquerading as wisdom.
 
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'logos_core.dart';
 import 'logos_git.dart';
+import 'logos_sensitivity.dart';
 
 /// Kind of refactor a proposal describes.
 enum RefactorKind {
@@ -87,9 +87,16 @@ List<RefactorProposal>? proposeRefactors(
   final g = engine.graph;
   if (g.n < 6) return null;
 
+  // One sensitivity field, shared across all candidate generators.
+  // Transpose builds once; gap + logDet fields each compute once and
+  // cache. No re-scanning across proposal kinds.
+  final field = SensitivityField(g, basis);
+
   final proposals = <RefactorProposal>[];
-  proposals.addAll(_mergeCandidates(engine, basis, considerN: considerN));
-  proposals.addAll(_decoupleCandidates(engine, basis, considerN: considerN));
+  proposals.addAll(
+      _mergeCandidates(engine, basis, field, considerN: considerN));
+  proposals.addAll(
+      _decoupleCandidates(engine, basis, field, considerN: considerN));
   proposals.addAll(_extractCandidates(engine, basis, considerN: considerN));
 
   proposals.sort((a, b) => b.benefitScore.compareTo(a.benefitScore));
@@ -99,7 +106,7 @@ List<RefactorProposal>? proposeRefactors(
 // ── Merge candidates: files with strong gravity + coupling ─────────
 
 List<RefactorProposal> _mergeCandidates(
-    LogosGit engine, SpectralBasis basis,
+    LogosGit engine, SpectralBasis basis, SensitivityField field,
     {required int considerN}) {
   final out = <RefactorProposal>[];
   final g = engine.graph;
@@ -124,18 +131,30 @@ List<RefactorProposal> _mergeCandidates(
     final potential = basis.gravitationalPotential(p.u, p.v, 1.0);
     if (!potential.isFinite) continue;
     if (potential > 4.0) continue; // only reasonably-bound pairs
-    // Predicted ΔF from merging: approximate as halving the edge's
-    // contribution to Dirichlet energy at the current state. Small,
-    // predictable, signed.
-    final deltaF = -0.5 * p.w;
-    // Confidence from how much stronger this edge is than its row's
-    // next-strongest (1.0 = a standout, 0.0 = one among many similar).
+    // Hellmann-Feynman log-det sensitivity: how much does this edge
+    // actually move the spectrum? A strong raw weight on an edge the
+    // spectrum doesn't notice is vacuous coupling (e.g. a leaf-to-leaf
+    // symbol match). A strong weight where the spectrum ALSO cares is
+    // the canonical merge candidate.
+    final sens = logDetSensitivity(basis, p.u, p.v);
+    // Predicted ΔF: raw Dirichlet contribution plus half of the
+    // log-det cost — the sensitivity captures the "this edge matters"
+    // correction. Both are negative (beneficial) on a good merge.
+    final deltaF = -0.5 * p.w - 0.25 * sens;
+    // Confidence compounds: (a) the edge is a standout in both rows
+    // AND (b) its spectral sensitivity confirms it's not a vacuous
+    // coupling.
     final uRowNext = _nextStrongestInRow(g, p.u, p.v);
     final vRowNext = _nextStrongestInRow(g, p.v, p.u);
     final standoutU = uRowNext <= 0 ? 1.0 : (p.w - uRowNext) / p.w;
     final standoutV = vRowNext <= 0 ? 1.0 : (p.w - vRowNext) / p.w;
-    final confidence =
+    final standoutScore =
         (0.5 * standoutU + 0.5 * standoutV).clamp(0.0, 1.0).toDouble();
+    // Sensitivity boost saturates quickly — we only care whether the
+    // spectrum notices the edge, not its absolute magnitude.
+    final sensBoost = (sens * 4.0).clamp(0.0, 1.0).toDouble();
+    final confidence =
+        (0.6 * standoutScore + 0.4 * sensBoost).clamp(0.0, 1.0).toDouble();
     out.add(RefactorProposal(
       kind: RefactorKind.merge,
       paths: [paths[p.u], paths[p.v]],
@@ -143,7 +162,8 @@ List<RefactorProposal> _mergeCandidates(
       confidence: confidence,
       receipt:
           'merge · gravity ${potential.toStringAsFixed(2)} · coupling '
-          '${p.w.toStringAsFixed(2)} · Ricci-flow neckpinch',
+          '${p.w.toStringAsFixed(2)} · logDet-sens '
+          '${sens.toStringAsFixed(3)} · Ricci-flow + Hellmann-Feynman',
     ));
   }
   return out;
@@ -164,60 +184,77 @@ double _nextStrongestInRow(CsrGraph g, int u, int excludeV) {
 // ── Decouple candidates: load-bearing anomalous edges ──────────────
 
 List<RefactorProposal> _decoupleCandidates(
-    LogosGit engine, SpectralBasis basis,
+    LogosGit engine, SpectralBasis basis, SensitivityField field,
     {required int considerN}) {
   final out = <RefactorProposal>[];
   final g = engine.graph;
   final paths = engine.nodePaths;
-  // An edge is "load-bearing anomalous" if:
-  //   - its weight is small relative to the overall spectrum
-  //   - but the nodes it connects have very different spectral
-  //     embeddings (large distance on the first few modes)
-  // Those are spurious Casimir-like bridges.
-  final pairs = <({int u, int v, double w, double dist})>[];
-  for (var u = 0; u < g.n; u++) {
-    for (var p = g.indptr[u]; p < g.indptr[u + 1]; p++) {
-      final v = g.indices[p];
-      if (v <= u) continue;
-      final w = g.rawWeights.length == g.values.length
-          ? g.rawWeights[p]
-          : g.values[p];
-      // Spectral distance on modes 1..4.
-      var d = 0.0;
-      final jMax = math.min(5, basis.k);
-      for (var j = 1; j < jMax; j++) {
-        final du =
-            basis.eigenvectors[j * basis.n + u] -
-                basis.eigenvectors[j * basis.n + v];
-        d += du * du;
-      }
-      pairs.add((u: u, v: v, w: w, dist: math.sqrt(d)));
-    }
-  }
-  // Decouple candidates: small w × large dist.
-  // Rank by anomaly score = dist / (w + ε).
-  pairs.sort((a, b) {
-    final aScore = a.dist / (a.w + 1e-9);
-    final bScore = b.dist / (b.w + 1e-9);
-    return bScore.compareTo(aScore);
-  });
-  final cap = math.min(considerN ~/ 2, pairs.length);
+  // An edge is a decouple candidate when:
+  //   - its raw coupling is small (a weak bond),
+  //   - but its spectral sensitivity is large (removing it would
+  //     measurably shift the spectrum),
+  //   - and it straddles two otherwise-well-separated regions of
+  //     the Fiedler embedding (genuine cross-cluster anomaly).
+  //
+  // The first two are exactly the gap-sensitivity field — a
+  // single-mode Fiedler scan delivered by the SensitivityField
+  // primitive. The field caches the result, so this call shares
+  // compute with any other consumer of the same field.
+  final gapField = field.gap();
+  if (gapField.isEmpty) return out;
+  final cap = math.min(considerN, gapField.length);
   for (var i = 0; i < cap; i++) {
-    final p = pairs[i];
-    if (p.dist < 0.3 || p.w > 0.5) continue; // only weak + far-apart
-    final deltaF = -0.2 * p.w * p.dist; // approximate
-    final confidence = (p.dist * 0.5).clamp(0.0, 1.0).toDouble();
+    final row = gapField[i];
+    // Filter: only genuinely-weak edges. A strong bridge isn't a
+    // decouple candidate, it's a load-bearing highway.
+    final rawW = g.rawWeights.length == g.values.length
+        ? _rawWeightFor(g, row.a, row.b)
+        : row.weight;
+    if (rawW > 0.5) continue;
+    // The gap sensitivity already is `(u₁[a] − u₁[b])²` — a squared
+    // spectral distance on the Fiedler mode. Small sensitivity means
+    // the edge doesn't actually separate Fiedler regions, so it's
+    // not really a bridge.
+    if (row.value < 0.01) continue;
+    // Predicted ΔF: proportional to (sensitivity × weight). Small
+    // edges with large sensitivity cost the most on removal, but
+    // their removal returns that cost PLUS the relief of a Fiedler
+    // misalignment.
+    final deltaF = -(0.2 * row.value + 0.2 * rawW * row.value);
+    // Confidence: sensitivity dominates over neighbouring edges in
+    // the sorted field. Top-of-field edges get higher confidence.
+    final relStrength = i == 0
+        ? 1.0
+        : 1.0 - (gapField[i].value / gapField[0].value).clamp(0.0, 1.0);
+    final confidence =
+        (0.5 + 0.5 * relStrength).clamp(0.0, 1.0).toDouble();
     out.add(RefactorProposal(
       kind: RefactorKind.decouple,
-      paths: [paths[p.u], paths[p.v]],
+      paths: [paths[row.a], paths[row.b]],
       deltaFreeEnergy: deltaF,
       confidence: confidence,
-      receipt:
-          'decouple · weight ${p.w.toStringAsFixed(2)} · spectral distance '
-          '${p.dist.toStringAsFixed(2)} · Casimir-bridge anomaly',
+      receipt: 'decouple · weight ${rawW.toStringAsFixed(2)} · '
+          'gap-sensitivity ${row.value.toStringAsFixed(3)} · '
+          'Hellmann-Feynman bridge',
     ));
+    if (out.length >= considerN ~/ 2) break;
   }
   return out;
+}
+
+/// Internal helper — look up the raw weight of edge (a, b) by scanning
+/// row a's indptr range. O(deg(a)). Used by decouple candidates that
+/// need the un-fused weight rather than the fused value from the
+/// sensitivity row.
+double _rawWeightFor(CsrGraph g, int a, int b) {
+  for (var p = g.indptr[a]; p < g.indptr[a + 1]; p++) {
+    if (g.indices[p] == b) {
+      return g.rawWeights.length == g.values.length
+          ? g.rawWeights[p]
+          : g.values[p];
+    }
+  }
+  return 0.0;
 }
 
 // ── Extract candidates: Courant-nodal cuts in low-j eigenvectors ───

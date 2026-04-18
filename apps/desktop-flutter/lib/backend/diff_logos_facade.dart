@@ -19,7 +19,7 @@ import 'git.dart' show runGitProbe;
 import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
 import 'logos_chunks.dart' as chunks;
-import 'logos_core.dart' show SpectralBasis, SpectralHeat;
+import 'logos_core.dart' show SpectralBasis, SpectralHeat, SpectralGroundSpace;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart' show LogosAxis, LogosRegime;
 import 'logos_git_probe.dart'
@@ -940,13 +940,20 @@ DiffPinnedSpectral? _projectSpectralForNode(
 }) {
   if (nodeId < 0 || nodeId >= basis.n || basis.k < 4) return null;
 
+  // Start at the first excited mode rather than hardcoding index 1.
+  // On a connected graph firstExcitedIndex == 1 (identical behaviour);
+  // on a disconnected graph this correctly skips the full kernel
+  // subspace instead of polluting the coordinate with ground modes.
+  final start = basis.firstExcitedIndex;
+  if (start + 3 > basis.k) return null;
+
   // Amplify raw eigenvector components — each one is ~1/sqrt(n) in
   // magnitude (unit-norm across n nodes). Multiplying by sqrt(n)
   // brings coords into roughly [-1, 1] for typical repos.
   final amplify = math.sqrt(basis.n.toDouble());
-  final x = basis.eigenvectors[1 * basis.n + nodeId] * amplify;
-  final y = basis.eigenvectors[2 * basis.n + nodeId] * amplify;
-  final z = basis.eigenvectors[3 * basis.n + nodeId] * amplify;
+  final x = basis.eigenvectors[start * basis.n + nodeId] * amplify;
+  final y = basis.eigenvectors[(start + 1) * basis.n + nodeId] * amplify;
+  final z = basis.eigenvectors[(start + 2) * basis.n + nodeId] * amplify;
 
   // Entropy on a 1-hot source: coefficients are exactly u_j[nodeId],
   // so we skip the O(k·n) project() call and read them directly in

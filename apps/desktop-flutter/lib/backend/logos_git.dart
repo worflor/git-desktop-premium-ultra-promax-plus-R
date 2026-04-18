@@ -79,6 +79,7 @@ import 'engram_fit.dart';
 import 'file_coupling.dart';
 import 'logos_core.dart';
 import 'logos_signature.dart';
+import 'logos_spectrogeometry.dart' as sg_lib;
 import 'spectral_kizuna.dart';
 import 'spectral_ricci.dart';
 import 'spectral_spacetime.dart';
@@ -1409,6 +1410,14 @@ class LogosGit {
   /// sidecar and never touch L_sym.
   final Map<int, SpectralBasis> _spectralCache;
 
+  /// Lazy-computed per-k `SpectroGeometry` fingerprint. Holds the
+  /// unified universality vector, RMT/persistence/dim/zeta reports,
+  /// and the 62-bit content hash. Populated on first call to
+  /// [spectrogeometry] for a given `k`. Keyed by the same `k` as
+  /// [_spectralCache] so the basis and its geometric read are
+  /// guaranteed coherent.
+  final Map<int, sg_lib.SpectroGeometry> _spectrogeometryCache = {};
+
   LogosGit._({
     required this.graph,
     required this.transportGraph,
@@ -1544,6 +1553,31 @@ class LogosGit {
   SpectralBasis? spectralBasis({int k = kDefaultSpectralBasisK}) =>
       _getOrBuildSpectralBasis(k);
 
+  /// Unified geometric fingerprint of this engine's graph at basis
+  /// size `k`. Bundles RMT classification, persistence diagram,
+  /// spectral dimension, zeta invariants, the 6-archetype
+  /// `universality` vector, and a 62-bit content hash into one
+  /// cached [SpectroGeometry] object.
+  ///
+  /// Cost: one `spectrogeometry()` evaluation the first time a
+  /// given `k` is requested (O(k·n) for the RMT + dim sweep, O(m
+  /// log m) for persistence, O(k) for zeta). Cached thereafter —
+  /// subsequent calls are O(1) map lookup.
+  ///
+  /// Returns `null` when the engine's graph is below
+  /// [kDefaultSpectralMinNodes] (the underlying basis is also null).
+  sg_lib.SpectroGeometry? spectrogeometry(
+      {int k = kDefaultSpectralBasisK}) {
+    final clampedK = math.min(k, graph.n);
+    final cached = _spectrogeometryCache[clampedK];
+    if (cached != null) return cached;
+    final basis = _getOrBuildSpectralBasis(clampedK);
+    if (basis == null) return null;
+    final sg = sg_lib.spectrogeometry(graph, basis);
+    _spectrogeometryCache[clampedK] = sg;
+    return sg;
+  }
+
   /// Convenience: build a [SpectralWalker] over this engine's spectral
   /// basis. Use it to sample concrete random-walk paths ("why this
   /// file surfaced") — the path-integral realisation of the heat
@@ -1563,6 +1597,11 @@ class LogosGit {
 
   /// Cached commit-level spectral basis.
   SpectralBasis? _commitSpectralBasis;
+
+  /// Cached commit-level geometric fingerprint. Parallel to
+  /// [_spectrogeometryCache] but over the commit graph — one report
+  /// per k. Lazily populated on first [commitSpectrogeometry] call.
+  final Map<int, sg_lib.SpectroGeometry> _commitSpectrogeometryCache = {};
 
   /// Cached spatiotemporal basis tying file space × commit time.
   SpacetimeBasis? _spacetimeBasis;
@@ -1599,6 +1638,53 @@ class LogosGit {
     final clamped = math.min(k, g.n);
     _commitSpectralBasis = SpectralBasis.fromGraph(g, clamped);
     return _commitSpectralBasis;
+  }
+
+  /// Commit-level geometric fingerprint — the temporal twin of
+  /// [spectrogeometry]. Returns the full [sg_lib.SpectroGeometry]
+  /// report (RMT, persistence, spectral dimension, ζ, universality
+  /// vector, fingerprint) computed over the commit graph.
+  ///
+  /// A repo can exhibit very different universality across the two
+  /// scales: a crystalline file graph (tidy code) paired with a GOE
+  /// commit graph (chaotic co-change history) is not rare and is a
+  /// meaningful signal. Caching is keyed by `k` just like the file
+  /// variant — one synthesis per resolved basis size.
+  ///
+  /// Returns `null` when the commit graph isn't available (repo
+  /// below the spectral-amortisation threshold or no commit indices
+  /// in stats).
+  sg_lib.SpectroGeometry? commitSpectrogeometry(
+      {int k = kDefaultSpectralBasisK}) {
+    final g = commitGraph();
+    if (g == null) return null;
+    final clampedK = math.min(k, g.n);
+    final cached = _commitSpectrogeometryCache[clampedK];
+    if (cached != null) return cached;
+    final basis = commitSpectralBasis(k: clampedK);
+    if (basis == null) return null;
+    final sg = sg_lib.spectrogeometry(g, basis);
+    _commitSpectrogeometryCache[clampedK] = sg;
+    return sg;
+  }
+
+  /// Paired (file, commit) universality reading. Bundles both scales
+  /// into one `({file, commit})` record so callers that want to
+  /// compare or combine the two reports don't have to thread them
+  /// separately.
+  ///
+  /// Either side may be null — returns `(null, null)` when no basis
+  /// is available; `(file, null)` when the commit graph isn't large
+  /// enough (common on young repos); never returns `(null, file)`
+  /// because the file graph is the primary and always resolves first.
+  ({
+    sg_lib.SpectroGeometry? file,
+    sg_lib.SpectroGeometry? commit,
+  }) spacetimeSpectrogeometry({int k = kDefaultSpectralBasisK}) {
+    return (
+      file: spectrogeometry(k: k),
+      commit: commitSpectrogeometry(k: k),
+    );
   }
 
   /// Joint file × commit-time spectral basis via Kronecker sum. The

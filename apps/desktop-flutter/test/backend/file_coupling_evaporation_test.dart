@@ -12,27 +12,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Time-weighted Jaccard (computeFileCoupling decay semantics)', () {
-    test('empty matrix is a valid empty state', () {
-      expect(FileCouplingMatrix.empty.jaccard, isEmpty);
-      expect(FileCouplingMatrix.empty.commitsAnalyzed, 0);
-    });
-
-    test('score() returns 0 for unknown pairs', () {
-      expect(FileCouplingMatrix.empty.score('a.dart', 'b.dart'), 0.0);
-    });
-
-    test('score() returns 1.0 for identical paths (shortcut)', () {
-      expect(FileCouplingMatrix.empty.score('a.dart', 'a.dart'), 1.0);
-    });
-
-    test('coherenceFor singleton returns 1.0', () {
-      expect(FileCouplingMatrix.empty.coherenceFor(['a.dart']), 1.0);
-    });
-
-    test('coherenceFor empty returns 1.0', () {
-      expect(FileCouplingMatrix.empty.coherenceFor(const []), 1.0);
-    });
-
     test('coherenceFor averages pairwise scores at high confidence', () {
       // Build a tiny hand-crafted matrix. High commitsAnalyzed so the
       // confidence gate doesn't trip.

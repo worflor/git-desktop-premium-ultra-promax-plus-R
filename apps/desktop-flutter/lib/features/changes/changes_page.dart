@@ -36,6 +36,7 @@ import '../../backend/logos_dream.dart';
 import '../../backend/logos_field.dart';
 import '../../backend/logos_refactor.dart';
 import '../../backend/logos_spaghetti.dart';
+import '../../backend/undo_controller.dart';
 import '../../ui/logos_glyph_strip.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/file_coupling_state.dart';
@@ -67,6 +68,38 @@ String _guardrailLabelForStage(int stage) {
 }
 
 enum _CommitRunMode { commitOnly, commitAndSync }
+
+/// Result of a delayed commit flow. Carries either the success
+/// message + committed data (+ optional post-commit sync error) or
+/// the error string from the failing step. Used so the coordinator's
+/// `schedule<T>` can hand back a single typed outcome.
+class _CommitOutcome {
+  final bool ok;
+  final CommitData? committed;
+  final String? successMessage;
+  final String? error;
+  final String? syncError;
+
+  const _CommitOutcome._({
+    required this.ok,
+    this.committed,
+    this.successMessage,
+    this.error,
+    this.syncError,
+  });
+
+  factory _CommitOutcome.ok(
+          CommitData committed, String successMessage, String? syncError) =>
+      _CommitOutcome._(
+        ok: true,
+        committed: committed,
+        successMessage: successMessage,
+        syncError: syncError,
+      );
+
+  factory _CommitOutcome.err(String error) =>
+      _CommitOutcome._(ok: false, error: error);
+}
 
 /// Payload produced by one dream-compute pass for the commit composer:
 /// the placeholder phrase + the diff's field-character classification.
@@ -186,6 +219,14 @@ class _ChangesPageState extends State<ChangesPage> {
   // re-seeded from "all files" defaults — the primary driver of the
   // "feels like a full page refresh" perception.
   final Map<String, Set<String>> _includedByContextKey = {};
+
+  // Per-context snapshot of the paths present in the last status
+  // refresh. Lets `_reconcileIncludedPaths` detect first-appearance of
+  // a file (new ∈ status ∖ seen) without re-adding paths the user
+  // deliberately deselected. Only consulted when the
+  // `autoSelectNewChanges` pref is on; kept up-to-date regardless so
+  // toggling the pref mid-session behaves as if it'd always been on.
+  final Map<String, Set<String>> _seenByContextKey = {};
   String? _selectedDiffPath;
   String? _inspectionDiffPath;
   String? _visibleDiffPath;
@@ -302,9 +343,6 @@ class _ChangesPageState extends State<ChangesPage> {
   // out cleanly. Bulk discards intentionally don't arm undo — the
   // bytes-snapshot cost scales with file count and the affordance only
   // ever recovered the single most recent operation anyway.
-  _DiscardUndo? _pendingUndo;
-  Timer? _undoTimer;
-  static const _undoWindow = Duration(seconds: 6);
 
   // Coupling rail — path under the mouse right now. Drives live peer
   // highlighting so moving the cursor along the rail visualizes which
@@ -326,6 +364,14 @@ class _ChangesPageState extends State<ChangesPage> {
   bool _selectionStorageLoaded = false;
   int _selectionLoadRequestId = 0;
   String? _selectionPersistFingerprint;
+
+  // PreferencesState subscription for the "remember work in progress"
+  // flip-off. Need a listener rather than a context.select because we
+  // want the *transition* to off, so we can wipe the current draft +
+  // selection the moment the toggle flips — otherwise stale data
+  // lingers until the next save-path call.
+  PreferencesState? _prefsSub;
+  bool _lastRememberWip = true;
 
   // Per-path line churn (adds + dels) feeding the "by impact" sort.
   // Refreshed whenever the status signature changes. Empty until the
@@ -380,6 +426,10 @@ class _ChangesPageState extends State<ChangesPage> {
       );
       _refreshCommitAiConfig();
       unawaited(context.read<AiSettingsState>().refreshProviders());
+      final prefs = context.read<PreferencesState>();
+      _lastRememberWip = prefs.rememberWorkInProgress;
+      prefs.addListener(_onPreferencesChanged);
+      _prefsSub = prefs;
     });
     _loadAtlasOpenPref();
     // Re-dream when the composer goes empty again (user deleted their
@@ -392,6 +442,32 @@ class _ChangesPageState extends State<ChangesPage> {
 
   void _onCommitDreamChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// Fires whenever any preference changes. We only care about the
+  /// `rememberWorkInProgress` transition from on → off: on flip-off,
+  /// actively wipe the current commit draft file and the current
+  /// selection scope so the toggle feels honest rather than waiting for
+  /// the next save-path call to erase things.
+  void _onPreferencesChanged() {
+    if (!mounted) return;
+    final prefs = _prefsSub;
+    if (prefs == null) return;
+    final nowRemember = prefs.rememberWorkInProgress;
+    if (_lastRememberWip && !nowRemember) {
+      unawaited(_clearCommitDraft());
+      _commitMsgCtrl.clear();
+      final scopeKey = _selectionStorageScopeKey;
+      if (scopeKey != null) {
+        unawaited(() async {
+          try {
+            final shared = await SharedPreferences.getInstance();
+            await shared.remove(_selectionPrefsKey(scopeKey));
+          } catch (_) {}
+        }());
+      }
+    }
+    _lastRememberWip = nowRemember;
   }
 
   /// Fires on every composer keystroke. We only care about the
@@ -609,7 +685,16 @@ class _ChangesPageState extends State<ChangesPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final prefKey = _selectionPrefsKey(scopeKey);
-      if (snapshot.isEmpty) {
+      // Honor the "remember work in progress" pref: when off, every
+      // "persist" call becomes an active clear so the on-disk footprint
+      // erases as the user works, not just when they deselect everything.
+      // Falls back to the cached last value so dispose-time flushes
+      // (which fire via `unawaited(...)` after the widget may have
+      // unmounted) still honor the pref.
+      final remember = mounted
+          ? context.read<PreferencesState>().rememberWorkInProgress
+          : _lastRememberWip;
+      if (!remember || snapshot.isEmpty) {
         await prefs.remove(prefKey);
         return;
       }
@@ -656,6 +741,7 @@ class _ChangesPageState extends State<ChangesPage> {
     _draftKey = null;
     _includedPaths.clear();
     _includedByContextKey.clear();
+    _seenByContextKey.clear();
     _selectedDiffPath = null;
     _inspectionDiffPath = null;
     _visibleDiffPath = null;
@@ -679,9 +765,20 @@ class _ChangesPageState extends State<ChangesPage> {
     final requestId = ++_selectionLoadRequestId;
     final scopeKey = await _resolveSelectionStorageScopeKey(repoPath);
     final prefs = await SharedPreferences.getInstance();
-    final restored = _decodeSelectionSnapshot(
-      prefs.getString(_selectionPrefsKey(scopeKey)),
-    );
+    final prefKey = _selectionPrefsKey(scopeKey);
+    // Honor the "remember work in progress" pref: when off, skip the
+    // restore AND clear any lingering snapshot for this scope so stale
+    // state gets erased on visit.
+    final remember = mounted
+        ? context.read<PreferencesState>().rememberWorkInProgress
+        : _lastRememberWip;
+    Map<String, Set<String>> restored;
+    if (!remember) {
+      await prefs.remove(prefKey);
+      restored = const {};
+    } else {
+      restored = _decodeSelectionSnapshot(prefs.getString(prefKey));
+    }
     if (!mounted ||
         _selectionRepoPath != repoPath ||
         requestId != _selectionLoadRequestId) {
@@ -697,6 +794,7 @@ class _ChangesPageState extends State<ChangesPage> {
       _includedByContextKey
         ..clear()
         ..addAll(restored);
+      _seenByContextKey.clear();
       if (currentStatus != null) {
         _syncDraftFromStatus(currentStatus);
       }
@@ -823,6 +921,17 @@ class _ChangesPageState extends State<ChangesPage> {
       final gitDir = await _resolveGitDir(repoPath);
       if (gitDir == null) return;
       final file = _draftFile(gitDir, branch);
+      // Honor the "remember work in progress" pref: when off, treat any
+      // lingering draft file as stale — delete it on touch and start
+      // clean instead of restoring.
+      final remember = mounted
+          ? context.read<PreferencesState>().rememberWorkInProgress
+          : _lastRememberWip;
+      if (!remember) {
+        if (await file.exists()) await file.delete();
+        if (force && mounted) _commitMsgCtrl.clear();
+        return;
+      }
       if (await file.exists()) {
         final draft = await file.readAsString();
         if (mounted && (force || _commitMsgCtrl.text.isEmpty)) {
@@ -840,6 +949,10 @@ class _ChangesPageState extends State<ChangesPage> {
     // saving to the wrong repo/branch after a switch.
     final capturedRepoPath = _lastDraftRepoPath;
     final capturedBranch = _lastDraftBranch;
+    // Honor the "remember work in progress" pref: when off, any save
+    // attempt becomes a delete so existing drafts don't linger on disk.
+    final remember =
+        context.read<PreferencesState>().rememberWorkInProgress;
     _commitDraftSaveDebounce =
         Timer(const Duration(milliseconds: 500), () async {
       try {
@@ -849,7 +962,7 @@ class _ChangesPageState extends State<ChangesPage> {
         final gitDir = await _resolveGitDir(repoPath);
         if (gitDir == null) return;
         final file = _draftFile(gitDir, capturedBranch);
-        if (value.trim().isEmpty) {
+        if (!remember || value.trim().isEmpty) {
           if (await file.exists()) await file.delete();
         } else {
           await file.writeAsString(value);
@@ -878,7 +991,10 @@ class _ChangesPageState extends State<ChangesPage> {
       final gitDir = await _resolveGitDir(repoPath);
       if (gitDir == null) return;
       final file = _draftFile(gitDir, branch);
-      if (value.trim().isEmpty) {
+      // Reads `_lastRememberWip` (maintained by the preferences
+      // listener) rather than `context.read` so this works correctly
+      // when called during dispose, after the widget has unmounted.
+      if (!_lastRememberWip || value.trim().isEmpty) {
         if (await file.exists()) await file.delete();
       } else {
         await file.writeAsString(value);
@@ -888,7 +1004,6 @@ class _ChangesPageState extends State<ChangesPage> {
 
   @override
   void dispose() {
-    _undoTimer?.cancel();
     _commitDraftSaveDebounce?.cancel();
     _flushSelectionPersistenceBestEffort();
     // Flush on dispose so closing the app doesn't lose the draft.
@@ -900,6 +1015,8 @@ class _ChangesPageState extends State<ChangesPage> {
     }
     _commitMsgCtrl.removeListener(_onComposerChangedForDream);
     _commitDream.removeListener(_onCommitDreamChanged);
+    _prefsSub?.removeListener(_onPreferencesChanged);
+    _prefsSub = null;
     _commitDream.dispose();
     _commitMsgCtrl.dispose();
     _commitMsgFocusNode.dispose();
@@ -982,6 +1099,14 @@ class _ChangesPageState extends State<ChangesPage> {
       _includedPaths
         ..clear()
         ..addAll(restored);
+      // Seed the seen-set for this context if we haven't observed it
+      // this session. Without this, auto-select-new-changes would see
+      // every currently-present file as "new" on the first reconcile
+      // after a return trip and sweep them all into the selection.
+      _seenByContextKey.putIfAbsent(
+        nextKey,
+        () => {for (final f in status.files) f.path},
+      );
       _reconcileIncludedPaths(status);
     } else {
       // First arrival in this context: seed with the staged set if
@@ -994,6 +1119,7 @@ class _ChangesPageState extends State<ChangesPage> {
       _includedPaths
         ..clear()
         ..addAll(staged.isNotEmpty ? staged : status.files.map((f) => f.path));
+      _seenByContextKey[nextKey] = {for (final f in status.files) f.path};
     }
     // AI review state is scoped to a specific (branch, diff) pair. It
     // could in principle be cached per context too, but reviews are
@@ -1003,14 +1129,30 @@ class _ChangesPageState extends State<ChangesPage> {
     _clearReviewState();
   }
 
-  /// Prune [_includedPaths] entries that no longer exist in [status].
-  /// Purely subtractive — a brand-new file saved by the user does NOT
-  /// auto-opt into the selection; the seed happens exactly once per
-  /// context (see [_syncDraftFromStatus]).
+  /// Reconcile [_includedPaths] against [status].
+  ///
+  /// Subtractive pass is always run: paths no longer present are
+  /// dropped. Additive pass only runs when the
+  /// `autoSelectNewChanges` pref is on, and only adds paths that
+  /// weren't in the per-context seen set — so files the user
+  /// explicitly deselected stay deselected. The seen set is updated
+  /// at the end regardless of the pref, so toggling the pref mid-
+  /// session behaves as if it'd always been at its new value.
   void _reconcileIncludedPaths(RepositoryStatus status) {
-    if (_includedPaths.isEmpty) return;
     final current = <String>{for (final f in status.files) f.path};
-    _includedPaths.removeWhere((p) => !current.contains(p));
+    if (_includedPaths.isNotEmpty) {
+      _includedPaths.removeWhere((p) => !current.contains(p));
+    }
+    final key = _draftKey;
+    if (key == null) return;
+    final autoOn = context.read<PreferencesState>().autoSelectNewChanges;
+    if (autoOn) {
+      final seen = _seenByContextKey[key] ?? const <String>{};
+      for (final p in current) {
+        if (!seen.contains(p)) _includedPaths.add(p);
+      }
+    }
+    _seenByContextKey[key] = current;
   }
 
   void _clearReviewState() {
@@ -2226,70 +2368,35 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     if (confirmed != true) return;
     if (!mounted) return;
-    // Capture the file's bytes before the discard so a mistake is
-    // recoverable for a short window. Tracked-file discards `checkout
-    // HEAD -- path` — the live bytes go away and git has the HEAD
-    // version. Untracked deletions vanish entirely. Either way, if we
-    // grabbed the contents, we can re-write them on Undo. Failures to
-    // read (permission / binary / missing) fall back to the existing
-    // no-undo snackbar path.
-    List<int>? undoBytes;
-    try {
-      final onDisk = File(p.join(repoPath, file.path));
-      if (await onDisk.exists()) {
-        undoBytes = await onDisk.readAsBytes();
-      }
-    } catch (_) {/* swallow — undo becomes unavailable */}
-    final result = await discardFile(repoPath, file);
-    if (!mounted) return;
-    if (!result.ok) {
-      setState(() {
-        _actionError = result.error ?? 'Failed to discard changes.';
-        _actionMessage = null;
-      });
-      return;
-    }
-    setState(() {
-      _includedPaths.remove(file.path);
-      _actionError = null;
-      _actionMessage = null;
-    });
-    await repoState.refreshStatus();
-    if (undoBytes != null && mounted) {
-      _armUndo(_DiscardUndo(
-        path: file.path,
-        bytes: undoBytes,
-        repoPath: repoPath,
-        wasUntracked: isUntracked,
-      ));
-    }
-  }
-
-  void _armUndo(_DiscardUndo undo) {
-    _undoTimer?.cancel();
-    setState(() => _pendingUndo = undo);
-    _undoTimer = Timer(_undoWindow, () {
-      if (!mounted) return;
-      setState(() => _pendingUndo = null);
-    });
-  }
-
-  Future<void> _runPendingUndo() async {
-    final undo = _pendingUndo;
-    if (undo == null) return;
-    _undoTimer?.cancel();
-    setState(() => _pendingUndo = null);
-    try {
-      final f = File(p.join(undo.repoPath, undo.path));
-      await f.create(recursive: true);
-      await f.writeAsBytes(undo.bytes);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _actionError = 'Undo failed: $e');
-      return;
-    }
-    if (!mounted) return;
-    await context.read<RepositoryState>().refreshStatus();
+    // Route the discard through the undo coordinator. During the
+    // undo window the file is NOT touched — its bytes are only reset
+    // by `discardFile` after the timer fires. If the user cancels,
+    // nothing happens at all, so we no longer need to capture bytes
+    // for a bytes-replay restore. Cleaner, safer, and symmetric with
+    // every other destructive action in the app.
+    final coord = context.read<UndoCoordinator>();
+    final windowSec =
+        context.read<PreferencesState>().undoWindowSeconds;
+    await coord.schedule<void>(
+      kind: UndoActionKind.discard,
+      label: isUntracked ? 'Deleting $basename' : 'Discarding $basename',
+      window: Duration(seconds: windowSec),
+      run: () async {
+        final result = await discardFile(repoPath, file);
+        if (!mounted) return;
+        if (!result.ok) {
+          setState(() {
+            _actionError = result.error ?? 'Failed to discard changes.';
+          });
+          return;
+        }
+        setState(() {
+          _includedPaths.remove(file.path);
+          _actionError = null;
+        });
+        await repoState.refreshStatus();
+      },
+    );
   }
 
   /// Bulk-discard sibling of [_confirmDiscardFile]. Used when the user
@@ -2369,29 +2476,38 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     if (confirmed != true) return;
     if (!mounted) return;
-    int failed = 0;
-    String? firstErr;
-    final discarded = <String>[];
-    for (final f in files) {
-      final r = await discardFile(repoPath, f);
-      if (r.ok) {
-        discarded.add(f.path);
-      } else {
-        failed++;
-        firstErr ??= r.error;
-      }
-    }
-    if (!mounted) return;
-    setState(() {
-      _includedPaths.removeAll(discarded);
-      _actionError = failed > 0 ? (firstErr ?? 'Some discards failed.') : null;
-      _actionMessage = null;
-    });
-    await repoState.refreshStatus();
-    // Intentionally no toast: the file rows vanishing IS the
-    // confirmation. The previous snackbar was redundant for the
-    // happy path and the failure case is already captured in
-    // _actionError above (rendered inline by the action strip).
+    // Bulk discard through the coordinator — same pattern as the
+    // single-file path, just one pill for the whole batch. If the
+    // user cancels mid-window, nothing in the batch runs.
+    final coord = context.read<UndoCoordinator>();
+    final windowSec =
+        context.read<PreferencesState>().undoWindowSeconds;
+    await coord.schedule<void>(
+      kind: UndoActionKind.discard,
+      label: 'Discarding ${files.length} files',
+      window: Duration(seconds: windowSec),
+      run: () async {
+        int failed = 0;
+        String? firstErr;
+        final discarded = <String>[];
+        for (final f in files) {
+          final r = await discardFile(repoPath, f);
+          if (r.ok) {
+            discarded.add(f.path);
+          } else {
+            failed++;
+            firstErr ??= r.error;
+          }
+        }
+        if (!mounted) return;
+        setState(() {
+          _includedPaths.removeAll(discarded);
+          _actionError =
+              failed > 0 ? (firstErr ?? 'Some discards failed.') : null;
+        });
+        await repoState.refreshStatus();
+      },
+    );
   }
 
   /// Drop handler: a desk dragged from the topbar strip onto this
@@ -3826,83 +3942,45 @@ class _ChangesPageState extends State<ChangesPage> {
       _actionMessage = null;
     });
 
-    final stageResult = await stagePaths(repoPath, included);
-    if (!mounted) {
-      return;
-    }
-    if (!stageResult.ok) {
-      setState(() {
-        _actionRunning = false;
-        _actionError = stageResult.error;
-      });
-      return;
-    }
+    final coord = context.read<UndoCoordinator>();
+    final windowSec =
+        context.read<PreferencesState>().undoWindowSeconds;
+    final isSync = mode == _CommitRunMode.commitAndSync;
+    final kind = isSync
+        ? UndoActionKind.commitAndPush
+        : UndoActionKind.commit;
+    final label = isSync ? 'Committing and syncing' : 'Committing';
 
-    final stagedExcluded = _stagedExcludedPaths(status);
-    if (stagedExcluded.isNotEmpty) {
-      final unstageResult = await unstagePaths(repoPath, stagedExcluded);
-      if (!mounted) {
-        return;
-      }
-      if (!unstageResult.ok) {
-        setState(() {
-          _actionRunning = false;
-          _actionError = unstageResult.error;
-        });
-        return;
-      }
-    }
+    final outcome = await coord.schedule<_CommitOutcome>(
+      kind: kind,
+      label: label,
+      window: Duration(seconds: windowSec),
+      run: () =>
+          _runCommitFlow(repoPath, status, mode, included, message),
+    );
 
-    final commitResult = await createCommit(repoPath, message);
-    if (!mounted) {
+    if (!mounted) return;
+
+    if (outcome == null) {
+      // User cancelled during the undo window — nothing was staged,
+      // committed, or pushed. Just restore the button state.
+      setState(() => _actionRunning = false);
       return;
-    }
-    if (!commitResult.ok) {
-      setState(() {
-        _actionRunning = false;
-        _actionError = commitResult.error;
-      });
-      await _refreshAndReadStatus();
-      return;
-    }
-
-    final committed = commitResult.data!;
-    final shortHash = committed.commitHash.length >= 8
-        ? committed.commitHash.substring(0, 8)
-        : committed.commitHash;
-    var successMessage = 'Committed ${committed.summary} ($shortHash).';
-    String? syncError;
-
-    final refreshed = await _refreshAndReadStatus();
-    if (!mounted) {
-      return;
-    }
-
-    if (mode == _CommitRunMode.commitAndSync && refreshed != null) {
-      final syncResult = await syncRemote(repoPath, refreshed);
-      if (!mounted) {
-        return;
-      }
-      if (syncResult.ok) {
-        final operation = syncResult.data!.operation;
-        successMessage =
-            'Committed ${committed.summary} ($shortHash) and ran $operation.';
-      } else {
-        syncError = 'Commit succeeded, but sync failed: ${syncResult.error}';
-      }
-      await _refreshAndReadStatus();
-      if (!mounted) {
-        return;
-      }
     }
 
     setState(() {
       _actionRunning = false;
-      _commitMsgCtrl.clear();
-      unawaited(_clearCommitDraft());
-      _actionMessage = successMessage;
-      _actionError = syncError;
+      if (outcome.ok) {
+        _commitMsgCtrl.clear();
+        unawaited(_clearCommitDraft());
+        _actionMessage = outcome.successMessage;
+        _actionError = outcome.syncError;
+      } else {
+        _actionError = outcome.error;
+      }
     });
+
+    if (!outcome.ok) return;
     // Bridge to Branches: if the current branch has a desk PR, refresh
     // its persisted diff stats so the row metrics (+N -M, K files) are
     // accurate the moment the user switches to Branches. Without this
@@ -3915,6 +3993,62 @@ class _ChangesPageState extends State<ChangesPage> {
           repoPath: repoPath,
           branch: branchAfterCommit,
         ));
+  }
+
+  /// The actual stage+commit+optional-push sequence. Wrapped in
+  /// [_commit] via [UndoCoordinator.schedule] so the entire block
+  /// gets a safety window — if the user cancels, none of this runs.
+  Future<_CommitOutcome> _runCommitFlow(
+    String repoPath,
+    RepositoryStatus status,
+    _CommitRunMode mode,
+    List<String> included,
+    String message,
+  ) async {
+    final stageResult = await stagePaths(repoPath, included);
+    if (!stageResult.ok) {
+      return _CommitOutcome.err(
+          stageResult.error ?? 'Failed to stage files.');
+    }
+
+    final stagedExcluded = _stagedExcludedPaths(status);
+    if (stagedExcluded.isNotEmpty) {
+      final unstageResult = await unstagePaths(repoPath, stagedExcluded);
+      if (!unstageResult.ok) {
+        return _CommitOutcome.err(
+            unstageResult.error ?? 'Failed to unstage excluded files.');
+      }
+    }
+
+    final commitResult = await createCommit(repoPath, message);
+    if (!commitResult.ok) {
+      await _refreshAndReadStatus();
+      return _CommitOutcome.err(
+          commitResult.error ?? 'Commit failed.');
+    }
+
+    final committed = commitResult.data!;
+    final shortHash = committed.commitHash.length >= 8
+        ? committed.commitHash.substring(0, 8)
+        : committed.commitHash;
+    var successMessage = 'Committed ${committed.summary} ($shortHash).';
+    String? syncError;
+
+    final refreshed = await _refreshAndReadStatus();
+
+    if (mode == _CommitRunMode.commitAndSync && refreshed != null) {
+      final syncResult = await syncRemote(repoPath, refreshed);
+      if (syncResult.ok) {
+        final operation = syncResult.data!.operation;
+        successMessage =
+            'Committed ${committed.summary} ($shortHash) and ran $operation.';
+      } else {
+        syncError = 'Commit succeeded, but sync failed: ${syncResult.error}';
+      }
+      await _refreshAndReadStatus();
+    }
+
+    return _CommitOutcome.ok(committed, successMessage, syncError);
   }
 
   Future<void> _loadStashes(String repo) async {
@@ -5562,25 +5696,8 @@ class _ChangesPageState extends State<ChangesPage> {
                 child: TopProgressLine(color: t.accentBright),
               ),
             ),
-            // In-page undo pill for the most recent single-file discard.
-            // Replaces the OS SnackBar — bounded by the page chrome,
-            // anchored low-right out of the diff scroll path, and tied to
-            // a state-driven timer so it can never get "stuck" the way a
-            // queued snackbar can. Tap to recover; ignore to let it fade.
-            if (_pendingUndo != null)
-              Positioned(
-                right: 16,
-                bottom: 16,
-                child: _DiscardUndoPill(
-                  tokens: t,
-                  undo: _pendingUndo!,
-                  onUndo: _runPendingUndo,
-                  onDismiss: () {
-                    _undoTimer?.cancel();
-                    setState(() => _pendingUndo = null);
-                  },
-                ),
-              ),
+            // (Discard undo pill now lives in the app-shell overlay via
+            // `UndoCoordinator` — same visual anchor, handled globally.)
             // Drop-zone affordance: when a desk is actively being dragged
             // over us, pulse an accent border + a centered label so the
             // user knows "yes, I'll catch that." Positioned.fill with
@@ -5635,136 +5752,6 @@ bool _samePathSet(Set<String> a, Set<String> b) {
     }
   }
   return true;
-}
-
-class _DiscardUndo {
-  final String path;
-  final List<int> bytes;
-  final String repoPath;
-  final bool wasUntracked;
-
-  const _DiscardUndo({
-    required this.path,
-    required this.bytes,
-    required this.repoPath,
-    required this.wasUntracked,
-  });
-}
-
-/// Compact recovery pill for a recent discard. Renders as a single
-/// floating element anchored bottom-right of the changes page (NOT a
-/// snackbar) so it lives inside the page's visual frame. Fades in on
-/// mount; the parent removes it after the undo window expires or when
-/// the user taps Undo / dismisses.
-class _DiscardUndoPill extends StatefulWidget {
-  final AppTokens tokens;
-  final _DiscardUndo undo;
-  final Future<void> Function() onUndo;
-  final VoidCallback onDismiss;
-
-  const _DiscardUndoPill({
-    required this.tokens,
-    required this.undo,
-    required this.onUndo,
-    required this.onDismiss,
-  });
-
-  @override
-  State<_DiscardUndoPill> createState() => _DiscardUndoPillState();
-}
-
-class _DiscardUndoPillState extends State<_DiscardUndoPill>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _intro = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 140),
-  )..forward();
-
-  @override
-  void dispose() {
-    _intro.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final t = widget.tokens;
-    final fileName = widget.undo.path.split('/').last;
-    return FadeTransition(
-      opacity: CurvedAnimation(parent: _intro, curve: Curves.easeOut),
-      child: Material(
-        color: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
-          decoration: BoxDecoration(
-            color: t.surface1.withValues(alpha: 0.96),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: t.chromeBorder.withValues(alpha: 0.35),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                widget.undo.wasUntracked ? Icons.delete_outline : Icons.history,
-                size: 14,
-                color: t.textMuted,
-              ),
-              const SizedBox(width: 8),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 240),
-                child: Text(
-                  fileName,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: t.textNormal,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              TextButton(
-                onPressed: () {
-                  unawaited(widget.onUndo());
-                },
-                style: TextButton.styleFrom(
-                  minimumSize: const Size(0, 28),
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  foregroundColor: t.accentBright,
-                ),
-                child: const Text(
-                  'Undo',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              IconButton(
-                onPressed: widget.onDismiss,
-                icon: const Icon(Icons.close, size: 14),
-                color: t.textMuted,
-                splashRadius: 14,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-                tooltip: 'Dismiss',
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _CombinedDiffSection {
@@ -9910,56 +9897,6 @@ class _StateBadge extends StatelessWidget {
   }
 }
 
-/// Dreamed placeholder overlay for the commit composer. Renders the
-/// engine-generated phrase and cross-fades between phrases. Fades
-/// subtly while the engine is computing so the user sees the work
-/// happening.
-///
-/// Replaces the plain `InputDecoration.hintText` when the logos engine
-/// has produced a phrase; when it hasn't, the widget isn't built and
-/// the TextField falls back to its default hint.
-class _DreamHintOverlay extends StatelessWidget {
-  final AppTokens tokens;
-  final String phrase;
-  final bool thinking;
-
-  const _DreamHintOverlay({
-    required this.tokens,
-    required this.phrase,
-    required this.thinking,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      opacity: thinking ? 0.42 : 0.72,
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 360),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
-        transitionBuilder: (child, anim) => FadeTransition(
-          opacity: anim,
-          child: child,
-        ),
-        child: Text(
-          phrase,
-          key: ValueKey(phrase),
-          maxLines: 1,
-          overflow: TextOverflow.clip,
-          softWrap: false,
-          style: TextStyle(
-            color: tokens.textMuted.withValues(alpha: 0.88),
-            fontSize: 12,
-            fontStyle: FontStyle.italic,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _CommitComposerField extends StatefulWidget {
   final AppTokens tokens;
   final TextEditingController controller;
@@ -10183,23 +10120,32 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
             ),
             decoration: InputDecoration(
               isCollapsed: true,
-              contentPadding: const EdgeInsets.fromLTRB(10, 10, 16, 10),
+              contentPadding: const EdgeInsets.fromLTRB(10, 6, 16, 6),
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
-              // When the dream overlay is active, skip the plain
-              // hintText — the custom morph overlay paints on top and
-              // would collide with the built-in hint otherwise. Shape
-              // mode still uses plain hintText because the ask panel
-              // doesn't share the dream pipeline.
-              hintText: widget.dreamHint != null && !widget.shapeMode
-                  ? null
-                  : widget.hintText,
+              // Dream hint piggybacks on the native `hintText`
+              // mechanism so it's pixel-aligned with the TextField
+              // cursor — any external overlay drifts by the InputDecorator's
+              // internal leading (1-3px) which reads as "off" no matter
+              // how carefully the Positioned is tuned. Italic-when-dream
+              // + alpha fade on `thinking` give the same feel.
+              hintText: widget.shapeMode
+                  ? widget.hintText
+                  : (widget.dreamHint ?? widget.hintText),
               hintStyle: TextStyle(
-                color: tokens.textMuted.withValues(alpha: 0.55),
+                color: tokens.textMuted.withValues(
+                  alpha: widget.dreamHint != null &&
+                          !widget.shapeMode &&
+                          widget.dreamThinking
+                      ? 0.32
+                      : 0.55,
+                ),
                 fontSize: 12,
-                fontStyle:
-                    widget.shapeMode ? FontStyle.italic : FontStyle.normal,
+                fontStyle: (widget.dreamHint != null && !widget.shapeMode) ||
+                        widget.shapeMode
+                    ? FontStyle.italic
+                    : FontStyle.normal,
               ),
             ),
           ),
@@ -10257,32 +10203,13 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                 children: [
                   // TextField subtree hoisted via `child:`. See the
                   // comment above the AnimatedBuilder for the rationale.
+                  // The dream phrase is routed through `hintText` directly
+                  // (see InputDecoration above), so there's no overlay
+                  // here — alignment with the cursor is pixel-perfect.
                   textField!,
-                  // Dream-hint overlay. Positioned to match the
-                  // TextField's contentPadding (10,10,16,10) so the
-                  // morph text sits exactly where a plain hint would
-                  // render. IgnorePointer lets clicks fall through to
-                  // the TextField underneath. Only visible when the
-                  // composer is empty AND the engine has a phrase AND
-                  // we're not in shape mode.
-                  if (!widget.shapeMode &&
-                      !hasText &&
-                      widget.dreamHint != null)
-                    Positioned(
-                      left: 10,
-                      top: 10,
-                      right: 96, // leave room for the toolbar buttons
-                      child: IgnorePointer(
-                        child: _DreamHintOverlay(
-                          tokens: tokens,
-                          phrase: widget.dreamHint!,
-                          thinking: widget.dreamThinking,
-                        ),
-                      ),
-                    ),
                   Positioned(
                     right: 7,
-                    bottom: 7,
+                    bottom: 6,
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [

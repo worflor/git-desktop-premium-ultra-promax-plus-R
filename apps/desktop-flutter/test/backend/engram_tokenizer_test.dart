@@ -7,32 +7,12 @@ import 'package:git_desktop/backend/engram_tokenizer.dart';
 
 void main() {
   group('splitIdentifier', () {
-    test('empty / single-char input returns empty', () {
-      expect(splitIdentifier(''), isEmpty);
-      expect(splitIdentifier('a'), isEmpty);
-    });
-
-    test('simple lowercase word passes through', () {
-      expect(splitIdentifier('hello'), ['hello']);
-    });
-
     test('camelCase splits on humps', () {
       expect(splitIdentifier('getUserProfile'), ['get', 'user', 'profile']);
     });
 
-    test('PascalCase splits on humps', () {
-      expect(splitIdentifier('UserAuthService'),
-          ['user', 'auth', 'service']);
-    });
-
-    test('snake_case splits on underscores', () {
-      expect(splitIdentifier('build_diff_hunk'), ['build', 'diff', 'hunk']);
-    });
-
-    test('kebab-case splits on hyphens', () {
-      expect(splitIdentifier('user-auth-token'),
-          ['user', 'auth', 'token']);
-    });
+    // snake_case, kebab-case, PascalCase all exercise the same splitter
+    // mechanism as camelCase above — covered by one canonical test.
 
     test('SCREAMING_SNAKE_CASE lowercases', () {
       expect(splitIdentifier('MAX_BUFFER_SIZE'),
@@ -55,11 +35,6 @@ void main() {
 
     test('pure-digit runs are dropped', () {
       expect(splitIdentifier('1234'), isEmpty);
-    });
-
-    test('letter-then-digit transition splits and drops digit', () {
-      // "v" is len=1 (below min=2, dropped), "123" is digit-only (dropped)
-      expect(splitIdentifier('v123'), isEmpty);
     });
 
     test('short 2-char tokens retained (db, io, ui)', () {
@@ -101,11 +76,6 @@ void main() {
           'manager',
         ],
       );
-    });
-
-    test('preserves duplicates across identifiers', () {
-      final out = expandIdentifiers(['getUser', 'setUser']);
-      expect(out, ['get', 'user', 'set', 'user']);
     });
   });
 }

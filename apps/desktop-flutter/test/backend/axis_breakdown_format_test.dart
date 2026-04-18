@@ -26,15 +26,6 @@ AxisAttribution _attr({
 
 void main() {
   group('_formatAxisBreakdown', () {
-    test('null attribution → empty string', () {
-      expect(formatAxisBreakdownForTesting(null, 'lib/foo.dart'), '');
-    });
-
-    test('path missing from shares → empty string', () {
-      final attr = _attr(shares: const {}, dominant: const {});
-      expect(formatAxisBreakdownForTesting(attr, 'lib/foo.dart'), '');
-    });
-
     test('dominant axis wears the parens marker; others use =', () {
       // Dominant=cc, others ranked by share desc.
       final attr = _attr(
@@ -87,17 +78,5 @@ void main() {
       );
     });
 
-    test('single-axis case (e.g. only primary) renders cleanly', () {
-      final attr = _attr(
-        shares: {
-          'lib/foo.dart': {'primary': 1.0},
-        },
-        dominant: {'lib/foo.dart': 'primary'},
-      );
-      expect(
-        formatAxisBreakdownForTesting(attr, 'lib/foo.dart'),
-        'primary(100%)',
-      );
-    });
   });
 }

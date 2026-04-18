@@ -150,6 +150,137 @@ class SpacetimeBasis {
   Float64List diffuse(Float64List rho, double t) =>
       recombineFromProjection(project(rho), t);
 
+  /// Joint kernel dimension — count of joint eigenvalues `(λᵢ + μⱼ)`
+  /// that fall below [kGroundStateEps]. Equals
+  /// `space.kernelDim * time.kernelDim` in expectation (the tensor
+  /// product of the two kernels) but we compute it directly so the
+  /// tolerance applies to the sum, not the factors.
+  int get jointKernelDim {
+    var c = 0;
+    for (var i = 0; i < kSpace; i++) {
+      for (var j = 0; j < kTime; j++) {
+        if (space.eigenvalues[i] + time.eigenvalues[j] <=
+            kGroundStateEps) {
+          c++;
+        }
+      }
+    }
+    return c;
+  }
+
+  /// Joint non-zero count — `kSpace * kTime − jointKernelDim`.
+  int get jointNonZeroCount => kSpace * kTime - jointKernelDim;
+
+  /// Excited-mode heat trace on the joint operator — the spacetime
+  /// analogue of [SpectralGroundSpace.excitedHeatTrace]. Subtracts
+  /// the `jointKernelDim` plateau so the caller sees a pure
+  /// dissipative curve that decays to 0 as `t → ∞`.
+  double excitedHeatTrace(double t) => heatTrace(t) - jointKernelDim;
+
+  /// Regularised log-determinant of the joint operator:
+  ///     log det' L_joint = Σ_{λᵢ+μⱼ > 0} log(λᵢ + μⱼ).
+  ///
+  /// **NOT** a factorisation of the component log-determinants —
+  /// `log(λ+μ) ≠ log(λ) + log(μ)`. This quantity carries genuinely
+  /// new information about the joint (space × time) geometry: how
+  /// coupled are the file and commit scales?
+  double get jointLogDeterminant {
+    var s = 0.0;
+    for (var i = 0; i < kSpace; i++) {
+      for (var j = 0; j < kTime; j++) {
+        final lam = space.eigenvalues[i] + time.eigenvalues[j];
+        if (lam <= kGroundStateEps) continue;
+        s += math.log(lam);
+      }
+    }
+    return s;
+  }
+
+  /// Joint spectral zeta `ζ_joint(s) = Σ 1/(λᵢ+μⱼ)^s` over non-zero
+  /// modes. Does NOT factorise into `ζ_space · ζ_time` — the
+  /// reciprocal of a sum isn't the product of reciprocals. This is
+  /// an independent spacetime invariant.
+  ///
+  /// **Fast path** (Circle IV): the inner doubly-nested loop runs
+  /// `kSpace × kTime` times on every call — a nontrivial multiple on
+  /// typical (k=20) × (k=20) spectra. Integer `s` short-circuits the
+  /// full `math.pow` to a direct inverse-multiply chain, preserving
+  /// bit-identical output at ~5-10× less work.
+  double jointZeta(double s) {
+    if (!s.isFinite) return double.nan;
+    final sAsInt = s.truncate();
+    if (s == sAsInt.toDouble()) {
+      return _jointZetaInt(sAsInt);
+    }
+    var sum = 0.0;
+    for (var i = 0; i < kSpace; i++) {
+      final lamI = space.eigenvalues[i];
+      for (var j = 0; j < kTime; j++) {
+        final lam = lamI + time.eigenvalues[j];
+        if (lam <= kGroundStateEps) continue;
+        final term = math.pow(lam, -s).toDouble();
+        if (!term.isFinite) return double.infinity;
+        sum += term;
+      }
+    }
+    return sum;
+  }
+
+  /// Integer-exponent jointZeta — direct multiplication chain, no
+  /// `math.pow`. Special-cases the values `zetaReport`-style code
+  /// actually calls (0, 1, 2). Falls through to a small integer loop
+  /// for the rest.
+  double _jointZetaInt(int s) {
+    var sum = 0.0;
+    switch (s) {
+      case 0:
+        for (var i = 0; i < kSpace; i++) {
+          final lamI = space.eigenvalues[i];
+          for (var j = 0; j < kTime; j++) {
+            final lam = lamI + time.eigenvalues[j];
+            if (lam > kGroundStateEps) sum += 1.0;
+          }
+        }
+        return sum;
+      case 1:
+        for (var i = 0; i < kSpace; i++) {
+          final lamI = space.eigenvalues[i];
+          for (var j = 0; j < kTime; j++) {
+            final lam = lamI + time.eigenvalues[j];
+            if (lam > kGroundStateEps) sum += 1.0 / lam;
+          }
+        }
+        return sum;
+      case 2:
+        for (var i = 0; i < kSpace; i++) {
+          final lamI = space.eigenvalues[i];
+          for (var j = 0; j < kTime; j++) {
+            final lam = lamI + time.eigenvalues[j];
+            if (lam > kGroundStateEps) sum += 1.0 / (lam * lam);
+          }
+        }
+        return sum;
+    }
+    // Generic integer fall-through.
+    for (var i = 0; i < kSpace; i++) {
+      final lamI = space.eigenvalues[i];
+      for (var j = 0; j < kTime; j++) {
+        final lam = lamI + time.eigenvalues[j];
+        if (lam <= kGroundStateEps) continue;
+        if (s > 0) {
+          var den = 1.0;
+          for (var p = 0; p < s; p++) den *= lam;
+          if (den > 0) sum += 1.0 / den;
+        } else {
+          var num = 1.0;
+          for (var p = 0; p < -s; p++) num *= lam;
+          sum += num;
+        }
+      }
+    }
+    return sum;
+  }
+
   /// Joint signature — deterministic from the two factor signatures.
   /// A spacetime basis is identity-equal to another iff both factors
   /// match, so combining the factor signatures with a stable mixer

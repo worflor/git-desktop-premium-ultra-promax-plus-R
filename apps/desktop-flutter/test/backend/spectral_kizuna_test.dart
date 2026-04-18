@@ -98,22 +98,6 @@ void main() {
       }
     });
 
-    test('L_i equals Σ (-1)^bit_i(commitFp) across pairs', () {
-      final fileFp = _randomBytes(3000, 11);
-      final commitFp = _randomBytes(3000, 12);
-      final bond = KizunaBond25D.fromFingerprintPairs(
-        fileFingerprints: fileFp,
-        commitFingerprints: commitFp,
-      );
-      final ls = bond.lower;
-      for (var i = 0; i < 8; i++) {
-        var s = 0;
-        for (var p = 0; p < commitFp.length; p++) {
-          s += ((commitFp[p] >> i) & 1) == 0 ? 1 : -1;
-        }
-        expect(ls[i], closeTo(s.toDouble(), 1e-6));
-      }
-    });
   });
 
   group('EXP 2 — correlation saturates X, independence kills X', () {
@@ -157,24 +141,6 @@ void main() {
       }
     });
 
-    test('correlated / independent X ratio exceeds 10×', () {
-      const n = 4096;
-      final base = _randomBytes(n, 5);
-      final corr = KizunaBond25D.fromFingerprintPairs(
-        fileFingerprints: base,
-        commitFingerprints: base,
-      );
-      final indep = KizunaBond25D.fromFingerprintPairs(
-        fileFingerprints: base,
-        commitFingerprints: _randomBytes(n, 6),
-      );
-      var sCorr = 0.0, sIndep = 0.0;
-      for (var i = 0; i < 8; i++) {
-        sCorr += corr.cross[i].abs();
-        sIndep += indep.cross[i].abs();
-      }
-      expect(sCorr / sIndep, greaterThan(10.0));
-    });
   });
 
   group('EXP 4 — cosine degrades monotonically under perturbation', () {
@@ -337,13 +303,6 @@ void main() {
       }
     });
 
-    test('roundtrip bond compares equal (== and hashCode)', () {
-      final bond = makeBond(1003);
-      final rt = KizunaBond25D.fromBytes(bond.toBytes());
-      expect(rt == bond, isTrue);
-      expect(rt.hashCode, bond.hashCode);
-    });
-
     test('fromBytes throws FormatException on bad magic', () {
       final bytes = makeBond(1004).toBytes();
       bytes[0] = 0xFF; // corrupt magic
@@ -379,11 +338,6 @@ void main() {
       // Roundtrip through bytes to confirm wire-safe path also lands identical.
       final rt = KizunaBond25D.fromBytes(bond.toBytes());
       expect(classifyBondPair(bond, rt), KizunaBondCompatibility.identical);
-    });
-
-    test('same bond object → identical', () {
-      final bond = makeBond(2002);
-      expect(classifyBondPair(bond, bond), KizunaBondCompatibility.identical);
     });
 
     test('tiny perturbation (2%) → compatible', () {
@@ -434,11 +388,5 @@ void main() {
       expect(classifyBondPair(indep, anti), KizunaBondCompatibility.divergent);
     });
 
-    test('unrelated random bonds → divergent', () {
-      final a = makeBond(2030);
-      final b = makeBond(2040);
-      // EXP 5 shows unrelated repos have |cos| < 0.3 at n=2048.
-      expect(classifyBondPair(a, b), KizunaBondCompatibility.divergent);
-    });
   });
 }

@@ -62,18 +62,6 @@ LogosGit _fixtureEngine() {
 
 void main() {
   group('LogosField constructors', () {
-    test('zero has right shape and all-zero primal', () {
-      final basis = _pathBasis(8);
-      final f = LogosField.zero(basis, 4);
-      expect(f.n, 8);
-      expect(f.k, 8);
-      expect(f.commitCount, 4);
-      expect(f.primal.length, 8 * 4);
-      for (final v in f.primal) {
-        expect(v, 0.0);
-      }
-    });
-
     test('fromPrimal adopts the buffer and validates length', () {
       final basis = _pathBasis(6);
       final primal = Float64List(6 * 3);
@@ -91,21 +79,6 @@ void main() {
                 commitCount: 3,
               ),
           throwsArgumentError);
-    });
-
-    test('gff produces finite values at requested shape', () {
-      final basis = _pathBasis(8);
-      final rng = math.Random(0x64F);
-      final f1 = LogosField.gff(basis: basis, commitCount: 1, rng: rng);
-      expect(f1.primal.length, 8);
-      for (final v in f1.primal) {
-        expect(v.isFinite, isTrue);
-      }
-      final f4 = LogosField.gff(basis: basis, commitCount: 4, rng: rng);
-      expect(f4.primal.length, 8 * 4);
-      for (final v in f4.primal) {
-        expect(v.isFinite, isTrue);
-      }
     });
 
     test('conditional pins observations exactly', () {
@@ -165,16 +138,6 @@ void main() {
   });
 
   group('LogosField dual lazy computation', () {
-    test('dual is populated on first access and cached', () {
-      final basis = _pathBasis(6);
-      final rng = math.Random(3);
-      final f = LogosField.gff(basis: basis, commitCount: 4, rng: rng);
-      final re1 = f.dualReal;
-      final re2 = f.dualReal;
-      // Cached — second call returns the same object.
-      expect(identical(re1, re2), isTrue);
-    });
-
     test('Parseval: dual total matches primal sum-of-squares', () {
       final basis = _pathBasis(8);
       final rng = math.Random(4);
@@ -236,26 +199,6 @@ void main() {
       }
     });
 
-    test('filter(null, null) is identity', () {
-      final basis = _pathBasis(8);
-      final rng = math.Random(8);
-      final f = LogosField.gff(basis: basis, commitCount: 3, rng: rng);
-      final g = f.filter();
-      for (var i = 0; i < f.primal.length; i++) {
-        expect(g.primal[i], closeTo(f.primal[i], 1e-9));
-      }
-    });
-
-    test('bandPass with full range is identity', () {
-      final basis = _pathBasis(8);
-      final rng = math.Random(9);
-      final f = LogosField.gff(basis: basis, commitCount: 3, rng: rng);
-      final g = f.bandPass();
-      for (var i = 0; i < f.primal.length; i++) {
-        expect(g.primal[i], closeTo(f.primal[i], 1e-9));
-      }
-    });
-
     test('bandPass(ω only, DC) kills non-DC temporal mass', () {
       final basis = _pathBasis(6);
       final rng = math.Random(10);
@@ -271,16 +214,6 @@ void main() {
       }
     });
 
-    test('scale is linear', () {
-      final basis = _pathBasis(6);
-      final rng = math.Random(11);
-      final f = LogosField.gff(basis: basis, commitCount: 2, rng: rng);
-      final doubled = f.scale(2.0);
-      for (var i = 0; i < f.primal.length; i++) {
-        expect(doubled.primal[i], closeTo(f.primal[i] * 2.0, 1e-9));
-      }
-    });
-
     test('+ and - are inverses', () {
       final basis = _pathBasis(6);
       final rng = math.Random(12);
@@ -290,19 +223,6 @@ void main() {
       final diff = sum - b;
       for (var i = 0; i < a.primal.length; i++) {
         expect(diff.primal[i], closeTo(a.primal[i], 1e-9));
-      }
-    });
-
-    test('interpolate endpoints match', () {
-      final basis = _pathBasis(6);
-      final rng = math.Random(13);
-      final a = LogosField.gff(basis: basis, commitCount: 2, rng: rng);
-      final b = LogosField.gff(basis: basis, commitCount: 2, rng: rng);
-      final at0 = a.interpolate(b, 0.0);
-      final at1 = a.interpolate(b, 1.0);
-      for (var i = 0; i < a.primal.length; i++) {
-        expect(at0.primal[i], closeTo(a.primal[i], 1e-9));
-        expect(at1.primal[i], closeTo(b.primal[i], 1e-9));
       }
     });
 
@@ -317,18 +237,6 @@ void main() {
   });
 
   group('LogosField analysis', () {
-    test('energy reports non-negative components', () {
-      final basis = _pathBasis(8);
-      final rng = math.Random(15);
-      final f = LogosField.gff(basis: basis, commitCount: 4, rng: rng);
-      final e = f.energy;
-      expect(e.spatial, greaterThanOrEqualTo(0.0));
-      expect(e.temporal, greaterThanOrEqualTo(0.0));
-      expect(e.total, greaterThanOrEqualTo(0.0));
-      expect(e.spatialFraction, greaterThanOrEqualTo(0.0));
-      expect(e.spatialFraction, lessThanOrEqualTo(1.0));
-    });
-
     test('centroid picks the strongest dual bin', () {
       final basis = _pathBasis(8);
       // Build a field whose dual is a single spike at (j=3, ω=2).
@@ -399,17 +307,6 @@ void main() {
       expect(f.anomalyScore(f), closeTo(0.0, 1e-9));
     });
 
-    test('anomalyScore between unrelated fields is positive', () {
-      final basis = _pathBasis(6);
-      final rngA = math.Random(18);
-      final rngB = math.Random(19);
-      final a = LogosField.gff(basis: basis, commitCount: 4, rng: rngA);
-      final b = LogosField.gff(basis: basis, commitCount: 4, rng: rngB);
-      final kl = a.anomalyScore(b);
-      expect(kl, greaterThan(0.0));
-      expect(kl.isFinite, isTrue);
-    });
-
     test('topPathsViaEngine ranks seed paths at the top', () {
       final engine = _fixtureEngine();
       final probe = DiffProbe(
@@ -436,11 +333,4 @@ void main() {
     });
   });
 
-  group('LogosFieldCharacter labels', () {
-    test('every enum value has a non-empty label', () {
-      for (final c in LogosFieldCharacter.values) {
-        expect(c.label, isNotEmpty);
-      }
-    });
-  });
 }

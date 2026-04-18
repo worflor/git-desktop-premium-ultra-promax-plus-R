@@ -633,8 +633,11 @@ class _BranchesPageState extends State<BranchesPage> {
     // pattern: render the list right now, populate caches in the background
     // so subsequent lens switches and row expands hit warm caches and don't
     // spinner. Survives mid-flight repo switches via the `_lastRepo` guard
-    // inside each fetch's setState.
-    if (mounted) {
+    // inside each fetch's setState. Gated on `fetchOnlineIssuesOnBranchLoad`
+    // for users on metered networks or strict provider rate limits who
+    // prefer pull-on-demand when they actually switch to that lens.
+    if (mounted &&
+        context.read<PreferencesState>().fetchOnlineIssuesOnBranchLoad) {
       unawaited(_prefetchAll(repo));
     }
   }

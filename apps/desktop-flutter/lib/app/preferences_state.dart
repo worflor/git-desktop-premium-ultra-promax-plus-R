@@ -24,6 +24,10 @@ class PreferencesState extends ChangeNotifier {
   double _reduceMotionPhase = 0.0;
   bool _stashCabinetDefaultExpanded = false;
   bool _instantBlameHover = false;
+  bool _autoSelectNewChanges = false;
+  bool _fetchOnlineIssuesOnBranchLoad = true;
+  bool _rememberWorkInProgress = true;
+  int _undoWindowSeconds = 6;
   FileSortGuide _fileSortGuide = FileSortGuide.relatedProximity;
   bool _fileSortInverted = false;
   CommitStructure _commitStructure = kDefaultCommitStructure;
@@ -60,6 +64,10 @@ class PreferencesState extends ChangeNotifier {
   static const double _kMotionRateOff = 0.0001;
   bool get stashCabinetDefaultExpanded => _stashCabinetDefaultExpanded;
   bool get instantBlameHover => _instantBlameHover;
+  bool get autoSelectNewChanges => _autoSelectNewChanges;
+  bool get fetchOnlineIssuesOnBranchLoad => _fetchOnlineIssuesOnBranchLoad;
+  bool get rememberWorkInProgress => _rememberWorkInProgress;
+  int get undoWindowSeconds => _undoWindowSeconds;
   FileSortGuide get fileSortGuide => _fileSortGuide;
   bool get fileSortInverted => _fileSortInverted;
   CommitStructure get commitStructure => _commitStructure;
@@ -83,6 +91,10 @@ class PreferencesState extends ChangeNotifier {
     _reduceMotionPhase = settings.reduceMotionPhase;
     _stashCabinetDefaultExpanded = settings.stashCabinetDefaultExpanded;
     _instantBlameHover = settings.instantBlameHover;
+    _autoSelectNewChanges = settings.autoSelectNewChanges;
+    _fetchOnlineIssuesOnBranchLoad = settings.fetchOnlineIssuesOnBranchLoad;
+    _rememberWorkInProgress = settings.rememberWorkInProgress;
+    _undoWindowSeconds = settings.undoWindowSeconds.clamp(0, 3600);
     _fileSortGuide = _sortGuideFromString(settings.fileSortGuide);
     _fileSortInverted = settings.fileSortInverted;
     _commitStructure = commitStructureFromKey(settings.commitStructure);
@@ -108,6 +120,10 @@ class PreferencesState extends ChangeNotifier {
     double? reduceMotionPhase,
     bool? stashCabinetDefaultExpanded,
     bool? instantBlameHover,
+    bool? autoSelectNewChanges,
+    bool? fetchOnlineIssuesOnBranchLoad,
+    bool? rememberWorkInProgress,
+    int? undoWindowSeconds,
     String? fileSortGuide,
     bool? fileSortInverted,
     String? commitStructure,
@@ -129,6 +145,10 @@ class PreferencesState extends ChangeNotifier {
         reduceMotionPhase: reduceMotionPhase,
         stashCabinetDefaultExpanded: stashCabinetDefaultExpanded,
         instantBlameHover: instantBlameHover,
+        autoSelectNewChanges: autoSelectNewChanges,
+        fetchOnlineIssuesOnBranchLoad: fetchOnlineIssuesOnBranchLoad,
+        rememberWorkInProgress: rememberWorkInProgress,
+        undoWindowSeconds: undoWindowSeconds,
         fileSortGuide: fileSortGuide,
         fileSortInverted: fileSortInverted,
         commitStructure: commitStructure,
@@ -201,6 +221,39 @@ class PreferencesState extends ChangeNotifier {
     if (_instantBlameHover == value) return;
     _instantBlameHover = value;
     await _persistWith(instantBlameHover: value);
+    notifyListeners();
+  }
+
+  Future<void> setAutoSelectNewChanges(bool value) async {
+    if (_autoSelectNewChanges == value) return;
+    _autoSelectNewChanges = value;
+    await _persistWith(autoSelectNewChanges: value);
+    notifyListeners();
+  }
+
+  Future<void> setFetchOnlineIssuesOnBranchLoad(bool value) async {
+    if (_fetchOnlineIssuesOnBranchLoad == value) return;
+    _fetchOnlineIssuesOnBranchLoad = value;
+    await _persistWith(fetchOnlineIssuesOnBranchLoad: value);
+    notifyListeners();
+  }
+
+  Future<void> setRememberWorkInProgress(bool value) async {
+    if (_rememberWorkInProgress == value) return;
+    _rememberWorkInProgress = value;
+    await _persistWith(rememberWorkInProgress: value);
+    notifyListeners();
+  }
+
+  /// Set the discard-file undo window, in seconds. Accepts 0 (off) or
+  /// any of the canonical stops {3, 6, 10, 15}; values strictly greater
+  /// than 15 are custom user-typed unlocks and get clamped to a sane
+  /// ceiling so a bogus paste can't nerf the flow.
+  Future<void> setUndoWindowSeconds(int value) async {
+    final clamped = value < 0 ? 0 : (value > 3600 ? 3600 : value);
+    if (_undoWindowSeconds == clamped) return;
+    _undoWindowSeconds = clamped;
+    await _persistWith(undoWindowSeconds: clamped);
     notifyListeners();
   }
 

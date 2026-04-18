@@ -11,6 +11,21 @@ class DiffHunkHeader {
   final int additions;
   final int deletions;
 
+  /// Scope text following the `@@` header — typically the enclosing
+  /// class/function that git infers from the diff context. Empty when
+  /// the hunk has no identifiable scope. Trimmed of surrounding
+  /// whitespace and trailing `{`/`:` that look ragged in UI.
+  final String scope;
+
+  /// Raw `@@ -A,B +C,D @@` header (without the trailing scope). Kept
+  /// verbatim so power-user tooltips can surface the exact line-range
+  /// signature for copy into patches.
+  final String rawHeader;
+
+  /// New-side start line, parsed from the `+C` half of the `@@` header.
+  /// -1 when the header was malformed / unparseable.
+  final int startLine;
+
   int get churn => additions + deletions;
 
   const DiffHunkHeader({
@@ -20,6 +35,9 @@ class DiffHunkHeader {
     required this.label,
     required this.additions,
     required this.deletions,
+    required this.scope,
+    required this.rawHeader,
+    required this.startLine,
   });
 }
 
@@ -298,9 +316,18 @@ List<DiffHunkHeader> extractDiffHunks(List<ParsedLine> lines) {
     final fileHunkIndex = fileHunkCounts[filePath] ?? 0;
     fileHunkCounts[filePath] = fileHunkIndex + 1;
     final match = RegExp(r'^(@@ [^ ]+ [^ ]+ @@)(.*)$').firstMatch(text);
+    final rawHeader = match?.group(1) ?? '';
+    final rawScope = match?.group(2)?.trim() ?? '';
+    // Strip trailing `{` / `:` / ` -` that git often emits after the
+    // scope signature — noisy in UI, zero information loss.
+    final scope = rawScope.replaceAll(RegExp(r'[\s{:\-]+$'), '');
     final label = match != null
         ? (match.group(1)! + (match.group(2)?.trimRight() ?? ''))
         : text;
+    // New-side start line from `+C,D` (or `+C`) half of `@@ -A,B +C,D @@`.
+    final startMatch = RegExp(r'\+(\d+)').firstMatch(rawHeader);
+    final startLine =
+        startMatch != null ? int.tryParse(startMatch.group(1)!) ?? -1 : -1;
     result.add(
       DiffHunkHeader(
         lineIndex: start,
@@ -309,6 +336,9 @@ List<DiffHunkHeader> extractDiffHunks(List<ParsedLine> lines) {
         label: label.length > 60 ? '${label.substring(0, 57)}...' : label,
         additions: additions,
         deletions: deletions,
+        scope: scope,
+        rawHeader: rawHeader,
+        startLine: startLine,
       ),
     );
   }

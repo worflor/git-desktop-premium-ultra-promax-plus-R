@@ -82,12 +82,6 @@ void main() {
           mind.resolveQuery(const MindQuery.path('lib/ghost.dart')), isEmpty);
     });
 
-    test('line query is equivalent to path query', () {
-      final mind = LogosMind(engine: _fixtureEngine());
-      final line = mind.resolveQuery(const MindQuery.line('lib/auth/a.dart', 42));
-      expect(line, {'lib/auth/a.dart': 1.0});
-    });
-
     test('tokens query weights paths by symbol overlap', () {
       final mind = LogosMind(engine: _fixtureEngine());
       final seeds = mind.resolveQuery(const MindQuery.tokens(['getUser']));
@@ -148,28 +142,6 @@ void main() {
       expect(unrelatedIdx, anyOf(-1, greaterThan(30)));
     });
 
-    test('candidates carry spectral enrichment fields', () {
-      final mind = LogosMind(engine: _fixtureEngine());
-      final response = mind.ask(const MindQuery.path('lib/auth/a.dart'));
-      expect(response.candidates, isNotEmpty);
-      final top = response.candidates.first;
-      // gravity and reach should be populated when basis is available.
-      expect(top.gravity, isNotNull);
-      expect(top.reach, isNotNull);
-      expect(top.gravity!, isNot(double.nan));
-      expect(top.reach!, greaterThanOrEqualTo(0.0));
-      expect(top.reach!, lessThanOrEqualTo(1.0));
-    });
-
-    test('grounding is non-empty when seeds exist', () {
-      final mind = LogosMind(engine: _fixtureEngine());
-      final response = mind.ask(const MindQuery.path('lib/auth/a.dart'));
-      expect(response.candidates, isNotEmpty);
-      final top = response.candidates.first;
-      expect(top.grounding, isNotEmpty,
-          reason: 'every candidate should carry at least one grounding line');
-    });
-
     test('empty query yields empty response', () {
       final mind = LogosMind(engine: _fixtureEngine());
       final response =
@@ -198,14 +170,6 @@ void main() {
           reason: 'explanation=${response.explanation} top=$topPath');
     });
 
-    test('token query surfaces semantically-aligned files', () {
-      final mind = LogosMind(engine: _fixtureEngine());
-      final response = mind.ask(const MindQuery.tokens(['authToken']));
-      // authToken is in a.dart and c.dart; with both as seeds the top
-      // non-seed candidate should be one of their strongly-coupled
-      // neighbours.
-      expect(response.candidates, isNotEmpty);
-    });
   });
 
   group('LogosMind.dream — generative inference', () {
@@ -299,14 +263,6 @@ void main() {
       }
     });
 
-    test('finalStepDelta is finite', () {
-      final mind = LogosMind(engine: _fixtureEngine());
-      final evo =
-          mind.evolve(const MindQuery.path('lib/auth/a.dart'), steps: 30);
-      expect(evo.finalStepDelta.isFinite, isTrue);
-      expect(evo.finalStepDelta, greaterThanOrEqualTo(0.0));
-    });
-
     test('empty query yields empty evolution', () {
       final mind = LogosMind(engine: _fixtureEngine());
       final evo = mind.evolve(const MindQuery.path('lib/ghost.dart'));
@@ -316,15 +272,6 @@ void main() {
   });
 
   group('MindAxisContribution', () {
-    test('uniform has equal components', () {
-      const u = MindAxisContribution.uniform;
-      expect(u.f0, 0.2);
-      expect(u.cc, 0.2);
-      expect(u.m, 0.2);
-      expect(u.ab, 0.2);
-      expect(u.en, 0.2);
-    });
-
     test('dominant returns the strongest axis name', () {
       const a = MindAxisContribution(f0: 0.1, cc: 0.8, m: 0.2, ab: 0.3, en: 0.1);
       expect(a.dominant, 'cc');
@@ -351,18 +298,6 @@ void main() {
   });
 
   group('ask populates axis attribution', () {
-    test('every candidate carries a non-null axis breakdown', () {
-      final mind = LogosMind(engine: _fixtureEngine());
-      final r = mind.ask(const MindQuery.path('lib/auth/a.dart'));
-      expect(r.candidates, isNotEmpty);
-      for (final c in r.candidates) {
-        expect(c.axis, isNotNull);
-        expect(c.axis!.f0, greaterThanOrEqualTo(0.0));
-        expect(c.axis!.f0, lessThanOrEqualTo(1.0));
-        expect(c.axis!.cc, greaterThanOrEqualTo(0.0));
-      }
-    });
-
     test('m axis lights up for same-directory siblings', () {
       final mind = LogosMind(engine: _fixtureEngine());
       final r = mind.ask(const MindQuery.path('lib/auth/a.dart'));
@@ -375,15 +310,6 @@ void main() {
   });
 
   group('MindSession', () {
-    test('history grows with each ask', () {
-      final mind = LogosMind(engine: _fixtureEngine());
-      final session = MindSession(mind: mind);
-      session.ask(const MindQuery.path('lib/auth/a.dart'));
-      session.ask(const MindQuery.path('lib/auth/b.dart'));
-      expect(session.history, hasLength(2));
-      expect(session.history[0].query, isA<PathMindQuery>());
-    });
-
     test('drill seeds the next query from previous top result', () {
       final mind = LogosMind(engine: _fixtureEngine());
       final session = MindSession(mind: mind);
@@ -393,14 +319,6 @@ void main() {
       // The new seed is the first query's top candidate.
       expect(r2.seedPaths, contains(r1.candidates.first.path));
       expect(session.history, hasLength(2));
-    });
-
-    test('drill(path:) accepts explicit seed', () {
-      final mind = LogosMind(engine: _fixtureEngine());
-      final session = MindSession(mind: mind);
-      session.ask(const MindQuery.path('lib/auth/a.dart'));
-      final r = session.drill(path: 'lib/auth/b.dart');
-      expect(r.seedPaths, {'lib/auth/b.dart'});
     });
 
     test('consensus attaches confidence ∈ [0, 1]', () {

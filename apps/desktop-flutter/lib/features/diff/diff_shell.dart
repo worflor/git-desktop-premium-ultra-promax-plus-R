@@ -64,14 +64,29 @@ class _HunkHeader {
   final int additions;
   final int deletions;
   int get churn => additions + deletions;
+
+  /// Scope (enclosing class/function) parsed from after the `@@`
+  /// header. Empty when git couldn't infer one.
+  final String scope;
+
+  /// Raw `@@ -A,B +C,D @@` header, used as tooltip on the dropdown
+  /// rows so power users can still copy the precise signature.
+  final String rawHeader;
+
+  /// New-side start line, -1 if unparseable.
+  final int startLine;
+
   const _HunkHeader(
     this.lineIndex,
     this.filePath,
     this.fileHunkIndex,
     this.label,
     this.additions,
-    this.deletions,
-  );
+    this.deletions, {
+    required this.scope,
+    required this.rawHeader,
+    required this.startLine,
+  });
 }
 
 class _TrailViewState {
@@ -613,6 +628,9 @@ class _DiffShellState extends State<DiffShell> {
               hunk.label,
               hunk.additions,
               hunk.deletions,
+              scope: hunk.scope,
+              rawHeader: hunk.rawHeader,
+              startLine: hunk.startLine,
             ),
         ];
         _rebuildHunkHeaderLookup();
@@ -5178,13 +5196,7 @@ class _HunkDropdown extends StatelessWidget {
           .map((e) => PopupMenuItem<int>(
                 value: e.key,
                 height: 28,
-                child: Text(
-                  e.value.label,
-                  style: TextStyle(
-                      color: t.accentBright,
-                      fontSize: 11,
-                      fontFamily: 'JetBrainsMono'),
-                ),
+                child: _HunkDropdownRow(hunk: e.value, t: t),
               ))
           .toList(),
       child: Container(
@@ -5200,6 +5212,76 @@ class _HunkDropdown extends StatelessWidget {
             AppIcon(name: 'chevron-down', size: 10, color: t.textMuted),
           ]),
         ),
+      ),
+    );
+  }
+}
+
+/// One row inside the hunk dropdown. Lays out scope-first (the enclosing
+/// class or function, if git inferred one), then the new-side start line
+/// muted, then an add/delete delta badge right-aligned. Wrapped in a
+/// Tooltip that surfaces the raw `@@ -A,B +C,D @@` header so power users
+/// can still copy-paste the signature into patches.
+class _HunkDropdownRow extends StatelessWidget {
+  final _HunkHeader hunk;
+  final AppTokens t;
+  const _HunkDropdownRow({required this.hunk, required this.t});
+
+  @override
+  Widget build(BuildContext context) {
+    final scopeStyle = TextStyle(
+      color: t.accentBright,
+      fontSize: 11,
+      fontFamily: 'JetBrainsMono',
+    );
+    final mutedStyle = TextStyle(
+      color: t.textMuted,
+      fontSize: 11,
+      fontFamily: 'JetBrainsMono',
+    );
+    final fadedStyle = TextStyle(
+      color: t.textMuted.withValues(alpha: 0.55),
+      fontSize: 11,
+      fontFamily: 'JetBrainsMono',
+    );
+    final addStyle = TextStyle(
+      color: t.stateAdded,
+      fontSize: 10,
+      fontFamily: 'JetBrainsMono',
+      fontWeight: FontWeight.w600,
+    );
+    final delStyle = TextStyle(
+      color: t.stateDeleted,
+      fontSize: 10,
+      fontFamily: 'JetBrainsMono',
+      fontWeight: FontWeight.w600,
+    );
+    final hasScope = hunk.scope.isNotEmpty;
+    final lineText = hunk.startLine > 0 ? '${hunk.startLine}' : '—';
+    return Tooltip(
+      message: hunk.rawHeader.isNotEmpty ? hunk.rawHeader : hunk.label,
+      waitDuration: const Duration(milliseconds: 400),
+      child: Row(
+        mainAxisSize: MainAxisSize.max,
+        children: [
+          if (hasScope) ...[
+            Flexible(
+              child: Text(
+                hunk.scope,
+                style: scopeStyle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Text(' · ', style: fadedStyle),
+          ],
+          Text(lineText, style: mutedStyle),
+          const SizedBox(width: 12),
+          if (hunk.additions > 0) Text('+${hunk.additions}', style: addStyle),
+          if (hunk.additions > 0 && hunk.deletions > 0)
+            const SizedBox(width: 4),
+          if (hunk.deletions > 0) Text('−${hunk.deletions}', style: delStyle),
+        ],
       ),
     );
   }

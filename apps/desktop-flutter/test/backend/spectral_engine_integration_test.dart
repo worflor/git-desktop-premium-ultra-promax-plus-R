@@ -369,4 +369,38 @@ void main() {
       }
     });
   });
+
+  group('commit-level spectrogeometry', () {
+    final engine = LogosGit.buildFromStats(_largeStats());
+
+    test('commitSpectrogeometry returns a full report on a real fixture', () {
+      final sg = engine.commitSpectrogeometry();
+      expect(sg, isNotNull);
+      // Exercises RMT + persistence + dim + zeta — all should populate
+      // on a sufficiently-large commit graph.
+      expect(sg!.zeta.nonZeroCount, greaterThan(0));
+      expect(sg.fingerprint.isZero, isFalse);
+      expect(sg.universality.canonicality.isFinite, isTrue);
+    });
+
+    test('repeated calls hit the cache (identical fingerprint + instance)',
+        () {
+      final first = engine.commitSpectrogeometry();
+      final second = engine.commitSpectrogeometry();
+      expect(identical(first, second), isTrue,
+          reason: 'commit spectrogeometry should be cached per k');
+    });
+
+    test('file and commit universalities are independent readings', () {
+      final pair = engine.spacetimeSpectrogeometry();
+      expect(pair.file, isNotNull);
+      expect(pair.commit, isNotNull);
+      // Fingerprints are derived from the scalars of each report,
+      // so different graphs → different fingerprints. This is the
+      // load-bearing claim: the two scales carry distinct info.
+      expect(pair.file!.fingerprint,
+          isNot(equals(pair.commit!.fingerprint)),
+          reason: 'file and commit graphs should hash differently');
+    });
+  });
 }

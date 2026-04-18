@@ -8,6 +8,7 @@ import '../backend/dtos.dart';
 import '../backend/git.dart';
 import '../backend/logos_dream.dart';
 import '../backend/logos_free_energy.dart';
+import '../backend/logos_spectrogeometry.dart' show UniversalityVector;
 import '../components/icons/app_icons.dart';
 import '../features/branches/branches_page.dart';
 import '../features/changes/changes_page.dart';
@@ -530,6 +531,10 @@ class _Topbar extends StatelessWidget {
         : logosState.engineFor(repo.activePath!);
     final anomaly =
         engine == null ? 0.0 : (repoAnomalyLevel(engine) ?? 0.0);
+    // Pull the repo's universality classification for the sheen. The
+    // engine caches the report by `manifoldRevision`, so this is a
+    // cheap map lookup on every build; no recomputation.
+    final universality = engine?.spectrogeometry()?.universality;
 
     return MaterialSurface(
       tone: topbarTone,
@@ -562,6 +567,7 @@ class _Topbar extends StatelessWidget {
                     repoPath: repo.activePath,
                     onRefresh: () => repo.refreshStatus(),
                     anomaly: anomaly,
+                    universality: universality,
                   ),
                   if (status != null) ...[
                     const SizedBox(height: 4),
@@ -721,12 +727,20 @@ class _RepoNameLabel extends StatefulWidget {
   /// title's sheen strength; leaves the base text colour untouched.
   final double anomaly;
 
+  /// Repo's universality classification — the nearest spectral
+  /// archetype (crystalline / poisson / goe / tree / bulk /
+  /// modular). Shapes the sheen's band count, width, palette, and
+  /// tilt: crystalline repos get tight ordered sweeps, chaotic ones
+  /// get multi-band turbulent ones. Null on no-basis repos.
+  final UniversalityVector? universality;
+
   const _RepoNameLabel({
     required this.name,
     required this.hasRepo,
     this.repoPath,
     required this.onRefresh,
     this.anomaly = 0.0,
+    this.universality,
   });
 
   @override
@@ -777,6 +791,7 @@ class _RepoNameLabelState extends State<_RepoNameLabel> {
             text: widget.name,
             intensity: widget.anomaly,
             refreshing: _fetching,
+            universality: widget.universality,
             // No special "fetching colour" — the refresh sheen itself
             // is the affordance now, so the base text stays readable
             // in its hover/default colour while the swoosh does the

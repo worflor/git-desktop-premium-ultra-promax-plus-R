@@ -61,6 +61,7 @@ import 'logos_signature.dart';
 import 'lru_cache.dart';
 
 part 'logos_generative.dart';
+part 'logos_groundspace.dart';
 part 'logos_heat.dart';
 part 'logos_thermo.dart';
 
@@ -2447,14 +2448,21 @@ class SpectralBasis {
     if (kClusters <= 1 || n == 0 || k < 2) {
       return List<int>.filled(n, 0);
     }
-    final embedDim = math.min(kClusters, k - 1);
-    // Build n × embedDim embedding using u_1..u_{embedDim} (skip u_0).
+    // Skip the full kernel subspace — on connected graphs this is 1,
+    // on disconnected graphs it's β₀. Hardcoding "skip mode 0" would
+    // feed a ground-state eigenvector into the embedding as an axis,
+    // poisoning the clustering with a component-indicator mask.
+    final start = firstExcitedIndex;
+    final available = k - start;
+    if (available <= 0) return List<int>.filled(n, 0);
+    final embedDim = math.min(kClusters, available);
+    // Build n × embedDim embedding using u_start..u_{start+embedDim-1}.
     // Row-normalised so cosine-like similarity drives the k-means.
     final embedding = Float64List(n * embedDim);
     for (var i = 0; i < n; i++) {
       var rowNormSq = 0.0;
       for (var d = 0; d < embedDim; d++) {
-        final v = eigenvectors[(d + 1) * n + i];
+        final v = eigenvectors[(start + d) * n + i];
         embedding[i * embedDim + d] = v;
         rowNormSq += v * v;
       }

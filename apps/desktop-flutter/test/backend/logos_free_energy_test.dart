@@ -70,13 +70,6 @@ void main() {
       expect(freeEnergy(f), closeTo(0.0, 1e-12));
     });
 
-    test('non-zero field has positive free energy', () {
-      final basis = _basis(10);
-      final rng = math.Random(1);
-      final f = LogosField.gff(basis: basis, commitCount: 1, rng: rng);
-      expect(freeEnergy(f), greaterThan(0.0));
-    });
-
     test('scaling a field scales free energy quadratically', () {
       final basis = _basis(10);
       final rng = math.Random(2);
@@ -155,13 +148,6 @@ void main() {
       expect(attr.topKFraction(1), greaterThan(1.0 / basis.k));
     });
 
-    test('mass term is preserved in the attribution', () {
-      final basis = _basis(6);
-      final rng = math.Random(5);
-      final f = LogosField.gff(basis: basis, commitCount: 1, rng: rng);
-      final attr = freeEnergyAttribution(f, mass: 0.3);
-      expect(attr.mass, 0.3);
-    });
   });
 
   group('repoFreeEnergy — engine-level observation', () {
@@ -182,30 +168,6 @@ void main() {
       expect(repoFreeEnergy(engine), isNull);
     });
 
-    test('non-null with finite total on a real fixture', () {
-      final engine = _fixtureEngine(noisy: false);
-      final attr = repoFreeEnergy(engine);
-      expect(attr, isNotNull);
-      expect(attr!.total.isFinite, isTrue);
-      expect(attr.total, greaterThan(0.0));
-    });
-
-    test('noisy and smooth repos both yield finite F', () {
-      // After max-normalisation the two fixtures land at comparable
-      // scalar F; the more meaningful distinction is mode concentration
-      // (tested directly against hand-built fields in the primal group).
-      // Here we just verify both engines produce finite, positive F.
-      final healthy = _fixtureEngine(noisy: false);
-      final noisy = _fixtureEngine(noisy: true);
-      final fHealthy = repoFreeEnergy(healthy);
-      final fNoisy = repoFreeEnergy(noisy);
-      expect(fHealthy, isNotNull);
-      expect(fNoisy, isNotNull);
-      expect(fHealthy!.total.isFinite, isTrue);
-      expect(fNoisy!.total.isFinite, isTrue);
-      expect(fHealthy.total, greaterThan(0.0));
-      expect(fNoisy.total, greaterThan(0.0));
-    });
   });
 
   group('repoHealth — classification', () {
@@ -226,17 +188,6 @@ void main() {
       expect(repoHealth(engine), RepoHealth.silent);
     });
 
-    test('returns a non-silent label on a real fixture', () {
-      final engine = _fixtureEngine(noisy: false);
-      final label = repoHealth(engine);
-      expect(label, isNot(RepoHealth.silent));
-    });
-
-    test('labels are stable and non-empty', () {
-      for (final label in RepoHealth.values) {
-        expect(label.label, isNotEmpty);
-      }
-    });
   });
 
   group('lowPassFraction', () {

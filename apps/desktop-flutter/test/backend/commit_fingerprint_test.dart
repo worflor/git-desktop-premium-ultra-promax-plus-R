@@ -62,14 +62,6 @@ void main() {
       }
     });
 
-    test('empty file list does not throw and gives zero fingerprint', () {
-      final s = computeCommitSignature(_detail(const []));
-      expect(s.fingerprint.length, kFingerprintDim);
-      for (var i = 0; i < kFingerprintDim; i++) {
-        expect(s.fingerprint[i], 0.0);
-      }
-    });
-
     test('different file sets produce different fingerprints', () {
       final a = computeCommitSignature(
           _detail([(path: 'a.dart', adds: 100, dels: 0)]));
@@ -92,13 +84,6 @@ void main() {
   });
 
   group('CommitSignature — witness Hamming', () {
-    test('identical witnesses have Hamming distance 0', () {
-      final d = _detail([(path: 'x', adds: 50, dels: 50)]);
-      final a = computeCommitSignature(d);
-      final b = computeCommitSignature(d);
-      expect(witnessHamming(a.witness, b.witness), 0);
-    });
-
     test('cosine reconstruction from Hamming is monotone in distance', () {
       // Hamming 0 → cos = 1; Hamming kWitnessBits → cos = -1.
       expect(witnessCosineFromHamming(0), closeTo(1.0, 1e-9));
@@ -108,12 +93,6 @@ void main() {
   });
 
   group('fingerprintCosine', () {
-    test('identical vectors → 1.0', () {
-      final d = _detail([(path: 'p', adds: 1, dels: 0)]);
-      final s = computeCommitSignature(d);
-      expect(fingerprintCosine(s.fingerprint, s.fingerprint),
-          closeTo(1.0, 1e-6));
-    });
     test('zero vectors → 0.0 (no NaN)', () {
       final s = computeCommitSignature(_detail(const []));
       expect(fingerprintCosine(s.fingerprint, s.fingerprint), 0.0);

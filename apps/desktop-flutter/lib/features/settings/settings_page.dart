@@ -45,7 +45,6 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _reviewPromptController = TextEditingController();
   final TextEditingController _musePromptController = TextEditingController();
   String _diagnosticsFocus = 'command';
-  String? _actionMessage;
   String? _actionError;
   bool _dataMaintenanceBusy = false;
   bool _aiProvidersLoading = false;
@@ -157,7 +156,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _saveGuardrailStage(int stage) async {
     setState(() {
       _actionError = null;
-      _actionMessage = null;
     });
     try {
       await context.read<PreferencesState>().setGuardrailStage(stage);
@@ -175,7 +173,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _saveRetention(int retentionDays, int retentionMb) async {
     setState(() {
       _actionError = null;
-      _actionMessage = null;
     });
     try {
       await context
@@ -195,7 +192,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _saveUpdateChannel(String value) async {
     setState(() {
       _actionError = null;
-      _actionMessage = null;
     });
     try {
       await context.read<PreferencesState>().setUpdateChannel(value);
@@ -213,7 +209,6 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _saveCrashReporting(bool value) async {
     setState(() {
       _actionError = null;
-      _actionMessage = null;
     });
     try {
       await context.read<PreferencesState>().setCrashReportingEnabled(value);
@@ -246,7 +241,6 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       setState(() {
         _actionError = null;
-        _actionMessage = 'Saved AI model selection.';
       });
     } catch (_) {
       if (!mounted) {
@@ -267,7 +261,6 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       setState(() {
         _actionError = null;
-        _actionMessage = 'Saved model alias.';
       });
     } catch (_) {
       if (!mounted) {
@@ -287,7 +280,6 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       setState(() {
         _actionError = null;
-        _actionMessage = 'Saved commit message model slot.';
       });
     } catch (_) {
       if (!mounted) {
@@ -307,7 +299,6 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       setState(() {
         _actionError = null;
-        _actionMessage = 'Saved review model slot.';
       });
     } catch (_) {
       if (!mounted) {
@@ -359,9 +350,6 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       setState(() {
         _actionError = null;
-        _actionMessage = value.trim().isEmpty
-            ? 'Cleared commit message custom prompt.'
-            : 'Saved commit message custom prompt.';
         _commitPromptSaveState = _PromptSaveState.saved;
       });
     } catch (_) {
@@ -385,9 +373,6 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       setState(() {
         _actionError = null;
-        _actionMessage = value.trim().isEmpty
-            ? 'Cleared review guide.'
-            : 'Saved review guide.';
         _reviewPromptSaveState = _PromptSaveState.saved;
       });
     } catch (_) {
@@ -424,9 +409,6 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       setState(() {
         _actionError = null;
-        _actionMessage = value.trim().isEmpty
-            ? 'Cleared muse notes.'
-            : 'Saved muse notes.';
         _musePromptSaveState = _PromptSaveState.saved;
       });
     } catch (_) {
@@ -448,8 +430,6 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       setState(() {
         _actionError = null;
-        _actionMessage =
-            value ? 'Enabled double-check review.' : 'Disabled double-check review.';
       });
     } catch (_) {
       if (!mounted) {
@@ -535,7 +515,6 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {
       _dataMaintenanceBusy = true;
       _actionError = null;
-      _actionMessage = null;
     });
     final diagnostics = DiagnosticsState.instance;
     await diagnostics.clearAllDiagnostics();
@@ -544,7 +523,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     setState(() {
       _dataMaintenanceBusy = false;
-      _actionMessage = 'Cleared local diagnostics samples.';
     });
   }
 
@@ -558,7 +536,6 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {
       _dataMaintenanceBusy = true;
       _actionError = null;
-      _actionMessage = null;
     });
     final count = await AiAuditStore.clearEntries();
     if (!mounted) {
@@ -566,8 +543,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     setState(() {
       _dataMaintenanceBusy = false;
-      _actionMessage =
-          'Cleared $count AI audit ${count == 1 ? "entry" : "entries"}.';
     });
   }
 
@@ -581,7 +556,6 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {
       _dataMaintenanceBusy = true;
       _actionError = null;
-      _actionMessage = null;
     });
     final diagnostics = DiagnosticsState.instance;
     await diagnostics.clearAllDiagnostics();
@@ -591,8 +565,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     setState(() {
       _dataMaintenanceBusy = false;
-      _actionMessage =
-          'Cleared diagnostics and $count AI audit ${count == 1 ? "entry" : "entries"}.';
     });
   }
 
@@ -608,14 +580,12 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     setState(() {
       _actionError = null;
-      _actionMessage = 'Copied diagnostics snapshot to clipboard.';
     });
   }
 
   void _showUpdateStubMessage() {
     setState(() {
-      _actionError = null;
-      _actionMessage = 'Update actions are not wired in the Flutter build yet.';
+      _actionError = 'Update actions are not wired in the Flutter build yet.';
     });
   }
 
@@ -802,11 +772,11 @@ class _SettingsPageState extends State<SettingsPage> {
       padding: const EdgeInsets.all(12),
       children: [
         const _FeatureHeader(),
-        if (_actionMessage != null || _actionError != null) ...[
+        if (_actionError != null) ...[
           const SizedBox(height: 10),
           _SettingsNotice(
-            message: _actionError ?? _actionMessage!,
-            error: _actionError != null,
+            message: _actionError!,
+            error: true,
           ),
         ],
         const SizedBox(height: 10),
@@ -960,6 +930,20 @@ class _SettingsPageState extends State<SettingsPage> {
                 },
               ),
               const SizedBox(height: 10),
+              _StepperRow(
+                label: 'Undo window',
+                description:
+                    'How long the undo pill stays after you discard a file.',
+                value: preferences.undoWindowSeconds,
+                fixedStops: const [0, 3, 6, 10],
+                topStopBaseline: 15,
+                onChanged: (value) {
+                  unawaited(context
+                      .read<PreferencesState>()
+                      .setUndoWindowSeconds(value));
+                },
+              ),
+              const SizedBox(height: 10),
               _CheckboxRow(
                 label: 'AI read-only mode',
                 description: 'Prevents AI from writing or staging changes automatically.',
@@ -974,8 +958,28 @@ class _SettingsPageState extends State<SettingsPage> {
                     ? "It's designed to be efficient, don't hurt its feelings"
                     : ":(",
                 value: preferences.logoAnimatesWhenUnfocused,
+                trailing: _LogoMotionMiniIndicator(
+                  animates: preferences.logoAnimatesWhenUnfocused,
+                  tokens: t,
+                ),
                 onChanged: (value) {
                   _setLogoAnimatesWhenUnfocused(value);
+                },
+              ),
+              const SizedBox(height: 10),
+              _CheckboxRow(
+                label: 'Remember work in progress',
+                description:
+                    'Keep your commit drafts and file selection between sessions.',
+                value: preferences.rememberWorkInProgress,
+                trailing: _WipMemoryMiniIndicator(
+                  remembered: preferences.rememberWorkInProgress,
+                  tokens: t,
+                ),
+                onChanged: (value) {
+                  unawaited(context
+                      .read<PreferencesState>()
+                      .setRememberWorkInProgress(value));
                 },
               ),
               const SizedBox(height: 10),
@@ -1008,6 +1012,38 @@ class _SettingsPageState extends State<SettingsPage> {
                   unawaited(context
                       .read<PreferencesState>()
                       .setInstantBlameHover(value));
+                },
+              ),
+              const SizedBox(height: 10),
+              _CheckboxRow(
+                label: 'Auto select new changes',
+                description:
+                    'Newly tracked or changed files are added to the commit selection automatically.',
+                value: preferences.autoSelectNewChanges,
+                trailing: _AutoSelectMiniIndicator(
+                  active: preferences.autoSelectNewChanges,
+                  tokens: t,
+                ),
+                onChanged: (value) {
+                  unawaited(context
+                      .read<PreferencesState>()
+                      .setAutoSelectNewChanges(value));
+                },
+              ),
+              const SizedBox(height: 10),
+              _CheckboxRow(
+                label: 'Fetch online issues on branch load',
+                description:
+                    'Pull PR and issue details from your git provider in the background when the branches page opens.',
+                value: preferences.fetchOnlineIssuesOnBranchLoad,
+                trailing: _OnlineFetchMiniIndicator(
+                  active: preferences.fetchOnlineIssuesOnBranchLoad,
+                  tokens: t,
+                ),
+                onChanged: (value) {
+                  unawaited(context
+                      .read<PreferencesState>()
+                      .setFetchOnlineIssuesOnBranchLoad(value));
                 },
               ),
               const SizedBox(height: 16),
@@ -6904,6 +6940,286 @@ class _CheckboxRow extends StatelessWidget {
   }
 }
 
+/// Interactive "semi-stage" row — taller than a checkbox, shorter than
+/// a full control stage. Renders a small tick-stop slider on the right
+/// side with N labeled stops. The last stop's label is an inline
+/// [TextField] with every visible decoration stripped: identical to
+/// the sibling `Text` labels at rest, quietly editable on tap.
+///
+/// Editing the last label with an integer strictly greater than
+/// [topStopBaseline] unlocks a custom value that becomes the top stop.
+/// Any invalid input reverts — no error chrome, it just doesn't take.
+/// Selecting a lower stop resets the top stop back to [topStopBaseline]
+/// (forgetting the custom unlock), matching the "while you're there"
+/// semantics that keep the easter-egg playful rather than permanent.
+class _StepperRow extends StatefulWidget {
+  final String label;
+  final String? description;
+  final int value;
+  final ValueChanged<int> onChanged;
+  /// Fixed discrete stops displayed left-to-right (e.g. [0, 3, 6, 10]).
+  /// The top stop is rendered separately and is editable.
+  final List<int> fixedStops;
+  /// Default value of the top stop. Also the minimum edited-value
+  /// ceiling — edits must be strictly greater than this.
+  final int topStopBaseline;
+
+  const _StepperRow({
+    required this.label,
+    this.description,
+    required this.value,
+    required this.onChanged,
+    required this.fixedStops,
+    required this.topStopBaseline,
+  });
+
+  @override
+  State<_StepperRow> createState() => _StepperRowState();
+}
+
+class _StepperRowState extends State<_StepperRow> {
+  late final TextEditingController _ctrl;
+  late final FocusNode _focus;
+
+  int get _topStopValue => widget.value >= widget.topStopBaseline
+      ? widget.value
+      : widget.topStopBaseline;
+
+  bool get _atTopStop => !widget.fixedStops.contains(widget.value) &&
+      widget.value >= widget.topStopBaseline;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: _topStopValue.toString());
+    _focus = FocusNode();
+    _focus.addListener(_onFocusChange);
+  }
+
+  @override
+  void didUpdateWidget(covariant _StepperRow old) {
+    super.didUpdateWidget(old);
+    // Keep the field text in sync with the model when the parent
+    // pushes a new value (e.g. slider moved elsewhere). Don't clobber
+    // what the user is actively typing.
+    if (!_focus.hasFocus && _ctrl.text != _topStopValue.toString()) {
+      _ctrl.text = _topStopValue.toString();
+    }
+  }
+
+  void _onFocusChange() {
+    if (!_focus.hasFocus) _commitEdit();
+  }
+
+  void _commitEdit() {
+    final parsed = int.tryParse(_ctrl.text.trim());
+    if (parsed != null && parsed > widget.topStopBaseline) {
+      widget.onChanged(parsed);
+    } else {
+      // Invalid or too-small — silently revert. No error state; the
+      // field just refuses the edit. The whole point is that it's a
+      // seamless label that happens to be editable when you coax it.
+      _ctrl.text = _topStopValue.toString();
+    }
+  }
+
+  @override
+  void dispose() {
+    _focus.removeListener(_onFocusChange);
+    _focus.dispose();
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  String _formatStop(int s) => s == 0 ? 'Off' : '${s}s';
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            // Leading spacer matches the 18px checkbox + 8px gap used by
+            // `_CheckboxRow`, so this row aligns with its neighbors.
+            const SizedBox(width: 26),
+            Text(widget.label,
+                style: TextStyle(color: t.textNormal, fontSize: 13)),
+            const Spacer(),
+            _buildStepper(t),
+          ],
+        ),
+        if (widget.description != null) ...[
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(left: 26),
+            child: Text(
+              widget.description!,
+              style: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.65),
+                fontSize: 10.5,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildStepper(AppTokens t) {
+    final stops = [...widget.fixedStops, widget.topStopBaseline];
+    const stepperWidth = 200.0;
+    const hPad = 12.0;
+    final trackStart = hPad;
+    final trackEnd = stepperWidth - hPad;
+    final trackSpan = trackEnd - trackStart;
+    return SizedBox(
+      width: stepperWidth,
+      height: 30,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Track line under the tick marks.
+          Positioned(
+            left: trackStart,
+            right: hPad,
+            top: 6,
+            child: Container(
+              height: 1,
+              color: t.textMuted.withValues(alpha: 0.30),
+            ),
+          ),
+          for (var i = 0; i < stops.length; i++)
+            _buildStop(
+              t,
+              stops[i],
+              isLast: i == stops.length - 1,
+              cx: trackStart + (i / (stops.length - 1)) * trackSpan,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStop(
+    AppTokens t,
+    int stopValue, {
+    required bool isLast,
+    required double cx,
+  }) {
+    final isActive = isLast
+        ? (_atTopStop || widget.value == widget.topStopBaseline)
+        : widget.value == stopValue;
+    final labelColor = isActive ? t.accentBright : t.textMuted;
+    final tickColor = isActive ? t.accentBright : t.inputBg;
+    final tickBorder =
+        isActive ? t.accentBright : t.textMuted.withValues(alpha: 0.5);
+    // Circle + (label or editable field). Non-last stops share one
+    // tap-target for both. Last stop splits the tap target so tapping
+    // the label focuses the TextField (native behavior) while tapping
+    // the circle snaps to the baseline top stop.
+    Widget circle = Container(
+      width: 10,
+      height: 10,
+      decoration: BoxDecoration(
+        color: tickColor,
+        shape: BoxShape.circle,
+        border: Border.all(color: tickBorder, width: 1),
+      ),
+    );
+    if (isLast) {
+      return Positioned(
+        left: cx - 18,
+        top: 0,
+        child: SizedBox(
+          width: 36,
+          child: Column(
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  if (_focus.hasFocus) _focus.unfocus();
+                  widget.onChanged(_topStopValue);
+                },
+                child: SizedBox(
+                  width: 36,
+                  height: 14,
+                  child: Center(child: circle),
+                ),
+              ),
+              const SizedBox(height: 1),
+              _buildLastLabelRow(labelColor),
+            ],
+          ),
+        ),
+      );
+    }
+    return Positioned(
+      left: cx - 18,
+      top: 0,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => widget.onChanged(stopValue),
+        child: SizedBox(
+          width: 36,
+          child: Column(
+            children: [
+              SizedBox(width: 36, height: 14, child: Center(child: circle)),
+              const SizedBox(height: 1),
+              Text(
+                _formatStop(stopValue),
+                style: TextStyle(color: labelColor, fontSize: 10),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLastLabelRow(Color labelColor) {
+    final style = TextStyle(color: labelColor, fontSize: 10);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        // No decoration: the field is invisible at rest, same glyphs as
+        // the sibling Text labels. Discovery happens by accident — you
+        // click where you didn't expect a field and find one.
+        ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 6, maxWidth: 28),
+          child: IntrinsicWidth(
+            child: TextField(
+              controller: _ctrl,
+              focusNode: _focus,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              textAlign: TextAlign.center,
+              style: style,
+              cursorWidth: 1,
+              cursorHeight: 10,
+              cursorColor: labelColor,
+              decoration: const InputDecoration(
+                isCollapsed: true,
+                isDense: true,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: EdgeInsets.zero,
+                hintText: null,
+              ),
+              onSubmitted: (_) => _commitEdit(),
+            ),
+          ),
+        ),
+        Text('s', style: style),
+      ],
+    );
+  }
+}
+
 class _ThemeCheckGlyph extends StatelessWidget {
   final AppTokens tokens;
 
@@ -7141,6 +7457,397 @@ class _InstantBlameMiniIndicator extends StatelessWidget {
                     ],
                   ),
                 ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Mini-viz for "remember work in progress." A little note-card with
+/// content lines and a tab-flag that reads as "kept for later" when ON.
+/// When OFF the card is blank and the flag is gone — the draft was not
+/// saved. Mirrors the on/off contract of the cabinet + blame indicators.
+class _WipMemoryMiniIndicator extends StatelessWidget {
+  final bool remembered;
+  final AppTokens tokens;
+  const _WipMemoryMiniIndicator({
+    required this.remembered,
+    required this.tokens,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dur = context.motion(const Duration(milliseconds: 220));
+    final muted = tokens.textMuted.withValues(alpha: 0.55);
+    final active = tokens.accentBright;
+    final borderColor = remembered ? active : muted;
+    return SizedBox(
+      width: 32,
+      height: 20,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // The note-card itself — a small rounded rectangle centered
+          // in the slot. Border color shifts with the active state so
+          // the whole card reads as "lit" when remembered.
+          Positioned(
+            top: 3,
+            bottom: 3,
+            left: 3,
+            right: 6,
+            child: AnimatedContainer(
+              duration: dur,
+              curve: Curves.easeOutCubic,
+              decoration: BoxDecoration(
+                color: remembered
+                    ? active.withValues(alpha: 0.10)
+                    : Colors.transparent,
+                border: Border.all(color: borderColor, width: 1),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          // Two content lines inside the card — they appear only when
+          // remembered. Absent = blank card = nothing saved.
+          Positioned(
+            top: 7,
+            left: 6,
+            right: 10,
+            child: AnimatedOpacity(
+              duration: dur,
+              curve: Curves.easeOutCubic,
+              opacity: remembered ? 1.0 : 0.0,
+              child: Container(height: 1, color: active),
+            ),
+          ),
+          Positioned(
+            top: 12,
+            left: 6,
+            right: 14,
+            child: AnimatedOpacity(
+              duration: dur,
+              curve: Curves.easeOutCubic,
+              opacity: remembered ? 1.0 : 0.0,
+              child: Container(height: 1, color: active),
+            ),
+          ),
+          // Bookmark tab — a small flag hanging off the card's top-
+          // right corner. Present iff remembered; scales in so the
+          // "kept" state reads as a deliberate bookmark action.
+          Positioned(
+            top: 0,
+            right: 4,
+            child: AnimatedScale(
+              duration: dur,
+              curve: Curves.easeOutCubic,
+              scale: remembered ? 1.0 : 0.0,
+              alignment: Alignment.topCenter,
+              child: Container(
+                width: 4,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: active,
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(1),
+                    bottomRight: Radius.circular(1),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Mini-viz for "logo animates when tabbed out." Two nested squares
+/// (inner rotated 45° to read as a cube/hypercube projection). When ON,
+/// the pair slowly rotates continuously — the indicator itself demos
+/// the setting. When OFF, frozen at 0° in a muted color.
+class _LogoMotionMiniIndicator extends StatefulWidget {
+  final bool animates;
+  final AppTokens tokens;
+  const _LogoMotionMiniIndicator({
+    required this.animates,
+    required this.tokens,
+  });
+
+  @override
+  State<_LogoMotionMiniIndicator> createState() =>
+      _LogoMotionMiniIndicatorState();
+}
+
+class _LogoMotionMiniIndicatorState extends State<_LogoMotionMiniIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 4),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncAnimation();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LogoMotionMiniIndicator old) {
+    super.didUpdateWidget(old);
+    _syncAnimation();
+  }
+
+  void _syncAnimation() {
+    final reduce = context.reduceMotionRead;
+    if (widget.animates && !reduce) {
+      if (!_ctrl.isAnimating) _ctrl.repeat();
+    } else {
+      if (_ctrl.isAnimating) _ctrl.stop();
+      if (reduce) _ctrl.value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = widget.tokens.textMuted.withValues(alpha: 0.55);
+    final active = widget.tokens.accentBright;
+    final color = widget.animates ? active : muted;
+    return SizedBox(
+      width: 32,
+      height: 20,
+      child: Center(
+        child: AnimatedBuilder(
+          animation: _ctrl,
+          builder: (context, _) {
+            return Transform.rotate(
+              angle: _ctrl.value * 2 * math.pi,
+              child: SizedBox(
+                width: 14,
+                height: 14,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Outer square outline.
+                    Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: color, width: 1),
+                      ),
+                    ),
+                    // Inner diamond — an offset-rotated square suggesting
+                    // a hypercube's nested-faces projection.
+                    Transform.rotate(
+                      angle: math.pi / 4,
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.18),
+                          border: Border.all(color: color, width: 1),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// Mini-viz for "auto select new changes." Two file rows stacked: the
+/// top one (existing file) is always checked; the bottom one (the
+/// "new" arrival) becomes checked when ON to show the auto-select
+/// behavior, unchecked when OFF.
+class _AutoSelectMiniIndicator extends StatelessWidget {
+  final bool active;
+  final AppTokens tokens;
+  const _AutoSelectMiniIndicator({
+    required this.active,
+    required this.tokens,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dur = context.motion(const Duration(milliseconds: 240));
+    final muted = tokens.textMuted.withValues(alpha: 0.55);
+    final accent = tokens.accentBright;
+    Widget row({required bool checked, required bool isNew}) {
+      final boxColor = checked ? accent : Colors.transparent;
+      final borderColor = checked ? accent : muted;
+      final lineColor =
+          checked ? accent.withValues(alpha: 0.75) : muted;
+      return Row(
+        children: [
+          AnimatedContainer(
+            duration: dur,
+            curve: Curves.easeOutCubic,
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(
+              color: boxColor,
+              border: Border.all(color: borderColor, width: 0.8),
+              borderRadius: BorderRadius.circular(1),
+            ),
+          ),
+          const SizedBox(width: 3),
+          Expanded(
+            child: AnimatedContainer(
+              duration: dur,
+              curve: Curves.easeOutCubic,
+              height: 1,
+              color: lineColor,
+            ),
+          ),
+          if (isNew) ...[
+            const SizedBox(width: 2),
+            // Tiny sparkle mark indicating "new." Always visible so
+            // the bottom row reads as the new arrival regardless of
+            // whether it's been auto-selected.
+            Text(
+              '+',
+              style: TextStyle(
+                color: active ? accent : muted,
+                fontSize: 8,
+                height: 1.0,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ],
+      );
+    }
+    return SizedBox(
+      width: 32,
+      height: 20,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          row(checked: true, isNew: false),
+          const SizedBox(height: 4),
+          row(checked: active, isNew: true),
+        ],
+      ),
+    );
+  }
+}
+
+/// Mini-viz for "fetch online issues on branch load." A tiny cloud
+/// glyph with a drop falling into an issue tray beneath. When ON, the
+/// drop is present and colored accent; when OFF, the cloud is there
+/// but empty — nothing's flowing down.
+class _OnlineFetchMiniIndicator extends StatelessWidget {
+  final bool active;
+  final AppTokens tokens;
+  const _OnlineFetchMiniIndicator({
+    required this.active,
+    required this.tokens,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dur = context.motion(const Duration(milliseconds: 240));
+    final muted = tokens.textMuted.withValues(alpha: 0.55);
+    final accent = tokens.accentBright;
+    final cloudColor = active ? accent : muted;
+    return SizedBox(
+      width: 32,
+      height: 20,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Cloud — two overlapping circles + a capping rounded rect
+          // along the bottom, all outlined. Reads as a cloud at 32×20
+          // without needing a vector asset.
+          Positioned(
+            top: 2,
+            left: 6,
+            child: Container(
+              width: 5,
+              height: 5,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: cloudColor, width: 1),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 1,
+            left: 10,
+            child: Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: cloudColor, width: 1),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 4,
+            left: 5,
+            child: Container(
+              width: 15,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.transparent,
+                border: Border.all(color: cloudColor, width: 1),
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(2),
+                  bottomRight: Radius.circular(2),
+                ),
+              ),
+            ),
+          ),
+          // Drop falling from cloud to tray — opacity is the on/off
+          // signal so the tray still reads as a destination even when
+          // nothing's flowing.
+          Positioned(
+            top: 10,
+            left: 12,
+            child: AnimatedOpacity(
+              duration: dur,
+              curve: Curves.easeOutCubic,
+              opacity: active ? 1.0 : 0.0,
+              child: Container(
+                width: 2,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(1),
+                ),
+              ),
+            ),
+          ),
+          // Issue tray — a small rounded rect at the bottom. Fills
+          // with accent when ON, outlined when OFF.
+          Positioned(
+            left: 4,
+            bottom: 2,
+            child: AnimatedContainer(
+              duration: dur,
+              curve: Curves.easeOutCubic,
+              width: 17,
+              height: 5,
+              decoration: BoxDecoration(
+                color: active
+                    ? accent.withValues(alpha: 0.18)
+                    : Colors.transparent,
+                border: Border.all(color: cloudColor, width: 1),
+                borderRadius: BorderRadius.circular(1.5),
               ),
             ),
           ),

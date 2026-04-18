@@ -24,6 +24,7 @@ import 'app/workspace_shell.dart';
 import 'backend/engram_bootstrap.dart';
 import 'backend/logos_git_resolver.dart' as logos_resolver;
 import 'backend/settings_store.dart';
+import 'backend/undo_controller.dart';
 import 'diagnostics/diagnostics_state.dart';
 import 'features/onboarding/onboarding_flow.dart';
 import 'features/onboarding/onboarding_state.dart';
@@ -32,6 +33,7 @@ import 'ui/material_surface.dart';
 import 'ui/theme.dart';
 import 'ui/theme_shaders.dart';
 import 'ui/tokens.dart';
+import 'ui/undo_pill.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -156,6 +158,7 @@ void main() async {
         ChangeNotifierProvider.value(value: appIdentityState),
         ChangeNotifierProvider.value(value: onboardingState),
         ChangeNotifierProvider(create: (_) => HyperReactivity()),
+        ChangeNotifierProvider(create: (_) => UndoCoordinator()),
       ],
       child: const GitDesktopApp(),
     ),
@@ -419,6 +422,15 @@ class _AppFrameState extends State<_AppFrame> {
                 ignoring: false,
                 child: BrandLockup(key: _brandLockupKey),
               ),
+            ),
+            // Global undo-window pill. Renders nothing when no
+            // destructive action is pending; otherwise floats in the
+            // lower-right corner regardless of page so the user always
+            // knows where to look for the cancel affordance.
+            const Positioned(
+              right: 16,
+              bottom: 16,
+              child: UndoPill(),
             ),
           ],
         ),

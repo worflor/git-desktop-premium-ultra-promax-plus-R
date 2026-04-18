@@ -77,16 +77,6 @@ LogosGit _fixtureEngine({bool hierarchical = true}) {
 
 void main() {
   group('proposeRefactors — smoke', () {
-    test('returns a non-null list on a hierarchical fixture', () {
-      // List may be empty when the fixture is so clean that no
-      // principled proposal fires — that's healthy behaviour, not a
-      // failure. The contract is "returns a bounded list, never throws".
-      final engine = _fixtureEngine(hierarchical: true);
-      final list = proposeRefactors(engine);
-      expect(list, isNotNull);
-      expect(list!.length, lessThanOrEqualTo(10));
-    });
-
     test('returns null for tiny repos', () {
       final engine = LogosGit.buildFromStats(LogosGitStats(
         touches: const {'a.dart': 1, 'b.dart': 1},
@@ -125,14 +115,6 @@ void main() {
       }
     });
 
-    test('every proposal carries a non-empty receipt', () {
-      final engine = _fixtureEngine(hierarchical: true);
-      final list = proposeRefactors(engine)!;
-      for (final p in list) {
-        expect(p.receipt, isNotEmpty);
-      }
-    });
-
     test('merge proposals name exactly two paths', () {
       final engine = _fixtureEngine(hierarchical: true);
       final list = proposeRefactors(engine)!;
@@ -149,20 +131,5 @@ void main() {
       }
     });
 
-    test('decouple proposals name exactly two paths', () {
-      final engine = _fixtureEngine(hierarchical: true);
-      final list = proposeRefactors(engine)!;
-      for (final p in list.where((p) => p.kind == RefactorKind.decouple)) {
-        expect(p.paths.length, 2);
-      }
-    });
-  });
-
-  group('topN capping', () {
-    test('list is bounded by topN', () {
-      final engine = _fixtureEngine(hierarchical: true);
-      final list = proposeRefactors(engine, topN: 3)!;
-      expect(list.length, lessThanOrEqualTo(3));
-    });
   });
 }

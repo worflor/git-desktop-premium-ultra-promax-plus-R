@@ -12,6 +12,7 @@ import 'git_result.dart';
 import 'logos_core.dart' show SpectralBasis, SpectralHeat, SpectralThermo;
 import 'logos_git.dart';
 import 'logos_git_resolver.dart' show resolveLogosGit;
+import 'logos_spectrogeometry.dart' show SpectroGeometry;
 
 typedef XrayGitProbe = Future<ProcessResult> Function(
   String workingDir,
@@ -578,6 +579,7 @@ class _SpectralSummary {
     required this.communityByPath,
     required this.heatTraceNormalised,
     required this.focusEntropyNormalised,
+    required this.spectrogeometry,
   });
 
   final LogosGit engine;
@@ -610,6 +612,15 @@ class _SpectralSummary {
   /// activity (laser focus); 1 = uniform across modes (scattered).
   /// 0 when basis/focus is null.
   final double focusEntropyNormalised;
+
+  /// Unified geometric fingerprint — RMT classification, persistence
+  /// diagram, spectral dimension, zeta invariants, and the
+  /// 6-archetype universality vector. Pulled from the engine's
+  /// `spectrogeometry()` cache so downstream consumers share one
+  /// authoritative read of the graph's geometry.
+  ///
+  /// Null when the spectral basis isn't resolvable (graph too small).
+  final SpectroGeometry? spectrogeometry;
 }
 
 /// Canonical temperature for xray-level spectral observables. The heat
@@ -641,6 +652,7 @@ _SpectralSummary? _buildSpectralSummary(LogosGit? engine) {
       communityByPath: const {},
       heatTraceNormalised: 0.0,
       focusEntropyNormalised: 0.0,
+      spectrogeometry: null,
     );
   }
 
@@ -701,6 +713,7 @@ _SpectralSummary? _buildSpectralSummary(LogosGit? engine) {
     communityByPath: communityByPath,
     heatTraceNormalised: heatTraceNorm,
     focusEntropyNormalised: focusEntropyNorm,
+    spectrogeometry: engine.spectrogeometry(),
   );
 }
 
