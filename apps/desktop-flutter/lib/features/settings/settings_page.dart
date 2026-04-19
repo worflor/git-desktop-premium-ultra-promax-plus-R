@@ -13,8 +13,10 @@ import '../../backend/command_telemetry_store.dart';
 import '../../backend/dtos.dart';
 import '../../backend/commit_format.dart';
 import '../../backend/file_coupling.dart';
+import '../../backend/undo_controller.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/preferences_state.dart';
+import '../../app/window_activity.dart';
 import '../../app/theme_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../onboarding/onboarding_state.dart';
@@ -930,19 +932,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 },
               ),
               const SizedBox(height: 10),
-              _StepperRow(
-                label: 'Undo window',
-                description:
-                    'How long the undo pill stays after you discard a file.',
-                value: preferences.undoWindowSeconds,
-                fixedStops: const [0, 3, 6, 10],
-                topStopBaseline: 15,
-                onChanged: (value) {
-                  unawaited(context
-                      .read<PreferencesState>()
-                      .setUndoWindowSeconds(value));
-                },
-              ),
+              const _UndoWindowControl(),
               const SizedBox(height: 10),
               _CheckboxRow(
                 label: 'AI read-only mode',
@@ -6955,6 +6945,7 @@ class _CheckboxRow extends StatelessWidget {
 class _StepperRow extends StatefulWidget {
   final String label;
   final String? description;
+  final Widget? descriptionWidget;
   final int value;
   final ValueChanged<int> onChanged;
   /// Fixed discrete stops displayed left-to-right (e.g. [0, 3, 6, 10]).
@@ -6964,13 +6955,22 @@ class _StepperRow extends StatefulWidget {
   /// ceiling — edits must be strictly greater than this.
   final int topStopBaseline;
 
+  /// Optional vertical-detent callback. Fires with +1 when the user
+  /// drags down past a detent threshold, -1 when up. Callers use this
+  /// to cycle an orthogonal dimension (e.g. the scope selector on the
+  /// undo-window control). When null, vertical drags on the stepper
+  /// do nothing and fall through to the enclosing scrollable.
+  final void Function(int direction)? onVerticalDetent;
+
   const _StepperRow({
     required this.label,
     this.description,
+    this.descriptionWidget,
     required this.value,
     required this.onChanged,
     required this.fixedStops,
     required this.topStopBaseline,
+    this.onVerticalDetent,
   });
 
   @override
@@ -6981,12 +6981,26 @@ class _StepperRowState extends State<_StepperRow> {
   late final TextEditingController _ctrl;
   late final FocusNode _focus;
 
+  // GestureDetector below uses `onHorizontalDragUpdate` +
+  // `onVerticalDragUpdate` (not `onPanUpdate`). A GestureDetector
+  // configured with those two callbacks internally registers
+  // independent HorizontalDragGestureRecognizer and
+  // VerticalDragGestureRecognizer participants in the gesture arena.
+  // The inner vertical recognizer wins against the enclosing
+  // scrollable's vertical recognizer when the drag starts on the
+  // stepper — so y-drag cycles scopes here while preserving page
+  // scroll everywhere else. A single pan recognizer (onPanUpdate)
+  // would claim the whole gesture arena and hijack scroll, which is
+  // why this is axis-split.
+  static const double _stepperWidth = 200.0;
+  static const double _stepperHPad = 12.0;
+  static const double _verticalDetent = 24.0;
+  double _panAccumY = 0.0;
+
   int get _topStopValue => widget.value >= widget.topStopBaseline
       ? widget.value
       : widget.topStopBaseline;
 
-  bool get _atTopStop => !widget.fixedStops.contains(widget.value) &&
-      widget.value >= widget.topStopBaseline;
 
   @override
   void initState() {
@@ -7033,6 +7047,77 @@ class _StepperRowState extends State<_StepperRow> {
 
   String _formatStop(int s) => s == 0 ? 'Off' : '${s}s';
 
+  void _onHorizontalDragUpdate(DragUpdateDetails d) {
+    _snapToPointer(d.localPosition.dx);
+  }
+
+  void _onVerticalDragStart(DragStartDetails _) {
+    _panAccumY = 0.0;
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails d) {
+    if (widget.onVerticalDetent == null) return;
+    _panAccumY += d.delta.dy;
+    while (_panAccumY >= _verticalDetent) {
+      widget.onVerticalDetent!(1);
+      _panAccumY -= _verticalDetent;
+    }
+    while (_panAccumY <= -_verticalDetent) {
+      widget.onVerticalDetent!(-1);
+      _panAccumY += _verticalDetent;
+    }
+  }
+
+  /// Resolve a pointer x inside the stepper to a continuous integer
+  /// value. Drag is free — users can land on 5s, 7s, 12s, whatever —
+  /// because personal preference doesn't match the canonical stops.
+  /// The track stays evenly divided between stops so a 5s value sits
+  /// visibly 2/3 of the way from the "3" stop to the "6" stop (not at
+  /// 5/15 = 33% absolute, which'd misalign the dot from the stops).
+  /// Clamped into `[0, _topStopValue]` — drag can't unlock a new
+  /// custom ceiling; only label edits do.
+  void _snapToPointer(double localX) {
+    final stops = [...widget.fixedStops, _topStopValue];
+    final trackStart = _stepperHPad;
+    final trackEnd = _stepperWidth - _stepperHPad;
+    final clamped = localX.clamp(trackStart, trackEnd);
+    final frac = (clamped - trackStart) / (trackEnd - trackStart);
+    // Piecewise-linear: each [stop[i], stop[i+1]] pair fills one
+    // equal slice of the track. `seg` is the fractional position in
+    // "segments"; `i` is the left stop, `t` is how far into that
+    // segment the pointer is.
+    final seg = (frac * (stops.length - 1))
+        .clamp(0.0, (stops.length - 1).toDouble());
+    final i = seg.floor().clamp(0, stops.length - 2);
+    final t = seg - i;
+    final valueDouble = stops[i] + t * (stops[i + 1] - stops[i]);
+    final target = valueDouble.round().clamp(0, _topStopValue);
+    if (widget.value != target) {
+      if (_focus.hasFocus) _focus.unfocus();
+      widget.onChanged(target);
+    }
+  }
+
+  /// Inverse of `_snapToPointer`: given a value, return the local x
+  /// position the dot should render at on the track. Uses the same
+  /// piecewise-linear mapping so a tap-snap to 6s and a drag-land on
+  /// 6s end up at pixel-identical positions.
+  double _xForValue(int v) {
+    final stops = [...widget.fixedStops, _topStopValue];
+    final trackStart = _stepperHPad;
+    final trackEnd = _stepperWidth - _stepperHPad;
+    final span = trackEnd - trackStart;
+    if (v <= stops.first) return trackStart;
+    if (v >= stops.last) return trackEnd;
+    var i = 0;
+    while (i < stops.length - 1 && stops[i + 1] <= v) {
+      i++;
+    }
+    final t = (v - stops[i]) / (stops[i + 1] - stops[i]);
+    final frac = (i + t) / (stops.length - 1);
+    return trackStart + frac * span;
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -7050,7 +7135,13 @@ class _StepperRowState extends State<_StepperRow> {
             _buildStepper(t),
           ],
         ),
-        if (widget.description != null) ...[
+        if (widget.descriptionWidget != null) ...[
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(left: 26),
+            child: widget.descriptionWidget!,
+          ),
+        ] else if (widget.description != null) ...[
           const SizedBox(height: 4),
           Padding(
             padding: const EdgeInsets.only(left: 26),
@@ -7069,38 +7160,88 @@ class _StepperRowState extends State<_StepperRow> {
   }
 
   Widget _buildStepper(AppTokens t) {
-    final stops = [...widget.fixedStops, widget.topStopBaseline];
-    const stepperWidth = 200.0;
-    const hPad = 12.0;
-    final trackStart = hPad;
-    final trackEnd = stepperWidth - hPad;
+    // Top stop uses the current value when it's already past the
+    // baseline (a custom-unlocked value), otherwise the baseline.
+    // Mirrors `_topStopValue`, which drag snapping reads too.
+    final stops = [...widget.fixedStops, _topStopValue];
+    final trackStart = _stepperHPad;
+    final trackEnd = _stepperWidth - _stepperHPad;
     final trackSpan = trackEnd - trackStart;
-    return SizedBox(
-      width: stepperWidth,
-      height: 30,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          // Track line under the tick marks.
-          Positioned(
-            left: trackStart,
-            right: hPad,
-            top: 6,
-            child: Container(
-              height: 1,
-              color: t.textMuted.withValues(alpha: 0.30),
+    final isOnStop = stops.contains(widget.value);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: _onHorizontalDragUpdate,
+      onVerticalDragStart:
+          widget.onVerticalDetent == null ? null : _onVerticalDragStart,
+      onVerticalDragUpdate:
+          widget.onVerticalDetent == null ? null : _onVerticalDragUpdate,
+      child: SizedBox(
+        width: _stepperWidth,
+        height: 30,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // Track line under the tick marks.
+            Positioned(
+              left: trackStart,
+              right: _stepperHPad,
+              top: 6,
+              child: Container(
+                height: 1,
+                color: t.textMuted.withValues(alpha: 0.30),
+              ),
             ),
-          ),
-          for (var i = 0; i < stops.length; i++)
-            _buildStop(
-              t,
-              stops[i],
-              isLast: i == stops.length - 1,
-              cx: trackStart + (i / (stops.length - 1)) * trackSpan,
-            ),
-        ],
+            for (var i = 0; i < stops.length; i++)
+              _buildStop(
+                t,
+                stops[i],
+                isLast: i == stops.length - 1,
+                cx: trackStart + (i / (stops.length - 1)) * trackSpan,
+              ),
+            // Floating "thumb" for off-stop values (e.g. 5s, 7s, 12s).
+            // Renders a filled accent dot at the interpolated x plus a
+            // tiny value label tucked under it. When the value happens
+            // to match a stop exactly, the stop's own "active" styling
+            // handles the highlight — no extra thumb needed.
+            if (!isOnStop) ..._buildFloatingThumb(t),
+          ],
+        ),
       ),
     );
+  }
+
+  List<Widget> _buildFloatingThumb(AppTokens t) {
+    final dotX = _xForValue(widget.value);
+    final valueText = widget.value == 0 ? 'Off' : '${widget.value}s';
+    return [
+      Positioned(
+        left: dotX - 5,
+        top: 2,
+        child: Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: t.accentBright,
+            shape: BoxShape.circle,
+            border: Border.all(color: t.accentBright, width: 1),
+          ),
+        ),
+      ),
+      Positioned(
+        left: dotX - 18,
+        top: 16,
+        width: 36,
+        child: Text(
+          valueText,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: t.accentBright,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    ];
   }
 
   Widget _buildStop(
@@ -7109,9 +7250,10 @@ class _StepperRowState extends State<_StepperRow> {
     required bool isLast,
     required double cx,
   }) {
-    final isActive = isLast
-        ? (_atTopStop || widget.value == widget.topStopBaseline)
-        : widget.value == stopValue;
+    // Exact-match only — off-stop values render as a floating thumb
+    // elsewhere, so the stops never "steal" the highlight when the
+    // user has landed between them.
+    final isActive = widget.value == stopValue;
     final labelColor = isActive ? t.accentBright : t.textMuted;
     final tickColor = isActive ? t.accentBright : t.inputBg;
     final tickBorder =
@@ -7216,6 +7358,262 @@ class _StepperRowState extends State<_StepperRow> {
         ),
         Text('s', style: style),
       ],
+    );
+  }
+}
+
+/// Scope dimension for the undo-window stepper. The "all" scope edits
+/// the default seconds; specific scopes write per-kind overrides.
+/// Kept as an ordered enum so y-drag can cycle through them cleanly.
+enum _UndoScope {
+  all,
+  discard,
+  commit,
+  commitAndPush,
+}
+
+extension _UndoScopeInfo on _UndoScope {
+  /// Human-readable scope name for the description line.
+  String get descriptionLabel {
+    switch (this) {
+      case _UndoScope.all:
+        return 'destructive actions';
+      case _UndoScope.discard:
+        return 'discards';
+      case _UndoScope.commit:
+        return 'commits';
+      case _UndoScope.commitAndPush:
+        return 'commit + push';
+    }
+  }
+
+  /// Short label for the scope chip below the stepper.
+  String get chipLabel {
+    switch (this) {
+      case _UndoScope.all:
+        return 'all';
+      case _UndoScope.discard:
+        return 'discards';
+      case _UndoScope.commit:
+        return 'commits';
+      case _UndoScope.commitAndPush:
+        return 'commit + push';
+    }
+  }
+
+  /// Map back to the underlying `UndoActionKind` for pref lookup.
+  /// `all` has no single kind — callers handle it separately.
+  UndoActionKind? get kind {
+    switch (this) {
+      case _UndoScope.all:
+        return null;
+      case _UndoScope.discard:
+        return UndoActionKind.discard;
+      case _UndoScope.commit:
+        return UndoActionKind.commit;
+      case _UndoScope.commitAndPush:
+        return UndoActionKind.commitAndPush;
+    }
+  }
+}
+
+/// Wraps `_StepperRow` with scope awareness. The stepper's horizontal
+/// axis picks seconds for the current scope; vertical drag cycles
+/// through scopes. Reads values from [PreferencesState] and writes
+/// via [PreferencesState.setUndoWindowSeconds] / [setUndoWindowFor].
+///
+/// Shows a small sync glyph inline in the description when per-kind
+/// overrides exist — clicking it clears every override so all kinds
+/// fall back to the default again. Glyph hides when no overrides are
+/// set (nothing to sync).
+class _UndoWindowControl extends StatefulWidget {
+  const _UndoWindowControl();
+
+  @override
+  State<_UndoWindowControl> createState() => _UndoWindowControlState();
+}
+
+class _UndoWindowControlState extends State<_UndoWindowControl> {
+  _UndoScope _scope = _UndoScope.all;
+
+  static const _orderedScopes = [
+    _UndoScope.all,
+    _UndoScope.discard,
+    _UndoScope.commit,
+    _UndoScope.commitAndPush,
+  ];
+
+  int _valueFor(PreferencesState prefs) {
+    final kind = _scope.kind;
+    if (kind == null) return prefs.undoWindowSeconds;
+    return prefs.undoWindowFor(kind);
+  }
+
+  void _write(PreferencesState prefs, int seconds) {
+    final kind = _scope.kind;
+    if (kind == null) {
+      unawaited(prefs.setUndoWindowSeconds(seconds));
+    } else {
+      unawaited(prefs.setUndoWindowFor(kind, seconds));
+    }
+  }
+
+  void _cycleScope(int direction) {
+    final idx = _orderedScopes.indexOf(_scope);
+    // Dart's `%` returns a non-negative result for positive divisor,
+    // so wrap-around for negative direction just works. Adding
+    // `_orderedScopes.length` before the mod lets callers pass -1 /
+    // +1 or larger magnitudes without an extra branch.
+    final next =
+        (idx + direction + _orderedScopes.length) % _orderedScopes.length;
+    setState(() => _scope = _orderedScopes[next]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prefs = context.watch<PreferencesState>();
+    final t = context.tokens;
+    final value = _valueFor(prefs);
+    final scopeLabel = _scope.descriptionLabel;
+    final description = value == 0
+        ? '${scopeLabel.substring(0, 1).toUpperCase()}${scopeLabel.substring(1)} finalize instantly.'
+        : '${value}s before $scopeLabel finalize.';
+    return _StepperRow(
+      label: 'Undo window',
+      value: value,
+      fixedStops: const [0, 3, 6, 10],
+      topStopBaseline: 15,
+      onChanged: (v) => _write(prefs, v),
+      onVerticalDetent: _cycleScope,
+      descriptionWidget: _UndoWindowDescription(
+        description: description,
+        scope: _scope,
+        hasOverrides: prefs.hasUndoWindowOverrides,
+        tokens: t,
+        onResync: () => unawaited(prefs.resyncUndoWindows()),
+        onCycleScope: () => _cycleScope(1),
+      ),
+    );
+  }
+}
+
+/// Description line for `_UndoWindowControl`. Shows the scope + time
+/// sentence, a tiny scope chip (so y-drag has a visible anchor), and
+/// conditionally a sync glyph when overrides exist.
+class _UndoWindowDescription extends StatelessWidget {
+  final String description;
+  final _UndoScope scope;
+  final bool hasOverrides;
+  final AppTokens tokens;
+  final VoidCallback onResync;
+  final VoidCallback onCycleScope;
+
+  const _UndoWindowDescription({
+    required this.description,
+    required this.scope,
+    required this.hasOverrides,
+    required this.tokens,
+    required this.onResync,
+    required this.onCycleScope,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final mutedStyle = TextStyle(
+      color: tokens.textMuted.withValues(alpha: 0.65),
+      fontSize: 10.5,
+      height: 1.4,
+    );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(child: Text(description, style: mutedStyle)),
+        const SizedBox(width: 8),
+        // Tiny scope chip — makes the y-drag anchor visible AND
+        // serves as a tap-to-cycle alternative for folks who don't
+        // think to drag vertically on a slider.
+        _ScopeChip(
+          scope: scope,
+          tokens: tokens,
+          onTap: onCycleScope,
+        ),
+        if (hasOverrides) ...[
+          const SizedBox(width: 6),
+          _SyncGlyph(tokens: tokens, onTap: onResync),
+        ],
+      ],
+    );
+  }
+}
+
+/// Tiny chip showing the current scope. Tap to cycle forward — a
+/// faster path than the y-drag on the stepper when the user wants to
+/// jump through a few scopes quickly. The y-drag is still the primary
+/// gesture; the chip is the click-only alternative.
+class _ScopeChip extends StatelessWidget {
+  final _UndoScope scope;
+  final AppTokens tokens;
+  final VoidCallback onTap;
+  const _ScopeChip({
+    required this.scope,
+    required this.tokens,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = tokens.textMuted.withValues(alpha: 0.55);
+    return Tooltip(
+      message: 'Click to cycle scope · drag up/down on the slider too',
+      waitDuration: const Duration(milliseconds: 500),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+            decoration: BoxDecoration(
+              border: Border.all(color: muted, width: 0.8),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              scope.chipLabel,
+              style: TextStyle(
+                color: tokens.textMuted,
+                fontSize: 9,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Tiny sync glyph. Tap to clear all per-kind overrides so every
+/// action falls back to the default window again. Tooltip explains.
+class _SyncGlyph extends StatelessWidget {
+  final AppTokens tokens;
+  final VoidCallback onTap;
+  const _SyncGlyph({required this.tokens, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Reset every action to use the default window',
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Icon(
+            Icons.sync,
+            size: 12,
+            color: tokens.accentBright.withValues(alpha: 0.85),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -7583,14 +7981,33 @@ class _LogoMotionMiniIndicator extends StatefulWidget {
 
 class _LogoMotionMiniIndicatorState extends State<_LogoMotionMiniIndicator>
     with SingleTickerProviderStateMixin {
+  // Authored base duration — actual runtime rotation period is
+  // `_authoredPeriod / motionRate` so the indicator literally demos
+  // the preference it represents. At rate=1 it's 4s/revolution;
+  // at rate=2 it's 2s/rev; at rate=0.5 it's 8s; at rate≈0 it halts.
+  static const Duration _authoredPeriod = Duration(seconds: 4);
+
   late final AnimationController _ctrl = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 4),
+    duration: _authoredPeriod,
   );
+
+  PreferencesState? _prefs;
+  bool _windowListenerAttached = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final prefs = context.read<PreferencesState>();
+    if (!identical(_prefs, prefs)) {
+      _prefs?.removeListener(_onPrefsChanged);
+      _prefs = prefs;
+      prefs.addListener(_onPrefsChanged);
+    }
+    if (!_windowListenerAttached) {
+      WindowActivity.instance.addListener(_onPrefsChanged);
+      _windowListenerAttached = true;
+    }
     _syncAnimation();
   }
 
@@ -7600,8 +8017,23 @@ class _LogoMotionMiniIndicatorState extends State<_LogoMotionMiniIndicator>
     _syncAnimation();
   }
 
+  void _onPrefsChanged() {
+    if (mounted) _syncAnimation();
+  }
+
   void _syncAnimation() {
-    final reduce = context.reduceMotionRead;
+    final rate = _prefs?.motionRate ?? 1.0;
+    final awake = WindowActivity.instance.awake;
+    final reduce = rate <= kMotionRateOff || !awake;
+    if (!reduce) {
+      // Scale period inversely with rate so higher rate = faster spin.
+      final periodUs =
+          (_authoredPeriod.inMicroseconds / rate).round().clamp(
+                const Duration(milliseconds: 120).inMicroseconds,
+                const Duration(seconds: 60).inMicroseconds,
+              );
+      _ctrl.duration = Duration(microseconds: periodUs);
+    }
     if (widget.animates && !reduce) {
       if (!_ctrl.isAnimating) _ctrl.repeat();
     } else {
@@ -7612,6 +8044,10 @@ class _LogoMotionMiniIndicatorState extends State<_LogoMotionMiniIndicator>
 
   @override
   void dispose() {
+    _prefs?.removeListener(_onPrefsChanged);
+    if (_windowListenerAttached) {
+      WindowActivity.instance.removeListener(_onPrefsChanged);
+    }
     _ctrl.dispose();
     super.dispose();
   }

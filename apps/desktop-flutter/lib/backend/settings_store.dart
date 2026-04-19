@@ -46,11 +46,18 @@ class AppSettingsSnapshot {
   /// sessions. Off = both get wiped on save and load — clean slate
   /// each time. Default on to preserve existing behavior.
   final bool rememberWorkInProgress;
-  /// Duration of the discard-file undo pill, in seconds. 0 = off (no
-  /// pill, discards are immediately final). Canonical UI stops are
-  /// {0, 3, 6, 10, 15}; any value > 15 is a user-typed custom, which
-  /// the slider surfaces as the top stop's label.
+  /// Default undo-window seconds — applies to any action kind that
+  /// doesn't have an override in [undoWindowOverrides]. 0 = off (no
+  /// pill, action is immediately final). Canonical UI stops are
+  /// {0, 3, 6, 10, 15}; any value > 15 is a user-typed custom.
   final int undoWindowSeconds;
+  /// Per-action-kind overrides for the undo window. Keys are the
+  /// string names of `UndoActionKind` enum values (e.g. "commit",
+  /// "discard"). When a key is present, its value replaces the
+  /// default for that specific kind — so a user can have e.g. 3s
+  /// discards and 15s commits in the same install. Empty by default:
+  /// every kind follows [undoWindowSeconds].
+  final Map<String, int> undoWindowOverrides;
   /// Change list sort guide: 'related' | 'alphabetical' | 'impact'.
   final String fileSortGuide;
   /// When true, the active sort guide is applied in reverse per its own
@@ -103,6 +110,7 @@ class AppSettingsSnapshot {
     required this.fetchOnlineIssuesOnBranchLoad,
     required this.rememberWorkInProgress,
     required this.undoWindowSeconds,
+    required this.undoWindowOverrides,
     required this.fileSortGuide,
     required this.fileSortInverted,
     required this.commitStructure,
@@ -139,6 +147,7 @@ class AppSettingsSnapshot {
         'fetchOnlineIssuesOnBranchLoad': fetchOnlineIssuesOnBranchLoad,
         'rememberWorkInProgress': rememberWorkInProgress,
         'undoWindowSeconds': undoWindowSeconds,
+        'undoWindowOverrides': undoWindowOverrides,
         'fileSortGuide': fileSortGuide,
         'fileSortInverted': fileSortInverted,
         'commitStructure': commitStructure,
@@ -175,6 +184,7 @@ class AppSettingsSnapshot {
         fetchOnlineIssuesOnBranchLoad: true,
         rememberWorkInProgress: true,
         undoWindowSeconds: 6,
+        undoWindowOverrides: const {},
         fileSortGuide: 'related',
         fileSortInverted: false,
         commitStructure: 'title_body',
@@ -283,6 +293,8 @@ class AppSettingsSnapshot {
         json['undoWindowSeconds'],
         defaults.undoWindowSeconds,
       ).clamp(0, 3600),
+      undoWindowOverrides:
+          SettingsStore._intMapOr(json['undoWindowOverrides']),
       fileSortGuide: SettingsStore._normalizeSortGuide(
         SettingsStore._stringOr(
           json['fileSortGuide'],
@@ -360,6 +372,7 @@ class AppSettingsSnapshot {
     bool? fetchOnlineIssuesOnBranchLoad,
     bool? rememberWorkInProgress,
     int? undoWindowSeconds,
+    Map<String, int>? undoWindowOverrides,
     String? fileSortGuide,
     bool? fileSortInverted,
     String? commitStructure,
@@ -405,6 +418,8 @@ class AppSettingsSnapshot {
           rememberWorkInProgress ?? this.rememberWorkInProgress,
       undoWindowSeconds:
           undoWindowSeconds ?? this.undoWindowSeconds,
+      undoWindowOverrides:
+          undoWindowOverrides ?? this.undoWindowOverrides,
       fileSortGuide: fileSortGuide ?? this.fileSortGuide,
       fileSortInverted: fileSortInverted ?? this.fileSortInverted,
       commitStructure: commitStructure ?? this.commitStructure,
@@ -513,6 +528,24 @@ class SettingsStore {
 
   static String _stringOr(dynamic value, String fallback) {
     return value is String && value.trim().isNotEmpty ? value.trim() : fallback;
+  }
+
+  /// Parse a JSON `Map<String, dynamic>` where every value is expected
+  /// to be an int, clamped into a sane [0, 3600] range. Malformed
+  /// entries (non-numeric values, garbage keys) are silently dropped
+  /// — same best-effort approach the other parsers take.
+  static Map<String, int> _intMapOr(dynamic value) {
+    if (value is! Map) return const {};
+    final out = <String, int>{};
+    for (final entry in value.entries) {
+      final k = entry.key;
+      final v = entry.value;
+      if (k is String && v is num) {
+        final iv = v.toInt();
+        if (iv >= 0 && iv <= 3600) out[k] = iv;
+      }
+    }
+    return out;
   }
 
   static String _normalizeUpdateChannel(String value) {

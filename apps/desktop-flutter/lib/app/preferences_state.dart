@@ -3,7 +3,18 @@ import 'package:flutter/foundation.dart';
 import '../backend/commit_format.dart';
 import '../backend/file_coupling.dart';
 import '../backend/settings_store.dart';
+import '../backend/undo_controller.dart';
 import '../diagnostics/diagnostics_state.dart';
+
+/// Single source of truth for the "motion is effectively off" threshold.
+///
+/// Rates at or below this value are treated as no motion. Chosen just
+/// above zero so a rounding artifact from disk persistence can't
+/// accidentally re-enable animations when the user meant OFF.
+/// Imported from `ui/motion.dart` and consumed by every widget that
+/// gates on motion rate — see that file's re-export for how UI code
+/// reaches this constant without depending on `preferences_state`.
+const double kMotionRateOff = 0.0001;
 
 class PreferencesState extends ChangeNotifier {
   PreferencesState();
@@ -28,6 +39,7 @@ class PreferencesState extends ChangeNotifier {
   bool _fetchOnlineIssuesOnBranchLoad = true;
   bool _rememberWorkInProgress = true;
   int _undoWindowSeconds = 6;
+  Map<String, int> _undoWindowOverrides = const {};
   FileSortGuide _fileSortGuide = FileSortGuide.relatedProximity;
   bool _fileSortInverted = false;
   CommitStructure _commitStructure = kDefaultCommitStructure;
@@ -48,26 +60,31 @@ class PreferencesState extends ChangeNotifier {
   /// Global motion-rate scalar in [0.0, 2.0]. 0 = no motion (reduce-motion
   /// equivalent), 1 = authored speed, 2 = double-time. Animations compute
   /// their actual duration as `authored / motionRate`, and skip entirely
-  /// (Duration.zero) when the rate is at or below [_kMotionRateOff].
+  /// (Duration.zero) when the rate is at or below [kMotionRateOff].
   double get motionRate => _motionRate;
 
   /// Legacy boolean view of [motionRate]. Returns true when the rate is at
   /// or below the "off" threshold — preserved so callers that only cared
   /// about the binary flip continue to work unchanged.
-  bool get reduceMotion => _motionRate <= _kMotionRateOff;
+  bool get reduceMotion => _motionRate <= kMotionRateOff;
 
   double get reduceMotionPhase => _reduceMotionPhase;
 
-  /// Rates at or below this threshold are treated as "no motion". Chosen
-  /// slightly above zero so a rounding artifact from persistence doesn't
-  /// accidentally re-enable animations when the user meant OFF.
-  static const double _kMotionRateOff = 0.0001;
   bool get stashCabinetDefaultExpanded => _stashCabinetDefaultExpanded;
   bool get instantBlameHover => _instantBlameHover;
   bool get autoSelectNewChanges => _autoSelectNewChanges;
   bool get fetchOnlineIssuesOnBranchLoad => _fetchOnlineIssuesOnBranchLoad;
   bool get rememberWorkInProgress => _rememberWorkInProgress;
   int get undoWindowSeconds => _undoWindowSeconds;
+  Map<String, int> get undoWindowOverrides =>
+      Map<String, int>.unmodifiable(_undoWindowOverrides);
+  bool get hasUndoWindowOverrides => _undoWindowOverrides.isNotEmpty;
+
+  /// Effective undo-window seconds for a given action [kind].
+  /// Returns the per-kind override when one exists, else the default.
+  int undoWindowFor(UndoActionKind kind) {
+    return _undoWindowOverrides[kind.name] ?? _undoWindowSeconds;
+  }
   FileSortGuide get fileSortGuide => _fileSortGuide;
   bool get fileSortInverted => _fileSortInverted;
   CommitStructure get commitStructure => _commitStructure;
@@ -95,6 +112,7 @@ class PreferencesState extends ChangeNotifier {
     _fetchOnlineIssuesOnBranchLoad = settings.fetchOnlineIssuesOnBranchLoad;
     _rememberWorkInProgress = settings.rememberWorkInProgress;
     _undoWindowSeconds = settings.undoWindowSeconds.clamp(0, 3600);
+    _undoWindowOverrides = Map<String, int>.from(settings.undoWindowOverrides);
     _fileSortGuide = _sortGuideFromString(settings.fileSortGuide);
     _fileSortInverted = settings.fileSortInverted;
     _commitStructure = commitStructureFromKey(settings.commitStructure);
@@ -124,6 +142,7 @@ class PreferencesState extends ChangeNotifier {
     bool? fetchOnlineIssuesOnBranchLoad,
     bool? rememberWorkInProgress,
     int? undoWindowSeconds,
+    Map<String, int>? undoWindowOverrides,
     String? fileSortGuide,
     bool? fileSortInverted,
     String? commitStructure,
@@ -149,6 +168,7 @@ class PreferencesState extends ChangeNotifier {
         fetchOnlineIssuesOnBranchLoad: fetchOnlineIssuesOnBranchLoad,
         rememberWorkInProgress: rememberWorkInProgress,
         undoWindowSeconds: undoWindowSeconds,
+        undoWindowOverrides: undoWindowOverrides,
         fileSortGuide: fileSortGuide,
         fileSortInverted: fileSortInverted,
         commitStructure: commitStructure,
@@ -187,7 +207,7 @@ class PreferencesState extends ChangeNotifier {
     _motionRate = clamped;
     await _persistWith(
       motionRate: clamped,
-      reduceMotion: clamped <= _kMotionRateOff,
+      reduceMotion: clamped <= kMotionRateOff,
     );
     notifyListeners();
   }
@@ -245,15 +265,54 @@ class PreferencesState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Set the discard-file undo window, in seconds. Accepts 0 (off) or
-  /// any of the canonical stops {3, 6, 10, 15}; values strictly greater
-  /// than 15 are custom user-typed unlocks and get clamped to a sane
-  /// ceiling so a bogus paste can't nerf the flow.
+  /// Set the default undo-window, in seconds. This is the value used
+  /// for any action kind that doesn't have a per-kind override. Prunes
+  /// any existing overrides that now match the new default so the
+  /// overrides map stays minimal (and the sync glyph stays honest —
+  /// no entry means "following default" unambiguously).
   Future<void> setUndoWindowSeconds(int value) async {
     final clamped = value < 0 ? 0 : (value > 3600 ? 3600 : value);
     if (_undoWindowSeconds == clamped) return;
     _undoWindowSeconds = clamped;
-    await _persistWith(undoWindowSeconds: clamped);
+    final nextOverrides = Map<String, int>.from(_undoWindowOverrides)
+      ..removeWhere((_, v) => v == clamped);
+    final overridesChanged =
+        nextOverrides.length != _undoWindowOverrides.length;
+    _undoWindowOverrides = nextOverrides;
+    await _persistWith(
+      undoWindowSeconds: clamped,
+      undoWindowOverrides: overridesChanged ? nextOverrides : null,
+    );
+    notifyListeners();
+  }
+
+  /// Set a per-kind override. When [value] equals the current default
+  /// and an override exists, the override is removed instead of being
+  /// set — keeps the overrides map minimal and makes the "on default"
+  /// state unambiguous (no override entry === follows default).
+  Future<void> setUndoWindowFor(UndoActionKind kind, int value) async {
+    final clamped = value < 0 ? 0 : (value > 3600 ? 3600 : value);
+    final key = kind.name;
+    final current = _undoWindowOverrides[key];
+    final nextMap = Map<String, int>.from(_undoWindowOverrides);
+    if (clamped == _undoWindowSeconds) {
+      if (current == null) return;
+      nextMap.remove(key);
+    } else {
+      if (current == clamped) return;
+      nextMap[key] = clamped;
+    }
+    _undoWindowOverrides = nextMap;
+    await _persistWith(undoWindowOverrides: nextMap);
+    notifyListeners();
+  }
+
+  /// Wipe all per-kind overrides — every action falls back to the
+  /// default window. No-op when no overrides are set.
+  Future<void> resyncUndoWindows() async {
+    if (_undoWindowOverrides.isEmpty) return;
+    _undoWindowOverrides = const {};
+    await _persistWith(undoWindowOverrides: const {});
     notifyListeners();
   }
 

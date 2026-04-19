@@ -14,6 +14,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../backend/logos_vis_events.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 
 /// The review-loading visualisation. Replaces the old text block.
@@ -33,8 +34,11 @@ class LogosDiffusionCanvas extends StatefulWidget {
 }
 
 class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, MotionLoopSync {
   late final AnimationController _ticker;
+
+  @override
+  List<AnimationController> get motionLoops => [_ticker];
   StreamSubscription<LogosVisEvent>? _sub;
 
   // Per-element birth timestamps in ms. -1 means unborn (envelope = 0).
@@ -107,6 +111,8 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     // while waiting for the resolver event.
     _birth[_Element.starfield] = 0.0;
     // Ticker drives setState; all motion is clocked off _clock.
+    // MotionLoopSync starts `.repeat()` in didChangeDependencies and
+    // stops it when reduce-motion is on / the window loses focus.
     _ticker = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 60),
@@ -133,8 +139,7 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
         _stepSpokePhysics(dt);
         _stepRopeFromLayout(dt);
         if (mounted) setState(() {});
-      })
-      ..repeat();
+      });
     _sub = LogosVisBus.instance.stream.listen(_onEvent);
   }
 

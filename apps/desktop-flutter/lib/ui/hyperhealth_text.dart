@@ -136,15 +136,13 @@ class _HyperhealthTextState extends State<HyperhealthText>
     super.didUpdateWidget(old);
     if (old.intensity != widget.intensity ||
         old.refreshing != widget.refreshing ||
-        _nearestArchetype(old.universality) !=
-            _nearestArchetype(widget.universality)) {
+        (_periodScaleFor(old.universality) -
+                    _periodScaleFor(widget.universality))
+                .abs() >
+            1e-6) {
       _syncTickers();
     }
   }
-
-  /// Archetype name for controller-rebuild comparison. Null-safe.
-  String? _nearestArchetype(UniversalityVector? u) =>
-      u?.nearest.name;
 
   void _syncTickers() {
     final intensity = _clampedIntensity();
@@ -152,8 +150,9 @@ class _HyperhealthTextState extends State<HyperhealthText>
     final motionActive = motionRate > 0.05;
     final rate = motionRate.clamp(0.1, 2.0);
 
-    // Resolve the archetype's desired period once per sync. Pure
-    // function of universality → small switch in _SheenProfile.
+    // Resolve the archetype-blended period once per sync. Pure
+    // function of universality → weighted mix over the archetype
+    // templates, same weights the profile uses.
     final periodScale = _periodScaleFor(widget.universality);
 
     // Ambient sheen runs continuously while the repo is anomalous.
@@ -205,26 +204,20 @@ class _HyperhealthTextState extends State<HyperhealthText>
     }
   }
 
-  /// Archetype-keyed period scale. Kept inline so the tickers can
-  /// read it without constructing a full [_SheenProfile] (which
-  /// needs token lookups we don't have during state-level logic).
+  /// Archetype-blended period scale. Returns the weighted average of
+  /// each archetype's `periodScale`, with weights from the same
+  /// distance-based mix the sheen profile uses. Kept in sync with the
+  /// profile's temporal character so ticker rebuilds happen exactly
+  /// when the blended tempo shifts — not when `nearest` flips between
+  /// two close-tied archetypes.
   double _periodScaleFor(UniversalityVector? u) {
     if (u == null) return 1.0;
-    switch (u.nearest.name) {
-      case 'crystalline':
-        return 1.25;
-      case 'goe':
-        return 0.70;
-      case 'tree':
-        return 1.45;
-      case 'bulk':
-        return 0.85;
-      case 'modular':
-        return 0.95;
-      case 'poisson':
-      default:
-        return 1.0;
-    }
+    final weights = _archetypeWeights(u);
+    var sum = 0.0;
+    weights.forEach((name, w) {
+      sum += w * _archetypeTemplates[name]!.periodScale;
+    });
+    return sum;
   }
 
   @override
@@ -255,6 +248,7 @@ class _HyperhealthTextState extends State<HyperhealthText>
       intensity: intensity,
       chroma1: tokens.hyperChromatic1,
       chroma2: tokens.hyperChromatic2,
+      core: tokens.hyperCore,
     );
 
     return AnimatedBuilder(
@@ -275,6 +269,7 @@ class _HyperhealthTextState extends State<HyperhealthText>
             phase: _refresh!.value,
             chroma1: tokens.hyperChromatic1,
             chroma2: tokens.hyperChromatic2,
+            core: tokens.hyperCore,
           );
         }
 
@@ -286,6 +281,7 @@ class _HyperhealthTextState extends State<HyperhealthText>
           phase: _ambient!.value,
           sweepSeed: _sweepSeed,
           profile: profile,
+          tier: _sheenTier(intensity),
         );
       },
     );
@@ -309,6 +305,11 @@ class _AmbientSheenStack extends StatelessWidget {
   final int sweepSeed;
   final _SheenProfile profile;
 
+  /// Severity tier (0-4). Each rung adds a distinct visual feature:
+  /// tier 2 bloom, tier 3 echo band, tier 4 heartbeat pulse. Archetype
+  /// shape is unchanged by tier — they're orthogonal axes.
+  final int tier;
+
   const _AmbientSheenStack({
     required this.text,
     required this.baseStyle,
@@ -317,6 +318,7 @@ class _AmbientSheenStack extends StatelessWidget {
     required this.phase,
     required this.sweepSeed,
     required this.profile,
+    required this.tier,
   });
 
   @override
@@ -328,7 +330,10 @@ class _AmbientSheenStack extends StatelessWidget {
       maxLines: 1,
     );
     // Build N band overlays. Each consults the profile for its own
-    // phase offset, colour shift, and width jitter.
+    // phase offset, colour shift, and width jitter. Degradation is
+    // the same across all bands of a given tier — the whole sheen
+    // drains together, not band-by-band.
+    final degradation = _tierDegradation(tier);
     final layers = <Widget>[baseText];
     for (var i = 0; i < profile.bandCount; i++) {
       final bandPhase = (phase + profile.bandPhaseOffset(i)) % 1.0;
@@ -344,9 +349,155 @@ class _AmbientSheenStack extends StatelessWidget {
         bandIndex: i,
         sweepSeed: seedForBand,
         bandPhase: bandPhase,
+        desaturation: degradation,
+        // Tier 2+ injects high-frequency alpha jitter — the band's
+        // peak stops being a clean bell and starts flickering.
+        // Reads as "the signal is noisy," not "the signal got
+        // shinier."
+        jitterAmp: tier >= 2 ? (0.10 + 0.06 * (tier - 2)) : 0.0,
       );
       layers.add(Positioned.fill(child: layer));
     }
+
+    // Tier 3 — shadow echo. A trailing band that's HEAVILY
+    // desaturated (closer to grey than the primary). Reads as a
+    // washed-out ghost tracking behind the light, not a twin
+    // reflection. Still half-alpha, but the greyed palette is what
+    // really sells it as "degraded."
+    if (tier >= 3) {
+      final echoPhase = (phase - 0.40 * _kAmbientVisibleFraction) % 1.0;
+      final echoCenter = _bandCenter(echoPhase);
+      if (echoCenter != null) {
+        layers.add(Positioned.fill(
+          child: _SheenBandLayer(
+            text: text,
+            overlayStyle: overlayStyle,
+            overflow: overflow,
+            center: echoCenter,
+            profile: profile,
+            bandIndex: 0,
+            sweepSeed: sweepSeed * 11 + 42,
+            bandPhase: echoPhase,
+            alphaScale: 0.50,
+            // Echo compounds the primary's desaturation with its own
+            // extra drain — always reads as a colourless shadow.
+            desaturation: math.min(1.0, degradation + 0.35),
+            jitterAmp: 0.0,
+          ),
+        ));
+      }
+    }
+
+    // Tier 4 — chromatic undertow. The band's fringe colours can't
+    // stay contained: they leak into the whole word as a slow, wide
+    // chromatic gradient that drifts at its own cadence, completely
+    // independent of the primary sweep. Always visible (never zero-
+    // alpha), noise-modulated so it shimmers organically, with the
+    // gradient direction slowly crawling over the text.
+    //
+    // Physically this maps to spectral broadening: when a repo's
+    // coherence collapses, the peak isn't the only thing radiating —
+    // the whole spectrum glows. The undertow is that radiation made
+    // visible, bleeding from chroma1 through the neutral toward
+    // chroma2, with the balance point wandering continuously.
+    if (tier >= 4) {
+      // Independent cadence. Multiplier is irrational-ish so the
+      // undertow never re-aligns with the sweep — there's no point
+      // where the user perceives "the loop restarted."
+      final undertowT = (phase * 2.37 + 0.17) % 1.0;
+      // Smooth balance-point drift: gradient centre walks from the
+      // left edge through the right edge and wraps. Noise adds
+      // subtle hesitation so the motion isn't mechanical.
+      final drift = _noise(undertowT, sweepSeed + 21.0);
+      final center = ((undertowT + 0.08 * drift) * 1.4 - 0.2)
+          .clamp(-0.25, 1.25)
+          .toDouble();
+
+      // Alpha breathes on its own noise envelope — never zero, but
+      // rises and falls so the undertow isn't a static tint.
+      final breath = _noise(undertowT * 1.6, sweepSeed + 34.5);
+      final undertowAlpha =
+          (0.13 + 0.06 * breath).clamp(0.07, 0.22).toDouble();
+
+      // Gradient spans the whole text. Three stops:
+      //   before `center` → chroma1 (cyan side)
+      //   at `center`     → fully transparent (neutral pivot)
+      //   after `center`  → chroma2 (magenta side)
+      // The neutral pivot prevents the undertow from tinting the
+      // whole word at once; at any instant, one side of the word
+      // leans chroma1 and the other leans chroma2, with the pivot
+      // slowly walking across.
+      //
+      // CRITICAL: never use `.clamp(lo, hi)` where `lo` could exceed
+      // `hi` — Dart throws ArgumentError and the ShaderMask paints
+      // a grey ErrorWidget for that frame, which reads as a full-
+      // app grey flash every few seconds. Compute each pivot with
+      // an INDEPENDENT clamp into [0, 1], then resolve any collision
+      // with plain math.min / math.max.
+      //
+      // The stops array ([0.0, pivotLeft, pivotRight, 1.0]) must be
+      // STRICTLY increasing, not just non-decreasing. Skia tolerates
+      // duplicates without throwing, but a `stops[0] == stops[1]`
+      // collision collapses the leading colour band to zero width —
+      // leaving the left edge of the text uncoloured, the opposite of
+      // the design intent. The clamps below pin each pivot off the
+      // boundaries (≥ eps, ≤ 1-eps) so stops[0] < stops[1] and
+      // stops[2] < stops[3] always hold; the collision guard then
+      // covers the interior pivotLeft / pivotRight case.
+      const eps = 1e-6;
+      var pivotLeft = (center - 0.08).clamp(0.0, 1.0).toDouble();
+      var pivotRight = (center + 0.08).clamp(0.0, 1.0).toDouble();
+      // Edge clamps — keep pivots strictly inside (0, 1).
+      if (pivotLeft < eps) pivotLeft = eps;
+      if (pivotRight > 1.0 - eps) pivotRight = 1.0 - eps;
+      // Interior collision — after edge clamping a residual inversion
+      // is only possible when center is inside the band where both
+      // pivots land on the same near-edge; resolve with math so we
+      // never risk an inverted clamp.
+      if (pivotRight <= pivotLeft) {
+        if (pivotLeft >= 1.0 - eps) {
+          pivotLeft = 1.0 - 2 * eps;
+          pivotRight = 1.0 - eps;
+        } else {
+          pivotRight = math.min(pivotLeft + eps, 1.0 - eps);
+        }
+      }
+      final stops = <double>[0.0, pivotLeft, pivotRight, 1.0];
+      // Undertow colours carry the full tier-4 degradation — the
+      // most drained state. At tier 4, degradation is ~0.78, so the
+      // chromatic bleed reads as muted dissonance, not vibrant
+      // coherence. The dissonance is the point: coherence has
+      // collapsed, and we're seeing grey-ish ghosts of what the
+      // theme's chromatics looked like when the spectrum was
+      // healthy.
+      final undertowC1 = _desaturate(profile.chroma1, degradation);
+      final undertowC2 = _desaturate(profile.chroma2, degradation);
+      final colors = <Color>[
+        undertowC1.withValues(alpha: undertowAlpha),
+        undertowC1.withValues(alpha: undertowAlpha * 0.15),
+        undertowC2.withValues(alpha: undertowAlpha * 0.15),
+        undertowC2.withValues(alpha: undertowAlpha),
+      ];
+
+      layers.add(Positioned.fill(
+        child: ShaderMask(
+          blendMode: BlendMode.srcIn,
+          shaderCallback: (bounds) => LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: colors,
+            stops: stops,
+          ).createShader(bounds),
+          child: Text(
+            text,
+            style: overlayStyle,
+            overflow: overflow,
+            maxLines: 1,
+          ),
+        ),
+      ));
+    }
+
     if (layers.length == 1) return baseText;
     return Stack(children: layers);
   }
@@ -363,7 +514,10 @@ class _AmbientSheenStack extends StatelessWidget {
 
 /// Single band overlay. Takes care of its own gradient + shader. The
 /// profile + seed decide tilt, palette, width, and noise-modulated
-/// wobble.
+/// wobble. Tier-driven degradation is injected via `desaturation`
+/// (drains colour as intensity rises), `jitterAmp` (high-frequency
+/// alpha noise on the peak), and `alphaScale` (used by the echo band
+/// to render at half strength).
 class _SheenBandLayer extends StatelessWidget {
   final String text;
   final TextStyle overlayStyle;
@@ -374,6 +528,20 @@ class _SheenBandLayer extends StatelessWidget {
   final int sweepSeed;
   final double bandPhase; // [0, visibleFraction]
 
+  /// HSL-saturation drain in `[0, 1]`. 0 = theme's full vibrance,
+  /// 1 = grayscale. Higher tiers push this up so the sheen reads as
+  /// losing colour along with coherence.
+  final double desaturation;
+
+  /// Amplitude of high-frequency alpha jitter on the peak. 0 = clean
+  /// bell envelope; tier 2+ injects noise here so the peak flickers
+  /// instead of gliding. Reads as signal instability.
+  final double jitterAmp;
+
+  /// Multiplicative scale on the entire band alpha envelope. Used
+  /// by tier 3's shadow echo to render at half strength.
+  final double alphaScale;
+
   const _SheenBandLayer({
     required this.text,
     required this.overlayStyle,
@@ -383,6 +551,9 @@ class _SheenBandLayer extends StatelessWidget {
     required this.bandIndex,
     required this.sweepSeed,
     required this.bandPhase,
+    this.desaturation = 0.0,
+    this.jitterAmp = 0.0,
+    this.alphaScale = 1.0,
   });
 
   @override
@@ -405,12 +576,24 @@ class _SheenBandLayer extends StatelessWidget {
     // band fades in on arrival and out on exit instead of hard-cut.
     //   envelope(0) = 0,  envelope(0.5) = 1,  envelope(1) = 0
     final envelope = math.sin(math.pi * tNorm.clamp(0.0, 1.0)).toDouble();
-    final centerAlpha = (profile.centerAlpha * envelope)
-        .clamp(0.0, 1.0)
-        .toDouble();
-    final edgeAlpha = (profile.edgeAlpha * envelope)
-        .clamp(0.0, 1.0)
-        .toDouble();
+    // Jitter factor: tier 2+ multiplies a high-frequency noise into
+    // the alpha. The noise is fast (phase-scaled ×6) so the eye
+    // reads it as instability, not wobble. `1 - jitterAmp * |noise|`
+    // only dips the alpha — never boosts it — so jitter drains the
+    // band rather than making it prettier.
+    final jitterNoise = jitterAmp > 0
+        ? _noise(tNorm * 6.0, sweepSeed + 101.0).abs()
+        : 0.0;
+    final jitterFactor =
+        (1.0 - jitterAmp * jitterNoise).clamp(0.0, 1.0).toDouble();
+    final centerAlpha =
+        (profile.centerAlpha * envelope * alphaScale * jitterFactor)
+            .clamp(0.0, 1.0)
+            .toDouble();
+    final edgeAlpha =
+        (profile.edgeAlpha * envelope * alphaScale * jitterFactor)
+            .clamp(0.0, 1.0)
+            .toDouble();
 
     // Gradient stop positions with forced monotonicity.
     final outer = halfWidth;
@@ -432,13 +615,22 @@ class _SheenBandLayer extends StatelessWidget {
     }
 
     final palette = profile.paletteForBand(bandIndex, hueShift: noiseHue);
+    // Drain the chromatic fringes toward grayscale by the tier's
+    // desaturation factor. The PEAK (theme core) is NOT desaturated
+    // here — the repo's own radiant colour stays legible even as
+    // the fringes go dull. What the eye picks up: the chromatic
+    // aura is dying while the core still glows faintly through it.
+    final approach = _desaturate(palette.approach, desaturation);
+    final innerApproach = _desaturate(palette.innerApproach, desaturation);
+    final innerExit = _desaturate(palette.innerExit, desaturation);
+    final exit = _desaturate(palette.exit, desaturation);
     final colors = <Color>[
       const Color(0x00000000),
-      palette.approach.withValues(alpha: edgeAlpha * 0.35),
-      palette.innerApproach.withValues(alpha: edgeAlpha),
+      approach.withValues(alpha: edgeAlpha * 0.35),
+      innerApproach.withValues(alpha: edgeAlpha),
       palette.peak.withValues(alpha: centerAlpha),
-      palette.innerExit.withValues(alpha: edgeAlpha),
-      palette.exit.withValues(alpha: edgeAlpha * 0.35),
+      innerExit.withValues(alpha: edgeAlpha),
+      exit.withValues(alpha: edgeAlpha * 0.35),
       const Color(0x00000000),
     ];
 
@@ -488,6 +680,7 @@ class _RefreshSheenStack extends StatelessWidget {
   final double phase;
   final Color chroma1;
   final Color chroma2;
+  final Color core;
 
   const _RefreshSheenStack({
     required this.text,
@@ -497,6 +690,7 @@ class _RefreshSheenStack extends StatelessWidget {
     required this.phase,
     required this.chroma1,
     required this.chroma2,
+    required this.core,
   });
 
   @override
@@ -558,6 +752,8 @@ class _RefreshSheenStack extends StatelessWidget {
 
     // Mid-burst layer during phase B — uniformly illuminates the word
     // for a ~70ms window. Gives the convergence its "click" moment.
+    // Painted with the theme's radiant core so the flash wears the
+    // theme's own light instead of a neutral white.
     if (midBurstAlpha > 0.01) {
       layers.add(Positioned.fill(
         child: ShaderMask(
@@ -566,8 +762,8 @@ class _RefreshSheenStack extends StatelessWidget {
             begin: Alignment.centerLeft,
             end: Alignment.centerRight,
             colors: [
-              Colors.white.withValues(alpha: midBurstAlpha),
-              Colors.white.withValues(alpha: midBurstAlpha),
+              core.withValues(alpha: midBurstAlpha),
+              core.withValues(alpha: midBurstAlpha),
             ],
           ).createShader(bounds),
           child: Text(
@@ -589,9 +785,10 @@ class _RefreshSheenStack extends StatelessWidget {
         halfWidth: halfWidth,
         peakAlpha: centerAlpha,
         edgeAlpha: edgeAlpha,
-        // Left band leads with cyan.
+        // Left band leads with the theme's cooler chromatic.
         chromaApproach: chroma1,
         chromaExit: chroma2,
+        peak: core,
       ),
     ));
     layers.add(Positioned.fill(
@@ -603,9 +800,10 @@ class _RefreshSheenStack extends StatelessWidget {
         halfWidth: halfWidth,
         peakAlpha: centerAlpha,
         edgeAlpha: edgeAlpha,
-        // Right band leads with magenta (mirror palette).
+        // Right band leads with the warmer chromatic (mirror palette).
         chromaApproach: chroma2,
         chromaExit: chroma1,
+        peak: core,
       ),
     ));
 
@@ -624,6 +822,11 @@ class _RefreshBandLayer extends StatelessWidget {
   final Color chromaApproach;
   final Color chromaExit;
 
+  /// Peak colour at the band's brightest point. Theme-owned — the
+  /// caller passes `hyperCore` so the flash matches the title's
+  /// colour identity instead of defaulting to neutral white.
+  final Color peak;
+
   const _RefreshBandLayer({
     required this.text,
     required this.overlayStyle,
@@ -634,6 +837,7 @@ class _RefreshBandLayer extends StatelessWidget {
     required this.edgeAlpha,
     required this.chromaApproach,
     required this.chromaExit,
+    required this.peak,
   });
 
   @override
@@ -659,7 +863,7 @@ class _RefreshBandLayer extends StatelessWidget {
       const Color(0x00000000),
       chromaApproach.withValues(alpha: edgeAlpha * 0.35),
       chromaApproach.withValues(alpha: edgeAlpha),
-      Colors.white.withValues(alpha: peakAlpha),
+      peak.withValues(alpha: peakAlpha),
       chromaExit.withValues(alpha: edgeAlpha),
       chromaExit.withValues(alpha: edgeAlpha * 0.35),
       const Color(0x00000000),
@@ -696,6 +900,13 @@ class _RefreshBandLayer extends StatelessWidget {
 /// repo breathes slowly and steadily, a chaotic one is quicker and
 /// more turbulent. No glyph or label tells you which; you just
 /// perceive the repo's nature through how its light moves.
+///
+/// Every colour comes from the theme — `chroma1`/`chroma2` are the
+/// theme's cool-chromatic fringe colours (cyan/magenta in most
+/// themes, rose/lavender in others); `core` is the theme's radiant
+/// peak tone (amber, honey, ivory — whatever the theme names as its
+/// centre-of-light). No hardcoded whites anywhere in the sheen;
+/// every pixel is paint the theme chose.
 class _SheenProfile {
   final int bandCount;
   final double baseWidth;
@@ -704,6 +915,7 @@ class _SheenProfile {
   final double edgeAlpha;
   final Color chroma1;
   final Color chroma2;
+  final Color core;
 
   /// Multiplier on the ambient cycle period. `<1.0` = faster;
   /// `>1.0` = slower. Applied to [_kAmbientPeriodBase] in the
@@ -725,6 +937,7 @@ class _SheenProfile {
     required this.edgeAlpha,
     required this.chroma1,
     required this.chroma2,
+    required this.core,
     this.periodScale = 1.0,
     this.noiseAmp = 1.0,
   });
@@ -734,133 +947,112 @@ class _SheenProfile {
     required double intensity,
     required Color chroma1,
     required Color chroma2,
+    required Color core,
   }) {
     // Intensity drives overall alpha envelope across every profile.
-    final centerAlpha = (0.35 + 0.65 * intensity).clamp(0.30, 1.0).toDouble();
-    final edgeAlpha = (0.15 + 0.55 * intensity).clamp(0.08, 0.85).toDouble();
+    final centerAlphaBase =
+        (0.35 + 0.65 * intensity).clamp(0.30, 1.0).toDouble();
+    final edgeAlphaBase =
+        (0.15 + 0.55 * intensity).clamp(0.08, 0.85).toDouble();
 
-    // Default / unknown profile — neutral single band.
+    // No universality signal yet — use the neutral template as-is.
     if (universality == null) {
-      final width = (0.07 + 0.11 * intensity).clamp(0.04, 0.22).toDouble();
-      return _SheenProfile(
-        bandCount: 1,
-        baseWidth: width,
-        tiltDeg: 0.0,
-        centerAlpha: centerAlpha,
-        edgeAlpha: edgeAlpha,
+      return _buildProfileFrom(
+        template: _neutralTemplate,
+        bandCount: _neutralTemplate.bandCount,
+        intensity: intensity,
+        centerAlphaBase: centerAlphaBase,
+        edgeAlphaBase: edgeAlphaBase,
         chroma1: chroma1,
         chroma2: chroma2,
+        core: core,
       );
     }
 
-    switch (universality.nearest.name) {
-      case 'crystalline':
-        // Ordered, geometric — one tight band, minimal tilt.
-        // Breathes SLOWLY and cleanly — the surface is uniform, so
-        // light doesn't flicker; it glides.
-        return _SheenProfile(
-          bandCount: 1,
-          baseWidth:
-              (0.06 + 0.08 * intensity).clamp(0.04, 0.18).toDouble(),
-          tiltDeg: 0.0,
-          centerAlpha: centerAlpha,
-          edgeAlpha: edgeAlpha,
-          chroma1: chroma1,
-          chroma2: chroma2,
-          periodScale: 1.25,
-          noiseAmp: 0.35,
-        );
-      case 'poisson':
-        // Independent levels — two bands, offset, moderate tilt.
-        // Default pace with gentle wobble.
-        return _SheenProfile(
-          bandCount: 2,
-          baseWidth:
-              (0.08 + 0.09 * intensity).clamp(0.05, 0.20).toDouble(),
-          tiltDeg: 4.0,
-          centerAlpha: centerAlpha,
-          edgeAlpha: edgeAlpha * 0.9,
-          chroma1: chroma1,
-          chroma2: chroma2,
-          periodScale: 1.0,
-          noiseAmp: 0.9,
-        );
-      case 'goe':
-        // Chaotic structured — three bands, wider, larger tilt.
-        // QUICKER pace, MORE turbulence. The repo is restless; the
-        // light picks it up.
-        return _SheenProfile(
-          bandCount: 3,
-          baseWidth:
-              (0.09 + 0.12 * intensity).clamp(0.06, 0.24).toDouble(),
-          tiltDeg: 7.0,
-          centerAlpha: (centerAlpha + 0.05).clamp(0.0, 1.0).toDouble(),
-          edgeAlpha: edgeAlpha,
-          chroma1: chroma1,
-          chroma2: chroma2,
-          periodScale: 0.70,
-          noiseAmp: 1.6,
-        );
-      case 'tree':
-        // Dendritic / dominated — one wide band with long fade.
-        // Tidal — very slow, very smooth. A single dominant mode
-        // isn't in a hurry.
-        return _SheenProfile(
-          bandCount: 1,
-          baseWidth:
-              (0.12 + 0.13 * intensity).clamp(0.08, 0.28).toDouble(),
-          tiltDeg: 2.0,
-          centerAlpha: (centerAlpha - 0.05).clamp(0.0, 1.0).toDouble(),
-          edgeAlpha: edgeAlpha * 1.1,
-          chroma1: chroma1,
-          chroma2: chroma2,
-          periodScale: 1.45,
-          noiseAmp: 0.5,
-        );
-      case 'bulk':
-        // Dense, multi-dimensional — two diffuse bands.
-        // Medium-fast, moderate wobble — many modes contributing
-        // read as a busier surface.
-        return _SheenProfile(
-          bandCount: 2,
-          baseWidth:
-              (0.10 + 0.10 * intensity).clamp(0.06, 0.22).toDouble(),
-          tiltDeg: 3.0,
-          centerAlpha: centerAlpha,
-          edgeAlpha: edgeAlpha * 1.05,
-          chroma1: chroma1,
-          chroma2: chroma2,
-          periodScale: 0.85,
-          noiseAmp: 1.1,
-        );
-      case 'modular':
-        // Clustered — two bands that almost cross, mirrored palette.
-        // Slightly quicker than default; moderate wobble from the
-        // cluster structure.
-        return _SheenProfile(
-          bandCount: 2,
-          baseWidth:
-              (0.07 + 0.10 * intensity).clamp(0.05, 0.20).toDouble(),
-          tiltDeg: -5.0,
-          centerAlpha: centerAlpha,
-          edgeAlpha: edgeAlpha,
-          chroma1: chroma1,
-          chroma2: chroma2,
-          periodScale: 0.95,
-          noiseAmp: 1.0,
-        );
-      default:
-        final width = (0.07 + 0.11 * intensity).clamp(0.04, 0.22).toDouble();
-        return _SheenProfile(
-          bandCount: 1,
-          baseWidth: width,
-          tiltDeg: 0.0,
-          centerAlpha: centerAlpha,
-          edgeAlpha: edgeAlpha,
-          chroma1: chroma1,
-          chroma2: chroma2,
-        );
-    }
+    // Blended archetype mix. A repo at the edge between crystalline
+    // and poisson renders as a hybrid whose tilt, period, and
+    // chromatic wobble sit between the two — it doesn't snap to the
+    // winner. The continuous params are weighted sums; bandCount
+    // can't blend (discrete count) so it tracks the dominant
+    // archetype alone.
+    final weights = _archetypeWeights(universality);
+
+    var bWidth = 0.0;
+    var bTilt = 0.0;
+    var bCenterBias = 0.0;
+    var bEdgeMult = 0.0;
+    var bPeriod = 0.0;
+    var bNoise = 0.0;
+    var dominant = 'poisson';
+    var topWeight = -1.0;
+    weights.forEach((name, w) {
+      final t = _archetypeTemplates[name]!;
+      // Width is clamped PER-archetype before blending so each class
+      // contributes at its own visually-sane scale. A crystalline
+      // partner can't push the blended width past its own 0.18 cap.
+      final perArchetypeWidth = (t.widthA + t.widthB * intensity)
+          .clamp(t.widthMin, t.widthMax)
+          .toDouble();
+      bWidth += w * perArchetypeWidth;
+      bTilt += w * t.tiltDeg;
+      bCenterBias += w * t.centerAlphaBias;
+      bEdgeMult += w * t.edgeAlphaMult;
+      bPeriod += w * t.periodScale;
+      bNoise += w * t.noiseAmp;
+      if (w > topWeight) {
+        topWeight = w;
+        dominant = name;
+      }
+    });
+    final bandCount = _archetypeTemplates[dominant]!.bandCount;
+
+    return _SheenProfile(
+      bandCount: bandCount,
+      baseWidth: bWidth,
+      tiltDeg: bTilt,
+      centerAlpha:
+          (centerAlphaBase + bCenterBias).clamp(0.0, 1.0).toDouble(),
+      edgeAlpha: (edgeAlphaBase * bEdgeMult).clamp(0.0, 1.0).toDouble(),
+      chroma1: chroma1,
+      chroma2: chroma2,
+      core: core,
+      periodScale: bPeriod,
+      noiseAmp: bNoise,
+    );
+  }
+
+  /// Build a profile from a single archetype template — used for the
+  /// neutral / unknown-universality path. The blended path skips this
+  /// and composes scalars directly.
+  static _SheenProfile _buildProfileFrom({
+    required _ArchetypeTemplate template,
+    required int bandCount,
+    required double intensity,
+    required double centerAlphaBase,
+    required double edgeAlphaBase,
+    required Color chroma1,
+    required Color chroma2,
+    required Color core,
+  }) {
+    final width = (template.widthA + template.widthB * intensity)
+        .clamp(template.widthMin, template.widthMax)
+        .toDouble();
+    return _SheenProfile(
+      bandCount: bandCount,
+      baseWidth: width,
+      tiltDeg: template.tiltDeg,
+      centerAlpha: (centerAlphaBase + template.centerAlphaBias)
+          .clamp(0.0, 1.0)
+          .toDouble(),
+      edgeAlpha: (edgeAlphaBase * template.edgeAlphaMult)
+          .clamp(0.0, 1.0)
+          .toDouble(),
+      chroma1: chroma1,
+      chroma2: chroma2,
+      core: core,
+      periodScale: template.periodScale,
+      noiseAmp: template.noiseAmp,
+    );
   }
 
   /// Per-band phase offset in `[0, 1]` — bands are spaced evenly
@@ -902,7 +1094,10 @@ class _SheenProfile {
     return _BandPalette(
       approach: mute(approach),
       innerApproach: mute(innerApproach),
-      peak: Colors.white,
+      // Peak comes from the theme's radiant core. Warm themes get an
+      // amber/honey peak; cool ones get ivory; the sheen always wears
+      // the theme's own luminous identity instead of a neutral white.
+      peak: core,
       innerExit: mute(innerExit),
       exit: mute(exit),
     );
@@ -923,6 +1118,285 @@ class _BandPalette {
     required this.innerExit,
     required this.exit,
   });
+}
+
+/// Discrete severity tier for the sheen overlay. Thresholds are
+/// NOT arbitrary — they mirror the canonical `repoHealth` classifier
+/// in `logos_free_energy.dart`, which declared the meaningful cut-
+/// points at `0.30 / 0.45 / 0.55` on the upper-half-spectrum fraction.
+/// That function and `repoAnomalyLevel` both compute the same scalar
+/// (upper-half F mass / total F mass), so a tier here means exactly
+/// what the backend means by stable / drifting / anomalous / critical.
+///
+/// A sheen is fundamentally a positive animation — shimmer, light,
+/// beauty. To make it convey NEGATIVE state (rising anomaly) without
+/// abandoning the medium, we don't enhance it as intensity climbs —
+/// we let it lose coherence. Colours desaturate. Smooth alpha gains
+/// jitter. Reflections stop being twin-bright and start reading as
+/// grey shadows. The light is losing its life.
+///
+/// Tiers compound: each rung adds a distinct degradation signal on
+/// top of the previous. Archetype (shape / palette / tempo) stays
+/// orthogonal — a crystalline repo at critical is still crystalline-
+/// shaped, just heavily drained.
+///
+///   0 (silent):    < 0.001  — no signal
+///   1 (stable):    < 0.30   — base sweep; mild attention cue
+///   2 (drifting):  < 0.45   — + alpha jitter; signal gets unsteady
+///   3 (anomalous): < 0.55   — + shadow echo (narrow transitional band)
+///   4 (critical):  ≥ 0.55   — + dissonant undertow; phase transition
+///
+/// The anomalous band (0.45–0.55) is deliberately narrow — it's the
+/// transitional state between "concerning" and "phase transition."
+/// 0.47 sits right in its middle, which is why that number feels
+/// like a "prime" threshold — it's the midpoint of the regime.
+int _sheenTier(double intensity) {
+  if (intensity < 0.001) return 0;
+  if (intensity < 0.30) return 1;
+  if (intensity < 0.45) return 2;
+  if (intensity < 0.55) return 3;
+  return 4;
+}
+
+/// Per-tier desaturation factor in `[0, 1]`. Zero keeps the theme's
+/// full chromatic vibrance; 1 collapses to grayscale. The curve is
+/// non-linear — vibrance falls gently through the middle tiers, then
+/// drains more aggressively at the top. Reads as: "the light loses
+/// its colour as the repo loses coherence."
+double _tierDegradation(int tier) {
+  switch (tier) {
+    case 0:
+      return 0.0;
+    case 1:
+      return 0.08;
+    case 2:
+      return 0.28;
+    case 3:
+      return 0.55;
+    case 4:
+      return 0.78;
+    default:
+      return 0.0;
+  }
+}
+
+/// Desaturate `c` by `amount` in `[0, 1]` via HSL. `amount = 0`
+/// returns the colour unchanged; `amount = 1` collapses it to
+/// grayscale. Preserves alpha and lightness.
+Color _desaturate(Color c, double amount) {
+  if (amount <= 0.0) return c;
+  final clamped = amount.clamp(0.0, 1.0);
+  final hsl = HSLColor.fromColor(c);
+  final s = (hsl.saturation * (1.0 - clamped)).clamp(0.0, 1.0).toDouble();
+  return hsl.withSaturation(s).toColor();
+}
+
+// ── Archetype templates ──────────────────────────────────────────
+//
+// Per-archetype sheen parameters. Each archetype's visual / temporal
+// signature is a point in a small scalar space (width, tilt, period,
+// noise, alpha bias). The blended profile takes a weighted sum over
+// these templates — a repo at the edge between two archetypes
+// renders as a hybrid whose light moves between them, not one that
+// snaps to whichever distance happens to be 0.001 smaller.
+
+class _ArchetypeTemplate {
+  /// How many parallel sheen bands sweep the text. Orders the
+  /// visual density: crystalline is a single clean glide; GOE runs
+  /// three layered bands for a turbulent, parallax-separated feel.
+  final int bandCount;
+
+  /// Width equation is `(widthA + widthB * intensity)` then clamped
+  /// to `[widthMin, widthMax]`. Each archetype's clamp range reflects
+  /// its visual register: crystalline stays narrow, tree spans wide.
+  final double widthA;
+  final double widthB;
+  final double widthMin;
+  final double widthMax;
+
+  /// Per-archetype tilt of the band gradient (degrees). Signed so
+  /// archetype pairs with opposing tilts (modular vs. poisson) can
+  /// cancel toward 0° when blended near-equally.
+  final double tiltDeg;
+
+  /// Offset added to the intensity-driven centre alpha. GOE nudges
+  /// up (+), tree nudges down (−) — the repo's *character* tips the
+  /// band's core brightness even at the same overall intensity.
+  final double centerAlphaBias;
+
+  /// Multiplier on the intensity-driven edge alpha. Tree's gentle
+  /// 1.1 reads as a long fade; poisson's 0.9 crops the fringes
+  /// harder for a more contained glide.
+  final double edgeAlphaMult;
+
+  /// Multiplier on the ambient cycle period. `<1.0` faster (chaos),
+  /// `>1.0` slower (coherent, tidal).
+  final double periodScale;
+
+  /// Per-sweep noise amplitude. Crystalline is almost still; GOE
+  /// glints and flickers.
+  final double noiseAmp;
+
+  const _ArchetypeTemplate({
+    required this.bandCount,
+    required this.widthA,
+    required this.widthB,
+    required this.widthMin,
+    required this.widthMax,
+    required this.tiltDeg,
+    required this.centerAlphaBias,
+    required this.edgeAlphaMult,
+    required this.periodScale,
+    required this.noiseAmp,
+  });
+}
+
+/// Crystalline — ordered, geometric. One tight band, minimal tilt.
+/// Breathes slowly and cleanly: the surface is uniform, so light
+/// glides instead of flickering.
+const _crystallineTemplate = _ArchetypeTemplate(
+  bandCount: 1,
+  widthA: 0.06,
+  widthB: 0.08,
+  widthMin: 0.04,
+  widthMax: 0.18,
+  tiltDeg: 0.0,
+  centerAlphaBias: 0.0,
+  edgeAlphaMult: 1.0,
+  periodScale: 1.25,
+  noiseAmp: 0.35,
+);
+
+/// Poisson — independent levels. Two bands, moderate tilt, default
+/// pace with gentle wobble.
+const _poissonTemplate = _ArchetypeTemplate(
+  bandCount: 2,
+  widthA: 0.08,
+  widthB: 0.09,
+  widthMin: 0.05,
+  widthMax: 0.20,
+  tiltDeg: 4.0,
+  centerAlphaBias: 0.0,
+  edgeAlphaMult: 0.9,
+  periodScale: 1.0,
+  noiseAmp: 0.9,
+);
+
+/// GOE — chaotic structured. Three bands, wider, larger tilt.
+/// Quicker, more turbulent — the repo is restless, and the light
+/// picks that up.
+const _goeTemplate = _ArchetypeTemplate(
+  bandCount: 3,
+  widthA: 0.09,
+  widthB: 0.12,
+  widthMin: 0.06,
+  widthMax: 0.24,
+  tiltDeg: 7.0,
+  centerAlphaBias: 0.05,
+  edgeAlphaMult: 1.0,
+  periodScale: 0.70,
+  noiseAmp: 1.6,
+);
+
+/// Tree — dendritic / dominated. One wide band with long fade; very
+/// slow, very smooth. A single dominant mode isn't in a hurry.
+const _treeTemplate = _ArchetypeTemplate(
+  bandCount: 1,
+  widthA: 0.12,
+  widthB: 0.13,
+  widthMin: 0.08,
+  widthMax: 0.28,
+  tiltDeg: 2.0,
+  centerAlphaBias: -0.05,
+  edgeAlphaMult: 1.1,
+  periodScale: 1.45,
+  noiseAmp: 0.5,
+);
+
+/// Bulk — dense, multi-dimensional. Two diffuse bands; medium-fast
+/// with moderate wobble as many modes contribute.
+const _bulkTemplate = _ArchetypeTemplate(
+  bandCount: 2,
+  widthA: 0.10,
+  widthB: 0.10,
+  widthMin: 0.06,
+  widthMax: 0.22,
+  tiltDeg: 3.0,
+  centerAlphaBias: 0.0,
+  edgeAlphaMult: 1.05,
+  periodScale: 0.85,
+  noiseAmp: 1.1,
+);
+
+/// Modular — clustered. Two bands that almost cross, mirrored
+/// palette via its negative tilt. Slightly quicker than default.
+const _modularTemplate = _ArchetypeTemplate(
+  bandCount: 2,
+  widthA: 0.07,
+  widthB: 0.10,
+  widthMin: 0.05,
+  widthMax: 0.20,
+  tiltDeg: -5.0,
+  centerAlphaBias: 0.0,
+  edgeAlphaMult: 1.0,
+  periodScale: 0.95,
+  noiseAmp: 1.0,
+);
+
+/// Neutral — used before any universality signal arrives. Matches
+/// the pre-blend default profile.
+const _neutralTemplate = _ArchetypeTemplate(
+  bandCount: 1,
+  widthA: 0.07,
+  widthB: 0.11,
+  widthMin: 0.04,
+  widthMax: 0.22,
+  tiltDeg: 0.0,
+  centerAlphaBias: 0.0,
+  edgeAlphaMult: 1.0,
+  periodScale: 1.0,
+  noiseAmp: 1.0,
+);
+
+const Map<String, _ArchetypeTemplate> _archetypeTemplates = {
+  'crystalline': _crystallineTemplate,
+  'poisson': _poissonTemplate,
+  'goe': _goeTemplate,
+  'tree': _treeTemplate,
+  'bulk': _bulkTemplate,
+  'modular': _modularTemplate,
+};
+
+/// Archetype mixing weights. Closer archetypes (smaller distance)
+/// carry larger weight, with `(1 − d)^2` sharpening so a clear
+/// match still dominates the blend. Two archetypes tied for
+/// nearest produce a near-50/50 mix; a single dominant archetype
+/// with all others distant approaches 100% weight for itself.
+///
+/// Returns a map keyed by archetype name (same six keys as
+/// `_archetypeTemplates`), summing to 1. If every distance is at
+/// its cap of 1.0, falls back to a uniform mix — the profile then
+/// reads as a neutral average of every archetype simultaneously,
+/// which is visually mild and correctly conveys "no clear class."
+Map<String, double> _archetypeWeights(UniversalityVector u) {
+  double w(double d) {
+    final x = (1.0 - d).clamp(0.0, 1.0).toDouble();
+    return x * x;
+  }
+  final raw = <String, double>{
+    'crystalline': w(u.toCrystalline),
+    'poisson': w(u.toPoisson),
+    'goe': w(u.toGoe),
+    'tree': w(u.toTree),
+    'bulk': w(u.toBulk),
+    'modular': w(u.toModular),
+  };
+  final sum = raw.values.fold<double>(0.0, (a, b) => a + b);
+  if (sum <= 1e-9) {
+    final n = raw.length.toDouble();
+    return {for (final k in raw.keys) k: 1.0 / n};
+  }
+  return raw.map((k, v) => MapEntry(k, v / sum));
 }
 
 /// Smooth pseudo-random modulator. Sum of three incommensurate sines

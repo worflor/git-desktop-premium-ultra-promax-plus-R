@@ -33,6 +33,7 @@ import '../../backend/desk_pr.dart';
 import '../../backend/desk_pr_diff.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/preferences_state.dart';
+import '../../app/window_activity.dart';
 import '../../app/desk_pr_state.dart';
 import '../../app/desk_issue_state.dart';
 import '../../app/app_identity.dart';
@@ -4939,25 +4940,67 @@ class _RefreshGlyph extends StatefulWidget {
 
 class _RefreshGlyphState extends State<_RefreshGlyph>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _spin = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1100),
-  );
+  static const Duration _authoredPeriod = Duration(milliseconds: 1100);
+  late final AnimationController _spin =
+      AnimationController(vsync: this, duration: _authoredPeriod);
+  PreferencesState? _prefs;
+  bool _windowListenerAttached = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final prefs = context.read<PreferencesState>();
+    if (!identical(_prefs, prefs)) {
+      _prefs?.removeListener(_onPrefsChanged);
+      _prefs = prefs;
+      prefs.addListener(_onPrefsChanged);
+    }
+    if (!_windowListenerAttached) {
+      WindowActivity.instance.addListener(_onPrefsChanged);
+      _windowListenerAttached = true;
+    }
+    _syncSpin();
+  }
+
+  void _onPrefsChanged() {
+    if (mounted) _syncSpin();
+  }
 
   @override
   void didUpdateWidget(covariant _RefreshGlyph old) {
     super.didUpdateWidget(old);
     // Spin while refreshing, stop where it lands when done — feels more
     // honest than a fade-out (the work was real, the glyph reports it).
-    if (widget.active && !_spin.isAnimating) {
-      _spin.repeat();
-    } else if (!widget.active && _spin.isAnimating) {
-      _spin.stop();
+    _syncSpin();
+  }
+
+  void _syncSpin() {
+    final rate = _prefs?.motionRate ?? 1.0;
+    final awake = WindowActivity.instance.awake;
+    final reduce = rate <= kMotionRateOff || !awake;
+    final wantSpin = widget.active && !reduce;
+    if (wantSpin) {
+      // Scale the rotation period with motionRate so a 2x rate spins
+      // visibly faster, matching the "motion rate = speed" contract.
+      _spin.duration = Duration(
+        microseconds:
+            (_authoredPeriod.inMicroseconds / rate).round().clamp(
+                  const Duration(milliseconds: 100).inMicroseconds,
+                  const Duration(seconds: 60).inMicroseconds,
+                ),
+      );
+      if (!_spin.isAnimating) _spin.repeat();
+    } else {
+      if (_spin.isAnimating) _spin.stop();
     }
   }
 
   @override
   void dispose() {
+    _prefs?.removeListener(_onPrefsChanged);
+    if (_windowListenerAttached) {
+      WindowActivity.instance.removeListener(_onPrefsChanged);
+    }
     _spin.dispose();
     super.dispose();
   }
@@ -6475,12 +6518,42 @@ class _ActionProgressBar extends StatefulWidget {
 
 class _ActionProgressBarState extends State<_ActionProgressBar>
     with SingleTickerProviderStateMixin {
+  // Progress-bar sweep represents live git work, not ambient motion,
+  // so this cannot use [MotionLoopSync] — that mixin pauses loops on
+  // window blur, which would silently freeze the sweep while the
+  // actual fetch/push continues in the background. Reduce-motion
+  // still stops it (the sweep is cosmetic; the user's pref overrides
+  // the animation either way), but window blur does not.
   late final AnimationController _ac =
-      AnimationController(vsync: this, duration: const Duration(seconds: 2))
-        ..repeat();
+      AnimationController(vsync: this, duration: const Duration(seconds: 2));
+  PreferencesState? _prefs;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final prefs = context.read<PreferencesState>();
+    if (!identical(_prefs, prefs)) {
+      _prefs?.removeListener(_syncSweep);
+      _prefs = prefs;
+      prefs.addListener(_syncSweep);
+    }
+    _syncSweep();
+  }
+
+  void _syncSweep() {
+    if (!mounted) return;
+    final rate = _prefs?.motionRate ?? 1.0;
+    if (rate <= kMotionRateOff) {
+      if (_ac.isAnimating) _ac.stop();
+      _ac.value = 0;
+    } else {
+      if (!_ac.isAnimating) _ac.repeat();
+    }
+  }
 
   @override
   void dispose() {
+    _prefs?.removeListener(_syncSweep);
     _ac.dispose();
     super.dispose();
   }

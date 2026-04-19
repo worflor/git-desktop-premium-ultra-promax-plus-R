@@ -43,6 +43,7 @@ import '../../app/file_coupling_state.dart';
 import '../../app/symbol_frequency_state.dart';
 import '../../app/logos_git_state.dart';
 import '../../app/preferences_state.dart';
+import '../../app/window_activity.dart';
 import '../../app/desk_drop_payload.dart';
 import '../../app/desk_pr_state.dart';
 import '../../app/repository_state.dart';
@@ -2375,8 +2376,9 @@ class _ChangesPageState extends State<ChangesPage> {
     // for a bytes-replay restore. Cleaner, safer, and symmetric with
     // every other destructive action in the app.
     final coord = context.read<UndoCoordinator>();
-    final windowSec =
-        context.read<PreferencesState>().undoWindowSeconds;
+    final windowSec = context
+        .read<PreferencesState>()
+        .undoWindowFor(UndoActionKind.discard);
     await coord.schedule<void>(
       kind: UndoActionKind.discard,
       label: isUntracked ? 'Deleting $basename' : 'Discarding $basename',
@@ -2480,8 +2482,9 @@ class _ChangesPageState extends State<ChangesPage> {
     // single-file path, just one pill for the whole batch. If the
     // user cancels mid-window, nothing in the batch runs.
     final coord = context.read<UndoCoordinator>();
-    final windowSec =
-        context.read<PreferencesState>().undoWindowSeconds;
+    final windowSec = context
+        .read<PreferencesState>()
+        .undoWindowFor(UndoActionKind.discard);
     await coord.schedule<void>(
       kind: UndoActionKind.discard,
       label: 'Discarding ${files.length} files',
@@ -3943,12 +3946,12 @@ class _ChangesPageState extends State<ChangesPage> {
     });
 
     final coord = context.read<UndoCoordinator>();
-    final windowSec =
-        context.read<PreferencesState>().undoWindowSeconds;
     final isSync = mode == _CommitRunMode.commitAndSync;
     final kind = isSync
         ? UndoActionKind.commitAndPush
         : UndoActionKind.commit;
+    final windowSec =
+        context.read<PreferencesState>().undoWindowFor(kind);
     final label = isSync ? 'Committing and syncing' : 'Committing';
 
     final outcome = await coord.schedule<_CommitOutcome>(
@@ -10307,18 +10310,38 @@ class _AnimatedShapeIcon extends StatefulWidget {
 
 class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
     with SingleTickerProviderStateMixin {
+  static const Duration _authoredActive = Duration(milliseconds: 3600);
+  static const Duration _authoredLoading = Duration(milliseconds: 2200);
   late final AnimationController _ctrl;
+  PreferencesState? _prefs;
+  bool _windowListenerAttached = false;
 
   @override
   void initState() {
     super.initState();
     // 3.6s gives one revolution slow enough to feel ambient (not
     // distracting), with two glint pulses per cycle.
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 3600),
-    );
+    _ctrl = AnimationController(vsync: this, duration: _authoredActive);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final prefs = context.read<PreferencesState>();
+    if (!identical(_prefs, prefs)) {
+      _prefs?.removeListener(_onPrefsChanged);
+      _prefs = prefs;
+      prefs.addListener(_onPrefsChanged);
+    }
+    if (!_windowListenerAttached) {
+      WindowActivity.instance.addListener(_onPrefsChanged);
+      _windowListenerAttached = true;
+    }
     _syncTickerToState();
+  }
+
+  void _onPrefsChanged() {
+    if (mounted) _syncTickerToState();
   }
 
   @override
@@ -10328,14 +10351,24 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
   }
 
   void _syncTickerToState() {
-    final shouldAnimate = widget.state == IconAnimState.success ||
-        widget.state == IconAnimState.loading;
+    final rate = _prefs?.motionRate ?? 1.0;
+    final awake = WindowActivity.instance.awake;
+    final reduce = rate <= kMotionRateOff || !awake;
+    final shouldAnimate = !reduce &&
+        (widget.state == IconAnimState.success ||
+            widget.state == IconAnimState.loading);
     if (shouldAnimate) {
       // Loading runs at 1.6× the active cadence — visibly busier,
-      // not just "kinda spinning."
-      _ctrl.duration = widget.state == IconAnimState.loading
-          ? const Duration(milliseconds: 2200)
-          : const Duration(milliseconds: 3600);
+      // not just "kinda spinning." Both cadences scale with motionRate.
+      final authored = widget.state == IconAnimState.loading
+          ? _authoredLoading
+          : _authoredActive;
+      _ctrl.duration = Duration(
+        microseconds: (authored.inMicroseconds / rate).round().clamp(
+              const Duration(milliseconds: 200).inMicroseconds,
+              const Duration(seconds: 60).inMicroseconds,
+            ),
+      );
       if (!_ctrl.isAnimating) _ctrl.repeat();
     } else {
       _ctrl.stop();
@@ -10345,6 +10378,10 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
 
   @override
   void dispose() {
+    _prefs?.removeListener(_onPrefsChanged);
+    if (_windowListenerAttached) {
+      WindowActivity.instance.removeListener(_onPrefsChanged);
+    }
     _ctrl.dispose();
     super.dispose();
   }

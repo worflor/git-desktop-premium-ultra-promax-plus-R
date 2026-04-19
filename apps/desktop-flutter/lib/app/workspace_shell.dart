@@ -33,6 +33,8 @@ import 'desk_drop_payload.dart';
 import 'desk_issue_state.dart';
 import 'desk_pr_state.dart';
 import 'file_coupling_state.dart';
+import 'preferences_state.dart';
+import 'window_activity.dart';
 import 'remote_issue_cache_state.dart';
 import 'hyper_reactivity.dart';
 import 'logos_git_state.dart';
@@ -1652,22 +1654,44 @@ class _DeskTab extends StatefulWidget {
 
 class _DeskTabState extends State<_DeskTab>
     with SingleTickerProviderStateMixin {
+  static const Duration _authoredPulse = Duration(milliseconds: 1600);
   bool _hovered = false;
   late final AnimationController _dotPulseCtrl;
   late final Animation<double> _dotPulse;
+  PreferencesState? _prefs;
+  bool _windowListenerAttached = false;
 
   @override
   void initState() {
     super.initState();
     _dotPulseCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1600),
+      duration: _authoredPulse,
     );
     _dotPulse = CurvedAnimation(
       parent: _dotPulseCtrl,
       curve: Curves.easeInOut,
     );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final prefs = context.read<PreferencesState>();
+    if (!identical(_prefs, prefs)) {
+      _prefs?.removeListener(_onPrefsChanged);
+      _prefs = prefs;
+      prefs.addListener(_onPrefsChanged);
+    }
+    if (!_windowListenerAttached) {
+      WindowActivity.instance.addListener(_onPrefsChanged);
+      _windowListenerAttached = true;
+    }
     _syncDotPulse();
+  }
+
+  void _onPrefsChanged() {
+    if (mounted) _syncDotPulse();
   }
 
   @override
@@ -1679,7 +1703,16 @@ class _DeskTabState extends State<_DeskTab>
   }
 
   void _syncDotPulse() {
-    if (widget.highlightSyncTarget) {
+    final rate = _prefs?.motionRate ?? 1.0;
+    final awake = WindowActivity.instance.awake;
+    final reduce = rate <= kMotionRateOff || !awake;
+    if (widget.highlightSyncTarget && !reduce) {
+      _dotPulseCtrl.duration = Duration(
+        microseconds: (_authoredPulse.inMicroseconds / rate).round().clamp(
+              const Duration(milliseconds: 200).inMicroseconds,
+              const Duration(seconds: 60).inMicroseconds,
+            ),
+      );
       if (!_dotPulseCtrl.isAnimating) {
         _dotPulseCtrl.repeat(reverse: true);
       }
@@ -1691,6 +1724,10 @@ class _DeskTabState extends State<_DeskTab>
 
   @override
   void dispose() {
+    _prefs?.removeListener(_onPrefsChanged);
+    if (_windowListenerAttached) {
+      WindowActivity.instance.removeListener(_onPrefsChanged);
+    }
     _dotPulseCtrl.dispose();
     super.dispose();
   }

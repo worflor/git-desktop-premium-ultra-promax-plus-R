@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../app/preferences_state.dart';
 import '../backend/undo_controller.dart';
+import 'motion.dart';
 import 'tokens.dart';
 
 /// Global "action-pending" pill. Lives in an app-shell overlay slot
@@ -24,15 +26,51 @@ class UndoPill extends StatefulWidget {
 
 class _UndoPillState extends State<UndoPill>
     with SingleTickerProviderStateMixin {
+  static const Duration _authoredIntro = Duration(milliseconds: 140);
   late final AnimationController _intro = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 140),
+    duration: _authoredIntro,
   );
   Timer? _tick;
   bool _hasPending = false;
+  PreferencesState? _prefs;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final prefs = context.read<PreferencesState>();
+    if (!identical(_prefs, prefs)) {
+      _prefs?.removeListener(_onPrefsChanged);
+      _prefs = prefs;
+      prefs.addListener(_onPrefsChanged);
+    }
+    _applyMotionDuration();
+  }
+
+  void _onPrefsChanged() {
+    if (mounted) _applyMotionDuration();
+  }
+
+  /// Apply the motion-scaled intro duration. Only reassigns when the
+  /// controller is AT REST — mutating an active AnimationController's
+  /// duration retroactively shifts its `.value` (position = elapsed /
+  /// duration), which would produce a visible jump in the fade if
+  /// motionRate changed mid-transition. Fade-ins/outs are short (140ms
+  /// authored, ≤280ms even at half-rate) so waiting for rest is a
+  /// negligible delay in practice.
+  void _applyMotionDuration() {
+    if (_intro.isAnimating) return;
+    final scaled = _prefs == null
+        ? _authoredIntro
+        : context.motionRead(_authoredIntro);
+    if (_intro.duration != scaled) {
+      _intro.duration = scaled;
+    }
+  }
 
   @override
   void dispose() {
+    _prefs?.removeListener(_onPrefsChanged);
     _tick?.cancel();
     _intro.dispose();
     super.dispose();
@@ -59,6 +97,11 @@ class _UndoPillState extends State<UndoPill>
     final hasPending = pending != null;
     if (hasPending != _hasPending) {
       _hasPending = hasPending;
+      // Ensure the duration reflects the current motionRate BEFORE we
+      // start the transition — otherwise a user who changed motionRate
+      // while the pill was dormant would get a transition at the old
+      // scaled duration for its first frame.
+      _applyMotionDuration();
       if (hasPending) {
         _intro.forward(from: 0);
       } else {

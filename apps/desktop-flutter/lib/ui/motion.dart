@@ -4,6 +4,12 @@ import 'package:provider/provider.dart';
 import '../app/preferences_state.dart';
 import '../app/window_activity.dart';
 
+// Re-export the motion-off threshold so UI code can import just
+// `motion.dart` and still reach the constant without a direct
+// `preferences_state` dependency. Single source of truth lives in
+// `preferences_state.dart`; this file re-surfaces it for the UI layer.
+export '../app/preferences_state.dart' show kMotionRateOff;
+
 /// Central gating for the app's motion preference. The user's "Reduce
 /// motion" control now writes a continuous `motionRate` in [0, 2]:
 ///   * 0.0 — no motion (same effective behavior as the old boolean toggle)
@@ -49,7 +55,7 @@ Duration _scale(Duration normal, double rate) {
   // Rate ≤ 0 → no motion. Rate = 1 → exact pass-through (avoids a divide
   // that could introduce rounding drift at zoom-unity). Otherwise the
   // inverse: faster rate shortens the duration, slower stretches it.
-  if (rate <= 0.0001) return Duration.zero;
+  if (rate <= kMotionRateOff) return Duration.zero;
   if (rate == 1.0) return normal;
   final micros = (normal.inMicroseconds / rate).round();
   return Duration(microseconds: micros);
@@ -133,7 +139,7 @@ mixin MotionLoopSync<T extends StatefulWidget> on State<T> {
     // re-focus. One gate, fan-out to every idle animation.
     final rate = _prefsRef?.motionRate ?? 1.0;
     final awake = WindowActivity.instance.awake;
-    final reduce = rate <= 0.0001 || !awake;
+    final reduce = rate <= kMotionRateOff || !awake;
     final loops = motionLoops;
     final reverse = motionLoopReverse;
     for (var i = 0; i < loops.length; i++) {
@@ -145,7 +151,7 @@ mixin MotionLoopSync<T extends StatefulWidget> on State<T> {
         // Don't reset value to 0 on a transient window-blur — only when
         // reduce-motion is explicitly set, so we preserve the rotation
         // phase across an alt-tab.
-        if (rate <= 0.0001) c.value = 0;
+        if (rate <= kMotionRateOff) c.value = 0;
       } else {
         if (!c.isAnimating) c.repeat(reverse: doReverse);
       }
