@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 
 import '../../app/repository_state.dart';
 import '../../app/repository_xray_state.dart';
+import '../../backend/aperture_sweep.dart'
+    show ApertureEvent, ApertureSample, ApertureSweep, CenterOfGravityStratum;
 import '../../backend/dtos.dart';
 import '../../backend/engram_fit.dart'
     show branchLabelConverging, branchLabelDiverging, branchLabelSteady;
@@ -685,6 +687,7 @@ class _MainViewport extends StatelessWidget {
             obstacle: mapObstacle,
           ),
         _XrayView.time => _TimeView(
+            repoPath: snapshot.header.repoPath,
             cadence: cadence,
             pivots: pivots,
             selectedPivotHash: selectedPivotHash,
@@ -739,12 +742,14 @@ class _MapView extends StatelessWidget {
 }
 
 class _TimeView extends StatelessWidget {
+  final String repoPath;
   final List<RepositoryXrayCadenceData> cadence;
   final List<RepositoryXrayPivotCommitData> pivots;
   final String? selectedPivotHash;
   final ValueChanged<String> onPivotSelected;
 
   const _TimeView({
+    required this.repoPath,
     required this.cadence,
     required this.pivots,
     required this.selectedPivotHash,
@@ -753,6 +758,10 @@ class _TimeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Cadence pinned at top (fixed height); below it, a single
+    // scrollable column holding pivots + growth-rings section. Rings
+    // live here because they describe temporal structure reconstructed
+    // from the current shape — the same beat the Time view is for.
     return Column(
       children: [
         SizedBox(
@@ -766,10 +775,20 @@ class _TimeView extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Expanded(
-          child: _PivotList(
-            pivots: pivots,
-            selectedPivotHash: selectedPivotHash,
-            onPivotSelected: onPivotSelected,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _PivotList(
+                  pivots: pivots,
+                  selectedPivotHash: selectedPivotHash,
+                  onPivotSelected: onPivotSelected,
+                  shrinkWrap: true,
+                ),
+                if (pivots.isNotEmpty) const SizedBox(height: 14),
+                _RingsSection(repoPath: repoPath),
+              ],
+            ),
           ),
         ),
       ],
@@ -1895,7 +1914,40 @@ List<Rect> _regionsAroundObstacle(Rect fullArea, Rect? obstacle) {
 /// then each region is squarified independently. This is what makes the
 /// L-shape layout possible — territory tiles flow around the floating
 /// inspector card.
+// Single-slot cache for the squarified treemap layout. The LayoutBuilder
+// surrounding the call fires on every resize, inspector-toggle, and
+// unrelated rebuild of the xray panel, yet the inputs (parcels list
+// identity + bounds rects) are stable across those rebuilds. Memoising
+// here turns a repeated O(n log n + squarify) per frame into a single
+// Rect + identical-pointer check per frame.
+List<_Parcel>? _treemapCacheParcels;
+List<Rect>? _treemapCacheBounds;
+List<_TreemapLayout>? _treemapCacheResult;
+
+bool _boundsEqual(List<Rect> a, List<Rect> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
 List<_TreemapLayout> _layoutTreemap(List<_Parcel> parcels, List<Rect> bounds) {
+  if (identical(_treemapCacheParcels, parcels) &&
+      _treemapCacheBounds != null &&
+      _boundsEqual(_treemapCacheBounds!, bounds) &&
+      _treemapCacheResult != null) {
+    return _treemapCacheResult!;
+  }
+  final result = _layoutTreemapUncached(parcels, bounds);
+  _treemapCacheParcels = parcels;
+  _treemapCacheBounds = List<Rect>.from(bounds);
+  _treemapCacheResult = result;
+  return result;
+}
+
+List<_TreemapLayout> _layoutTreemapUncached(
+    List<_Parcel> parcels, List<Rect> bounds) {
   if (parcels.isEmpty) return const [];
   final regions =
       bounds.where((r) => r.width > 0 && r.height > 0).toList(growable: false);
@@ -1967,7 +2019,11 @@ List<_TreemapLayout> _layoutTreemapSingle(
     return _TreemapLayout(
       layout.rect,
       layout.parcel,
-      _layoutTreemap(layout.parcel.children, [childBounds]),
+      // Recursive descent intentionally bypasses the top-level cache
+      // slot — caching children would just thrash the one slot with
+      // the last-recursion's result and destroy the outer-call hit
+      // rate. Child layouts are cheap anyway (few items per cell).
+      _layoutTreemapUncached(layout.parcel.children, [childBounds]),
     );
   }).toList();
 }
@@ -3049,10 +3105,19 @@ class _PivotList extends StatelessWidget {
   final List<RepositoryXrayPivotCommitData> pivots;
   final String? selectedPivotHash;
   final ValueChanged<String> onPivotSelected;
-  const _PivotList(
-      {required this.pivots,
-      required this.selectedPivotHash,
-      required this.onPivotSelected});
+
+  /// When `true` the internal [ListView] wraps to its content height
+  /// and disables its own scrolling — needed when the caller nests
+  /// this list inside another scrollable (e.g. the Time view's
+  /// scroll column that also renders growth-rings below).
+  final bool shrinkWrap;
+
+  const _PivotList({
+    required this.pivots,
+    required this.selectedPivotHash,
+    required this.onPivotSelected,
+    this.shrinkWrap = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -3070,6 +3135,8 @@ class _PivotList extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         child: ListView.builder(
           padding: EdgeInsets.zero,
+          shrinkWrap: shrinkWrap,
+          physics: shrinkWrap ? const NeverScrollableScrollPhysics() : null,
           itemCount: pivots.length,
           itemBuilder: (context, i) {
             final p = pivots[i];
@@ -3289,13 +3356,16 @@ class _SignalRow extends StatelessWidget {
 }
 
 DateTime? _cadenceDate(RepositoryXrayCadenceData item) {
-  if (DateTime.tryParse(item.label) != null) {
-    return DateTime.parse(item.label);
-  }
+  // Parse once, not twice. The prior shape called `tryParse` as a
+  // predicate and then `parse` for the value — paying the parse cost
+  // on every hit, which adds up to hundreds of parses per panel
+  // rebuild given how many call sites dereference this helper.
+  final direct = DateTime.tryParse(item.label);
+  if (direct != null) return direct;
   if (item.kind == 'gap') {
     final parts = item.label.split('->');
-    if (parts.isNotEmpty && DateTime.tryParse(parts.first.trim()) != null) {
-      return DateTime.parse(parts.first.trim());
+    if (parts.isNotEmpty) {
+      return DateTime.tryParse(parts.first.trim());
     }
   }
   return null;
@@ -3372,8 +3442,8 @@ Color _cadenceAccent(AppTokens t, String kind) {
 DateTime? _cadenceDateEnd(RepositoryXrayCadenceData item) {
   if (item.kind == 'gap') {
     final parts = item.label.split('->');
-    if (parts.length > 1 && DateTime.tryParse(parts.last.trim()) != null) {
-      return DateTime.parse(parts.last.trim());
+    if (parts.length > 1) {
+      return DateTime.tryParse(parts.last.trim());
     }
   }
   return null;
@@ -3469,3 +3539,691 @@ class _MiniButtonState extends State<_MiniButton> {
     );
   }
 }
+
+// ── Growth-rings section — embedded inside [_TimeView] ───────────
+//
+// Reads the codebase's history from its current shape via an aperture
+// sweep — a sequence of spectral probes at geometrically-spaced
+// commit-window depths. Surfaces three correlated views inline under
+// the existing cadence/pivots panel:
+//
+//   * centre-of-gravity trajectory — the sequence of "top
+//     housekeeping" files across the sweep; reads like a narrative
+//     of the repo's recent work order, deepest-focus first.
+//   * compound events — aperture bins where multiple observables
+//     flip together; each maps to an approximate commit range and
+//     is tagged with what changed (cleavage/topology/size/class).
+//   * invariant / running / artifact classification — which
+//     observables describe the repo's species (hold across all
+//     lens settings) vs its developmental arc (drift predictably
+//     with scale) vs lens noise.
+//
+// The sweep is expensive (multiple spectral-basis builds) and runs
+// per-sample inside [Isolate.run] so the main isolate stays
+// responsive. The section triggers a background load when first
+// rendered and reads through [RepositoryXrayState.ringsFor].
+
+class _RingsSection extends StatefulWidget {
+  final String repoPath;
+
+  const _RingsSection({required this.repoPath});
+
+  @override
+  State<_RingsSection> createState() => _RingsSectionState();
+}
+
+class _RingsSectionState extends State<_RingsSection> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context
+          .read<RepositoryXrayState>()
+          .loadRingsForRepo(widget.repoPath);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final state = context.watch<RepositoryXrayState>();
+    final rings = state.ringsFor(widget.repoPath);
+    final loading = state.isLoadingRings(widget.repoPath);
+    final error = state.ringsErrorFor(widget.repoPath);
+    final progress = state.ringsProgressFor(widget.repoPath);
+
+    // Streaming UX: partial rings data appears as soon as the first
+    // sample completes, so the section is rarely in the pure "empty,
+    // loading" state for long. Three presentations coexist:
+    //   * rings=null, loading: slim progress bar only
+    //   * rings!=null, loading: partial data + progress hint
+    //   * rings!=null, done: final data
+    //   * rings=null, error: error banner
+    final hint = rings != null
+        ? loading
+            ? 'probing ${progress?.$1 ?? rings.sweep.length}/${progress?.$2 ?? rings.sweep.length}… · '
+                '${rings.sweep.length} samples so far · '
+                '${rings.events.length} events · '
+                '${rings.centerTrajectory.length} strata'
+            : '${rings.sweep.length} samples · ${rings.events.length} events · '
+                '${rings.centerTrajectory.length} strata'
+        : error != null
+            ? 'unavailable — $error'
+            : progress != null
+                ? 'probing ${progress.$1}/${progress.$2}…'
+                : loading
+                    ? 'probing…'
+                    : 'preparing sweep';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionHeader(label: 'Growth rings', hint: hint),
+        const SizedBox(height: 8),
+        if (loading)
+          // Progress rail always visible while sweeping, whether
+          // partial data has arrived or not. The bar fills as
+          // samples complete; partial data fills in below it.
+          Container(
+            height: 4,
+            margin: const EdgeInsets.only(bottom: 10),
+            decoration: BoxDecoration(
+              color: t.chromeBorder.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(2),
+            ),
+            child: progress == null
+                ? null
+                : FractionallySizedBox(
+                    widthFactor:
+                        (progress.$1 / progress.$2).clamp(0.02, 1.0),
+                    alignment: Alignment.centerLeft,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: t.accentBright.withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+          ),
+        if (rings == null && !loading)
+          // Only show this empty-state when there's truly nothing —
+          // not during the first sample's travel time.
+          Text('No rings data yet.',
+              style: TextStyle(color: t.textMuted, fontSize: 11))
+        else if (rings != null) ...[
+          _RingsClassificationRow(
+              classification: rings.observableClassification),
+          const SizedBox(height: 12),
+          // Aperture scrubber — drag through the probe to see the
+          // repo through different memory horizons. The live readout
+          // below the track uses `sweep.sampleAt(window)` continuous-
+          // domain interpolation so the cursor glides between real
+          // samples without snapping.
+          _ApertureScrubber(sweep: rings.sweep),
+          const SizedBox(height: 14),
+          _SectionSubHeader(
+              label: 'Centre-of-gravity trajectory',
+              hint: 'close focus → wide focus'),
+          const SizedBox(height: 6),
+          _CenterTrajectoryList(strata: rings.centerTrajectory),
+          const SizedBox(height: 10),
+          _SectionSubHeader(
+              label: 'Compound events',
+              hint: '${rings.events.length} detected'),
+          const SizedBox(height: 6),
+          if (rings.events.isEmpty)
+            Text(loading
+                ? 'No compound events detected yet — still sampling.'
+                : 'No compound events in the sampled range.',
+                style: TextStyle(color: t.textMuted, fontSize: 11))
+          else
+            Column(
+              children: [
+                for (final e in rings.events)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: _EventCard(event: e),
+                  ),
+              ],
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Interactive aperture scrubber. Draggable track over the
+/// commit-window space of an [ApertureSweep]. Real sample positions
+/// render as ticks whose height reflects the sample's decisiveness
+/// (confident archetype = tall tick; uncertain = short). The thumb
+/// glides log-space between ticks via [ApertureSweep.sampleAt], and
+/// the compact readout below shows the interpolated observables at
+/// the cursor's window. No separate "slider" affordance — the ticks
+/// ARE the handles, the whole card surface scrubs.
+class _ApertureScrubber extends StatefulWidget {
+  const _ApertureScrubber({required this.sweep});
+  final ApertureSweep sweep;
+
+  @override
+  State<_ApertureScrubber> createState() => _ApertureScrubberState();
+}
+
+class _ApertureScrubberState extends State<_ApertureScrubber> {
+  // Current cursor position expressed as a window value. Defaults to
+  // the sweep's widest sample — the "full memory" lens — so the
+  // initial view matches the headline stats the rest of the panel
+  // shows.
+  int? _window;
+  bool _dragging = false;
+
+  int get _minWindow => widget.sweep.samples.first.window;
+  int get _maxWindow => widget.sweep.samples.last.window;
+  int get _currentWindow => _window ?? _maxWindow;
+
+  @override
+  void didUpdateWidget(covariant _ApertureScrubber old) {
+    super.didUpdateWidget(old);
+    // If the sweep range shifts (refresh, HEAD moved), clamp the
+    // cursor into the new bounds rather than holding a stale value.
+    if (_window != null) {
+      final w = _window!;
+      if (w < _minWindow || w > _maxWindow) _window = null;
+    }
+  }
+
+  double _tForWindow(int w) {
+    if (_maxWindow <= _minWindow) return 0.0;
+    final la = math.log(_minWindow.toDouble());
+    final lb = math.log(_maxWindow.toDouble());
+    final lw = math.log(w.toDouble());
+    return ((lw - la) / (lb - la)).clamp(0.0, 1.0).toDouble();
+  }
+
+  int _windowForT(double t) {
+    final la = math.log(_minWindow.toDouble());
+    final lb = math.log(_maxWindow.toDouble());
+    final lw = la + (lb - la) * t.clamp(0.0, 1.0);
+    return math.exp(lw).round().clamp(_minWindow, _maxWindow).toInt();
+  }
+
+  void _seek(double localX, double width) {
+    if (width <= 0) return;
+    setState(() {
+      _window = _windowForT(localX / width);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    if (widget.sweep.samples.length < 2) {
+      // One sample → there's nothing to scrub between. Just show the
+      // single-sample digest in the same slot so layout stays stable.
+      return _ApertureScrubberReadout(
+        sample: widget.sweep.samples.isEmpty
+            ? null
+            : widget.sweep.samples.first,
+        tokens: t,
+      );
+    }
+    final sample = widget.sweep.sampleAt(_currentWindow);
+    final cursorT = _tForWindow(_currentWindow);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LayoutBuilder(
+          builder: (ctx, constraints) {
+            final width = constraints.maxWidth;
+            return MouseRegion(
+              cursor: SystemMouseCursors.grab,
+              child: Listener(
+                onPointerDown: (e) {
+                  setState(() => _dragging = true);
+                  _seek(e.localPosition.dx, width);
+                },
+                onPointerMove: (e) {
+                  if (!_dragging) return;
+                  _seek(e.localPosition.dx, width);
+                },
+                onPointerUp: (_) => setState(() => _dragging = false),
+                onPointerCancel: (_) => setState(() => _dragging = false),
+                child: SizedBox(
+                  height: 28,
+                  child: CustomPaint(
+                    painter: _ApertureScrubberPainter(
+                      sweep: widget.sweep,
+                      cursorT: cursorT,
+                      dragging: _dragging,
+                      accent: t.accentBright,
+                      faint: t.chromeBorder,
+                      textFaint: t.textFaint,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 6),
+        _ApertureScrubberReadout(sample: sample, tokens: t),
+      ],
+    );
+  }
+}
+
+class _ApertureScrubberPainter extends CustomPainter {
+  _ApertureScrubberPainter({
+    required this.sweep,
+    required this.cursorT,
+    required this.dragging,
+    required this.accent,
+    required this.faint,
+    required this.textFaint,
+  });
+  final ApertureSweep sweep;
+  final double cursorT;
+  final bool dragging;
+  final Color accent;
+  final Color faint;
+  final Color textFaint;
+
+  double _tForSample(ApertureSample s) {
+    final lo = sweep.samples.first.window;
+    final hi = sweep.samples.last.window;
+    if (hi <= lo) return 0.0;
+    final la = math.log(lo.toDouble());
+    final lb = math.log(hi.toDouble());
+    final lw = math.log(s.window.toDouble());
+    return ((lw - la) / (lb - la)).clamp(0.0, 1.0).toDouble();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final midY = size.height / 2 + 4;
+    // Track — hairline baseline the ticks stand on.
+    canvas.drawLine(
+      Offset(0, midY),
+      Offset(size.width, midY),
+      Paint()
+        ..color = faint.withValues(alpha: 0.35)
+        ..strokeWidth = 0.75,
+    );
+    // Tick per real sample. Height reflects decisiveness so the user
+    // sees at a glance which windows the engine read confidently.
+    for (final s in sweep.samples) {
+      final t = _tForSample(s);
+      final x = t * size.width;
+      final h = 6 + 10 * s.decisiveness.clamp(0.0, 1.0);
+      canvas.drawLine(
+        Offset(x, midY - h / 2),
+        Offset(x, midY + h / 2),
+        Paint()
+          ..color = accent.withValues(alpha: 0.38 + 0.32 * s.decisiveness)
+          ..strokeWidth = 1.4,
+      );
+    }
+    // Cursor — fat line + soft halo. Halo brightens during drag to
+    // confirm capture without a separate indicator.
+    final cx = cursorT * size.width;
+    final haloAlpha = dragging ? 0.22 : 0.12;
+    canvas.drawLine(
+      Offset(cx, 2),
+      Offset(cx, size.height - 2),
+      Paint()
+        ..color = accent.withValues(alpha: haloAlpha)
+        ..strokeWidth = 12
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawLine(
+      Offset(cx, 4),
+      Offset(cx, size.height - 4),
+      Paint()
+        ..color = accent.withValues(alpha: dragging ? 0.95 : 0.78)
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ApertureScrubberPainter old) =>
+      old.cursorT != cursorT ||
+      old.dragging != dragging ||
+      !identical(old.sweep, sweep);
+}
+
+class _ApertureScrubberReadout extends StatelessWidget {
+  const _ApertureScrubberReadout({
+    required this.sample,
+    required this.tokens,
+  });
+  final ApertureSample? sample;
+  final AppTokens tokens;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    final s = sample;
+    if (s == null) {
+      return Text(
+        'scrubbing unavailable — no samples yet',
+        style: TextStyle(color: t.textMuted, fontSize: 10.5),
+      );
+    }
+    final muted = TextStyle(
+      color: t.textMuted,
+      fontSize: 10,
+      letterSpacing: 1.2,
+      fontWeight: FontWeight.w600,
+      fontFamilyFallback: const ['monospace'],
+    );
+    final value = TextStyle(
+      color: t.textNormal,
+      fontSize: 11.5,
+      fontWeight: FontWeight.w500,
+      fontFamilyFallback: const ['monospace'],
+    );
+    String pair(String label, String body) => '$label $body';
+    return Wrap(
+      spacing: 14,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(pair('W', '${s.window}'),
+            style: value.copyWith(color: t.accentBright)),
+        Text(pair('ARCHETYPE', s.nearestArchetype), style: muted),
+        Text(pair('FIEDLER', s.fiedler.toStringAsFixed(3)), style: muted),
+        Text(pair('β₀/β₁', '${s.componentCount}/${s.cycleCount}'), style: muted),
+        Text(pair('CENTRE', s.topHousekeepingPath), style: muted),
+      ],
+    );
+  }
+}
+
+class _SectionSubHeader extends StatelessWidget {
+  final String label;
+  final String hint;
+  const _SectionSubHeader({required this.label, required this.hint});
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Text(label,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.3,
+            )),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(hint,
+              style: TextStyle(color: t.textMuted, fontSize: 10),
+              overflow: TextOverflow.ellipsis),
+        ),
+      ],
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final String label;
+  final String hint;
+  const _SectionHeader({required this.label, required this.hint});
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Text(label,
+            style: TextStyle(
+              color: t.textStrong,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            )),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(hint,
+              style: TextStyle(color: t.textMuted, fontSize: 11),
+              overflow: TextOverflow.ellipsis),
+        ),
+      ],
+    );
+  }
+}
+
+class _RingsClassificationRow extends StatelessWidget {
+  final Map<String, String> classification;
+  const _RingsClassificationRow({required this.classification});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    if (classification.isEmpty) {
+      return Text('Observable classification unavailable.',
+          style: TextStyle(color: t.textMuted, fontSize: 11));
+    }
+    Color colorFor(String cls) {
+      switch (cls) {
+        case 'invariant':
+          return t.stateAdded;
+        case 'running':
+          return t.accentBright;
+        case 'artifact':
+          return t.textMuted;
+      }
+      return t.textMuted;
+    }
+
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final entry in classification.entries)
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: colorFor(entry.value).withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: colorFor(entry.value).withValues(alpha: 0.35),
+                width: 1,
+              ),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(entry.key,
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 10,
+                    fontFamily: 'JetBrainsMono',
+                  )),
+              const SizedBox(width: 6),
+              Text(entry.value,
+                  style: TextStyle(
+                    color: colorFor(entry.value),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  )),
+            ]),
+          ),
+      ],
+    );
+  }
+}
+
+class _CenterTrajectoryList extends StatelessWidget {
+  final List<CenterOfGravityStratum> strata;
+  const _CenterTrajectoryList({required this.strata});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    if (strata.isEmpty) {
+      return Text('No trajectory — only one stratum observed.',
+          style: TextStyle(color: t.textMuted, fontSize: 11));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < strata.length; i++)
+          _TrajectoryRow(
+            stratum: strata[i],
+            stratumIndex: i,
+            total: strata.length,
+          ),
+      ],
+    );
+  }
+}
+
+class _TrajectoryRow extends StatelessWidget {
+  final CenterOfGravityStratum stratum;
+  final int stratumIndex;
+  final int total;
+
+  const _TrajectoryRow({
+    required this.stratum,
+    required this.stratumIndex,
+    required this.total,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    // Close-focus (first) = current activity; wide-focus (last) = history.
+    final isFirst = stratumIndex == 0;
+    final isLast = stratumIndex == total - 1;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 48,
+            child: Text(
+              'w=${stratum.window}',
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono',
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  stratum.path,
+                  style: TextStyle(
+                    color: t.textNormal,
+                    fontSize: 12,
+                    fontFamily: 'JetBrainsMono',
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    if (isFirst) 'close focus · current attention',
+                    if (isLast) 'wide focus · deepest stratum',
+                    'archetype: ${stratum.nearestArchetype}',
+                  ].join('  ·  '),
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EventCard extends StatelessWidget {
+  final ApertureEvent event;
+  const _EventCard({required this.event});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return MaterialSurface(
+      tone: AppMaterialTone.surface0,
+      borderAlpha: 0.22,
+      elevated: false,
+      innerHighlight: false,
+      glaze: false,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  'aperture ${event.fromWindow}→${event.toWindow}',
+                  style: TextStyle(
+                    color: t.textStrong,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'JetBrainsMono',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'mag ${event.magnitude.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontFamily: 'JetBrainsMono',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                for (final obs in event.flippedObservables)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: t.accentBright.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(3),
+                      border: Border.all(
+                        color: t.accentBright.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      obs,
+                      style: TextStyle(
+                        color: t.textNormal,
+                        fontSize: 10,
+                        fontFamily: 'JetBrainsMono',
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

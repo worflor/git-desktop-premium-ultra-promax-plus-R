@@ -877,9 +877,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     onClearDiagnostics: () {
                       _clearDiagnostics();
                     },
-                    onClearAudit: () {
-                      _clearAudit();
-                    },
+                    onClearAudit: preferences.hideAiFeatures
+                        ? null
+                        : () {
+                            _clearAudit();
+                          },
                     onClearAll: () {
                       _clearAllLocalData();
                     },
@@ -934,14 +936,16 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(height: 10),
               const _UndoWindowControl(),
               const SizedBox(height: 10),
-              _CheckboxRow(
-                label: 'AI read-only mode',
-                description: 'Prevents AI from writing or staging changes automatically.',
-                value: true, // Forced enabled
-                enabled: false, // Grayed out
-                onChanged: (_) {},
-              ),
-              const SizedBox(height: 10),
+              if (!preferences.hideAiFeatures) ...[
+                _CheckboxRow(
+                  label: 'AI read-only mode',
+                  description: 'Prevents AI from writing or staging changes automatically.',
+                  value: true, // Forced enabled
+                  enabled: false, // Grayed out
+                  onChanged: (_) {},
+                ),
+                const SizedBox(height: 10),
+              ],
               _CheckboxRow(
                 label: 'Logo animates when tabbed out',
                 description: preferences.logoAnimatesWhenUnfocused
@@ -1046,6 +1050,24 @@ class _SettingsPageState extends State<SettingsPage> {
                       .setLogosPad(x, y));
                 },
               ),
+              const _SettingsGap(),
+              _CheckboxRow(
+                label: 'I hate AI',
+                description:
+                    "Banish all LLM-backed features. Logos keeps running "
+                    "because it's spectral math, not a model.",
+                value: preferences.hideAiFeatures,
+                trailing: _AiHiddenMiniIndicator(
+                  hidden: preferences.hideAiFeatures,
+                  tokens: t,
+                ),
+                onChanged: (value) {
+                  unawaited(context
+                      .read<PreferencesState>()
+                      .setHideAiFeatures(value));
+                },
+              ),
+              if (!preferences.hideAiFeatures) ...[
               const _SettingsGap(),
               Row(
                 children: [
@@ -1245,6 +1267,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 guardrailStage: preferences.guardrailStage,
                 onPromptChanged: _scheduleMusePromptSave,
               ),
+              ], // end of `if (!preferences.hideAiFeatures) ...[` AI subtree
             ],
           ),
         ),
@@ -1936,7 +1959,9 @@ class _InputWithUnitState extends State<_InputWithUnit> {
 class _HybridRetentionActions extends StatelessWidget {
   final bool busy;
   final VoidCallback onClearDiagnostics;
-  final VoidCallback onClearAudit;
+  /// Null when AI features are hidden — the "Audit" segment is
+  /// elided entirely in that case so the pill reads "Diag · All".
+  final VoidCallback? onClearAudit;
   final VoidCallback onClearAll;
 
   const _HybridRetentionActions({
@@ -1949,8 +1974,13 @@ class _HybridRetentionActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    const labels = ['Diag', 'Audit', 'All'];
-    final actions = [onClearDiagnostics, onClearAudit, onClearAll];
+    final hasAudit = onClearAudit != null;
+    final labels = hasAudit
+        ? const ['Diag', 'Audit', 'All']
+        : const ['Diag', 'All'];
+    final actions = hasAudit
+        ? <VoidCallback>[onClearDiagnostics, onClearAudit!, onClearAll]
+        : <VoidCallback>[onClearDiagnostics, onClearAll];
     return Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -3808,14 +3838,28 @@ class _LogosDynamicsStage extends StatelessWidget {
       final totalW = c.maxWidth.clamp(420.0, 720.0).toDouble();
       final padW = (totalW - gripW - gap).clamp(280.0, 600.0).toDouble();
       final padH = (padW / 1.7).clamp(220.0, 360.0).toDouble();
+      // Motion-aware resize easing. When the window is live-resized,
+      // the LayoutBuilder rebuilds per frame with a slightly new
+      // maxWidth — snapping the stage dimensions each rebuild felt
+      // jittery. AnimatedContainer smooths the transition so the
+      // stage reads as a single object settling into its new size
+      // rather than redrawing itself per frame. Duration routed
+      // through `context.motion` so reduce-motion users get Duration
+      // .zero and the old snap behavior.
+      final resizeDur = ctx.motion(const Duration(milliseconds: 320));
+      const resizeCurve = Curves.easeOutCubic;
       // Use IntrinsicHeight so whichever child is taller sets the row height.
-      return SizedBox(
+      return AnimatedContainer(
+        duration: resizeDur,
+        curve: resizeCurve,
         width: totalW,
         child: IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
+              AnimatedContainer(
+                duration: resizeDur,
+                curve: resizeCurve,
                 width: padW,
                 height: padH,
                 child: _LogosPad(
@@ -8175,6 +8219,97 @@ class _AutoSelectMiniIndicator extends StatelessWidget {
           row(checked: true, isNew: false),
           const SizedBox(height: 4),
           row(checked: active, isNew: true),
+        ],
+      ),
+    );
+  }
+}
+
+/// Mini-viz for "I hate AI." A tiny chip glyph (meant to read as a
+/// silicon model chip). When HIDDEN is on, a diagonal stroke crosses
+/// the chip in muted ink — the silicon is "off." When HIDDEN is off,
+/// the chip is intact + accent-coloured with faint leg-dots glowing,
+/// matching the app's other on-state indicator voices.
+class _AiHiddenMiniIndicator extends StatelessWidget {
+  final bool hidden;
+  final AppTokens tokens;
+  const _AiHiddenMiniIndicator({
+    required this.hidden,
+    required this.tokens,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dur = context.motion(const Duration(milliseconds: 240));
+    final muted = tokens.textMuted.withValues(alpha: 0.55);
+    final accent = tokens.accentBright;
+    final chipColor = hidden ? muted : accent;
+    return SizedBox(
+      width: 32,
+      height: 20,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Chip body — rounded rect center.
+          Positioned(
+            left: 8,
+            top: 5,
+            child: AnimatedContainer(
+              duration: dur,
+              curve: Curves.easeOutCubic,
+              width: 16,
+              height: 10,
+              decoration: BoxDecoration(
+                color: hidden
+                    ? Colors.transparent
+                    : accent.withValues(alpha: 0.14),
+                border: Border.all(color: chipColor, width: 1),
+                borderRadius: BorderRadius.circular(1.5),
+              ),
+            ),
+          ),
+          // Chip legs — three tiny dots on each side. Faded when
+          // hidden, accent when active.
+          for (final y in const [7.0, 11.0])
+            Positioned(
+              left: 4,
+              top: y,
+              child: Container(
+                width: 4,
+                height: 1,
+                color: chipColor,
+              ),
+            ),
+          for (final y in const [7.0, 11.0])
+            Positioned(
+              left: 24,
+              top: y,
+              child: Container(
+                width: 4,
+                height: 1,
+                color: chipColor,
+              ),
+            ),
+          // Strike — a diagonal line crossing the chip when hidden.
+          // Animates in / out with opacity.
+          Positioned(
+            left: 3,
+            top: 3,
+            child: AnimatedOpacity(
+              duration: dur,
+              curve: Curves.easeOutCubic,
+              opacity: hidden ? 1.0 : 0.0,
+              child: Transform.rotate(
+                angle: -math.pi / 5,
+                alignment: Alignment.center,
+                child: Container(
+                  width: 26,
+                  height: 1.5,
+                  color: muted,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );

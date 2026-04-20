@@ -889,72 +889,138 @@ class AiMuseIdea {
   });
 }
 
-/// One concrete suggestion in the muse output. `originatingIdeaIndex`
-/// links back to a brainstorm idea (so the UI can show "from idea: …").
-/// `citations` are file paths or `path:line` references the muse grounded
-/// the move in.
-class AiMuseMove {
-  final String body;
-  final int? originatingIdeaIndex;
-  final List<String> citations;
+/// Ambition tier for a muse proposal. The muse distributes its
+/// output across these tiers so every run offers a range from "could
+/// ship this week" to "genuinely unhinged." Ordered by ambition: low
+/// to high, with `fever` as the wildcard final.
+enum AiMuseIdeaTier {
+  /// Near-term, realistic — something that could ship as a normal PR.
+  spark,
+  /// Mid-term, this-month. Feels already in motion; naming where it goes.
+  current,
+  /// Grand but reachable. The project's destiny, named.
+  horizon,
+  /// Absurd, wildly eldritch, possibly impossible. Permission granted
+  /// to propose the unhinged; still grounded in a real foothold so
+  /// the absurdity reads as "WISH this existed" rather than noise.
+  fever,
+}
 
-  const AiMuseMove({
-    required this.body,
-    this.originatingIdeaIndex,
+AiMuseIdeaTier? parseMuseIdeaTier(String raw) {
+  switch (raw.trim().toLowerCase()) {
+    case 'spark':
+      return AiMuseIdeaTier.spark;
+    case 'current':
+      return AiMuseIdeaTier.current;
+    case 'horizon':
+      return AiMuseIdeaTier.horizon;
+    case 'fever':
+      return AiMuseIdeaTier.fever;
+  }
+  return null;
+}
+
+String museIdeaTierLabel(AiMuseIdeaTier tier) {
+  switch (tier) {
+    case AiMuseIdeaTier.spark:
+      return 'spark';
+    case AiMuseIdeaTier.current:
+      return 'current';
+    case AiMuseIdeaTier.horizon:
+      return 'horizon';
+    case AiMuseIdeaTier.fever:
+      return 'fever';
+  }
+}
+
+/// A single proposal in the muse output. Unlike the old "move" shape
+/// (which read as a summary of what the change rhymes with), a
+/// proposal is generative: a title + a vision + a foothold that
+/// anchors the idea to something real in the codebase. Tier signals
+/// ambition range; the muse emits a distribution across all four.
+class AiMuseProposal {
+  final AiMuseIdeaTier tier;
+  /// Short, memorable name for the idea (4-8 words). Named like a
+  /// feature, not a sentence.
+  final String title;
+  /// 1-2 sentences of generative imagination. What the idea WOULD
+  /// BE, written in the present tense of the hypothetical world.
+  final String vision;
+  /// One sentence anchoring the idea to a concrete point in the
+  /// code — what's already there that makes this reachable.
+  final String foothold;
+  /// Paths or path:line references cited by this proposal. The
+  /// primary foothold citation is the first entry; additional cites
+  /// may appear when the idea spans multiple touch points.
+  final List<String> citations;
+  /// Links back to a brainstorm idea index when the synthesis wove
+  /// a phase-1 spew into this proposal. Null when the idea sprang
+  /// from the synthesis pass directly.
+  final int? originatingIdeaIndex;
+
+  const AiMuseProposal({
+    required this.tier,
+    required this.title,
+    required this.vision,
+    required this.foothold,
     this.citations = const [],
+    this.originatingIdeaIndex,
   });
 }
 
 /// Output of the three-phase muse pipeline.
-/// `intent` is the muse's read of what the change is reaching for.
-/// `resonances` names patterns elsewhere in the codebase the change
-/// rhymes with. `alternatives` proposes directions the change could
-/// take alongside or instead. `extensions` names places the codebase
-/// invites the work to grow into. `trajectory` sketches what the next
-/// 1–3 commits naturally look like.
+///
+/// The muse's job is to PROPOSE, not to summarize. Its output is a
+/// list of [AiMuseProposal]s distributed across four ambition tiers
+/// (spark / current / horizon / fever). Every proposal carries its
+/// own foothold citation so the ambition still reads as reachable.
+/// The brainstorm phase-1 spew is preserved in [brainstormIdeas] for
+/// the UI's "raw ideas" drawer.
 class AiMuseData {
   final String providerId;
   final String modelId;
   final String scopeLabel;
-  final String intent;
-  final String trajectory;
-  final List<AiMuseMove> resonances;
-  final List<AiMuseMove> alternatives;
-  final List<AiMuseMove> extensions;
+  /// Ambition-distributed proposals. Ordered in emission order from
+  /// the synthesis pass; consumers can re-group by tier via
+  /// [proposalsForTier] for rendering.
+  final List<AiMuseProposal> proposals;
   final List<AiMuseIdea> brainstormIdeas;
   final int promptCharacters;
   final int diffCharacters;
 
-  /// Number of `<move>` tags the model emitted that the parser could not
-  /// fully extract.  Zero when parse was clean; non-zero means the user
-  /// is seeing a partial result — rendered as a warning note in the UI.
-  final int droppedMoves;
+  /// Free-form warnings raised during parse — malformed `<idea>` tags,
+  /// missing foothold citations, tiers the model invented. Rendered as
+  /// a muted footnote so the user knows the synthesis wasn't clean
+  /// without hiding the successful proposals behind the error.
+  final List<String> parseWarnings;
 
   /// Paths the user explicitly pulled on during the loading canvas.
-  /// These boosted the phase-2 seed map and their presence in a move's
-  /// citation list is what lets the UI surface "you pulled this" to
-  /// the reader — closing the loop between the physical gesture and
-  /// the rendered result.
+  /// These boosted the phase-2 seed map, and their presence in a
+  /// proposal's foothold citation lets the UI surface "you pulled
+  /// this" — closing the loop between the physical gesture and the
+  /// rendered result.
   final Set<String> userBoostedPaths;
 
   const AiMuseData({
     required this.providerId,
     required this.modelId,
     required this.scopeLabel,
-    required this.intent,
-    required this.trajectory,
-    this.resonances = const [],
-    this.alternatives = const [],
-    this.extensions = const [],
+    this.proposals = const [],
     this.brainstormIdeas = const [],
     required this.promptCharacters,
     required this.diffCharacters,
-    this.droppedMoves = 0,
+    this.parseWarnings = const [],
     this.userBoostedPaths = const {},
   });
 
   int get keptIdeaCount => brainstormIdeas.where((idea) => idea.kept).length;
   int get totalIdeaCount => brainstormIdeas.length;
+
+  /// Proposals filtered to a single tier, preserving emission order.
+  /// Used by the UI to group the display under tier headers without
+  /// mutating the source list.
+  List<AiMuseProposal> proposalsForTier(AiMuseIdeaTier tier) =>
+      proposals.where((p) => p.tier == tier).toList(growable: false);
 }
 
 class AiCommitMessageData {

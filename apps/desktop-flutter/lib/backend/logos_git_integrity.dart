@@ -390,10 +390,73 @@ LogosRelationDescriptor? logosRelationDescriptor(String source, String candidate
   return null;
 }
 
-LogosTransportLane? logosTransportLane(String source, String candidate) {
-  final sn = source.replaceAll('\\', '/').toLowerCase();
-  final cn = candidate.replaceAll('\\', '/').toLowerCase();
-  if (_sharesManifestRoot(sn, cn) && _isManifestLike(sn) && _isLockfileLike(cn)) {
+/// Precomputed role-of-path cache. `logosTransportLane` called in a
+/// tight loop (ranked-list construction inside `gatherEvidence`, once
+/// per focus × candidate pair) spent 95%+ of its cost re-running the
+/// same path-normalization + role-classification + seed-key token
+/// extraction on the same strings. Build one of these per unique
+/// path, reuse across every pairing.
+class TransportRoles {
+  TransportRoles._(
+    this.normalized,
+    this.seedKey,
+    this.isManifest,
+    this.isLockfile,
+    this.isSource,
+    this.isTest,
+    this.isDoc,
+    this.isMigration,
+    this.isGenerated,
+    this.isFixture,
+  );
+
+  factory TransportRoles.of(String path) {
+    final n = path.replaceAll('\\', '/').toLowerCase();
+    return TransportRoles._(
+      n,
+      logosTransportSeedKey(n),
+      _isManifestLike(n),
+      _isLockfileLike(n),
+      _looksSourceLikeNorm(n),
+      _looksTestLike(n),
+      _looksDocLike(n),
+      _looksMigrationLike(n),
+      _looksGenerated(n),
+      _looksFixtureLike(n),
+    );
+  }
+
+  final String normalized;
+  final String? seedKey;
+  final bool isManifest;
+  final bool isLockfile;
+  final bool isSource;
+  final bool isTest;
+  final bool isDoc;
+  final bool isMigration;
+  final bool isGenerated;
+  final bool isFixture;
+
+  bool _sharesManifestRoot(TransportRoles other) =>
+      seedKey != null &&
+      seedKey == other.seedKey &&
+      seedKey!.startsWith('manifest:');
+
+  bool _sharesTransportConcept(TransportRoles other) =>
+      seedKey != null &&
+      seedKey == other.seedKey &&
+      seedKey!.startsWith('concept:');
+}
+
+/// Fast transport-lane lookup on pre-computed roles. Intended for hot
+/// loops that make N×M lookups across two path sets — build one
+/// [TransportRoles] per unique path once, reuse here. The returned
+/// value is byte-identical to [logosTransportLane] called with the
+/// same raw strings.
+LogosTransportLane? logosTransportLaneOfRoles(
+    TransportRoles src, TransportRoles cand) {
+  final sharesManifest = src._sharesManifestRoot(cand);
+  if (sharesManifest && src.isManifest && cand.isLockfile) {
     return const LogosTransportLane(
       label: 'manifest->lockfile',
       strength: 0.34,
@@ -402,7 +465,7 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'lockfile',
     );
   }
-  if (_sharesManifestRoot(sn, cn) && _isLockfileLike(sn) && _isManifestLike(cn)) {
+  if (sharesManifest && src.isLockfile && cand.isManifest) {
     return const LogosTransportLane(
       label: 'lockfile->manifest',
       strength: 0.46,
@@ -411,9 +474,8 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'manifest',
     );
   }
-  if (_sharesTransportConcept(sn, cn) &&
-      _looksSourceLike(sn) &&
-      _looksGenerated(cn)) {
+  final sharesConcept = src._sharesTransportConcept(cand);
+  if (sharesConcept && src.isSource && cand.isGenerated) {
     return const LogosTransportLane(
       label: 'source->generated',
       strength: 0.28,
@@ -422,9 +484,7 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'generated',
     );
   }
-  if (_sharesTransportConcept(sn, cn) &&
-      _looksGenerated(sn) &&
-      _looksSourceLike(cn)) {
+  if (sharesConcept && src.isGenerated && cand.isSource) {
     return const LogosTransportLane(
       label: 'generated->source',
       strength: 0.44,
@@ -433,10 +493,7 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'source',
     );
   }
-  if (_sharesTransportConcept(sn, cn) &&
-      !_looksTestLike(sn) &&
-      _looksSourceLike(sn) &&
-      _looksTestLike(cn)) {
+  if (sharesConcept && !src.isTest && src.isSource && cand.isTest) {
     return const LogosTransportLane(
       label: 'source->test',
       strength: 0.18,
@@ -445,10 +502,7 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'test',
     );
   }
-  if (_sharesTransportConcept(sn, cn) &&
-      _looksTestLike(sn) &&
-      _looksSourceLike(cn) &&
-      !_looksTestLike(cn)) {
+  if (sharesConcept && src.isTest && cand.isSource && !cand.isTest) {
     return const LogosTransportLane(
       label: 'test->source',
       strength: 0.24,
@@ -457,10 +511,7 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'source',
     );
   }
-  if (_sharesTransportConcept(sn, cn) &&
-      !_looksDocLike(sn) &&
-      _looksSourceLike(sn) &&
-      _looksDocLike(cn)) {
+  if (sharesConcept && !src.isDoc && src.isSource && cand.isDoc) {
     return const LogosTransportLane(
       label: 'source->doc',
       strength: 0.12,
@@ -469,10 +520,7 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'doc',
     );
   }
-  if (_sharesTransportConcept(sn, cn) &&
-      _looksDocLike(sn) &&
-      _looksSourceLike(cn) &&
-      !_looksDocLike(cn)) {
+  if (sharesConcept && src.isDoc && cand.isSource && !cand.isDoc) {
     return const LogosTransportLane(
       label: 'doc->source',
       strength: 0.18,
@@ -481,10 +529,10 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'source',
     );
   }
-  if (_sharesTransportConcept(sn, cn) &&
-      !_looksMigrationLike(sn) &&
-      _looksSourceLike(sn) &&
-      _looksMigrationLike(cn)) {
+  if (sharesConcept &&
+      !src.isMigration &&
+      src.isSource &&
+      cand.isMigration) {
     return const LogosTransportLane(
       label: 'source->migration',
       strength: 0.20,
@@ -493,10 +541,10 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'migration',
     );
   }
-  if (_sharesTransportConcept(sn, cn) &&
-      _looksMigrationLike(sn) &&
-      _looksSourceLike(cn) &&
-      !_looksMigrationLike(cn)) {
+  if (sharesConcept &&
+      src.isMigration &&
+      cand.isSource &&
+      !cand.isMigration) {
     return const LogosTransportLane(
       label: 'migration->source',
       strength: 0.28,
@@ -505,7 +553,7 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'source',
     );
   }
-  if (_looksFixtureLike(sn) && !_looksFixtureLike(cn)) {
+  if (src.isFixture && !cand.isFixture) {
     return const LogosTransportLane(
       label: 'fixture->source',
       strength: 0.20,
@@ -514,7 +562,7 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
       targetRole: 'source',
     );
   }
-  if (!_looksFixtureLike(sn) && _looksFixtureLike(cn)) {
+  if (!src.isFixture && cand.isFixture) {
     return const LogosTransportLane(
       label: 'source->fixture',
       strength: 0.16,
@@ -526,11 +574,16 @@ LogosTransportLane? logosTransportLane(String source, String candidate) {
   return null;
 }
 
+LogosTransportLane? logosTransportLane(String source, String candidate) {
+  final src = TransportRoles.of(source);
+  final cand = TransportRoles.of(candidate);
+  return logosTransportLaneOfRoles(src, cand);
+}
+
 String? logosTransportSeedKey(String path) {
   final lower = path.replaceAll('\\', '/').toLowerCase();
   if (_isManifestLike(lower) || _isLockfileLike(lower)) {
-    final parent = _parentDirKey(lower);
-    return parent.isEmpty ? null : 'manifest:$parent';
+    return 'manifest:${_parentDirKey(lower)}';
   }
   if (_looksSourceLike(lower) ||
       _looksGenerated(lower) ||
@@ -544,24 +597,26 @@ String? logosTransportSeedKey(String path) {
   return null;
 }
 
-bool _looksSourceLike(String path) {
-  final lower = path.toLowerCase();
-  return lower.endsWith('.dart') ||
-      lower.endsWith('.ts') ||
-      lower.endsWith('.tsx') ||
-      lower.endsWith('.js') ||
-      lower.endsWith('.jsx') ||
-      lower.endsWith('.rs') ||
-      lower.endsWith('.py') ||
-      lower.endsWith('.go') ||
-      lower.endsWith('.java') ||
-      lower.endsWith('.kt') ||
-      lower.endsWith('.swift') ||
-      lower.endsWith('.c') ||
-      lower.endsWith('.cc') ||
-      lower.endsWith('.cpp') ||
-      lower.endsWith('.h');
-}
+bool _looksSourceLike(String path) => _looksSourceLikeNorm(path.toLowerCase());
+
+/// Norm variant — caller guarantees [path] is already lowercase. Used
+/// by [TransportRoles.of] to avoid a per-role lowercase allocation.
+bool _looksSourceLikeNorm(String path) =>
+    path.endsWith('.dart') ||
+    path.endsWith('.ts') ||
+    path.endsWith('.tsx') ||
+    path.endsWith('.js') ||
+    path.endsWith('.jsx') ||
+    path.endsWith('.rs') ||
+    path.endsWith('.py') ||
+    path.endsWith('.go') ||
+    path.endsWith('.java') ||
+    path.endsWith('.kt') ||
+    path.endsWith('.swift') ||
+    path.endsWith('.c') ||
+    path.endsWith('.cc') ||
+    path.endsWith('.cpp') ||
+    path.endsWith('.h');
 
 bool _looksRitualPath(String path) =>
     _looksGenerated(path) ||
@@ -619,7 +674,12 @@ bool _looksMigrationLike(String path) =>
 
 String _parentDirKey(String path) {
   final slash = path.lastIndexOf('/');
-  if (slash <= 0) return '';
+  // Top-level files have no slash; use a sentinel so sibling
+  // top-level files (e.g. `pubspec.yaml` ↔ `pubspec.lock` in a
+  // single-project repo root) still share a seed key. Empty string
+  // would've caused the seed-key nullability check to reject them.
+  if (slash < 0) return '.';
+  if (slash == 0) return '/';
   return path.substring(0, slash);
 }
 
@@ -663,6 +723,15 @@ final _transportNoise = <String>{
 final _transportNonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
 final _transportCamelBoundary =
     RegExp(r'(?<=[\p{Ll}\p{N}])(?=[\p{Lu}])', unicode: true);
+/// Strip the rightmost `.<ext>` suffix from a stem. Hoisted because
+/// [_transportConceptTokens] runs for every file in the repo during an
+/// integrity profile build and was previously building a fresh `RegExp`
+/// per stem — O(n) throw-away NFA compilations per call.
+final _transportExtension = RegExp(r'\.[^.]+$');
+/// Reject all-digit tokens (line numbers, version fragments). Hoisted
+/// for the same reason — [_normalizeTransportToken] is called for
+/// every sub-token of every path and was rebuilding this NFA per hit.
+final _transportAllDigits = RegExp(r'^\d+$');
 
 List<String> _transportConceptTokens(String path) {
   final parts = path.split('/');
@@ -673,7 +742,7 @@ List<String> _transportConceptTokens(String path) {
   }
   final tokens = <String>{};
   for (final piece in raw) {
-    final stem = piece.replaceAll(RegExp(r'\.[^.]+$'), '');
+    final stem = piece.replaceAll(_transportExtension, '');
     for (final word in stem.split(_transportNonWord)) {
       if (word.isEmpty) continue;
       for (final sub in word.split(_transportCamelBoundary)) {
@@ -691,7 +760,7 @@ String? _normalizeTransportToken(String token) {
   var lower = token.toLowerCase();
   if (lower.length < 3) return null;
   if (_transportNoise.contains(lower)) return null;
-  if (RegExp(r'^\d+$').hasMatch(lower)) return null;
+  if (_transportAllDigits.hasMatch(lower)) return null;
   if (lower.endsWith('ies') && lower.length > 4) {
     lower = '${lower.substring(0, lower.length - 3)}y';
   } else if (lower.endsWith('s') && lower.length > 4) {

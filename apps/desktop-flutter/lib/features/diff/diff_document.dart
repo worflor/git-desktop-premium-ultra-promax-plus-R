@@ -191,7 +191,8 @@ class DiffDocument {
     };
 
     final fullLines = <ParsedLine>[
-      for (final file in orderedFiles) ...file.lines,
+      for (final file in orderedFiles)
+        ..._condenseFilePathMetaLines(file.lines),
     ];
     final viewLines =
         trimLeadingMeta ? _trimLeadingMetaLines(fullLines) : fullLines;
@@ -221,9 +222,10 @@ class DiffDocument {
     var lineOffset = 0;
     for (var i = 0; i < orderedFiles.length; i++) {
       final file = orderedFiles[i];
+      final condensed = _condenseFilePathMetaLines(file.lines);
       final fileLines = trimLeadingMeta && i == 0
-          ? _trimLeadingMetaLines(file.lines)
-          : file.lines;
+          ? _trimLeadingMetaLines(condensed)
+          : condensed;
       sections.add(
         DiffDocumentSection(
           path: file.path,
@@ -355,6 +357,57 @@ List<ParsedLine> _trimLeadingMetaLines(List<ParsedLine> lines) {
     firstContentIndex++;
   }
   return firstContentIndex == 0 ? lines : lines.sublist(firstContentIndex);
+}
+
+/// Collapse `--- a/path` + `+++ b/path` pairs into a single meta line
+/// when the two paths match (the common case — a modification). The
+/// old layout rendered both lines, wasting a row on duplicate info
+/// the moment you could see either one. Renames keep both lines
+/// because the paths actually differ. New files (`--- /dev/null`) and
+/// deletions (`+++ /dev/null`) also keep the meaningful side.
+List<ParsedLine> condenseDuplicateFilePathMetaLines(List<ParsedLine> lines) =>
+    _condenseFilePathMetaLines(lines);
+
+String? _metaPathFromText(String text, String prefix) {
+  // Strips `--- a/` / `+++ b/` from the meta line text, leaving just
+  // the path. Returns null for `/dev/null` markers and for anything
+  // that doesn't look like a file path meta line.
+  if (!text.startsWith(prefix)) return null;
+  final tail = text.substring(prefix.length).trim();
+  if (tail.isEmpty || tail == '/dev/null') return null;
+  // git emits paths as `a/<path>` / `b/<path>` by default; strip the
+  // one-char prefix + slash when present.
+  if (tail.length >= 2 && tail[1] == '/' && (tail[0] == 'a' || tail[0] == 'b')) {
+    return tail.substring(2);
+  }
+  return tail;
+}
+
+List<ParsedLine> _condenseFilePathMetaLines(List<ParsedLine> lines) {
+  if (lines.length < 2) return lines;
+  final out = <ParsedLine>[];
+  var i = 0;
+  while (i < lines.length) {
+    final a = lines[i];
+    final b = i + 1 < lines.length ? lines[i + 1] : null;
+    if (a.kind == LineKind.meta &&
+        b != null &&
+        b.kind == LineKind.meta) {
+      final oldPath = _metaPathFromText(a.text, '--- ');
+      final newPath = _metaPathFromText(b.text, '+++ ');
+      if (oldPath != null && newPath != null && oldPath == newPath) {
+        // Same path on both sides — this was a modification. Emit
+        // just the `+++` line (the "current" state); it stands in
+        // for the whole pair. Keep identity stable via fastKey.
+        out.add(b);
+        i += 2;
+        continue;
+      }
+    }
+    out.add(a);
+    i++;
+  }
+  return out;
 }
 
 String _displayNameForPath(String path, {String? fallback}) {

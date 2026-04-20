@@ -83,3 +83,4 @@ flutter:
     - shaders/loverboy_bg.frag
     - shaders/glass.frag
     - shaders/plastic.frag
+    - shaders/topology_starfield.frag

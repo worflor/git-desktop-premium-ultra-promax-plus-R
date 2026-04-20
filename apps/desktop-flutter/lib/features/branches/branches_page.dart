@@ -1143,11 +1143,13 @@ class _BranchesPageState extends State<BranchesPage> {
         // the working-tree derivation, so the same Logos + context +
         // prompt pipeline runs against a PR as runs against a local
         // commit draft. Result renders in a simple dialog.
-        AppContextMenuItem(
-          icon: Icons.auto_awesome_outlined,
-          label: 'Review PR',
-          onTap: () => _runPrAiReview(repoPath, pr),
-        ),
+        // Elided entirely when the master AI-hide pref is on.
+        if (!context.read<PreferencesState>().hideAiFeatures)
+          AppContextMenuItem(
+            icon: Icons.auto_awesome_outlined,
+            label: 'Review PR',
+            onTap: () => _runPrAiReview(repoPath, pr),
+          ),
         // Open in browser — `gh pr view --web` for remote PRs. Local
         // PRs have no URL so the option is hidden rather than disabled.
         if (!isLocal)
@@ -3701,6 +3703,8 @@ class _BranchesPageState extends State<BranchesPage> {
   /// inline pane, since PR review is a one-shot operation from this
   /// surface (no commit-draft feedback loop).
   Future<void> _runPrAiReview(String repoPath, PullRequestSummary pr) async {
+    // Defense-in-depth: PR review is AI — skip when hidden.
+    if (context.read<PreferencesState>().hideAiFeatures) return;
     var detail = _prDetails[pr.number];
     if (detail == null || detail.diff.isEmpty) {
       await _ensurePrDetailLoaded(repoPath, pr.number);
@@ -11015,6 +11019,8 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
   }
 
   Future<void> _resolveWithAi(String categoryId) async {
+    // Defense-in-depth: patch AI-resolve is AI — skip when hidden.
+    if (context.read<PreferencesState>().hideAiFeatures) return;
     if (_resolving) return;
     final aiSettings = context.read<AiSettingsState>();
     final modelValue = aiSettings.modelSelections[categoryId] ?? '';
@@ -11461,7 +11467,13 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       // AI resolve — only appears when the patch won't
                       // apply cleanly. Rewrites the failing hunks against
                       // the current target state so the apply succeeds.
-                      if (!_dryRunOk) ...[
+                      // Honours the master AI-hide pref: no AI button
+                      // when the user opted out. Users can still fall
+                      // back to reverse / 3-way / manual.
+                      if (!_dryRunOk &&
+                          !context
+                              .read<PreferencesState>()
+                              .hideAiFeatures) ...[
                         _PatchResolveSplitButton(
                           busy: _resolving,
                           onAction: _resolveWithAi,

@@ -416,25 +416,104 @@ class LogosGitProbeBuilder {
     return blocklist.contains(id);
   }
 
-  /// Per-symbol pickaxe. Runs ALL greps in parallel (one subprocess each
-  /// but awaited as a fan-out) and returns `symbol → file set`. That
-  /// lets the caller apply specificity weighting based on per-symbol
-  /// match count. Total wall time ≈ single slowest grep.
+  /// Per-symbol pickaxe. Batches ALL symbols into a single `git grep`
+  /// invocation with one `-e <pattern>` per symbol, then attributes
+  /// each matched line back to the symbol(s) it contains. Replaces
+  /// the old N-subprocess fan-out — one fork/exec instead of N, and
+  /// git's internal grep engine scans the tree once for all patterns
+  /// rather than once per pattern.
+  ///
+  /// The output is `<path>:<line>:<content>` per `-H -n -w -I`. Since
+  /// `-w` requires a whole-word match, substring-matching each symbol
+  /// against the emitted content line is sound: any line git emits
+  /// contains at least one of our symbols as a whole word. Most lines
+  /// match a single symbol; the per-line attribution loop is bounded
+  /// by `symbols.length × content.length`, cheap relative to a
+  /// subprocess spawn.
   Future<Map<String, Set<String>>> _pickaxeLookupPerSymbol({
     required String repoPath,
     required List<String> symbols,
   }) async {
     if (symbols.isEmpty) return const {};
-    final futures = symbols.map((sym) => _pickaxeSingle(
-          repoPath: repoPath,
-          symbol: sym,
-        ));
-    final results = await Future.wait(futures);
-    final bySymbol = <String, Set<String>>{};
-    for (var i = 0; i < symbols.length; i++) {
-      bySymbol[symbols[i]] = results[i];
+    if (symbols.length == 1) {
+      // Tiny-input fast path: no batching overhead, and the existing
+      // `_pickaxeSingle` already does dedup + inflight coalescing.
+      final only = symbols.first;
+      final set = await _pickaxeSingle(repoPath: repoPath, symbol: only);
+      return {only: set};
     }
-    return bySymbol;
+
+    // Build `-e sym1 -e sym2 ...`. One subprocess for the whole batch.
+    final args = <String>['grep', '-H', '-n', '-w', '-I'];
+    for (final sym in symbols) {
+      args.add('-e');
+      args.add(sym);
+    }
+    const grepTimeout = Duration(seconds: 5);
+    Process? process;
+    try {
+      process = await Process.start(
+        'git',
+        args,
+        workingDirectory: repoPath,
+        runInShell: false,
+      );
+      final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+      final stderrFuture = process.stderr.drain<void>();
+      final int exitCode;
+      try {
+        exitCode = await process.exitCode.timeout(grepTimeout);
+      } on TimeoutException {
+        process.kill();
+        return {for (final s in symbols) s: <String>{}};
+      }
+      if (exitCode != 0 && exitCode != 1) {
+        return {for (final s in symbols) s: <String>{}};
+      }
+      final out = await stdoutFuture;
+      await stderrFuture;
+
+      final bySymbol = <String, Set<String>>{
+        for (final s in symbols) s: <String>{},
+      };
+      // Precompile word-boundary regexes per symbol so attribution
+      // matches git's `-w` semantics. Plain `content.contains(sym)`
+      // over-attributes when one symbol is a substring of another —
+      // e.g. content "foobar" would match both "foo" and "foobar",
+      // inflating the file set for "foo" even though git grep -w
+      // only matched "foobar" at the source. Anchoring on `\b` keeps
+      // Dart's classification in sync with what git emitted.
+      //
+      // `RegExp.escape` (2.17+) would be ideal; absent that, we
+      // escape the handful of regex metacharacters that can appear
+      // in identifier-like symbols. Since the symbol set is
+      // identifiers (alphanumerics + underscore) plus the
+      // occasional language-specific punctuator, a conservative
+      // escape of all non-word chars is safe.
+      final matchers = <String, RegExp>{
+        for (final s in symbols) s: RegExp(r'\b' + _escapeRegex(s) + r'\b'),
+      };
+      for (final line in out.split('\n')) {
+        if (line.isEmpty) continue;
+        // Path : lineno : content. Find the first two colons; any
+        // third colon lives inside `content` and we leave it there.
+        final c1 = line.indexOf(':');
+        if (c1 < 0) continue;
+        final c2 = line.indexOf(':', c1 + 1);
+        if (c2 < 0) continue;
+        final path = line.substring(0, c1);
+        if (path.isEmpty) continue;
+        final content = line.substring(c2 + 1);
+        for (final sym in symbols) {
+          if (matchers[sym]!.hasMatch(content)) {
+            bySymbol[sym]!.add(path);
+          }
+        }
+      }
+      return bySymbol;
+    } catch (_) {
+      return {for (final s in symbols) s: <String>{}};
+    }
   }
 
   Future<Set<String>> _pickaxeSingle({
@@ -676,6 +755,25 @@ List<RelevanceScore> diffuseFromProbe({
   // Heat kernel is linear in ρ, so the weighted mixture diffuses in
   // one matvec pass — no per-source basis needed.
   return _weightedDiffuse(engine: engine, probe: probe, t: t);
+}
+
+/// Escape regex metacharacters so a symbol can be embedded in a
+/// regex literal as a plain substring. Conservative: escapes every
+/// non-word character (anything outside `[A-Za-z0-9_]`), which is a
+/// superset of what regex metasyntax uses.
+String _escapeRegex(String s) {
+  final buf = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    final c = s.codeUnitAt(i);
+    // [A-Za-z0-9_] — common identifier character set.
+    final isWord = (c >= 0x30 && c <= 0x39) ||
+        (c >= 0x41 && c <= 0x5a) ||
+        (c >= 0x61 && c <= 0x7a) ||
+        c == 0x5f;
+    if (!isWord) buf.writeCharCode(0x5c); // '\'
+    buf.writeCharCode(c);
+  }
+  return buf.toString();
 }
 
 String _classifyProbeAxis(

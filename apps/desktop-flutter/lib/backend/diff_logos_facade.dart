@@ -5,7 +5,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
-    show ChangeNotifier, Listenable, setEquals;
+    show ChangeNotifier, Listenable, clampDouble, setEquals;
 import 'package:path/path.dart' as p;
 
 import '../diagnostics/diagnostics_state.dart';
@@ -620,25 +620,26 @@ class DiffLineResidualSignal {
   });
 
   DiffLineResidualSignal scaled(double factor) => DiffLineResidualSignal(
-        importance: (importance * factor).clamp(0.0, 1.0).toDouble(),
-        transportPull: (transportPull * factor).clamp(0.0, 1.0).toDouble(),
+        importance: clampDouble(importance * factor, 0.0, 1.0),
+        transportPull: clampDouble(transportPull * factor, 0.0, 1.0),
         transportedSupport:
-            (transportedSupport * factor).clamp(0.0, 1.0).toDouble(),
+            clampDouble(transportedSupport * factor, 0.0, 1.0),
         innovationResidual:
-            (innovationResidual * factor).clamp(0.0, 1.0).toDouble(),
-        witnessResidual: (witnessResidual * factor).clamp(0.0, 1.0).toDouble(),
+            clampDouble(innovationResidual * factor, 0.0, 1.0),
+        witnessResidual: clampDouble(witnessResidual * factor, 0.0, 1.0),
       );
 
   double get transportSignal =>
-      math.max(transportPull, transportedSupport).clamp(0.0, 1.0).toDouble();
+      clampDouble(math.max(transportPull, transportedSupport), 0.0, 1.0);
 
   double get residualSignal =>
-      math.max(innovationResidual, witnessResidual).clamp(0.0, 1.0).toDouble();
+      clampDouble(math.max(innovationResidual, witnessResidual), 0.0, 1.0);
 
-  double get semanticSignal => math
-      .max(importance, math.max(transportSignal, residualSignal))
-      .clamp(0.0, 1.0)
-      .toDouble();
+  double get semanticSignal => clampDouble(
+        math.max(importance, math.max(transportSignal, residualSignal)),
+        0.0,
+        1.0,
+      );
 }
 
 class DiffFileContextRequest {
@@ -975,7 +976,7 @@ DiffPinnedSpectral? _projectSpectralForNode(
     }
   }
   final sMax = math.log(basis.k.toDouble());
-  final reach = sMax > 0 ? (s / sMax).clamp(0.0, 1.0).toDouble() : 0.0;
+  final reach = sMax > 0 ? clampDouble(s / sMax, 0.0, 1.0) : 0.0;
 
   return DiffPinnedSpectral(
     x: x.clamp(-1.2, 1.2).toDouble(),

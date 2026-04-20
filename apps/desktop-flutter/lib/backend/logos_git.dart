@@ -939,6 +939,53 @@ class LogosResidualView {
       .toDouble();
 }
 
+/// Output of [LogosGit.gatherEvidenceRecurrent]. Wraps a single
+/// [LogosEvidenceQueryResult] (the final iteration's snapshot) with
+/// metadata describing how the iterative exploration proceeded —
+/// which paths were discovered at which depth, whether the loop
+/// converged on a self-consistent distribution, and the residual
+/// novelty mass at termination.
+class LogosRecurrentEvidenceResult {
+  const LogosRecurrentEvidenceResult({
+    required this.evidence,
+    required this.iterations,
+    required this.converged,
+    required this.discoveryDepth,
+    required this.finalNoveltyMass,
+  });
+
+  /// The final-iteration evidence snapshot. Null only when the very
+  /// first `gatherEvidence` call returned null (empty graph, empty
+  /// focus). Downstream consumers should treat null as "diffusion
+  /// didn't run" the same way they do for single-pass `gatherEvidence`.
+  final LogosEvidenceQueryResult? evidence;
+
+  /// How many iterations actually ran. ≥ 1 when evidence is non-null.
+  final int iterations;
+
+  /// True if the loop terminated because novelty fell below threshold
+  /// (distribution is self-consistent); false if it terminated because
+  /// it hit the iteration cap.
+  final bool converged;
+
+  /// Iteration at which each surfaced path was first admitted. The
+  /// original focus paths are at depth 0. A path promoted as a new
+  /// source in iteration 1's harvest is at depth 1. Depth bounds the
+  /// graph distance from the original probe to that path.
+  final Map<String, int> discoveryDepth;
+
+  /// Sum of `innovationResidual` over non-focus ranked paths at the
+  /// final iteration. Low mass → self-consistent; high mass → the
+  /// iteration cap stopped us before exploration completed.
+  final double finalNoveltyMass;
+}
+
+class _NoveltyCandidate {
+  _NoveltyCandidate(this.path, this.novelty);
+  final String path;
+  final double novelty;
+}
+
 class LogosEvidenceQueryResult {
   final List<LogosEvidenceScore> ranked;
   final Map<String, LogosResidualView> residualByPath;
@@ -2063,9 +2110,16 @@ class LogosGit {
       }
       final segA = pathSegments[i];
       if (segA.length > 1) {
-        // Reconstruct the parent - segA already split, joining is faster
-        // than re-substring on the original path.
-        final parent = segA.sublist(0, segA.length - 1).join('/');
+        // Parent directory via single lastIndexOf on the original path
+        // string. The previous shape was `segA.sublist(0, len-1).join('/')`
+        // — allocates a new list plus runs the join writer — which the
+        // comment above claimed was faster than re-substring. It isn't:
+        // `String.lastIndexOf` is one scan, `substring` is one allocation,
+        // and neither touches the split array. This runs per-node per
+        // edge-scoring pass, so the allocation churn was measurable on
+        // larger repos.
+        final cut = a.lastIndexOf('/');
+        final parent = cut > 0 ? a.substring(0, cut) : '';
         final siblings = dirIndex[parent];
         if (siblings != null) {
           for (final id in siblings) {
@@ -2444,31 +2498,48 @@ class LogosGit {
     }
 
     final out = <String, double>{};
-    final seriesByPath = useSemanticClock
-        ? stats.perFileCommitClock
-        : {
-            for (final entry in stats.perFileCommitIndices.entries)
-              entry.key: entry.value.map((v) => v.toDouble()).toList(),
-          };
-    for (final entry in seriesByPath.entries) {
-      var w = 0.0;
-      final v = entry.value;
-      for (var k = 0; k < v.length; k++) {
-        final age = newest - v[k];
-        if (age < 0) continue;
-        // Skip entries beyond ~6 half-lives - contribution < 1.5%.
-        if (age >= cutoff) continue;
-        // Linear-interpolate the LUT for fractional ages (semantic
-        // clock carries real-valued timestamps). At tau ≫ 1 the
-        // interpolation error is below 1e-4, well under the noise
-        // floor of downstream rank-order consumption.
-        final floorIdx = age.floor();
-        final frac = age - floorIdx;
-        final lo = expLut[floorIdx];
-        final hi = floorIdx + 1 < lutSize ? expLut[floorIdx + 1] : 0.0;
-        w += lo + (hi - lo) * frac;
+    // Duplicate the hot inner loop for the two source-series types
+    // rather than materialise a Map<String, List<double>> for the
+    // integer case just to unify the read path. The previous shape
+    // copied every per-file index list into a fresh boxed double
+    // list on every call — N heap-allocated lists per refresh.
+    // Duplicating ~10 lines of arithmetic is much cheaper than
+    // paying that copy pass.
+    if (useSemanticClock) {
+      for (final entry in stats.perFileCommitClock.entries) {
+        var w = 0.0;
+        final v = entry.value;
+        for (var k = 0; k < v.length; k++) {
+          final age = newest - v[k];
+          if (age < 0) continue;
+          if (age >= cutoff) continue;
+          // Linear-interpolate the LUT for fractional ages (semantic
+          // clock carries real-valued timestamps). At tau ≫ 1 the
+          // interpolation error is below 1e-4, well under the noise
+          // floor of downstream rank-order consumption.
+          final floorIdx = age.floor();
+          final frac = age - floorIdx;
+          final lo = expLut[floorIdx];
+          final hi = floorIdx + 1 < lutSize ? expLut[floorIdx + 1] : 0.0;
+          w += lo + (hi - lo) * frac;
+        }
+        if (w > 0) out[entry.key] = w;
       }
-      if (w > 0) out[entry.key] = w;
+    } else {
+      for (final entry in stats.perFileCommitIndices.entries) {
+        var w = 0.0;
+        final v = entry.value;
+        for (var k = 0; k < v.length; k++) {
+          // Commit indices are integers; fractional part is always 0
+          // in this branch so the LUT read is a direct index — no
+          // interpolation arithmetic needed.
+          final age = newest - v[k].toDouble();
+          if (age < 0) continue;
+          if (age >= cutoff) continue;
+          w += expLut[age.toInt()];
+        }
+        if (w > 0) out[entry.key] = w;
+      }
     }
     _activityCache[halfLifeCommits] = out;
     return out;
@@ -3267,6 +3338,15 @@ class LogosGit {
       for (final entry in focusWeights.entries)
         if (entry.value > 0) entry.key,
     };
+    // Precompute transport roles per focus path ONCE — the ranked loop
+    // below calls `_hasWitnessCarrierLane*` `graph.n` times, and each
+    // call previously rebuilt the roles for every focus path. Budget
+    // for a 94-focus × 426-node diff: 40k fresh TransportRoles per
+    // gatherEvidence call = seconds. Precomputing collapses this to
+    // `|focusPaths|` role builds, amortised across the loop.
+    final focusRoles = [
+      for (final p in focusPaths) (path: p, roles: TransportRoles.of(p)),
+    ];
 
     final ranked = <LogosEvidenceScore>[];
     for (var i = 0; i < graph.n; i++) {
@@ -3291,7 +3371,16 @@ class LogosGit {
           ? transportPhi[i] / transportMass
           : 0.0;
       final innovationResidual = math.max(0.0, support - transportedSupport);
-      final witnessResidual = _hasWitnessCarrierLane(path, focusPaths)
+      // Build candidate roles once per loop body. Only pay the cost
+      // if the witness-residual branch could possibly matter — when
+      // transportedSupport > support the witness channel is active.
+      final maybeWitness = transportedSupport > support;
+      final witnessResidual = maybeWitness &&
+              _hasWitnessCarrierLaneFast(
+                path,
+                TransportRoles.of(path),
+                focusRoles,
+              )
           ? math.max(0.0, transportedSupport - support)
           : 0.0;
       final transportSignal = math.max(transportPull, transportedSupport);
@@ -3363,7 +3452,13 @@ class LogosGit {
               ? (transportDerived[path] ?? 0.0) / transportMass
               : 0.0;
       final innovationResidual = math.max(0.0, support - transportedSupport);
-      final witnessResidual = _hasWitnessCarrierLane(path, focusPaths)
+      final maybeWitness = transportedSupport > support;
+      final witnessResidual = maybeWitness &&
+              _hasWitnessCarrierLaneFast(
+                path,
+                TransportRoles.of(path),
+                focusRoles,
+              )
           ? math.max(0.0, transportedSupport - support)
           : 0.0;
       final transportSignal = math.max(transportPull, transportedSupport);
@@ -3608,6 +3703,173 @@ class LogosGit {
               disagreement: 0.0,
             ),
       supportAttribution: supportAttribution,
+    );
+  }
+
+  /// Recurrent variant of [gatherEvidence]: runs up to [maxIterations]
+  /// passes, each time promoting the highest-innovation-residual paths
+  /// from the previous pass into the focus set with a decayed weight.
+  /// Stops early when the novelty mass drops below [noveltyThreshold]
+  /// (the distribution has become self-consistent — the lanes already
+  /// explain everything that's lighting up).
+  ///
+  /// Physics: single-pass `gatherEvidence` finds the zones one
+  /// diffusion-hop from the probe sources. A file 2 hops away that IS
+  /// structurally load-bearing can get near-zero φ because no source
+  /// probes near it. Each recurrent pass "re-lights" the hottest
+  /// unexplored zone (highest innovation residual) as a new source,
+  /// so the 2nd pass reaches 2 hops, the 3rd reaches 3, etc. Novelty
+  /// falls monotonically as the set of unexplained zones shrinks —
+  /// termination is guaranteed.
+  ///
+  /// Why `innovationResidual` as the driver: it is literally "focus
+  /// support that transport doesn't explain" — i.e. paths that are
+  /// important to the diff but whose importance isn't yet wired up to
+  /// a known structural lane. Exactly the "unexplored" definition we
+  /// want.
+  ///
+  /// Cost: each iteration is one `gatherEvidence` call. With the
+  /// TransportRoles + detailBudget=4 fixes already in place, a typical
+  /// iteration is 30-250ms; bounding at 4 iterations caps worst-case
+  /// recurrent cost at ~1s on the biggest diffs.
+  LogosRecurrentEvidenceResult gatherEvidenceRecurrent({
+    required Map<String, double> focusWeights,
+    Map<String, String> axisLabelByPath = const {},
+    double t = 1.0,
+    int K = kDefaultChebyshevK,
+    int ambientHalfLifeCommits = 30,
+    double lambda = 0.5,
+    Set<String> excludePaths = const {},
+    int? topK,
+    int detailBudget = 48,
+    bool includeSpectrum = true,
+    bool includeSupportAttribution = true,
+    bool includeSummaryDiagnostics = true,
+    double phiThreshold = 0.0,
+    int maxIterations = 4,
+    // Per-path admission gate. Paths whose innovation residual falls
+    // below this floor are too weak to re-seed the exploration, even
+    // if collectively their sum is still high.
+    double perPathNoveltyFloor = 0.05,
+    // Relative convergence: stop when the current iteration's total
+    // novelty mass drops below this fraction of the first-iteration
+    // baseline. `e^{-2}` ≈ one additional e-folding — the natural
+    // "the unexplained distribution has relaxed" point, matching the
+    // heat-kernel exp-decay structure the diffusion is built on.
+    double convergenceRatio = 0.1353352832366127, // math.exp(-2)
+  }) {
+    final focus = Map<String, double>.from(focusWeights);
+    final depth = <String, int>{for (final k in focus.keys) k: 0};
+    // Promote a share of the original focus size per iteration — not
+    // a fixed count — so expansion scales with the problem: 2-focus
+    // diffs add ~1 source per iteration, 60-focus diffs add ~20. The
+    // floor of 1 ensures at least one candidate can be promoted on
+    // any non-empty focus.
+    final newSourcesPerIter = math.max(1, focusWeights.length ~/ 3);
+
+    LogosEvidenceQueryResult? last;
+    var ranIterations = 0;
+    var finalNovelty = 0.0;
+    var noveltyBaseline = 0.0;
+    var converged = false;
+
+    for (var iter = 0; iter < maxIterations; iter++) {
+      final evidence = gatherEvidence(
+        focusWeights: focus,
+        axisLabelByPath: axisLabelByPath,
+        t: t,
+        K: K,
+        ambientHalfLifeCommits: ambientHalfLifeCommits,
+        lambda: lambda,
+        excludePaths: excludePaths,
+        topK: topK,
+        detailBudget: detailBudget,
+        includeSpectrum: includeSpectrum,
+        includeSupportAttribution: includeSupportAttribution,
+        includeSummaryDiagnostics: includeSummaryDiagnostics,
+        phiThreshold: phiThreshold,
+      );
+      if (evidence == null) {
+        // Diffusion collapsed (empty graph or all-unknown focus).
+        // Return whatever the previous iteration produced — null on
+        // first-call, a real snapshot otherwise. Iteration count is
+        // the number of iterations that produced a result, not the
+        // attempted count.
+        return LogosRecurrentEvidenceResult(
+          evidence: last,
+          iterations: ranIterations,
+          converged: true,
+          discoveryDepth: depth,
+          finalNoveltyMass: finalNovelty,
+        );
+      }
+      last = evidence;
+      ranIterations = iter + 1;
+
+      // Harvest novelty: non-focus paths with non-trivial innovation
+      // residual. `innovationResidual ∈ [0, 1]` so summing across
+      // ranked non-focus paths gives a stable "unexplained mass"
+      // scalar whose trajectory is monotone non-increasing.
+      final candidates = <_NoveltyCandidate>[];
+      var noveltySum = 0.0;
+      for (final score in evidence.ranked) {
+        if (focus.containsKey(score.path)) continue;
+        final novelty = score.innovationResidual;
+        if (novelty <= 0) continue;
+        noveltySum += novelty;
+        if (novelty >= perPathNoveltyFloor) {
+          candidates.add(_NoveltyCandidate(score.path, novelty));
+        }
+      }
+      finalNovelty = noveltySum;
+      if (iter == 0) noveltyBaseline = noveltySum;
+
+      // Relative-change convergence: the unexplained-mass trajectory
+      // has relaxed by one additional e-folding (or more) past its
+      // initial value. Monotonically driven by the diffusion operator
+      // — every promoted source reduces `innovationResidual` on
+      // neighbours it explains — so this condition eventually fires
+      // even if each step's improvement is small.
+      if (noveltyBaseline > 0 &&
+          noveltySum < noveltyBaseline * convergenceRatio) {
+        converged = true;
+        break;
+      }
+
+      // No candidate cleared the per-path floor → the residual mass
+      // that remains is scattered noise, not concentrated zones.
+      // Further iteration would just diffuse noise.
+      if (candidates.isEmpty) {
+        converged = true;
+        break;
+      }
+
+      // Promote newcomers at a depth-decayed weight. `0.5^iter` is the
+      // canonical halving schedule — iter 1 promotes at 50%, iter 2
+      // at 25%, iter 3 at 12.5%. A path promoted at depth 3 contributes
+      // 1/8 the influence of a depth-1 path, matching the intuition
+      // that each additional hop on the diffusion graph attenuates the
+      // probe signal by a factor of 2.
+      candidates.sort((a, b) => b.novelty.compareTo(a.novelty));
+      final iterDepth = iter + 1;
+      final decay = math.pow(0.5, iterDepth).toDouble();
+      for (final cand in candidates.take(newSourcesPerIter)) {
+        // Already-focus guard: a path that was promoted in an earlier
+        // iteration must not be re-promoted with compounded weight.
+        // Its depth stays at first-sighting; its focus weight stays
+        // at the decay level of that first promotion.
+        if (focus.containsKey(cand.path)) continue;
+        focus[cand.path] = cand.novelty * decay;
+        depth[cand.path] = iterDepth;
+      }
+    }
+
+    return LogosRecurrentEvidenceResult(
+      evidence: last,
+      iterations: ranIterations,
+      converged: converged,
+      discoveryDepth: depth,
+      finalNoveltyMass: finalNovelty,
     );
   }
 
@@ -4309,10 +4571,22 @@ class LogosGit {
     return edges.take(limit).toList(growable: false);
   }
 
-  bool _hasWitnessCarrierLane(String path, Set<String> focusPaths) {
-    for (final source in focusPaths) {
-      if (source == path) continue;
-      if (logosTransportLane(source, path) != null) return true;
+  /// Fast variant: caller precomputes [TransportRoles] for every focus
+  /// path once (outside the ranked-list loop) and for the candidate
+  /// once per loop body. Replaces the O(|focusPaths|) fresh-role-build
+  /// per call with O(1) field-access comparisons on pre-built roles.
+  /// Dominates the cost profile of [gatherEvidence] on large diffs —
+  /// worth the extra API surface.
+  bool _hasWitnessCarrierLaneFast(
+    String path,
+    TransportRoles candRoles,
+    List<({String path, TransportRoles roles})> focusRoles,
+  ) {
+    for (final entry in focusRoles) {
+      if (entry.path == path) continue;
+      if (logosTransportLaneOfRoles(entry.roles, candRoles) != null) {
+        return true;
+      }
     }
     return false;
   }

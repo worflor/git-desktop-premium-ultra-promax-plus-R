@@ -74,7 +74,23 @@ class SeismographSegment {
 
   bool get isLeaf => file != null;
   int get churn => additions + deletions;
+
+  /// `path.join('/')` memoised via an [Expando]. The rendering code
+  /// reads this 3-4× per segment per build (filter match, hover
+  /// callback, dirty lookup, lifecycle lookup, tooltip), and each
+  /// `.join` previously allocated a fresh String from the segments
+  /// list. Expando gives us a weak-keyed cache that evicts entries
+  /// automatically when segments fall out of scope — unlike a plain
+  /// Map which would leak.
+  String get pathKey =>
+      _pathKeyExpando[this] ??= path.join('/');
+  String get pathKeyLower =>
+      _pathKeyLowerExpando[this] ??= pathKey.toLowerCase();
 }
+
+final Expando<String> _pathKeyExpando = Expando<String>('segment.pathKey');
+final Expando<String> _pathKeyLowerExpando =
+    Expando<String>('segment.pathKeyLower');
 
 /// Final laid-out panel. Either a single-file row OR a stack of tracks.
 class SeismographLayout {

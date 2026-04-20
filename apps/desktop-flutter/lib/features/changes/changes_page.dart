@@ -228,6 +228,18 @@ class _ChangesPageState extends State<ChangesPage> {
   // `autoSelectNewChanges` pref is on; kept up-to-date regardless so
   // toggling the pref mid-session behaves as if it'd always been on.
   final Map<String, Set<String>> _seenByContextKey = {};
+
+  /// Per-context first-seen record per file. Holds the file's
+  /// fingerprint (stage chars + diff magnitude) AND the
+  /// [RepositoryState.userRefreshEpoch] captured at first-seen time.
+  /// A file is "stale" iff its current fingerprint still matches the
+  /// snapshot AND the snapshot was captured in a strictly earlier
+  /// refresh epoch — i.e. it has persisted unchanged across at least
+  /// one deliberate user "show me what's new" event. This keeps newly-
+  /// appearing files and freshly-edited files out of the dim bucket
+  /// until the user has explicitly had a chance to see them.
+  final Map<String, Map<String, _FirstSeenRecord>>
+      _firstSeenByContextKey = {};
   String? _selectedDiffPath;
   String? _inspectionDiffPath;
   String? _visibleDiffPath;
@@ -350,6 +362,60 @@ class _ChangesPageState extends State<ChangesPage> {
   // files are most tightly coupled to the currently-hovered one.
   String? _railHoverPath;
 
+  // Small LRU for `combinedCouplingScore` lookups along the coupling
+  // rail. Hovering different rows rapidly triggers a full rebuild of
+  // the change list and N score computations per rebuild. Most of
+  // those are between the same file pairs across hovers — a bounded
+  // cache invalidated on matrix identity change pays off even at
+  // modest hover speeds. Keyed on a canonical "lo|hi" pair so A→B
+  // and B→A share the same entry.
+  //
+  // Kept small (256) because the working-set size during a hover
+  // sweep is bounded by the visible row count, not the whole repo.
+  // A true LinkedHashMap LRU would be ideal; a plain Map with a
+  // hard-clear when it grows past 2× is cheaper to maintain and
+  // produces essentially the same hit rate for this access pattern.
+  static const int _peerScoreCacheCap = 256;
+  final Map<String, double> _peerScoreCache = <String, double>{};
+  Object? _peerScoreCacheMatrix;
+
+  // Diffusion-score cache for the right-click "Ripple" submenu.
+  // `engine.diffuseWeighted({filePath: 1.0})` is O(K·n) Chebyshev —
+  // ~12 matvecs over the coupling graph — and fires on every
+  // right-click. Cache per (manifoldRevision, filePath); the whole
+  // cache clears whenever the engine's manifold revision advances
+  // (stats refresh, branch switch, etc.) so callers never see a
+  // stale neighbour set.
+  final Map<String, List<RelevanceScore>> _rippleDiffuseCache = {};
+  int _rippleDiffuseCacheRevision = -1;
+
+  List<RelevanceScore> _cachedRippleDiffuse(
+      LogosGit engine, String filePath) {
+    if (_rippleDiffuseCacheRevision != engine.manifoldRevision) {
+      _rippleDiffuseCache.clear();
+      _rippleDiffuseCacheRevision = engine.manifoldRevision;
+    }
+    return _rippleDiffuseCache.putIfAbsent(
+      filePath,
+      () => engine.diffuseWeighted({filePath: 1.0}),
+    );
+  }
+
+  // Single-slot cluster cache. `clusterFiles()` is O(n²) in candidate
+  // pair construction and runs inside the main state's build. Before
+  // caching, every hover-triggered rebuild paid the full cluster
+  // build even though nothing clusterFiles consumes had changed.
+  // Keyed on identity of the stable inputs plus a content hash of
+  // the in-place mutable Sets (_includedPaths, conflictedPaths).
+  FileClusters? _clustersCache;
+  Object? _clustersCacheStatus;
+  Object? _clustersCacheMatrix;
+  Object? _clustersCacheChangeWeights;
+  FileSortGuide? _clustersCacheSortGuide;
+  bool? _clustersCacheInverted;
+  int _clustersCacheIncludedHash = 0;
+  int _clustersCacheConflictsHash = 0;
+
   // Atlas view: when true the file list is replaced with the commit
   // candidates panel from `file_constellation.dart`. Aims to flip the
   // user's job from "carve files out of a list" to "critique the
@@ -425,9 +491,11 @@ class _ChangesPageState extends State<ChangesPage> {
         phase: 'mount',
         durationMs: _mountedAt.elapsedMicroseconds / 1000,
       );
-      _refreshCommitAiConfig();
-      unawaited(context.read<AiSettingsState>().refreshProviders());
       final prefs = context.read<PreferencesState>();
+      if (!prefs.hideAiFeatures) {
+        _refreshCommitAiConfig();
+        unawaited(context.read<AiSettingsState>().refreshProviders());
+      }
       _lastRememberWip = prefs.rememberWorkInProgress;
       prefs.addListener(_onPreferencesChanged);
       _prefsSub = prefs;
@@ -743,6 +811,7 @@ class _ChangesPageState extends State<ChangesPage> {
     _includedPaths.clear();
     _includedByContextKey.clear();
     _seenByContextKey.clear();
+    _firstSeenByContextKey.clear();
     _selectedDiffPath = null;
     _inspectionDiffPath = null;
     _visibleDiffPath = null;
@@ -796,6 +865,7 @@ class _ChangesPageState extends State<ChangesPage> {
         ..clear()
         ..addAll(restored);
       _seenByContextKey.clear();
+      _firstSeenByContextKey.clear();
       if (currentStatus != null) {
         _syncDraftFromStatus(currentStatus);
       }
@@ -879,9 +949,98 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
+  /// Cached `clusterFiles()` wrapper. Returns the cached [FileClusters]
+  /// when every input the clustering actually depends on matches the
+  /// prior build; otherwise recomputes and stores. Hover-only rebuilds
+  /// no longer repay the O(n²) pair enumeration.
+  FileClusters _clustersFor({
+    required RepositoryStatus status,
+    required FileCouplingMatrix? effectiveMatrix,
+    required List<String> currentPaths,
+    required FileSortGuide sortGuide,
+    required Map<String, FileImpactSignal> impactSignals,
+    required Set<String> conflictedPaths,
+    required bool inverted,
+  }) {
+    if (effectiveMatrix == null || currentPaths.isEmpty) {
+      // Empty-case short-circuit; no point caching a zero-cost answer.
+      return FileClusters.empty(currentPaths);
+    }
+    // Stable content hashes for the mutable Sets: _includedPaths is a
+    // field that's mutated in place across builds, and conflictedPaths
+    // is derived fresh each build from `status`. Object.hashAll on a
+    // Set is iteration-order dependent, which is fine here because Set
+    // iteration in Dart is insertion order and we only need change
+    // detection, not semantic equality.
+    final includedHash = Object.hashAll(_includedPaths);
+    final conflictsHash = Object.hashAll(conflictedPaths);
+
+    if (identical(_clustersCacheStatus, status) &&
+        identical(_clustersCacheMatrix, effectiveMatrix) &&
+        identical(_clustersCacheChangeWeights, _changeWeights) &&
+        _clustersCacheSortGuide == sortGuide &&
+        _clustersCacheInverted == inverted &&
+        _clustersCacheIncludedHash == includedHash &&
+        _clustersCacheConflictsHash == conflictsHash &&
+        _clustersCache != null) {
+      return _clustersCache!;
+    }
+
+    final result = clusterFiles(
+      currentPaths,
+      effectiveMatrix,
+      sortGuide: sortGuide,
+      impactSignals: impactSignals,
+      conflictedPaths: conflictedPaths,
+      includedPaths: _includedPaths,
+      inverted: inverted,
+    );
+    _clustersCache = result;
+    _clustersCacheStatus = status;
+    _clustersCacheMatrix = effectiveMatrix;
+    _clustersCacheChangeWeights = _changeWeights;
+    _clustersCacheSortGuide = sortGuide;
+    _clustersCacheInverted = inverted;
+    _clustersCacheIncludedHash = includedHash;
+    _clustersCacheConflictsHash = conflictsHash;
+    return result;
+  }
+
+  /// Cached peer-score lookup: reads [_peerScoreCache] or computes
+  /// and stores on miss. Invalidates when the coupling matrix
+  /// identity changes (a new FileCouplingMatrix instance implies
+  /// potentially-different scores and different path→id mapping).
+  double _cachedPeerScore(
+      String a, String b, FileCouplingMatrix matrix) {
+    if (!identical(_peerScoreCacheMatrix, matrix)) {
+      _peerScoreCache.clear();
+      _peerScoreCacheMatrix = matrix;
+    }
+    // Canonicalise pair so A→B and B→A share an entry.
+    final key = a.compareTo(b) < 0 ? '$a|$b' : '$b|$a';
+    final existing = _peerScoreCache[key];
+    if (existing != null) return existing;
+    if (_peerScoreCache.length >= _peerScoreCacheCap * 2) {
+      _peerScoreCache.clear();
+    }
+    final score = combinedCouplingScore(a, b, matrix);
+    _peerScoreCache[key] = score;
+    return score;
+  }
+
+  /// Per-session cache of resolved `.git` paths. The git dir for a
+  /// given working tree is structural — it doesn't change while the
+  /// app is running — so the first successful resolve can be reused
+  /// on every subsequent draft save / load / flush / clear. Without
+  /// this each of those paths spawns a fresh `git rev-parse --git-dir`
+  /// subprocess (~50-150ms) for no reason.
+  final Map<String, String> _gitDirCache = {};
+
   /// Resolve the git directory for a repo. Handles worktrees and submodules
-  /// where `.git` may be a file rather than a directory.
+  /// where `.git` may be a file rather than a directory. Cached.
   Future<String?> _resolveGitDir(String repoPath) async {
+    final cached = _gitDirCache[repoPath];
+    if (cached != null) return cached;
     try {
       final result = await Process.run(
         'git',
@@ -891,10 +1050,15 @@ class _ChangesPageState extends State<ChangesPage> {
       if (result.exitCode == 0) {
         final gitDir = (result.stdout as String).trim();
         // rev-parse returns relative or absolute — normalize.
-        return p.isAbsolute(gitDir) ? gitDir : p.join(repoPath, gitDir);
+        final resolved =
+            p.isAbsolute(gitDir) ? gitDir : p.join(repoPath, gitDir);
+        _gitDirCache[repoPath] = resolved;
+        return resolved;
       }
     } catch (_) {}
-    // Fallback to the common case.
+    // Fallback to the common case. Don't cache the fallback — if
+    // rev-parse came back broken we want to retry on the next call
+    // rather than lock in a wrong answer.
     return p.join(repoPath, '.git');
   }
 
@@ -1083,6 +1247,7 @@ class _ChangesPageState extends State<ChangesPage> {
       // stashed something). Reconcile the selection rather than
       // resetting it — preserve everything the user touched.
       _reconcileIncludedPaths(status);
+      _trackFirstSeenFingerprints(status);
       return;
     }
     // Stash the outgoing context's selection before switching so we
@@ -1122,12 +1287,82 @@ class _ChangesPageState extends State<ChangesPage> {
         ..addAll(staged.isNotEmpty ? staged : status.files.map((f) => f.path));
       _seenByContextKey[nextKey] = {for (final f in status.files) f.path};
     }
+    _trackFirstSeenFingerprints(status);
     // AI review state is scoped to a specific (branch, diff) pair. It
     // could in principle be cached per context too, but reviews are
     // expensive state (full LLM output) and can grow stale if the diff
     // changes while we were on another desk. Drop it — the user can
     // re-run review if they return and want fresh analysis.
     _clearReviewState();
+  }
+
+  /// Sentinel fingerprint returned when the file's diff magnitude
+  /// isn't available yet (change-weights are loaded asynchronously
+  /// after status). We deliberately do NOT snapshot this value —
+  /// locking in a pending fingerprint would flip every file to
+  /// "fresh" the moment weights actually arrive.
+  static const String _fingerprintPending = '__pending__';
+
+  /// Compact fingerprint of a file's current state — stage codes plus
+  /// diff magnitude. Returns [_fingerprintPending] when change-weights
+  /// haven't arrived yet; callers treat that as "don't snapshot this
+  /// file yet." Including `adds`/`dels` is what lets edit-in-place
+  /// (same staging status, different diff size) bump a stale file
+  /// back to fresh without needing a full content hash.
+  String _fileFreshnessFingerprint(RepositoryStatusFile f) {
+    final w = _changeWeights[f.path];
+    if (w == null) return _fingerprintPending;
+    return '${f.staged}|${f.unstaged}|${w.adds}|${w.dels}|${w.binary}';
+  }
+
+  /// Capture first-seen records for freshly-appearing files and prune
+  /// entries for files that have left the change set. `putIfAbsent`
+  /// locks each file's first-seen fingerprint and epoch at the moment
+  /// it first enters the change set — subsequent edits change the
+  /// LIVE fingerprint, but the snapshot is frozen, so `_isFileStale`
+  /// correctly reports fresh.
+  ///
+  /// Pending-fingerprint files (change-weights not loaded yet) are
+  /// skipped; they'll get captured on the next sync after the async
+  /// weights arrive.
+  void _trackFirstSeenFingerprints(RepositoryStatus status) {
+    final key = _draftKey;
+    if (key == null) return;
+    final epoch = context.read<RepositoryState>().userRefreshEpoch;
+    final snapshot = _firstSeenByContextKey.putIfAbsent(key, () => {});
+    final currentPaths = <String>{};
+    for (final f in status.files) {
+      currentPaths.add(f.path);
+      final fp = _fileFreshnessFingerprint(f);
+      if (fp == _fingerprintPending) continue;
+      snapshot.putIfAbsent(
+        f.path,
+        () => _FirstSeenRecord(fingerprint: fp, epoch: epoch),
+      );
+    }
+    // Drop entries for files that left the change set — if they come
+    // back in a different state the next appearance counts as fresh.
+    snapshot.removeWhere((path, _) => !currentPaths.contains(path));
+  }
+
+  /// True iff the file's current fingerprint matches its first-seen
+  /// fingerprint AND first-seen happened in an earlier refresh epoch
+  /// than the current one. The epoch gate is what keeps freshly-
+  /// loaded or freshly-edited files out of the stale bucket until the
+  /// user has explicitly clicked refresh at least once since they
+  /// appeared — first-seen-in-this-epoch always reads as fresh.
+  bool _isFileStale(RepositoryStatusFile f) {
+    final key = _draftKey;
+    if (key == null) return false;
+    final snapshot = _firstSeenByContextKey[key];
+    if (snapshot == null) return false;
+    final rec = snapshot[f.path];
+    if (rec == null) return false;
+    final current = _fileFreshnessFingerprint(f);
+    if (current == _fingerprintPending) return false;
+    if (rec.fingerprint != current) return false;
+    final epoch = context.read<RepositoryState>().userRefreshEpoch;
+    return rec.epoch < epoch;
   }
 
   /// Reconcile [_includedPaths] against [status].
@@ -2191,7 +2426,7 @@ class _ChangesPageState extends State<ChangesPage> {
     String filePath,
   ) {
     if (!engine.pathToId.containsKey(filePath)) return const [];
-    final scores = engine.diffuseWeighted({filePath: 1.0});
+    final scores = _cachedRippleDiffuse(engine, filePath);
     if (scores.isEmpty) return const [];
     // Skip self; first entry after sorting is typically the source.
     final filtered = scores.where((s) => s.path != filePath).toList()
@@ -3019,6 +3254,8 @@ class _ChangesPageState extends State<ChangesPage> {
     String sentence,
     String categoryId,
   ) async {
+    // Defense-in-depth: ask/shape is AI — skip when hidden.
+    if (context.read<PreferencesState>().hideAiFeatures) return;
     if (_shaping) return;
     final trimmed = sentence.trim();
     if (trimmed.isEmpty) return;
@@ -3402,6 +3639,11 @@ class _ChangesPageState extends State<ChangesPage> {
     String repoPath,
     RepositoryStatus status,
   ) async {
+    // Defense-in-depth: even if a shortcut or stale state triggers
+    // this while AI is hidden, bail early. The UI hides the button,
+    // but the handler guards against keyboard routes or programmatic
+    // invocations we haven't traced.
+    if (context.read<PreferencesState>().hideAiFeatures) return;
     // Click while a generation is running = cancel. Bumping the counter
     // invalidates any in-flight result; the click itself doesn't wait
     // for the backend to unwind — the UI returns to idle immediately.
@@ -3540,6 +3782,8 @@ class _ChangesPageState extends State<ChangesPage> {
     String repoPath,
     RepositoryStatus status,
   ) async {
+    // Defense-in-depth: review is AI — bail when hidden.
+    if (context.read<PreferencesState>().hideAiFeatures) return;
     final included = status.files
         .where((file) => _includedPaths.contains(file.path))
         .toList();
@@ -3674,6 +3918,8 @@ class _ChangesPageState extends State<ChangesPage> {
     String repoPath,
     RepositoryStatus status,
   ) async {
+    // Defense-in-depth: muse is AI — bail when hidden.
+    if (context.read<PreferencesState>().hideAiFeatures) return;
     final included = status.files
         .where((file) => _includedPaths.contains(file.path))
         .toList();
@@ -3886,30 +4132,24 @@ class _ChangesPageState extends State<ChangesPage> {
     buf.writeln('Muse · ${muse.scopeLabel}');
     buf.writeln('Model: ${muse.providerId} / ${muse.modelId}');
     buf.writeln();
-    if (muse.intent.isNotEmpty) {
-      buf.writeln('Intent');
-      buf.writeln(muse.intent);
-      buf.writeln();
-    }
-    void section(String title, List<AiMuseMove> moves) {
-      if (moves.isEmpty) return;
-      buf.writeln(title);
-      for (final m in moves) {
-        buf.writeln('- ${m.body}');
-        if (m.citations.isNotEmpty) {
-          buf.writeln('  ↳ ${m.citations.join(", ")}');
+    void tierBlock(AiMuseIdeaTier tier, String label) {
+      final group = muse.proposalsForTier(tier);
+      if (group.isEmpty) return;
+      buf.writeln(label);
+      for (final p in group) {
+        buf.writeln('- ${p.title}');
+        buf.writeln('    ${p.vision}');
+        buf.writeln('    foothold: ${p.foothold}');
+        if (p.citations.isNotEmpty) {
+          buf.writeln('    cite: ${p.citations.join(", ")}');
         }
       }
       buf.writeln();
     }
-
-    section('Resonances', muse.resonances);
-    section('Alternatives', muse.alternatives);
-    section('Extensions', muse.extensions);
-    if (muse.trajectory.isNotEmpty) {
-      buf.writeln('Trajectory');
-      buf.writeln(muse.trajectory);
-    }
+    tierBlock(AiMuseIdeaTier.spark, 'SPARK');
+    tierBlock(AiMuseIdeaTier.current, 'CURRENT');
+    tierBlock(AiMuseIdeaTier.horizon, 'HORIZON');
+    tierBlock(AiMuseIdeaTier.fever, 'FEVER');
     await Clipboard.setData(ClipboardData(text: buf.toString().trim()));
     if (!mounted) return;
     setState(() {
@@ -4224,6 +4464,12 @@ class _ChangesPageState extends State<ChangesPage> {
         context.select<RepositoryState, String?>((state) => state.statusError);
     final statusLoading =
         context.select<RepositoryState, bool>((state) => state.statusLoading);
+    // Subscribe to the user-refresh epoch so the stale-dim flips apply
+    // on explicit refresh even when the status object is structurally
+    // equal to the prior one (empty-refresh case). The value itself is
+    // read through [_isFileStale] at row-build time; the select here
+    // exists purely to trigger rebuild on epoch change.
+    context.select<RepositoryState, int>((state) => state.userRefreshEpoch);
 
     // Seed the stash drawer from the user's "default expanded" preference
     // once per session, as soon as we actually have shelves to show. After
@@ -4418,7 +4664,7 @@ class _ChangesPageState extends State<ChangesPage> {
                 tokens: t,
                 status: status,
                 repoPath: repoPath,
-                onRefresh: () => repo.refreshStatus(),
+                onRefresh: () => repo.userRefresh(),
               ),
               if (dragActive)
                 Positioned.fill(
@@ -4506,17 +4752,15 @@ class _ChangesPageState extends State<ChangesPage> {
         ? couplingMatrix.withSymbol(_symbolCoupling)
         : couplingMatrix;
 
-    final clusters = effectiveMatrix != null && _currentPaths.isNotEmpty
-        ? clusterFiles(
-            _currentPaths,
-            effectiveMatrix,
-            sortGuide: preferences.fileSortGuide,
-            impactSignals: impactSignals,
-            conflictedPaths: conflictedPaths,
-            includedPaths: _includedPaths,
-            inverted: preferences.fileSortInverted,
-          )
-        : FileClusters.empty(_currentPaths);
+    final clusters = _clustersFor(
+      status: status,
+      effectiveMatrix: effectiveMatrix,
+      currentPaths: _currentPaths,
+      sortGuide: preferences.fileSortGuide,
+      impactSignals: impactSignals,
+      conflictedPaths: conflictedPaths,
+      inverted: preferences.fileSortInverted,
+    );
 
     // Within-cluster φ re-ranking. When the 'related' sort guide is
     // active and the Logos engine is warm, sort cluster members by the
@@ -4853,7 +5097,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                             isRailSubject = true;
                                             peerScore = 1.0;
                                           } else if (couplingMatrix != null) {
-                                            peerScore = combinedCouplingScore(
+                                            peerScore = _cachedPeerScore(
                                                 subjectPath,
                                                 file.path,
                                                 couplingMatrix);
@@ -4873,6 +5117,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                           inRealCluster: inRealCluster,
                                           peerScore: peerScore,
                                           isRailSubject: isRailSubject,
+                                          isStale: _isFileStale(file),
                                           onRailEnter: inRealCluster
                                               ? () {
                                                   if (_railHoverPath !=
@@ -5255,11 +5500,12 @@ class _ChangesPageState extends State<ChangesPage> {
                                 onToggleShape: status.files.isEmpty
                                     ? null
                                     : _toggleShapeMode,
+                                hideAi: preferences.hideAiFeatures,
                                 );
                               }),
                             ),
                             const SizedBox(height: 8),
-                            if (_shapeMode)
+                            if (_shapeMode && !preferences.hideAiFeatures)
                               _ShapeAskButton(
                                 tokens: t,
                                 categories: _shapeCategories(aiSettings),
@@ -5374,7 +5620,7 @@ class _ChangesPageState extends State<ChangesPage> {
                               _inspectSingleDiff(repoPath, path),
                         );
                       }
-                      if (_shapeActive) {
+                      if (_shapeActive && !preferences.hideAiFeatures) {
                         return MaterialSurface(
                           tone: AppMaterialTone.surface0,
                           radius: 0,
@@ -5399,7 +5645,7 @@ class _ChangesPageState extends State<ChangesPage> {
                           ),
                         );
                       }
-                      if (_museActive) {
+                      if (_museActive && !preferences.hideAiFeatures) {
                         return MaterialSurface(
                           tone: AppMaterialTone.surface0,
                           radius: 0,
@@ -5431,7 +5677,7 @@ class _ChangesPageState extends State<ChangesPage> {
                           ),
                         );
                       }
-                      if (_reviewActive) {
+                      if (_reviewActive && !preferences.hideAiFeatures) {
                         final stats =
                             (showMultiDiff ? _multiDiffDocument : _diffDocument)
                                     ?.stats ??
@@ -6255,7 +6501,17 @@ class _MusePaneState extends State<_MusePane> {
               ),
             ),
           ),
-          Expanded(child: LogosDiffusionCanvas(tokens: t)),
+          // RepaintBoundary isolates the canvas's 60fps raster layer
+          // from the surrounding column. Without it, every ticker
+          // frame would invalidate the enclosing composition and
+          // force sibling layers (file list, commit message panel)
+          // through the compositor even when their contents haven't
+          // changed.
+          Expanded(
+            child: RepaintBoundary(
+              child: LogosDiffusionCanvas(tokens: t),
+            ),
+          ),
         ],
       );
     }
@@ -6276,116 +6532,123 @@ class _MusePaneState extends State<_MusePane> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (r.intent.isNotEmpty) _section(t, 'intent', r.intent, prose: true),
-        if (r.resonances.isNotEmpty)
-          _movesSection(t, 'resonances', r.resonances, r.brainstormIdeas,
-              r.userBoostedPaths),
-        if (r.alternatives.isNotEmpty)
-          _movesSection(t, 'alternatives', r.alternatives, r.brainstormIdeas,
-              r.userBoostedPaths),
-        if (r.extensions.isNotEmpty)
-          _movesSection(t, 'extensions', r.extensions, r.brainstormIdeas,
-              r.userBoostedPaths),
-        if (r.trajectory.isNotEmpty)
-          _section(t, 'trajectory', r.trajectory, prose: true),
+        _tierSection(t, r, AiMuseIdeaTier.spark, 'SPARK'),
+        _tierSection(t, r, AiMuseIdeaTier.current, 'CURRENT'),
+        _tierSection(t, r, AiMuseIdeaTier.horizon, 'HORIZON'),
+        _tierSection(t, r, AiMuseIdeaTier.fever, 'FEVER'),
         if (r.brainstormIdeas.isNotEmpty) _brainstormReveal(t, r),
-        if (r.droppedMoves > 0)
+        if (r.parseWarnings.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
-            child: Text(
-              '${r.droppedMoves} move${r.droppedMoves == 1 ? '' : 's'} '
-              'could not be parsed from model output.',
-              style: TextStyle(
-                color: t.textFaint.withValues(alpha: 0.6),
-                fontSize: 11,
-                fontStyle: FontStyle.italic,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final warning in r.parseWarnings)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Text(
+                      warning,
+                      style: TextStyle(
+                        color: t.textFaint.withValues(alpha: 0.6),
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
       ],
     );
   }
 
-  Widget _section(AppTokens t, String label, String body,
-      {bool prose = false}) {
+  /// Render one ambition tier as a labelled block of proposal cards.
+  /// `fever` gets a distinctive glyph and accent treatment so the
+  /// register reads as different at a glance — the rest share a
+  /// common spark/current/horizon look.
+  Widget _tierSection(AppTokens t, AiMuseData r, AiMuseIdeaTier tier,
+      String label) {
+    final group = r.proposalsForTier(tier);
+    if (group.isEmpty) return const SizedBox.shrink();
+    final isFever = tier == AiMuseIdeaTier.fever;
     return Padding(
       padding: const EdgeInsets.only(bottom: 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label.toUpperCase(),
-              style: TextStyle(
-                color: t.textFaint,
-                fontSize: 10,
-                letterSpacing: 1.2,
-              )),
-          const SizedBox(height: 6),
-          SelectableText(body,
-              style: TextStyle(
-                color: t.textStrong,
-                fontSize: 12.5,
-                height: 1.5,
-              )),
+          Row(
+            children: [
+              Text(
+                isFever ? '☽' : '✦',
+                style: TextStyle(
+                  color: isFever
+                      ? t.accentBright.withValues(alpha: 0.75)
+                      : t.accentBright.withValues(alpha: 0.55),
+                  fontSize: 11,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: isFever
+                      ? t.accentBright.withValues(alpha: 0.80)
+                      : t.textFaint,
+                  fontSize: 10,
+                  letterSpacing: 1.4,
+                  fontWeight:
+                      isFever ? FontWeight.w700 : FontWeight.normal,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final p in group)
+            _proposalCard(t, p, r.brainstormIdeas, r.userBoostedPaths,
+                fever: isFever),
         ],
       ),
     );
   }
 
-  Widget _movesSection(AppTokens t, String label, List<AiMuseMove> moves,
-      List<AiMuseIdea> ideas, Set<String> userBoostedPaths) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label.toUpperCase(),
-              style: TextStyle(
-                color: t.textFaint,
-                fontSize: 10,
-                letterSpacing: 1.2,
-              )),
-          const SizedBox(height: 6),
-          for (final m in moves) _moveCard(t, m, ideas, userBoostedPaths),
-        ],
-      ),
-    );
-  }
-
-  Widget _moveCard(AppTokens t, AiMuseMove m, List<AiMuseIdea> ideas,
-      Set<String> userBoostedPaths) {
-    // A move is "pulled" when at least one of its cited paths matches
-    // a spoke the user yanked during the loading canvas. Closes the
-    // gesture loop — a physical pull becomes a marker in the rendered
-    // result rather than disappearing into invisible context.
+  Widget _proposalCard(
+    AppTokens t,
+    AiMuseProposal p,
+    List<AiMuseIdea> ideas,
+    Set<String> userBoostedPaths, {
+    required bool fever,
+  }) {
+    // A proposal is "pulled" when at least one of its cited paths
+    // matches a spoke the user yanked during the loading canvas —
+    // closes the gesture loop so a physical pull becomes a marker
+    // in the rendered result.
     final pulledCitations = userBoostedPaths.isEmpty
         ? const <String>{}
         : {
-            for (final c in m.citations)
+            for (final c in p.citations)
               if (userBoostedPaths.contains(c)) c
           };
     final isPulled = pulledCitations.isNotEmpty;
-    // final so Dart 3 flow analysis promotes the null-check across closure
-    // boundaries — removes the need for idea! inside onTap.
-    final idea = m.originatingIdeaIndex == null
+    final idea = p.originatingIdeaIndex == null
         ? null
-        : ideas.where((i) => i.index == m.originatingIdeaIndex).firstOrNull;
+        : ideas.where((i) => i.index == p.originatingIdeaIndex).firstOrNull;
     final highlighted = idea != null && _highlightedIdeaIndex == idea.index;
+    final railColor = isPulled
+        ? t.accentBright
+        : fever
+            ? t.accentBright.withValues(alpha: 0.55)
+            : t.textFaint.withValues(alpha: 0.4);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
         decoration: BoxDecoration(
           color: highlighted
               ? t.textStrong.withValues(alpha: 0.04)
               : Colors.transparent,
           border: Border(
             left: BorderSide(
-              // Pulled moves take the accent colour on the left rail
-              // — the visual echo of the user's gesture. Unpulled
-              // moves keep the subtle chrome border.
-              color: isPulled
-                  ? t.accentBright
-                  : t.textFaint.withValues(alpha: 0.4),
+              color: railColor,
               width: isPulled ? 2.5 : 2,
             ),
           ),
@@ -6415,55 +6678,112 @@ class _MusePaneState extends State<_MusePane> {
               ),
               const SizedBox(height: 6),
             ],
-            SelectableText(m.body,
-                style: TextStyle(
-                  color: t.textStrong,
-                  fontSize: 12.5,
-                  height: 1.5,
-                )),
-            if (m.citations.isNotEmpty || idea != null) ...[
+            // Title — the proposal's name, displayed with more weight
+            // than the body so the idea is scannable at a glance.
+            SelectableText(
+              p.title,
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                height: 1.3,
+              ),
+            ),
+            const SizedBox(height: 6),
+            // Vision — the present-tense description of the future
+            // the muse is proposing.
+            SelectableText(
+              p.vision,
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: 12.5,
+                height: 1.55,
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Foothold — the grounding sentence. Rendered muted so it
+            // reads as supporting footnote rather than a claim of
+            // equal weight with the vision.
+            _footholdRow(t, p, pulledCitations),
+            if (idea != null) ...[
               const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                children: [
-                  for (final c in m.citations)
-                    Text(c,
-                        style: TextStyle(
-                          // Boosted citations glow in the accent hue so
-                          // the user can trace their pull to the exact
-                          // cited file within a multi-citation move.
-                          color: pulledCitations.contains(c)
-                              ? t.accentBright
-                              : t.textFaint,
-                          fontSize: 10.5,
-                          fontFamily: 'monospace',
-                          fontWeight: pulledCitations.contains(c)
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                        )),
-                  if (idea != null)
-                    GestureDetector(
-                      onTap: () => setState(() {
-                        _highlightedIdeaIndex =
-                            _highlightedIdeaIndex == idea.index
-                                ? null
-                                : idea.index;
-                        _brainstormExpanded = true;
-                      }),
-                      child: Text('from idea: "${idea.text}"',
-                          style: TextStyle(
-                            color: t.textFaint.withValues(alpha: 0.85),
-                            fontSize: 10.5,
-                            fontStyle: FontStyle.italic,
-                          )),
-                    ),
-                ],
+              GestureDetector(
+                onTap: () => setState(() {
+                  _highlightedIdeaIndex =
+                      _highlightedIdeaIndex == idea.index
+                          ? null
+                          : idea.index;
+                  _brainstormExpanded = true;
+                }),
+                child: Text(
+                  'from idea: "${idea.text}"',
+                  style: TextStyle(
+                    color: t.textFaint.withValues(alpha: 0.85),
+                    fontSize: 10.5,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
               ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _footholdRow(
+      AppTokens t, AiMuseProposal p, Set<String> pulledCitations) {
+    final footholdStyle = TextStyle(
+      color: t.textMuted.withValues(alpha: 0.8),
+      fontSize: 11.5,
+      height: 1.5,
+      fontStyle: FontStyle.italic,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text(
+              'foothold — ',
+              style: footholdStyle.copyWith(
+                color: t.textFaint.withValues(alpha: 0.7),
+                fontStyle: FontStyle.normal,
+                letterSpacing: 0.6,
+                fontSize: 10.5,
+              ),
+            ),
+            Expanded(
+              child: SelectableText(p.foothold, style: footholdStyle),
+            ),
+          ],
+        ),
+        if (p.citations.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final c in p.citations)
+                Text(
+                  c,
+                  style: TextStyle(
+                    color: pulledCitations.contains(c)
+                        ? t.accentBright
+                        : t.textFaint,
+                    fontSize: 10.5,
+                    fontFamily: 'monospace',
+                    fontWeight: pulledCitations.contains(c)
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 
@@ -6769,9 +7089,11 @@ class _CommitReviewPane extends StatelessWidget {
                 // hunk ranking → transmission). Replaces the static
                 // "Checking these changes..." text with a geometric
                 // narration of what the engine is actually doing.
-                child: LogosDiffusionCanvas(
-                  tokens: tokens,
-                  onCancel: onCancel,
+                child: RepaintBoundary(
+                  child: LogosDiffusionCanvas(
+                    tokens: tokens,
+                    onCancel: onCancel,
+                  ),
                 ),
               ),
             ),
@@ -9517,6 +9839,14 @@ class _FileRow extends StatefulWidget {
   /// one go. Null for isolated rows — nothing to batch.
   final VoidCallback? onClusterToggle;
 
+  /// True when the file has persisted in the change set unchanged
+  /// across at least one explicit user refresh since first-seen. The
+  /// checkbox and cluster stripe stay vivid (still interactive /
+  /// informative); the filename column and state badges fade so the
+  /// user's attention flows naturally to freshly-appeared or
+  /// freshly-edited files.
+  final bool isStale;
+
   const _FileRow({
     required this.file,
     required this.tokens,
@@ -9534,6 +9864,7 @@ class _FileRow extends StatefulWidget {
     this.onRailExit,
     this.onSecondaryTap,
     this.onClusterToggle,
+    this.isStale = false,
   });
 
   @override
@@ -9669,47 +10000,70 @@ class _FileRowState extends State<_FileRow> {
                         ),
                       ),
                       const SizedBox(width: 8),
+                      // Everything RIGHT of the checkbox dims together on
+                      // stale rows — filename, directory, badges. The
+                      // checkbox and cluster stripe stay vivid so the
+                      // row's interactive + structural signals keep full
+                      // legibility; only the identifying/status content
+                      // fades. AnimatedOpacity keeps the fresh↔stale
+                      // transition smooth so weights-arrival flips and
+                      // epoch advances don't snap.
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              filename,
-                              style:
-                                  TextStyle(color: t.textNormal, fontSize: 12),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    dir.isEmpty ? 'Repository root' : dir,
-                                    style: TextStyle(
-                                      color: t.textMuted,
-                                      fontSize: 10,
-                                      fontFamily: 'JetBrainsMono',
+                        child: AnimatedOpacity(
+                          duration: const Duration(milliseconds: 140),
+                          opacity: widget.isStale ? 0.45 : 1.0,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Top row: filename competes with the
+                              // status badge for horizontal space. The
+                              // dir line below sits outside this Row so
+                              // it can extend under the badge to the
+                              // full card width (without this split, a
+                              // long dir truncated at the same cutoff
+                              // as the filename even though nothing
+                              // was there to collide with).
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      filename,
+                                      style: TextStyle(
+                                          color: t.textNormal, fontSize: 12),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
                                   ),
+                                  if (badges.isNotEmpty) ...[
+                                    const SizedBox(width: 8),
+                                    Wrap(
+                                      spacing: 6,
+                                      runSpacing: 6,
+                                      alignment: WrapAlignment.end,
+                                      children: [
+                                        for (final badge in badges)
+                                          _StateBadge(
+                                              label: badge.label,
+                                              color: badge.color),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                dir.isEmpty ? 'Repository root' : dir,
+                                style: TextStyle(
+                                  color: t.textMuted,
+                                  fontSize: 10,
+                                  fontFamily: 'JetBrainsMono',
                                 ),
-                              ],
-                            ),
-                          ],
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      if (badges.isNotEmpty)
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          alignment: WrapAlignment.end,
-                          children: [
-                            for (final badge in badges)
-                              _StateBadge(
-                                  label: badge.label, color: badge.color),
-                          ],
-                        ),
                     ],
                   ),
                 ),
@@ -9727,6 +10081,17 @@ class _ChangeBadgeSpec {
   final Color color;
 
   const _ChangeBadgeSpec({required this.label, required this.color});
+}
+
+/// Per-file snapshot used by the stale-dim mechanic. The fingerprint
+/// captures stage codes plus diff magnitude at first-seen time; the
+/// epoch records which user-refresh epoch that capture happened in,
+/// so a file isn't considered stale until at least one explicit
+/// user refresh has elapsed with it unchanged.
+class _FirstSeenRecord {
+  final String fingerprint;
+  final int epoch;
+  const _FirstSeenRecord({required this.fingerprint, required this.epoch});
 }
 
 /// Cluster stripe color derived from the active theme. Returns null for
@@ -9949,6 +10314,11 @@ class _CommitComposerField extends StatefulWidget {
   /// pending or compute in flight). Subtly fades the overlay so the
   /// user can tell the engine is working.
   final bool dreamThinking;
+  /// Master AI hide — when true, the four AI toolbar buttons (ask,
+  /// muse, review, generate-message) are elided from the composer
+  /// toolbar entirely. Dream hint, logos pad, and every non-AI piece
+  /// remain untouched.
+  final bool hideAi;
 
   const _CommitComposerField({
     required this.tokens,
@@ -9980,6 +10350,7 @@ class _CommitComposerField extends StatefulWidget {
     this.onToggleShape,
     this.dreamHint,
     this.dreamThinking = false,
+    this.hideAi = false,
   });
 
   @override
@@ -10216,63 +10587,65 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (widget.onToggleShape != null) ...[
-                          // Plain mode-toggle button — was an OverlayPortal-
-                          // hosted popover; the inline shape-mode now
-                          // morphs the same TextField + bottom button in
-                          // place, so no overlay machinery needed.
+                        if (!widget.hideAi) ...[
+                          if (widget.onToggleShape != null) ...[
+                            // Plain mode-toggle button — was an OverlayPortal-
+                            // hosted popover; the inline shape-mode now
+                            // morphs the same TextField + bottom button in
+                            // place, so no overlay machinery needed.
+                            _CommitAiToolbarBtn(
+                              tokens: tokens,
+                              enabled: widget.shapeEnabled || widget.shapeMode,
+                              loading: widget.shapeLoading,
+                              // When already in shape mode, treat as the
+                              // active state so the button reads as armed
+                              // (the next tap exits).
+                              success: widget.shapeMode,
+                              tooltip: widget.shapeTooltip,
+                              hasText: hasText,
+                              fieldRadius: effectiveRadius,
+                              iconKind: _AiToolbarIconKind.shape,
+                              onTap: widget.onToggleShape!,
+                            ),
+                            const SizedBox(width: 4),
+                          ],
                           _CommitAiToolbarBtn(
                             tokens: tokens,
-                            enabled: widget.shapeEnabled || widget.shapeMode,
-                            loading: widget.shapeLoading,
-                            // When already in shape mode, treat as the
-                            // active state so the button reads as armed
-                            // (the next tap exits).
-                            success: widget.shapeMode,
-                            tooltip: widget.shapeTooltip,
+                            enabled: widget.museEnabled,
+                            loading: widget.museLoading,
+                            success: widget.museSuccess,
+                            tooltip: widget.museTooltip,
                             hasText: hasText,
                             fieldRadius: effectiveRadius,
-                            iconKind: _AiToolbarIconKind.shape,
-                            onTap: widget.onToggleShape!,
+                            iconKind: _AiToolbarIconKind.oracle,
+                            onTap: widget.onMuse,
                           ),
                           const SizedBox(width: 4),
+                          _CommitAiToolbarBtn(
+                            tokens: tokens,
+                            enabled: widget.reviewEnabled,
+                            loading: widget.reviewLoading,
+                            success: widget.reviewSuccess,
+                            verdict: widget.reviewVerdict,
+                            tooltip: widget.reviewTooltip,
+                            hasText: hasText,
+                            fieldRadius: effectiveRadius,
+                            iconKind: _AiToolbarIconKind.search,
+                            onTap: widget.onReview,
+                          ),
+                          const SizedBox(width: 4),
+                          _CommitAiToolbarBtn(
+                            tokens: tokens,
+                            enabled: widget.aiEnabled,
+                            loading: widget.aiLoading,
+                            success: widget.aiSuccess,
+                            tooltip: widget.aiTooltip,
+                            hasText: hasText,
+                            fieldRadius: effectiveRadius,
+                            iconKind: _AiToolbarIconKind.sparkle,
+                            onTap: widget.onGenerate,
+                          ),
                         ],
-                        _CommitAiToolbarBtn(
-                          tokens: tokens,
-                          enabled: widget.museEnabled,
-                          loading: widget.museLoading,
-                          success: widget.museSuccess,
-                          tooltip: widget.museTooltip,
-                          hasText: hasText,
-                          fieldRadius: effectiveRadius,
-                          iconKind: _AiToolbarIconKind.oracle,
-                          onTap: widget.onMuse,
-                        ),
-                        const SizedBox(width: 4),
-                        _CommitAiToolbarBtn(
-                          tokens: tokens,
-                          enabled: widget.reviewEnabled,
-                          loading: widget.reviewLoading,
-                          success: widget.reviewSuccess,
-                          verdict: widget.reviewVerdict,
-                          tooltip: widget.reviewTooltip,
-                          hasText: hasText,
-                          fieldRadius: effectiveRadius,
-                          iconKind: _AiToolbarIconKind.search,
-                          onTap: widget.onReview,
-                        ),
-                        const SizedBox(width: 4),
-                        _CommitAiToolbarBtn(
-                          tokens: tokens,
-                          enabled: widget.aiEnabled,
-                          loading: widget.aiLoading,
-                          success: widget.aiSuccess,
-                          tooltip: widget.aiTooltip,
-                          hasText: hasText,
-                          fieldRadius: effectiveRadius,
-                          iconKind: _AiToolbarIconKind.sparkle,
-                          onTap: widget.onGenerate,
-                        ),
                       ],
                     ),
                   ),

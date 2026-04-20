@@ -40,6 +40,11 @@ class _Candidate {
   final double coherence; // 0..1
   final List<CouplingNudge> orbits;
 
+  /// Dominant bond — why these files group. Drives the axis pill on
+  /// the card so the user sees the geometry, not just "they cluster."
+  /// Null for leftovers (by definition unclustered).
+  final RelatednessAxis? axis;
+
   _Candidate({
     required this.id,
     required this.title,
@@ -47,9 +52,27 @@ class _Candidate {
     required this.members,
     required this.coherence,
     required this.orbits,
+    required this.axis,
   });
 
   bool get isLeftovers => id == FileClusters.clusterIdIsolated;
+}
+
+/// Short label for the axis pill. Chosen to be semantically dense in
+/// 6–12 characters so the pill stays compact. Paired with a glyph
+/// that hints at the axis's flavour (◈ history, ◇ vocabulary, ▣
+/// structure, ⌂ path).
+({String glyph, String label}) _axisPill(RelatednessAxis axis) {
+  switch (axis) {
+    case RelatednessAxis.transport:
+      return (glyph: '▣', label: 'STRUCTURE');
+    case RelatednessAxis.coChange:
+      return (glyph: '◈', label: 'CO-CHANGE');
+    case RelatednessAxis.symbol:
+      return (glyph: '◇', label: 'SHARED SYMBOLS');
+    case RelatednessAxis.pathAffinity:
+      return (glyph: '⌂', label: 'PATH SIBLINGS');
+  }
 }
 
 // Public widget, kept named FileConstellation for import stability; the
@@ -100,7 +123,25 @@ class _FileConstellationState extends State<FileConstellation> {
   // the user reads "carve replaces selection" from motion, not text.
   int? _hoveredCandidateId;
 
+  // Cached `_buildCandidates` / `_leftovers` results. Hovering a
+  // candidate card calls `setState(_hoveredCandidateId = …)` which
+  // rebuilds this widget, and previously each rebuild redid the full
+  // cluster scan + `suggestMissingPeers` walk + sort even though the
+  // inputs hadn't moved. Keying the cache on the clusters instance
+  // is sufficient because clusters is itself derived upstream from
+  // `widget.files` and `widget.matrix`: whenever either of those
+  // changes, the clusters reference changes and the cache invalidates.
+  List<_Candidate>? _candidatesCache;
+  List<String>? _leftoversCache;
+  Object? _cacheClusters;
+  Object? _cacheMatrix;
+
   List<_Candidate> _buildCandidates() {
+    if (identical(_cacheClusters, widget.clusters) &&
+        identical(_cacheMatrix, widget.matrix) &&
+        _candidatesCache != null) {
+      return _candidatesCache!;
+    }
     final byCluster = <int, List<String>>{};
     for (final f in widget.files) {
       final cid =
@@ -129,6 +170,7 @@ class _FileConstellationState extends State<FileConstellation> {
         members: members,
         coherence: coherence,
         orbits: orbits,
+        axis: widget.clusters.dominantAxisByCluster[cid],
       ));
     });
     candidates.sort((a, b) {
@@ -136,10 +178,21 @@ class _FileConstellationState extends State<FileConstellation> {
       if (c != 0) return c;
       return a.title.compareTo(b.title);
     });
+    _candidatesCache = candidates;
+    // Invalidate the paired leftovers cache when candidates recompute —
+    // they're derived from the same inputs, so their cache should
+    // evict together to avoid presenting stale orbit-vs-member splits.
+    _leftoversCache = null;
+    _cacheClusters = widget.clusters;
+    _cacheMatrix = widget.matrix;
     return candidates;
   }
 
   List<String> _leftovers() {
+    if (identical(_cacheClusters, widget.clusters) &&
+        _leftoversCache != null) {
+      return _leftoversCache!;
+    }
     final out = <String>[];
     for (final f in widget.files) {
       final cid =
@@ -147,6 +200,7 @@ class _FileConstellationState extends State<FileConstellation> {
       if (cid == FileClusters.clusterIdIsolated) out.add(f.path);
     }
     out.sort();
+    _leftoversCache = out;
     return out;
   }
 
@@ -510,17 +564,28 @@ class _CandidateCardState extends State<_CandidateCard>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            c.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: t.textNormal,
-                              fontSize: 12.5,
-                              letterSpacing: 2.0,
-                              fontWeight: FontWeight.w600,
-                              height: 1.05,
-                            ),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  c.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: t.textNormal,
+                                    fontSize: 12.5,
+                                    letterSpacing: 2.0,
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.05,
+                                  ),
+                                ),
+                              ),
+                              if (c.axis != null) ...[
+                                const SizedBox(width: 8),
+                                _AxisPill(axis: c.axis!, tokens: t, accent: accent),
+                              ],
+                            ],
                           ),
                         ],
                       ),
@@ -873,6 +938,61 @@ class _OrbitChipState extends State<_OrbitChip> {
 //   • Included files fill; excluded files ring. Cluster identity
 //     (cluster id) phase-shifts the starting angle so sibling cards
 //     don't all line up the same.
+
+// Axis pill: a compact pill-shaped badge showing the dominant
+// relatedness axis for a cluster. Honours the card accent so the pill
+// reads as part of the same specimen tray, not a separate tag. The
+// glyph carries the axis flavour at a glance; the letterspaced text
+// carries the name for anyone reading carefully.
+class _AxisPill extends StatelessWidget {
+  const _AxisPill({
+    required this.axis,
+    required this.tokens,
+    required this.accent,
+  });
+  final RelatednessAxis axis;
+  final AppTokens tokens;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final pill = _axisPill(axis);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: accent.withValues(alpha: 0.35),
+          width: 0.6,
+        ),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            pill.glyph,
+            style: TextStyle(
+              color: accent.withValues(alpha: 0.85),
+              fontSize: 10,
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            pill.label,
+            style: TextStyle(
+              color: tokens.textMuted,
+              fontSize: 8.5,
+              letterSpacing: 1.5,
+              fontWeight: FontWeight.w600,
+              height: 1.0,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _CandidateGlyph extends StatelessWidget {
   final AppTokens tokens;

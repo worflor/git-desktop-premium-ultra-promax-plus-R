@@ -393,20 +393,47 @@ class _FocusSummary {
   });
 }
 
+// ── Text-measurement cache ──────────────────────────────────────
+//
+// [_measureWidth] / [_measureHeight] are called five times per
+// CommitSeismograph build from inside a LayoutBuilder. Every hover,
+// filter keystroke, or drill triggers another build, and each call
+// previously allocated a fresh TextPainter + ran `.layout()`. The
+// probe strings and the layout-affecting TextStyle fields
+// (fontSize / fontFamily / height) are all stable across rebuilds
+// — so cache the result per (text, style-layout-signature).
+//
+// Colour and weight can affect rendering but not text metrics, so
+// they stay out of the key. On a theme change the fontFamily or
+// fontSize may change, which moves the key and invalidates the
+// prior entry implicitly without explicit invalidation.
+final Map<String, double> _measureWidthCache = <String, double>{};
+final Map<String, double> _measureHeightCache = <String, double>{};
+
+String _measureKey(String text, TextStyle s) =>
+    '$text|${s.fontSize}|${s.fontFamily}|${s.fontWeight?.value}|'
+    '${s.fontStyle?.index}|${s.height}|${s.letterSpacing}';
+
 double _measureWidth(String text, TextStyle s) {
+  final key = _measureKey(text, s);
+  final hit = _measureWidthCache[key];
+  if (hit != null) return hit;
   final tp = TextPainter(
     text: TextSpan(text: text, style: s),
     textDirection: TextDirection.ltr,
   )..layout();
-  return tp.width;
+  return _measureWidthCache[key] = tp.width;
 }
 
 double _measureHeight(String text, TextStyle s) {
+  final key = _measureKey(text, s);
+  final hit = _measureHeightCache[key];
+  if (hit != null) return hit;
   final tp = TextPainter(
     text: TextSpan(text: text, style: s),
     textDirection: TextDirection.ltr,
   )..layout();
-  return tp.height;
+  return _measureHeightCache[key] = tp.height;
 }
 
 
@@ -620,14 +647,40 @@ class _TrackHeader extends StatefulWidget {
 class _TrackHeaderState extends State<_TrackHeader> {
   bool _hovered = false;
 
+  // Aggregates are pure functions of `widget.track` but the track
+  // only changes when the layout actually reassigns it. Hover
+  // toggles churn build() repeatedly without touching the track,
+  // so memoise the three folds and refresh only when the track
+  // reference changes. Cheap initialisers; identity-compared.
+  SeismographTrack? _aggFor;
+  int _fileCount = 0;
+  int _adds = 0;
+  int _dels = 0;
+
+  void _ensureAggregates(SeismographTrack track) {
+    if (identical(_aggFor, track)) return;
+    var files = 0;
+    var adds = 0;
+    var dels = 0;
+    for (final s in track.segments) {
+      files += s.containedFileCount;
+      adds += s.additions;
+      dels += s.deletions;
+    }
+    _fileCount = files;
+    _adds = adds;
+    _dels = dels;
+    _aggFor = track;
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = widget.tokens;
     final track = widget.track;
-    final fileCount =
-        track.segments.fold<int>(0, (a, s) => a + s.containedFileCount);
-    final adds = track.segments.fold<int>(0, (a, s) => a + s.additions);
-    final dels = track.segments.fold<int>(0, (a, s) => a + s.deletions);
+    _ensureAggregates(track);
+    final fileCount = _fileCount;
+    final adds = _adds;
+    final dels = _dels;
     final isOverflow = track.isOverflowBucket;
     final canDrill = !isOverflow && track.path.isNotEmpty;
     return MouseRegion(
@@ -736,17 +789,23 @@ class _Track extends StatelessWidget {
 
   bool _matchesFilter(SeismographSegment s) {
     if (filterText.isEmpty) return true;
-    return s.path.join('/').toLowerCase().contains(filterText) ||
+    return s.pathKeyLower.contains(filterText) ||
         s.label.toLowerCase().contains(filterText);
   }
 
   @override
   Widget build(BuildContext context) {
     if (track.segments.isEmpty) return const SizedBox.shrink();
-    final maxChurn = track.segments
-        .map((s) => s.churn)
-        .fold<int>(0, (a, b) => a > b ? a : b)
-        .clamp(1, 1 << 30);
+    // Direct loop — previous `.map().fold()` chain allocated a
+    // MappedIterable wrapper + two closure objects per build, which
+    // fires on every `wake` tick, hover, and filter keystroke. The
+    // loop stays within SMI integer range for realistic churn
+    // values, so the whole thing runs without heap traffic.
+    var maxChurn = 1;
+    for (final s in track.segments) {
+      if (s.churn > maxChurn) maxChurn = s.churn;
+    }
+    if (maxChurn > 1 << 30) maxChurn = 1 << 30;
 
     final labelBandPx = segLabelHeight + 2;
     return ClipRect(
@@ -781,13 +840,12 @@ class _Track extends StatelessWidget {
               labelBandPx: labelBandPx,
               showLabel: seg.width >= minLabelSegmentPx,
               maxChurn: maxChurn,
-              isDirty: seg.isLeaf &&
-                  dirtyPaths.contains(seg.path.join('/')),
+              isDirty: seg.isLeaf && dirtyPaths.contains(seg.pathKey),
               isHero: seg.isLeaf &&
                   heroPath != null &&
                   listEquals(seg.path, heroPath),
               lifecycle: (seg.isLeaf && lifecycles != null)
-                  ? lifecycles![seg.path.join('/')]
+                  ? lifecycles![seg.pathKey]
                   : null,
               dimmed: !_matchesFilter(seg),
               wake: wake,
@@ -804,10 +862,10 @@ class _Track extends StatelessWidget {
                 }
                 onHover(_HoverInfo(
                   label: seg.isLeaf
-                      ? seg.path.join('/')
+                      ? seg.pathKey
                       : (seg.isDrillable
                           ? '${seg.containedFileCount} files in '
-                              '${seg.path.join('/')}/'
+                              '${seg.pathKey}/'
                           : '${seg.containedFileCount} more files'),
                   additions: seg.additions,
                   deletions: seg.deletions,
@@ -1017,7 +1075,7 @@ class _SegmentState extends State<_Segment> {
 
     // Build a screen-reader narration that doesn't rely on color.
     final semanticLabel = seg.isLeaf
-        ? '${seg.path.join('/')}, '
+        ? '${seg.pathKey}, '
             '${seg.additions} added, ${seg.deletions} deleted'
             '${widget.isHero ? ', largest change in this view' : ''}'
             '${notch?.label == 'U' ? ', conflicted' : ''}'

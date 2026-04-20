@@ -238,7 +238,15 @@ class _SidebarRailState extends State<SidebarRail> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final repo = context.watch<RepositoryState>();
+    // Narrow subscription: the rail only reads activePath and
+    // recentPaths. Mutations (setActivePath, forgetRecent) go through
+    // `context.read`. The prior `context.watch` forced a full rail
+    // rebuild on every status tick of every repo.
+    final activePath =
+        context.select<RepositoryState, String?>((s) => s.activePath);
+    final recentPaths = context
+        .select<RepositoryState, List<String>>((s) => s.recentPaths);
+    final repo = context.read<RepositoryState>();
     final railTone = t.chromeTone;
 
     return MaterialSurface(
@@ -305,7 +313,7 @@ class _SidebarRailState extends State<SidebarRail> {
               // Filter out any worktree paths that may have leaked into
               // recents (e.g. from pre-fix sessions). Worktrees are desks,
               // not projects — the sidebar is for distinct repos only.
-              final visiblePaths = repo.recentPaths
+              final visiblePaths = recentPaths
                   .where((p) =>
                       !p.replaceAll('\\', '/').contains('/.manifold/worktrees/'))
                   .toList();
@@ -326,8 +334,8 @@ class _SidebarRailState extends State<SidebarRail> {
                       return _ProjectItem(
                         name: _toProjectName(path),
                         path: path,
-                        isActive: repo.activePath != null &&
-                            _normalizePath(repo.activePath!) ==
+                        isActive: activePath != null &&
+                            _normalizePath(activePath) ==
                                 _normalizePath(path),
                         onTap: () async {
                           try {

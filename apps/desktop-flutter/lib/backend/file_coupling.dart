@@ -293,9 +293,31 @@ class FileCouplingMatrix {
   }
 
 
-  /// O(1) check for whether [path] is tracked in the matrix.
+  /// O(1) check for whether [path] is known to the matrix — tracked
+  /// OR layered in via [withSymbol] for the current change set.
   /// Replaces `matrix.jaccard.containsKey(path)`.
+  ///
+  /// Note: after a [withSymbol] call, untracked files also appear in
+  /// the id space, so this returns `true` for them too. Callers that
+  /// need the stricter "has git co-change history" check should use
+  /// [hasJaccardRow].
   bool containsPath(String path) => _pathToId.containsKey(path);
+
+  /// Stricter companion to [containsPath]: `true` iff the file has at
+  /// least one historical co-change edge in the jaccard CSR.
+  ///
+  /// Why this exists: [withSymbol] appends untracked files to the id
+  /// space so their symbol overlap can be queried, which makes
+  /// [containsPath] return `true` for them too. Several call sites
+  /// (clustering step-2 guard, [combinedCouplingScore]'s
+  /// "both tracked → trust history" fallback) really want to ask
+  /// "does this file have real co-change history?" — which is
+  /// precisely "does its jaccard row have any entries?"
+  bool hasJaccardRow(String path) {
+    final i = _pathToId[path];
+    if (i == null) return false;
+    return _jRowPtr[i + 1] > _jRowPtr[i];
+  }
 
   /// Iterate the jaccard neighbours of [path] as (path, score) entries.
   /// Replaces `matrix.jaccard[path]?.entries` / `matrix.jaccard[path]?.keys`.
@@ -319,6 +341,22 @@ class FileCouplingMatrix {
     final hi = _jRowPtr[i + 1];
     for (var k = lo; k < hi; k++) {
       yield paths[_jColIdx[k]];
+    }
+  }
+
+  /// Iterate the symbol-overlap neighbours of [path]. Symmetric
+  /// accessor to [jaccardEntriesOf] for the symbol CSR — clustering
+  /// and diffusion-graph builders that want to treat symbol edges as
+  /// first-class coupling evidence (e.g. to let untracked files
+  /// participate in clustering the same way tracked files do) read
+  /// them through here rather than going through [score] per pair.
+  Iterable<MapEntry<String, double>> symbolEntriesOf(String path) sync* {
+    final i = _pathToId[path];
+    if (i == null) return;
+    final lo = _sRowPtr[i];
+    final hi = _sRowPtr[i + 1];
+    for (var k = lo; k < hi; k++) {
+      yield MapEntry(paths[_sColIdx[k]], _sValues[k]);
     }
   }
 
@@ -907,6 +945,23 @@ enum FileSortGuide {
 /// the same cluster (single-link). Files with no qualifying peer get
 /// [clusterIdIsolated] (-1) — rendered as a muted stripe so they read as
 /// "standalone, no coupling signal" rather than "part of cluster N".
+/// Which signal made two files cluster together. Surfaced to the UI
+/// so Atlas cards can show *why* these files group — not just a
+/// coherence number but the geometric reason.
+///
+/// Priority order when a pair scores on multiple axes: transport >
+/// coChange > symbol > pathAffinity. `transport` is the most
+/// semantically specific (source↔test, manifest↔lockfile are
+/// unambiguous structural relations); `coChange` carries real git
+/// history; `symbol` is vocabulary overlap; `pathAffinity` is the
+/// weakest (mere directory siblings).
+enum RelatednessAxis {
+  coChange,
+  symbol,
+  transport,
+  pathAffinity,
+}
+
 class FileClusters {
   final Map<String, int> byPath;
   final int clusterCount;
@@ -915,10 +970,18 @@ class FileClusters {
   /// themselves are ordered by size (largest first), with isolated at the end.
   final List<String> orderedPaths;
 
+  /// The dominant bonding signal for each cluster id. Computed as the
+  /// mode (most-frequent axis) across the cluster's Union-Find pairs.
+  /// Absent when a cluster was built purely from singleton merges
+  /// (shouldn't happen in practice — every cluster has ≥1 pair). The
+  /// isolated cluster id is never keyed here.
+  final Map<int, RelatednessAxis> dominantAxisByCluster;
+
   const FileClusters({
     required this.byPath,
     required this.clusterCount,
     required this.orderedPaths,
+    this.dominantAxisByCluster = const {},
   });
 
   static const clusterIdIsolated = -1;
@@ -977,10 +1040,14 @@ FileClusters clusterFiles(
     for (var i = 0; i < n; i++) currentPaths[i]: i,
   };
 
-  // Collect candidate pairs above threshold. Each pair stored at most once
-  // via a lexicographic (lo, hi) key in a compact int-encoded set.
+  // Collect candidate pairs above threshold. Each pair stored at most
+  // once via a lexicographic (lo, hi) int-encoded key. `candidateIndex`
+  // maps the encoded key to its slot in `candidates`, so when a pair is
+  // hit twice (e.g. once via jaccard, once via symbol overlap) we can
+  // promote its score to the stronger of the two in O(1) instead of
+  // scanning the candidates list.
   final candidates = <_PairScore>[];
-  final seen = <int>{};
+  final candidateIndex = <int, int>{};
 
   int encode(int a, int b) {
     final lo = a < b ? a : b;
@@ -988,26 +1055,101 @@ FileClusters clusterFiles(
     return lo * n + hi;
   }
 
-  // -- 1. Historical pairs: sparse iteration over the jaccard CSR.
-  //    For each current file, walk its neighbour row; only add pairs where
-  //    the neighbour is also in the current change set. Uses the CSR-
-  //    native row iterator so we don't materialise the legacy nested
-  //    map view just to read this row's entries.
+  // -- 1. Direct coupling pairs: sparse iteration over the jaccard CSR
+  //    AND the symbol-overlap CSR. For each current file, walk both
+  //    neighbour rows; only add pairs where the neighbour is also in
+  //    the current change set. Both axes are independent evidence, so
+  //    we record whichever score is larger when both fire — matches
+  //    the `score(a, b) = max(jaccard, symbol)` contract used
+  //    everywhere else in the coupling API.
+  //
+  //    The symbol walk is what makes untracked files cluster with
+  //    their structural peers: co-change history is blind to a file
+  //    that has never been committed, but symbol overlap sees the
+  //    identifier graph instantly, so a new test file groups with the
+  //    module it tests the moment it shows up in the working tree.
+  void recordPair(int i, int j, double s, RelatednessAxis axis) {
+    if (i == j) return;
+    final key = encode(i, j);
+    final existing = candidateIndex[key];
+    if (existing == null) {
+      candidateIndex[key] = candidates.length;
+      candidates.add(_PairScore(s, i, j, axis));
+    } else if (s > candidates[existing].score) {
+      // Dedup: same pair hit by a second axis — keep the stronger
+      // evidence so union-find sorts on the best score available.
+      // Axis tag moves with the score so the cluster's dominant-axis
+      // tally reflects the evidence that actually did the work.
+      candidates[existing] = _PairScore(s, i, j, axis);
+    }
+  }
+
   for (var i = 0; i < n; i++) {
     final a = currentPaths[i];
     for (final entry in matrix.jaccardEntriesOf(a)) {
       final s = entry.value;
       if (s < threshold) continue;
       final j = pathIndex[entry.key];
-      if (j == null || i == j) continue;
-      final key = encode(i, j);
-      if (seen.add(key)) candidates.add(_PairScore(s, i, j));
+      if (j == null) continue;
+      recordPair(i, j, s, RelatednessAxis.coChange);
+    }
+    for (final entry in matrix.symbolEntriesOf(a)) {
+      final s = entry.value;
+      if (s < threshold) continue;
+      final j = pathIndex[entry.key];
+      if (j == null) continue;
+      recordPair(i, j, s, RelatednessAxis.symbol);
     }
   }
 
-  // -- 2. Path-affinity pairs for new/untracked files (and for pairs the
-  //    historical matrix doesn't cover). Bucket by top-2 path segments to
-  //    keep enumeration near-linear even for huge change sets.
+  // -- 1b. Transport-lane pairs: structural relations that path-based
+  //    heuristics catch even on brand-new files with no history or
+  //    symbol overlap (`pubspec.yaml` ↔ `pubspec.lock`, `foo.dart` ↔
+  //    `foo_test.dart`, `schema.sql` ↔ migrations sharing a concept
+  //    token). `logosTransportLane` returns a typed descriptor with a
+  //    `strength` in [0, 0.5] we use as the pair score; every matching
+  //    lane clears the default 0.25 threshold by design, so these
+  //    pairs always promote their files out of `isolated`.
+  //
+  //    Precompute roles once per path (same trick as gatherEvidence's
+  //    TransportRoles pool) so the O(n²) enumeration is role-lookup +
+  //    field compare, not string-normalize + regex per pair.
+  final transportRoles = [
+    for (final p in currentPaths) TransportRoles.of(p),
+  ];
+  for (var i = 0; i < n; i++) {
+    final ri = transportRoles[i];
+    for (var j = i + 1; j < n; j++) {
+      final rj = transportRoles[j];
+      final forward = logosTransportLaneOfRoles(ri, rj);
+      final backward = logosTransportLaneOfRoles(rj, ri);
+      final strength = math.max(
+        forward?.strength ?? 0.0,
+        backward?.strength ?? 0.0,
+      );
+      // Transport-lane presence is definitive — a source file and its
+      // test ARE related, a manifest and its lockfile ARE related.
+      // Don't hold them to the statistical-axis threshold; admit on
+      // any non-zero strength. UF still processes by score so stronger
+      // lanes (manifest↔lockfile) win over weaker ones (source↔doc)
+      // when both would assign a file to different clusters.
+      if (strength <= 0) continue;
+      recordPair(i, j, strength, RelatednessAxis.transport);
+    }
+  }
+
+  // -- 2. Path-affinity pairs for files with no historical co-change
+  //    data (typically untracked / new files). Bucket by top-2 path
+  //    segments to keep enumeration near-linear even for huge change
+  //    sets.
+  //
+  //    The "skip if both tracked" guard uses [hasJaccardRow], NOT
+  //    [containsPath]: after [withSymbol] layers untracked paths into
+  //    the id space, `containsPath` would return true for them too,
+  //    causing this pass to skip the exact untracked-untracked pairs
+  //    it was designed to cover. `hasJaccardRow` preserves the
+  //    original intent — "does this file have real git history to
+  //    trust?" — regardless of symbol-layer expansion.
   final buckets = <String, List<int>>{};
   for (var i = 0; i < n; i++) {
     final p = currentPaths[i];
@@ -1025,22 +1167,25 @@ FileClusters clusterFiles(
         final j = idxs[jj];
         final a = currentPaths[i];
         final b = currentPaths[j];
-        final aTracked = matrix.containsPath(a);
-        final bTracked = matrix.containsPath(b);
-        if (aTracked && bTracked) continue; // history-only for that case
+        final aHasHistory = matrix.hasJaccardRow(a);
+        final bHasHistory = matrix.hasJaccardRow(b);
+        if (aHasHistory && bHasHistory) continue; // history is authoritative
         final s = pathAffinity(a, b);
         if (s < threshold) continue;
-        final key = encode(i, j);
-        if (seen.add(key)) candidates.add(_PairScore(s, i, j));
+        recordPair(i, j, s, RelatednessAxis.pathAffinity);
       }
     }
   });
 
-  // -- 3. Union-Find: merge pairs in descending-score order.
+  // -- 3. Union-Find: merge pairs in descending-score order. As we
+  //    merge, track which axis supplied each edge's evidence so we
+  //    can report a dominant axis per cluster at the end.
   candidates.sort((a, b) => b.score.compareTo(a.score));
   final uf = _UnionFind(n);
+  final pairAxes = <_PairScore>[];
   for (final p in candidates) {
     uf.union(p.a, p.b);
+    pairAxes.add(p);
   }
 
   // -- 4. Build clusters from UF roots. Singletons (their own root) become
@@ -1119,6 +1264,38 @@ FileClusters clusterFiles(
   for (final idx in isolatedIdx) {
     byPath[currentPaths[idx]] = FileClusters.clusterIdIsolated;
   }
+
+  // Dominant-axis tally per cluster. Each Union-Find pair contributes
+  // one vote for its axis, weighted by pair score so a strong
+  // transport-lane edge beats several weak pathAffinity edges. We
+  // break ties by the axis priority order declared on
+  // [RelatednessAxis].
+  final axisVotes = <int, Map<RelatednessAxis, double>>{};
+  for (final p in pairAxes) {
+    final root = uf.find(p.a);
+    final clusterId = byPath[currentPaths[root]];
+    if (clusterId == null || clusterId == FileClusters.clusterIdIsolated) {
+      continue;
+    }
+    final bucket = axisVotes.putIfAbsent(clusterId, () => {});
+    bucket[p.axis] = (bucket[p.axis] ?? 0.0) + p.score;
+  }
+  final dominantAxisByCluster = <int, RelatednessAxis>{};
+  axisVotes.forEach((clusterId, votes) {
+    RelatednessAxis? best;
+    double bestScore = -1.0;
+    int bestPriority = -1;
+    votes.forEach((axis, score) {
+      final priority = _axisPriority(axis);
+      if (score > bestScore ||
+          (score == bestScore && priority > bestPriority)) {
+        bestScore = score;
+        bestPriority = priority;
+        best = axis;
+      }
+    });
+    if (best != null) dominantAxisByCluster[clusterId] = best!;
+  });
 
   // orderedPaths — the actual row order. Strategy depends on sortGuide.
   final orderedPaths = <String>[];
@@ -1298,6 +1475,32 @@ FileClusters clusterFiles(
     orderedPaths.setAll(0, orderedPaths.reversed.toList());
   }
 
+  // Universal float-to-top for the user's selection: files included in
+  // the current commit always sit above excluded files, whatever the
+  // sort mode. The mode still decides order WITHIN each group — so
+  // alphabetical-mode keeps its A→Z ordering within selected, then A→Z
+  // within unselected, rather than silently losing selection as a
+  // tie-break. `relatedProximity` already did this within clusters; the
+  // float below makes the same semantics universal. Preserves relative
+  // order within each partition so the mode's work isn't undone.
+  if (includedPaths != null && includedPaths.isNotEmpty) {
+    final selected = <String>[];
+    final unselected = <String>[];
+    for (final p in orderedPaths) {
+      if (includedPaths.contains(p)) {
+        selected.add(p);
+      } else {
+        unselected.add(p);
+      }
+    }
+    if (selected.isNotEmpty && unselected.isNotEmpty) {
+      orderedPaths
+        ..clear()
+        ..addAll(selected)
+        ..addAll(unselected);
+    }
+  }
+
   // Universal float-to-top: merge conflicts block every commit. Whatever
   // the sort mode, conflicted files belong at eye level. Preserves their
   // relative order as produced by the main sort below.
@@ -1321,7 +1524,26 @@ FileClusters clusterFiles(
     byPath: byPath,
     clusterCount: realClusters.length,
     orderedPaths: orderedPaths,
+    dominantAxisByCluster: dominantAxisByCluster,
   );
+}
+
+/// Axis priority for dominant-axis tiebreaks. Higher = more
+/// semantically specific. `transport` wins over `coChange` when vote
+/// scores are equal because a structural lane is a stronger claim
+/// than mere historical co-change; `pathAffinity` loses every tie
+/// because sibling-directory is the weakest signal in the set.
+int _axisPriority(RelatednessAxis a) {
+  switch (a) {
+    case RelatednessAxis.transport:
+      return 3;
+    case RelatednessAxis.coChange:
+      return 2;
+    case RelatednessAxis.symbol:
+      return 1;
+    case RelatednessAxis.pathAffinity:
+      return 0;
+  }
 }
 
 /// Natural, case-insensitive path comparator.
@@ -1613,7 +1835,8 @@ class _PairScore {
   final double score;
   final int a;
   final int b;
-  const _PairScore(this.score, this.a, this.b);
+  final RelatednessAxis axis;
+  const _PairScore(this.score, this.a, this.b, this.axis);
 }
 
 /// Precomputed sort key for a cluster — populated once outside the
@@ -1984,16 +2207,23 @@ Map<String, Map<String, double>> computeSymbolCoupling(
 /// overlap, whichever is stronger). Falls back to path-structure affinity
 /// only when the matrix has no signal at all for the pair — typically two
 /// files that are both new AND share no identifiers.
-/// If BOTH files are present in the co-change history (jaccard map), a
-/// score of 0.0 is meaningful: they've been tracked and they don't
-/// co-change. pathAffinity must NOT fire in that case — it would
-/// manufacture coupling that contradicts the historical record and corrupt
+/// If BOTH files have real co-change history and the score is still 0,
+/// that's meaningful: they've been tracked and they don't co-change.
+/// pathAffinity must NOT fire in that case — it would manufacture
+/// coupling that contradicts the historical record and corrupt
 /// clustering for pairs that deliberately don't co-change.
+/// The gate uses [FileCouplingMatrix.hasJaccardRow], NOT `containsPath`:
+/// after `withSymbol` layers untracked files into the id space,
+/// `containsPath` returns true for them too and the original "both
+/// tracked → trust history" fallback would mute pathAffinity for every
+/// untracked pair. Checking the jaccard row directly keeps the
+/// semantic "does this file actually have git-history evidence?" stable
+/// across that layering.
 double combinedCouplingScore(String a, String b, FileCouplingMatrix m) {
   final s = m.score(a, b);
   if (s > 0) return s;
-  // Both files are tracked with no co-change history → trust the history.
-  if (m.containsPath(a) && m.containsPath(b)) return 0.0;
+  // Both files have real co-change history with no co-change → trust it.
+  if (m.hasJaccardRow(a) && m.hasJaccardRow(b)) return 0.0;
   return pathAffinity(a, b);
 }
 

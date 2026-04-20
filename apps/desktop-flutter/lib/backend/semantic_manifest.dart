@@ -91,6 +91,7 @@ class SemanticManifest {
     required this.additionsByFile,
     required this.removalsByFile,
     required this.couplingPairs,
+    required this.touchedCoherence,
     required this.topHunks,
     required this.idfAvailable,
   });
@@ -133,6 +134,15 @@ class SemanticManifest {
   /// change together, so narrate them together." Empty when no
   /// coupling matrix was supplied, or when no pair crossed the floor.
   final List<CouplingEntry> couplingPairs;
+
+  /// Mean pairwise coupling across all touched files. A single scalar
+  /// that tells the reviewer whether this commit is a *coherent
+  /// change* (high — the touched files usually move together) or a
+  /// *grab-bag* (low — the touched files rarely appear in the same
+  /// commit historically). Null when fewer than two files were
+  /// touched, or when the coupling matrix was too thin to be
+  /// meaningful (see `FileCouplingMatrix.coherenceFor` gating).
+  final double? touchedCoherence;
 
   /// Top-K hunks by φ (logos diffusion salience). The "map" the model
   /// should navigate to first.
@@ -223,6 +233,21 @@ class SemanticManifest {
       removalsByFile.forEach((file, tokens) {
         buf.writeln('  $file: ${tokens.join(', ')}');
       });
+    }
+
+    if (touchedCoherence != null) {
+      buf.writeln();
+      // Mean pairwise coupling across all touched files. High = the
+      // diff is a coherent change (files that usually move together
+      // are moving together); low = a grab-bag (files that rarely
+      // co-change appear in the same commit). Emitted as a raw scalar
+      // so the reviewer can read it alongside the per-pair coupling
+      // lines without us imposing a pre-chosen band vocabulary.
+      buf.writeln(
+        'Touched-set coherence: ${touchedCoherence!.toStringAsFixed(2)}'
+        ' (mean pairwise historical coupling across the touched files;'
+        ' high = coherent change, low = grab-bag)',
+      );
     }
 
     if (couplingPairs.isNotEmpty) {
@@ -372,6 +397,7 @@ SemanticManifest buildSemanticManifest(
       additionsByFile: const {},
       removalsByFile: const {},
       couplingPairs: const [],
+      touchedCoherence: null,
       topHunks: const [],
       idfAvailable: false,
     );
@@ -440,18 +466,8 @@ SemanticManifest buildSemanticManifest(
   // manifest reunifies them here. After detection, the token is
   // subtracted from the per-file sets so it never appears in the
   // additions or removals sections.
-  final addedFilesByToken = <String, Set<String>>{};
-  final removedFilesByToken = <String, Set<String>>{};
-  trulyAddedByFile.forEach((file, tokens) {
-    for (final t in tokens) {
-      (addedFilesByToken[t] ??= <String>{}).add(file);
-    }
-  });
-  trulyRemovedByFile.forEach((file, tokens) {
-    for (final t in tokens) {
-      (removedFilesByToken[t] ??= <String>{}).add(file);
-    }
-  });
+  final addedFilesByToken = _invertByToken(trulyAddedByFile);
+  final removedFilesByToken = _invertByToken(trulyRemovedByFile);
   final migratedTokens = addedFilesByToken.keys
       .toSet()
       .intersection(removedFilesByToken.keys.toSet());
@@ -493,8 +509,7 @@ SemanticManifest buildSemanticManifest(
   // is almost certainly a rename/refactor worth narrating; ties break
   // by score.
   moves.sort((a, b) => score(b.token).compareTo(score(a.token)));
-  final cappedMoves =
-      moves.length <= _kMaxMoves ? moves : moves.sublist(0, _kMaxMoves);
+  final cappedMoves = _capList(moves, _kMaxMoves);
 
   crossFileMoves.sort((a, b) {
     final fa = a.fromFiles.length + a.toFiles.length;
@@ -502,9 +517,7 @@ SemanticManifest buildSemanticManifest(
     if (fa != fb) return fb.compareTo(fa);
     return score(b.token).compareTo(score(a.token));
   });
-  final cappedCrossFileMoves = crossFileMoves.length <= _kMaxCrossFileMoves
-      ? crossFileMoves
-      : crossFileMoves.sublist(0, _kMaxCrossFileMoves);
+  final cappedCrossFileMoves = _capList(crossFileMoves, _kMaxCrossFileMoves);
 
   final cappedAdditions =
       _capFiles(additionsByFile, hunksByFile, _kMaxFilesInTokenList);
@@ -541,6 +554,17 @@ SemanticManifest buildSemanticManifest(
       couplingPairs.removeRange(_kMaxCouplingPairs, couplingPairs.length);
     }
   }
+
+  // Mean pairwise coupling across all touched files — the coherence
+  // of the commit at the file-graph level. The underlying method gates
+  // on corpus size (returns 0.5 when history is too thin to trust),
+  // so we propagate its own honesty as a nullable field: present only
+  // when there are at least two touched files and the matrix is
+  // populated.
+  final double? touchedCoherence =
+      (couplingMatrix != null && allFiles.length >= 2)
+          ? couplingMatrix.coherenceFor(allFiles)
+          : null;
 
   // Theme histogram: sum φ per well. A well contributes the φ of every
   // hunk that lands in it; the well with the largest φ-mass is the
@@ -593,6 +617,7 @@ SemanticManifest buildSemanticManifest(
     additionsByFile: cappedAdditions,
     removalsByFile: cappedRemovals,
     couplingPairs: couplingPairs,
+    touchedCoherence: touchedCoherence,
     topHunks: topHunks,
     idfAvailable: idfReady,
   );
@@ -681,3 +706,20 @@ Map<String, List<String>> _capFiles(
 @visibleForTesting
 ({Set<String> added, Set<String> removed}) debugTokensFromHunk(DiffHunk h) =>
     _tokensFromHunk(h);
+
+/// Return [list] truncated to the first [max] elements when longer, or
+/// the original list otherwise. Cheap no-copy path in the common case.
+List<T> _capList<T>(List<T> list, int max) =>
+    list.length <= max ? list : list.sublist(0, max);
+
+/// Invert a `file → tokens` map into a `token → files` map, preserving
+/// every (token, file) edge. Used by the cross-file-move detector.
+Map<String, Set<String>> _invertByToken(Map<String, Set<String>> byFile) {
+  final out = <String, Set<String>>{};
+  byFile.forEach((file, tokens) {
+    for (final t in tokens) {
+      (out[t] ??= <String>{}).add(file);
+    }
+  });
+  return out;
+}

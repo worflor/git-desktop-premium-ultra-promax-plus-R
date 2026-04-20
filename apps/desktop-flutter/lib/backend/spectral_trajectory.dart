@@ -230,18 +230,40 @@ class SpectralTrajectory {
 
   /// `[p.rigidity for p in points]` — the spectral-rigidity curve.
   /// Points whose file spectrum is null contribute `NaN`.
-  List<double> rigidityCurve() =>
-      [for (final p in points) p.rigidity];
+  ///
+  /// Returns a typed [Float64List] rather than `List<double>` — the
+  /// backing storage is a contiguous primitive array, so downstream
+  /// curve analyses (derivatives, rolling windows, SIMD-style inner
+  /// loops) read from cache-friendly memory with no boxing overhead
+  /// per element. Typed-array returns also let callers chain curves
+  /// without repeatedly materialising boxed lists between transforms.
+  Float64List rigidityCurve() {
+    final out = Float64List(points.length);
+    for (var i = 0; i < points.length; i++) {
+      out[i] = points[i].rigidity;
+    }
+    return out;
+  }
 
   /// `[p.spectralGap for p in points]` — the λ₁ curve. Disconnected or
   /// missing spectra contribute `0.0`.
-  List<double> gapCurve() =>
-      [for (final p in points) p.spectralGap];
+  Float64List gapCurve() {
+    final out = Float64List(points.length);
+    for (var i = 0; i < points.length; i++) {
+      out[i] = points[i].spectralGap;
+    }
+    return out;
+  }
 
   /// `[p.vonNeumannEntropy for p in points]` — the spectral-diversity
   /// curve. Missing spectra contribute `0.0`.
-  List<double> vonNeumannCurve() =>
-      [for (final p in points) p.vonNeumannEntropy];
+  Float64List vonNeumannCurve() {
+    final out = Float64List(points.length);
+    for (var i = 0; i < points.length; i++) {
+      out[i] = points[i].vonNeumannEntropy;
+    }
+    return out;
+  }
 
   /// Per-point universality reading — what archetype the repo most
   /// resembled at each revision. Basis-only (no coupling graph
@@ -798,23 +820,28 @@ class SpectralTrajectory {
   // below turns trajectories into variational objects.
 
   /// Forward finite difference `x[i+1] − x[i]`, one entry shorter
-  /// than [curve]. NaN entries propagate as NaN.
-  static List<double> derivativeOfCurve(List<double> curve) {
-    if (curve.length < 2) return const <double>[];
-    return [
-      for (var i = 0; i < curve.length - 1; i++) curve[i + 1] - curve[i]
-    ];
+  /// than [curve]. NaN entries propagate as NaN. Accepts any `List<double>`
+  /// but allocates a [Float64List] so downstream chained transforms
+  /// stay on the typed-array path.
+  static Float64List derivativeOfCurve(List<double> curve) {
+    if (curve.length < 2) return Float64List(0);
+    final out = Float64List(curve.length - 1);
+    for (var i = 0; i < curve.length - 1; i++) {
+      out[i] = curve[i + 1] - curve[i];
+    }
+    return out;
   }
 
   /// Second forward difference `x[i+1] − 2·x[i] + x[i−1]`. Length is
   /// `curve.length − 2`; indexed from 1 in the original curve's
   /// frame, so `result[i]` corresponds to `curve[i + 1]`.
-  static List<double> secondDerivativeOfCurve(List<double> curve) {
-    if (curve.length < 3) return const <double>[];
-    return [
-      for (var i = 1; i < curve.length - 1; i++)
-        curve[i + 1] - 2 * curve[i] + curve[i - 1]
-    ];
+  static Float64List secondDerivativeOfCurve(List<double> curve) {
+    if (curve.length < 3) return Float64List(0);
+    final out = Float64List(curve.length - 2);
+    for (var i = 1; i < curve.length - 1; i++) {
+      out[i - 1] = curve[i + 1] - 2 * curve[i] + curve[i - 1];
+    }
+    return out;
   }
 
   /// Riemann-like sum `Σ_{k=a}^{b-1} curve[k]`. Defaults span the

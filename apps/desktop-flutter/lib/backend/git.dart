@@ -128,45 +128,113 @@ Future<GitResult<List<String>>> listRecentRepositories() async {
 }
 
 Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
+  // Single `status --porcelain=v2 --branch` replaces the previous 4
+  // serial calls (rev-parse HEAD, status v1, rev-parse @{u}, rev-list
+  // --left-right --count). Porcelain v2 emits the branch name,
+  // upstream name, and ahead/behind counts as header lines alongside
+  // the file status entries — saves 3 subprocess spawns (~150-450ms)
+  // on every refresh.
+  //
+  // Header format (one per line, leading `#`):
+  //   # branch.oid <hash>             — HEAD sha or `(initial)`
+  //   # branch.head <branch>          — branch name or `(detached)`
+  //   # branch.upstream <upstream>    — only if upstream configured
+  //   # branch.ab +<ahead> -<behind>  — only if upstream configured
+  //
+  // File entry format (leading digit / char):
+  //   1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>       — tracked
+  //   2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>\t<orig>
+  //   u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+  //   ? <path>                                           — untracked
+  //   ! <path>                                           — ignored
   try {
-    final branch = await _git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
-    if (branch.exitCode != 0) {
-      return GitResult.err(branch.stderr.toString().trim());
-    }
-    final branchName = branch.stdout.toString().trim();
-
-    final status = await _git(repo, ['status', '--porcelain=v1', '-u']);
+    final status =
+        await _git(repo, ['status', '--porcelain=v2', '--branch', '-u']);
     if (status.exitCode != 0) {
       return GitResult.err(status.stderr.toString().trim());
     }
 
+    String branchName = '';
+    String? upstreamName;
+    int ahead = 0;
+    int behind = 0;
     final files = <RepositoryStatusFile>[];
-    for (final line in status.stdout.toString().split('\n')) {
-      if (line.length < 3) continue;
-      final staged = line[0];
-      final unstaged = line[1];
-      final path = line.substring(3).trim();
-      if (path.isEmpty) continue;
-      files.add(RepositoryStatusFile(
+
+    for (final rawLine in status.stdout.toString().split('\n')) {
+      if (rawLine.isEmpty) continue;
+      final first = rawLine.codeUnitAt(0);
+      if (first == 0x23) {
+        // '#' — header line. Match by key prefix.
+        if (rawLine.startsWith('# branch.head ')) {
+          final v = rawLine.substring(14).trim();
+          if (v != '(detached)') branchName = v;
+        } else if (rawLine.startsWith('# branch.upstream ')) {
+          upstreamName = rawLine.substring(18).trim();
+        } else if (rawLine.startsWith('# branch.ab ')) {
+          // Format: `+<ahead> -<behind>`
+          final parts = rawLine.substring(12).trim().split(' ');
+          if (parts.length == 2) {
+            ahead = int.tryParse(parts[0].replaceFirst('+', '')) ?? 0;
+            behind = int.tryParse(parts[1].replaceFirst('-', '')) ?? 0;
+          }
+        }
+        continue;
+      }
+      if (first == 0x31 /* '1' */ || first == 0x32 /* '2' */) {
+        // Tracked / renamed: `<type> <XY> <sub> <mH> <mI> <mW> <hH> <hI> [<rename>] <path>`
+        // The XY field is at a known position (chars 2-3). For `2`
+        // entries there's an additional `<X><score>` field before the
+        // path, and the path itself is followed by `\t<origPath>`.
+        // We only need the XY and the final path.
+        if (rawLine.length < 4) continue;
+        final staged = rawLine[2];
+        final unstaged = rawLine[3];
+        // Path is whatever follows the 8th (tracked) or 9th (rename)
+        // space-separated field. Splitting once per space is simpler
+        // than counting fields — skip through the fixed-width metadata.
+        final pathStart = first == 0x31
+            ? _nthSpace(rawLine, 8) + 1
+            : _nthSpace(rawLine, 9) + 1;
+        if (pathStart <= 0 || pathStart >= rawLine.length) continue;
+        var path = rawLine.substring(pathStart);
+        // Rename records append `\t<origPath>` — we only want the new
+        // path for RepositoryStatusFile.
+        final tab = path.indexOf('\t');
+        if (tab >= 0) path = path.substring(0, tab);
+        if (path.isEmpty) continue;
+        files.add(RepositoryStatusFile(
           path: path,
           staged: canonicalGitStatusCode(staged, stagedSlot: true),
-          unstaged: canonicalGitStatusCode(unstaged, stagedSlot: false)));
-    }
-
-    int ahead = 0, behind = 0;
-    final upstream = await _git(
-        repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
-    String? upstreamName;
-    if (upstream.exitCode == 0) {
-      upstreamName = upstream.stdout.toString().trim();
-      final ab = await _git(repo,
-          ['rev-list', '--left-right', '--count', '$upstreamName...HEAD']);
-      if (ab.exitCode == 0) {
-        final parts = ab.stdout.toString().trim().split('\t');
-        if (parts.length == 2) {
-          behind = int.tryParse(parts[0]) ?? 0;
-          ahead = int.tryParse(parts[1]) ?? 0;
-        }
+          unstaged: canonicalGitStatusCode(unstaged, stagedSlot: false),
+        ));
+        continue;
+      }
+      if (first == 0x75 /* 'u' */) {
+        // Unmerged: path starts after the 10th field.
+        if (rawLine.length < 4) continue;
+        final staged = rawLine[2];
+        final unstaged = rawLine[3];
+        final pathStart = _nthSpace(rawLine, 10) + 1;
+        if (pathStart <= 0 || pathStart >= rawLine.length) continue;
+        final path = rawLine.substring(pathStart);
+        if (path.isEmpty) continue;
+        files.add(RepositoryStatusFile(
+          path: path,
+          staged: canonicalGitStatusCode(staged, stagedSlot: true),
+          unstaged: canonicalGitStatusCode(unstaged, stagedSlot: false),
+        ));
+        continue;
+      }
+      if (first == 0x3f /* '?' */ || first == 0x21 /* '!' */) {
+        // Untracked / ignored: `? <path>` or `! <path>`.
+        final path = rawLine.substring(2);
+        if (path.isEmpty) continue;
+        files.add(RepositoryStatusFile(
+          path: path,
+          staged: canonicalGitStatusCode('', stagedSlot: true),
+          unstaged:
+              canonicalGitStatusCode(first == 0x3f ? '?' : '!', stagedSlot: false),
+        ));
       }
     }
 
@@ -179,6 +247,21 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
   } catch (error) {
     return GitResult.err(error.toString());
   }
+}
+
+/// Return the byte-index of the [n]th space in [s], or -1 when there
+/// are fewer than [n] spaces. Used to locate the path field in
+/// porcelain-v2 entries without allocating a full `split(' ')` list
+/// per status line.
+int _nthSpace(String s, int n) {
+  var count = 0;
+  for (var i = 0; i < s.length; i++) {
+    if (s.codeUnitAt(i) == 0x20) {
+      count++;
+      if (count == n) return i;
+    }
+  }
+  return -1;
 }
 
 /// Format string used by both listCommitHistory and listFileHistory.
@@ -269,56 +352,56 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
   if (commits.isEmpty) return GitResult.ok({});
 
   final meta = {for (final c in commits) c.commitHash: c};
-  final baseArgs = ['log', '--format=>>>%H', '-n', '$limit'];
-  if (branch != null) baseArgs.add(branch);
-
-  final results = await Future.wait([
-    _git(repo, [...baseArgs, '--numstat']),
-    _git(repo, [...baseArgs, '--name-status']),
-  ]);
-
-  if (results[0].exitCode != 0) {
-    return GitResult.err(results[0].stderr.toString().trim());
+  final args = ['log', '--format=>>>%H', '-n', '$limit'];
+  if (branch != null) args.add(branch);
+  // Single `git log --numstat --name-status` replaces the old two
+  // parallel invocations. Git emits both blocks per commit (name-status
+  // first, numstat second), distinguishable by line shape:
+  //   numstat    : starts with a digit or `-` (binary)  e.g. `42\t7\tpath`
+  //   name-status: starts with a letter                  e.g. `M\tpath`
+  // Parsing by first-char discriminates the two streams without needing
+  // a separator pass — one log walk replaces two.
+  args.add('--numstat');
+  args.add('--name-status');
+  final r = await _git(repo, args);
+  if (r.exitCode != 0) {
+    return GitResult.err(r.stderr.toString().trim());
   }
 
-  // Parse numstat output: sentinel line ">>>hash" then tab-separated file rows
   final numstatByHash = <String, List<_BulkFileStat>>{};
+  final changeTypesByHash = <String, Map<String, String>>{};
   String? cur;
-  for (final line in results[0].stdout.toString().split('\n')) {
+  for (final line in r.stdout.toString().split('\n')) {
     if (line.startsWith('>>>')) {
       cur = line.substring(3).trim();
       numstatByHash[cur] = [];
-    } else if (cur != null) {
-      final parts = line.trim().split('\t');
+      changeTypesByHash[cur] = {};
+      continue;
+    }
+    if (cur == null) continue;
+    if (line.isEmpty) continue;
+    final first = line.codeUnitAt(0);
+    final isDigit = first >= 0x30 && first <= 0x39;
+    final isDash = first == 0x2d; // '-' — binary file in numstat
+    if (isDigit || isDash) {
+      // Numstat row: <adds>\t<dels>\t<path>  (or -\t-\t<path>)
+      final parts = line.split('\t');
       if (parts.length >= 3) {
         final adds = int.tryParse(parts[0]) ?? 0;
         final dels = int.tryParse(parts[1]) ?? 0;
         final path = parts[2].trim();
-        if (path.isNotEmpty)
+        if (path.isNotEmpty) {
           numstatByHash[cur]!.add(_BulkFileStat(path, adds, dels));
+        }
       }
-    }
-  }
-
-  // Parse name-status output: sentinel line ">>>hash" then "X\tpath" rows
-  final changeTypesByHash = <String, Map<String, String>>{};
-  cur = null;
-  if (results[1].exitCode == 0) {
-    for (final line in results[1].stdout.toString().split('\n')) {
-      if (line.startsWith('>>>')) {
-        cur = line.substring(3).trim();
-        changeTypesByHash[cur] = {};
-      } else if (cur != null) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-        final tabIdx = trimmed.indexOf('\t');
-        if (tabIdx < 0) continue;
-        final type = trimmed.substring(0, 1);
-        final rest = trimmed.substring(tabIdx + 1);
-        // Renames: "old\tnew" — use new path
-        final path = rest.contains('\t') ? rest.split('\t').last : rest;
-        changeTypesByHash[cur]![path.trim()] = type;
-      }
+    } else if (first >= 0x41 && first <= 0x5a) {
+      // Name-status row: <letter><score?>\t<path>  (rename: <letter>\t<old>\t<new>)
+      final tabIdx = line.indexOf('\t');
+      if (tabIdx < 0) continue;
+      final type = line.substring(0, 1);
+      final rest = line.substring(tabIdx + 1);
+      final path = rest.contains('\t') ? rest.split('\t').last : rest;
+      changeTypesByHash[cur]![path.trim()] = type;
     }
   }
 
@@ -751,6 +834,58 @@ Future<GitResult<String>> getFileDiff(String repo, String path,
 /// each is rendered as a synthetic `/dev/null → b/<path>` block. The
 /// same helper [getSelectionDiff] uses on the changes page; format is
 /// what `git apply` consumes for new-file creation.
+/// Count commits the worktree's HEAD is ahead and behind [targetRef].
+/// Returns `(ahead, behind)` — for "is the desk behind main?" the
+/// caller reads `behind > 0 && ahead == 0` as "fast-forwardable."
+/// Runs `git rev-list --left-right --count targetRef...HEAD` in the
+/// desk's worktree. Returns err on detached HEAD with no resolvable
+/// target, empty output, or unrelated histories.
+Future<GitResult<({int ahead, int behind})>> getDeskAheadBehind(
+  String deskPath,
+  String targetRef,
+) async {
+  final res = await _git(
+    deskPath,
+    ['rev-list', '--left-right', '--count', '$targetRef...HEAD'],
+  );
+  if (res.exitCode != 0) {
+    return GitResult.err(res.stderr.toString().trim().isEmpty
+        ? 'Could not compare with $targetRef.'
+        : res.stderr.toString().trim());
+  }
+  final parts = res.stdout.toString().trim().split(RegExp(r'\s+'));
+  if (parts.length < 2) {
+    return GitResult.err('Unexpected rev-list output: "${res.stdout}"');
+  }
+  // left (targetRef-only) is "behind"; right (HEAD-only) is "ahead".
+  final behind = int.tryParse(parts[0]) ?? 0;
+  final ahead = int.tryParse(parts[1]) ?? 0;
+  return GitResult.ok((ahead: ahead, behind: behind));
+}
+
+/// Fast-forward the desk's checked-out branch to [targetRef]. Fails
+/// (ok=false, no side effects) if the fast-forward isn't possible —
+/// i.e. the desk has diverged or has uncommitted changes that block
+/// the merge. Callers should fall back to a patch / rebase flow in
+/// that case. Succeeds when the desk is a strict ancestor of the
+/// target and the worktree is clean: git moves HEAD + updates the
+/// working tree in one atomic step.
+Future<GitResult<void>> fastForwardDeskTo(
+  String deskPath,
+  String targetRef,
+) async {
+  final res = await _git(
+    deskPath,
+    ['merge', '--ff-only', targetRef],
+  );
+  if (res.exitCode != 0) {
+    return GitResult.err(res.stderr.toString().trim().isEmpty
+        ? 'Fast-forward from $targetRef failed.'
+        : res.stderr.toString().trim());
+  }
+  return const GitResult.ok(null);
+}
+
 Future<GitResult<String>> getDeskDumpDiff(
   String deskPath,
   String targetRef, {

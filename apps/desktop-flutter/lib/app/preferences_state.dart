@@ -38,6 +38,7 @@ class PreferencesState extends ChangeNotifier {
   bool _autoSelectNewChanges = false;
   bool _fetchOnlineIssuesOnBranchLoad = true;
   bool _rememberWorkInProgress = true;
+  bool _hideAiFeatures = false;
   int _undoWindowSeconds = 6;
   Map<String, int> _undoWindowOverrides = const {};
   FileSortGuide _fileSortGuide = FileSortGuide.relatedProximity;
@@ -75,6 +76,7 @@ class PreferencesState extends ChangeNotifier {
   bool get autoSelectNewChanges => _autoSelectNewChanges;
   bool get fetchOnlineIssuesOnBranchLoad => _fetchOnlineIssuesOnBranchLoad;
   bool get rememberWorkInProgress => _rememberWorkInProgress;
+  bool get hideAiFeatures => _hideAiFeatures;
   int get undoWindowSeconds => _undoWindowSeconds;
   Map<String, int> get undoWindowOverrides =>
       Map<String, int>.unmodifiable(_undoWindowOverrides);
@@ -111,6 +113,7 @@ class PreferencesState extends ChangeNotifier {
     _autoSelectNewChanges = settings.autoSelectNewChanges;
     _fetchOnlineIssuesOnBranchLoad = settings.fetchOnlineIssuesOnBranchLoad;
     _rememberWorkInProgress = settings.rememberWorkInProgress;
+    _hideAiFeatures = settings.hideAiFeatures;
     _undoWindowSeconds = settings.undoWindowSeconds.clamp(0, 3600);
     _undoWindowOverrides = Map<String, int>.from(settings.undoWindowOverrides);
     _fileSortGuide = _sortGuideFromString(settings.fileSortGuide);
@@ -141,6 +144,7 @@ class PreferencesState extends ChangeNotifier {
     bool? autoSelectNewChanges,
     bool? fetchOnlineIssuesOnBranchLoad,
     bool? rememberWorkInProgress,
+    bool? hideAiFeatures,
     int? undoWindowSeconds,
     Map<String, int>? undoWindowOverrides,
     String? fileSortGuide,
@@ -167,6 +171,7 @@ class PreferencesState extends ChangeNotifier {
         autoSelectNewChanges: autoSelectNewChanges,
         fetchOnlineIssuesOnBranchLoad: fetchOnlineIssuesOnBranchLoad,
         rememberWorkInProgress: rememberWorkInProgress,
+        hideAiFeatures: hideAiFeatures,
         undoWindowSeconds: undoWindowSeconds,
         undoWindowOverrides: undoWindowOverrides,
         fileSortGuide: fileSortGuide,
@@ -262,6 +267,13 @@ class PreferencesState extends ChangeNotifier {
     if (_rememberWorkInProgress == value) return;
     _rememberWorkInProgress = value;
     await _persistWith(rememberWorkInProgress: value);
+    notifyListeners();
+  }
+
+  Future<void> setHideAiFeatures(bool value) async {
+    if (_hideAiFeatures == value) return;
+    _hideAiFeatures = value;
+    await _persistWith(hideAiFeatures: value);
     notifyListeners();
   }
 

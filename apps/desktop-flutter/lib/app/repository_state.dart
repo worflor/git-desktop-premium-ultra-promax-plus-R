@@ -22,11 +22,21 @@ class RepositoryState extends ChangeNotifier {
   /// still surfacing a spinner on legitimately slow probes.
   static const Duration _loadingPublishDelay = Duration(milliseconds: 120);
 
+  /// Monotonically increasing counter bumped whenever the user takes
+  /// an explicit "show me what's new" action — a refresh button tap,
+  /// a pull, etc. Implicit internal refreshes (post-staging reloads,
+  /// automatic reconciliation) do NOT bump it, so consumers that want
+  /// to draw a before/after boundary on deliberate user attention
+  /// events (e.g. dimming files that have persisted unchanged across
+  /// an explicit refresh) have a clean signal to key on.
+  int _userRefreshEpoch = 0;
+
   String? get activePath => _activePath;
   RepositoryStatus? get status => _status;
   bool get statusLoading => _statusLoading;
   String? get statusError => _statusError;
   List<String> get recentPaths => _recentPaths;
+  int get userRefreshEpoch => _userRefreshEpoch;
 
   String? get activeRepoName {
     final p = _activePath;
@@ -103,6 +113,23 @@ class RepositoryState extends ChangeNotifier {
     } catch (error) {
       return error.toString();
     }
+  }
+
+  /// Bump [userRefreshEpoch] then run [refreshStatus]. Call this from
+  /// user-facing refresh affordances (repo title refresh icon, manual
+  /// refresh shortcuts, post-pull flows) so listeners that distinguish
+  /// explicit-attention events from background reconciliations see a
+  /// single authoritative tick. Internal callers that are merely
+  /// reconciling after their own side-effect (e.g. post-staging)
+  /// should continue to call [refreshStatus] directly — their work
+  /// isn't a "show me what's new" signal from the user.
+  Future<void> userRefresh() {
+    _userRefreshEpoch++;
+    // Notify listeners synchronously so UI subscribers can observe the
+    // epoch change before the async status probe lands. That ordering
+    // matters for consumers that snapshot state on epoch change.
+    notifyListeners();
+    return refreshStatus();
   }
 
   Future<void> refreshStatus() async {

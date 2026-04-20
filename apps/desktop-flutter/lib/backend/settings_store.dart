@@ -46,6 +46,11 @@ class AppSettingsSnapshot {
   /// sessions. Off = both get wiped on save and load — clean slate
   /// each time. Default on to preserve existing behavior.
   final bool rememberWorkInProgress;
+  /// Master AI kill-switch. When true, every LLM-backed feature is
+  /// hidden + disabled (review, muse, generate-message, ask/shape,
+  /// AI patch-resolve, AI settings subtree). Logos stays — it's
+  /// spectral math, not a model. Default false.
+  final bool hideAiFeatures;
   /// Default undo-window seconds — applies to any action kind that
   /// doesn't have an override in [undoWindowOverrides]. 0 = off (no
   /// pill, action is immediately final). Canonical UI stops are
@@ -109,6 +114,7 @@ class AppSettingsSnapshot {
     required this.autoSelectNewChanges,
     required this.fetchOnlineIssuesOnBranchLoad,
     required this.rememberWorkInProgress,
+    required this.hideAiFeatures,
     required this.undoWindowSeconds,
     required this.undoWindowOverrides,
     required this.fileSortGuide,
@@ -146,6 +152,7 @@ class AppSettingsSnapshot {
         'autoSelectNewChanges': autoSelectNewChanges,
         'fetchOnlineIssuesOnBranchLoad': fetchOnlineIssuesOnBranchLoad,
         'rememberWorkInProgress': rememberWorkInProgress,
+        'hideAiFeatures': hideAiFeatures,
         'undoWindowSeconds': undoWindowSeconds,
         'undoWindowOverrides': undoWindowOverrides,
         'fileSortGuide': fileSortGuide,
@@ -183,6 +190,7 @@ class AppSettingsSnapshot {
         autoSelectNewChanges: false,
         fetchOnlineIssuesOnBranchLoad: true,
         rememberWorkInProgress: true,
+        hideAiFeatures: false,
         undoWindowSeconds: 6,
         undoWindowOverrides: const {},
         fileSortGuide: 'related',
@@ -289,6 +297,10 @@ class AppSettingsSnapshot {
         json['rememberWorkInProgress'],
         defaults.rememberWorkInProgress,
       ),
+      hideAiFeatures: SettingsStore._boolOr(
+        json['hideAiFeatures'],
+        defaults.hideAiFeatures,
+      ),
       undoWindowSeconds: SettingsStore._intOr(
         json['undoWindowSeconds'],
         defaults.undoWindowSeconds,
@@ -371,6 +383,7 @@ class AppSettingsSnapshot {
     bool? autoSelectNewChanges,
     bool? fetchOnlineIssuesOnBranchLoad,
     bool? rememberWorkInProgress,
+    bool? hideAiFeatures,
     int? undoWindowSeconds,
     Map<String, int>? undoWindowOverrides,
     String? fileSortGuide,
@@ -416,6 +429,7 @@ class AppSettingsSnapshot {
           this.fetchOnlineIssuesOnBranchLoad,
       rememberWorkInProgress:
           rememberWorkInProgress ?? this.rememberWorkInProgress,
+      hideAiFeatures: hideAiFeatures ?? this.hideAiFeatures,
       undoWindowSeconds:
           undoWindowSeconds ?? this.undoWindowSeconds,
       undoWindowOverrides:

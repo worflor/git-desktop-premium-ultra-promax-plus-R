@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import '../../backend/logos_vis_events.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import 'topology_shaders.dart';
 
 /// The review-loading visualisation. Replaces the old text block.
 class LogosDiffusionCanvas extends StatefulWidget {
@@ -51,6 +52,13 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   int _nodeCount = 0;
   bool _cached = false;
   Map<String, double> _sourceWeights = const {};
+  // Pre-materialised entry list rebuilt whenever [_sourceWeights] is
+  // assigned. The source-starburst painter runs every ticker frame
+  // (~60fps during ignition + reseed animations) and previously
+  // allocated a fresh `List<MapEntry>` per paint call — significant
+  // churn on the render hot path. Holding the list on the state
+  // side costs one allocation per event instead of one per frame.
+  List<MapEntry<String, double>> _sourceWeightsList = const [];
   int _churn = 0;
   int _reseedIdeaCount = 0;
   int _reseedSemanticHits = 0;
@@ -107,6 +115,16 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   void initState() {
     super.initState();
     _clock = Stopwatch()..start();
+    // Kick off topology shader compilation in parallel with the first
+    // few frames. The starfield painter falls back to a CPU path
+    // until the FragmentProgram resolves; once it does, subsequent
+    // paints pick the shader up transparently. Schedule a repaint
+    // when the future completes — without it, a canvas that's idle
+    // (no live motion) when compile finishes stays stuck on the CPU
+    // fallback indefinitely.
+    TopologyShaders.whenStarfieldReady().then((_) {
+      if (mounted) setState(() {});
+    });
     // Starfield fades in immediately so the canvas is never empty
     // while waiting for the resolver event.
     _birth[_Element.starfield] = 0.0;
@@ -138,7 +156,18 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
         _stepTipPhysics(dt);
         _stepSpokePhysics(dt);
         _stepRopeFromLayout(dt);
-        if (mounted) setState(() {});
+        // Skip the rebuild when nothing is moving and no birth
+        // animation is still growing. The ticker keeps running (it's
+        // driven by MotionLoopSync) but we don't churn the widget
+        // tree at 60fps while the canvas is visually static.
+        //
+        // Post-settle motion on this canvas is rare: after the
+        // initial ignition finishes, there is often no further
+        // movement for long stretches. Previously that downtime cost
+        // a full subtree rebuild every 16ms for nothing.
+        if (mounted && _hasLiveMotion(now)) {
+          setState(() {});
+        }
       });
     _sub = LogosVisBus.instance.stream.listen(_onEvent);
   }
@@ -156,6 +185,7 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     if (_sessionId == null || event.sessionId > _sessionId!) {
       _sessionId = event.sessionId;
       _sourceWeights = const {};
+      _sourceWeightsList = const [];
       _phi = const {};
       _wellByPath = const {};
       _phiSortedDesc = const [];
@@ -188,6 +218,7 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       wantSetState = true;
     } else if (event is LogosVisDiffSources) {
       _sourceWeights = event.weights;
+      _sourceWeightsList = event.weights.entries.toList(growable: false);
       _churn = event.churn;
       if (_birth[_Element.sourceIgnition]! < 0) {
         _birth[_Element.sourceIgnition] = now;
@@ -204,6 +235,7 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       // wider field, and kick off a second wavefront that rides on
       // top of the first.
       _sourceWeights = event.weights;
+      _sourceWeightsList = event.weights.entries.toList(growable: false);
       _reseedIdeaCount = event.brainstormIdeas;
       _reseedSemanticHits = event.semanticHits;
       _reseedWellExpansion = event.wellExpansionFiles;
@@ -286,6 +318,47 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   // diffuse distributions feel loose.
   static const double _tipDampingPerSec = 21.4;
   double get _tipSpring => 500.0 + 500.0 * _attentionConcentration;
+
+  /// True when something is still visually moving: a drag is active,
+  /// the tip/spoke springs haven't settled, the rope is still
+  /// relaxing, or a birth animation is still within its growth
+  /// window. A conservative `true` is safe — we just paint a frame
+  /// nobody would notice. A false negative (returning `false` while
+  /// something IS moving) would stall visible motion, so the bounds
+  /// below are intentionally generous.
+  static const double _birthGrowWindowMs = 2400.0;
+  bool _hasLiveMotion(double nowMs) {
+    if (_tipDragging) return true;
+    if (_tipDragOffset.distance > 0.1 || _tipVelocity.distance > 1.0) {
+      return true;
+    }
+    if (_spokeDrag.isNotEmpty) return true;
+    for (final v in _spokeVel.values) {
+      if (v.distance > 1.0) return true;
+    }
+    // Rope uses verlet integration — "velocity" is the delta between
+    // current and previous positions. If any segment has moved more
+    // than a pixel between ticks, consider it alive.
+    final ropePos = _ropePos;
+    final ropePrev = _ropePrev;
+    if (ropePos != null && ropePrev != null) {
+      final n = math.min(ropePos.length, ropePrev.length);
+      for (var i = 0; i < n; i++) {
+        if ((ropePos[i] - ropePrev[i]).distanceSquared > 1.0) return true;
+      }
+    }
+    // Any element still inside its growth window needs frames so the
+    // entrance animation plays. Birth stamps are either negative
+    // (not yet triggered — no motion to draw) or a positive birth
+    // time; we only care about the latter and only while the element
+    // is still "young".
+    for (final entry in _birth.entries) {
+      final birth = entry.value;
+      if (birth < 0) continue;
+      if (nowMs - birth < _birthGrowWindowMs) return true;
+    }
+    return false;
+  }
 
   void _stepTipPhysics(double dt) {
     if (_tipDragging) return;
@@ -532,17 +605,11 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     _activeSpokeDrag = null;
   }
 
-  /// FNV-1a mirror of the painter's per-path hash (same output as
-  /// `_TopoPainter._unitHash` — duplicated here because the Listener
-  /// runs outside the paint phase).
-  double _unitHashLocal(String s) {
-    var h = 0x811c9dc5;
-    for (var i = 0; i < s.length; i++) {
-      h ^= s.codeUnitAt(i);
-      h = (h * 0x01000193) & 0xffffffff;
-    }
-    return h / 0xffffffff;
-  }
+  /// FNV-1a mirror of the painter's per-path hash — same output as
+  /// `_TopoPainter._unitHash`. Routed through the module-level
+  /// memoisation so state-side and paint-side lookups share the
+  /// same cache.
+  double _unitHashLocal(String s) => _unitHashShared(s);
 
   /// Compute the rest-position tip of a source spoke for [path].
   /// Mirrors the painter's math exactly so hit-testing lines up with
@@ -672,6 +739,7 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
                   nodeCount: _nodeCount,
                   cached: _cached,
                   sourceWeights: _sourceWeights,
+                  sourceWeightsList: _sourceWeightsList,
                   churn: _churn,
                   phi: _phi,
                   phiSortedDesc: _phiSortedDesc,
@@ -803,6 +871,10 @@ class _LogosDiffusionPainter extends CustomPainter {
   final int nodeCount;
   final bool cached;
   final Map<String, double> sourceWeights;
+  /// Pre-materialised `sourceWeights.entries.toList()` — shared with
+  /// the state so the painter doesn't allocate a fresh list on every
+  /// 16ms paint call.
+  final List<MapEntry<String, double>> sourceWeightsList;
   final int churn;
   final Map<String, double> phi;
   final List<MapEntry<String, double>> phiSortedDesc;
@@ -832,6 +904,7 @@ class _LogosDiffusionPainter extends CustomPainter {
     required this.nodeCount,
     required this.cached,
     required this.sourceWeights,
+    required this.sourceWeightsList,
     required this.churn,
     required this.phi,
     required this.phiSortedDesc,
@@ -884,6 +957,7 @@ class _LogosDiffusionPainter extends CustomPainter {
     final radius = math.min(rect.width, rect.height) * 0.36;
     final p = _TopoPainter(
       canvas: canvas,
+      rect: rect,
       center: center,
       maxRadius: radius,
       tokens: tokens,
@@ -893,6 +967,7 @@ class _LogosDiffusionPainter extends CustomPainter {
       nodeCount: nodeCount,
       cached: cached,
       sourceWeights: sourceWeights,
+      sourceWeightsList: sourceWeightsList,
       churn: churn,
       phi: phi,
       phiSortedDesc: phiSortedDesc,
@@ -938,6 +1013,10 @@ class _LogosDiffusionPainter extends CustomPainter {
 /// Top-half diffusion diagram.
 class _TopoPainter {
   final Canvas canvas;
+  /// Full panel bounds the topology is painted within. Needed so the
+  /// starfield fragment shader can draw across a proper quad rather
+  /// than inferring one from center + radius.
+  final Rect rect;
   final Offset center;
   final double maxRadius;
   final AppTokens tokens;
@@ -947,6 +1026,9 @@ class _TopoPainter {
   final int nodeCount;
   final bool cached;
   final Map<String, double> sourceWeights;
+  /// Pre-materialised entry list (see [_LogosDiffusionCanvasState]).
+  /// Lets _paintSourceFiles iterate without allocating per frame.
+  final List<MapEntry<String, double>> sourceWeightsList;
   final int churn;
   final Map<String, double> phi;
   /// φ entries, descending. Precomputed — see `_onEvent`.
@@ -965,6 +1047,7 @@ class _TopoPainter {
 
   _TopoPainter({
     required this.canvas,
+    required this.rect,
     required this.center,
     required this.maxRadius,
     required this.tokens,
@@ -974,6 +1057,7 @@ class _TopoPainter {
     required this.nodeCount,
     required this.cached,
     required this.sourceWeights,
+    required this.sourceWeightsList,
     required this.churn,
     required this.phi,
     required this.phiSortedDesc,
@@ -1104,36 +1188,65 @@ class _TopoPainter {
     final denseEnv = envFor(_Element.topologyDense, fadeMs: 900);
     if (baseEnv <= 0) return;
 
-    // Golden-angle spiral — fixed positions, no time-based motion.
-    final baseCount = 48;
+    const baseCount = 48;
+    final extra = nodeCount > 0 && denseEnv > 0
+        ? math.min(nodeCount - baseCount, 110)
+        : 0;
+
+    // GPU path: one drawRect with topology_starfield.frag computes
+    // all ~158 stars in parallel across every pixel of the quad.
+    // Collapses 158 per-frame drawCircle calls into a single draw
+    // and one command-buffer entry — the biggest single paint-cost
+    // reduction on this canvas.
+    final shader = TopologyShaders.starfieldShader(
+      width: rect.width,
+      height: rect.height,
+      centerX: center.dx - rect.left,
+      centerY: center.dy - rect.top,
+      maxRadius: maxRadius,
+      baseCount: baseCount.toDouble(),
+      extraCount: extra > 0 ? extra.toDouble() : 0.0,
+      baseEnv: baseEnv,
+      denseEnv: denseEnv,
+      color: tokens.chromeBorder,
+    );
+    if (shader != null) {
+      canvas.save();
+      canvas.translate(rect.left, rect.top);
+      canvas.drawRect(
+        Rect.fromLTWH(0, 0, rect.width, rect.height),
+        Paint()..shader = shader,
+      );
+      canvas.restore();
+      return;
+    }
+
+    // CPU fallback — used only during the first few frames while the
+    // shader's FragmentProgram loads from the asset bundle. Identical
+    // geometry so there's no visual pop when the shader comes online.
     final baseAlpha = 0.24 * baseEnv;
     final basePaint = Paint()
       ..color = tokens.chromeBorder.withValues(alpha: baseAlpha);
     for (var i = 0; i < baseCount; i++) {
       final t = i / baseCount;
       final r = maxRadius * (0.18 + 0.95 * math.sqrt(t));
-      final theta = i * 2.3998; // golden angle, frozen
+      final theta = i * 2.3998;
       final dx = center.dx + r * math.cos(theta);
       final dy = center.dy + r * math.sin(theta);
       final size_ = 0.9 + 0.5 * math.sin(i * 1.7);
       canvas.drawCircle(Offset(dx, dy), size_, basePaint);
     }
-
-    // Cap extra dots at 110; more reads as visual noise.
-    if (denseEnv > 0 && nodeCount > 0) {
-      final extra = math.min(nodeCount - baseCount, 110);
-      if (extra > 0) {
-        final paint = Paint()
-          ..color = tokens.chromeBorder.withValues(alpha: 0.28 * denseEnv);
-        for (var i = 0; i < extra; i++) {
-          final t = (i + baseCount) / (baseCount + extra);
-          final r = maxRadius * (0.22 + 0.92 * math.sqrt(t));
-          final theta = (i + baseCount) * 2.3998;
-          final dx = center.dx + r * math.cos(theta);
-          final dy = center.dy + r * math.sin(theta);
-          final size_ = 0.9 + 0.4 * math.sin(i * 2.1);
-          canvas.drawCircle(Offset(dx, dy), size_, paint);
-        }
+    if (extra > 0) {
+      final paint = Paint()
+        ..color = tokens.chromeBorder.withValues(alpha: 0.28 * denseEnv);
+      for (var i = 0; i < extra; i++) {
+        final t = (i + baseCount) / (baseCount + extra);
+        final r = maxRadius * (0.22 + 0.92 * math.sqrt(t));
+        final theta = (i + baseCount) * 2.3998;
+        final dx = center.dx + r * math.cos(theta);
+        final dy = center.dy + r * math.sin(theta);
+        final size_ = 0.9 + 0.4 * math.sin(i * 2.1);
+        canvas.drawCircle(Offset(dx, dy), size_, paint);
       }
     }
   }
@@ -1170,6 +1283,15 @@ class _TopoPainter {
     // Each node's fade is shifted by its rank so the wave reads
     // strongest-first. The 0.35 tail is each individual fade's width.
     final cascadeWindow = math.max(0.0001, 1.0 - 0.35);
+    // Hoist Paint allocations out of the inner loop. Before this,
+    // every painted node allocated a fresh Paint (and haloed nodes
+    // allocated a second Paint with a MaskFilter), producing up to
+    // ~32 Paint objects per frame on top-φ nodes. Both paints now
+    // live as locals and just get their color / maskFilter mutated
+    // per iteration.
+    final corePaint = Paint();
+    final haloPaint = Paint()
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
     int idx = 0;
     for (final e in sorted) {
       final phiNorm = (e.value / maxPhi).clamp(0.0, 1.0);
@@ -1208,16 +1330,13 @@ class _TopoPainter {
 
       final baseColour = well != null ? _wellColour(well) : tokens.accentBright;
       final alpha = (0.30 + 0.60 * phiNorm) * localIntensity;
-      final paint = Paint()
-        ..color = baseColour.withValues(alpha: alpha.clamp(0.0, 1.0));
+      corePaint.color = baseColour.withValues(alpha: alpha.clamp(0.0, 1.0));
       final radius = (1.4 + 2.4 * phiNorm) * (0.7 + 0.3 * localIntensity);
       if (phiNorm > 0.6) {
-        final halo = Paint()
-          ..color = baseColour.withValues(alpha: 0.18 * localIntensity)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
-        canvas.drawCircle(Offset(dx, dy), radius * 2.2, halo);
+        haloPaint.color = baseColour.withValues(alpha: 0.18 * localIntensity);
+        canvas.drawCircle(Offset(dx, dy), radius * 2.2, haloPaint);
       }
-      canvas.drawCircle(Offset(dx, dy), radius, paint);
+      canvas.drawCircle(Offset(dx, dy), radius, corePaint);
       idx++;
     }
   }
@@ -1282,7 +1401,10 @@ class _TopoPainter {
     final env = envFor(_Element.sourceIgnition, fadeMs: 550);
     if (env <= 0 || sourceWeights.isEmpty) return;
 
-    final entries = sourceWeights.entries.toList();
+    // Use the pre-materialised entry list from the state — avoids
+    // a per-frame List<MapEntry> allocation inside the 60fps paint
+    // loop during ignition / reseed animations.
+    final entries = sourceWeightsList;
     final maxWeight = entries.fold<double>(
         0, (a, e) => e.value > a ? e.value : a);
     if (maxWeight <= 0) return;
@@ -1422,25 +1544,15 @@ class _TopoPainter {
     return _unitHash(path) * 2 * math.pi;
   }
 
-  /// FNV-1a of [s] mapped to [0, 1). Same path → same value run to run.
-  double _unitHash(String s) {
-    var h = 0x811c9dc5;
-    for (var i = 0; i < s.length; i++) {
-      h ^= s.codeUnitAt(i);
-      h = (h * 0x01000193) & 0xffffffff;
-    }
-    return h / 0xffffffff;
-  }
+  /// FNV-1a of [s] mapped to [0, 1). Same path → same value run to
+  /// run — so cache at module scope and turn the per-frame per-node
+  /// string walk into a single Map lookup. On a mid-size repo the
+  /// topology painter calls this 16+ times per paint, which was
+  /// previously doing a full FNV-1a loop over every path string
+  /// ~60 times a second during animation.
+  double _unitHash(String s) => _unitHashShared(s);
 
-  Color _wellColour(String wellName) {
-    var h = 0x811c9dc5;
-    for (var i = 0; i < wellName.length; i++) {
-      h ^= wellName.codeUnitAt(i);
-      h = (h * 0x01000193) & 0xffffffff;
-    }
-    final hue = (h % 360).toDouble();
-    return HSLColor.fromAHSL(1.0, hue, 0.32, 0.68).toColor();
-  }
+  Color _wellColour(String wellName) => _wellColourShared(wellName);
 
   static double _smoothstep(double x) {
     final c = x.clamp(0.0, 1.0);
@@ -1575,4 +1687,54 @@ class _FooterPainter {
       }
     }
   }
+}
+
+// ── Shared FNV-1a memoisation ───────────────────────────────────
+//
+// Both the state and the _TopoPainter compute FNV-1a over path /
+// well-name strings, many times per frame during animation. The
+// function is pure — identical input gives identical output run
+// to run — so a module-level map turns the walk into a single
+// lookup after the first call per string.
+//
+// Capped to keep memory bounded on long-running sessions; when the
+// cap is hit the whole map clears and starts over. The hit rate
+// would still be near-perfect for a typical working-set because
+// the paths touched across a single review are tiny compared to
+// the cap.
+const int _hashCacheCap = 4096;
+final Map<String, double> _unitHashCache = <String, double>{};
+final Map<String, Color> _wellColourCache = <String, Color>{};
+
+double _unitHashShared(String s) {
+  final hit = _unitHashCache[s];
+  if (hit != null) return hit;
+  var h = 0x811c9dc5;
+  for (var i = 0; i < s.length; i++) {
+    h ^= s.codeUnitAt(i);
+    h = (h * 0x01000193) & 0xffffffff;
+  }
+  final result = h / 0xffffffff;
+  if (_unitHashCache.length >= _hashCacheCap) {
+    _unitHashCache.clear();
+  }
+  _unitHashCache[s] = result;
+  return result;
+}
+
+Color _wellColourShared(String wellName) {
+  final hit = _wellColourCache[wellName];
+  if (hit != null) return hit;
+  var h = 0x811c9dc5;
+  for (var i = 0; i < wellName.length; i++) {
+    h ^= wellName.codeUnitAt(i);
+    h = (h * 0x01000193) & 0xffffffff;
+  }
+  final hue = (h % 360).toDouble();
+  final result = HSLColor.fromAHSL(1.0, hue, 0.32, 0.68).toColor();
+  if (_wellColourCache.length >= _hashCacheCap) {
+    _wellColourCache.clear();
+  }
+  _wellColourCache[wellName] = result;
+  return result;
 }

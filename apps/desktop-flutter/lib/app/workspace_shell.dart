@@ -8,6 +8,7 @@ import '../backend/dtos.dart';
 import '../backend/git.dart';
 import '../backend/logos_dream.dart';
 import '../backend/logos_free_energy.dart';
+import '../backend/logos_git.dart' show LogosGit;
 import '../backend/logos_spectrogeometry.dart' show UniversalityVector;
 import '../components/icons/app_icons.dart';
 import '../features/branches/branches_page.dart';
@@ -520,17 +521,30 @@ class _Topbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final topbarTone = t.chromeTone;
-    final repo = context.watch<RepositoryState>();
+    // Narrow subscription: only rebuild when activePath or status
+    // change, not on every unrelated RepositoryState mutation. The
+    // topbar reads activeRepoName (derived from path) + status, no
+    // other state. The prior `context.watch` rebuilt this tree on
+    // every status tick across 30-50 widgets for no useful reason.
+    final repoPath = context
+        .select<RepositoryState, String?>((s) => s.activePath);
+    final status = context
+        .select<RepositoryState, RepositoryStatus?>((s) => s.status);
+    final repo = context.read<RepositoryState>();
     final repoName = repo.activeRepoName;
-    final status = repo.status;
     // Free-energy anomaly read — the repo name gets a sheen swoosh
     // whose strength scales with this continuous 0..1 signal. Colour
     // of the title stays whatever it was; only the sheen carries the
     // health indication.
-    final logosState = context.watch<LogosGitState>();
-    final engine = repo.activePath == null
+    //
+    // Select only the engine for the active repo, not the whole
+    // LogosGitState. Other repos' engine updates shouldn't churn the
+    // topbar.
+    final engine = repoPath == null
         ? null
-        : logosState.engineFor(repo.activePath!);
+        : context.select<LogosGitState, LogosGit?>(
+            (s) => s.engineFor(repoPath),
+          );
     final anomaly =
         engine == null ? 0.0 : (repoAnomalyLevel(engine) ?? 0.0);
     // Pull the repo's universality classification for the sheen. The
@@ -567,7 +581,7 @@ class _Topbar extends StatelessWidget {
                     name: repoName ?? 'No repository open',
                     hasRepo: repoName != null,
                     repoPath: repo.activePath,
-                    onRefresh: () => repo.refreshStatus(),
+                    onRefresh: () => repo.userRefresh(),
                     anomaly: anomaly,
                     universality: universality,
                   ),
@@ -1418,6 +1432,13 @@ class _DeskRow extends StatelessWidget {
   }
 
   /// Preview updates from the clicked desk onto the current desk.
+  ///
+  /// Tries the simplest thing first: if the current desk is strictly
+  /// behind [desk] (the source) and has a clean worktree, do a
+  /// fast-forward merge — one git op, no dialog. Only falls back to
+  /// the patch-preview flow when fast-forward isn't possible
+  /// (uncommitted changes, diverged history, or the user's desk has
+  /// its own commits ahead of the source).
   Future<void> _updateCurrentDeskFromDeskFlow(
     BuildContext context,
     WorktreeData desk,
@@ -1429,6 +1450,77 @@ class _DeskRow extends StatelessWidget {
         ? (repoState.status?.branch ?? 'current')
         : _deskDisplayLabel(targetDesk);
     final sourceLabel = _deskDisplayLabel(desk);
+    final targetPath = repoState.activePath;
+    final sourceRef = desk.branch ?? desk.head;
+
+    // Check if a clean fast-forward is the right move. Safety shape:
+    //   • Only attempts anything when the source ref resolves AND the
+    //     target is STRICTLY behind the source (behind > 0, ahead == 0).
+    //   • Only runs on a clean worktree — we don't want to entangle
+    //     uncommitted work with an upstream merge.
+    //   • Uses `git merge --ff-only`, which refuses any non-fast-forward
+    //     (diverged history, staged conflict, uncommitted overwrite, hook
+    //     rejection) and leaves the worktree exactly as it was.
+    //   • Falls back to the existing patch preview on any failure, so the
+    //     user always has a path forward without surprise.
+    //   • Every branch surfaces a user-visible snackbar — the "nothing
+    //     happens" silent-close is gone.
+    if (targetPath != null && sourceRef.isNotEmpty) {
+      final isClean = (repoState.status?.files.isEmpty ?? false);
+      final compare = await getDeskAheadBehind(targetPath, sourceRef);
+      if (!context.mounted) return;
+      if (compare.ok && isClean) {
+        final info = compare.data!;
+        if (info.behind > 0 && info.ahead == 0) {
+          final ff = await fastForwardDeskTo(targetPath, sourceRef);
+          if (!context.mounted) return;
+          if (ff.ok) {
+            final n = info.behind;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Brought $targetLabel up to $sourceLabel '
+                  '($n commit${n == 1 ? '' : 's'}).',
+                ),
+              ),
+            );
+            await repoState.refreshStatus();
+            if (!context.mounted) return;
+            await worktreeState.refreshFor(targetPath);
+            return;
+          }
+          // Fast-forward declined (hook / stale index / unexpected). Show
+          // a brief explanation rather than silently falling through so
+          // the user knows WHY they're about to see the patch dialog.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Fast-forward couldn\'t land cleanly — '
+                'showing a patch preview instead.',
+              ),
+            ),
+          );
+          // Fall through to the patch flow below.
+        } else if (info.behind == 0) {
+          // Nothing to bring forward. Be explicit so "does nothing" has
+          // a voice — the old empty-diff path silently dropped here.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                info.ahead > 0
+                    ? '$targetLabel is ahead of $sourceLabel by '
+                        '${info.ahead} commit${info.ahead == 1 ? '' : 's'}.'
+                    : '$targetLabel is already up to date with $sourceLabel.',
+              ),
+            ),
+          );
+          return;
+        }
+        // Diverged (behind > 0 && ahead > 0) → fall through to patch
+        // preview so the user can see exactly what'd land before it does.
+      }
+    }
+
     await _openDeskPatchPreviewFlow(
       context,
       sourceDesk: desk,

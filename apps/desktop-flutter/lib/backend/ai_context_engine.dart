@@ -59,6 +59,9 @@ class LogosDiffusionResult {
     required this.resolvedT,
     this.attribution,
     this.evidence,
+    this.recurrentIterations = 1,
+    this.recurrentConverged = true,
+    this.discoveryDepth = const {},
   });
   final LogosGit engine;
   final DiffProbe probe;
@@ -71,6 +74,25 @@ class LogosDiffusionResult {
   /// [AxisAttribution.combined].
   final AxisAttribution? attribution;
   final LogosEvidenceQueryResult? evidence;
+
+  /// How many recurrent-diffusion passes ran to produce [evidence].
+  /// 1 means the distribution was self-consistent on the first shot;
+  /// higher values mean the engine re-lit under-explored zones and
+  /// kept diffusing. Exposed so the UI / prompt can show exploration
+  /// depth and so the producers can annotate which ranked paths were
+  /// discovered beyond the initial probe.
+  final int recurrentIterations;
+
+  /// True when iteration stopped because novelty fell below threshold
+  /// (distribution stable), false when it hit the iteration cap.
+  final bool recurrentConverged;
+
+  /// Path → iteration at which that path was first promoted into the
+  /// focus set. Original probe paths are at depth 0. Paths discovered
+  /// in iteration k (1-indexed) are at depth k. Missing key = path was
+  /// never part of the focus set (only found via diffusion from
+  /// focus, never promoted).
+  final Map<String, int> discoveryDepth;
 }
 
 /// Shared state every producer sees. Carries the seed inputs (repo +

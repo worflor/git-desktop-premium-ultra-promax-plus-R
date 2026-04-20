@@ -266,6 +266,21 @@ class _DiffShellState extends State<DiffShell> {
   DiffDocument? _currentDocument;
   List<ParsedLine> _displayLines = const [];
 
+  // Adaptive hunk compaction — low-φ hunks render as their header row
+  // only, collapsing the body. Same LOD mechanic we use for the LLM
+  // prompt, lifted into the user-facing diff viewer so a 600-hunk
+  // diff doesn't flood the scroll with low-salience lines.
+  //
+  // Stored as indices into [_hunks] so we don't tether to header
+  // identity (which changes across rebuilds). Empty = nothing
+  // collapsed; the adaptive default repopulates it whenever the
+  // document + logos session both refresh.
+  Set<int> _collapsedHunks = {};
+  // True once the user has toggled anything — we then stop blowing
+  // away their explicit choices when the logos session repopulates.
+  // Reset when a new document loads (different diff = fresh slate).
+  bool _collapseUserDirtied = false;
+
   /// Index map for O(1) fastKey → display index lookup. Rebuilt
   /// whenever [_displayLines] changes. Keyed on `fastKey` (integer
   /// content hash) rather than object identity because `ParsedLine`
@@ -454,6 +469,17 @@ class _DiffShellState extends State<DiffShell> {
   // from the previous one — no "slow pin overwrites fast pin" race.
   int _pinSeq = 0;
 
+  // Memoised result of `_buildPinnedPastContext`. The helper walks
+  // nearby blame lines, aggregates author shares + heat samples,
+  // and is called from `build()` every rebuild — previously paid
+  // the full aggregation cost on every hover, scroll, staging
+  // toggle, or unrelated setState. Invalidated by identity change
+  // on either the pinned-context model or the blame map for the
+  // currently pinned file/revision.
+  _PinnedPastContext? _pinnedPastCache;
+  Object? _pinnedPastCacheCtx;
+  Object? _pinnedPastCacheBlame;
+
   /// Max churn across the current file's hunks, cached at hunk
   /// extraction so the hot-zone check is O(1) per scroll tick.
   int _maxHunkChurn = 0;
@@ -609,6 +635,12 @@ class _DiffShellState extends State<DiffShell> {
     _profileUiSync(
       'diff.shell.apply-document',
       () {
+        // Fresh document = fresh collapse slate. The user's choices
+        // on the previous diff don't translate (hunk indices mean
+        // different hunks now); the auto-policy gets to re-decide
+        // on the new document's φ distribution.
+        _collapseUserDirtied = false;
+        _collapsedHunks = <int>{};
         _currentDocument = document;
         _currentDiffContent = document.rawContent;
         _lines = stagedKeys.isEmpty
@@ -1508,7 +1540,12 @@ class _DiffShellState extends State<DiffShell> {
   }
 
   _PinnedPastContext? _buildPinnedPastContext(DiffPinnedContextModel? context) {
-    if (context == null) return null;
+    if (context == null) {
+      _pinnedPastCache = null;
+      _pinnedPastCacheCtx = null;
+      _pinnedPastCacheBlame = null;
+      return null;
+    }
     final line = context.line;
     final filePath = line.filePath ?? widget.filePath;
     final lineNum = line.lineNumNew;
@@ -1516,18 +1553,34 @@ class _DiffShellState extends State<DiffShell> {
     final blameMap =
         _blameByFile[_blameLookupKey(filePath, _activeRevisionRef)];
 
+    // Identity cache: the nearby-blame aggregation is a pure function
+    // of the pinned-context model plus the blame map for the pinned
+    // file/revision. Both are reference-stable between mutations, so
+    // identity compare is sufficient for invalidation.
+    if (identical(_pinnedPastCacheCtx, context) &&
+        identical(_pinnedPastCacheBlame, blameMap) &&
+        _pinnedPastCache != null) {
+      return _pinnedPastCache;
+    }
+
     String? lastTouchLabel;
     if (lineBlame != null) {
       lastTouchLabel =
           '${lineBlame.authorName} / ${_formatBlameTime(lineBlame.authoredAt)} / ${lineBlame.shortHash}';
     }
     if (lineNum == null || blameMap == null || blameMap.isEmpty) {
-      if (lastTouchLabel == null) return null;
-      return _PinnedPastContext(
-        tempoLabel: 'history loading',
-        lastTouchLabel: lastTouchLabel,
-        nearbyAuthors: const [],
-        lineHeatSamples: const [],
+      if (lastTouchLabel == null) {
+        return _storePinnedPast(context, blameMap, null);
+      }
+      return _storePinnedPast(
+        context,
+        blameMap,
+        _PinnedPastContext(
+          tempoLabel: 'history loading',
+          lastTouchLabel: lastTouchLabel,
+          nearbyAuthors: const [],
+          lineHeatSamples: const [],
+        ),
       );
     }
 
@@ -1539,11 +1592,15 @@ class _DiffShellState extends State<DiffShell> {
       }
     }
     if (nearby.isEmpty) {
-      return _PinnedPastContext(
-        tempoLabel: 'history loading',
-        lastTouchLabel: lastTouchLabel,
-        nearbyAuthors: const [],
-        lineHeatSamples: const [],
+      return _storePinnedPast(
+        context,
+        blameMap,
+        _PinnedPastContext(
+          tempoLabel: 'history loading',
+          lastTouchLabel: lastTouchLabel,
+          nearbyAuthors: const [],
+          lineHeatSamples: const [],
+        ),
       );
     }
 
@@ -1606,18 +1663,36 @@ class _DiffShellState extends State<DiffShell> {
       }
     }
 
-    return _PinnedPastContext(
-      tempoLabel: tempoLabel,
-      lastTouchLabel: lastTouchLabel,
-      nearbyAuthors: [
-        for (final author in authors.take(2))
-          _PinnedAuthorShare(
-            name: author.key,
-            share: author.value / total,
-          ),
-      ],
-      lineHeatSamples: lineHeatSamples,
+    return _storePinnedPast(
+      context,
+      blameMap,
+      _PinnedPastContext(
+        tempoLabel: tempoLabel,
+        lastTouchLabel: lastTouchLabel,
+        nearbyAuthors: [
+          for (final author in authors.take(2))
+            _PinnedAuthorShare(
+              name: author.key,
+              share: author.value / total,
+            ),
+        ],
+        lineHeatSamples: lineHeatSamples,
+      ),
     );
+  }
+
+  /// Populates the [_pinnedPastCache] slot and returns the stored
+  /// value. All four return paths of [_buildPinnedPastContext] route
+  /// through this so identity-based cache hits are uniform.
+  _PinnedPastContext? _storePinnedPast(
+    DiffPinnedContextModel ctx,
+    Object? blameMap,
+    _PinnedPastContext? result,
+  ) {
+    _pinnedPastCacheCtx = ctx;
+    _pinnedPastCacheBlame = blameMap;
+    _pinnedPastCache = result;
+    return result;
   }
 
   // Blame is loaded lazily per-file on hover, so the session caps
@@ -2531,12 +2606,125 @@ class _DiffShellState extends State<DiffShell> {
     );
   }
 
+  /// Strip body rows for hunks the user has collapsed (or that the
+  /// adaptive default collapsed on our behalf). Hunk-header rows are
+  /// always kept — they're the chevron the user taps to expand.
+  List<ParsedLine> _filterCollapsedHunkBodies(List<ParsedLine> lines) {
+    if (_collapsedHunks.isEmpty) return lines;
+    if (_hunks.isEmpty) return lines;
+    // Canonical (filePath, fileHunkIndex) → collapsed? lookup. Built
+    // once per call so the per-line check is a hash-map probe.
+    final collapsedByPath = <String, Set<int>>{};
+    for (final idx in _collapsedHunks) {
+      if (idx < 0 || idx >= _hunks.length) continue;
+      final h = _hunks[idx];
+      (collapsedByPath[h.filePath] ??= <int>{}).add(h.fileHunkIndex);
+    }
+    if (collapsedByPath.isEmpty) return lines;
+    final out = <ParsedLine>[];
+    for (final line in lines) {
+      if (line.kind == LineKind.hunk) {
+        out.add(line);
+        continue;
+      }
+      final path = line.filePath;
+      if (path != null) {
+        final collapsed = collapsedByPath[path];
+        if (collapsed != null && collapsed.contains(line.hunkIndex)) {
+          continue;
+        }
+      }
+      out.add(line);
+    }
+    return out;
+  }
+
+  /// Auto-collapse policy. Runs after both [_hunks] and [_logosSession]
+  /// have resolved. Marks below-median-importance hunks as collapsed
+  /// by default so large diffs render with their noise already folded,
+  /// and the user reveals individual hunks with a tap.
+  ///
+  /// Emergent — the collapse threshold is the diff's own median φ, so
+  /// a uniform-importance diff collapses nothing and a skewed diff
+  /// collapses its long tail. Respects [_collapseUserDirtied]: once
+  /// the user has manually toggled anything, we stop re-applying the
+  /// auto-policy for this diff.
+  void _recomputeAutoCollapseIfNeeded() {
+    if (_collapseUserDirtied) return;
+    if (_logosSession == null) {
+      if (_collapsedHunks.isNotEmpty) _collapsedHunks = <int>{};
+      return;
+    }
+    if (_hunks.length < 3) {
+      // Tiny diffs read better fully expanded.
+      if (_collapsedHunks.isNotEmpty) _collapsedHunks = <int>{};
+      return;
+    }
+    final importances = <double>[];
+    for (var i = 0; i < _hunks.length; i++) {
+      final sig = _logosSignalForHeader(_hunks[i]);
+      importances.add(sig?.importance ?? 0.0);
+    }
+    final sorted = [...importances]..sort();
+    final median = sorted[sorted.length ~/ 2];
+    final next = <int>{};
+    for (var i = 0; i < importances.length; i++) {
+      // Below-median hunks collapse. `<=` would fold the middle hunk
+      // too; `<` keeps it expanded for the degenerate case where many
+      // importances tie at the median.
+      if (importances[i] < median) next.add(i);
+    }
+    _collapsedHunks = next;
+  }
+
+  /// Toggle the collapse state of a single hunk. Called when the user
+  /// single-taps a hunk header row. Marks `_collapseUserDirtied` so
+  /// subsequent logos-session updates don't overwrite the choice.
+  void _toggleHunkCollapsed(int hunkIdx) {
+    if (hunkIdx < 0 || hunkIdx >= _hunks.length) return;
+    setState(() {
+      _collapseUserDirtied = true;
+      if (_collapsedHunks.contains(hunkIdx)) {
+        _collapsedHunks.remove(hunkIdx);
+      } else {
+        _collapsedHunks.add(hunkIdx);
+      }
+      // Rebuild displayLines so the body-row filter picks up the
+      // change. Everything else (scroll position, selection, etc.)
+      // stays put.
+      _setDisplayLines(_lines);
+    });
+  }
+
+  /// Look up the hunk index in [_hunks] that a given display-line
+  /// belongs to, or -1 when it isn't attached to any hunk. Uses the
+  /// ParsedLine's (filePath, hunkIndex) coordinate since that survives
+  /// paired-add filtering and collapse-filter passes.
+  int _hunkIndexForLine(ParsedLine line) {
+    final path = line.filePath;
+    if (path == null) return -1;
+    for (var i = 0; i < _hunks.length; i++) {
+      final h = _hunks[i];
+      if (h.filePath == path && h.fileHunkIndex == line.hunkIndex) return i;
+    }
+    return -1;
+  }
+
   /// Assign [_displayLines] and rebuild the fastKey → display-index
   /// lookup in one shot. Every caller that used to write
   /// `_displayLines = x` should go through here so the index never
   /// goes stale.
   void _setDisplayLines(List<ParsedLine> lines) {
-    _displayLines = _searchTerm.isEmpty ? _applyAdaptiveContext(lines) : lines;
+    _recomputeAutoCollapseIfNeeded();
+    // Search bypasses the collapse filter — a matching line hidden
+    // inside a collapsed hunk needs to surface when the user types
+    // its term. When search clears, we fall back through the collapse
+    // + adaptive-context filters.
+    if (_searchTerm.isNotEmpty) {
+      _displayLines = lines;
+    } else {
+      _displayLines = _applyAdaptiveContext(_filterCollapsedHunkBodies(lines));
+    }
     if (lines.isEmpty) {
       _displayLineIndex = const {};
       _hunkDisplayRows = const [];
@@ -3346,6 +3534,20 @@ class _DiffShellState extends State<DiffShell> {
                                             _stageCellWidth) {
                                           return;
                                         }
+                                        // Primary-click on a hunk header row
+                                        // toggles its collapse state (the
+                                        // adaptive-compaction affordance).
+                                        // Right-click + non-hunk rows fall
+                                        // through to pin-on-press as before.
+                                        if (isPrimary &&
+                                            line.kind == LineKind.hunk) {
+                                          final hIdx =
+                                              _hunkIndexForLine(line);
+                                          if (hIdx >= 0) {
+                                            _toggleHunkCollapsed(hIdx);
+                                            return;
+                                          }
+                                        }
                                         _togglePinLine(i);
                                       },
                                       child: lineView,
@@ -3379,6 +3581,17 @@ class _DiffShellState extends State<DiffShell> {
                                     final hunkOrdinal =
                                         _hunks.indexOf(hunkHeader) + 1;
                                     final totalHunks = _hunks.length;
+                                    // Adaptive-compaction state: is this
+                                    // hunk's body currently hidden? If so,
+                                    // the inline hint shows a chevron + the
+                                    // line count that's folded away.
+                                    final hIdx = hunkOrdinal - 1;
+                                    final isCollapsed =
+                                        _collapsedHunks.contains(hIdx);
+                                    final hiddenLines = isCollapsed
+                                        ? (hunkHeader.additions +
+                                            hunkHeader.deletions)
+                                        : 0;
                                     return Stack(
                                       children: [
                                         wrapped,
@@ -3400,6 +3613,8 @@ class _DiffShellState extends State<DiffShell> {
                                                 approaching: isHotHunkRow,
                                                 approachStrength:
                                                     _hotHunkStrength,
+                                                collapsed: isCollapsed,
+                                                hiddenLineCount: hiddenLines,
                                               ),
                                             ),
                                           ),
@@ -3687,20 +3902,28 @@ class _DiffLineState extends State<DiffLineView> {
         sigilColor = t.stateDeleted;
         break;
       case LineKind.hunk:
+        // Hunk header lines — muted by default so they recede behind
+        // the actual content lines the reader is scanning. The old
+        // style rendered them in full-strength accent, which pulled
+        // the eye to a row that's structurally noise. Semantic mix is
+        // retained so important hunks still lean slightly warmer, but
+        // at much lower intensity: text is textMuted-based rather
+        // than accent-based, and background picks up only a whisper
+        // of the accent tint.
         final importance = widget.hunkImportance.clamp(0.0, 1.0);
         final semanticMix =
             math.max(importance, 0.35 * semanticSignal).clamp(0.0, 1.0);
         lineBg = Color.lerp(
-          t.chromeAccent.withValues(alpha: 0.04),
-          semanticColor.withValues(alpha: 0.08 + 0.08 * semanticSignal),
+          t.chromeAccent.withValues(alpha: 0.02),
+          semanticColor.withValues(alpha: 0.04 + 0.04 * semanticSignal),
           semanticMix,
         );
         textColor = Color.lerp(
-              t.accentBright.withValues(alpha: 0.85),
-              semanticColor,
-              (0.20 + 0.25 * semanticSignal).clamp(0.0, 1.0),
+              t.textMuted.withValues(alpha: 0.70),
+              semanticColor.withValues(alpha: 0.70),
+              (0.10 + 0.15 * semanticSignal).clamp(0.0, 1.0),
             ) ??
-            t.accentBright;
+            t.textMuted;
         break;
       case LineKind.meta:
         lineBg = isFoldMarker
@@ -6892,6 +7115,12 @@ class _HunkInlineHint extends StatelessWidget {
   final AppTokens tokens;
   final bool approaching;
   final double approachStrength;
+  // Adaptive compaction: when collapsed, the hunk body is hidden and
+  // the hint shows a chevron + count of folded lines so the row
+  // self-describes as "tap to expand." When expanded, the chevron
+  // shape flips and the count disappears.
+  final bool collapsed;
+  final int hiddenLineCount;
 
   const _HunkInlineHint({
     required this.additions,
@@ -6903,6 +7132,8 @@ class _HunkInlineHint extends StatelessWidget {
     required this.tokens,
     required this.approaching,
     required this.approachStrength,
+    this.collapsed = false,
+    this.hiddenLineCount = 0,
   });
 
   @override
@@ -6935,6 +7166,32 @@ class _HunkInlineHint extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Collapse chevron. `▸` points right when hidden (body folded
+        // below header), `▾` points down when expanded. The glyph is
+        // rendered at the start of the hint so it reads left-to-right
+        // with the rest of the header — chevron, tag, counts, ordinal.
+        Text(
+          collapsed ? '▸' : '▾',
+          style: textStyle.copyWith(
+            fontSize: 11,
+            color: baseColor.withValues(
+                alpha: collapsed ? baseAlpha * 1.2 : baseAlpha * 0.6),
+          ),
+        ),
+        const SizedBox(width: 6),
+        // When collapsed, show the count of folded lines so the row
+        // carries honest weight without having to expand — the user
+        // sees "12 lines hidden" and decides whether to investigate.
+        if (collapsed && hiddenLineCount > 0) ...[
+          Text(
+            '$hiddenLineCount hidden',
+            style: textStyle.copyWith(
+              fontSize: 9.5,
+              color: baseColor.withValues(alpha: baseAlpha * 0.75),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
         if (approaching) ...[
           Container(
             width: 6,

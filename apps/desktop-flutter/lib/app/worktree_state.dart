@@ -157,78 +157,69 @@ class WorktreeState extends ChangeNotifier {
 
   Future<DeskActivity> _probeDeskActivity(WorktreeData d) async {
     if (d.path.isEmpty) return DeskActivity.empty;
-    DateTime? lastActivity;
-    int ahead = 0;
-    int behind = 0;
-    try {
-      // Last commit's author timestamp on this worktree's HEAD.
-      // Cheap — single object lookup; no I/O over the working tree.
-      final logRes = await Process.run(
-        'git',
-        ['log', '-1', '--format=%cI', 'HEAD'],
-        workingDirectory: d.path,
-      );
-      if (logRes.exitCode == 0) {
-        final iso = (logRes.stdout as String).trim();
-        if (iso.isNotEmpty) lastActivity = DateTime.tryParse(iso);
-      }
-    } catch (_) {/* probe is best-effort */}
-    try {
-      // Resolve a base ref to compare against. Prefer the upstream
-      // tracking branch; otherwise fall back to main/master if either
-      // exists. If nothing usable is found, ahead/behind stay 0 (no
-      // misleading number is shown).
-      final baseRef = await _resolveBaseRef(d.path);
-      if (baseRef != null) {
-        final r = await Process.run(
-          'git',
-          ['rev-list', '--left-right', '--count', '$baseRef...HEAD'],
-          workingDirectory: d.path,
-        );
-        if (r.exitCode == 0) {
-          final parts = (r.stdout as String).trim().split(RegExp(r'\s+'));
-          if (parts.length == 2) {
-            behind = int.tryParse(parts[0]) ?? 0;
-            ahead = int.tryParse(parts[1]) ?? 0;
-          }
-        }
-      }
-    } catch (_) {/* probe is best-effort */}
+    // Kick off log + ahead/behind concurrently. The two probes are
+    // independent — the log just reads HEAD's commit object, the
+    // ahead/behind walk compares HEAD to a base ref — so overlapping
+    // their wall time halves the desk-probe latency on top of the
+    // individual-call collapse below.
+    final logFuture = _deskLastActivity(d.path);
+    final abFuture = _deskAheadBehind(d.path);
+    final results = await Future.wait([logFuture, abFuture]);
+    final lastActivity = results[0] as DateTime?;
+    final ab = results[1] as ({int ahead, int behind});
     return DeskActivity(
-      ahead: ahead,
-      behind: behind,
+      ahead: ab.ahead,
+      behind: ab.behind,
       lastActivity: lastActivity,
     );
   }
 
-  Future<String?> _resolveBaseRef(String path) async {
-    // Upstream tracking ref first.
+  /// HEAD's author timestamp. Single git object lookup — no working
+  /// tree I/O — so this stays fast even on giant repos.
+  Future<DateTime?> _deskLastActivity(String path) async {
     try {
-      final up = await Process.run(
+      final logRes = await Process.run(
         'git',
-        ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
+        ['log', '-1', '--format=%cI', 'HEAD'],
         workingDirectory: path,
       );
-      if (up.exitCode == 0) {
-        final v = (up.stdout as String).trim();
-        if (v.isNotEmpty && v != 'HEAD') return v;
+      if (logRes.exitCode == 0) {
+        final iso = (logRes.stdout as String).trim();
+        if (iso.isNotEmpty) return DateTime.tryParse(iso);
       }
     } catch (_) {}
-    // Fall back to local main / master if either resolves.
-    for (final name in ['main', 'master']) {
+    return null;
+  }
+
+  /// Ahead/behind counts against the most-relevant base ref. Tries
+  /// `@{u}...HEAD` first — one rev-list walk, upstream resolution
+  /// happens inside git without a separate rev-parse spawn. If the
+  /// branch has no upstream, falls back to `main` then `master`
+  /// without needing to pre-verify them: rev-list returns exit 128
+  /// on an unresolvable ref, so we just try and move on. Previously
+  /// this was 2-4 serial git calls per desk; the common case
+  /// (upstream configured) is now exactly 1.
+  Future<({int ahead, int behind})> _deskAheadBehind(String path) async {
+    ({int ahead, int behind}) parse(ProcessResult r) {
+      if (r.exitCode != 0) return (ahead: 0, behind: 0);
+      final parts = (r.stdout as String).trim().split(RegExp(r'\s+'));
+      if (parts.length != 2) return (ahead: 0, behind: 0);
+      final behind = int.tryParse(parts[0]) ?? 0;
+      final ahead = int.tryParse(parts[1]) ?? 0;
+      return (ahead: ahead, behind: behind);
+    }
+
+    for (final baseRef in const ['@{u}', 'main', 'master']) {
       try {
         final r = await Process.run(
           'git',
-          ['rev-parse', '--verify', '--quiet', name],
+          ['rev-list', '--left-right', '--count', '$baseRef...HEAD'],
           workingDirectory: path,
         );
-        if (r.exitCode == 0 &&
-            (r.stdout as String).trim().isNotEmpty) {
-          return name;
-        }
+        if (r.exitCode == 0) return parse(r);
       } catch (_) {}
     }
-    return null;
+    return (ahead: 0, behind: 0);
   }
 
   /// Creates a new desk for [branch] under the main repo's hidden worktrees

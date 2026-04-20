@@ -1381,6 +1381,16 @@ class _HistoryPageState extends State<HistoryPage> {
   int _tagProfileBuildId = 0;
   Timer? _tagProfileDebounce;
 
+  // Per-commit coherence cache. `engine.coherence(files)` is pure for
+  // a given (engine manifold revision, commit's file set) — commits
+  // are immutable once recorded, so hash-keyed caching is sound.
+  // Without this, every tag-profile rebuild (search change, new
+  // details arriving) paid the full O(commits × avg-degree) sweep,
+  // dominated by commits that were already computed last time.
+  // Clears whenever the engine's manifoldRevision advances.
+  final Map<String, double> _coherencePerCommitCache = {};
+  int _coherencePerCommitCacheRev = -1;
+
   // History limit
   int _historyLimit = _kHistoryDefault;
   final _limitCtrl = TextEditingController(text: '$_kHistoryDefault');
@@ -1503,10 +1513,26 @@ class _HistoryPageState extends State<HistoryPage> {
         final engine =
             context.read<LogosGitState>().engineFor(repoPath);
         if (engine != null) {
+          // Invalidate the per-commit cache when the engine has moved
+          // on. Otherwise honour cached values; commits we've already
+          // coherence-scored against the current manifold don't need
+          // to repeat the CSR walk.
+          if (_coherencePerCommitCacheRev != engine.manifoldRevision) {
+            _coherencePerCommitCache.clear();
+            _coherencePerCommitCacheRev = engine.manifoldRevision;
+          }
           engineCoherences = <String, double>{};
           for (final entry in detailsCopy.entries) {
+            final hash = entry.key;
+            final cached = _coherencePerCommitCache[hash];
+            if (cached != null) {
+              engineCoherences[hash] = cached;
+              continue;
+            }
             final files = entry.value.files.map((f) => f.path);
-            engineCoherences[entry.key] = engine.coherence(files);
+            final value = engine.coherence(files);
+            _coherencePerCommitCache[hash] = value;
+            engineCoherences[hash] = value;
           }
           // Project per-commit expected-token distributions on the
           // main thread so the isolate has them ready.
