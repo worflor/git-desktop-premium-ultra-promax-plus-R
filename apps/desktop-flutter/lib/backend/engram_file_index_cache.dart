@@ -1,22 +1,14 @@
 // engram_file_index_cache.dart — disk-persisted K-vector cache.
 //
-// The file index is expensive to build from scratch (read + tokenize +
-// AR(2) fit + well match per file). On a thousand-file repo this is
-// 5–15 seconds of pure CPU + I/O even when parallelised.
+// Keyed by (mtime, size) per file. If that pair still matches, the
+// cached K-vector is still valid and we skip re-encoding.
 //
-// Most of those files don't change between app launches. A
-// content-aware disk cache skips the encode entirely for files whose
-// (mtime, size) pair still matches what we saw last time — the same
-// "has it changed" check `make` has used since 1976, and the same
-// thing git's index uses to skip diff scans.
-//
-// One cache file per repository, keyed by repo path hash. Stored in
-// the shared app data directory alongside other logos caches so it
-// survives app restarts and repo switches.
+// One cache file per repository, keyed by repo path hash. Lives in the
+// shared app data dir alongside other logos caches.
 //
 // Binary layout ("EFIX" = Engram FIle indeX):
 //   magic[4]          "EFIX"
-//   version u32       = 1
+//   version u32       = 2
 //   pairs u32         must match brain.pairs or the file is discarded
 //   n_entries u32
 //   per entry:
@@ -28,6 +20,8 @@
 //     mean_rms   f64
 //     k_re f64[pairs]
 //     k_im f64[pairs]
+//     g_re f64[pairs]
+//     g_im f64[pairs]
 //     has_well u8      (0 or 1)
 //     if has_well:
 //       well_name_len       u16
@@ -36,8 +30,8 @@
 //       raw_distance        f64
 //       weighted_distance   f64
 //
-// All multi-byte fields little-endian — matches the rest of the
-// engram binaries for consistency.
+// Pre-release: v1 caches are discarded, no migration shim. All
+// multi-byte fields little-endian.
 
 import 'dart:convert';
 import 'dart:io';
@@ -50,7 +44,7 @@ import 'engram_hunk_encoder.dart' show HunkKVector;
 import 'storage_paths.dart';
 
 const _kEfixMagic = [0x45, 0x46, 0x49, 0x58]; // "EFIX"
-const int _kEfixVersion = 1;
+const int _kEfixVersion = 2;
 
 /// One cached entry keyed by absolute file path plus mtime + size for
 /// staleness detection. Acts like a tiny content-addressable memo —
@@ -183,6 +177,16 @@ class EngramFileIndexCache {
         kIm[j] = bd.getFloat64(off, Endian.little);
         off += 8;
       }
+      final gRe = Float64List(pairs);
+      final gIm = Float64List(pairs);
+      for (var j = 0; j < pairs; j++) {
+        gRe[j] = bd.getFloat64(off, Endian.little);
+        off += 8;
+      }
+      for (var j = 0; j < pairs; j++) {
+        gIm[j] = bd.getFloat64(off, Endian.little);
+        off += 8;
+      }
 
       final hasWell = bytes[off]; off += 1;
       EngramWellMatch? well;
@@ -207,6 +211,8 @@ class EngramFileIndexCache {
         kVector: HunkKVector(
           kRe: kRe,
           kIm: kIm,
+          gRe: gRe,
+          gIm: gIm,
           meanRms: meanRms,
           vocabHits: vocabHits,
           well: well,
@@ -247,12 +253,18 @@ class EngramFileIndexCache {
       meta.setFloat64(20, kv.meanRms, Endian.little);
       buf.add(meta.buffer.asUint8List());
 
-      // K-vectors as two contiguous f64 blocks; the buffer-builder
-      // concatenates typed views without intermediate allocations.
+      if (kv.gRe.length != pairs || kv.gIm.length != pairs) continue;
+      // K and G vectors as four contiguous f64 blocks; the
+      // buffer-builder concatenates typed views without intermediate
+      // allocations.
       buf.add(kv.kRe.buffer.asUint8List(
           kv.kRe.offsetInBytes, kv.kRe.lengthInBytes));
       buf.add(kv.kIm.buffer.asUint8List(
           kv.kIm.offsetInBytes, kv.kIm.lengthInBytes));
+      buf.add(kv.gRe.buffer.asUint8List(
+          kv.gRe.offsetInBytes, kv.gRe.lengthInBytes));
+      buf.add(kv.gIm.buffer.asUint8List(
+          kv.gIm.offsetInBytes, kv.gIm.lengthInBytes));
 
       final well = kv.well;
       if (well == null) {

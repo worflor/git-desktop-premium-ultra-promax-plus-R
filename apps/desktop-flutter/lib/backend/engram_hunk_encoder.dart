@@ -34,13 +34,30 @@ import 'engram_tokenizer.dart';
 /// working set stays friendly even on older hardware with 256KB L2).
 const int _kMaxTrajectoryTokens = 128;
 
-/// One hunk's K-space signature. `kRe` and `kIm` are length `brain.pairs`
-/// (150 for the trained Alexandria). [well] is the nearest well match
+/// One hunk's K-space signature. `kRe`/`kIm` are the AR(2) first-lag
+/// (velocity-like) coefficients; `gRe`/`gIm` are the second-lag
+/// (curvature-like) coefficients. Both are length `brain.pairs` (150
+/// for the trained Alexandria). [well] is the nearest well match
 /// (null when the brain has zero wells or the fit degenerated).
+///
+/// **Why both K AND G?** K alone answers "where is this hunk heading?"
+/// G adds "how sharply does it turn?" Two hunks with similar K but
+/// opposite G are moving in the same direction but bending oppositely
+/// — same concept, different *shape of change*. The harmonic 1D/2D
+/// audio codec treats both coefficients as first-class metrics, and
+/// we inherit that contract here: callers can cosine-compare either
+/// axis, and the hunk graph blends both into H_sym when the fit
+/// was valid.
 @immutable
 class HunkKVector {
   final Float64List kRe;
   final Float64List kIm;
+
+  /// Second-lag AR(2) coefficient — "curvature" channel. Exposed as
+  /// a separate cosine axis in `EngramHunkEncoder.curvatureCosine`;
+  /// captures same-bending-pattern even when the K vectors diverge.
+  final Float64List gRe;
+  final Float64List gIm;
 
   /// Mean per-pair RMS — a rough "signal quality" read. High RMS means
   /// the AR(2) couldn't explain the trajectory (short sequence, wild
@@ -57,6 +74,8 @@ class HunkKVector {
   const HunkKVector({
     required this.kRe,
     required this.kIm,
+    required this.gRe,
+    required this.gIm,
     required this.meanRms,
     required this.vocabHits,
     required this.well,
@@ -172,6 +191,8 @@ class EngramHunkEncoder {
     return HunkKVector(
       kRe: fit.kRe,
       kIm: fit.kIm,
+      gRe: fit.gRe,
+      gIm: fit.gIm,
       meanRms: fit.meanRms,
       vocabHits: t,
       well: match,
@@ -198,6 +219,23 @@ class EngramHunkEncoder {
       aIm: a.kIm,
       bRe: b.kRe,
       bIm: b.kIm,
+    );
+  }
+
+  /// Cosine similarity between two hunks' AR(2) G (curvature) vectors.
+  /// The second-lag coefficient describes how the K-trajectory bends,
+  /// independent of its direction — two hunks with identical K may
+  /// still have wildly different G when their change-shape differs
+  /// (ramp vs oscillation vs impulse). Used as a second H_sym sub-axis
+  /// in the hunk graph so code that *bends* alike bonds, not just
+  /// code that *points* alike.
+  static double curvatureCosine(HunkKVector? a, HunkKVector? b) {
+    if (a == null || b == null) return 0.0;
+    return cosineKVector(
+      aRe: a.gRe,
+      aIm: a.gIm,
+      bRe: b.gRe,
+      bIm: b.gIm,
     );
   }
 }

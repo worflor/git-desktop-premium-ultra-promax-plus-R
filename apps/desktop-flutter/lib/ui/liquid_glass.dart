@@ -47,7 +47,7 @@ class LiquidGlassProvider extends StatefulWidget {
 }
 
 class _LiquidGlassProviderState extends State<LiquidGlassProvider>
-    with SingleTickerProviderStateMixin, WindowListener {
+    with SingleTickerProviderStateMixin, WindowListener, WindowAwakeMixin {
   late final Ticker _ticker;
   final ValueNotifier<LiquidGlassPulse> _pulse =
       ValueNotifier(LiquidGlassPulse.zero);
@@ -71,8 +71,10 @@ class _LiquidGlassProviderState extends State<LiquidGlassProvider>
     windowManager.addListener(this);
     _ticker = createTicker(_onTick);
     if (WindowActivity.instance.awake) _ticker.start();
-    WindowActivity.instance.addListener(_syncAwake);
   }
+
+  @override
+  void onWindowAwakeChanged() => _syncAwake();
 
   /// Ride [WindowActivity] so the 30Hz pulse — which fans out to every
   /// glass surface in the tree — stops the instant the window loses
@@ -132,7 +134,6 @@ class _LiquidGlassProviderState extends State<LiquidGlassProvider>
 
   @override
   void dispose() {
-    WindowActivity.instance.removeListener(_syncAwake);
     _ticker.dispose();
     windowManager.removeListener(this);
     _pulse.dispose();

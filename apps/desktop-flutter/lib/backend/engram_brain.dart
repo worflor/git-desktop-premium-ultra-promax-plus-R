@@ -1,10 +1,16 @@
-// engram_brain.dart — Alexandria brain (wells + pairing) loaded at runtime.
+// engram_brain.dart — Alexandria brain (wells + pairing + optional dream,
+// annotations, manifest) loaded at runtime.
 //
-// Reads the compact ENDB ("Engram Dart Brain") binary produced by the
-// preprocessing script from alexandria.engram. Holds the reference
-// pairing (permutation over dim dims into complex pairs) and every
-// well's sum_K + count so centroids can be computed on demand.
+// Reads the ENDB ("Engram Dart Brain") v2 binary produced by the
+// preprocessing script from alexandria.engram. The format carries the
+// full `.engram` ZIP payload in a single flat binary:
 //
+//   header  (magic ENDB, version, dim, pairs, n_wells, flags)
+//   pairing int16[dim]
+//   wells   [name, count, sum_K (complex128), sum_raw (float64)]
+//   dream   optional — K, G (complex64), S (float32) per entry
+//   annot   optional — raw JSON bytes
+//   manif   optional — raw source manifest JSON bytes
 //
 // The brain's hot path is `nearestWell`, called once per file during
 // index builds (typically 10k+ calls per repo switch). It needs:
@@ -33,9 +39,11 @@
 //   EngramBrain.loadBytes(bytes) → parsed brain
 //   brain.nearestWell(K_vector) → (well name, raw distance, index)
 //   brain.wellCount / brain.wellName(i) / brain.wellCentroidReView(i)
+//   brain.wellSumRawView(i) / brain.dream / brain.annotations / brain.manifest
 //
-// The brain is stateless after load: no absorption, no dream buffer, no
-// training. It's a semantic lookup table for the hunk encoder.
+// The brain is stateless after load: no absorption, no dream writes, no
+// training. It's a semantic lookup table for the hunk encoder plus a
+// carrier for the supplemental payloads that consumers may read later.
 
 import 'dart:convert';
 import 'dart:math' as math;
@@ -46,8 +54,103 @@ import 'package:meta/meta.dart';
 /// File magic: "ENDB" — matches the preprocessing script's header.
 const _kEndbMagic = [0x45, 0x4E, 0x44, 0x42];
 
-/// Supported format version. Bumps if the binary layout changes.
-const int _kEndbVersion = 1;
+/// Supported format version. Pre-release, so v1 readers are gone —
+/// only v2 loads, anything else is a hard FormatException.
+const int _kEndbVersion = 2;
+
+/// Flag bits in the ENDB v2 header. Keep in sync with
+/// `tools/export_engram_assets.py`.
+const int _kFlagHasSumRaw     = 1 << 0;
+const int _kFlagHasDream      = 1 << 1;
+const int _kFlagHasAnnotations = 1 << 2;
+const int _kFlagHasManifest   = 1 << 3;
+
+/// One dream entry: K (complex) + G (complex) + S (float) per pair.
+/// Stored as f32 views to match alexandria's on-disk layout; consumers
+/// that want f64 should copy up explicitly. Views are zero-copy into the
+/// underlying dream-blob buffer — cheap to hand out, must not be mutated.
+@immutable
+class DreamEntry {
+  const DreamEntry({
+    required this.kRe,
+    required this.kIm,
+    required this.gRe,
+    required this.gIm,
+    required this.s,
+  });
+
+  /// Real part of the K vector, length == pairs. f32.
+  final Float32List kRe;
+  /// Imaginary part of the K vector, length == pairs. f32.
+  final Float32List kIm;
+  /// Real part of the G vector, length == pairs. f32.
+  final Float32List gRe;
+  /// Imaginary part of the G vector, length == pairs. f32.
+  final Float32List gIm;
+  /// Per-pair RMS / envelope (float32), length == pairs.
+  final Float32List s;
+}
+
+/// Alexandria's dream buffer — the circular K/G/S log that the trainer
+/// records during absorption. Immutable. Lazily decodes entries so the
+/// ~3 MB blob isn't exploded into objects at load time; walk via
+/// [entry] or [forEach].
+class DreamBuffer {
+  DreamBuffer._({
+    required this.pairs,
+    required this.length,
+    required Uint8List blob,
+  }) : _blob = blob;
+
+  final int pairs;
+  /// Total number of entries in the buffer.
+  final int length;
+
+  /// Raw blob: [entries] × [perEntryBytes]. Laid out as K complex64 +
+  /// G complex64 + S float32, matching alexandria's dream.bin.
+  final Uint8List _blob;
+
+  /// Per-entry byte size: `pairs*(8 + 8 + 4)` = 20 × pairs.
+  int get perEntryBytes => pairs * 20;
+
+  /// Decoded view of entry `i`. Throws [RangeError] on oob.
+  /// All four axes are copied out of the backing blob because the blob
+  /// lives on a byte-level offset that isn't guaranteed to be 4-byte
+  /// aligned (ByteBuffer alignment requirements for typed-list views).
+  DreamEntry entry(int i) {
+    if (i < 0 || i >= length) {
+      throw RangeError.index(i, this, 'i', null, length);
+    }
+    final base = i * perEntryBytes;
+    final kRe = Float32List(pairs);
+    final kIm = Float32List(pairs);
+    final gRe = Float32List(pairs);
+    final gIm = Float32List(pairs);
+    final s = Float32List(pairs);
+    final bd = ByteData.sublistView(_blob, base, base + perEntryBytes);
+    var off = 0;
+    for (var p = 0; p < pairs; p++) {
+      kRe[p] = bd.getFloat32(off, Endian.little); off += 4;
+      kIm[p] = bd.getFloat32(off, Endian.little); off += 4;
+    }
+    for (var p = 0; p < pairs; p++) {
+      gRe[p] = bd.getFloat32(off, Endian.little); off += 4;
+      gIm[p] = bd.getFloat32(off, Endian.little); off += 4;
+    }
+    for (var p = 0; p < pairs; p++) {
+      s[p] = bd.getFloat32(off, Endian.little); off += 4;
+    }
+    return DreamEntry(kRe: kRe, kIm: kIm, gRe: gRe, gIm: gIm, s: s);
+  }
+
+  /// Walk all entries. Cheaper than `for (i = 0; ...) entry(i)` when the
+  /// caller needs every entry, because we can keep one ByteData view.
+  void forEach(void Function(int i, DreamEntry e) fn) {
+    for (var i = 0; i < length; i++) {
+      fn(i, entry(i));
+    }
+  }
+}
 
 @immutable
 class EngramWellMatch {
@@ -95,6 +198,11 @@ class EngramBrain {
     required Float64List wellNorm,
     required List<String> wellNamesSorted,
     required List<String> wellNamesOriginal,
+    required Float64List? flatSumRaw,
+    required int sumRawLen,
+    required this.dream,
+    required this.annotations,
+    required this.manifest,
   })  : _flatOrder = flatOrder,
         _originalToSortPos = originalToSortPos,
         _flatCentroidRe = flatCentroidRe,
@@ -103,7 +211,9 @@ class EngramBrain {
         _invLogMass = invLogMass,
         _wellNorm = wellNorm,
         _wellNamesSorted = wellNamesSorted,
-        _wellNamesOriginal = wellNamesOriginal;
+        _wellNamesOriginal = wellNamesOriginal,
+        _flatSumRaw = flatSumRaw,
+        _sumRawLen = sumRawLen;
 
   /// Embedding dimension (e.g. 300 for GloVe).
   final int dim;
@@ -169,6 +279,28 @@ class EngramBrain {
   /// identities.
   final List<String> _wellNamesOriginal;
 
+  /// Per-well sum_raw in sorted order, packed as `[sortPos0, sortPos1, …]`
+  /// with each block of length [_sumRawLen]. Null when the source `.endb`
+  /// did not carry the has_sum_raw flag. The trainer's neuroplastic
+  /// augmentation channel — not used by the hot path, but available so
+  /// diagnostic / future consumers can read the raw envelope directly.
+  final Float64List? _flatSumRaw;
+
+  /// Number of float64 values per well's sum_raw record (e.g. 256 for
+  /// alexandria). Zero when sum_raw is absent.
+  final int _sumRawLen;
+
+  /// Optional dream buffer — alexandria's circular K/G/S log. Null when
+  /// absent in the source bundle.
+  final DreamBuffer? dream;
+
+  /// Optional freeform annotations JSON (voice / system card / tone /
+  /// anything the trainer chose to attach). Null when absent.
+  final Map<String, dynamic>? annotations;
+
+  /// Full source manifest JSON (identity, physics, capabilities, state,
+  /// wells index). Null when absent.
+  final Map<String, dynamic>? manifest;
 
   /// Well name at its ORIGINAL (on-disk) index.
   String wellName(int originalIdx) => _wellNamesOriginal[originalIdx];
@@ -193,17 +325,31 @@ class EngramBrain {
     return Float64List.sublistView(_flatCentroidIm, base, base + pairs);
   }
 
+  /// Zero-copy view into the well's raw envelope (sum_raw float64 block).
+  /// Length == [sumRawLen]. Returns null when the source bundle did not
+  /// carry sum_raw.
+  Float64List? wellSumRawView(int originalIdx) {
+    final raw = _flatSumRaw;
+    if (raw == null || _sumRawLen == 0) return null;
+    final sortPos = _originalToSortPos[originalIdx];
+    final base = sortPos * _sumRawLen;
+    return Float64List.sublistView(raw, base, base + _sumRawLen);
+  }
+
+  /// Length of each well's sum_raw record, or 0 when not present.
+  int get sumRawLen => _sumRawLen;
+
   /// All well names in original order. Exposed as a fixed-length list
   /// view so downstream column-stores (like `EngramFileKTable`) can
   /// retain a reference without depending on the brain itself.
   List<String> get wellNamesByOriginalIndex =>
       List<String>.unmodifiable(_wellNamesOriginal);
 
-  /// Deserialize a brain from its compact ENDB binary form. Throws
+  /// Deserialize a brain from its ENDB v2 binary form. Throws
   /// [FormatException] on magic / version / bounds mismatches — callers
   /// at the singleton layer should catch and degrade silently.
   /// Binary layout is little-endian throughout, matching the byte order
-  /// emitted by `tools/export_engram_assets.py` (which uses Python's
+  /// emitted by `tools/export_engram_assets.py` (Python's
   /// `struct.pack('<...')` and numpy's default little-endian dtypes).
   /// On the unlikely big-endian Dart host this parser would still
   /// produce numerically-valid output because we use ByteData with an
@@ -212,8 +358,8 @@ class EngramBrain {
     final bd = ByteData.sublistView(bytes);
     var off = 0;
 
-    // Header
-    if (bytes.length < 20) {
+    // Header: magic + version + dim + pairs + n_wells + flags.
+    if (bytes.length < 24) {
       throw const FormatException('engram: binary too small');
     }
     for (var i = 0; i < 4; i++) {
@@ -229,6 +375,7 @@ class EngramBrain {
     final dim = bd.getUint32(off, Endian.little); off += 4;
     final pairs = bd.getUint32(off, Endian.little); off += 4;
     final nWells = bd.getUint32(off, Endian.little); off += 4;
+    final flags = bd.getUint32(off, Endian.little); off += 4;
     if (dim.isOdd || dim ~/ 2 != pairs) {
       throw FormatException('engram: dim/pairs mismatch (dim=$dim, pairs=$pairs)');
     }
@@ -243,6 +390,11 @@ class EngramBrain {
       }
     }
 
+    final hasSumRaw      = (flags & _kFlagHasSumRaw) != 0;
+    final hasDream       = (flags & _kFlagHasDream) != 0;
+    final hasAnnotations = (flags & _kFlagHasAnnotations) != 0;
+    final hasManifest    = (flags & _kFlagHasManifest) != 0;
+
     // Parse wells directly into per-original-index arrays to avoid the
     // intermediate object list that used to live here. We still need
     // to sort by descending logMass for the hot path, so we track
@@ -251,12 +403,14 @@ class EngramBrain {
     final namesOriginal = List<String>.filled(nWells, '', growable: false);
     final countsOriginal = Int32List(nWells);
     final logMassOriginal = Float64List(nWells);
-    // Per-well centroids in original-order flat storage. We could
-    // build the sorted version directly in a single pass if we
-    // pre-computed the sort order, but we don't know logMass until
-    // we've read every well's count — so two passes here.
+    // Per-well centroids in original-order flat storage.
     final centroidReOriginal = Float64List(nWells * pairs);
     final centroidImOriginal = Float64List(nWells * pairs);
+    // Per-well sum_raw in original-order flat storage (or null if flag unset).
+    // We discover the record length from the first well's prefix and
+    // require all subsequent wells to agree — trainer guarantees this.
+    Float64List? sumRawOriginal;
+    int sumRawLen = 0;
 
     for (var w = 0; w < nWells; w++) {
       if (off + 2 > bytes.length) {
@@ -285,6 +439,35 @@ class EngramBrain {
         centroidImOriginal[base + p] =
             bd.getFloat64(off, Endian.little) * invCount;
         off += 8;
+      }
+
+      if (hasSumRaw) {
+        if (off + 4 > bytes.length) {
+          throw FormatException('engram: well #$w truncated at sum_raw length');
+        }
+        final rawBytes = bd.getUint32(off, Endian.little); off += 4;
+        if (rawBytes % 8 != 0) {
+          throw FormatException(
+              'engram: sum_raw length $rawBytes is not a multiple of 8');
+        }
+        final rawLen = rawBytes >> 3;
+        if (w == 0) {
+          sumRawLen = rawLen;
+          sumRawOriginal = Float64List(nWells * rawLen);
+        } else if (rawLen != sumRawLen) {
+          throw FormatException(
+              'engram: sum_raw length mismatch at well #$w '
+              '(got $rawLen, expected $sumRawLen)');
+        }
+        if (off + rawBytes > bytes.length) {
+          throw FormatException('engram: well #$w truncated inside sum_raw');
+        }
+        final dst = sumRawOriginal!;
+        final dstBase = w * rawLen;
+        for (var i = 0; i < rawLen; i++) {
+          dst[dstBase + i] = bd.getFloat64(off, Endian.little);
+          off += 8;
+        }
       }
     }
 
@@ -316,6 +499,8 @@ class EngramBrain {
     final invLogMass = Float64List(nWells);
     final wellNorm = Float64List(nWells);
     final wellNamesSorted = List<String>.filled(nWells, '', growable: false);
+    final flatSumRaw =
+        sumRawOriginal != null ? Float64List(nWells * sumRawLen) : null;
     for (var sortPos = 0; sortPos < nWells; sortPos++) {
       final orig = order[sortPos];
       final srcBase = orig * pairs;
@@ -337,6 +522,80 @@ class EngramBrain {
         accSq += re * re + im * im;
       }
       wellNorm[sortPos] = math.sqrt(accSq);
+
+      if (flatSumRaw != null) {
+        flatSumRaw.setRange(
+          sortPos * sumRawLen,
+          sortPos * sumRawLen + sumRawLen,
+          sumRawOriginal!,
+          orig * sumRawLen,
+        );
+      }
+    }
+
+    // Supplemental payloads (all optional).
+    DreamBuffer? dream;
+    if (hasDream) {
+      if (off + 4 > bytes.length) {
+        throw const FormatException('engram: truncated at dream header');
+      }
+      final nDream = bd.getUint32(off, Endian.little); off += 4;
+      final entryBytes = pairs * 20; // (f32 re+im) * 2 + f32 S  == pairs*20
+      final blobBytes = nDream * entryBytes;
+      if (off + blobBytes > bytes.length) {
+        throw FormatException(
+            'engram: dream buffer truncated (want $blobBytes, have ${bytes.length - off})');
+      }
+      // Zero-copy: hand the blob a view, don't copy the ~3 MB buffer.
+      final blob = Uint8List.sublistView(bytes, off, off + blobBytes);
+      off += blobBytes;
+      dream = DreamBuffer._(pairs: pairs, length: nDream, blob: blob);
+    }
+
+    Map<String, dynamic>? annotations;
+    if (hasAnnotations) {
+      if (off + 4 > bytes.length) {
+        throw const FormatException('engram: truncated at annotations length');
+      }
+      final alen = bd.getUint32(off, Endian.little); off += 4;
+      if (off + alen > bytes.length) {
+        throw const FormatException('engram: annotations body truncated');
+      }
+      final jsonBytes = bytes.sublist(off, off + alen);
+      off += alen;
+      try {
+        final decoded = json.decode(utf8.decode(jsonBytes));
+        if (decoded is Map<String, dynamic>) {
+          annotations = decoded;
+        } else {
+          // Non-object JSON — wrap in a map so the accessor type is stable.
+          annotations = <String, dynamic>{'value': decoded};
+        }
+      } on FormatException {
+        // Malformed JSON — silently drop rather than fail the whole brain load.
+        annotations = null;
+      }
+    }
+
+    Map<String, dynamic>? manifest;
+    if (hasManifest) {
+      if (off + 4 > bytes.length) {
+        throw const FormatException('engram: truncated at manifest length');
+      }
+      final mlen = bd.getUint32(off, Endian.little); off += 4;
+      if (off + mlen > bytes.length) {
+        throw const FormatException('engram: manifest body truncated');
+      }
+      final jsonBytes = bytes.sublist(off, off + mlen);
+      off += mlen;
+      try {
+        final decoded = json.decode(utf8.decode(jsonBytes));
+        if (decoded is Map<String, dynamic>) {
+          manifest = decoded;
+        }
+      } on FormatException {
+        manifest = null;
+      }
     }
 
     return EngramBrain._(
@@ -353,6 +612,15 @@ class EngramBrain {
       wellNorm: wellNorm,
       wellNamesSorted: List<String>.unmodifiable(wellNamesSorted),
       wellNamesOriginal: List<String>.unmodifiable(namesOriginal),
+      flatSumRaw: flatSumRaw,
+      sumRawLen: sumRawLen,
+      dream: dream,
+      annotations: annotations == null
+          ? null
+          : Map<String, dynamic>.unmodifiable(annotations),
+      manifest: manifest == null
+          ? null
+          : Map<String, dynamic>.unmodifiable(manifest),
     );
   }
 

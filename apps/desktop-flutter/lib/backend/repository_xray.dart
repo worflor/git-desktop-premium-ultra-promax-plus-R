@@ -23,7 +23,7 @@ typedef XrayStatusLoader = Future<GitResult<RepositoryStatus>> Function(
 );
 
 /// Sentinel token that git-log format strings in [buildRepositoryXraySnapshot]
-/// inject at the start of each commit-header line.  Every `--name-only` or
+/// inject at the start of each commit-header line.  Every `--name-status` or
 /// `--shortstat` git-log call that feeds one of the parsers below MUST prefix
 /// its `--format=` or `--pretty=format:` value with this constant so parsers
 /// can locate commit boundaries.  Using the constant in both call sites and
@@ -148,26 +148,39 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
           '--pretty=format:%H\t%h\t%ad\t%an\t%s',
         ],
       ),
-      // Per-commit file lists with dates. The `__C__%ad` marker lets
-      // us slice the stream into dated commits without a second pass:
-      // each block starts with `__C__YYYY-MM-DD`, followed by the
-      // file paths touched in that commit. Drives both co-change
-      // (Jaccard pair walk) and the alive-mass age decay.
+      // Per-commit file lists with full header metadata. The marker
+      // line `__C__<hash>\t<short>\t<date>\t<author>` packs enough
+      // identity for downstream consumers (co-change, alive-mass age
+      // decay, hotspot/stratum enrichment) to work entirely off this
+      // one pass — without it, each hotspot/stratum path would need
+      // its own `git log -- <path>` subprocess. Each block starts
+      // with the marker and is followed by per-file status lines.
+      //
+      // `--name-status -M95` emits `<status>\t<path>` per file, with
+      // renames shown as `R<score>\told\tnew` when similarity ≥ 95%.
+      // The parser threads those events through a union-find so
+      // pre-rename history attributes to the HEAD-side name — same
+      // fidelity as `git log --follow` without the per-path spawn.
+      // 95% is the conservative threshold: only rename-with-minor-
+      // edit counts, no false positives from coincidentally-similar
+      // files.
       cachedProbe.run([
         'log',
         '--all',
-        '--name-only',
+        '--name-status',
+        '-M95',
         '--date=short',
-        '--format=${_kCommitMarker}%ad'
+        '--format=${_kCommitMarker}%H\t%h\t%ad\t%an'
       ]),
       cachedProbe.run([
         'log',
         '--all',
         '--grep=^t3 checkpoint',
         '--invert-grep',
-        '--name-only',
+        '--name-status',
+        '-M95',
         '--date=short',
-        '--format=${_kCommitMarker}%ad',
+        '--format=${_kCommitMarker}%H\t%h\t%ad\t%an',
       ]),
       cachedProbe.run(
         [
@@ -257,8 +270,19 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
     // are absent. Keeps both real-world and test paths working.
     final pathBytes = _parseLsTreeBytes(futures[19].stdout.toString());
 
-    var rawPathTouches = _countPathTouches(futures[4].stdout.toString());
-    var filteredPathTouches = _countPathTouches(futures[5].stdout.toString());
+    // Parse the dated-commit stream once; touch counts (line-based,
+    // since a real `git log --name-status` emits each changed path on
+    // its own line) + downstream co-change / alive-mass all share the
+    // same rename canonicalisation map, so a file renamed at -M95
+    // attributes consistently across every signal.
+    final rawParsed = _parseDatedCommitFiles(futures[4].stdout.toString());
+    final filteredParsed = _parseDatedCommitFiles(futures[5].stdout.toString());
+    final rawDated = rawParsed.$1;
+    final filteredDated = filteredParsed.$1;
+    var rawPathTouches = _countPathTouches(
+        futures[4].stdout.toString(), rawParsed.$2);
+    var filteredPathTouches = _countPathTouches(
+        futures[5].stdout.toString(), filteredParsed.$2);
     if (pathBytes.isNotEmpty) {
       // Edge filter: drop paths missing from HEAD or with 0 bytes.
       // Cheap signal-floor cleanup — deleted files, empty stubs, and
@@ -311,11 +335,8 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
         .toList()
       ..sort();
 
-    // Dated per-commit file lists. Same parse drives co-change (Jaccard
-    // pair walk) and the alive-mass exponential decay (per-file last-
-    // touched date → age → exp(-age/halfLife)).
-    final rawDated = _parseDatedCommitFiles(futures[4].stdout.toString());
-    final filteredDated = _parseDatedCommitFiles(futures[5].stdout.toString());
+    // Dated per-commit file lists (parsed above) also drive co-change
+    // (Jaccard pair walk) and the alive-mass exponential decay.
     final rawCommitFiles = [for (final c in rawDated) c.files];
     final filteredCommitFiles = [for (final c in filteredDated) c.files];
     // Await the engine now — both the spectral co-change path and
@@ -368,27 +389,25 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
     );
     final filteredDirAlive = _aggregateAliveMassByDirectory(filteredPathAlive);
 
-    final rawHotspots = await _buildHotspots(
+    final rawHotspots = _buildHotspots(
       rawPathTouches,
       rawDirTouches,
-      true,
-      cachedProbe.run,
+      rawDated,
       rawCoChange,
       rawPathAlive,
       spectral,
     );
-    final filteredHotspots = await _buildHotspots(
+    final filteredHotspots = _buildHotspots(
       filteredPathTouches,
       filteredDirTouches,
-      false,
-      cachedProbe.run,
+      filteredDated,
       filteredCoChange,
       filteredPathAlive,
       spectral,
     );
-    final strata = await _buildStrata(
+    final strata = _buildStrata(
       filteredDirTouches,
-      cachedProbe.run,
+      filteredDated,
       filteredDirAlive,
     );
     final rawPivots = _buildPivotCommits(rawShortstats);
@@ -855,25 +874,91 @@ Map<String, int> _countDateSeries(String output) {
 /// Parse a `git log --name-only --format=` stream into per-commit file
 /// sets. With an empty format string git emits blank-metadata rows and
 /// name-per-line blocks separated by blank lines.
-/// One commit's file set with the commit date attached. The date is
-/// the source for both per-file "last touched" and the alive-mass
-/// exponential decay — same parse, no extra git work.
+/// One commit's file set with enough header identity for every
+/// downstream consumer to work off the same parse: the date drives
+/// per-file "last touched" + alive-mass decay, the author drives
+/// owner-count enrichment, and the hashes drive recent-touch display.
+/// Keeping the raw `%ad` string alongside the parsed DateTime avoids a
+/// date→string round-trip when emitting hotspot metadata.
 class _DatedCommit {
-  _DatedCommit({required this.date, required this.files});
+  _DatedCommit({
+    required this.date,
+    required this.dateStr,
+    required this.hash,
+    required this.shortHash,
+    required this.author,
+    required this.files,
+  });
   final DateTime? date;
+  final String dateStr;
+  final String hash;
+  final String shortHash;
+  final String author;
   final Set<String> files;
 }
 
-/// Parse `--name-only --format=__C__%ad` output into dated commit
-/// records. The `__C__YYYY-MM-DD` marker delimits commits; everything
-/// between markers is a path. Empty lines are tolerated.
-List<_DatedCommit> _parseDatedCommitFiles(String raw) {
+/// Parse `--name-status -M95 --format=__C__%H\t%h\t%ad\t%an` output into
+/// dated commit records. The marker line packs `hash, shortHash, date,
+/// author` tab-separated; every line between markers is one of:
+///
+///   `M\t<path>`                     modify / add / delete / typechange
+///   `A\t<path>`
+///   `D\t<path>`
+///   `T\t<path>`
+///   `R<score>\t<old>\t<new>`        rename (≥95% similar under -M95)
+///   `C<score>\t<old>\t<new>`        copy (only if `-C` passed; unused)
+///
+/// Rename events feed a union-find so any commit touching a pre-rename
+/// name attributes to the HEAD-side canonical path. Recovers the
+/// `--follow` semantics lost when the xray switched to one batched
+/// log instead of per-path subprocesses.
+///
+/// Bare-path lines (no tab) are tolerated for back-compat with tests
+/// that feed `--name-only`-style fixtures — they're treated as
+/// modifications on the emitted path.
+///
+/// Tab-in-author caveat: `%an` can in theory contain a tab, which
+/// would push author tokens into [4..] and silently undercount owners.
+/// Matches the existing `_parseShortstats` / `_parseCommits` tolerance
+/// for the same case — if this ever bites, switch the delimiter to
+/// `\x1f` (ASCII Unit Separator) everywhere.
+/// Returns the parsed commits plus the rename-canonicalisation map
+/// (union-find parent pointers). Callers that also want to canonicalise
+/// a separate line-based count — e.g. [_countPathTouches] — can thread
+/// the same map through so every signal agrees on "which file".
+(List<_DatedCommit>, Map<String, String>) _parseDatedCommitFiles(String raw) {
   final out = <_DatedCommit>[];
   DateTime? curDate;
+  String curDateStr = '';
+  String curHash = '';
+  String curShortHash = '';
+  String curAuthor = '';
   Set<String>? curFiles;
+
+  // Rename union-find. Git log walks newest→oldest, so the `new` side
+  // of any rename is closer to HEAD — we always union(old → new) so
+  // `find(x)` resolves to the HEAD-side canonical. Non-rename paths
+  // are absent from the map and canonicalise to themselves.
+  final parent = <String, String>{};
+  String find(String x) {
+    var cur = x;
+    while (true) {
+      final p = parent[cur];
+      if (p == null || p == cur) return cur;
+      cur = p;
+    }
+  }
+
   void flush() {
     if (curFiles != null && curFiles!.isNotEmpty) {
-      out.add(_DatedCommit(date: curDate, files: curFiles!));
+      out.add(_DatedCommit(
+        date: curDate,
+        dateStr: curDateStr,
+        hash: curHash,
+        shortHash: curShortHash,
+        author: curAuthor,
+        files: curFiles!,
+      ));
     }
     curFiles = null;
   }
@@ -882,16 +967,64 @@ List<_DatedCommit> _parseDatedCommitFiles(String raw) {
     final trimmed = line.trim();
     if (trimmed.startsWith(_kCommitMarker)) {
       flush();
-      curDate = DateTime.tryParse(trimmed.substring(_kCommitMarker.length));
+      final payload = trimmed.substring(_kCommitMarker.length);
+      final parts = payload.split('\t');
+      assert(parts.length >= 4,
+          'xray commit marker must be hash\\tshort\\tdate\\tauthor; got "$payload"');
+      curHash = parts.isNotEmpty ? parts[0] : '';
+      curShortHash = parts.length > 1 ? parts[1] : '';
+      curDateStr = parts.length > 2 ? parts[2] : '';
+      curAuthor = parts.length > 3 ? parts.sublist(3).join('\t') : '';
+      curDate = DateTime.tryParse(curDateStr);
       curFiles = <String>{};
       continue;
     }
     if (trimmed.isEmpty) continue;
     curFiles ??= <String>{};
-    curFiles!.add(trimmed.replaceAll('\\', '/'));
+
+    final tabIdx = trimmed.indexOf('\t');
+    if (tabIdx < 0) {
+      // Legacy bare path (no status prefix). Test fixtures use this.
+      curFiles!.add(trimmed.replaceAll('\\', '/'));
+      continue;
+    }
+    final status = trimmed.substring(0, tabIdx);
+    final rest = trimmed.substring(tabIdx + 1);
+    final restTab = rest.indexOf('\t');
+    if (restTab < 0) {
+      // `M\t<path>` / `A\t<path>` / `D\t<path>` / `T\t<path>`.
+      curFiles!.add(rest.replaceAll('\\', '/'));
+      continue;
+    }
+    // Two-path form: rename or copy. Only renames feed the union-find
+    // — copies (`C<score>`) originate from an existing file that is
+    // still live, not a rename.
+    final oldPath = rest.substring(0, restTab).replaceAll('\\', '/');
+    final newPath = rest.substring(restTab + 1).replaceAll('\\', '/');
+    if (status.isNotEmpty && status.codeUnitAt(0) == 0x52 /* 'R' */) {
+      final rOld = find(oldPath);
+      final rNew = find(newPath);
+      if (rOld != rNew) parent[rOld] = rNew;
+    }
+    // Attribute to the HEAD-side name. For a rename this is the new
+    // path; for a copy, also the new path (the old still exists).
+    curFiles!.add(newPath);
   }
   flush();
-  return out;
+
+  // Canonicalise every commit's file list so pre-rename modifications
+  // collapse onto the HEAD-side name. Skipped entirely when no rename
+  // was seen (common case) — find() is a no-op on an empty map.
+  if (parent.isNotEmpty) {
+    for (final c in out) {
+      if (c.files.isEmpty) continue;
+      final canon = <String>{for (final f in c.files) find(f)};
+      c.files
+        ..clear()
+        ..addAll(canon);
+    }
+  }
+  return (out, parent);
 }
 
 /// Project dated commits into per-path most-recent date. Used as the
@@ -1247,15 +1380,49 @@ Map<String, int> _parseShortlog(String output) {
   return counts;
 }
 
-Map<String, int> _countPathTouches(String output) {
+/// Count per-path touches from the same `--name-status -M95` stream
+/// that feeds [_parseDatedCommitFiles]. Line-based: production git
+/// emits one status line per changed path per commit, so line count
+/// equals commit-touch count without any per-commit dedup.
+///
+/// [canon] is the union-find parent map from [_parseDatedCommitFiles]
+/// — passing it canonicalises pre-rename names onto the HEAD-side
+/// path, matching how downstream enrichment / co-change / alive-mass
+/// see the same file. Pass an empty map to skip rename collapsing.
+Map<String, int> _countPathTouches(String output, Map<String, String> canon) {
+  String findCanon(String x) {
+    if (canon.isEmpty) return x;
+    var cur = x;
+    while (true) {
+      final p = canon[cur];
+      if (p == null || p == cur) return cur;
+      cur = p;
+    }
+  }
+
   final counts = <String, int>{};
   for (final line in output.split('\n')) {
-    final path = line.trim();
-    if (path.isEmpty) continue;
-    // Skip the per-commit date marker injected by the `__C__%ad` format
-    // — those lines tag the commit boundary, they are not file paths.
-    if (path.startsWith(_kCommitMarker)) continue;
-    counts.update(path, (value) => value + 1, ifAbsent: () => 1);
+    final trimmed = line.trim();
+    if (trimmed.isEmpty) continue;
+    if (trimmed.startsWith(_kCommitMarker)) continue;
+
+    // Extract the HEAD-side path from the status line. Bare paths
+    // (legacy `--name-only`-style test fixtures) fall through the
+    // tab-less branch unchanged.
+    String path;
+    final tab1 = trimmed.indexOf('\t');
+    if (tab1 < 0) {
+      path = trimmed;
+    } else {
+      final rest = trimmed.substring(tab1 + 1);
+      final tab2 = rest.indexOf('\t');
+      // `R<score>\t<old>\t<new>` / `C<score>\t<old>\t<new>` — the
+      // new path is the HEAD-side name. Single-path rows fall into
+      // the else branch.
+      path = tab2 < 0 ? rest : rest.substring(tab2 + 1);
+    }
+    path = findCanon(path.replaceAll('\\', '/'));
+    counts.update(path, (v) => v + 1, ifAbsent: () => 1);
   }
   return counts;
 }
@@ -1281,6 +1448,16 @@ Map<String, int> _aggregateDirTouchesFromPaths(Map<String, int> pathTouches) {
 Map<String, int> parseLsTreeBytesForTesting(String output) =>
     _parseLsTreeBytes(output);
 
+/// Test-only view over [_parseDatedCommitFiles]. Returns one entry per
+/// commit — each entry is the set of HEAD-side (rename-canonical) paths
+/// that commit touched. Lets tests pin the union-find logic without
+/// standing up a full xray probe.
+@visibleForTesting
+List<Set<String>> parseDatedCommitCanonicalFilesForTesting(String output) {
+  final (commits, _) = _parseDatedCommitFiles(output);
+  return [for (final c in commits) c.files];
+}
+
 Map<String, int> _parseLsTreeBytes(String output) {
   final out = <String, int>{};
   for (final line in output.split('\n')) {
@@ -1301,15 +1478,14 @@ Map<String, int> _parseLsTreeBytes(String output) {
   return out;
 }
 
-Future<List<RepositoryXrayHotspotData>> _buildHotspots(
+List<RepositoryXrayHotspotData> _buildHotspots(
   Map<String, int> pathTouches,
   Map<String, int> dirTouches,
-  bool includeMachineHistory,
-  Future<ProcessResult> Function(List<String> args) probe,
+  List<_DatedCommit> commits,
   _CoChangeAnalysis coChange,
   Map<String, double> pathAliveMass,
   _SpectralSummary? spectral,
-) async {
+) {
   final keystoneScores = coChange.scores;
   final coupling = coChange.coupling;
   final files = pathTouches.entries.toList()
@@ -1347,47 +1523,48 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
     picked.add(path);
   }
 
-  // Each `_enrichHotspot` spawns 2 `git log` subprocesses. With ~40
-  // file candidates + 16 directory candidates, an eager `Future.wait`
-  // would fire ~112 `git log` processes simultaneously — on Windows
-  // that's catastrophic (each ~20–50ms to spawn, plus .git disk
-  // contention), turning individual log calls from ~50ms into ~1.5s.
-  // Route through [_runBounded] so only [_xraySubprocessConcurrency]
-  // enrichments are in flight at a time. Result order is preserved.
+  // Previously each hotspot candidate spawned 2 `git log -- <path>`
+  // subprocesses to fetch authors and the most recent commit. With
+  // ~40 file + 16 directory candidates that was ~112 subprocesses per
+  // snapshot; on Windows (50ms+ spawn each, plus .git I/O contention
+  // under concurrent `git log --all`) this was the dominant xray
+  // cost. We already have the full `--name-only` commit stream
+  // parsed into [commits], so walk that once per path in-memory.
   int communityOf(String path) =>
       spectral?.communityByPath[path] ?? -1;
-  final hotspotTasks = <Future<RepositoryXrayHotspotData> Function()>[
-    for (final path in picked)
-      () => _enrichHotspot(
-            path,
-            'file',
-            pathTouches[path] ?? 0,
-            includeMachineHistory,
-            probe,
-            keystoneScores[path],
-            keystoneFlags.contains(path),
-            coupling[path] ?? const [],
-            pathAliveMass[path] ?? (pathTouches[path] ?? 0).toDouble(),
-            communityOf(path),
-          ),
-    for (final entry in dirs.take(_mapDirHotspotCandidateCap))
-      () => _enrichHotspot(
-            entry.key,
-            'directory',
-            entry.value,
-            includeMachineHistory,
-            probe,
-            null,
-            false,
-            const [],
-            pathAliveMass[entry.key] ?? entry.value.toDouble(),
-            -1,
-          ),
-  ];
-  final hotspots = await _runBounded(
-    hotspotTasks,
-    maxConcurrent: _xraySubprocessConcurrency,
+  final dirPaths =
+      dirs.take(_mapDirHotspotCandidateCap).map((e) => e.key).toList();
+  final enriched = _enrichPathsFromCommits(
+    filePaths: picked,
+    dirPaths: dirPaths,
+    commits: commits,
   );
+  final hotspots = <RepositoryXrayHotspotData>[
+    for (final path in picked)
+      _hotspotFromEnrichment(
+        path: path,
+        kind: 'file',
+        touchCount: pathTouches[path] ?? 0,
+        enrichment: enriched[path],
+        keystoneScore: keystoneScores[path],
+        isKeystone: keystoneFlags.contains(path),
+        coupledTo: coupling[path] ?? const [],
+        aliveMass: pathAliveMass[path] ?? (pathTouches[path] ?? 0).toDouble(),
+        spectralCommunity: communityOf(path),
+      ),
+    for (final entry in dirs.take(_mapDirHotspotCandidateCap))
+      _hotspotFromEnrichment(
+        path: entry.key,
+        kind: 'directory',
+        touchCount: entry.value,
+        enrichment: enriched[entry.key],
+        keystoneScore: null,
+        isKeystone: false,
+        coupledTo: const [],
+        aliveMass: pathAliveMass[entry.key] ?? entry.value.toDouble(),
+        spectralCommunity: -1,
+      ),
+  ];
   // Sort: keystones group at the top (they're the noteworthy shape),
   // then remaining by raw touch count. Within each group, touch count
   // tie-breaks so the ordering stays stable and familiar.
@@ -1408,8 +1585,8 @@ Future<List<RepositoryXrayHotspotData>> _buildHotspots(
 ///  • File hotspots want diversity — the renderer should be able to
 ///    show many on a wide window, few on a narrow one.
 ///  • Directory hotspots fill the gap between strata and files.
-/// Each `_enrichHotspot` issues 2 git probes in parallel, so the sum
-/// also bounds subprocess fan-out per snapshot.
+/// Enrichment now reads the already-parsed `--name-status` commit
+/// stream in-memory, so these caps are pure data-volume bounds.
 const int _mapStratumCandidateCap = 12;
 const int _mapHotspotCandidateCap = 40;
 const int _mapDirHotspotCandidateCap = 16;
@@ -1452,52 +1629,118 @@ Set<String> _flagKeystones(Map<String, double> scores) {
   return sorted.take(take.clamp(1, sorted.length)).map((e) => e.key).toSet();
 }
 
-Future<RepositoryXrayHotspotData> _enrichHotspot(
-  String path,
-  String kind,
-  int touchCount,
-  bool includeMachineHistory,
-  Future<ProcessResult> Function(List<String> args) probe,
-  double? keystoneScore,
-  bool isKeystone,
-  List<String> coupledTo,
-  double aliveMass,
-  int spectralCommunity,
-) async {
-  final authorArgs = ['log', '--format=%an'];
-  final recentArgs = ['log', '-n', '1', '--date=short', '--format=%H\t%h\t%ad'];
-  if (!includeMachineHistory) {
-    authorArgs.addAll(['--grep=^t3 checkpoint', '--invert-grep']);
-    recentArgs.addAll(['--grep=^t3 checkpoint', '--invert-grep']);
+/// Per-path enrichment derived from a single pass over the parsed
+/// `--name-only` commit stream: distinct authors who touched the path
+/// plus the most recent touch (hash + shortHash + raw YYYY-MM-DD).
+class _PathEnrichment {
+  _PathEnrichment();
+  final Set<String> authors = <String>{};
+  DateTime? recentDate;
+  String recentDateStr = '';
+  String recentHash = '';
+  String recentShortHash = '';
+
+  void observe(_DatedCommit c) {
+    if (c.author.isNotEmpty) authors.add(c.author);
+    // Record identity even when the commit's date failed to parse —
+    // otherwise a file whose only touches had malformed dates would
+    // report ownerCount > 0 but no hash/date, which renders worse than
+    // "no information." Dated commits overwrite undated ones below.
+    if (recentHash.isEmpty && c.hash.isNotEmpty) {
+      recentHash = c.hash;
+      recentShortHash = c.shortHash;
+      recentDateStr = c.dateStr;
+    }
+    final d = c.date;
+    if (d == null) return;
+    if (recentDate == null || d.isAfter(recentDate!)) {
+      recentDate = d;
+      recentDateStr = c.dateStr;
+      recentHash = c.hash;
+      recentShortHash = c.shortHash;
+    }
   }
+}
 
-  final results = await Future.wait([
-    probe([...authorArgs, '--', path]),
-    probe([...recentArgs, '--', path]),
-  ]);
-  final authorsResult = results[0];
-  final recentResult = results[1];
-  final ownerCount = authorsResult.stdout
-      .toString()
-      .split('\n')
-      .map((line) => line.trim())
-      .where((line) => line.isNotEmpty)
-      .toSet()
-      .length;
-  final recentParts = recentResult.stdout.toString().trim().split('\t');
+/// Single-pass enrichment for every picked file + directory. Walks
+/// [commits] once, routing each touched path either directly (files)
+/// or via prefix match (directories) into its enrichment bucket.
+/// Equivalent to `git log --follow -- <path>` in aggregate: the
+/// commits list is canonicalised via union-find (see
+/// [_parseDatedCommitFiles]) so a file's pre-rename history, when the
+/// rename meets the -M95 similarity threshold, attributes to the
+/// HEAD-side name.
+Map<String, _PathEnrichment> _enrichPathsFromCommits({
+  required Iterable<String> filePaths,
+  required Iterable<String> dirPaths,
+  required List<_DatedCommit> commits,
+}) {
+  final out = <String, _PathEnrichment>{};
+  final fileSet = filePaths.toSet();
+  for (final p in fileSet) {
+    out[p] = _PathEnrichment();
+  }
+  final dirList = dirPaths.toList();
+  for (final d in dirList) {
+    out[d] = _PathEnrichment();
+  }
+  if (fileSet.isEmpty && dirList.isEmpty) return out;
 
+  // Pre-compute `${dir}/` so prefix match is one O(n) compare per
+  // file instead of an allocation per commit.
+  final dirPrefixes = [for (final d in dirList) '$d/'];
+
+  for (final commit in commits) {
+    // Track which dirs already matched this commit so each dir gets
+    // at most one observe() per commit. This is a perf optimisation,
+    // not a correctness requirement — `authors` is a Set and
+    // recent-date tracks max — but it keeps the inner loop tight.
+    final dirHit = List<bool>.filled(dirList.length, false);
+    for (final file in commit.files) {
+      final fileBucket = out[file];
+      // The fileSet check is load-bearing: if a tracked path happens
+      // to equal a directory path exactly (e.g. a submodule gitlink
+      // named like a dir candidate), `out[file]` resolves to the dir
+      // bucket, and we'd attribute a file-observe to it. Guarding on
+      // fileSet membership pins file-observes to real file candidates.
+      if (fileBucket != null && fileSet.contains(file)) {
+        fileBucket.observe(commit);
+      }
+      for (var i = 0; i < dirList.length; i++) {
+        if (dirHit[i]) continue;
+        final dir = dirList[i];
+        if (file == dir || file.startsWith(dirPrefixes[i])) {
+          dirHit[i] = true;
+          out[dir]!.observe(commit);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+RepositoryXrayHotspotData _hotspotFromEnrichment({
+  required String path,
+  required String kind,
+  required int touchCount,
+  required _PathEnrichment? enrichment,
+  required double? keystoneScore,
+  required bool isKeystone,
+  required List<String> coupledTo,
+  required double aliveMass,
+  required int spectralCommunity,
+}) {
+  final e = enrichment;
   return RepositoryXrayHotspotData(
     kind: kind,
     path: path,
     touchCount: touchCount,
-    ownerCount: ownerCount,
-    lastTouchedAt: recentParts.length > 2 ? recentParts[2] : '',
-    latestCommitHash: recentParts.isNotEmpty && recentParts[0].isNotEmpty
-        ? recentParts[0]
-        : null,
-    latestShortHash: recentParts.length > 1 && recentParts[1].isNotEmpty
-        ? recentParts[1]
-        : null,
+    ownerCount: e?.authors.length ?? 0,
+    lastTouchedAt: e?.recentDateStr ?? '',
+    latestCommitHash:
+        (e != null && e.recentHash.isNotEmpty) ? e.recentHash : null,
+    latestShortHash:
+        (e != null && e.recentShortHash.isNotEmpty) ? e.recentShortHash : null,
     keystoneScore: keystoneScore,
     isKeystone: isKeystone,
     coupledTo: coupledTo,
@@ -1506,105 +1749,33 @@ Future<RepositoryXrayHotspotData> _enrichHotspot(
   );
 }
 
-Future<List<RepositoryXrayStratumData>> _buildStrata(
+List<RepositoryXrayStratumData> _buildStrata(
   Map<String, int> dirTouches,
-  Future<ProcessResult> Function(List<String> args) probe,
+  List<_DatedCommit> commits,
   Map<String, double> dirAliveMass,
-) async {
+) {
   final entries = dirTouches.entries.toList()
     ..sort((a, b) => b.value.compareTo(a.value));
-  // 12 strata × 2 `git log` each = 24 subprocess spawns. Funnel through
-  // the same concurrency cap as hotspots so strata + hotspots together
-  // stay under the shared subprocess budget.
-  return _runBounded<RepositoryXrayStratumData>(
-    [
-      for (final entry in entries.take(_mapStratumCandidateCap))
-        () async {
-          final results = await Future.wait([
-            probe([
-              'log',
-              '--grep=^t3 checkpoint',
-              '--invert-grep',
-              '--format=%an',
-              '--',
-              entry.key
-            ]),
-            probe([
-              'log',
-              '-n',
-              '1',
-              '--grep=^t3 checkpoint',
-              '--invert-grep',
-              '--date=short',
-              '--format=%ad',
-              '--',
-              entry.key,
-            ]),
-          ]);
-          final authorsResult = results[0];
-          final recentResult = results[1];
-          return RepositoryXrayStratumData(
-            id: entry.key,
-            label: _stratumLabelForPrefix(entry.key),
-            pathPrefix: entry.key,
-            touchCount: entry.value,
-            ownerCount: authorsResult.stdout
-                .toString()
-                .split('\n')
-                .map((line) => line.trim())
-                .where((line) => line.isNotEmpty)
-                .toSet()
-                .length,
-            lastTouchedAt: recentResult.stdout.toString().trim(),
-            summary: 'Touched ${entry.value} times in filtered history.',
-            aliveMass: dirAliveMass[entry.key] ?? entry.value.toDouble(),
-          );
-        },
-    ],
-    maxConcurrent: _xraySubprocessConcurrency,
+  final picked = entries.take(_mapStratumCandidateCap).toList();
+  final dirPaths = [for (final e in picked) e.key];
+  final enriched = _enrichPathsFromCommits(
+    filePaths: const <String>[],
+    dirPaths: dirPaths,
+    commits: commits,
   );
-}
-
-/// Maximum number of in-flight subprocess enrichments during an xray
-/// snapshot. The xray fires 2 `git log` processes per enriched file
-/// or directory and can enrich ~56 total (40 files + 16 dirs), plus
-/// 12 strata — an eager Future.wait would spawn 136 processes at
-/// once. On Windows each spawn costs ~20–50ms and fights the .git
-/// object store for I/O, so an unbounded wave stalls individual logs
-/// from their native ~50ms into the 1.5s range observed in telemetry.
-/// 6 in-flight matches the branches-page PR prefetch budget
-/// (`_bounded` there uses 4–6) and keeps spawn + disk pressure within
-/// what a single git repo can absorb.
-const int _xraySubprocessConcurrency = 6;
-
-/// Run [tasks] with at most [maxConcurrent] in flight at a time,
-/// preserving input order in the returned list. Factory-closure input
-/// is essential — a pre-built `List<Future<T>>` would have *already*
-/// started every future by the time it reaches us. Errors propagate;
-/// the caller decides whether to swallow or surface them. Mirrors
-/// `_bounded<T>` in branches_page.dart but without the silent
-/// error-swallowing (xray reports failures upstream).
-Future<List<T>> _runBounded<T>(
-  List<Future<T> Function()> tasks, {
-  required int maxConcurrent,
-}) async {
-  if (tasks.isEmpty) return const [];
-  final results = List<T?>.filled(tasks.length, null);
-  var next = 0;
-  Future<void> worker() async {
-    while (true) {
-      final idx = next++;
-      if (idx >= tasks.length) return;
-      results[idx] = await tasks[idx]();
-    }
-  }
-
-  final workers = List.generate(
-    math.min(maxConcurrent, tasks.length),
-    (_) => worker(),
-  );
-  await Future.wait(workers);
-  return results.cast<T>();
+  return [
+    for (final entry in picked)
+      RepositoryXrayStratumData(
+        id: entry.key,
+        label: _stratumLabelForPrefix(entry.key),
+        pathPrefix: entry.key,
+        touchCount: entry.value,
+        ownerCount: enriched[entry.key]?.authors.length ?? 0,
+        lastTouchedAt: enriched[entry.key]?.recentDateStr ?? '',
+        summary: 'Touched ${entry.value} times in filtered history.',
+        aliveMass: dirAliveMass[entry.key] ?? entry.value.toDouble(),
+      ),
+  ];
 }
 
 List<RepositoryXrayPivotCommitData> _buildPivotCommits(

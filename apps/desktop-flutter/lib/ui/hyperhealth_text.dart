@@ -39,6 +39,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../app/window_activity.dart';
 import '../backend/logos_spectrogeometry.dart' show UniversalityVector;
 import 'motion.dart';
 import 'tokens.dart';
@@ -105,7 +106,7 @@ class HyperhealthText extends StatefulWidget {
 }
 
 class _HyperhealthTextState extends State<HyperhealthText>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WindowAwakeGuardedMixin {
   /// Slow ambient cycle — runs whenever `intensity > 0` and motion is
   /// enabled. Controller value in `[0, 1]` maps to sheen band x-offset.
   AnimationController? _ambient;
@@ -128,8 +129,15 @@ class _HyperhealthTextState extends State<HyperhealthText>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Ambient sheen ticker is gated on window focus via
+    // WindowAwakeGuardedMixin → onWindowAwakeChanged. The widget is
+    // visible on the main workspace chrome, so an idle 60 fps
+    // rebuild loop here was a top blur-time GPU contributor.
     _syncTickers();
   }
+
+  @override
+  void onWindowAwakeChanged() => _syncTickers();
 
   @override
   void didUpdateWidget(covariant HyperhealthText old) {
@@ -145,9 +153,11 @@ class _HyperhealthTextState extends State<HyperhealthText>
   }
 
   void _syncTickers() {
+    if (!mounted) return;
     final intensity = _clampedIntensity();
     final motionRate = context.motionRate;
-    final motionActive = motionRate > 0.05;
+    final awake = WindowActivity.instance.awake;
+    final motionActive = motionRate > 0.05 && awake;
     final rate = motionRate.clamp(0.1, 2.0);
 
     // Resolve the archetype-blended period once per sync. Pure

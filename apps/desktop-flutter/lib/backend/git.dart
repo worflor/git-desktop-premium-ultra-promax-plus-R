@@ -48,6 +48,109 @@ String? diffHeaderPath(String line) {
   return null;
 }
 
+/// Decode outcome: the decoded text, plus whether strict UTF-8 failed
+/// (bytes contained invalid sequences) and the byte offset of the first
+/// malformed sequence. The flag lets callers emit a lifecycle event so
+/// a lossy fallback is never silent in telemetry.
+class _GitDecodeOutcome {
+  final String text;
+  final bool lenientFallback;
+  final int? malformedAtOffset;
+  const _GitDecodeOutcome(
+      this.text, this.lenientFallback, this.malformedAtOffset);
+}
+
+/// Commands whose stdout is known-ASCII structured data (SHAs, ref
+/// names, boolean flags). Malformed UTF-8 here doesn't mean "binary
+/// patch payload" — it means real ref/config corruption, which should
+/// surface as a hard failure, not a silent U+FFFD substitution that
+/// lets downstream code consume garbage as though it were valid.
+///
+/// Deliberately narrow: only subcommands where we're confident the
+/// output is purely machine-structured. Anything that can embed commit
+/// messages, file content, config values, paths (when `core.quotePath`
+/// is off), or user-supplied strings stays in the lenient bucket, since
+/// those legitimately carry non-UTF-8 bytes in real repos.
+const Set<String> _kStrictDecodeSubcommands = {
+  'rev-parse',
+  'rev-list',
+  'symbolic-ref',
+  'merge-base',
+  'check-ref-format',
+};
+
+/// Git accepts global options before the subcommand (e.g. `git -C <dir>
+/// rev-parse HEAD`, `git --git-dir=<path> rev-list`, `git -c foo=bar
+/// status`). A naive `args.first` check would classify such a call as
+/// lenient even though the real subcommand is strict-eligible. Walk
+/// past every leading global option to find the subcommand token.
+///
+/// Global options per `man git(1)` that take values as a separate
+/// argument: `-C`, `-c`, `--exec-path=` (only when given without `=`),
+/// `--git-dir`, `--work-tree`, `--namespace`, `--super-prefix`,
+/// `--config-env`. Attached-value forms (`--foo=bar`, `-C<path>`) are
+/// a single token and are skipped by the prefix check.
+String? _gitSubcommandToken(List<String> args) {
+  var i = 0;
+  while (i < args.length) {
+    final a = args[i];
+    if (!a.startsWith('-')) return a; // positional → this is the subcommand
+    // Boolean-only global flags: consume one slot.
+    const boolFlags = {
+      '-p', '-P', '--paginate', '--no-pager',
+      '--bare', '--no-replace-objects',
+      '--literal-pathspecs', '--glob-pathspecs',
+      '--noglob-pathspecs', '--icase-pathspecs',
+      '-h', '--help', '--version',
+    };
+    if (boolFlags.contains(a)) {
+      i++;
+      continue;
+    }
+    // Value-taking flags when split across two args: `-C <dir>` style.
+    const splitFlags = {
+      '-C', '-c', '--exec-path', '--git-dir', '--work-tree',
+      '--namespace', '--super-prefix', '--config-env',
+    };
+    if (splitFlags.contains(a)) {
+      i += 2;
+      continue;
+    }
+    // Attached-value form (`-C<dir>`, `--git-dir=<path>`, `-cfoo=bar`)
+    // — single token, just advance past it.
+    i++;
+  }
+  return null;
+}
+
+/// Decodes git stdout/stderr bytes as UTF-8. Behavior depends on
+/// [strict]:
+///   • strict=true  — throw `FormatException` on any malformed byte.
+///     Used for structural commands where U+FFFD substitution would
+///     silently corrupt a parser that expects exact bytes.
+///   • strict=false — attempt strict first, fall back to lenient
+///     decode on FormatException. Used for content-bearing commands
+///     (diff, show, log, grep, cat-file, ls-files when paths may be
+///     raw) where non-UTF-8 bytes are legitimate and blocking on them
+///     would kill the flow.
+_GitDecodeOutcome _decodeGitBytes(Object? raw, {required bool strict}) {
+  if (raw is! List<int>) {
+    return _GitDecodeOutcome(raw?.toString() ?? '', false, null);
+  }
+  if (strict) {
+    // Propagate FormatException to caller; no fallback. The outer
+    // catch turns this into a `git.invoke_failed` lifecycle event
+    // with the malformed-byte offset preserved in the message.
+    return _GitDecodeOutcome(utf8.decode(raw), false, null);
+  }
+  try {
+    return _GitDecodeOutcome(utf8.decode(raw), false, null);
+  } on FormatException catch (e) {
+    return _GitDecodeOutcome(
+        utf8.decode(raw, allowMalformed: true), true, e.offset);
+  }
+}
+
 Future<ProcessResult> _git(String workingDir, List<String> args) async {
   final commandLabel = args.isEmpty ? 'git' : 'git.${args.first}';
   final stopwatch = Stopwatch()..start();
@@ -56,13 +159,58 @@ Future<ProcessResult> _git(String workingDir, List<String> args) async {
     command: commandLabel,
   );
   try {
-    final result = await Process.run(
+    // Raw bytes, then strict-first / lenient-fallback decode. Strict
+    // utf8 would throw on the first malformed byte — and git diffs
+    // routinely emit non-UTF-8 (binary file contents in patch hunks,
+    // legacy-encoded source, the occasional latin-1 working tree) —
+    // so a strict-only pipeline kills flows silently through async
+    // onTap callbacks. But defaulting to lenient loses information we
+    // actually care about elsewhere (paths come back C-quoted as
+    // ASCII, and any non-ASCII in git's own output is a bug worth
+    // hearing about loudly). Resolution: try strict, fall back to
+    // allowMalformed only for the streams that actually need it. 99 %
+    // of calls keep strict guarantees; the 1 % that would have thrown
+    // now survives with U+FFFD in the unrecoverable bytes.
+    final raw = await Process.run(
       'git',
       args,
       workingDirectory: workingDir,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
+      stdoutEncoding: null,
+      stderrEncoding: null,
     );
+    // Classify by subcommand. stderr is always lenient — it carries
+    // human messages that may be localized to a non-UTF-8 locale on
+    // exotic setups, and a lenient parse is fine for surfacing the
+    // text to a user. Use `_gitSubcommandToken` so global options
+    // before the subcommand (`-C`, `--git-dir`, etc.) don't silently
+    // downgrade a strict-eligible command to lenient mode.
+    final subcommand = _gitSubcommandToken(args);
+    final strictStdout = subcommand != null &&
+        _kStrictDecodeSubcommands.contains(subcommand);
+    final stdoutOut = _decodeGitBytes(raw.stdout, strict: strictStdout);
+    final stderrOut = _decodeGitBytes(raw.stderr, strict: false);
+    // Surface any lenient-decode fallback as a diagnostic lifecycle
+    // event. Without this, malformed-byte replacement (U+FFFD) is
+    // invisible to ops — downstream parsers would silently consume
+    // corrupted text. The event is type=warning rather than failure
+    // so it doesn't poison success metrics; the errorCode + message
+    // are grep-able for encoding audits.
+    if (stdoutOut.lenientFallback || stderrOut.lenientFallback) {
+      final streams = [
+        if (stdoutOut.lenientFallback)
+          'stdout@${stdoutOut.malformedAtOffset}',
+        if (stderrOut.lenientFallback)
+          'stderr@${stderrOut.malformedAtOffset}',
+      ].join(',');
+      DiagnosticsState.instance.recordCommandLifecycleEvent(
+        type: 'warning',
+        command: commandLabel,
+        errorCode: 'git.malformed_utf8',
+        message: 'lenient UTF-8 fallback: $streams',
+      );
+    }
+    final result = ProcessResult(
+        raw.pid, raw.exitCode, stdoutOut.text, stderrOut.text);
     stopwatch.stop();
     final elapsedMs = stopwatch.elapsedMicroseconds / 1000;
     final ok = result.exitCode == 0;
@@ -1423,12 +1571,26 @@ class FileSignals {
   static const empty = FileSignals(authors: [], heatByPath: {});
 }
 
+/// Marker token prefixing each commit header in [scanFileSignals]'s
+/// `git log` output. `\x01` (ASCII Start-of-Heading) is chosen over a
+/// string sentinel like `__C__` because file paths can legally start
+/// with double-underscore (e.g. `__generated__`, `__init__.py`) — a
+/// control character cannot appear at column 0 of `--name-only` output
+/// in any realistic repo, so misidentification is impossible.
+const String _kFileSignalsMarker = '\x01';
+
 /// One scan, two signals: who has been touching this code AND how hot
 /// each file is right now (exponentially-decayed commit density).
 /// Used by the PR detail surface for the PEOPLE section + per-file
 /// thermal glow. Pure local git; transferable to any host.
-/// Cost: O(paths) git log invocations, each capped at [maxPerFile]
-/// commits. Cheap for typical PR file lists.
+///
+/// Cost: one `git log` invocation total, regardless of path count.
+/// Previously this was O(paths) subprocesses — 12 spawns per typical
+/// PR detail × N expanded PRs dominated the branches-page latency on
+/// Windows (each spawn ~50ms, plus .git I/O contention). The batched
+/// form filters commits via the pathspec and then buckets per-file
+/// in memory, preserving the original [maxPerFile] cap as a
+/// newest-first counter per path.
 Future<GitResult<FileSignals>> scanFileSignals(
   String repo,
   List<String> paths, {
@@ -1438,48 +1600,101 @@ Future<GitResult<FileSignals>> scanFileSignals(
 }) async {
   if (paths.isEmpty) return const GitResult.ok(FileSignals.empty);
   final since = '$sinceDays.days.ago';
+  final r = await _git(repo, [
+    'log',
+    '--no-merges',
+    // `--date-order` pins reverse-chronological-by-commit-date so the
+    // per-path "newest-first" cap below is stable even in repos with
+    // imported / rebased history whose default topo order would drift.
+    '--date-order',
+    '--since',
+    since,
+    '--name-only',
+    // Marker-delimited commit header: email + timestamp (epoch).
+    // Following lines list the file paths touched by that commit.
+    // Note: `--name-only` with a pathspec emits the FULL changed-file
+    // list per matching commit, not only the matching files — we
+    // intersect with [pathSet] below to attribute correctly.
+    '--format=$_kFileSignalsMarker%ae|%at',
+    '--',
+    ...paths,
+  ]);
+  // Best-effort signal: if the log fails (corrupt repo, invalid
+  // pathspec on a single file) degrade to empty glow rather than
+  // failing the whole PR detail surface — matches the old per-path
+  // loop's tolerance (which `continue`d past individual failures).
+  if (r.exitCode != 0) {
+    return const GitResult.ok(FileSignals.empty);
+  }
+
   final counts = <String, int>{};
   final heatByPath = <String, double>{};
+  // Per-path newest-first cap that matches the old `-n $maxPerFile`
+  // behaviour: git log default ordering is reverse-chronological, so
+  // the first [maxPerFile] commits we see touching each path are the
+  // most recent ones. Older touches are ignored for both heat and
+  // author attribution.
+  final perFileCount = <String, int>{};
+  final pathSet = paths.toSet();
   final now = DateTime.now();
-  for (final p in paths) {
-    final r = await _git(repo, [
-      'log',
-      '--no-merges',
-      // Author email + commit timestamp (epoch seconds).
-      '--format=%ae|%at',
-      '-n',
-      '$maxPerFile',
-      '--since',
-      since,
-      '--',
-      p,
-    ]);
-    if (r.exitCode != 0) continue;
-    double heat = 0;
-    for (final raw in (r.stdout as String).split('\n')) {
-      final line = raw.trim();
-      if (line.isEmpty) continue;
-      final pipe = line.indexOf('|');
-      final email = pipe > 0 ? line.substring(0, pipe) : line;
-      final tsStr = pipe > 0 ? line.substring(pipe + 1) : '';
-      if (email.isNotEmpty) {
-        counts[email] = (counts[email] ?? 0) + 1;
-      }
-      // Exponential decay: each commit contributes exp(-Δd/τ) to the
-      // file's heat. Recent commits dominate; old ones fade. Heat is
-      // capped at 1.0 for visualization (rare to exceed even in
-      // active files).
-      final ts = int.tryParse(tsStr);
-      if (ts != null) {
-        final commitAt = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
-        final ageDays = now.difference(commitAt).inHours / 24.0;
-        heat += math.exp(-ageDays / thermalTauDays);
-      }
+
+  String curEmail = '';
+  DateTime? curAt;
+  Set<String> curFiles = <String>{};
+
+  void flushCommit() {
+    if (curFiles.isEmpty) return;
+    double? heatContribution;
+    final at = curAt;
+    if (at != null) {
+      final ageDays = now.difference(at).inHours / 24.0;
+      heatContribution = math.exp(-ageDays / thermalTauDays);
     }
-    if (heat > 0) {
-      heatByPath[p] = heat.clamp(0.0, 1.0).toDouble();
+    for (final file in curFiles) {
+      if (!pathSet.contains(file)) continue;
+      final seen = perFileCount[file] ?? 0;
+      if (seen >= maxPerFile) continue;
+      perFileCount[file] = seen + 1;
+      if (curEmail.isNotEmpty) {
+        counts[curEmail] = (counts[curEmail] ?? 0) + 1;
+      }
+      if (heatContribution != null) {
+        heatByPath[file] = (heatByPath[file] ?? 0) + heatContribution;
+      }
     }
   }
+
+  for (final raw in (r.stdout as String).split('\n')) {
+    final line = raw.trim();
+    if (line.startsWith(_kFileSignalsMarker)) {
+      flushCommit();
+      final payload = line.substring(_kFileSignalsMarker.length);
+      // Split on the LAST `|` — the author email side can legally
+      // contain pipes (git accepts any string in `user.email`) while
+      // the timestamp side is always `[0-9]+`, so the rightmost pipe
+      // is the unambiguous delimiter.
+      final pipe = payload.lastIndexOf('|');
+      curEmail = pipe > 0 ? payload.substring(0, pipe) : payload;
+      final tsStr = pipe > 0 ? payload.substring(pipe + 1) : '';
+      final ts = int.tryParse(tsStr);
+      curAt = ts != null
+          ? DateTime.fromMillisecondsSinceEpoch(ts * 1000)
+          : null;
+      curFiles = <String>{};
+      continue;
+    }
+    if (line.isEmpty) continue;
+    curFiles.add(line.replaceAll('\\', '/'));
+  }
+  flushCommit();
+
+  // Heat accumulates unclamped across a file's commits; clip once at
+  // the end so visualisation stays in 0..1 while preserving ordering
+  // among files whose raw heat exceeds 1.
+  for (final entry in heatByPath.entries.toList()) {
+    heatByPath[entry.key] = entry.value.clamp(0.0, 1.0).toDouble();
+  }
+
   final authors = counts.entries
       .map((e) => (email: e.key, commits: e.value))
       .toList()

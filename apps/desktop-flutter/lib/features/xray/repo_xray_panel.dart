@@ -1,6 +1,11 @@
+import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 
 import '../../app/repository_state.dart';
@@ -10,6 +15,8 @@ import '../../backend/aperture_sweep.dart'
 import '../../backend/dtos.dart';
 import '../../backend/engram_fit.dart'
     show branchLabelConverging, branchLabelDiverging, branchLabelSteady;
+import '../../backend/repo_summary/api.dart';
+import '../../backend/repo_summary/types.dart' as rs;
 import '../../components/icons/app_icons.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/interaction_feedback.dart';
@@ -18,7 +25,7 @@ import '../../ui/motion.dart';
 import '../../ui/status_view.dart';
 import '../../ui/tokens.dart';
 
-enum _XrayView { map, time, signals }
+enum _XrayView { map, time, signals, summary }
 
 class RepoXrayPanel extends StatefulWidget {
   final VoidCallback onClose;
@@ -227,6 +234,13 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
                 onCommitSelected: widget.onCommitSelected,
               );
 
+              // Summary view fills the whole area; no inspector sidebar.
+              if (_view == _XrayView.summary) {
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                  child: main,
+                );
+              }
               if (showSideInspector) {
                 // Map view gets a floating inspector — territory tiles
                 // flow around it in an L-shape via the obstacle param,
@@ -630,6 +644,12 @@ class _ViewTabs extends StatelessWidget {
             icon: 'search',
             active: current == _XrayView.signals,
             onTap: () => onChanged(_XrayView.signals)),
+        const SizedBox(width: 8),
+        _TabChip(
+            label: 'Summary',
+            icon: 'repo-summary',
+            active: current == _XrayView.summary,
+            onTap: () => onChanged(_XrayView.summary)),
       ],
     );
   }
@@ -698,6 +718,7 @@ class _MainViewport extends StatelessWidget {
             selectedSignalId: selectedSignalId,
             onSignalSelected: onSignalSelected,
           ),
+        _XrayView.summary => _SummaryView(repoPath: snapshot.header.repoPath),
       },
     );
   }
@@ -911,6 +932,12 @@ class _InspectorPanel extends StatelessWidget {
           inspectorTitle = snapshot.header.repoName;
           inspectorAccent = t.accentBright;
         }
+      case _XrayView.summary:
+        // Summary view occupies the full viewport — this inspector is
+        // never mounted for it. The case exists only for switch
+        // exhaustiveness.
+        inspectorTitle = snapshot.header.repoName;
+        inspectorAccent = t.accentBright;
     }
 
     return _PanelBlock(
@@ -935,6 +962,7 @@ class _InspectorPanel extends StatelessWidget {
                   ? _SignalInspector(
                       card: card, onCommitSelected: onCommitSelected)
                   : _OverviewInspector(snapshot: snapshot),
+              _XrayView.summary => _OverviewInspector(snapshot: snapshot),
             },
           ),
         ],
@@ -4225,5 +4253,347 @@ class _EventCard extends StatelessWidget {
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Summary view — lives inside the xray panel as its fourth tab. Runs
+// the repo_summary pipeline on a background isolate and renders the
+// markdown result with Copy + Save actions.
+// ─────────────────────────────────────────────────────────────────────
+
+class _SummaryView extends StatefulWidget {
+  final String repoPath;
+  const _SummaryView({required this.repoPath});
+  @override
+  State<_SummaryView> createState() => _SummaryViewState();
+}
+
+class _SummaryViewState extends State<_SummaryView> {
+  bool _generating = false;
+  rs.RepoDoc? _doc;
+  String? _markdown;
+  String? _error;
+
+  @override
+  void didUpdateWidget(covariant _SummaryView old) {
+    super.didUpdateWidget(old);
+    // Repo switched — drop cached doc so the user doesn't see stale
+    // content. The generation path also guards against completing with
+    // stale data, but this covers the passive case where the user
+    // switches repos without re-generating.
+    if (old.repoPath != widget.repoPath) {
+      _doc = null;
+      _markdown = null;
+      _error = null;
+    }
+  }
+
+  Future<void> _runGenerate() async {
+    if (_generating) return;
+    final repoPath = widget.repoPath;
+    setState(() {
+      _generating = true;
+      _error = null;
+    });
+    try {
+      // Run the full pipeline on a background isolate so the UI stays
+      // responsive on large repos. `generateRepoSummary` reaches into
+      // the git subprocess + diagnostics writers, which use plugin
+      // channels — those need the binary messenger bootstrapped inside
+      // the worker isolate. We pass the root-isolate token alongside
+      // the repo path and initialise the messenger as the first thing
+      // the worker does.
+      final rootToken = RootIsolateToken.instance!;
+      final doc = await compute<_SummaryJob, rs.RepoDoc>(
+        _runSummaryJob,
+        _SummaryJob(rootToken: rootToken, repoPath: repoPath),
+      );
+      if (!mounted) return;
+      // Guard: if the user switched repos while we were generating,
+      // discard the stale result.
+      if (widget.repoPath != repoPath) return;
+      setState(() {
+        _doc = doc;
+        _markdown = repoDocToMarkdown(doc);
+        _generating = false;
+      });
+    } on Object catch (e) {
+      if (!mounted) return;
+      if (widget.repoPath != repoPath) return;
+      setState(() {
+        _error = 'Generation failed: $e';
+        _generating = false;
+      });
+    }
+  }
+
+  Future<void> _copyToClipboard() async {
+    final md = _markdown;
+    if (md == null) return;
+    await Clipboard.setData(ClipboardData(text: md));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Summary copied to clipboard.'),
+      duration: Duration(seconds: 2),
+    ));
+  }
+
+  Future<void> _saveToFile() async {
+    final md = _markdown;
+    if (md == null) return;
+    final defaultName = '${_doc?.repoName ?? 'repo'}-summary.md';
+    try {
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save repository summary',
+        fileName: defaultName,
+        type: FileType.custom,
+        allowedExtensions: const ['md'],
+      );
+      if (path == null) return;
+      await File(path).writeAsString(md);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Saved to $path'),
+        duration: const Duration(seconds: 3),
+      ));
+    } on Object catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Save failed: $e'),
+        duration: const Duration(seconds: 4),
+      ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _PanelBlock(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _SummaryToolbar(
+            generating: _generating,
+            hasDoc: _markdown != null,
+            onGenerate: _runGenerate,
+            onCopy: _markdown == null ? null : _copyToClipboard,
+            onSave: _markdown == null ? null : _saveToFile,
+          ),
+          const SizedBox(height: 8),
+          Expanded(child: _summaryBody()),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryBody() {
+    final t = context.tokens;
+    if (_generating) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 22, height: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation(t.accentBright),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Reading the repo and clustering features…',
+              style: TextStyle(color: t.textMuted, fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Text(
+            _error!,
+            style: TextStyle(color: t.textMuted, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    final md = _markdown;
+    if (md == null) {
+      return Center(
+        child: Text(
+          'Press Generate to produce a markdown summary of this repo.',
+          style: TextStyle(color: t.textMuted, fontSize: 12),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    return Markdown(
+      data: md,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      selectable: true,
+      styleSheet: MarkdownStyleSheet(
+        p: TextStyle(color: t.textNormal, fontSize: 13, height: 1.55),
+        h1: TextStyle(
+          color: t.textNormal, fontSize: 20,
+          fontWeight: FontWeight.w700, height: 1.3,
+        ),
+        h2: TextStyle(
+          color: t.textNormal, fontSize: 16,
+          fontWeight: FontWeight.w600, height: 1.3,
+        ),
+        h3: TextStyle(
+          color: t.accentBright, fontSize: 13,
+          fontWeight: FontWeight.w600, height: 1.3,
+        ),
+        code: TextStyle(
+          color: t.accentBright,
+          fontFamily: 'JetBrainsMono',
+          fontSize: 11,
+          backgroundColor: t.chromeBorder.withValues(alpha: 0.3),
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: t.chromeBorder.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        blockquote: TextStyle(
+          color: t.textMuted, fontStyle: FontStyle.italic, fontSize: 12,
+        ),
+        blockquoteDecoration: BoxDecoration(
+          border: Border(left: BorderSide(
+            color: t.accentBright.withValues(alpha: 0.4), width: 3,
+          )),
+          color: t.chromeBorder.withValues(alpha: 0.1),
+        ),
+        listBullet: TextStyle(color: t.textNormal, fontSize: 13),
+        strong: TextStyle(color: t.textNormal, fontWeight: FontWeight.w700),
+        em: TextStyle(color: t.textMuted, fontStyle: FontStyle.italic),
+        horizontalRuleDecoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: t.chromeBorder, width: 1),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryToolbar extends StatelessWidget {
+  const _SummaryToolbar({
+    required this.generating,
+    required this.hasDoc,
+    required this.onGenerate,
+    required this.onCopy,
+    required this.onSave,
+  });
+  final bool generating;
+  final bool hasDoc;
+  final VoidCallback onGenerate;
+  final VoidCallback? onCopy;
+  final VoidCallback? onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      child: Row(
+        children: [
+          _SummaryActionButton(
+            label: hasDoc ? 'Regenerate' : 'Generate',
+            icon: 'sync',
+            primary: true,
+            loading: generating,
+            onTap: generating ? null : onGenerate,
+          ),
+          const SizedBox(width: 8),
+          _SummaryActionButton(label: 'Copy', icon: 'check', onTap: onCopy),
+          const SizedBox(width: 8),
+          _SummaryActionButton(label: 'Save', icon: 'fetch', onTap: onSave),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryActionButton extends StatelessWidget {
+  const _SummaryActionButton({
+    required this.label,
+    required this.icon,
+    this.onTap,
+    this.primary = false,
+    this.loading = false,
+  });
+  final String label;
+  final String icon;
+  final VoidCallback? onTap;
+  final bool primary;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final disabled = onTap == null;
+    final fg = disabled
+        ? t.textMuted
+        : (primary ? t.accentBright : t.textNormal);
+    final bg = primary && !disabled
+        ? t.accentBright.withValues(alpha: 0.12)
+        : Colors.transparent;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: bg,
+          border: Border.all(color: t.chromeBorder, width: 1),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (loading)
+              SizedBox(
+                width: 12, height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  valueColor: AlwaysStoppedAnimation(fg),
+                ),
+              )
+            else
+              AppIcon(name: icon, size: 12, color: fg),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: fg, fontSize: 12, fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Message sent from the main isolate to the summary worker isolate.
+/// Carries the [RootIsolateToken] the worker needs to bootstrap plugin
+/// channels so `runGitProbe`, diagnostics writers, and path-provider
+/// calls all succeed from inside `compute`.
+class _SummaryJob {
+  const _SummaryJob({required this.rootToken, required this.repoPath});
+  final RootIsolateToken rootToken;
+  final String repoPath;
+}
+
+/// Top-level worker entry for `compute`. Initialises the binary
+/// messenger, then delegates to the pipeline. Must be top-level (not
+/// a closure or instance method) so its tear-off is sendable to the
+/// background isolate.
+Future<rs.RepoDoc> _runSummaryJob(_SummaryJob job) async {
+  BackgroundIsolateBinaryMessenger.ensureInitialized(job.rootToken);
+  return generateRepoSummary(job.repoPath);
 }
 

@@ -1840,7 +1840,31 @@ class LogosGit {
     LogosGitStats stats, {
     int edgeDensity = _defaultEdgeDensity,
     EngramFileKTable? perFileKVectors,
+    // Probe hook. When non-null, sub-phase wallclock is written here so
+    // cold-start probes can drill into which piece of the build is
+    // actually expensive. Null in production — zero overhead (a single
+    // null-check per phase).
+    Map<String, int>? probeTimingsUs,
   }) {
+    Stopwatch? probeSw;
+    // tick(label) closes out the *preceding* phase and records its
+    // elapsed time under `label`. So tick('_start') just arms the
+    // clock (records nothing), tick('nodes') attributes everything
+    // between _start and nodes to the "nodes" phase, and so on. The
+    // label names the slice that just finished, not the one about
+    // to begin.
+    void tick(String phase) {
+      if (probeTimingsUs == null) return;
+      probeSw ??= Stopwatch();
+      if (probeSw!.isRunning) {
+        probeSw!.stop();
+        probeTimingsUs[phase] =
+            (probeTimingsUs[phase] ?? 0) + probeSw!.elapsedMicroseconds;
+      }
+      probeSw!.reset();
+      probeSw!.start();
+    }
+    tick('_start');
     // Whether the EN axis is active for this build. Determined once
     // here so the build loop can branch cleanly without per-edge
     // null checks inside the hot path.
@@ -1868,6 +1892,7 @@ class LogosGit {
     }
 
     final n = nodePaths.length;
+    tick('nodes');
     if (n == 0) {
       // Empty graph - engine does nothing useful but doesn't throw.
       return LogosGit._(
@@ -1933,6 +1958,7 @@ class LogosGit {
     // 5th observation (mixer caps stay 4-element).
     final en =
         useEngram ? _EnAxis(rowIds: enRowIds!, table: perFileKVectors) : null;
+    tick('axes');
 
     // Per-file curved metric (Whisper Harmonic, applied per-file).
     // For each file with sufficient touch history, fit AR(2) on the
@@ -1968,6 +1994,7 @@ class LogosGit {
       if (fit.isLinearFallback) continue;
       perFileMetrics[path] = fit;
     }
+    tick('curvature');
 
     // (Per-file curvature factor - formerly an inline closure here -
     // is now materialised as a precomputed `Float64List curvatures`
@@ -2002,6 +2029,16 @@ class LogosGit {
     final transportSeedIndex = <String, List<int>>{};
     final pathSegments =
         List<List<String>>.generate(n, (i) => nodePaths[i].split('/'));
+    // Precomputed [TransportRoles] per node. `logosTransportLane(a, b)`
+    // internally rebuilds both roles per call — at n²-scale that's 44k+
+    // redundant string normalisations + seed-key + 8 pattern-match
+    // sweeps per build. The file_coupling pass already pays this cost
+    // once and reuses via `logosTransportLaneOfRoles`; we do the same
+    // here. This was the single biggest cold-start win identified by
+    // the phase-timing probe (scoreLoop was 98 % of build, transport
+    // was the dominant sub-cost of each pair).
+    final transportRoles =
+        List<TransportRoles>.generate(n, (i) => TransportRoles.of(nodePaths[i]));
     final curvatures = Float64List(n);
     // Well -> node-ids index. Same shape as `dirIndex` but partitioned
     // by Alexandria's learned semantic wells instead of directory
@@ -2064,7 +2101,9 @@ class LogosGit {
         final parent = p.substring(0, slash);
         (dirIndex[parent] ??= <int>[]).add(i);
       }
-      final transportKey = logosTransportSeedKey(p);
+      // Seed key already computed inside TransportRoles.of above — read
+      // it back instead of redoing the pattern work.
+      final transportKey = transportRoles[i].seedKey;
       if (transportKey != null) {
         (transportSeedIndex[transportKey] ??= <int>[]).add(i);
       }
@@ -2076,6 +2115,7 @@ class LogosGit {
         curvatures[i] = (!r.isFinite || r <= 0) ? 1.0 : r.clamp(0.5, 1.0);
       }
     }
+    tick('indexes');
 
     // Pass 1: collect raw (neighbour, p_mix) pairs per row. Pass 2:
     // normalise by D^(-1/2) and write CSR.
@@ -2090,6 +2130,14 @@ class LogosGit {
     // Sized to match the active mixer (4 axes by default, 5 with EN).
     final obsBuf =
         List<AxisObs>.filled(obsBufSize, AxisObs.silent, growable: false);
+
+    // Probe counters — only updated when a timings map is requested.
+    // In production (`probeTimingsUs == null`) these stay 0 and the
+    // per-pair increments below are gated by a single null-check.
+    final probeActive = probeTimingsUs != null;
+    var probePairsScored = 0;
+    var probeMixerCalls = 0;
+    var probeTransportCalls = 0;
 
     for (var i = 0; i < n; i++) {
       final a = nodePaths[i];
@@ -2158,7 +2206,7 @@ class LogosGit {
         }
       }
 
-      final transportKey = logosTransportSeedKey(a);
+      final transportKey = transportRoles[i].seedKey;
       if (transportKey != null) {
         final seeded = transportSeedIndex[transportKey];
         if (seeded != null) {
@@ -2193,6 +2241,7 @@ class LogosGit {
       // hottest build-time loop).
       final kept = <_EdgeCandidate>[];
       for (final j in candidates) {
+        if (probeActive) probePairsScored++;
         final b = nodePaths[j];
 
         // Inline SP observe - uses cached pathSegments. Identical
@@ -2226,6 +2275,7 @@ class LogosGit {
               ? en.observeIdsWithMag(i, j, aMagSqI)
               : AxisObs.silent;
         }
+        if (probeActive) probeMixerCalls++;
         var p = mixer.mix(obsBuf);
         // Merge the two `sqrt` calls into one: the algebra is
         // `sqrt(curvA·curvB) · sqrt(integrityA·integrityB) =
@@ -2236,12 +2286,15 @@ class LogosGit {
         p *= math.sqrt(
               curvA * curvatures[j] * integrityA * integrityB,
             ) *
-            logosPairPenalty(a, b);
-        final lane = logosTransportLane(a, b);
+            logosPairPenaltyOfRoles(transportRoles[i], transportRoles[j]);
+        if (probeActive) probeTransportCalls += 2;
+        final rolesA = transportRoles[i];
+        final rolesB = transportRoles[j];
+        final lane = logosTransportLaneOfRoles(rolesA, rolesB);
         if (lane != null && lane.strength > 0) {
           final transportWeight = (lane.strength *
                   math.max(integrityA, 0.35) *
-                  math.sqrt(stats.integrityByPath[b] ?? 1.0))
+                  math.sqrt(integrityB))
               .clamp(0.0, 1.0)
               .toDouble();
           if (transportWeight > 0.01) {
@@ -2252,10 +2305,10 @@ class LogosGit {
             }
           }
         }
-        final reverseLane = logosTransportLane(b, a);
+        final reverseLane = logosTransportLaneOfRoles(rolesB, rolesA);
         if (reverseLane != null && reverseLane.strength > 0) {
           final reverseWeight = (reverseLane.strength *
-                  math.max(stats.integrityByPath[b] ?? 1.0, 0.35) *
+                  math.max(integrityB, 0.35) *
                   math.sqrt(integrityA))
               .clamp(0.0, 1.0)
               .toDouble();
@@ -2280,7 +2333,9 @@ class LogosGit {
         if (candidates.contains(j)) continue;
         final b = nodePaths[j];
         final integrityB = stats.integrityByPath[b] ?? 1.0;
-        final lane = logosTransportLane(a, b);
+        final rolesA = transportRoles[i];
+        final rolesB = transportRoles[j];
+        final lane = logosTransportLaneOfRoles(rolesA, rolesB);
         if (lane != null && lane.strength > 0) {
           final transportWeight = (lane.strength *
                   math.max(integrityA, 0.35) *
@@ -2295,7 +2350,7 @@ class LogosGit {
             }
           }
         }
-        final reverseLane = logosTransportLane(b, a);
+        final reverseLane = logosTransportLaneOfRoles(rolesB, rolesA);
         if (reverseLane != null && reverseLane.strength > 0) {
           final reverseWeight = (reverseLane.strength *
                   math.max(integrityB, 0.35) *
@@ -2321,6 +2376,12 @@ class LogosGit {
       for (final e in kept) {
         degree[i] += e.pMix;
       }
+    }
+    tick('scoreLoop');
+    if (probeTimingsUs != null) {
+      probeTimingsUs['_probePairsScored'] = probePairsScored;
+      probeTimingsUs['_probeMixerCalls'] = probeMixerCalls;
+      probeTimingsUs['_probeTransportCalls'] = probeTransportCalls;
     }
 
     // Symmetrise: enforce W[i,j] = W[j,i] = max(W[i,j], W[j,i]).
@@ -2358,6 +2419,7 @@ class LogosGit {
         }
       }
     }
+    tick('symmetrise');
 
     // Pass 2: build CSR with D^(-1/2) fused into values.
     //
@@ -2395,6 +2457,7 @@ class LogosGit {
       indices: indices,
       values: values,
     );
+    tick('csr');
     var totalTransportEdges = 0;
     for (var i = 0; i < n; i++) {
       totalTransportEdges += transportRows[i].length;
@@ -2424,6 +2487,7 @@ class LogosGit {
       indices: transportIndices,
       values: transportValues,
     );
+    tick('transportCsr');
 
     return LogosGit._(
       graph: graph,

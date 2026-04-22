@@ -2,25 +2,51 @@
 """Export Alexandria engram + filtered GloVe to compact Dart-loadable assets.
 
 Alexandria's original `.engram` file is a ZIP containing wells.bin + dream.bin
-+ manifest.json + annotations.json. For the Flutter app we only need the
-reference pairing and per-well K-space centroids, so we re-serialise into
-a flat `.endb` (Engram Dart Brain) binary:
++ manifest.json + annotations.json. The `.endb` asset is a faithful flat-binary
+re-serialisation of *everything* the ZIP carries — not a slim projection.
+
+.endb layout (little-endian, version 2):
 
     magic[4]  = "ENDB"
-    version   u32 = 1
+    version   u32 = 2
     dim       u32
-    pairs     u32
+    pairs     u32                (= dim // 2)
     n_wells   u32
+    flags     u32
+        bit 0: has_sum_raw       (per-well sum_raw float64[L] follows each sum_K)
+        bit 1: has_dream         (dream buffer present)
+        bit 2: has_annotations   (annotations JSON present)
+        bit 3: has_manifest      (full source manifest JSON present)
     pairing   int16[dim]
+
     per well:
         name_len u16
         name     utf-8[name_len]
         count    u32
         sum_K    complex128[pairs]  (re f64 + im f64 interleaved)
+        [if has_sum_raw]:
+            sum_raw_len u32          (byte length)
+            sum_raw     float64[sum_raw_len / 8]
 
-(We drop the `sum_raw` float64[256] that Alexandria carries per well —
-nearest-well in K-space only needs sum_K; skipping sum_raw cuts the asset
-~2KB per well, ~0.5MB total for 225 wells.)
+    [if has_dream]:
+        n_dream u32
+        per entry (complex64 K/G to match alexandria's v0 dream.bin):
+            K  float32[pairs * 2]    (re,im interleaved)
+            G  float32[pairs * 2]    (re,im interleaved)
+            S  float32[pairs]
+
+    [if has_annotations]:
+        annot_len u32
+        annot     utf-8[annot_len]
+
+    [if has_manifest]:
+        manifest_len u32
+        manifest     utf-8[manifest_len]
+
+Version 1 is still accepted by the Dart reader for backward compatibility;
+v2 supersedes it and carries the full `.engram` payload so downstream
+consumers (dream introspection, annotation voice, raw sum audit) can read
+directly from the bundled asset without needing the original ZIP.
 
 The GloVe export filters the 20k mini vocab to lowercase alpha tokens and
 supplements missing programming-specific terms from the full 6B vocab,
@@ -69,46 +95,131 @@ GLOVE_FULL = os.environ.get(
 )
 
 
+# .endb flags.
+FLAG_HAS_SUM_RAW     = 1 << 0
+FLAG_HAS_DREAM       = 1 << 1
+FLAG_HAS_ANNOTATIONS = 1 << 2
+FLAG_HAS_MANIFEST    = 1 << 3
+
+# sum_raw length per well in the alexandria v0 wells.bin. Stored so we can
+# round-trip it verbatim.
+V0_SUM_RAW_LEN_F64 = 256
+V0_SUM_RAW_BYTES   = V0_SUM_RAW_LEN_F64 * 8
+
+
+def _parse_v0_wells(wells_data: bytes, dim: int, pairs: int):
+    """Parse the v0 alexandria wells.bin. Returns (pairing_bytes, wells_list).
+
+    Each well in the returned list is a dict with keys: name_bytes (bytes),
+    count (int), sum_k_bytes (bytes, len == pairs*16), sum_raw_bytes (bytes,
+    len == 2048). The layout matches the exporter's original parse logic
+    but preserves sum_raw instead of discarding it.
+    """
+    off = 0
+    pairing = wells_data[off:off + dim * 2]; off += dim * 2
+    (n_wells,) = struct.unpack_from('<I', wells_data, off); off += 4
+
+    wells = []
+    for _ in range(n_wells):
+        (name_len,) = struct.unpack_from('<H', wells_data, off); off += 2
+        name_bytes = wells_data[off:off + name_len]; off += name_len
+        sum_k_bytes = wells_data[off:off + pairs * 16]; off += pairs * 16
+        sum_raw_bytes = wells_data[off:off + V0_SUM_RAW_BYTES]
+        off += V0_SUM_RAW_BYTES
+        (count,) = struct.unpack_from('<I', wells_data, off); off += 4
+        wells.append({
+            'name_bytes': name_bytes,
+            'count': count,
+            'sum_k_bytes': sum_k_bytes,
+            'sum_raw_bytes': sum_raw_bytes,
+        })
+
+    assert off == len(wells_data), f'bad wells parse: {off} != {len(wells_data)}'
+    return pairing, wells
+
+
+def _parse_v0_dream(dream_data: bytes, pairs: int):
+    """Parse the v0 alexandria dream.bin.
+
+    Layout: [n_entries u32] + per entry: [K complex64[pairs]][G
+    complex64[pairs]][S float32[pairs]]. Returns the raw bytes re-emitted
+    as a tight blob (n_entries u32 + entries). Entry bytes are passed
+    through verbatim — the consumer parses on demand.
+    """
+    if len(dream_data) < 4:
+        return 0, b''
+    (n_entries,) = struct.unpack_from('<I', dream_data, 0)
+    entry_bytes = pairs * 8 + pairs * 8 + pairs * 4  # K + G + S
+    expected = 4 + n_entries * entry_bytes
+    if len(dream_data) != expected:
+        # Unknown dream.bin variant — skip rather than embed broken data.
+        print(f'  warn: dream.bin size mismatch '
+              f'(got {len(dream_data)}, expected {expected} for '
+              f'n_entries={n_entries} pairs={pairs}); skipping')
+        return 0, b''
+    # Re-emit verbatim: 4-byte count + rest.
+    return n_entries, dream_data[4:]
+
+
 def export_alexandria():
     out_bin = os.path.join(ASSETS_DIR, 'alexandria.endb')
     out_meta = os.path.join(ASSETS_DIR, 'alexandria.manifest.json')
 
     with zipfile.ZipFile(ALEXANDRIA_SRC) as z:
-        manifest = json.loads(z.read('manifest.json'))
+        names = set(z.namelist())
+        manifest_bytes = z.read('manifest.json')
+        manifest = json.loads(manifest_bytes)
         wells_data = z.read('wells.bin')
+        dream_data = z.read('dream.bin') if 'dream.bin' in names else b''
+        annot_bytes = z.read('annotations.json') if 'annotations.json' in names else b''
 
     dim = manifest['physics']['dim']
-    P = dim // 2
+    pairs = dim // 2
     assert dim % 2 == 0, f'dim must be even, got {dim}'
 
-    # Parse source wells.bin
-    #   [pairing int16[dim]][n_wells u32][per well: name_len u16, name,
-    #    sum_K complex128[P], sum_raw float64[256], count u32]
-    off = 0
-    pairing = wells_data[off:off + dim * 2]; off += dim * 2
-    n_wells, = struct.unpack_from('<I', wells_data, off); off += 4
+    pairing_bytes, wells = _parse_v0_wells(wells_data, dim, pairs)
+
+    # Build flags and optional payloads.
+    flags = FLAG_HAS_SUM_RAW | FLAG_HAS_MANIFEST
+    if annot_bytes:
+        flags |= FLAG_HAS_ANNOTATIONS
+
+    n_dream = 0
+    dream_blob = b''
+    if dream_data:
+        n_dream, dream_blob = _parse_v0_dream(dream_data, pairs)
+        if n_dream > 0:
+            flags |= FLAG_HAS_DREAM
 
     out = bytearray()
     out += b'ENDB'
-    out += struct.pack('<I', 1)
+    out += struct.pack('<I', 2)              # version
     out += struct.pack('<I', dim)
-    out += struct.pack('<I', P)
-    out += struct.pack('<I', n_wells)
-    out += pairing
+    out += struct.pack('<I', pairs)
+    out += struct.pack('<I', len(wells))
+    out += struct.pack('<I', flags)
+    out += pairing_bytes
 
-    for _ in range(n_wells):
-        name_len, = struct.unpack_from('<H', wells_data, off); off += 2
-        name = wells_data[off:off + name_len]; off += name_len
-        sum_k_bytes = wells_data[off:off + P * 16]; off += P * 16
-        off += 256 * 8  # skip sum_raw
-        count, = struct.unpack_from('<I', wells_data, off); off += 4
+    for w in wells:
+        out += struct.pack('<H', len(w['name_bytes']))
+        out += w['name_bytes']
+        out += struct.pack('<I', w['count'])
+        out += w['sum_k_bytes']
+        # sum_raw is stored length-prefixed so future versions can vary it.
+        out += struct.pack('<I', len(w['sum_raw_bytes']))
+        out += w['sum_raw_bytes']
 
-        out += struct.pack('<H', name_len)
-        out += name
-        out += struct.pack('<I', count)
-        out += sum_k_bytes
+    if flags & FLAG_HAS_DREAM:
+        out += struct.pack('<I', n_dream)
+        out += dream_blob
 
-    assert off == len(wells_data), f'bad parse: {off} != {len(wells_data)}'
+    if flags & FLAG_HAS_ANNOTATIONS:
+        out += struct.pack('<I', len(annot_bytes))
+        out += annot_bytes
+
+    if flags & FLAG_HAS_MANIFEST:
+        out += struct.pack('<I', len(manifest_bytes))
+        out += manifest_bytes
 
     os.makedirs(ASSETS_DIR, exist_ok=True)
     with open(out_bin, 'wb') as f:
@@ -116,17 +227,29 @@ def export_alexandria():
 
     slim_manifest = {
         'format': 'endb',
-        'version': 1,
+        'version': 2,
         'dim': dim,
-        'pairs': P,
-        'n_wells': n_wells,
+        'pairs': pairs,
+        'n_wells': len(wells),
+        'flags': flags,
+        'has_sum_raw': bool(flags & FLAG_HAS_SUM_RAW),
+        'has_dream': bool(flags & FLAG_HAS_DREAM),
+        'n_dream': n_dream,
+        'has_annotations': bool(flags & FLAG_HAS_ANNOTATIONS),
+        'has_manifest': bool(flags & FLAG_HAS_MANIFEST),
         'source_manifest': manifest,
     }
     with open(out_meta, 'w') as f:
         json.dump(slim_manifest, f, indent=2)
 
     size_mb = os.path.getsize(out_bin) / 1024 / 1024
-    print(f'engram: {n_wells} wells, dim={dim} pairs={P} → {out_bin} ({size_mb:.2f} MB)')
+    flag_desc = []
+    if flags & FLAG_HAS_SUM_RAW:     flag_desc.append('sum_raw')
+    if flags & FLAG_HAS_DREAM:       flag_desc.append(f'dream({n_dream})')
+    if flags & FLAG_HAS_ANNOTATIONS: flag_desc.append('annotations')
+    if flags & FLAG_HAS_MANIFEST:    flag_desc.append('manifest')
+    print(f'engram: {len(wells)} wells, dim={dim} pairs={pairs} '
+          f'[{", ".join(flag_desc)}] -> {out_bin} ({size_mb:.2f} MB)')
 
 
 def export_glove():
@@ -204,7 +327,7 @@ def export_glove():
         f.write(q.tobytes())
 
     size_mb = os.path.getsize(out) / 1024 / 1024
-    print(f'glove: {len(sorted_keys)} tokens → {out} ({size_mb:.2f} MB)')
+    print(f'glove: {len(sorted_keys)} tokens -> {out} ({size_mb:.2f} MB)')
 
 
 if __name__ == '__main__':

@@ -51,6 +51,8 @@ const _icons = <String, String>{
       '<svg viewBox="0 0 16 16" fill="none"><path d="M5 4h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.5 4v-1h3v1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 4v8c0 .8.7 1.5 1.5 1.5h2c.8 0 1.5-.7 1.5-1.5V4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 7v4M9 7v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   'check':
       '<svg viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  'repo-summary':
+      '<svg viewBox="0 0 16 16" fill="none"><path d="M3.2 2.4h7.6l2.0 2.0v9.2h-9.6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10.8 2.4v2.0h2.0" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M5 7h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5 9.5h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5 12h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
 };
 
 class AppIcon extends StatelessWidget {

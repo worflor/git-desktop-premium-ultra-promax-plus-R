@@ -1,5 +1,13 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/widgets.dart';
 import 'package:window_manager/window_manager.dart';
+
+// Idle-GPU diagnostic flag. Mirrors main.dart's `_kFpsProbe` so the
+// focus/minimize trace lines match the FPS probe's gating — both on in
+// debug builds or when built with `--dart-define=FPS_PROBE=true`, both
+// off in default release builds.
+const bool _kFpsProbeTrace =
+    kDebugMode || bool.fromEnvironment('FPS_PROBE', defaultValue: false);
 
 /// Single source of truth for "is the app window actually visible and
 /// focused right now." Observes the Flutter engine's [AppLifecycleState]
@@ -40,6 +48,10 @@ class WindowActivity extends ChangeNotifier
   void onWindowFocus() {
     if (_windowFocused) return;
     _windowFocused = true;
+    if (_kFpsProbeTrace) {
+      // ignore: avoid_print
+      print('FPS-PROBE: awake->TRUE (focus)');
+    }
     notifyListeners();
   }
 
@@ -47,6 +59,10 @@ class WindowActivity extends ChangeNotifier
   void onWindowBlur() {
     if (!_windowFocused) return;
     _windowFocused = false;
+    if (_kFpsProbeTrace) {
+      // ignore: avoid_print
+      print('FPS-PROBE: awake->FALSE (blur)');
+    }
     notifyListeners();
   }
 
@@ -54,6 +70,10 @@ class WindowActivity extends ChangeNotifier
   void onWindowMinimize() {
     if (_windowMinimized) return;
     _windowMinimized = true;
+    if (_kFpsProbeTrace) {
+      // ignore: avoid_print
+      print('FPS-PROBE: awake->FALSE (minimize)');
+    }
     notifyListeners();
   }
 
@@ -61,6 +81,10 @@ class WindowActivity extends ChangeNotifier
   void onWindowRestore() {
     if (!_windowMinimized) return;
     _windowMinimized = false;
+    if (_kFpsProbeTrace) {
+      // ignore: avoid_print
+      print('FPS-PROBE: awake->TRUE (restore)');
+    }
     notifyListeners();
   }
 
@@ -70,6 +94,70 @@ class WindowActivity extends ChangeNotifier
     final active = state == AppLifecycleState.resumed;
     if (active == _lifecycleActive) return;
     _lifecycleActive = active;
+    if (_kFpsProbeTrace) {
+      // ignore: avoid_print
+      print('FPS-PROBE: lifecycle=${state.name} active=$active');
+    }
     notifyListeners();
+  }
+}
+
+/// Mixin that wires a State to [WindowActivity]'s change-notifier. Use
+/// for widgets whose listener lifecycle is purely initState/dispose —
+/// the common case where nothing in the callback depends on a
+/// [BuildContext] lookup.
+///
+/// Implementers override [onWindowAwakeChanged] with whatever the
+/// widget does when the window focus/minimize/lifecycle signal flips.
+/// The same method is (un)registered using Dart's stable instance
+/// tear-off equality, so add/remove pair up correctly.
+mixin WindowAwakeMixin<T extends StatefulWidget> on State<T> {
+  @protected
+  void onWindowAwakeChanged();
+
+  @override
+  @mustCallSuper
+  void initState() {
+    super.initState();
+    WindowActivity.instance.addListener(onWindowAwakeChanged);
+  }
+
+  @override
+  @mustCallSuper
+  void dispose() {
+    WindowActivity.instance.removeListener(onWindowAwakeChanged);
+    super.dispose();
+  }
+}
+
+/// As [WindowAwakeMixin] but attaches lazily in [didChangeDependencies]
+/// rather than [initState]. Use when the callback consults an
+/// InheritedWidget (e.g. `context.read<PreferencesState>()`) — those
+/// aren't safe to touch in initState. A `_attached` flag guards
+/// against the repeated didChangeDependencies calls Flutter makes
+/// when ancestors rebuild.
+mixin WindowAwakeGuardedMixin<T extends StatefulWidget> on State<T> {
+  bool _windowAwakeAttached = false;
+
+  @protected
+  void onWindowAwakeChanged();
+
+  @override
+  @mustCallSuper
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_windowAwakeAttached) {
+      WindowActivity.instance.addListener(onWindowAwakeChanged);
+      _windowAwakeAttached = true;
+    }
+  }
+
+  @override
+  @mustCallSuper
+  void dispose() {
+    if (_windowAwakeAttached) {
+      WindowActivity.instance.removeListener(onWindowAwakeChanged);
+    }
+    super.dispose();
   }
 }

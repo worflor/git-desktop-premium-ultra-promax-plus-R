@@ -7,6 +7,7 @@ import 'package:git_desktop/backend/repository_xray.dart'
     show
         buildRepositoryXraySnapshot,
         computeRepositoryXrayFingerprint,
+        parseDatedCommitCanonicalFilesForTesting,
         parseLsTreeBytesForTesting;
 
 void main() {
@@ -66,6 +67,46 @@ void main() {
       final rawHotspotPaths =
           snapshot.rawHotspots.map((hotspot) => hotspot.path).toList();
       expect(rawHotspotPaths, contains('generated/session.lock'));
+
+      // Enriched fields are derived from the single `--name-only` pass
+      // (no per-path `git log` fan-out). Pin author/date/hash so the
+      // in-memory enrichment can't silently regress.
+      final changesPageHotspot = snapshot.hotspots.firstWhere(
+        (h) => h.path ==
+            'apps/desktop-flutter/lib/features/changes/changes_page.dart',
+      );
+      expect(changesPageHotspot.ownerCount, 1);
+      expect(changesPageHotspot.lastTouchedAt, '2026-04-11');
+      expect(changesPageHotspot.latestShortHash, 'aaaa1111');
+      expect(changesPageHotspot.latestCommitHash, 'aaaa111122223333');
+
+      final legacyShellHotspot = snapshot.hotspots.firstWhere(
+        (h) => h.path == 'apps/desktop/src/legacy_shell.ts',
+      );
+      expect(legacyShellHotspot.ownerCount, 1);
+      expect(legacyShellHotspot.lastTouchedAt, '2026-04-02');
+      expect(legacyShellHotspot.latestShortHash, 'bbbb1111');
+
+      // Directory strata enrichment: `apps/desktop-flutter` is touched
+      // only by Alice (2026-04-11), and `apps/desktop` only by Bob
+      // (2026-04-02) — the dir prefix must NOT match `apps/desktop-*`.
+      final flutterStratum = snapshot.strata
+          .firstWhere((s) => s.pathPrefix == 'apps/desktop-flutter');
+      expect(flutterStratum.ownerCount, 1);
+      expect(flutterStratum.lastTouchedAt, '2026-04-11');
+
+      final desktopStratum = snapshot.strata
+          .firstWhere((s) => s.pathPrefix == 'apps/desktop');
+      expect(desktopStratum.ownerCount, 1);
+      expect(desktopStratum.lastTouchedAt, '2026-04-02');
+
+      // Raw hotspots include machine history — the session.lock file
+      // should be attributed to Machine alone.
+      final sessionLockHotspot = snapshot.rawHotspots.firstWhere(
+        (h) => h.path == 'generated/session.lock',
+      );
+      expect(sessionLockHotspot.ownerCount, 1);
+      expect(sessionLockHotspot.latestShortHash, 'ffff1111');
 
       expect(snapshot.flow.gradientMass, inInclusiveRange(0.0, 1.0));
       expect(snapshot.flow.curlMass, inInclusiveRange(0.0, 1.0));
@@ -132,6 +173,61 @@ void main() {
       expect(commandCounts['rev-parse HEAD'], 1);
     });
 
+    test('rename events collapse pre-rename history onto HEAD-side name', () {
+      // `git log --all --name-status -M95` output for a repo where the
+      // file walked old/one.dart → mid/two.dart → new/three.dart across
+      // two rename commits. Walk is newest→oldest, so the destination
+      // of the newest rename is HEAD-side — all three names must
+      // canonicalise to `new/three.dart`.
+      final stream = [
+        // Newest commit touches the current name directly.
+        '__C__cccc1111\tcccc\t2026-04-20\tAlice',
+        'M\tnew/three.dart',
+        '',
+        // Second rename.
+        '__C__bbbb1111\tbbbb\t2026-04-15\tAlice',
+        'R98\tmid/two.dart\tnew/three.dart',
+        '',
+        // First rename.
+        '__C__aaaa1111\taaaa\t2026-04-10\tBob',
+        'R97\told/one.dart\tmid/two.dart',
+        '',
+        // Oldest commit touches the original name.
+        '__C__zzzz1111\tzzzz\t2026-04-01\tBob',
+        'M\told/one.dart',
+      ].join('\n');
+
+      final perCommit = parseDatedCommitCanonicalFilesForTesting(stream);
+      expect(perCommit.length, 4);
+      // Every commit should attribute to the HEAD-side path after
+      // union-find canonicalisation — pre-rename names are gone.
+      for (final files in perCommit) {
+        expect(files, {'new/three.dart'});
+      }
+    });
+
+    test('non-rename status lines preserve their paths unchanged', () {
+      // With no rename events the union-find stays empty and every
+      // path is its own canonical — guards against accidental
+      // collapsing of unrelated files.
+      final stream = [
+        '__C__aaaa1111\taaaa\t2026-04-10\tAlice',
+        'M\tlib/a.dart',
+        'A\tlib/b.dart',
+        'D\tlib/c.dart',
+        '',
+        '__C__bbbb1111\tbbbb\t2026-04-11\tBob',
+        'M\tlib/a.dart',
+        'T\tlib/d.dart',
+      ].join('\n');
+
+      final perCommit = parseDatedCommitCanonicalFilesForTesting(stream);
+      expect(perCommit, [
+        {'lib/a.dart', 'lib/b.dart', 'lib/c.dart'},
+        {'lib/a.dart', 'lib/d.dart'},
+      ]);
+    });
+
     test('ls-tree parser handles the real git format (single-tab, padded size)', () {
       // Real `git ls-tree -r -l HEAD` output: one TAB between the
       // right-padded size column and the path. Submodule entries use
@@ -171,8 +267,9 @@ Future<ProcessResult> _fakeProbe(String workingDir, List<String> args) async {
     'log --all --date=short --pretty=format:%H\t%h\t%ad\t%an\t%s': _rawCommitLog(),
     'log --all --grep=^t3 checkpoint --invert-grep --date=short --pretty=format:%H\t%h\t%ad\t%an\t%s':
         _filteredCommitLog(),
-    'log --all --name-only --date=short --format=__C__%ad': _rawPathLog(),
-    'log --all --grep=^t3 checkpoint --invert-grep --name-only --date=short --format=__C__%ad':
+    'log --all --name-status -M95 --date=short --format=__C__%H\t%h\t%ad\t%an':
+        _rawPathLog(),
+    'log --all --grep=^t3 checkpoint --invert-grep --name-status -M95 --date=short --format=__C__%H\t%h\t%ad\t%an':
         _filteredPathLog(),
     'log --all --shortstat --date=short --pretty=format:__C__%H\t%h\t%ad\t%an\t%s':
         _rawShortstatLog(),
@@ -201,66 +298,11 @@ Future<ProcessResult> _fakeProbe(String workingDir, List<String> args) async {
       'origin\thttps://example.com/repo.git (fetch)',
       'origin\thttps://example.com/repo.git (push)',
     ].join('\n'),
-    'log --grep=^t3 checkpoint --invert-grep --format=%an -- apps/desktop-flutter/lib/features/changes/changes_page.dart':
-        List.filled(12, 'Alice').join('\n'),
-    'log -n 1 --date=short --format=%H\t%h\t%ad -- apps/desktop-flutter/lib/features/changes/changes_page.dart':
-        'abcdef1234567890\tabcdef12\t2026-04-11',
-    'log --grep=^t3 checkpoint --invert-grep --format=%an -- apps/desktop': 'Alice\nBob',
-    'log -n 1 --grep=^t3 checkpoint --invert-grep --date=short --format=%ad -- apps/desktop':
-        '2026-04-02',
-    'log --grep=^t3 checkpoint --invert-grep --format=%an -- apps/desktop-flutter': 'Alice',
-    'log -n 1 --grep=^t3 checkpoint --invert-grep --date=short --format=%ad -- apps/desktop-flutter':
-        '2026-04-11',
   };
 
   if (responses.containsKey(command)) {
     return ProcessResult(0, 0, responses[command]!, '');
   }
-
-  if (command.startsWith('log --format=%an --')) {
-    final path = args.last;
-    if (path == 'generated/session.lock') {
-      return ProcessResult(0, 0, List.filled(18, 'Machine').join('\n'), '');
-    }
-    if (path == 'apps/desktop/src/legacy_shell.ts') {
-      return ProcessResult(0, 0, 'Alice\nBob', '');
-    }
-    if (path == 'apps/desktop-flutter') {
-      return ProcessResult(0, 0, 'Alice', '');
-    }
-    return ProcessResult(0, 0, 'Alice', '');
-  }
-
-  if (command.startsWith('log --grep=^t3 checkpoint --invert-grep --format=%an --')) {
-    final path = args.last;
-    if (path == 'apps/desktop/src/legacy_shell.ts') {
-      return ProcessResult(0, 0, 'Alice\nBob', '');
-    }
-    return ProcessResult(0, 0, 'Alice', '');
-  }
-
-  if (command.startsWith('log -n 1 --date=short --format=%H\t%h\t%ad --')) {
-    final path = args.last;
-    if (path == 'generated/session.lock') {
-      return ProcessResult(0, 0, 'ffff111122223333\tffff1111\t2026-04-11', '');
-    }
-    if (path == 'apps/desktop/src/legacy_shell.ts') {
-      return ProcessResult(0, 0, 'bbbb111122223333\tbbbb1111\t2026-04-02', '');
-    }
-    if (path == 'apps/desktop-flutter') {
-      return ProcessResult(0, 0, 'cccc111122223333\tcccc1111\t2026-04-11', '');
-    }
-    return ProcessResult(0, 0, 'dddd111122223333\tdddd1111\t2026-04-11', '');
-  }
-
-  if (command.startsWith('log -n 1 --grep=^t3 checkpoint --invert-grep --date=short --format=%H\t%h\t%ad --')) {
-    final path = args.last;
-    if (path == 'apps/desktop/src/legacy_shell.ts') {
-      return ProcessResult(0, 0, 'bbbb111122223333\tbbbb1111\t2026-04-02', '');
-    }
-    return ProcessResult(0, 0, 'dddd111122223333\tdddd1111\t2026-04-11', '');
-  }
-
   return ProcessResult(0, 0, '', '');
 }
 
@@ -277,33 +319,38 @@ String _filteredCommitLog() => [
       'cccc111122223333\tcccc1111\t2026-04-01\tAlice\tseed desktop flutter migration',
     ].join('\n');
 
-/// Build a per-commit log: each `__C__date` marker delimits one
-/// commit, followed by its file paths. We collapse same-file repeats
-/// into per-commit blocks so touch counts stay equal to the previous
-/// flat-list version, while letting the new dated-commit parser also
-/// extract per-file last-touched dates.
-String _commitBlock(String date, List<String> files) =>
-    ['__C__$date', ...files].join('\n');
+/// Build a per-commit log: each marker line packs hash/shortHash/date/
+/// author tab-separated, followed by the file paths touched in that
+/// commit. Matches the `--format=__C__%H\t%h\t%ad\t%an` string used
+/// by the production xray path.
+String _commitBlock(
+  String hash,
+  String shortHash,
+  String date,
+  String author,
+  List<String> files,
+) =>
+    ['__C__$hash\t$shortHash\t$date\t$author', ...files].join('\n');
 
 String _rawPathLog() => [
-      _commitBlock('2026-04-11', [
+      _commitBlock('ffff111122223333', 'ffff1111', '2026-04-11', 'Machine', [
         ...List.filled(18, 'generated/session.lock'),
       ]),
-      _commitBlock('2026-04-11', [
+      _commitBlock('aaaa111122223333', 'aaaa1111', '2026-04-11', 'Alice', [
         ...List.filled(24, 'apps/desktop-flutter/lib/features/changes/changes_page.dart'),
         ...List.filled(12, 'apps/desktop-flutter/lib/app/workspace_shell.dart'),
       ]),
-      _commitBlock('2026-04-02', [
+      _commitBlock('bbbb111122223333', 'bbbb1111', '2026-04-02', 'Bob', [
         ...List.filled(22, 'apps/desktop/src/legacy_shell.ts'),
       ]),
     ].join('\n');
 
 String _filteredPathLog() => [
-      _commitBlock('2026-04-11', [
+      _commitBlock('aaaa111122223333', 'aaaa1111', '2026-04-11', 'Alice', [
         ...List.filled(24, 'apps/desktop-flutter/lib/features/changes/changes_page.dart'),
         ...List.filled(12, 'apps/desktop-flutter/lib/app/workspace_shell.dart'),
       ]),
-      _commitBlock('2026-04-02', [
+      _commitBlock('bbbb111122223333', 'bbbb1111', '2026-04-02', 'Bob', [
         ...List.filled(22, 'apps/desktop/src/legacy_shell.ts'),
       ]),
     ].join('\n');

@@ -35,6 +35,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../app/window_activity.dart';
 import '../../../backend/diff_logos_facade.dart';
 import '../../../backend/lru_cache.dart';
 import '../../../ui/motion.dart';
@@ -148,7 +149,7 @@ class ManifoldPane extends StatefulWidget {
 }
 
 class _ManifoldPaneState extends State<ManifoldPane>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WindowAwakeGuardedMixin {
   late final AnimationController _intro;
   late final AnimationController _breath;
   late final AnimationController _slerp;
@@ -242,16 +243,26 @@ class _ManifoldPaneState extends State<ManifoldPane>
         _tangentFocusRing.duration = focusRingDesired;
       }
     }
-    // Breath — theme-independent ambient drift; motion rate 0
-    // disables it entirely.
+    _syncBreath();
+  }
+
+  /// Breath — theme-independent ambient drift; motion rate 0 disables
+  /// it entirely. Also folded into the window-focus gate so it stops
+  /// burning GPU on the 3D comet scene while the user is tabbed out.
+  void _syncBreath() {
+    if (!mounted) return;
     final breathTarget = context.motion(ManifoldTuning.breathCycle);
-    if (breathTarget <= Duration.zero) {
+    final awake = WindowActivity.instance.awake;
+    if (breathTarget <= Duration.zero || !awake) {
       if (_breath.isAnimating) _breath.stop();
     } else {
       if (_breath.duration != breathTarget) _breath.duration = breathTarget;
       if (!_breath.isAnimating) _breath.repeat();
     }
   }
+
+  @override
+  void onWindowAwakeChanged() => _syncBreath();
 
   @override
   void didUpdateWidget(covariant ManifoldPane old) {

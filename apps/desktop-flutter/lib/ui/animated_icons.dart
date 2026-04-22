@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
+import '../app/window_activity.dart';
 import 'motion.dart';
 
 // Each icon transitions between these states. The widget manages its own
@@ -23,7 +24,7 @@ abstract class _AnimatedIconBase extends StatefulWidget {
 }
 
 abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
-    extends State<T> with TickerProviderStateMixin {
+    extends State<T> with TickerProviderStateMixin, WindowAwakeMixin<T> {
   late final AnimationController _loop = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1200),
@@ -44,6 +45,38 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
   void initState() {
     super.initState();
     _applyState(widget.state);
+    // Idle-loop gate applied via WindowAwakeMixin.onWindowAwakeChanged.
+    // A page full of idle-state icons (loading spinners on a pending
+    // fetch, error glyphs on a failed call) running their 1200 ms loops
+    // at 60 fps with no window focus was an easy idle-GPU contributor.
+  }
+
+  @override
+  void onWindowAwakeChanged() => _syncAwake();
+
+  /// Pending flash replay. Set when a [IconAnimState.success] transition
+  /// fires while the window is blurred — the visual "ta-da" would be
+  /// lost to TickerMode mute otherwise (either held at 0 or jumped to 1
+  /// on unmute, neither of which plays the actual animation). Consumed
+  /// by [_syncAwake] when focus returns, which re-fires the flash from
+  /// 0 so the user sees the confirmation they missed.
+  bool _pendingFlashReplay = false;
+
+  void _syncAwake() {
+    if (!mounted) return;
+    final reduce = context.reduceMotionRead;
+    final awake = WindowActivity.instance.awake;
+    final wantsLoop = widget.state == IconAnimState.loading ||
+        widget.state == IconAnimState.error;
+    if (!awake || reduce) {
+      if (_loop.isAnimating) _loop.stop();
+    } else {
+      if (wantsLoop && !_loop.isAnimating) _loop.repeat();
+      if (_pendingFlashReplay) {
+        _pendingFlashReplay = false;
+        _flash.forward(from: 0);
+      }
+    }
   }
 
   @override
@@ -57,7 +90,8 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
     super.didChangeDependencies();
     // React to a live toggle of Reduce Motion — if the user flips it ON
     // while an icon is mid-loop, immediately stop the loop.
-    if (context.reduceMotion) {
+    final awake = WindowActivity.instance.awake;
+    if (context.reduceMotion || !awake) {
       if (_loop.isAnimating) _loop.stop();
       if (_hover.isAnimating) _hover.stop();
     } else {
@@ -73,6 +107,11 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
 
   void _applyState(IconAnimState s) {
     final reduce = mounted ? context.reduceMotionRead : false;
+    final awake = WindowActivity.instance.awake;
+    // When tabbed out, don't start new loops. The `_syncAwake`
+    // listener will resume them on re-focus if the state still
+    // wants a loop.
+    final canLoop = !reduce && awake;
     switch (s) {
       case IconAnimState.idle:
         _loop.stop();
@@ -82,17 +121,26 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
         reduce ? _hover.value = 1 : _hover.forward();
       case IconAnimState.loading:
         reduce ? _hover.value = 0 : _hover.reverse();
-        if (!reduce) _loop.repeat();
+        if (canLoop) _loop.repeat();
       case IconAnimState.success:
         _loop.stop();
         reduce ? _hover.value = 0 : _hover.reverse();
-        if (!reduce) _flash.forward(from: 0);
-        else {
+        if (reduce) {
+          // Reduce-motion: user explicitly opted out of animations.
+          // Land at the final value without playing.
           _flash.value = 1;
+        } else if (awake) {
+          _flash.forward(from: 0);
+        } else {
+          // Blurred: defer the replay until focus returns. Held at 0
+          // so the TickerMode mute doesn't silently advance-and-end the
+          // controller while the user isn't looking.
+          _flash.value = 0;
+          _pendingFlashReplay = true;
         }
       case IconAnimState.error:
         reduce ? _hover.value = 0 : _hover.reverse();
-        if (!reduce) {
+        if (canLoop) {
           _loop.repeat();
           Future.delayed(const Duration(milliseconds: 600), () {
             if (mounted && widget.state == IconAnimState.error) {
@@ -1542,21 +1590,24 @@ class AnimatedBranchesIcon extends _AnimatedIconBase {
 class _AnimatedBranchesIconState
     extends _AnimatedIconBaseState<AnimatedBranchesIcon> {
   // Loop runs only while actively interacting — hover, loading, error.
-  // Idle is still, as it should be.
+  // Idle is still, as it should be. Gated on `_AnimatedIconBaseState`'s
+  // WindowActivity listener — when tabbed out, new repeats don't start,
+  // and running loops stop via `_syncAwake`.
   @override
   void _applyState(IconAnimState s) {
+    final awake = WindowActivity.instance.awake;
     switch (s) {
       case IconAnimState.idle:
         _loop.stop();
         _hover.reverse();
       case IconAnimState.hovered:
-        if (!_loop.isAnimating) _loop.repeat();
+        if (awake && !_loop.isAnimating) _loop.repeat();
         _hover.forward();
       case IconAnimState.loading:
-        if (!_loop.isAnimating) _loop.repeat();
+        if (awake && !_loop.isAnimating) _loop.repeat();
         _hover.reverse();
       case IconAnimState.error:
-        if (!_loop.isAnimating) _loop.repeat();
+        if (awake && !_loop.isAnimating) _loop.repeat();
         _hover.reverse();
         Future.delayed(const Duration(milliseconds: 600), () {
           if (mounted && widget.state == IconAnimState.error) {

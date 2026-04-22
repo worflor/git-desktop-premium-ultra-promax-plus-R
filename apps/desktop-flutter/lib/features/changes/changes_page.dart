@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:ffi' hide Size;
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:flutter/material.dart';
@@ -27,7 +30,9 @@ import '../../backend/ai.dart';
 import '../../backend/engram_text_kspace.dart' show nearestRowsInTable;
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
+import '../../backend/engram_bootstrap.dart' show EngramRuntime;
 import '../../backend/file_coupling.dart';
+import '../../backend/logos_hunks.dart' as hunks;
 import '../../backend/file_layout.dart';
 import 'logos_diffusion_canvas.dart';
 import '../../backend/stash_shape.dart';
@@ -415,6 +420,29 @@ class _ChangesPageState extends State<ChangesPage> {
   bool? _clustersCacheInverted;
   int _clustersCacheIncludedHash = 0;
   int _clustersCacheConflictsHash = 0;
+
+  // Cached hunk-pipeline result for the correlatedness sort. We feed
+  // the full change-set diff through `rankHunksByPhiAsync` (the
+  // engine's own hunk pipeline — 4-axis blended graph + heat-kernel
+  // diffusion + Fiedler basis) once per status change, then lift
+  // each hunk's Fiedler coordinate into a per-file centroid for the
+  // sort. Async: the first related-sort render after a change uses
+  // whichever context is currently cached (legacy fallback when
+  // cold), and the next frame gets the fresh one via setState.
+  //
+  // Ratchet (Whisper #3). `_correlatednessContextDiffHash` is a
+  // content hash of the combined diff text the engine last saw.
+  // When the next status probe yields the same diff body — common
+  // on panel-level marker changes, selection toggles, or stash list
+  // updates that touch status identity but don't move hunks — we
+  // short-circuit the rebuild and keep the existing context. This
+  // saves a full parseDiffHunks + gatherEvidence + rankHunksByPhi
+  // round trip (tens to hundreds of ms on churning repos).
+  CorrelatednessContext? _correlatednessContext;
+  Object? _correlatednessContextStatusRef;
+  Object? _correlatednessContextEngineRef;
+  int? _correlatednessContextDiffHash;
+  Future<void>? _correlatednessContextInflight;
 
   // Atlas view: when true the file list is replaced with the commit
   // candidates panel from `file_constellation.dart`. Aims to flip the
@@ -953,6 +981,322 @@ class _ChangesPageState extends State<ChangesPage> {
   /// when every input the clustering actually depends on matches the
   /// prior build; otherwise recomputes and stores. Hover-only rebuilds
   /// no longer repay the O(n²) pair enumeration.
+  /// Ensure a fresh CorrelatednessContext is available for the
+  /// current (repo, status, engine) triple. Returns the currently-
+  /// cached context synchronously — may be null on first access or
+  /// stale during an in-flight rebuild; the caller always falls back
+  /// to the legacy nearest-neighbour chain in that case.
+  ///
+  /// When the inputs have changed since the last rebuild and no
+  /// build is in flight, kicks off an async rebuild that:
+  ///   1. runs the same `git diff` + `git diff --cached` probes the
+  ///      panel already uses for other features
+  ///   2. parses via `parseDiffHunks`
+  ///   3. runs the engine's canonical `rankHunksByPhiAsync` — the
+  ///      full 4-axis hunk graph with engram K-blend, heat-kernel
+  ///      diffusion, and cached spectral basis
+  ///   4. wraps the result in a `CorrelatednessContext` that
+  ///      `seriateByHunkFiedler` consumes to lift per-hunk Fiedler
+  ///      coordinates into per-file centroids
+  /// When the rebuild completes, we setState so the next frame
+  /// re-clusters with the refreshed context.
+  CorrelatednessContext? _correlatednessContextFor({
+    required String repoPath,
+    required RepositoryStatus status,
+    required LogosGit engine,
+  }) {
+    final statusChanged =
+        !identical(_correlatednessContextStatusRef, status);
+    final engineChanged =
+        !identical(_correlatednessContextEngineRef, engine);
+    if (!statusChanged &&
+        !engineChanged &&
+        _correlatednessContextInflight == null) {
+      return _correlatednessContext;
+    }
+    if (_correlatednessContextInflight != null) {
+      // Already rebuilding — return whatever's cached (may be null
+      // or stale); the caller has a sensible fallback.
+      return _correlatednessContext;
+    }
+    _correlatednessContextStatusRef = status;
+    _correlatednessContextEngineRef = engine;
+    _correlatednessContextInflight = _rebuildCorrelatednessContext(
+      repoPath: repoPath,
+      status: status,
+      engine: engine,
+    ).whenComplete(() {
+      _correlatednessContextInflight = null;
+    });
+    return _correlatednessContext;
+  }
+
+  Future<void> _rebuildCorrelatednessContext({
+    required String repoPath,
+    required RepositoryStatus status,
+    required LogosGit engine,
+  }) async {
+    // Fetch the full change-set diff — same probes the shape-prompt
+    // pipeline already uses a few hundred lines above.
+    const diffArgs = [
+      'diff',
+      '-U3',
+      '--no-color',
+      '--patience',
+      '--ignore-cr-at-eol',
+    ];
+    const stagedArgs = [
+      'diff',
+      '--cached',
+      '-U3',
+      '--no-color',
+      '--patience',
+      '--ignore-cr-at-eol',
+    ];
+    List<ProcessResult> probes;
+    try {
+      probes = await Future.wait([
+        runGitProbe(repoPath, diffArgs),
+        runGitProbe(repoPath, stagedArgs),
+      ]);
+    } on Object {
+      return; // git unavailable / repo broken — keep whatever's cached
+    }
+
+    final unstaged =
+        probes[0].exitCode == 0 ? probes[0].stdout.toString() : '';
+    final staged =
+        probes[1].exitCode == 0 ? probes[1].stdout.toString() : '';
+
+    // `git diff` / `git diff --cached` never emit blocks for untracked
+    // files. Those paths are visible in the panel AND we want them
+    // placed by the spectral seriator, so synthesize a unified-diff
+    // "new file" block per untracked path and append — the existing
+    // parser handles the result uniformly.
+    final synthesized = await _synthesiseUntrackedDiffs(repoPath, status);
+    final combined = [staged, unstaged, synthesized]
+        .where((d) => d.trim().isNotEmpty)
+        .join('\n');
+    if (combined.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _correlatednessContext = null;
+        _correlatednessContextDiffHash = null;
+      });
+      return;
+    }
+
+    // Ratchet short-circuit. If the combined diff body is byte-for-
+    // byte what the engine last ranked, the spectral basis it
+    // produced is still correct — skip the whole pipeline and keep
+    // the cached context. Uses Dart's built-in hashCode on the
+    // String (64-bit splay-based) which is plenty collision-safe for
+    // this gate. Worst case of a collision: we skip a rebuild that
+    // should have happened, and the sort lags one status cycle —
+    // not a correctness bug.
+    final diffHash = combined.hashCode;
+    if (_correlatednessContextDiffHash == diffHash &&
+        _correlatednessContext != null) {
+      return;
+    }
+
+    final parsed = hunks.parseDiffHunks(combined);
+    if (parsed.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _correlatednessContext = null;
+        _correlatednessContextDiffHash = diffHash;
+      });
+      return;
+    }
+
+    // Pipeline conformance with `diff_logos_facade`: pre-compute the
+    // file-level evidence at detailBudget=32 so the H_file axis in the
+    // hunk graph sees the same resolution the facade uses. Without
+    // this, `rankHunksByPhiAsync` falls through `_resolveFileCoupling`
+    // at detailBudget=4 (8× less detailed) — that was the "missing
+    // files" surface. `buildHunkFileEvidenceFromResiduals` filters the
+    // residuals to the touched paths and produces the coupling map
+    // the hunk engine consumes directly.
+    final touchedPaths = <String>{for (final h in parsed) h.filePath};
+    final focusWeights = <String, double>{
+      for (final path in touchedPaths) path: 1.0,
+    };
+    final evidence = await _gatherEvidenceOffThread(
+      engine: engine,
+      focusWeights: focusWeights,
+      t: 1.0,
+    );
+    final fileEvidence = evidence == null
+        ? null
+        : hunks.buildHunkFileEvidenceFromResiduals(
+            evidence.residualByPath,
+            touchedPaths: touchedPaths,
+          );
+
+    // Wall-clock anchors per touched file for the temporal lift
+    // (Whisper #2). Uses `perFileCommitClock` from the engine's own
+    // stats — latest timestamp per file = the file's "era". New /
+    // untracked files (no history yet) get the current wall clock so
+    // they cluster with the freshest tracked files, not with ancient
+    // ones.
+    final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+    final ageByPath = <String, double>{};
+    for (final path in touchedPaths) {
+      final clock = engine.stats.perFileCommitClock[path];
+      if (clock != null && clock.isNotEmpty) {
+        ageByPath[path] = clock.last;
+      } else {
+        ageByPath[path] = now;
+      }
+    }
+
+    // KEEP engram assets on top of the canonical evidence pre-compute.
+    // `diff_logos_facade` drops engram for prompt-budget reasons that
+    // don't apply to file-ordering — the seriator has no byte budget
+    // and gets a strictly stronger H_sym from the 2-axis (Jaccard +
+    // K-cosine) blend. So the pipeline here *supersets* the facade:
+    // same evidence structure (detailBudget=32), same builder, plus
+    // engram's structural signal where the facade omits it.
+    final engramAssets = await EngramRuntime.instance.assets();
+    final result = await hunks.rankHunksByPhiAsync(
+      hunks: parsed,
+      logosEngine: engine,
+      fileEvidence: fileEvidence,
+      engramAssets: engramAssets,
+    );
+    if (!mounted) return;
+    setState(() {
+      _correlatednessContext = CorrelatednessContext(
+        hunks: parsed,
+        hunkResult: result,
+        ageByFilePath: ageByPath,
+      );
+      _correlatednessContextDiffHash = diffHash;
+    });
+  }
+
+  /// Off-thread evidence gather. Matches the pattern in
+  /// `diff_logos_facade._gatherEvidenceOffThread` — isolates the
+  /// O(k·n) spectral projection so the UI stays responsive on large
+  /// repos. Falls through to the on-thread call on isolate error.
+  Future<LogosEvidenceQueryResult?> _gatherEvidenceOffThread({
+    required LogosGit engine,
+    required Map<String, double> focusWeights,
+    required double t,
+  }) async {
+    try {
+      return await Isolate.run<LogosEvidenceQueryResult?>(
+        () => engine.gatherEvidence(
+          focusWeights: focusWeights,
+          t: t,
+          detailBudget: 32,
+          includeSpectrum: false,
+          includeSupportAttribution: false,
+          includeSummaryDiagnostics: false,
+        ),
+        debugName: 'changesCorrelatednessEvidence',
+      );
+    } catch (_) {
+      return engine.gatherEvidence(
+        focusWeights: focusWeights,
+        t: t,
+        detailBudget: 32,
+        includeSpectrum: false,
+        includeSupportAttribution: false,
+        includeSummaryDiagnostics: false,
+      );
+    }
+  }
+
+  /// For each untracked file in [status], read its content and build a
+  /// valid unified-diff "new file" block. Returns the blocks joined
+  /// with newlines; empty string when the repo has no untracked
+  /// files. Used by [_rebuildCorrelatednessContext] to make sure
+  /// untracked paths participate in the hunk spectral embedding
+  /// alongside tracked files — without this, `git diff` skipped them
+  /// and they collapsed to a uniform fallback coordinate in the sort.
+  ///
+  /// Per-file content is capped to keep pathological cases (huge
+  /// generated assets committed as untracked) from inflating the
+  /// hunk graph. 16 KiB matches what `engram_file_index` uses for its
+  /// own cap — enough to capture a file's identifier surface,
+  /// bounded enough to stay cheap across dozens of untracked files.
+  Future<String> _synthesiseUntrackedDiffs(
+    String repoPath,
+    RepositoryStatus status,
+  ) async {
+    const perFileCap = 16 * 1024;
+    final buf = StringBuffer();
+    for (final f in status.files) {
+      if (!f.isUntracked) continue;
+      final absPath = p.join(repoPath, f.path);
+      final file = File(absPath);
+      if (!await file.exists()) continue;
+      Uint8List bytes;
+      try {
+        final raf = await file.open();
+        try {
+          final length = await raf.length();
+          final readN = length < perFileCap ? length : perFileCap;
+          bytes = await raf.read(readN);
+        } finally {
+          await raf.close();
+        }
+      } on FileSystemException {
+        continue;
+      }
+      if (_looksLikeBinary(bytes)) continue;
+      String text;
+      try {
+        text = utf8.decode(bytes, allowMalformed: true);
+      } on FormatException {
+        continue;
+      }
+      if (text.isEmpty) continue;
+      final lines = text.split('\n');
+      // `split` on a trailing newline yields an extra empty element;
+      // drop it so the `@@ -0,0 +1,N @@` line count is accurate.
+      if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
+      if (lines.isEmpty) continue;
+
+      // Synthetic unified-diff block. Format matches what git emits
+      // for a `diff --cached` on a freshly-added file, which is what
+      // `parseDiffHunks` expects:
+      //
+      //   diff --git a/path b/path
+      //   new file mode 100644
+      //   --- /dev/null
+      //   +++ b/path
+      //   @@ -0,0 +1,N @@
+      //   +line_1
+      //   +line_2
+      //   ...
+      final path = f.path;
+      buf.writeln('diff --git a/$path b/$path');
+      buf.writeln('new file mode 100644');
+      buf.writeln('--- /dev/null');
+      buf.writeln('+++ b/$path');
+      buf.writeln('@@ -0,0 +1,${lines.length} @@');
+      for (final line in lines) {
+        buf.writeln('+$line');
+      }
+    }
+    return buf.toString();
+  }
+
+  /// Null-byte sniff over [bytes]. Identical to the binary-detection
+  /// heuristic used by `text_harvest.dart` and `git.dart` elsewhere —
+  /// any 0x00 byte in the prefix → binary → skip. Keeps synthetic
+  /// diffs from ever containing non-text content that would corrupt
+  /// the unified-diff parser downstream.
+  bool _looksLikeBinary(Uint8List bytes) {
+    for (var i = 0; i < bytes.length; i++) {
+      if (bytes[i] == 0) return true;
+    }
+    return false;
+  }
+
   FileClusters _clustersFor({
     required RepositoryStatus status,
     required FileCouplingMatrix? effectiveMatrix,
@@ -961,6 +1305,7 @@ class _ChangesPageState extends State<ChangesPage> {
     required Map<String, FileImpactSignal> impactSignals,
     required Set<String> conflictedPaths,
     required bool inverted,
+    CorrelatednessContext? correlatednessContext,
   }) {
     if (effectiveMatrix == null || currentPaths.isEmpty) {
       // Empty-case short-circuit; no point caching a zero-cost answer.
@@ -994,6 +1339,7 @@ class _ChangesPageState extends State<ChangesPage> {
       conflictedPaths: conflictedPaths,
       includedPaths: _includedPaths,
       inverted: inverted,
+      correlatednessContext: correlatednessContext,
     );
     _clustersCache = result;
     _clustersCacheStatus = status;
@@ -2515,25 +2861,27 @@ class _ChangesPageState extends State<ChangesPage> {
     await Clipboard.setData(ClipboardData(text: text));
   }
 
-  /// Open the OS file explorer with the file selected. Windows: invoke
-  /// `explorer.exe /select,<path>`. macOS: `open -R <path>`. Linux:
-  /// `xdg-open <dir>` (no per-file selection in standard xdg-open).
-  /// The spawned process detaches from us — the file manager keeps
-  /// running for the user's whole session — but the Dart-side `Process`
-  /// object still holds the stdout/stderr pipes until they're drained
-  /// and `exitCode` is awaited. Without that cleanup, the pipe FDs
-  /// accumulate for as long as the spawned window stays open. We
-  /// drain both streams, unawait the exitCode future (fire-and-forget;
-  /// it resolves whenever the user eventually closes the window), and
-  /// get the handles released promptly.
+  /// Open the OS file explorer with the file selected. Windows: call
+  /// `ShellExecuteW("open", "explorer.exe", "/select,\"<path>\"")` via
+  /// FFI — `Process.start` auto-quotes any arg containing spaces, and
+  /// explorer's custom `/select,` parser treats the wrapping quotes as
+  /// part of the literal path, falling back to `Documents\`. Quoting
+  /// only the path portion (inside the params string we hand to
+  /// ShellExecuteW) is the form explorer actually understands.
+  /// macOS: `open -R <path>`. Linux: `xdg-open <dir>` (no per-file
+  /// selection in standard xdg-open). The spawned Unix Process still
+  /// needs its stdout/stderr pipes drained so the FDs release promptly
+  /// while the file-manager window lives on for the session.
   Future<void> _revealInExplorer(String repoPath, String relPath) async {
     final absPath = '$repoPath${Platform.pathSeparator}'
         '${relPath.replaceAll('/', Platform.pathSeparator)}';
     try {
-      final Process p;
       if (Platform.isWindows) {
-        p = await Process.start('explorer.exe', ['/select,$absPath']);
-      } else if (Platform.isMacOS) {
+        _shellSelectInExplorer(absPath);
+        return;
+      }
+      final Process p;
+      if (Platform.isMacOS) {
         p = await Process.start('open', ['-R', absPath]);
       } else {
         final dir =
@@ -2551,6 +2899,31 @@ class _ChangesPageState extends State<ChangesPage> {
         _actionError = 'Failed to open file explorer: $e';
         _actionMessage = null;
       });
+    }
+  }
+
+  /// Windows-only reveal: call `ShellExecuteW` directly so we control
+  /// the exact command-line handed to explorer.exe. `/select,"<path>"`
+  /// with quotes wrapping only the path is the form explorer's parser
+  /// accepts; `Process.start` wraps the whole arg and breaks that.
+  void _shellSelectInExplorer(String absPath) {
+    final shell32 = DynamicLibrary.open('shell32.dll');
+    final shellExecute = shell32.lookupFunction<
+        IntPtr Function(IntPtr, Pointer<Utf16>, Pointer<Utf16>,
+            Pointer<Utf16>, Pointer<Utf16>, Int32),
+        int Function(int, Pointer<Utf16>, Pointer<Utf16>, Pointer<Utf16>,
+            Pointer<Utf16>, int)>('ShellExecuteW');
+    final op = 'open'.toNativeUtf16();
+    final file = 'explorer.exe'.toNativeUtf16();
+    final params = '/select,"$absPath"'.toNativeUtf16();
+    try {
+      // SW_SHOWNORMAL = 1. Return <= 32 means failure, but even then
+      // there's nothing useful to surface — the user sees no window.
+      shellExecute(0, op, file, params, nullptr, 1);
+    } finally {
+      malloc.free(op);
+      malloc.free(file);
+      malloc.free(params);
     }
   }
 
@@ -4752,34 +5125,10 @@ class _ChangesPageState extends State<ChangesPage> {
         ? couplingMatrix.withSymbol(_symbolCoupling)
         : couplingMatrix;
 
-    final clusters = _clustersFor(
-      status: status,
-      effectiveMatrix: effectiveMatrix,
-      currentPaths: _currentPaths,
-      sortGuide: preferences.fileSortGuide,
-      impactSignals: impactSignals,
-      conflictedPaths: conflictedPaths,
-      inverted: preferences.fileSortInverted,
-    );
-
-    // Within-cluster φ re-ranking. When the 'related' sort guide is
-    // active and the Logos engine is warm, sort cluster members by the
-    // diffusion pull from currently-included files. Cluster grouping
-    // (which files belong to which cluster) stays intact — the cluster
-    // stripe rendering still works — but members within each cluster
-    // are re-ordered by relevance to the user's staging intent.
-    //
-    // At t=0.5 the diffusion is tight (1-hop-ish), so "related" here
-    // means "historically moves with what you just staged," not the
-    // broader architectural orbit.
-    // `fileSortGuide` is an enum — comparing to a literal string here
-    // silently returned false on every build, so the Logos re-rank
-    // below never actually fired. Now routes through the real enum
-    // case (`relatedProximity`).
-    // Layer symbol edges onto the Logos engine so new/untracked files
-    // participate in diffusion — both as sources (proxy injection) and
-    // as results (derived φ). withSymbolEdges is a shallow copy; the
-    // underlying graph is shared and unchanged.
+    // Pull the Logos engine up-front so the clustering seriation AND
+    // the downstream φ re-rank share a single fetch. The engine is
+    // only relevant when the sort guide is `relatedProximity`; for
+    // other modes we skip the lookup entirely.
     final logosTabActive = TickerMode.valuesOf(context).enabled;
     final logosEngineBase =
         preferences.fileSortGuide == FileSortGuide.relatedProximity
@@ -4792,6 +5141,34 @@ class _ChangesPageState extends State<ChangesPage> {
     final logosEngine = (logosEngineBase != null && _symbolCoupling.isNotEmpty)
         ? logosEngineBase.withSymbolEdges(_symbolCoupling)
         : logosEngineBase;
+
+    // Route the correlatedness sort through the engine's own hunk
+    // pipeline. `_correlatednessContextFor` returns whatever context
+    // is currently cached (possibly null on first access); when the
+    // status or engine has moved on, it kicks off an async rebuild
+    // that runs `rankHunksByPhiAsync` and setStates when done. The
+    // sort falls back to the legacy nearest-neighbour chain until
+    // the first rebuild completes.
+    final correlatednessContext = (effectiveMatrix != null &&
+            logosEngine != null &&
+            preferences.fileSortGuide == FileSortGuide.relatedProximity)
+        ? _correlatednessContextFor(
+            repoPath: repoPath,
+            status: status,
+            engine: logosEngine,
+          )
+        : null;
+
+    final clusters = _clustersFor(
+      status: status,
+      effectiveMatrix: effectiveMatrix,
+      currentPaths: _currentPaths,
+      sortGuide: preferences.fileSortGuide,
+      impactSignals: impactSignals,
+      conflictedPaths: conflictedPaths,
+      inverted: preferences.fileSortInverted,
+      correlatednessContext: correlatednessContext,
+    );
     // Map the Logos XY pad to diffusion controls:
     //   padY (NEAR=0 ↔ FAR=1) → temperature t = 0.5 × 4^padY ∈ [0.5, 2.0]
     //     padY=0 tight: just the staged cluster
@@ -10358,7 +10735,7 @@ class _CommitComposerField extends StatefulWidget {
 }
 
 class _CommitComposerFieldState extends State<_CommitComposerField>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WindowAwakeMixin {
   late AnimationController _pulseCtrl;
   late AnimationController _doneCtrl;
   final ScrollController _scrollCtrl = ScrollController();
@@ -10384,7 +10761,25 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     _rebuildComposerSignal();
     // _pulseCtrl is gated via didChangeDependencies so Reduce Motion
     // silences the border pulse; _doneCtrl forwards only when motion is
-    // allowed.
+    // allowed. Window-focus gate folds in via onWindowAwakeChanged →
+    // _syncPulseAwake so a stuck AI loader pulse doesn't burn GPU while
+    // tabbed out.
+  }
+
+  @override
+  void onWindowAwakeChanged() => _syncPulseAwake();
+
+  void _syncPulseAwake() {
+    if (!mounted) return;
+    final awake = WindowActivity.instance.awake;
+    if (!awake && _pulseCtrl.isAnimating) {
+      _pulseCtrl.stop();
+    } else if (awake &&
+        widget.aiLoading &&
+        !_pulseCtrl.isAnimating &&
+        !context.reduceMotionRead) {
+      _pulseCtrl.repeat(reverse: true);
+    }
   }
 
   void _rebuildComposerSignal() {
@@ -10400,10 +10795,14 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
   void didChangeDependencies() {
     super.didChangeDependencies();
     final reduce = context.reduceMotion;
+    final awake = WindowActivity.instance.awake;
     if (widget.aiLoading) {
-      if (reduce) {
+      if (reduce || !awake) {
         if (_pulseCtrl.isAnimating) _pulseCtrl.stop();
-        _pulseCtrl.value = 0;
+        // Asymmetry is intentional: reduce-motion snaps value to 0
+        // (no implied motion at rest), but window-blur only pauses
+        // so the pulse resumes mid-phase when focus returns.
+        if (reduce) _pulseCtrl.value = 0;
       } else if (!_pulseCtrl.isAnimating) {
         _pulseCtrl.repeat(reverse: true);
       }
@@ -10682,12 +11081,11 @@ class _AnimatedShapeIcon extends StatefulWidget {
 }
 
 class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WindowAwakeGuardedMixin {
   static const Duration _authoredActive = Duration(milliseconds: 3600);
   static const Duration _authoredLoading = Duration(milliseconds: 2200);
   late final AnimationController _ctrl;
   PreferencesState? _prefs;
-  bool _windowListenerAttached = false;
 
   @override
   void initState() {
@@ -10706,12 +11104,11 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
       _prefs = prefs;
       prefs.addListener(_onPrefsChanged);
     }
-    if (!_windowListenerAttached) {
-      WindowActivity.instance.addListener(_onPrefsChanged);
-      _windowListenerAttached = true;
-    }
     _syncTickerToState();
   }
+
+  @override
+  void onWindowAwakeChanged() => _onPrefsChanged();
 
   void _onPrefsChanged() {
     if (mounted) _syncTickerToState();
@@ -10752,9 +11149,6 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
   @override
   void dispose() {
     _prefs?.removeListener(_onPrefsChanged);
-    if (_windowListenerAttached) {
-      WindowActivity.instance.removeListener(_onPrefsChanged);
-    }
     _ctrl.dispose();
     super.dispose();
   }

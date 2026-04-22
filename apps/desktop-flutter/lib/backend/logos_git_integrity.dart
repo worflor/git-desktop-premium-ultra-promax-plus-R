@@ -185,6 +185,49 @@ class LogosRelationDescriptor {
   });
 }
 
+/// Fast variant of [logosPairPenalty] on precomputed roles. Callers
+/// building an n² candidate loop should build one [TransportRoles] per
+/// unique path once and reuse across every pairing — otherwise the
+/// string normalisation + seed-key + 8 pattern-match sweep fires 2×
+/// per pair inside every call below. Byte-identical to the raw-string
+/// variant for the same inputs.
+double logosPairPenaltyOfRoles(TransportRoles a, TransportRoles b) {
+  if (a._sharesManifestRoot(b) &&
+      ((a.isManifest && b.isLockfile) ||
+          (b.isManifest && a.isLockfile))) {
+    return 0.45;
+  }
+  final sharesConcept = a._sharesTransportConcept(b);
+  if (sharesConcept &&
+      ((a.isGenerated && b.isSource) || (b.isGenerated && a.isSource))) {
+    return 0.55;
+  }
+  if (sharesConcept &&
+      ((!a.isTest && a.isSource && b.isTest) ||
+          (!b.isTest && b.isSource && a.isTest))) {
+    return 0.62;
+  }
+  if (sharesConcept &&
+      ((!a.isDoc && a.isSource && b.isDoc) ||
+          (!b.isDoc && b.isSource && a.isDoc))) {
+    return 0.74;
+  }
+  if (sharesConcept &&
+      ((!a.isMigration && a.isSource && b.isMigration) ||
+          (!b.isMigration && b.isSource && a.isMigration))) {
+    return 0.60;
+  }
+  if (a.isGenerated && b.isGenerated) return 0.35;
+  if (a.isFixture && b.isFixture) return 0.6;
+  if ((a.isFixture && !b.isFixture) || (b.isFixture && !a.isFixture)) {
+    return 0.82;
+  }
+  // Vendor check isn't cached on TransportRoles yet — fall back to the
+  // raw-path predicate on the already-normalised string field.
+  if (_looksVendor(a.normalized) || _looksVendor(b.normalized)) return 0.9;
+  return 1.0;
+}
+
 double logosPairPenalty(String a, String b) {
   final an = a.replaceAll('\\', '/').toLowerCase();
   final bn = b.replaceAll('\\', '/').toLowerCase();

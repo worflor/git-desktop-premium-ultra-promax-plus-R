@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui show Gradient;
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'app/app_identity.dart';
@@ -34,6 +36,15 @@ import 'ui/theme.dart';
 import 'ui/theme_shaders.dart';
 import 'ui/tokens.dart';
 import 'ui/undo_pill.dart';
+
+/// Idle-GPU diagnostic probe. Off by default in release. Enable via:
+///   flutter build windows --release --dart-define=FPS_PROBE=true
+/// Prints frame-scheduling rate every ~2 s plus every focus/minimize
+/// transition, so we can tell whether a ticker is still pushing frames
+/// while the window is blurred. Zero cost when disabled (the callback
+/// is never registered).
+const bool _kFpsProbe =
+    kDebugMode || bool.fromEnvironment('FPS_PROBE', defaultValue: false);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -139,6 +150,25 @@ void main() async {
     diagnosticsState.load().catchError((_) {});
   });
 
+  // Idle-GPU probe. Only registered when _kFpsProbe is true (debug
+  // builds or explicit --dart-define=FPS_PROBE=true). Zero cost in a
+  // default release build — the callback is never added, no per-frame
+  // work, no log spam.
+  if (_kFpsProbe) {
+    var frameCount = 0;
+    final frameSw = Stopwatch()..start();
+    SchedulerBinding.instance.addPersistentFrameCallback((_) {
+      frameCount++;
+      if (frameSw.elapsedMilliseconds >= 2000) {
+        // ignore: avoid_print
+        print('FPS-PROBE: ${(frameCount * 1000 / frameSw.elapsedMilliseconds).toStringAsFixed(1)} fps '
+            '(${frameCount} frames in ${frameSw.elapsedMilliseconds} ms)');
+        frameCount = 0;
+        frameSw.reset();
+      }
+    });
+  }
+
   runApp(
     MultiProvider(
       providers: [
@@ -216,15 +246,62 @@ class _GitDesktopAppState extends State<GitDesktopApp> {
       title: identity.shortName,
       debugShowCheckedModeBanner: false,
       theme: buildTheme(tokens),
-      home: LiquidGlassProvider(
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 500),
-          switchInCurve: Curves.easeOutCubic,
-          switchOutCurve: Curves.easeInCubic,
-          child: onboardingComplete
-              ? const _AppFrame(key: ValueKey('workspace'))
-              : const OnboardingFlow(key: ValueKey('onboarding')),
-        ),
+      home: const _RootTickerMute(
+        child: LiquidGlassProviderWithSwitcher(),
+      ),
+    );
+  }
+}
+
+/// Root-level [TickerMode] wrapper driven by [WindowActivity]. Flips
+/// `enabled: false` the instant the window loses focus, which mutes
+/// every `TickerProviderStateMixin`-backed animation in the subtree —
+/// catching the long tail of idle repaints that individual `awake`
+/// gates missed (unfound tickers, third-party widgets, AnimatedXxx
+/// implicit animations that may still drive frames even at rest).
+///
+/// Tickers in the subtree stay subscribed; they simply don't fire
+/// their callbacks while muted. On re-focus, the next `didChangeDeps`
+/// flows through normally and animations resume where they left off.
+class _RootTickerMute extends StatefulWidget {
+  final Widget child;
+  const _RootTickerMute({required this.child});
+
+  @override
+  State<_RootTickerMute> createState() => _RootTickerMuteState();
+}
+
+class _RootTickerMuteState extends State<_RootTickerMute>
+    with WindowAwakeMixin {
+  @override
+  void onWindowAwakeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TickerMode(
+      enabled: WindowActivity.instance.awake,
+      child: widget.child,
+    );
+  }
+}
+
+class LiquidGlassProviderWithSwitcher extends StatelessWidget {
+  const LiquidGlassProviderWithSwitcher({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final onboardingComplete =
+        context.select<OnboardingState, bool>((o) => o.isComplete);
+    return LiquidGlassProvider(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 500),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        child: onboardingComplete
+            ? const _AppFrame(key: ValueKey('workspace'))
+            : const OnboardingFlow(key: ValueKey('onboarding')),
       ),
     );
   }
@@ -492,7 +569,11 @@ class _ParticleBackdrop extends StatefulWidget {
 }
 
 class _ParticleBackdropState extends State<_ParticleBackdrop>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver, WindowListener {
+    with
+        SingleTickerProviderStateMixin,
+        WidgetsBindingObserver,
+        WindowListener,
+        WindowAwakeMixin {
   late final AnimationController _controller;
 
   /// Delta from the first-captured window position. As the user drags the
@@ -531,7 +612,6 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     windowManager.addListener(this);
-    WindowActivity.instance.addListener(_syncAwake);
     _controller = AnimationController(
       vsync: this,
       duration: _particleAnimationDuration(widget.shader),
@@ -543,6 +623,9 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
     _rebuildBackdropSignal();
     _captureBaseWindowPos();
   }
+
+  @override
+  void onWindowAwakeChanged() => _syncAwake();
 
   /// Window-focus / minimize / lifecycle observer drives this. The N²
   /// whisp collision loop and blur-glow CustomPaint are pure background
@@ -725,7 +808,6 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
 
   @override
   void dispose() {
-    WindowActivity.instance.removeListener(_syncAwake);
     windowManager.removeListener(this);
     WidgetsBinding.instance.removeObserver(this);
     _windowDelta.dispose();

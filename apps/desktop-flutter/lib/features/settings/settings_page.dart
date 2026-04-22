@@ -13,9 +13,12 @@ import '../../backend/command_telemetry_store.dart';
 import '../../backend/dtos.dart';
 import '../../backend/commit_format.dart';
 import '../../backend/file_coupling.dart';
+import '../../backend/logos_git.dart';
 import '../../backend/undo_controller.dart';
 import '../../app/ai_settings_state.dart';
+import '../../app/logos_git_state.dart';
 import '../../app/preferences_state.dart';
+import '../../app/repository_state.dart';
 import '../../app/window_activity.dart';
 import '../../app/theme_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
@@ -3816,9 +3819,151 @@ class _SettingsGap extends StatelessWidget {
   }
 }
 
-// Logos pad and grip are one control: interactive tuning + static status.
+// Logos pad + live lens readout. The pad's knob position (padX, padY)
+// drives the actual Logos relevance engine against the user's repo: dots
+// on the pad are real file neighbours of the recent-activity focus, not
+// static decoration, and the side panel reports the current lens as
+// live signal instead of hardcoded spec-sheet strings.
 
-class _LogosDynamicsStage extends StatelessWidget {
+/// One file projected into the lens. Position is deterministic from the
+/// file's structural/history axis scores, size/opacity track current
+/// phi (heat-kernel support) at the puck-selected temperature.
+class _LensNeighbor {
+  final String path;
+  final double bx; // 0..1 pad-space X
+  final double by; // 0..1 pad-space Y
+  final double phi; // 0..1 current heat-kernel support
+  final bool reachable; // above the current coherence gate
+  const _LensNeighbor({
+    required this.path,
+    required this.bx,
+    required this.by,
+    required this.phi,
+    required this.reachable,
+  });
+}
+
+/// Snapshot of the lens at a given puck position. Produced by
+/// [_computeLens] and threaded to both the pad painter and the
+/// readout — single source of truth so the two stay in sync.
+class _LensSnapshot {
+  final List<_LensNeighbor> neighbours;
+  final double tTemperature; // heat-kernel `t` the puck decoded to
+  final double coherenceGate; // the gate threshold the puck decoded to
+  final int reachableCount; // count of neighbours above the gate
+  final bool ready; // false = engine not available, still show pad chrome
+  const _LensSnapshot({
+    required this.neighbours,
+    required this.tTemperature,
+    required this.coherenceGate,
+    required this.reachableCount,
+    required this.ready,
+  });
+
+  static const _LensSnapshot empty = _LensSnapshot(
+    neighbours: [],
+    tTemperature: 1.0,
+    coherenceGate: 0.25,
+    reachableCount: 0,
+    ready: false,
+  );
+}
+
+/// Resolve puck → (t, coherenceGate) using the same mapping the
+/// changes page's rerank already uses (`changes_page.dart:4806-4808`).
+/// Matters for integrity: the preview has to be the same function of
+/// padX/padY that the real feature applies, or the lens would lie.
+({double t, double gate}) _padToLensParams(double padX, double padY) {
+  final t = 0.5 * math.pow(4.0, padY).toDouble();
+  final gate = (0.35 - (padX.clamp(0.0, 1.0) * 0.20)).toDouble();
+  return (t: t, gate: gate);
+}
+
+/// Deterministic angle for a path. Same path always lands at the same
+/// angular home so dots don't rotate on every recompute — only their
+/// radial distance changes as the puck moves.
+double _pathAngle(String path) {
+  var h = 0x811c9dc5;
+  for (final c in path.codeUnits) {
+    h = ((h ^ c) * 0x01000193) & 0xffffffff;
+  }
+  return (h & 0xffff) / 0xffff * 2 * math.pi;
+}
+
+/// Evaluate the lens at the current puck using the engine's own
+/// diffuse API. One `chebyshevDiffuse` call per puck movement — the
+/// same path `changes_page`'s rerank uses, minus the gathering of
+/// secondary summaries we don't need. Sub-millisecond on warm graphs
+/// at our scale (500-ish files, k≈20 Chebyshev terms).
+///
+/// No manual `_buildRho` / `project` / `recombine`: that was me
+/// reinventing what `diffuseWeighted` already does, and missing a
+/// bunch of wiring (derived-path phi, coherence gating) along the way.
+_LensSnapshot _evaluateLens({
+  required LogosGit engine,
+  required Map<String, double> focusWeights,
+  required double padX,
+  required double padY,
+  int topK = 18,
+}) {
+  final params = _padToLensParams(padX, padY);
+  // NO excludePaths: recentActivityWeights returns weights for every
+  // touched file (every file, on a live repo), and passing that set as
+  // excludePaths would zero out the entire diffusion result. We want
+  // the diffusion over the full graph and then rank by phi — seeds
+  // naturally sit on top because they're the sources, which is fine
+  // for a visual "what does the lens see" preview.
+  final results = engine.diffuseWeighted(
+    focusWeights,
+    t: params.t,
+    topK: topK,
+  );
+  if (results.isEmpty) {
+    return _LensSnapshot(
+      neighbours: const [],
+      tTemperature: params.t,
+      coherenceGate: params.gate,
+      reachableCount: 0,
+      ready: true,
+    );
+  }
+  // Normalise so phi ∈ [0, 1] across the visible slate. Keeps the
+  // lens readable no matter what the raw diffusion magnitude looks
+  // like at this temperature.
+  var maxPhi = 0.0;
+  for (final r in results) {
+    if (r.phi > maxPhi) maxPhi = r.phi;
+  }
+  final norm = maxPhi > 1e-12 ? 1.0 / maxPhi : 1.0;
+
+  final neighbours = <_LensNeighbor>[];
+  var reachableCount = 0;
+  for (final r in results) {
+    final p = (r.phi * norm).clamp(0.0, 1.0).toDouble();
+    final reachable = p >= params.gate;
+    if (reachable) reachableCount++;
+    final angle = _pathAngle(r.path);
+    final radius = 0.10 + (1.0 - p) * 0.32;
+    final bx = (0.5 + radius * math.cos(angle)).clamp(0.05, 0.95).toDouble();
+    final by = (0.5 + radius * math.sin(angle)).clamp(0.08, 0.92).toDouble();
+    neighbours.add(_LensNeighbor(
+      path: r.path,
+      bx: bx,
+      by: by,
+      phi: p,
+      reachable: reachable,
+    ));
+  }
+  return _LensSnapshot(
+    neighbours: neighbours,
+    tTemperature: params.t,
+    coherenceGate: params.gate,
+    reachableCount: reachableCount,
+    ready: true,
+  );
+}
+
+class _LogosDynamicsStage extends StatefulWidget {
   final double padX;
   final double padY;
   final void Function(double x, double y) onChanged;
@@ -3828,6 +3973,120 @@ class _LogosDynamicsStage extends StatelessWidget {
     required this.padY,
     required this.onChanged,
   });
+
+  @override
+  State<_LogosDynamicsStage> createState() => _LogosDynamicsStageState();
+}
+
+class _LogosDynamicsStageState extends State<_LogosDynamicsStage> {
+  _LensSnapshot _snapshot = _LensSnapshot.empty;
+
+  // Subscribed Provider handles. `didChangeDependencies` wires up the
+  // listeners on first mount (and whenever our Provider scope changes);
+  // `dispose` tears them down. Both notifiers fan out exactly once per
+  // real change — no polling, no mount-timing trap.
+  LogosGitState? _logosState;
+  RepositoryState? _repoState;
+
+  // Cached focus-weights per resolved engine. `recentActivityWeights`
+  // is memoised inside the engine but still O(files × commits) on the
+  // first call at this halfLife; no reason to redo it per puck tick.
+  LogosGit? _engineCache;
+  Map<String, double>? _focusCache;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final logosState = context.read<LogosGitState>();
+    final repoState = context.read<RepositoryState>();
+    if (!identical(logosState, _logosState)) {
+      _logosState?.removeListener(_syncFromState);
+      _logosState = logosState;
+      _logosState!.addListener(_syncFromState);
+    }
+    if (!identical(repoState, _repoState)) {
+      _repoState?.removeListener(_syncFromState);
+      _repoState = repoState;
+      _repoState!.addListener(_syncFromState);
+    }
+    _syncFromState();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LogosDynamicsStage old) {
+    super.didUpdateWidget(old);
+    if (old.padX != widget.padX || old.padY != widget.padY) {
+      _reEvaluate();
+    }
+  }
+
+  @override
+  void dispose() {
+    _logosState?.removeListener(_syncFromState);
+    _repoState?.removeListener(_syncFromState);
+    super.dispose();
+  }
+
+  /// React to engine / repo-path transitions. When there's a repo with
+  /// no engine yet, kick off `loadForRepo` (idempotent — the state
+  /// guards against duplicate loads internally and the shared resolver
+  /// dedupes across callers). When the engine arrives, cache its focus
+  /// seeds and evaluate the lens at the current puck.
+  void _syncFromState() {
+    if (!mounted) return;
+    final repoPath = _repoState?.activePath;
+    if (repoPath == null) {
+      if (_engineCache != null || _snapshot.ready) {
+        _engineCache = null;
+        _focusCache = null;
+        setState(() => _snapshot = _LensSnapshot.empty);
+      }
+      return;
+    }
+    final engine = _logosState?.engineFor(repoPath);
+    if (engine == null) {
+      // Trigger the resolve — this is what was missing. Other
+      // consumers (changes_page) do the same thing; without it, a user
+      // landing on settings directly never causes the engine to load.
+      if (_logosState != null && !_logosState!.isLoading(repoPath)) {
+        // ignore: discarded_futures
+        _logosState!.loadForRepo(repoPath);
+      }
+      if (_engineCache != null || _snapshot.ready) {
+        _engineCache = null;
+        _focusCache = null;
+        setState(() => _snapshot = _LensSnapshot.empty);
+      }
+      return;
+    }
+    // Engine available. Cache focus seeds once per engine instance.
+    if (!identical(engine, _engineCache)) {
+      _engineCache = engine;
+      _focusCache = engine.recentActivityWeights(halfLifeCommits: 30);
+    }
+    _reEvaluate();
+  }
+
+  /// Compute the snapshot from the cached engine + focus weights at
+  /// the current puck. Called on both engine-arrival and puck-change.
+  void _reEvaluate() {
+    final engine = _engineCache;
+    final focus = _focusCache;
+    if (engine == null || focus == null || focus.isEmpty) {
+      if (_snapshot.ready || _snapshot.neighbours.isNotEmpty) {
+        setState(() => _snapshot = _LensSnapshot.empty);
+      }
+      return;
+    }
+    final snapshot = _evaluateLens(
+      engine: engine,
+      focusWeights: focus,
+      padX: widget.padX,
+      padY: widget.padY,
+    );
+    if (!mounted) return;
+    setState(() => _snapshot = snapshot);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3863,15 +4122,16 @@ class _LogosDynamicsStage extends StatelessWidget {
                 width: padW,
                 height: padH,
                 child: _LogosPad(
-                  x: padX,
-                  y: padY,
-                  onChanged: onChanged,
+                  x: widget.padX,
+                  y: widget.padY,
+                  snapshot: _snapshot,
+                  onChanged: widget.onChanged,
                 ),
               ),
               const SizedBox(width: gap),
-              const SizedBox(
+              SizedBox(
                 width: gripW,
-                child: _LogosGrip(),
+                child: _LogosLensReadout(snapshot: _snapshot),
               ),
             ],
           ),
@@ -3884,11 +4144,13 @@ class _LogosDynamicsStage extends StatelessWidget {
 class _LogosPad extends StatefulWidget {
   final double x;
   final double y;
+  final _LensSnapshot snapshot;
   final void Function(double x, double y) onChanged;
 
   const _LogosPad({
     required this.x,
     required this.y,
+    required this.snapshot,
     required this.onChanged,
   });
 
@@ -3906,7 +4168,7 @@ class _TrailDot {
 }
 
 class _LogosPadState extends State<_LogosPad>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WindowAwakeMixin {
   // Ambient pulse drives the halo and field shimmer.
   late final AnimationController _ambient;
 
@@ -3931,7 +4193,26 @@ class _LogosPadState extends State<_LogosPad>
     _ambient = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2600),
-    )..repeat();
+    );
+    _syncAmbient();
+  }
+
+  @override
+  void onWindowAwakeChanged() => _syncAmbient();
+
+  // Toggle the ambient pulse on window focus. Without this gate the
+  // 2.6 s loop keeps ticking + invalidating the AnimatedBuilder every
+  // frame even when the user has alt-tabbed away — idle-GPU contributor
+  // on the Bibble theme even though the settings pad isn't visible
+  // on every page.
+  void _syncAmbient() {
+    if (!mounted) return;
+    final shouldRun = WindowActivity.instance.awake;
+    if (shouldRun && !_ambient.isAnimating) {
+      _ambient.repeat();
+    } else if (!shouldRun && _ambient.isAnimating) {
+      _ambient.stop();
+    }
   }
 
   @override
@@ -4066,6 +4347,7 @@ class _LogosPadState extends State<_LogosPad>
                   trail: _trail,
                   now: now,
                   tokens: t,
+                  snapshot: widget.snapshot,
                 ),
               );
             },
@@ -4076,38 +4358,6 @@ class _LogosPadState extends State<_LogosPad>
   }
 }
 
-/// Point in the pad for one file path.
-/// Relevance is based on distance from the puck.
-class _LogosNode {
-  final String path;
-  final double bx;
-  final double by;
-  const _LogosNode(this.path, this.bx, this.by);
-}
-
-// Nodes are real paths from this app/session.
-// Grouped by axis (folder/history x far/near).
-const List<_LogosNode> _kLogosNodes = [
-  // Folder × Far — directory roots, the architecture-level view.
-  _LogosNode('backend/', 0.12, 0.16),
-  _LogosNode('features/', 0.26, 0.10),
-  _LogosNode('ui/', 0.08, 0.30),
-  _LogosNode('app/', 0.30, 0.26),
-  // History × Far — repo-wide hubs git keeps revisiting.
-  _LogosNode('app/main.dart', 0.84, 0.14),
-  _LogosNode('app/repository_state.dart', 0.74, 0.24),
-  _LogosNode('ui/tokens.dart', 0.92, 0.28),
-  // Folder × Near — siblings of logos_git.dart in backend/.
-  _LogosNode('backend/logos_core.dart', 0.10, 0.78),
-  _LogosNode('backend/logos_chunks.dart', 0.22, 0.86),
-  _LogosNode('backend/logos_hunks.dart', 0.30, 0.72),
-  _LogosNode('backend/logos_git_stats.dart', 0.06, 0.66),
-  // History × Near — what moved alongside the pad work itself.
-  _LogosNode('features/settings/settings_page.dart', 0.86, 0.84),
-  _LogosNode('app/preferences_state.dart', 0.72, 0.74),
-  _LogosNode('backend/settings_store.dart', 0.92, 0.68),
-];
-
 class _LogosPadPainter extends CustomPainter {
   final double x;
   final double y;
@@ -4117,6 +4367,7 @@ class _LogosPadPainter extends CustomPainter {
   final List<_TrailDot> trail;
   final DateTime now;
   final AppTokens tokens;
+  final _LensSnapshot snapshot;
 
   _LogosPadPainter({
     required this.x,
@@ -4127,6 +4378,7 @@ class _LogosPadPainter extends CustomPainter {
     required this.trail,
     required this.now,
     required this.tokens,
+    required this.snapshot,
   });
 
   // Parallax offsets for depth layers, in pixels at full deflection.
@@ -4371,55 +4623,56 @@ class _LogosPadPainter extends CustomPainter {
   }
 
   //
-  // Relevance = 1 / (1 + k·d²) — a soft Lorentzian that gives nearby
-  // nodes a strong pull while letting far ones fade gracefully.
-  // Relevance is 1/(1 + k*d²), so nearby nodes dominate smoothly.
-  // Top-3 labels are placed opposite the puck to avoid overlap.
+  // Live lens neighbours. Size + opacity track phi (heat-kernel support
+  // at the puck's current temperature) so moving the puck visibly
+  // reweights every file. Unreachable neighbours (below the coherence
+  // gate the puck decoded) render at reduced alpha as a "just outside
+  // the ring" hint — they're candidates that would appear if you
+  // relaxed the gate by dragging toward HISTORY.
   void _paintNodes(Canvas canvas, double w, double h) {
     final px = x * w;
     final py = y * h;
-    final scored = <({_LogosNode n, double r, Offset pos})>[];
-    for (final n in _kLogosNodes) {
-      final nx = n.bx * w;
-      final ny = n.by * h;
-      final dx = (nx - px) / w;
-      final dy = (ny - py) / h;
-      final d2 = dx * dx + dy * dy;
-      // k=12 keeps nearby nodes readable while suppressing distant ones.
-      final rel = 1.0 / (1.0 + 12.0 * d2);
-      scored.add((n: n, r: rel, pos: Offset(nx, ny)));
-    }
-
-    // Draw low-relevance first so top-3 composite cleanly on top.
-    scored.sort((a, b) => a.r.compareTo(b.r));
     final dot = Paint()..style = PaintingStyle.fill;
     final ring = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
-    for (final s in scored) {
-      final r = 1.6 + 3.2 * s.r;
-      final alpha = (0.18 + 0.78 * s.r).clamp(0.0, 1.0);
+
+    final neighbours = [...snapshot.neighbours]
+      // Draw low-phi first so strong neighbours composite on top.
+      ..sort((a, b) => a.phi.compareTo(b.phi));
+
+    for (final n in neighbours) {
+      final nx = n.bx * w;
+      final ny = n.by * h;
+      // Unreachable neighbours fade to a hint; reachable ones land
+      // solid accent. This is the visible consequence of the
+      // coherence-gate setting (padX).
+      final effectivePhi = n.reachable ? n.phi : n.phi * 0.45;
+      final r = 1.6 + 3.2 * effectivePhi;
+      final alpha = (0.15 + 0.80 * effectivePhi).clamp(0.0, 1.0);
       final col = Color.lerp(
         tokens.textMuted.withValues(alpha: alpha * 0.55),
         tokens.accentBright.withValues(alpha: alpha),
-        s.r,
+        effectivePhi,
       )!;
       dot.color = col;
-      canvas.drawCircle(s.pos, r, dot);
-      // Use an extra ring for high-relevance nodes.
-      if (s.r > 0.35) {
+      canvas.drawCircle(Offset(nx, ny), r, dot);
+      if (n.reachable && n.phi > 0.55) {
         ring.color = tokens.accentBright
-            .withValues(alpha: ((s.r - 0.35) / 0.65 * 0.55).clamp(0.0, 1.0));
-        canvas.drawCircle(s.pos, r + 3, ring);
+            .withValues(alpha: ((n.phi - 0.55) / 0.45 * 0.55).clamp(0.0, 1.0));
+        canvas.drawCircle(Offset(nx, ny), r + 3, ring);
       }
     }
 
-    // Label the top 3 nodes by relevance.
-    final topN = scored.sublist(scored.length - 3);
-    for (final s in topN) {
-      final labelAlpha = ((s.r - 0.18) / 0.5).clamp(0.0, 1.0);
+    // Label top 3 reachable neighbours — those are the files the user
+    // should recognise as "what my current lens is actually seeing".
+    final topN = neighbours.where((n) => n.reachable).toList()
+      ..sort((a, b) => b.phi.compareTo(a.phi));
+    for (final n in topN.take(3)) {
+      final labelAlpha = ((n.phi - 0.2) / 0.5).clamp(0.0, 1.0);
       if (labelAlpha <= 0) continue;
-      _drawNodeLabel(canvas, s.n.path, s.pos, Offset(px, py),
+      _drawNodeLabel(canvas, n.path, Offset(n.bx * w, n.by * h),
+          Offset(px, py),
           alpha: labelAlpha, w: w);
     }
   }
@@ -4596,7 +4849,8 @@ class _LogosPadPainter extends CustomPainter {
       old.ambient != ambient ||
       old.parallax != parallax ||
       !identical(old.trail, trail) ||
-      old.trail.length != trail.length;
+      old.trail.length != trail.length ||
+      !identical(old.snapshot, snapshot);
 }
 
 /// Quadrant labels for the pad; the label appears near the puck near each corner.
@@ -4621,15 +4875,25 @@ enum _LogosQuadrant {
       };
 }
 
-/// Static info plate to the right of the pad.
-/// It's read-only and mirrors the active Logos configuration while the
-/// puck interaction updates continuously.
-class _LogosGrip extends StatelessWidget {
-  const _LogosGrip();
+/// Live readout sibling of the Logos pad. Replaces the old static
+/// "method/graph/axes/t/k/range" spec-sheet with the lens's *current*
+/// view of the user's repo: how many files are within reach at the
+/// puck's tuning, which three are most central, and the decoded `t` /
+/// gate values. Everything here derives from the same [_LensSnapshot]
+/// the pad painter uses, so dragging the puck moves dots and updates
+/// this readout in lockstep.
+class _LogosLensReadout extends StatelessWidget {
+  final _LensSnapshot snapshot;
+  const _LogosLensReadout({required this.snapshot});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final ready = snapshot.ready;
+    final top = [...snapshot.neighbours]
+      ..sort((a, b) => b.phi.compareTo(a.phi));
+    final topReachable =
+        top.where((n) => n.reachable).take(3).toList(growable: false);
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
       decoration: BoxDecoration(
@@ -4642,7 +4906,6 @@ class _LogosGrip extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Wordmark — small caps, wide tracking, stamped feel.
           Text(
             'LOGOS',
             style: TextStyle(
@@ -4663,30 +4926,131 @@ class _LogosGrip extends StatelessWidget {
               height: 1.2,
             ),
           ),
-          const SizedBox(height: 14),
-          _GripDivider(t: t),
-          const SizedBox(height: 12),
-          // Static stat rows use a two-column layout so values stay
-          // stable and easy to compare.
-          _GripStat(label: 'method', value: 'heat-kernel', t: t),
-          _GripStat(label: 'graph', value: 'born-mix', t: t),
-          _GripStat(label: 'axes', value: '4', t: t),
           const SizedBox(height: 10),
+          Text(
+            'reads how files move together '
+            'across structure, history, and '
+            'rhythm, so reviews see what '
+            'matters, not just what changed.',
+            style: TextStyle(
+              color: t.textMuted.withValues(alpha: 0.6),
+              fontSize: 10,
+              letterSpacing: 0.15,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 12),
           _GripDivider(t: t),
           const SizedBox(height: 12),
-          _GripStat(label: 't', value: '1.0', t: t, mono: true),
-          _GripStat(label: 'k', value: '20', t: t, mono: true),
-          _GripStat(label: 'range', value: '0.3–3.0', t: t, mono: true),
-          const SizedBox(height: 14),
+          // The count IS the story: dragging the puck changes this
+          // number in real time. That's the feedback loop the old
+          // hardcoded grip never gave.
+          _GripStat(
+            label: 'within reach',
+            value: ready ? '${snapshot.reachableCount}' : '—',
+            t: t,
+            mono: true,
+          ),
+          _GripStat(
+            label: 't',
+            value: snapshot.tTemperature.toStringAsFixed(2),
+            t: t,
+            mono: true,
+          ),
+          _GripStat(
+            label: 'gate',
+            value: snapshot.coherenceGate.toStringAsFixed(2),
+            t: t,
+            mono: true,
+          ),
+          const SizedBox(height: 10),
           _GripDivider(t: t),
           const SizedBox(height: 10),
           Text(
-            'self-tuned\nno manual\nweights',
+            ready ? 'nearest' : 'warming',
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.55),
+              fontSize: 8.5,
+              letterSpacing: 1.4,
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (!ready)
+            Text(
+              'open a repo to\nsee the lens live',
+              style: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 9.5,
+                letterSpacing: 0.3,
+                height: 1.55,
+              ),
+            )
+          else if (topReachable.isEmpty)
+            Text(
+              'no files within\nreach — drag\ntoward HISTORY',
+              style: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.55),
+                fontSize: 9.5,
+                letterSpacing: 0.3,
+                height: 1.55,
+              ),
+            )
+          else
+            for (final n in topReachable) ...[
+              _NeighbourRow(path: n.path, phi: n.phi, t: t),
+              const SizedBox(height: 4),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One row in the readout's "nearest" section. Path shown short-form
+/// (filename) and full-form on hover via Tooltip; phi rendered as a
+/// 2-char monospace reading so the column aligns.
+class _NeighbourRow extends StatelessWidget {
+  final String path;
+  final double phi;
+  final AppTokens t;
+  const _NeighbourRow(
+      {required this.path, required this.phi, required this.t});
+
+  @override
+  Widget build(BuildContext context) {
+    // Show the last two path segments so both file name and parent
+    // folder are visible in the narrow column (e.g. "backend/git.dart").
+    final parts = path.split('/');
+    final shortPath =
+        parts.length <= 2 ? path : '${parts[parts.length - 2]}/${parts.last}';
+    return Tooltip(
+      message: path,
+      waitDuration: const Duration(milliseconds: 350),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              shortPath,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: t.textNormal,
+                fontSize: 10,
+                letterSpacing: 0.1,
+                height: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            phi.toStringAsFixed(2),
+            style: TextStyle(
+              color: t.accentBright.withValues(alpha: 0.85),
               fontSize: 9.5,
-              letterSpacing: 0.4,
-              height: 1.55,
+              fontFamily: 'monospace',
+              letterSpacing: 0.2,
+              height: 1.2,
             ),
           ),
         ],
@@ -8024,7 +8388,7 @@ class _LogoMotionMiniIndicator extends StatefulWidget {
 }
 
 class _LogoMotionMiniIndicatorState extends State<_LogoMotionMiniIndicator>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WindowAwakeGuardedMixin {
   // Authored base duration — actual runtime rotation period is
   // `_authoredPeriod / motionRate` so the indicator literally demos
   // the preference it represents. At rate=1 it's 4s/revolution;
@@ -8037,7 +8401,6 @@ class _LogoMotionMiniIndicatorState extends State<_LogoMotionMiniIndicator>
   );
 
   PreferencesState? _prefs;
-  bool _windowListenerAttached = false;
 
   @override
   void didChangeDependencies() {
@@ -8048,12 +8411,11 @@ class _LogoMotionMiniIndicatorState extends State<_LogoMotionMiniIndicator>
       _prefs = prefs;
       prefs.addListener(_onPrefsChanged);
     }
-    if (!_windowListenerAttached) {
-      WindowActivity.instance.addListener(_onPrefsChanged);
-      _windowListenerAttached = true;
-    }
     _syncAnimation();
   }
+
+  @override
+  void onWindowAwakeChanged() => _onPrefsChanged();
 
   @override
   void didUpdateWidget(covariant _LogoMotionMiniIndicator old) {
@@ -8089,9 +8451,6 @@ class _LogoMotionMiniIndicatorState extends State<_LogoMotionMiniIndicator>
   @override
   void dispose() {
     _prefs?.removeListener(_onPrefsChanged);
-    if (_windowListenerAttached) {
-      WindowActivity.instance.removeListener(_onPrefsChanged);
-    }
     _ctrl.dispose();
     super.dispose();
   }

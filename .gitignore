@@ -15,6 +15,13 @@ apps/desktop/src-tauri/target/
 # PIDs, etc. Nothing under here is shared across contributors.
 .claude/
 
+# Codex (OpenAI CLI) scratch directories — per-invocation probes
+# (ffcheck / status / status_unicode variants) with UUID-suffixed
+# names. Agent creates and abandons them; they should never reach
+# the repo. Anchored to root: Codex only drops these in CWD, and an
+# unanchored pattern would mask any same-named dir at any depth.
+/.codex_tmp_*/
+
 # Local git worktrees. Worktree paths are dev-local — different
 # contributors check out feature branches into different sub-paths.
 # The branches themselves live in the repo's history; the on-disk

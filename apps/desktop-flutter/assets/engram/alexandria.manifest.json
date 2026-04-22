@@ -1,9 +1,15 @@
 {
   "format": "endb",
-  "version": 1,
+  "version": 2,
   "dim": 300,
   "pairs": 150,
   "n_wells": 225,
+  "flags": 15,
+  "has_sum_raw": true,
+  "has_dream": true,
+  "n_dream": 1200,
+  "has_annotations": true,
+  "has_manifest": true,
   "source_manifest": {
     "format": "engram",
     "version": 4,

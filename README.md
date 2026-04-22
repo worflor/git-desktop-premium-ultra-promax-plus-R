@@ -1,94 +1,56 @@
-# Git Desktop Premium Ultra Promax Plus-R
+# Manifold
 
-Git Desktop is an ambitious desktop Git client project focused on fast local workflows, richer repository context, and stronger visual tooling than a plain status/history UI.
+A Git client. Built in Flutter, Dart, and a lot of spectral hypercomplex math.
 
-This repository now has a clear split:
+## It's a Git client
 
-- `apps/desktop-flutter/README.md` is the canonical detailed README for the Flutter desktop app
-- this root `README.md` is the repo-level overview for the broader project and docs set
+Stage, commit, push, pull, diff, branch, merge, rebase, stash, cherry-pick,
+reflog. The usual. If you've used GitHub Desktop or Sourcetree or Fork or
+Tower, you already know the shape, and Manifold does that shape. The
+day-to-day stuff works how you'd expect it to.
 
-## Start here
+## Why you might care anyway
 
-If you want the runnable Dart app:
+Manifold builds a *manifold* from your repository. I mean that literally.
+A weighted graph with spectral structure, continuously rebuilt as you work,
+sitting under the client like scaffolding. Files are coordinates in a space
+the engine knows how to navigate.
 
-- [apps/desktop-flutter/README.md](apps/desktop-flutter/README.md)
+The engine that drives this is **Logos**, a relevance engine that diffuses
+signal across the repo's spectral geometry. No grep. No
+stitching heuristics together and praying. It asks the geometry where the signal
+lands and tells you what it finds. Git-Logos is built on top of the
+**Whisper Logos Attention Codec** (WLAC), a 0d entropy codec, and the **Whisper Engram Embedding Codec** (WEEC), a 256d semantic trajectory codec. Turns out giving semantic meaning to arbitary entropy is useful.
 
-If you want the broader planning and architecture material:
+What that looks like in practice:
 
-- [docs/product/vision.md](docs/product/vision.md)
-- [docs/architecture/system-architecture.md](docs/architecture/system-architecture.md)
-- [docs/architecture/stack-decision.md](docs/architecture/stack-decision.md)
-- [docs/architecture/command-contract.md](docs/architecture/command-contract.md)
-- [docs/architecture/diff-rendering-architecture.md](docs/architecture/diff-rendering-architecture.md)
-- [docs/architecture/vcs-auth-strategy.md](docs/architecture/vcs-auth-strategy.md)
-- [docs/architecture/repo-structure.md](docs/architecture/repo-structure.md)
-- [docs/architecture/open-questions.md](docs/architecture/open-questions.md)
-- [docs/research/pretext-evaluation.md](docs/research/pretext-evaluation.md)
-- [docs/research/t3code-ux-inspiration.md](docs/research/t3code-ux-inspiration.md)
-- [docs/ui/layout-and-component-spec.md](docs/ui/layout-and-component-spec.md)
-- [docs/ui/icon-and-motion-system.md](docs/ui/icon-and-motion-system.md)
-- [docs/planning/roadmap.md](docs/planning/roadmap.md)
-- [docs/planning/execution-model.md](docs/planning/execution-model.md)
-- [docs/planning/risk-register.md](docs/planning/risk-register.md)
-- [docs/planning/backlog-v1.md](docs/planning/backlog-v1.md)
-- [docs/planning/bootstrap-checklist.md](docs/planning/bootstrap-checklist.md)
-- [docs/planning/program-plan.md](docs/planning/program-plan.md)
-- [docs/planning/sprint-0-plan.md](docs/planning/sprint-0-plan.md)
-- [docs/planning/pretext-adoption-plan.md](docs/planning/pretext-adoption-plan.md)
-- [docs/planning/implementation-decisions.md](docs/planning/implementation-decisions.md)
-- [docs/planning/agent-execution-contract.md](docs/planning/agent-execution-contract.md)
+- Manifold can map your diff to external file context automatically using repo history and the graph itself.
+  - Use non-agentic LLM-powered Review Commit with logos-backed context gathering. Cheap, efficient, thorough.
+- Open any file. The client already knows what it connects to, how
+  tightly, and through which channels.
+- View changes by geometric Atlas rather than by file.
+- PRs, worktrees, and branches have Orbits.
+- Summarise a repo. Trace a feature across the tree. Find a file's
+  structural siblings. Surface hotspots or keystone files.
 
-## Repo layout
+Oh, and, it's free.
 
-- `apps/desktop-flutter`
-  - current Flutter desktop app
-- `docs/`
-  - product, architecture, UX, and planning docs
+### ...in monke terms..?
 
-## What the Flutter app already covers
+- monke add repo. repo get analyzed. monke see where banana generater was added vs banna VIEWER (monke doesnt add descriptions. too busy making banana generators in different languages). friend send monke spaghetti repo when monke prefer banana repo. Manifold show monke around the new repo as if monke's own repo. spaghetti turned lasagna. all with manifold
 
-The Flutter app already includes:
+## Mine, and yours
 
-- day-to-day Git operations through the system Git binary
-- staged/unstaged workflow, diffing, history, stash, worktrees, and interactive rebase support
-- Logos related-file ranking and repository-context tooling
-- Engram semantic indexing over local code tokens
-- X-Ray analytics views for hotspots, cadence, keystones, and repo activity summaries
-- optional AI-backed commit/review workflows through configured providers
-- a substantial theme, animation, and diagnostics layer
+Enjoy a variety of unique themes from dark and mysterious Loverboy to a Claude inspired "Halo". Show off that you earned your fairy wings with Bibble or forget the world like a Nightwalker.
 
-For the full walkthrough, storage model, math notes, and feature semantics, use:
+Cellshaded comic book page, cosmic glass in three unique perspectives... you get the point.
 
-- [apps/desktop-flutter/README.md](apps/desktop-flutter/README.md)
+## Status
 
-## Mission
+Pre-release. Windows is the primary target. macOS and Linux build, but
+neither is polished yet. (i dont possess a mac or linux machine)
 
-Build a fast, native-feeling Git desktop client that:
-
-- handles real local Git workflows without ceremony
-- surfaces repository context instead of only file lists
-- keeps AI features optional and explicit
-- treats visual design and diagnostics as product features, not garnish
-
-## Product principles
-
-- Speed over ceremony
-- Native feel over web-app feel
-- Explainability over opaque AI
-- Local-first defaults
-- Extensibility without plugin chaos
-
-## Scope strategy
-
-We are not starting with parity on every GitHub Desktop feature.
-
-Phase strategy:
-
-1. Build a thin but elite core loop: status -> stage -> commit -> diff -> push/pull.
-2. Make context and performance on larger repos a first-class concern.
-3. Add advanced Git, review, and AI workflows without turning the app into a generic chat wrapper.
-
-## Quick start for the Flutter app
+## Quick start
 
 ```bash
 cd apps/desktop-flutter
@@ -96,6 +58,41 @@ flutter pub get
 flutter run -d windows
 ```
 
+Needs Flutter 3.22+, Dart 3.3+, and Git on your PATH.
+
+## On the code, openly
+
+Manifold is open source. Use it as your daily driver if it clicks for you.
+Fork it, lift pieces for your own projects, audit it, whatever helps. If it
+ends up being the Git client someone actually reaches for, that's great.
+
+Issues are welcome. Bug reports, questions, "this broke", "this is
+confusing", "X seems wrong" — all of that is useful, and I'll get to it
+when I can.
+
+Pull requests aren't, and this isn't a community thing. The math
+underneath Manifold is specific, layered, and easy to break in ways that
+don't look broken. The engine mixes:
+
+- hypercomplex algebra
+- spectral graph theory: Laplacian, heat kernel, Ricci flow, the usual zoo
+- chemistry-flavoured structural analogies — coupling, diffusion, phase
+  transitions on the repo graph
+- **kizuna math**, a term I coined for a particular flavor of
+  higher-dimensional hypercomplex algebra I use across my projects.
+  Manifold leans on parts of it, alongside everything else above.
+
+PRs that touch the engine tend to violate invariants that look fine at
+code review but quietly wreck properties the rest of the system depends
+on. Unwinding that eats the time I'd rather spend *not*. So read it,
+fork it, yoink from it, file issues. Just not vibe-understood PRs or I'll vibe-respond.
+
 ## License
 
-See the project root for license information.
+See [LICENSE](LICENSE). WLAC and WEEC ship under the same Free License I hold the
+rights to.
+
+## Acknowledgments
+
+Flutter. Dart. The math nerds. The GloVe authors. Everyone whose work I
+stood on.

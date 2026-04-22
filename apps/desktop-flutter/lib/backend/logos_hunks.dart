@@ -645,7 +645,15 @@ CsrGraph _buildHunkGraph({
   final engramOnlyThreshold = math.exp(-1.0);
 
   // Pass 1: pairs with at least one shared token. Blend Jaccard with
-  // engram cosine using evidence-weighted convex combination.
+  // an engram signal that itself fuses K-cosine (velocity channel)
+  // and G-cosine (curvature channel). The engram signal per pair is
+  // the geometric mean of the two cosines when both are positive —
+  // a bonded pair must agree on BOTH where the concept points AND
+  // how it bends. When either cosine has decayed past zero, the
+  // geometric mean collapses to 0 and we fall through to Jaccard
+  // alone for that pair. When G is near-degenerate (linear fallback)
+  // for one side, we fall through to K alone rather than let a
+  // broken curvature kill a legitimately-bonded pair.
   for (final outer in symNumerator.entries) {
     final i = outer.key;
     final iTokens = tokens[i].length;
@@ -659,8 +667,8 @@ CsrGraph _buildHunkGraph({
       double weight;
       if (engramKVectors != null) {
         final kvj = engramKVectors[j];
-        final cos = EngramHunkEncoder.cosine(kvi, kvj);
-        if (cos > 0 && kvi != null && kvj != null) {
+        final engramSignal = _engramSignal(kvi, kvj);
+        if (engramSignal > 0 && kvi != null && kvj != null) {
           final jaccardEvidence =
               math.log(1.0 + (iTokens + tokens[j].length).toDouble());
           final engramEvidence = math.log(1.0 +
@@ -668,7 +676,7 @@ CsrGraph _buildHunkGraph({
                   .toDouble());
           final totalEvidence = jaccardEvidence + engramEvidence;
           final blended = totalEvidence > 0
-              ? (jaccardEvidence * jaccard + engramEvidence * cos) /
+              ? (jaccardEvidence * jaccard + engramEvidence * engramSignal) /
                   totalEvidence
               : jaccard;
           weight = wSym * blended;
@@ -710,19 +718,23 @@ CsrGraph _buildHunkGraph({
         final kvj = engramKVectors[j];
         if (kvj == null) continue;
         if (alreadyBonded != null && alreadyBonded.containsKey(j)) continue;
-        final cos = EngramHunkEncoder.cosine(kvi, kvj);
-        if (cos < engramOnlyThreshold) continue;
+        // Engram-only path uses the same K+G geometric mean so the
+        // token-free bridges only admit pairs that agree on both
+        // velocity and curvature — a stricter gate than K alone,
+        // and the 1/e floor filters noise the same way.
+        final signal = _engramSignal(kvi, kvj);
+        if (signal < engramOnlyThreshold) continue;
         final engEvidence = math.log(1.0 +
             (kvi.vocabHits < kvj.vocabHits ? kvi.vocabHits : kvj.vocabHits)
                 .toDouble());
         // Self-normalised engram-only weight. With Jaccard evidence =
         // ln(2) (the zero-overlap baseline), the blend collapses to:
-        //   weight = cos · engEvidence / (engEvidence + ln2)
-        // which tends to `cos` as evidence grows and to `0` when
+        //   weight = signal · engEvidence / (engEvidence + ln2)
+        // which tends to `signal` as evidence grows and to `0` when
         // evidence is tiny — the "confidence-gated signal" shape the
         // Born mixer uses on its axes.
         final selfNorm = engEvidence / (engEvidence + math.ln2);
-        addEdge(i, j, wSym * cos * selfNorm);
+        addEdge(i, j, wSym * signal * selfNorm);
       }
     }
   }
@@ -902,6 +914,28 @@ class _Edge {
   _Edge(this.j, this.w);
   final int j;
   final double w;
+}
+
+/// Fuse K-cosine (velocity channel) and G-cosine (curvature channel)
+/// into a single per-pair engram similarity signal.
+///
+/// Geometric mean — a pair only scores high when it agrees on BOTH
+/// channels. A shared concept-heading with opposite bending shapes
+/// is legitimately dissimilar; we shouldn't bond it via the K-axis
+/// alone. Arithmetic mean would paper over that disagreement; the
+/// geometric mean respects it.
+///
+/// Falls back to K alone when the G channel is degenerate (either
+/// side has zero-norm G — linear AR(2) fallback, a short trajectory
+/// that couldn't fit curvature). This protects legitimate K matches
+/// from being killed by a collapsed curvature channel.
+double _engramSignal(HunkKVector? a, HunkKVector? b) {
+  if (a == null || b == null) return 0.0;
+  final k = EngramHunkEncoder.cosine(a, b);
+  if (k <= 0) return 0.0;
+  final g = EngramHunkEncoder.curvatureCosine(a, b);
+  if (g <= 0) return k; // linear-fallback G → use K alone
+  return math.sqrt(k * g);
 }
 
 // Chebyshev/Bessel math + heat-kernel diffusion live in logos_core.dart

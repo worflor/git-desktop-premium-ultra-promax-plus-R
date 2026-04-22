@@ -34,6 +34,8 @@ EngramFileKTable _kTable(Map<String, HunkKVector> m, {int pairs = 2}) {
     reIdxed[e.key] = HunkKVector(
       kRe: orig.kRe,
       kIm: orig.kIm,
+      gRe: orig.gRe,
+      gIm: orig.gIm,
       meanRms: orig.meanRms,
       vocabHits: orig.vocabHits,
       well: EngramWellMatch(
@@ -68,10 +70,15 @@ HunkKVector _kVec({
   required List<double> im,
   required int hits,
   String? wellName,
+  List<double>? gRe,
+  List<double>? gIm,
 }) {
+  final p = re.length;
   return HunkKVector(
     kRe: Float64List.fromList(re),
     kIm: Float64List.fromList(im),
+    gRe: Float64List.fromList(gRe ?? List<double>.filled(p, 1.0)),
+    gIm: Float64List.fromList(gIm ?? List<double>.filled(p, 0.0)),
     meanRms: 0.01,
     vocabHits: hits,
     well: wellName == null

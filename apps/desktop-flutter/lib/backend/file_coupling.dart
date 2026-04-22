@@ -5,10 +5,17 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import 'correlatedness_hunk_sort.dart'
+    show CorrelatednessContext, seriateByHunkFiedler;
 import 'engram_fit.dart';
 import 'git.dart';
 import 'git_result.dart';
 import 'logos_git_integrity.dart';
+
+// Re-export so callers that only import file_coupling.dart can still
+// construct the context — the changes panel and tests historically
+// treat this file as the entry point for coupling-related types.
+export 'correlatedness_hunk_sort.dart' show CorrelatednessContext;
 
 /// Separator token planted into `git log` custom formats so downstream
 /// parsers can identify commit boundaries without regex. Chosen to be
@@ -1029,6 +1036,14 @@ FileClusters clusterFiles(
   //   * alphabetical: Z → A.
   //   * impact: smallest churn first — "quick wins on top."
   bool inverted = false,
+  // Optional rich-signal context for the `relatedProximity` sort.
+  // When supplied, intra-cluster ordering routes through the
+  // spectrally-self-weighted seriator in `correlatedness_signals.dart`
+  // — combining jaccard×authenticity, symbol overlap, transport
+  // lanes, commit hyperedges, and engram K-vector cosine into one
+  // Fiedler-seriated 1D order. When absent, falls back to the
+  // legacy greedy nearest-neighbour chain on `combinedCouplingScore`.
+  CorrelatednessContext? correlatednessContext,
 }) {
   final n = currentPaths.length;
   if (n == 0) {
@@ -1326,10 +1341,19 @@ FileClusters clusterFiles(
             excluded.add(idx);
           }
         }
-        final incChain =
-            _seriateCluster(included, currentPaths, matrix).toList();
-        final excChain =
-            _seriateCluster(excluded, currentPaths, matrix).toList();
+        // When the caller supplied a CorrelatednessContext, route intra-
+        // cluster ordering through the spectrally-self-weighted seriator
+        // — it combines jaccard×authenticity, symbol overlap, transport
+        // lanes, hyperedge co-membership, and engram K-cosine into a
+        // single Fiedler-seriated order, with each axis's weight set by
+        // its own spectral gap. Falls back to the legacy greedy NN chain
+        // when no context is present.
+        final incChain = _seriateClusterWith(
+          included, currentPaths, matrix, correlatednessContext,
+        ).toList();
+        final excChain = _seriateClusterWith(
+          excluded, currentPaths, matrix, correlatednessContext,
+        ).toList();
         if (incChain.isNotEmpty && excChain.length >= 2) {
           final tail = incChain.last;
           final headScore = combinedCouplingScore(
@@ -1661,6 +1685,32 @@ String _stripLeadingZeros(String digits) {
 /// order of the path so the output stays deterministic across runs and
 /// files that truly have no coupling signal degrade gracefully to
 /// alphabetical.
+/// Dispatcher: when the caller has already run the logos hunk pipeline
+/// and bundled the result in `context`, we route the cluster's files
+/// through the Fiedler vector of the engine's OWN hunk graph — the
+/// most faithful 1D ordering the engine can give. When context is
+/// null (cold engine, no diff cached yet), we fall back to the legacy
+/// greedy nearest-neighbour chain on the file-level coupling matrix.
+List<int> _seriateClusterWith(
+  List<int> members,
+  List<String> paths,
+  FileCouplingMatrix matrix,
+  CorrelatednessContext? context,
+) {
+  if (members.length <= 2 || context == null) {
+    return _seriateCluster(members, paths, matrix);
+  }
+  final localPaths = [for (final i in members) paths[i]];
+  final ordered = seriateByHunkFiedler(localPaths, context);
+  if (ordered.length != members.length) {
+    return _seriateCluster(members, paths, matrix);
+  }
+  final localIndexOf = <String, int>{
+    for (var i = 0; i < localPaths.length; i++) localPaths[i]: i,
+  };
+  return [for (final p in ordered) members[localIndexOf[p]!]];
+}
+
 List<int> _seriateCluster(
   List<int> members,
   List<String> paths,

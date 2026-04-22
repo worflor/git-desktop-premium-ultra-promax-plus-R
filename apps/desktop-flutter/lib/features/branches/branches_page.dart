@@ -681,10 +681,12 @@ class _BranchesPageState extends State<BranchesPage> {
         for (final pr in prs)
           () async {
             if (!mounted || _lastRepo != repo) return;
-            // Detail (body + files + diff + comments) and checks fetch
-            // in parallel for each PR — they don't depend on each other.
+            // Metadata-only prefetch: body + files + comments, no diff.
+            // The diff is megabyte-scale and parses in a worker isolate —
+            // warming dozens in parallel was the freeze. User click
+            // upgrades to full via `_ensurePrDetailLoaded(full: true)`.
             await Future.wait([
-              _ensurePrDetailLoaded(repo, pr.number),
+              _ensurePrDetailLoaded(repo, pr.number, full: false),
               _ensureChecksLoaded(repo, pr.number),
             ]);
           },
@@ -4943,12 +4945,11 @@ class _RefreshGlyph extends StatefulWidget {
 }
 
 class _RefreshGlyphState extends State<_RefreshGlyph>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WindowAwakeGuardedMixin {
   static const Duration _authoredPeriod = Duration(milliseconds: 1100);
   late final AnimationController _spin =
       AnimationController(vsync: this, duration: _authoredPeriod);
   PreferencesState? _prefs;
-  bool _windowListenerAttached = false;
 
   @override
   void didChangeDependencies() {
@@ -4959,12 +4960,11 @@ class _RefreshGlyphState extends State<_RefreshGlyph>
       _prefs = prefs;
       prefs.addListener(_onPrefsChanged);
     }
-    if (!_windowListenerAttached) {
-      WindowActivity.instance.addListener(_onPrefsChanged);
-      _windowListenerAttached = true;
-    }
     _syncSpin();
   }
+
+  @override
+  void onWindowAwakeChanged() => _onPrefsChanged();
 
   void _onPrefsChanged() {
     if (mounted) _syncSpin();
@@ -5002,9 +5002,6 @@ class _RefreshGlyphState extends State<_RefreshGlyph>
   @override
   void dispose() {
     _prefs?.removeListener(_onPrefsChanged);
-    if (_windowListenerAttached) {
-      WindowActivity.instance.removeListener(_onPrefsChanged);
-    }
     _spin.dispose();
     super.dispose();
   }

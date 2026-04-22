@@ -1445,6 +1445,22 @@ class _DeskRow extends StatelessWidget {
     RepositoryState repoState,
     WorktreeState worktreeState,
   ) async {
+    // Capture stable, widget-tree-rooted handles BEFORE any await.
+    // After the first await the context-menu overlay is gone AND the
+    // sidebar may have rebuilt (a 70 k-line `git diff` can take a few
+    // hundred ms to stream, and the desk tile that originally owned
+    // this context gets re-created during that window). Relying on
+    // the raw `context.mounted` from that point on silently drops
+    // snackbars and swallows the dialog — the "nothing happens" bug.
+    // NavigatorState and ScaffoldMessengerState, by contrast, are
+    // rooted at MaterialApp and survive all the rebuild churn below.
+    // Navigator + messenger captured off the live widget-tree context
+    // BEFORE any await. After the first await the context-menu overlay
+    // is torn down and the desk tile may have rebuilt; raw context use
+    // past that point silently swallows snackbars (the original
+    // "nothing happens" bug).
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
     final targetDesk = worktreeState.activeDesk;
     final targetLabel = targetDesk == null
         ? (repoState.status?.branch ?? 'current')
@@ -1452,82 +1468,78 @@ class _DeskRow extends StatelessWidget {
     final sourceLabel = _deskDisplayLabel(desk);
     final targetPath = repoState.activePath;
     final sourceRef = desk.branch ?? desk.head;
+    if (targetPath == null ||
+        sourceRef.isEmpty ||
+        desk.path == targetPath) {
+      return;
+    }
+    void toast(String msg) =>
+        messenger.showSnackBar(SnackBar(content: Text(msg)));
 
-    // Check if a clean fast-forward is the right move. Safety shape:
-    //   • Only attempts anything when the source ref resolves AND the
-    //     target is STRICTLY behind the source (behind > 0, ahead == 0).
-    //   • Only runs on a clean worktree — we don't want to entangle
-    //     uncommitted work with an upstream merge.
-    //   • Uses `git merge --ff-only`, which refuses any non-fast-forward
-    //     (diverged history, staged conflict, uncommitted overwrite, hook
-    //     rejection) and leaves the worktree exactly as it was.
-    //   • Falls back to the existing patch preview on any failure, so the
-    //     user always has a path forward without surprise.
-    //   • Every branch surfaces a user-visible snackbar — the "nothing
-    //     happens" silent-close is gone.
-    if (targetPath != null && sourceRef.isNotEmpty) {
-      final isClean = (repoState.status?.files.isEmpty ?? false);
-      final compare = await getDeskAheadBehind(targetPath, sourceRef);
-      if (!context.mounted) return;
-      if (compare.ok && isClean) {
-        final info = compare.data!;
-        if (info.behind > 0 && info.ahead == 0) {
-          final ff = await fastForwardDeskTo(targetPath, sourceRef);
-          if (!context.mounted) return;
-          if (ff.ok) {
-            final n = info.behind;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Brought $targetLabel up to $sourceLabel '
-                  '($n commit${n == 1 ? '' : 's'}).',
-                ),
-              ),
-            );
-            await repoState.refreshStatus();
-            if (!context.mounted) return;
-            await worktreeState.refreshFor(targetPath);
-            return;
-          }
-          // Fast-forward declined (hook / stale index / unexpected). Show
-          // a brief explanation rather than silently falling through so
-          // the user knows WHY they're about to see the patch dialog.
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Fast-forward couldn\'t land cleanly — '
-                'showing a patch preview instead.',
-              ),
-            ),
-          );
-          // Fall through to the patch flow below.
-        } else if (info.behind == 0) {
-          // Nothing to bring forward. Be explicit so "does nothing" has
-          // a voice — the old empty-diff path silently dropped here.
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                info.ahead > 0
-                    ? '$targetLabel is ahead of $sourceLabel by '
-                        '${info.ahead} commit${info.ahead == 1 ? '' : 's'}.'
-                    : '$targetLabel is already up to date with $sourceLabel.',
-              ),
-            ),
-          );
+    // Staleness guard: if the user switches to a different repo mid-
+    // await, our captured `targetPath` no longer reflects the visible
+    // state and any continuation would mutate/report on the wrong
+    // repo. Widget-mount checks are the wrong layer — the overlay
+    // context dies as soon as the menu dismisses, which is exactly
+    // what produced the original silent-failure bug. Equality against
+    // `repoState.activePath` is the real freshness signal.
+    bool stillOnTarget() => repoState.activePath == targetPath;
+
+    // Fast-forward safety shape:
+    //   • Only when the source resolves AND target is STRICTLY behind
+    //     (behind > 0, ahead == 0).
+    //   • Only on a clean worktree — we don't want to entangle
+    //     uncommitted work with an upstream merge. Dirty worktrees
+    //     skip to patch preview where the user can review hunks.
+    //   • `git merge --ff-only` refuses any non-fast-forward and leaves
+    //     the worktree unchanged on failure; fall through to patch
+    //     preview so the user always has a path forward.
+    //   • Every branch surfaces a snackbar — silent no-op is the bug
+    //     we're fixing.
+    final isClean = repoState.status?.files.isEmpty ?? false;
+    final compare = await getDeskAheadBehind(targetPath, sourceRef);
+    if (!stillOnTarget()) return;
+    if (compare.ok && isClean) {
+      final info = compare.data!;
+      if (info.behind > 0 && info.ahead == 0) {
+        final ff = await fastForwardDeskTo(targetPath, sourceRef);
+        if (!stillOnTarget()) return;
+        if (ff.ok) {
+          final n = info.behind;
+          toast('Updated $targetLabel to $sourceLabel '
+              '($n commit${n == 1 ? '' : 's'}).');
+          await repoState.refreshStatus();
+          if (!stillOnTarget()) return;
+          await worktreeState.refreshFor(targetPath);
           return;
         }
-        // Diverged (behind > 0 && ahead > 0) → fall through to patch
-        // preview so the user can see exactly what'd land before it does.
+        // FF declined (hook / stale index / unexpected). Surface WHY
+        // before falling through to the patch flow so the dialog isn't
+        // a surprise.
+        toast("Fast-forward couldn't land cleanly — "
+            'showing a patch preview instead.');
+      } else if (info.behind == 0) {
+        toast(info.ahead > 0
+            ? '$targetLabel is ahead of $sourceLabel by '
+                '${info.ahead} commit${info.ahead == 1 ? '' : 's'}.'
+            : '$targetLabel is already up to date with $sourceLabel.');
+        return;
       }
+    } else if (compare.ok && !isClean) {
+      // Dirty worktree — skip FF (entanglement risk) but explain the
+      // choice so the patch dialog doesn't read as random.
+      toast('Uncommitted changes in $targetLabel — '
+          'previewing as a patch instead.');
     }
 
+    if (!stillOnTarget()) return;
     await _openDeskPatchPreviewFlow(
-      context,
+      navigator.context,
       sourceDesk: desk,
       repoState: repoState,
       worktreeState: worktreeState,
       previewLabel: 'update $targetLabel from $sourceLabel',
-      emptyMessage: 'No updates to bring from $sourceLabel into $targetLabel.',
+      emptyMessage: 'No updates to bring from $sourceLabel.',
       failureLabel: 'Update prep failed',
     );
   }
@@ -1745,13 +1757,12 @@ class _DeskTab extends StatefulWidget {
 }
 
 class _DeskTabState extends State<_DeskTab>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WindowAwakeGuardedMixin {
   static const Duration _authoredPulse = Duration(milliseconds: 1600);
   bool _hovered = false;
   late final AnimationController _dotPulseCtrl;
   late final Animation<double> _dotPulse;
   PreferencesState? _prefs;
-  bool _windowListenerAttached = false;
 
   @override
   void initState() {
@@ -1775,12 +1786,11 @@ class _DeskTabState extends State<_DeskTab>
       _prefs = prefs;
       prefs.addListener(_onPrefsChanged);
     }
-    if (!_windowListenerAttached) {
-      WindowActivity.instance.addListener(_onPrefsChanged);
-      _windowListenerAttached = true;
-    }
     _syncDotPulse();
   }
+
+  @override
+  void onWindowAwakeChanged() => _onPrefsChanged();
 
   void _onPrefsChanged() {
     if (mounted) _syncDotPulse();
@@ -1817,9 +1827,6 @@ class _DeskTabState extends State<_DeskTab>
   @override
   void dispose() {
     _prefs?.removeListener(_onPrefsChanged);
-    if (_windowListenerAttached) {
-      WindowActivity.instance.removeListener(_onPrefsChanged);
-    }
     _dotPulseCtrl.dispose();
     super.dispose();
   }
