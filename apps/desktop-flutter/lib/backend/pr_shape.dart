@@ -22,6 +22,7 @@
 // Pure data + pure functions. No I/O, no Flutter. Caching/lifetime is
 // the caller's problem (BranchesPageState owns the per-PR map).
 
+import 'dart:collection';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -448,4 +449,84 @@ class PrShapeComputer {
     if (cos >= 0.2) return FieldOrientation.adjacent;
     return FieldOrientation.orthogonal;
   }
+}
+
+/// Pairwise PR cosine matrix — the canonical "orbital partnership"
+/// surface between PRs whose shapes are loaded. Sparse, symmetric,
+/// keyed by PR number; each entry is `PrShapeComputer.cosine` of two
+/// `PrShape.phi` vectors. Values ∈ [0, 1] — 1 = identical neighborhood
+/// reach, 0 = fully orthogonal footprints.
+///
+/// Immutable. Rebuild whenever the underlying `prShapes` snapshot
+/// changes — the constructor is O(n²·d); callers should cache per
+/// snapshot identity. Pairs with mismatched φ length (from different
+/// engine seeds) or zero cosine are omitted, so absence means "no
+/// partnership" without needing a sentinel.
+///
+/// Features that render orbital partnerships, sort by proximity, or
+/// visualise pair-level collisions should consume through here so the
+/// geometry stays consistent across call sites.
+class PrOrbitMap {
+  PrOrbitMap._(this._map);
+
+  /// Empty map — use when no shapes are loaded yet; `cosine` always
+  /// returns 0 and `partnersOf` returns empty.
+  static final PrOrbitMap empty = PrOrbitMap._(const {});
+
+  /// Build a sparse orbit map from a `{prNumber: PrShape}` snapshot.
+  /// Each `PrShapeComputer.cosine` result is materialised symmetrically.
+  factory PrOrbitMap.fromShapes(Map<int, PrShape> shapes) {
+    if (shapes.length < 2) return PrOrbitMap.empty;
+    final map = <int, Map<int, double>>{};
+    final entries = shapes.entries.toList();
+    for (var i = 0; i < entries.length; i++) {
+      final aNum = entries[i].key;
+      final aPhi = entries[i].value.phi;
+      for (var j = i + 1; j < entries.length; j++) {
+        final bNum = entries[j].key;
+        final bPhi = entries[j].value.phi;
+        if (aPhi.length != bPhi.length) continue;
+        final c = PrShapeComputer.cosine(aPhi, bPhi);
+        if (c <= 0) continue;
+        (map[aNum] ??= <int, double>{})[bNum] = c;
+        (map[bNum] ??= <int, double>{})[aNum] = c;
+      }
+    }
+    return PrOrbitMap._(map);
+  }
+
+  final Map<int, Map<int, double>> _map;
+
+  /// Cosine between PRs [a] and [b], or 0 when the pair isn't in the
+  /// map. Self-cosine is 1.
+  double cosine(int a, int b) {
+    if (a == b) return 1.0;
+    return _map[a]?[b] ?? 0.0;
+  }
+
+  /// True when [pr] has at least one partner with positive cosine.
+  bool hasPartner(int pr) => _map.containsKey(pr);
+
+  /// All partners of [pr] as `(prNumber, cosine)` pairs sorted
+  /// descending by cosine. Empty when [pr] has no positive partners.
+  List<MapEntry<int, double>> partnersOf(int pr) {
+    final row = _map[pr];
+    if (row == null) return const [];
+    return row.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+  }
+
+  /// Cosine row for [pr] — `{otherPr: cosine}` — as an unmodifiable
+  /// view over the internal storage. Returns `null` when [pr] has no
+  /// partners. Intended for widgets that need the per-PR slice as a
+  /// lookup table (e.g. the PR row neighbor visualiser). Prefer
+  /// [cosine] when you only need one pairwise value.
+  Map<int, double>? rowOf(int pr) {
+    final row = _map[pr];
+    return row == null ? null : UnmodifiableMapView(row);
+  }
+
+  /// True when no pair of loaded shapes produced a positive cosine —
+  /// callers can short-circuit orbital-sort passes.
+  bool get isEmpty => _map.isEmpty;
 }

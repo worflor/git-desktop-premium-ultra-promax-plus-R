@@ -64,10 +64,13 @@ List<String> seriateByHunkFiedler(
   // φ lookup keyed by (filePath, hunkIndex). HunkRanking carries φ
   // but not the graph index, so we match through the original hunks
   // list whose position is the graph index.
-  final phiByKey = <String, double>{};
+  // Record key avoids the per-hunk string concatenation that the
+  // earlier `'${path}.${index}'` form allocated on both the
+  // build and the lookup side. One record per entry is cheaper than
+  // one String per entry, and the hot loop is per-hunk.
+  final phiByKey = <(String, int), double>{};
   for (final ranking in context.hunkResult.rankings) {
-    final key = '${ranking.hunk.filePath}\u0000${ranking.hunk.hunkIndex}';
-    phiByKey[key] = ranking.phi;
+    phiByKey[(ranking.hunk.filePath, ranking.hunk.hunkIndex)] = ranking.phi;
   }
 
   // hunks[i] → node i → fiedler[i].
@@ -77,8 +80,7 @@ List<String> seriateByHunkFiedler(
   for (var i = 0; i < n; i++) {
     if (i >= fiedler.length) break;
     final DiffHunk h = context.hunks[i];
-    final key = '${h.filePath}\u0000${h.hunkIndex}';
-    final phi = phiByKey[key] ?? 0.0;
+    final phi = phiByKey[(h.filePath, h.hunkIndex)] ?? 0.0;
     final coord = fiedler[i];
     // Zero-φ hunks vote at weight 1 so trivial clusters don't drop
     // out; heavy-φ hunks dominate.

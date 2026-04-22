@@ -797,13 +797,16 @@ class LogosMind {
         ? 0.0
         : ((engine.stats.touches[candidate] ?? 0) / maxTouches).clamp(0.0, 1.0).toDouble();
 
-    // CC: best jaccard coupling to any seed.
+    // CC: best jaccard coupling to any seed. `jaccardScoreOf`
+    // canonicalises (seed, candidate) via min/max and does a binary
+    // search — O(log k) per seed. The previous linear scan of the
+    // seed's row was also asymmetric: it missed the case where
+    // candidate was lex-smaller than seed (the edge would live in
+    // candidate's row instead).
     var cc = 0.0;
     for (final seed in seeds.keys) {
-      final row = engine.stats.coupling.jaccardEntriesOf(seed);
-      for (final e in row) {
-        if (e.key == candidate && e.value > cc) cc = e.value;
-      }
+      final s = engine.stats.coupling.jaccardScoreOf(seed, candidate);
+      if (s > cc) cc = s;
     }
     cc = cc.clamp(0.0, 1.0).toDouble();
 

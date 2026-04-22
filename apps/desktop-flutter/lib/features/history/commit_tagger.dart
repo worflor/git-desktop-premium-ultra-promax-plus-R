@@ -751,28 +751,12 @@ RepositoryTagProfile buildTagProfile({
   final corpus = _SubjectCorpus.build(commits, detailsByHash);
 
   // Centrality = sum of jaccard scores to neighbors. Files in dense
-  // subgraphs score high; isolated files score 0. The matrix is
-  // upper-triangle (lex), so each edge appears once — we accumulate
-  // both endpoints to give every file its full degree-weighted score.
+  // subgraphs score high; isolated files score 0. Backed by the
+  // canonical `FileCouplingMatrix.jaccardCentralityMap` — one CSR
+  // pass, each edge visited once and accumulated into both endpoints.
   // Pure topological derivation, zero taste.
-  final fileCentrality = <String, double>{};
-  if (coupling != null) {
-    // CSR-native upper-triangle iteration: walk every known path's
-    // row directly via the CSR's `paths` and `jaccardEntriesOf`. Each
-    // edge appears once (storage is upper-triangle, indexed by the
-    // lex-smaller endpoint), so we accumulate both endpoints to give
-    // every file its full degree-weighted score — same invariant the
-    // legacy nested-map iteration relied on. Skips materialising the
-    // entire backward-compat map view.
-    for (final a in coupling.paths) {
-      for (final neighbor in coupling.jaccardEntriesOf(a)) {
-        final b = neighbor.key;
-        final v = neighbor.value;
-        fileCentrality[a] = (fileCentrality[a] ?? 0.0) + v;
-        fileCentrality[b] = (fileCentrality[b] ?? 0.0) + v;
-      }
-    }
-  }
+  final fileCentrality =
+      coupling?.jaccardCentralityMap() ?? <String, double>{};
 
   // Walk in commits order; gather distributions; remember timestamps
   // and file sets per commit for the chain pass.

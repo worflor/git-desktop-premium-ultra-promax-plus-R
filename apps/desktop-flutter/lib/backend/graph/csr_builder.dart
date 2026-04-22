@@ -154,11 +154,37 @@ CsrGraph buildSymmetricCsrGraph({
 }
 
 /// Sort [keys] ascending, permuting [values] in lockstep. In-place.
-/// Uses a key-carrying index sort since Dart doesn't give us a
-/// two-array parallel sort out of the box.
+///
+/// Two regimes, chosen by row length. After top-K sparsification most
+/// CSR rows carry ≤ topK entries (default 24 in the hunk/chunk
+/// engines), so the **short-row** path is the common case: an
+/// in-place insertion sort with zero heap allocation. It beats the
+/// generic indexed sort for `n ≤ 32` because the indexed version
+/// allocates three auxiliary buffers (`order`, `keysCopy`,
+/// `valuesCopy`) per row, which cost more in GC pressure than the
+/// O(n²) insertion sort does in compares at these sizes.
+///
+/// For longer rows (rare but legal when a node participates in many
+/// unique edges), we fall back to the original allocate-and-permute
+/// path, which is O(n log n) with slightly higher constants.
 void _sortParallel(List<int> keys, List<double> values) {
   final n = keys.length;
   if (n < 2) return;
+  if (n <= 32) {
+    for (var i = 1; i < n; i++) {
+      final k = keys[i];
+      final v = values[i];
+      var j = i - 1;
+      while (j >= 0 && keys[j] > k) {
+        keys[j + 1] = keys[j];
+        values[j + 1] = values[j];
+        j--;
+      }
+      keys[j + 1] = k;
+      values[j + 1] = v;
+    }
+    return;
+  }
   final order = List<int>.generate(n, (i) => i, growable: false);
   order.sort((a, b) => keys[a].compareTo(keys[b]));
   final keysCopy = List<int>.from(keys);

@@ -16,6 +16,7 @@ import 'engram_bootstrap.dart' show EngramRuntime;
 import 'engram_text_kspace.dart';
 import 'file_coupling.dart' show FileCouplingMatrix;
 import 'git.dart' show runGitProbe;
+import 'perf_span.dart' show perfSpan, perfSpanSync;
 import 'logos_branch_orbit.dart'
     show logosTemperatureMultiplierFromOrbit, probeLogosBranchOrbit;
 import 'logos_chunks.dart' as chunks;
@@ -1113,9 +1114,11 @@ class DiffLogosFacade {
     final matrix = request.couplingMatrix;
     final selfPath = queryPath;
     if (matrix != null && matrix.containsPath(selfPath)) {
-      final entries = matrix.jaccardEntriesOf(selfPath).toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-      for (final entry in entries.take(5)) {
+      // Canonical ranking: walks both triangles of the CSR so lex-late
+      // files see their full partner set (not just the upper-triangle
+      // slice). Same surface changes_page and branches_page use.
+      final entries = matrix.topJaccardNeighbours(selfPath, limit: 5);
+      for (final entry in entries) {
         if (entry.value <= 0) continue;
         final existingIndex = related.indexWhere((r) => r.path == entry.key);
         if (existingIndex >= 0) {
@@ -1266,7 +1269,16 @@ class DiffLogosFacade {
   }
 
   Future<_DiffLogosSnapshot> _analyzeDiffImpl(DiffLogosRequest request) async {
-    final parsed = request.parsedLines ?? parseUnifiedDiff(request.diffText);
+    // Phase: parse — splits the unified diff text into ParsedLine[]
+    // and DiffHunk[] when the caller didn't pre-parse. Large diffs
+    // (megabytes) historically hid inside this phase; pin it so the
+    // telemetry dashboard shows when parse, not logos math, is the
+    // actual tax.
+    final parsed = request.parsedLines ??
+        perfSpanSync<List<ParsedLine>>(
+          'diff.logos.parse.lines',
+          () => parseUnifiedDiff(request.diffText),
+        );
     final touchedPaths = request.parsedMetadata?.touchedPaths ??
         {
           for (final line in parsed)
@@ -1281,13 +1293,23 @@ class DiffLogosFacade {
       (parsedLinesByFile[filePath] ??= <ParsedLine>[]).add(line);
     }
     final parsedHunks = request.parsedMetadata?.parsedHunks ??
-        hunks.parseDiffHunks(request.diffText);
+        perfSpanSync<List<hunks.DiffHunk>>(
+          'diff.logos.parse.hunks',
+          () => hunks.parseDiffHunks(request.diffText),
+        );
     final parsedHunksByFile = <String, List<hunks.DiffHunk>>{};
     for (final hunk in parsedHunks) {
       (parsedHunksByFile[hunk.filePath] ??= <hunks.DiffHunk>[]).add(hunk);
     }
-    final engineBase =
-        request.warmEngine ?? await resolveLogosGit(request.repositoryPath);
+    // Phase: engine.resolve — fetches or builds the LogosGit engine
+    // for the repo. Cache hit is ~µs; cold build can be 100s of ms
+    // for a fresh repo. Separating from probe.build makes the
+    // cold/warm cost visible.
+    final engineBase = request.warmEngine ??
+        await perfSpan(
+          'diff.logos.engine.resolve',
+          () => resolveLogosGit(request.repositoryPath),
+        );
     final engine = engineBase == null
         ? null
         : (request.symbolCoupling.isEmpty
@@ -1299,17 +1321,26 @@ class DiffLogosFacade {
           parsedHunks: parsedHunks,
           diffText: request.diffText,
         );
+    // Phase: probe.build — the lightweight form is O(touched); the
+    // full form walks the diff + engine to compute source weights
+    // and is the usual dominant cost in the cold-path.
     final probe = engine == null
         ? DiffProbe.empty
         : useLightweightSnapshot
-            ? _buildLightweightDiffProbe(
-                engine: engine,
-                touchedPaths: touchedPaths,
+            ? perfSpanSync(
+                'diff.logos.probe.lightweight',
+                () => _buildLightweightDiffProbe(
+                  engine: engine,
+                  touchedPaths: touchedPaths,
+                ),
               )
-            : await buildDiffProbe(
-                repoPath: request.repositoryPath,
-                diffText: request.diffText,
-                engine: engine,
+            : await perfSpan(
+                'diff.logos.probe.full',
+                () => buildDiffProbe(
+                  repoPath: request.repositoryPath,
+                  diffText: request.diffText,
+                  engine: engine,
+                ),
               );
     var effectiveT = probe.suggestedTemperature ?? 1.0;
     if (!useLightweightSnapshot) {
@@ -1345,13 +1376,20 @@ class DiffLogosFacade {
               symbolPaths: symbolPaths,
             ).name,
         };
-        evidence = await _gatherEvidenceOffThread(
-          engine: engine,
-          focusWeights: probe.sourceWeights,
-          axisLabelByPath: axisLabels,
-          t: effectiveT,
-          excludePaths: probe.primaryPaths,
-          detailBudget: 32,
+        // Phase: evidence.gather — the isolate-boundary evidence
+        // query. Heaviest single step in the diff pipeline when
+        // symbol coupling is rich; marshals state across isolate
+        // port AND runs the diffusion + attribution math.
+        evidence = await perfSpan(
+          'diff.logos.evidence.gather',
+          () => _gatherEvidenceOffThread(
+            engine: engine,
+            focusWeights: probe.sourceWeights,
+            axisLabelByPath: axisLabels,
+            t: effectiveT,
+            excludePaths: probe.primaryPaths,
+            detailBudget: 32,
+          ),
         );
         attribution = evidence?.supportAttribution;
         if (evidence != null && evidence.ranked.isNotEmpty) {

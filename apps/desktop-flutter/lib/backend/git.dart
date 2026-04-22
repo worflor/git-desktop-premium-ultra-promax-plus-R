@@ -79,6 +79,108 @@ const Set<String> _kStrictDecodeSubcommands = {
   'check-ref-format',
 };
 
+/// Subcommands that are **always** read-only regardless of their
+/// flags — no matter what arg combination you throw at them they
+/// never mutate the repo. Safe to deduplicate two concurrent calls
+/// with byte-identical args into a single subprocess.
+///
+/// Conservative by design: anything that CAN mutate under some
+/// flag (branch -D, tag -d, worktree add, stash push, remote add,
+/// etc.) stays out even though many of their args are read-only —
+/// the cost of a false dedup is correctness loss; the cost of a
+/// missed dedup is just paying for one more subprocess spawn.
+const Set<String> _kDedupableSubcommands = {
+  'rev-parse',
+  'rev-list',
+  'symbolic-ref',
+  'merge-base',
+  'check-ref-format',
+  'check-ignore',
+  'check-attr',
+  'cat-file',
+  'log',
+  'show',
+  'diff',
+  'blame',
+  'grep',
+  'status',
+  'ls-files',
+  'ls-tree',
+  'ls-remote',
+  'describe',
+  'for-each-ref',
+};
+
+/// Request-coalescing cache for concurrent identical git reads.
+/// Keyed by a **length-prefixed** encoding of workingDir and every
+/// arg — see [_gitDedupKey]. Length prefixes make the key injection-
+/// proof: no sequence of bytes inside a real path or arg can forge
+/// a boundary, so two calls with different `(workingDir, args)`
+/// tuples can never collide. Earlier separator-based designs (NUL,
+/// SOH, tab) either tripped git's binary-file heuristic or relied
+/// on a "never appears in practice" assumption that is just waiting
+/// to be disproven by a path with an unusual character.
+///
+/// Entries live **only** while the subprocess is in flight — the
+/// finalizer at [_git]'s `whenComplete` removes the key, so a later
+/// call after the state has changed never shares a stale result.
+///
+/// **Snapshot semantics (important for the working-tree readers
+/// in [_kDedupableSubcommands] — `status`, `diff`, `log`, `show`,
+/// `blame`, `ls-files`, `grep` etc.)**: when caller B arrives while
+/// caller A's subprocess is still running, B receives A's result.
+/// If the filesystem mutates between A's spawn and B's arrival, B
+/// observes the PRE-MUTATION state that A captured, not a fresh
+/// snapshot at B's wall-clock. In the UI this collapses into a
+/// one-refresh-cycle staleness window — the next call (after A
+/// completes and its key is cleared) spawns a fresh subprocess that
+/// sees the mutation. The guarantee is "two identical concurrent
+/// calls see the same bytes," not "each call sees an FS snapshot
+/// taken at its own send time." Callers that genuinely need the
+/// stricter guarantee should force a fresh spawn by varying an
+/// arg (e.g. including a nonce) or by awaiting the previous call
+/// before issuing the next.
+///
+/// Why this matters: startup telemetry shows six `git.status`, three
+/// `git.worktree`, and two `git.log` calls firing within a single
+/// millisecond at app launch. On Windows, each subprocess spawn costs
+/// ~100ms of OS overhead; half a dozen in flight turns into p95
+/// blow-up via OS scheduler thrashing + antivirus file-system scans.
+/// (Grimoire Circle CVIII: second-moment curse. Circle CIX: fanout
+/// multiplies tail risk.) Coalescing identical concurrent reads
+/// collapses that burst without changing semantics.
+final Map<String, Future<ProcessResult>> _inflightGitReads = {};
+
+String _gitDedupKey(String workingDir, List<String> args) {
+  // Length-prefixed concatenation: each field is emitted as
+  // `"${length}:${field}"`. Decoding is unambiguous — read the
+  // digits up to the colon, read exactly that many chars, repeat —
+  // so two distinct `(workingDir, args)` tuples can never produce
+  // the same string. This matters because the dedupable subcommand
+  // list includes `log`, `diff`, `show`, and `grep`, whose args can
+  // legally carry user-supplied paths, pathspecs, and format
+  // strings with arbitrary bytes (tabs in POSIX paths, tabs in
+  // `--pretty=format:%h\t%s`, etc). Any fixed-character separator
+  // would be a latent collision waiting on the right input.
+  final buf = StringBuffer()
+    ..write(workingDir.length)
+    ..write(':')
+    ..write(workingDir);
+  for (final arg in args) {
+    buf
+      ..write(arg.length)
+      ..write(':')
+      ..write(arg);
+  }
+  return buf.toString();
+}
+
+bool _isDedupableGitCall(List<String> args) {
+  final sub = _gitSubcommandToken(args);
+  if (sub == null) return false;
+  return _kDedupableSubcommands.contains(sub);
+}
+
 /// Git accepts global options before the subcommand (e.g. `git -C <dir>
 /// rev-parse HEAD`, `git --git-dir=<path> rev-list`, `git -c foo=bar
 /// status`). A naive `args.first` check would classify such a call as
@@ -152,6 +254,39 @@ _GitDecodeOutcome _decodeGitBytes(Object? raw, {required bool strict}) {
 }
 
 Future<ProcessResult> _git(String workingDir, List<String> args) async {
+  // Coalesce concurrent identical reads. Two callers asking for
+  // `git.status --porcelain=v2 --branch -u` in the same instant pay
+  // for ONE subprocess, not two. Only applies to known pure-read
+  // subcommands (see [_kDedupableSubcommands]); mutating calls
+  // (commit, push, add, stash push, ...) always spawn fresh.
+  if (_isDedupableGitCall(args)) {
+    final key = _gitDedupKey(workingDir, args);
+    final inflight = _inflightGitReads[key];
+    if (inflight != null) {
+      DiagnosticsState.instance.recordCommandLifecycleEvent(
+        type: 'coalesced',
+        command: args.isEmpty ? 'git' : 'git.${_gitSubcommandToken(args) ?? args.first}',
+        message: 'shared with in-flight identical call',
+      );
+      return inflight;
+    }
+    final future = _gitRaw(workingDir, args);
+    _inflightGitReads[key] = future;
+    future.whenComplete(() {
+      // Only clear if this is still the live entry. A concurrent
+      // race where another caller replaced the future would be a
+      // bug in the caller, not this cache; defensive equality check
+      // just avoids eager-clearing a fresh in-flight call.
+      if (identical(_inflightGitReads[key], future)) {
+        _inflightGitReads.remove(key);
+      }
+    });
+    return future;
+  }
+  return _gitRaw(workingDir, args);
+}
+
+Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
   final commandLabel = args.isEmpty ? 'git' : 'git.${args.first}';
   final stopwatch = Stopwatch()..start();
   DiagnosticsState.instance.recordCommandLifecycleEvent(

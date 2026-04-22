@@ -33,6 +33,8 @@ import 'dart:typed_data';
 
 import 'engram_bootstrap.dart' show EngramAssets;
 import 'engram_hunk_encoder.dart';
+import 'graph/csr_builder.dart' show buildSymmetricCsrGraph;
+import 'graph/top_k_symmetrise.dart' show topKSymmetriseEdges;
 import 'logos_core.dart';
 import 'logos_git.dart'
     show
@@ -592,7 +594,15 @@ CsrGraph _buildHunkGraph({
   // |tokens[i] âˆª tokens[j]| â‰ˆ |tokens[i]| + |tokens[j]| - overlap.
   // We approximate by tallying numerator first, then normalising at
   // the end.
-  final symNumerator = <int, Map<int, int>>{};
+  // Flat single-map with a record key. The earlier nested
+  // `Map<int, Map<int, int>>` allocated an inner map on every
+  // first-seen `lo`, which fired thousands of small heap allocations
+  // per diff inside the hottest token-bucket loop. Collapsing into
+  // one map keyed by `(lo, hi)` is O(1) per upsert and zero
+  // auxiliary allocations.
+  // (Grimoire Circle XIV: the access pattern wants one flat table,
+  // not a tree of tables.)
+  final symNumerator = <(int, int), int>{};
   for (final bucket in tokenBuckets.values) {
     if (bucket.length < 2) continue;
     // No upper bucket cap: a token shared by many hunks lowers each
@@ -604,8 +614,8 @@ CsrGraph _buildHunkGraph({
         final ib = bucket[b];
         final lo = ia < ib ? ia : ib;
         final hi = ia < ib ? ib : ia;
-        (symNumerator[lo] ??= <int, int>{})[hi] =
-            (symNumerator[lo]![hi] ?? 0) + 1;
+        final key = (lo, hi);
+        symNumerator[key] = (symNumerator[key] ?? 0) + 1;
       }
     }
   }
@@ -654,40 +664,39 @@ CsrGraph _buildHunkGraph({
   // alone for that pair. When G is near-degenerate (linear fallback)
   // for one side, we fall through to K alone rather than let a
   // broken curvature kill a legitimately-bonded pair.
-  for (final outer in symNumerator.entries) {
-    final i = outer.key;
+  for (final entry in symNumerator.entries) {
+    final i = entry.key.$1;
+    final j = entry.key.$2;
+    final overlap = entry.value;
     final iTokens = tokens[i].length;
-    final kvi = engramKVectors != null ? engramKVectors[i] : null;
-    for (final inner in outer.value.entries) {
-      final j = inner.key;
-      final overlap = inner.value;
-      final denom = iTokens + tokens[j].length - overlap;
-      if (denom <= 0) continue;
-      final jaccard = overlap / denom;
-      double weight;
-      if (engramKVectors != null) {
-        final kvj = engramKVectors[j];
-        final engramSignal = _engramSignal(kvi, kvj);
-        if (engramSignal > 0 && kvi != null && kvj != null) {
-          final jaccardEvidence =
-              math.log(1.0 + (iTokens + tokens[j].length).toDouble());
-          final engramEvidence = math.log(1.0 +
-              (kvi.vocabHits < kvj.vocabHits ? kvi.vocabHits : kvj.vocabHits)
-                  .toDouble());
-          final totalEvidence = jaccardEvidence + engramEvidence;
-          final blended = totalEvidence > 0
-              ? (jaccardEvidence * jaccard + engramEvidence * engramSignal) /
-                  totalEvidence
-              : jaccard;
-          weight = wSym * blended;
-        } else {
-          weight = wSym * jaccard;
-        }
+    final jTokens = tokens[j].length;
+    final denom = iTokens + jTokens - overlap;
+    if (denom <= 0) continue;
+    final jaccard = overlap / denom;
+    double weight;
+    if (engramKVectors != null) {
+      final kvi = engramKVectors[i];
+      final kvj = engramKVectors[j];
+      final engramSignal = _engramSignal(kvi, kvj);
+      if (engramSignal > 0 && kvi != null && kvj != null) {
+        final jaccardEvidence =
+            math.log(1.0 + (iTokens + jTokens).toDouble());
+        final engramEvidence = math.log(1.0 +
+            (kvi.vocabHits < kvj.vocabHits ? kvi.vocabHits : kvj.vocabHits)
+                .toDouble());
+        final totalEvidence = jaccardEvidence + engramEvidence;
+        final blended = totalEvidence > 0
+            ? (jaccardEvidence * jaccard + engramEvidence * engramSignal) /
+                totalEvidence
+            : jaccard;
+        weight = wSym * blended;
       } else {
         weight = wSym * jaccard;
       }
-      addEdge(i, j, weight);
+    } else {
+      weight = wSym * jaccard;
     }
+    addEdge(i, j, weight);
   }
 
   // Pass 2: engram-only edges. Walk every pair that has K-vectors but
@@ -713,11 +722,12 @@ CsrGraph _buildHunkGraph({
     for (var i = 0; i < n; i++) {
       final kvi = engramKVectors[i];
       if (kvi == null) continue;
-      final alreadyBonded = symNumerator[i];
       for (var j = i + 1; j < n; j++) {
         final kvj = engramKVectors[j];
         if (kvj == null) continue;
-        if (alreadyBonded != null && alreadyBonded.containsKey(j)) continue;
+        // Direct O(1) pair-presence check in the flat map — no inner
+        // map to walk, no null-guard of a missing row.
+        if (symNumerator.containsKey((i, j))) continue;
         // Engram-only path uses the same K+G geometric mean so the
         // token-free bridges only admit pairs that agree on both
         // velocity and curvature — a stricter gate than K alone,
@@ -761,19 +771,32 @@ CsrGraph _buildHunkGraph({
   // unchanged, so total injected mass per file pair still equals
   // ~coupling regardless of the fanout path taken.
   if (fileCouplingFromParent.isNotEmpty) {
+    // Pre-resolve the hashmap lookups ONCE. The nested loop below was
+    // doing 3·nF² Map<String, double> probes (phiA, phiB, fileToHunks
+    // both sides) where nF is the diff's file count. Parallel
+    // Float64List + List-of-List lookups collapse that to nF hash
+    // lookups plus nF² typed-array reads.
+    // (Grimoire Circle XIV: replace cache-hostile per-pair pointer
+    // chasing with aligned column access.)
     final filePaths = fileToHunks.keys.toList(growable: false);
-    for (var a = 0; a < filePaths.length; a++) {
-      final fa = filePaths[a];
-      final phiA = fileCouplingFromParent[fa] ?? 0.0;
+    final nF = filePaths.length;
+    final phis = Float64List(nF);
+    final hunkLists = List<List<int>>.generate(
+        nF, (i) => fileToHunks[filePaths[i]]!,
+        growable: false);
+    for (var i = 0; i < nF; i++) {
+      phis[i] = fileCouplingFromParent[filePaths[i]] ?? 0.0;
+    }
+    for (var a = 0; a < nF; a++) {
+      final phiA = phis[a];
       if (phiA <= 0) continue;
-      for (var b = a + 1; b < filePaths.length; b++) {
-        final fb = filePaths[b];
-        final phiB = fileCouplingFromParent[fb] ?? 0.0;
+      final listA = hunkLists[a];
+      for (var b = a + 1; b < nF; b++) {
+        final phiB = phis[b];
         if (phiB <= 0) continue;
-        final coupling = math.min(phiA, phiB);
+        final coupling = phiA < phiB ? phiA : phiB;
         if (coupling <= 0) continue;
-        final listA = fileToHunks[fa]!;
-        final listB = fileToHunks[fb]!;
+        final listB = hunkLists[b];
         final fanout = listA.length * listB.length;
         final norm = 1.0 / math.sqrt(fanout);
         if (fanout <= _kCrossFileFanoutCap) {
@@ -785,7 +808,7 @@ CsrGraph _buildHunkGraph({
         } else {
           // Sample _kCrossFileFanoutCap pairs deterministically along
           // a stride that visits both lists' index spaces uniformly.
-          // Each kept edge carries `(fanout / cap)`Ã— the per-pair
+          // Each kept edge carries `(fanout / cap)`× the per-pair
           // weight so the summed mass over the file pair matches the
           // full-fanout case.
           final massScale = fanout / _kCrossFileFanoutCap;
@@ -844,76 +867,14 @@ CsrGraph _buildHunkGraph({
     }
   }
 
-  final trimmedRows = List<List<_Edge>>.generate(n, (_) => <_Edge>[]);
-  for (final rowEntry in edges.entries) {
-    final i = rowEntry.key;
-    final list = <_Edge>[];
-    for (final e in rowEntry.value.entries) {
-      list.add(_Edge(e.key, e.value));
-    }
-    list.sort((x, y) => y.w.compareTo(x.w));
-    final cap = math.min(topK, list.length);
-    final outRow = trimmedRows[i];
-    for (var k = 0; k < cap; k++) {
-      outRow.add(list[k]);
-    }
-  }
-
-  // Symmetrise: an edge survives if EITHER endpoint kept it. This is the
-  // same top-K-then-symmetrise policy LogosGit uses.
-  final adj = List<Map<int, double>>.generate(n, (_) => <int, double>{});
-  for (var i = 0; i < n; i++) {
-    for (final e in trimmedRows[i]) {
-      adj[i][e.j] = e.w;
-      adj[e.j][i] = e.w; // symmetric weight
-    }
-  }
-
-  // Degree then D^{-1/2} fusion.
-  final deg = Float64List(n);
-  for (var i = 0; i < n; i++) {
-    double s = 0;
-    for (final w in adj[i].values) {
-      s += w;
-    }
-    deg[i] = s;
-  }
-  final dInv = Float64List(n);
-  for (var i = 0; i < n; i++) {
-    dInv[i] = deg[i] > 0 ? 1.0 / math.sqrt(deg[i]) : 0.0;
-  }
-
-  // Pack CSR. Pre-count for indptr.
-  final indptr = Int32List(n + 1);
-  for (var i = 0; i < n; i++) {
-    indptr[i + 1] = indptr[i] + adj[i].length;
-  }
-  final nnz = indptr[n];
-  final indices = Int32List(nnz);
-  final values = Float64List(nnz);
-  for (var i = 0; i < n; i++) {
-    var cursor = indptr[i];
-    // Sort neighbours by index for nicer locality; not required.
-    final keys = adj[i].keys.toList()..sort();
-    for (final j in keys) {
-      indices[cursor] = j;
-      values[cursor] = dInv[i] * adj[i][j]! * dInv[j];
-      cursor++;
-    }
-  }
-
-  return CsrGraph(
+  // Sparsify + build: top-K per row, symmetric union, then degree +
+  // D^{-1/2} fusion. Both passes live in `graph/` so the file, hunk,
+  // and chunk engines share the same sparsification policy and
+  // normalisation — change it once, every engine picks it up.
+  return buildSymmetricCsrGraph(
     n: n,
-    indptr: indptr,
-    indices: indices,
-    values: values,
+    edges: topKSymmetriseEdges(edges: edges, topK: topK),
   );
-}
-
-class _Edge {
-  _Edge(this.j, this.w);
-  final int j;
-  final double w;
 }
 
 /// Fuse K-cosine (velocity channel) and G-cosine (curvature channel)

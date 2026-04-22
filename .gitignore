@@ -41,3 +41,11 @@ Thumbs.db
 .env
 .env.*
 apps/desktop-flutter/build_log.txt
+
+# Research scratchpad — autonomous-session probes, tm_/tmp_ scripts,
+# staging markdowns, __pycache__. Lives in-tree so the work is
+# retrievable locally but never bloats git history. If a specific
+# probe graduates to production, it gets a home under
+# apps/desktop-flutter/test/research/ or docs/architecture/ and is
+# added back explicitly.
+/research_lab/

@@ -27,7 +27,7 @@ import '../../ui/resonance_text.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/ai.dart';
-import '../../backend/engram_text_kspace.dart' show nearestRowsInTable;
+import '../../backend/engram_text_kspace.dart' show nearestKFilesForPath;
 import '../../backend/git.dart';
 import '../../backend/dtos.dart';
 import '../../backend/engram_bootstrap.dart' show EngramRuntime;
@@ -2716,8 +2716,10 @@ class _ChangesPageState extends State<ChangesPage> {
       // Coupling threshold: low enough to catch real partners on
       // small/young repos where 0.25 is hard to reach, high enough
       // that a file co-changed twice won't look like a pattern.
-      for (final e in matrix.jaccardEntriesOf(filePath)) {
-        if (e.value < 0.15) continue;
+      // `topJaccardNeighbours` walks both triangles of the CSR, so
+      // lex-late paths (e.g. `zz.dart`) see their partners the same
+      // way lex-early paths do — which raw `jaccardEntriesOf` missed.
+      for (final e in matrix.topJaccardNeighbours(filePath, minScore: 0.15)) {
         if (!changedPaths.contains(e.key)) continue;
         if (alreadyIncluded.contains(e.key)) continue;
         out.add(e.key);
@@ -2725,35 +2727,22 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     if (engine != null) {
-      final table = engine.perFileKVectors;
-      final row = table.rowOf(filePath);
-      if (row != null && !table.isEmpty) {
-        final p = table.pairs;
-        final base = row * p;
-        final qRe = Float64List(p);
-        final qIm = Float64List(p);
-        final ri = table.kRi;
-        for (var j = 0; j < p; j++) {
-          final v = ri[base + j];
-          qRe[j] = v.x;
-          qIm[j] = v.y;
-        }
-        // Semantic threshold is tighter than the panel's lookup
-        // because we're making a suggestion the user can one-click
-        // accept — false positives cost them an unwanted checkbox.
-        final near = nearestRowsInTable(
-          table,
-          qRe: qRe,
-          qIm: qIm,
-          topK: 12,
-          minSimilarity: 0.55,
-        );
-        for (final n in near) {
-          if (n.path == filePath) continue;
-          if (!changedPaths.contains(n.path)) continue;
-          if (alreadyIncluded.contains(n.path)) continue;
-          out.add(n.path);
-        }
+      // Semantic threshold is tighter than the panel's lookup
+      // because we're making a suggestion the user can one-click
+      // accept — false positives cost them an unwanted checkbox.
+      // `nearestKFilesForPath` reads the path's own K-vector row
+      // and runs KNN over the engram table — one call instead of
+      // the row-layout unpack that used to live here.
+      final near = nearestKFilesForPath(
+        engine.perFileKVectors,
+        filePath,
+        topK: 12,
+        minSimilarity: 0.55,
+      );
+      for (final n in near) {
+        if (!changedPaths.contains(n.path)) continue;
+        if (alreadyIncluded.contains(n.path)) continue;
+        out.add(n.path);
       }
     }
 
@@ -2815,15 +2804,14 @@ class _ChangesPageState extends State<ChangesPage> {
   }) {
     final matrix = ctx.read<FileCouplingState>().matrixFor(repoPath);
     if (matrix == null || !matrix.containsPath(filePath)) return const [];
-    final entries = matrix.jaccardEntriesOf(filePath).toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final out = <String>[];
-    for (final e in entries) {
-      if (e.value < 0.10) break; // sorted desc; cut once scores dip
-      out.add(e.key);
-      if (out.length >= limit) break;
-    }
-    return out;
+    return [
+      for (final e in matrix.topJaccardNeighbours(
+        filePath,
+        minScore: 0.10,
+        limit: limit,
+      ))
+        e.key,
+    ];
   }
 
   /// File extension *without* the leading dot, or null when the path

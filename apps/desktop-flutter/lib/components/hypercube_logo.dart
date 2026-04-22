@@ -25,7 +25,10 @@ class HypercubeLogo extends StatefulWidget {
 }
 
 class _HypercubeLogoState extends State<HypercubeLogo>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with
+        SingleTickerProviderStateMixin,
+        WidgetsBindingObserver,
+        WindowAwakeMixin {
   late final Ticker _ticker;
   late final HypercubeLogoEngine _engine;
   Duration? _lastElapsed;
@@ -42,9 +45,11 @@ class _HypercubeLogoState extends State<HypercubeLogo>
     _engine = HypercubeLogoEngine();
     _appLifecycleState = WidgetsBinding.instance.lifecycleState;
     WidgetsBinding.instance.addObserver(this);
-    WindowActivity.instance.addListener(_syncTicker);
     _ticker = createTicker(_tick);
   }
+
+  @override
+  void onWindowAwakeChanged() => _syncTicker();
 
   @override
   void didChangeDependencies() {
@@ -167,7 +172,6 @@ class _HypercubeLogoState extends State<HypercubeLogo>
 
   @override
   void dispose() {
-    WindowActivity.instance.removeListener(_syncTicker);
     _prefs?.removeListener(_onPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
     context.read<HyperReactivity>().deactivate();

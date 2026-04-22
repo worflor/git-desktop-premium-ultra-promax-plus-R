@@ -114,13 +114,30 @@ List<FileSimilarity> nearestRowsInTable(
   final p = table.pairs;
   if (qRe.length != p || qIm.length != p) return const [];
 
-  // Precompute ‖q‖ once.
-  var qNorm = 0.0;
+  // Precondition: the squared-space gate below compares `dotRe² ≥
+  // minSim² · rowNormSq · qNormSq`, which is monotone-equivalent to
+  // `cos ≥ minSim` ONLY when `minSim ≥ 0`. A negative floor (e.g.
+  // "admit anti-correlated rows too") would need a different gate,
+  // and our cheap `dotRe ≤ 0` skip would silently discard valid
+  // rows. All production call sites pass floors in [0.35, 0.55];
+  // pinning the contract here stops a future caller from tripping
+  // that footgun without discovering it.
+  assert(minSimilarity >= 0,
+      'nearestRowsInTable requires minSimilarity >= 0; '
+      'negative floors would break the squared-space admission gate.');
+
+  // Precompute ‖q‖² once. We keep it SQUARED (no outer sqrt) so the
+  // per-row rejection test can gate on `dotRe² ≥ minSim² · rowNormSq ·
+  // qNormSq` without a sqrt in the hot loop (Grimoire Circle XXIII /
+  // XXV: stay in the representation where the cheap operation
+  // dominates, pay for the transcendental only when admitting).
+  var qNormSq = 0.0;
   for (var j = 0; j < p; j++) {
-    qNorm += qRe[j] * qRe[j] + qIm[j] * qIm[j];
+    qNormSq += qRe[j] * qRe[j] + qIm[j] * qIm[j];
   }
-  qNorm = math.sqrt(qNorm);
-  if (qNorm <= 0) return const [];
+  if (qNormSq <= 0) return const [];
+  // Assertion above ensures minSimilarity >= 0, so squaring is safe.
+  final minSimSq = minSimilarity * minSimilarity;
 
   final n = table.n;
   final ri = table.kRi;
@@ -145,10 +162,17 @@ List<FileSimilarity> nearestRowsInTable(
       dotRe += ar * br + ai * bi;
       rowNormSq += ar * ar + ai * ai;
     }
-    final rowNorm = math.sqrt(rowNormSq);
-    if (rowNorm <= 0) continue;
-    final sim = dotRe / (rowNorm * qNorm);
-    if (!sim.isFinite || sim < minSimilarity) continue;
+    if (rowNormSq <= 0 || dotRe <= 0) continue;
+    // Squared-space gate: reject rows that can't clear the floor
+    // without spending the sqrt. dotRe² ≥ minSim² · rowNormSq · qNormSq
+    // ⟺ cos² ≥ minSim². Equivalent to the original comparison for
+    // non-negative cosine (negative dotRe was already dropped above).
+    final normProd = rowNormSq * qNormSq;
+    if (dotRe * dotRe < minSimSq * normProd) continue;
+    // Only now — after the row is known to clear the floor — do we
+    // pay the one sqrt + division to recover the actual similarity.
+    final sim = dotRe / math.sqrt(normProd);
+    if (!sim.isFinite) continue;
     if (kept.length < topK) {
       kept.add(FileSimilarity(row, table.paths[row], sim));
       // Bubble down so head is the min.
@@ -178,4 +202,62 @@ List<FileSimilarity> nearestRowsInTable(
 
   // Currently ascending; flip to descending for the caller.
   return kept.reversed.toList(growable: false);
+}
+
+/// K-nearest rows in [table] to the K-vector stored at [sourcePath]'s
+/// own row. Thin wrapper over [nearestRowsInTable] that handles the
+/// row → query-vector unpack (reading the interleaved `kRi` columns
+/// into the two Float64List channels the KNN scan expects). Use this
+/// whenever a feature asks "what files are semantically nearest to
+/// THIS file?" — it keeps callers out of the AoSoA row-layout
+/// internals.
+///
+/// Returns an empty list when [table] is empty, [sourcePath] isn't
+/// encoded, or no row clears [minSimilarity]. The source path is
+/// filtered out of the result by default so callers don't need to
+/// re-check — the closest row is almost always [sourcePath] itself.
+List<FileSimilarity> nearestKFilesForPath(
+  EngramFileKTable table,
+  String sourcePath, {
+  int topK = 8,
+  double minSimilarity = 0.35,
+  bool excludeSource = true,
+}) {
+  if (table.isEmpty || topK <= 0) return const [];
+  final row = table.rowOf(sourcePath);
+  if (row == null) return const [];
+  final p = table.pairs;
+  if (p <= 0) return const [];
+
+  // Unpack the interleaved AoSoA row into the two channels the KNN
+  // scan expects. Cheap — a few dozen Float64x2 loads.
+  final qRe = Float64List(p);
+  final qIm = Float64List(p);
+  final base = row * p;
+  final ri = table.kRi;
+  for (var j = 0; j < p; j++) {
+    final v = ri[base + j];
+    qRe[j] = v.x;
+    qIm[j] = v.y;
+  }
+
+  // Over-pull by one so we can drop the self-match and still honour
+  // the caller's topK budget. Cheap — `nearestRowsInTable` already
+  // runs a streaming top-K, not a full sort.
+  final scanTopK = excludeSource ? topK + 1 : topK;
+  final raw = nearestRowsInTable(
+    table,
+    qRe: qRe,
+    qIm: qIm,
+    topK: scanTopK,
+    minSimilarity: minSimilarity,
+  );
+  if (!excludeSource) return raw;
+  final out = <FileSimilarity>[];
+  for (final m in raw) {
+    if (m.path == sourcePath) continue;
+    out.add(m);
+    if (out.length >= topK) break;
+  }
+  return out;
 }

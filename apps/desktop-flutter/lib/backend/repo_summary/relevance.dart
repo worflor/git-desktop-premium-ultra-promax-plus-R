@@ -116,20 +116,15 @@ Relevance computeRelevance({
 
   // Structural: baseline of 1.0 so a file with no coupling row still
   // has non-zero structural support (rescuing fresh files). Sum of
-  // Jaccard weights is the file's total coupling budget.
+  // incident Jaccard weights is the file's total coupling budget.
+  // `jaccardCentralityMap` walks the CSR once and returns per-file
+  // Σweights covering both triangles — strictly more complete and
+  // faster than the previous N per-file upper-triangle iterations.
   final structural = <String, double>{};
+  final centrality =
+      coupling?.jaccardCentralityMap() ?? const <String, double>{};
   for (final f in files) {
-    structural[f.path] = 1.0;
-  }
-  if (coupling != null) {
-    for (final f in files) {
-      if (!coupling.containsPath(f.path)) continue;
-      var acc = 1.0;
-      for (final entry in coupling.jaccardEntriesOf(f.path)) {
-        acc += entry.value;
-      }
-      structural[f.path] = acc;
-    }
+    structural[f.path] = 1.0 + (centrality[f.path] ?? 0.0);
   }
 
   // Combine: relevance = structural × √(1 + temporal × authentic) − 1.

@@ -25,6 +25,8 @@ import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'graph/csr_builder.dart' show buildSymmetricCsrGraph;
+import 'graph/top_k_symmetrise.dart' show topKSymmetriseEdges;
 import 'logos_git.dart'
     show LogosEvidenceWitness, LogosResidualView, formatLogosEvidenceWitness;
 import 'logos_core.dart';
@@ -424,72 +426,13 @@ CsrGraph _buildChunkGraph({
     }
   }
 
-  // Top-K + symmetrise (same policy as logos_hunks / logos_git).
-  final trimmedRows = List<List<_Edge>>.generate(n, (_) => <_Edge>[]);
-  for (final rowEntry in edges.entries) {
-    final i = rowEntry.key;
-    final row = rowEntry.value;
-    final list = <_Edge>[];
-    for (final e in row.entries) {
-      list.add(_Edge(e.key, e.value));
-    }
-    list.sort((x, y) => y.w.compareTo(x.w));
-    final cap = math.min(topK, list.length);
-    final outRow = trimmedRows[i];
-    for (var k = 0; k < cap; k++) {
-      outRow.add(list[k]);
-    }
-  }
-  final adj = List<Map<int, double>>.generate(n, (_) => <int, double>{});
-  for (var i = 0; i < n; i++) {
-    for (final e in trimmedRows[i]) {
-      adj[i][e.j] = e.w;
-      adj[e.j][i] = e.w;
-    }
-  }
-
-  final deg = Float64List(n);
-  for (var i = 0; i < n; i++) {
-    double s = 0;
-    for (final w in adj[i].values) {
-      s += w;
-    }
-    deg[i] = s;
-  }
-  final dInv = Float64List(n);
-  for (var i = 0; i < n; i++) {
-    dInv[i] = deg[i] > 0 ? 1.0 / math.sqrt(deg[i]) : 0.0;
-  }
-
-  final indptr = Int32List(n + 1);
-  for (var i = 0; i < n; i++) {
-    indptr[i + 1] = indptr[i] + adj[i].length;
-  }
-  final nnz = indptr[n];
-  final indices = Int32List(nnz);
-  final values = Float64List(nnz);
-  for (var i = 0; i < n; i++) {
-    var cursor = indptr[i];
-    final keys = adj[i].keys.toList()..sort();
-    for (final j in keys) {
-      indices[cursor] = j;
-      values[cursor] = dInv[i] * adj[i][j]! * dInv[j];
-      cursor++;
-    }
-  }
-
-  return CsrGraph(
+  // Sparsify + build: top-K per row, symmetric union, then degree +
+  // D^{-1/2} fusion. Shared helper lives in `graph/` so every engine
+  // follows the same sparsification policy.
+  return buildSymmetricCsrGraph(
     n: n,
-    indptr: indptr,
-    indices: indices,
-    values: values,
+    edges: topKSymmetriseEdges(edges: edges, topK: topK),
   );
-}
-
-class _Edge {
-  _Edge(this.j, this.w);
-  final int j;
-  final double w;
 }
 
 // Chebyshev/Bessel math + heat-kernel diffusion live in logos_core.dart

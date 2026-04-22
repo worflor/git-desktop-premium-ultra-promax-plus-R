@@ -447,10 +447,11 @@ class _BranchesPageState extends State<BranchesPage> {
     return <int>{for (final di in deskIssues) di.toSummary().number};
   }
 
-  // Cached pairwise PR cosine map. cosines[a][b] = cos(φ_a, φ_b) when
-  // both shapes exist; absence = unknown. Rebuilt from `_prShapes` on
-  // first read after invalidation.
-  Map<int, Map<int, double>>? _cachedCosineMap;
+  // Cached canonical PR orbit map — the single pairwise-cosine surface
+  // feeding orbital sort, rail tinting, and collision visualisation.
+  // Rebuilt from `_prShapes` on first read after invalidation; see
+  // `backend/pr_shape.dart#PrOrbitMap` for the geometry.
+  PrOrbitMap? _cachedOrbitMap;
   // Activity field (rolling-recent-commit aggregate φ). One snapshot
   // per (repo, HEAD); shared across all PR shape computations so
   // alignments are mutually consistent. Recomputed on engine refresh.
@@ -1931,7 +1932,7 @@ class _BranchesPageState extends State<BranchesPage> {
   /// the next time they're asked.
   void _invalidatePrDerivations() {
     _cachedCollisionMap = null;
-    _cachedCosineMap = null;
+    _cachedOrbitMap = null;
     _prDetailsRev++;
   }
 
@@ -1944,7 +1945,7 @@ class _BranchesPageState extends State<BranchesPage> {
     _prShapes.clear();
     _prShapeFileFingerprints.clear();
     _prShapesLoading.clear();
-    _cachedCosineMap = null;
+    _cachedOrbitMap = null;
     _activityField = null;
     _activityFieldRepoKey = null;
   }
@@ -2067,7 +2068,7 @@ class _BranchesPageState extends State<BranchesPage> {
         );
         // Pairwise cosine map invalidates whenever a new shape lands —
         // cheap to recompute (O(P²)) at realistic open-PR counts.
-        _cachedCosineMap = null;
+        _cachedOrbitMap = null;
       } else {
         // Failed compute (engine cold, no in-graph files) — drop any
         // stale entry so the next call retries rather than silently
@@ -2159,33 +2160,18 @@ class _BranchesPageState extends State<BranchesPage> {
     }
   }
 
-  /// Pairwise PR cosine map — orbital partnership matrix. Replaces the
-  /// binary file-overlap heuristic in [_prCollisionMap] with a real
-  /// geometric similarity. Cosines are non-negative (heat-kernel φ is
-  /// non-negative) so the values live in [0, 1]: 1 = identical
-  /// neighborhood reach, 0 = fully orthogonal footprints.
-  /// Sparse — only includes pairs where BOTH PRs have a computed
-  /// shape; unloaded PRs simply omit. Caller falls back to file-overlap
-  /// when an entry is missing.
-  Map<int, Map<int, double>> _prCosineMap() {
-    if (_cachedCosineMap != null) return _cachedCosineMap!;
-    final map = <int, Map<int, double>>{};
-    final entries = _prShapes.entries.toList();
-    for (var i = 0; i < entries.length; i++) {
-      final aNum = entries[i].key;
-      final aPhi = entries[i].value.phi;
-      for (var j = i + 1; j < entries.length; j++) {
-        final bNum = entries[j].key;
-        final bPhi = entries[j].value.phi;
-        if (aPhi.length != bPhi.length) continue;
-        final c = PrShapeComputer.cosine(aPhi, bPhi);
-        if (c <= 0) continue;
-        (map[aNum] ??= <int, double>{})[bNum] = c;
-        (map[bNum] ??= <int, double>{})[aNum] = c;
-      }
-    }
-    _cachedCosineMap = map;
-    return map;
+  /// Canonical pairwise PR cosine surface — orbital partnership
+  /// matrix. Replaces the binary file-overlap heuristic in
+  /// [_prCollisionMap] with a real geometric similarity. Values
+  /// ∈ [0, 1]: 1 = identical neighborhood reach, 0 = fully
+  /// orthogonal. Sparse — pairs where either PR's shape is unloaded
+  /// or cosine collapsed to 0 simply omit, and callers treat absence
+  /// as "no partnership" (or fall back to file-overlap).
+  ///
+  /// Backed by [PrOrbitMap] so geometry + sort order stay consistent
+  /// with any other feature reading orbital partnerships.
+  PrOrbitMap _prOrbits() {
+    return _cachedOrbitMap ??= PrOrbitMap.fromShapes(_prShapes);
   }
 
   /// True when this PR's branch is the working tree's current head —
@@ -3462,7 +3448,7 @@ class _BranchesPageState extends State<BranchesPage> {
     // under cold-start.
     void orbitSort(List<PullRequestSummary> bucket) {
       if (bucket.length < 2) return;
-      final cosines = _prCosineMap();
+      final orbits = _prOrbits();
       // Stable primary sort: alignment desc (nulls last → time-order).
       bucket.sort((a, b) {
         final sa = _prShapes[a.number]?.fieldAlignment;
@@ -3482,8 +3468,8 @@ class _BranchesPageState extends State<BranchesPage> {
         final cur = bucket[i].number;
         final nxt = bucket[i + 1].number;
         final far = bucket[i + 2].number;
-        final cNxt = cosines[cur]?[nxt] ?? 0;
-        final cFar = cosines[cur]?[far] ?? 0;
+        final cNxt = orbits.cosine(cur, nxt);
+        final cFar = orbits.cosine(cur, far);
         if (cFar > cNxt + 0.05) {
           // Far is meaningfully closer to cur than nxt is — swap them
           // so cur's orbital partner sits next to it.
@@ -3591,7 +3577,7 @@ class _BranchesPageState extends State<BranchesPage> {
       fileSignals: _prFileSignals[pr.number],
       fileSignalsLoading: _prFileSignalsLoading.contains(pr.number),
       shape: _prShapes[pr.number],
-      cosines: _prCosineMap()[pr.number],
+      cosines: _prOrbits().rowOf(pr.number),
       isLocal: isLocalPr,
       isUnread: _isUnread(pr),
       filePillsWrap: _filePillsWrap,
@@ -7638,9 +7624,9 @@ Set<String> _resonanceForecast(
   if (matrix == null) return const {};
   final scored = <String, double>{};
   for (final f in files) {
-    // CSR-native row iteration — yields each neighbour's (path,
-    // score) without materialising the legacy nested-map view.
-    for (final entry in matrix.jaccardEntriesOf(f.path)) {
+    // Full-row walk (both triangles) — lex-late files see lex-smaller
+    // partners too, matching the rest of the ranking surfaces.
+    for (final entry in matrix.fullJaccardRowOf(f.path)) {
       if (entry.value < threshold) continue;
       if (inPr.contains(entry.key)) continue;
       // Take the max score for any (PR file → neighbor) pair so a

@@ -30,6 +30,7 @@ import 'git.dart';
 import 'logos_git.dart';
 import 'logos_git_diagnostics.dart';
 import 'logos_git_stats.dart';
+import 'perf_span.dart' show perfSpan;
 import 'logos_vis_events.dart';
 import 'lru_cache.dart';
 
@@ -483,22 +484,30 @@ Future<LogosGit?> _resolveImpl(
       }
     }
 
-    final engine = await Isolate.run<LogosGit>(
-      () {
-        final built = LogosGit.buildFromStats(
-          stats,
-          perFileKVectors: perFileKVectors,
-        );
-        // Warm the spectral basis inside the worker so the first
-        // [gatherEvidence] call on the UI isolate never pays the
-        // one-time Lanczos cost. The basis lives inside the engine's
-        // cache (`_spectralCache`) and is copied across the isolate
-        // boundary with the engine on return — turning a UI-freeze
-        // into a background build.
-        built.spectralBasis();
-        return built;
-      },
-      debugName: 'LogosGit.buildFromStats',
+    // Phase: engine.build — the isolate hop that dominates cold
+    // engine resolution (graph construction + Lanczos warm-up).
+    // Marshalling + actual build visible as one span so the
+    // telemetry dashboard can distinguish repo-size-bound cost from
+    // git-subprocess cost upstream.
+    final engine = await perfSpan(
+      'logos.engine.build',
+      () => Isolate.run<LogosGit>(
+        () {
+          final built = LogosGit.buildFromStats(
+            stats,
+            perFileKVectors: perFileKVectors,
+          );
+          // Warm the spectral basis inside the worker so the first
+          // [gatherEvidence] call on the UI isolate never pays the
+          // one-time Lanczos cost. The basis lives inside the engine's
+          // cache (`_spectralCache`) and is copied across the isolate
+          // boundary with the engine on return — turning a UI-freeze
+          // into a background build.
+          built.spectralBasis();
+          return built;
+        },
+        debugName: 'LogosGit.buildFromStats',
+      ),
     );
 
     _engines.put(repoPath, _ResolverEntry(hash, engine));
