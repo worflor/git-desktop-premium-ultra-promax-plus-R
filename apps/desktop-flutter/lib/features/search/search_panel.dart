@@ -228,23 +228,24 @@ class _ResultsBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = tokens;
     if (loading && results.isEmpty) {
+      // The progress bar already says "looking" — title is enough.
       return const AppStatusView.loading(
-        title: 'Searching commits',
-        message: 'Looking through the current repository.',
+        title: 'Searching',
+        message: '',
         compact: true,
       );
     }
     if (searched && results.isEmpty) {
       return const AppStatusView(
         title: 'No results',
-        message: 'Try a commit message, file path, or S: pickaxe query.',
+        message: 'message · path · S: pickaxe',
         compact: true,
       );
     }
     if (!searched && results.isEmpty) {
       return const AppStatusView(
-        title: 'Search commits',
-        message: 'Type to search messages, paths, or code changes.',
+        title: 'Search',
+        message: 'message · path · S: pickaxe',
         compact: true,
       );
     }
@@ -306,9 +307,11 @@ class _ResultRowState extends State<_ResultRow> {
           duration: context.motion(const Duration(milliseconds: 100)),
           padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
           decoration: BoxDecoration(
-            color: _hovered
-                ? t.chromeBorder.withValues(alpha: 0.06)
-                : t.chromeBorder.withValues(alpha: 0),
+            // Use the canonical itemHoverBg / itemActiveBg tokens so
+            // search rows share the hover language with branches and
+            // history rows. Previously this drew a chromeBorder wash
+            // that didn't match either neighbor.
+            color: _hovered ? t.itemHoverBg : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
           ),
           child: Column(

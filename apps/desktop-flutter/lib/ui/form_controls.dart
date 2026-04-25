@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'design_primitives.dart';
+import 'motion.dart';
 import 'tokens.dart';
 
 class AppInputShell extends StatelessWidget {
@@ -11,10 +13,15 @@ class AppInputShell extends StatelessWidget {
   final Color? fillColor;
   final Color? borderColor;
 
+  // 32px is the canonical control height for the dense chrome
+  // surfaces (settings, branches list, sync action rows). Larger
+  // touch targets — onboarding pickers etc. — pass an explicit
+  // [height]; everywhere else inherits this so adjacent inputs
+  // share a single vertical rhythm.
   const AppInputShell({
     super.key,
     required this.child,
-    this.height = 34,
+    this.height = 32,
     this.padding = const EdgeInsets.symmetric(horizontal: 10),
     this.focused = false,
     this.enabled = true,
@@ -67,7 +74,7 @@ class AppTextField extends StatefulWidget {
     super.key,
     required this.controller,
     this.hintText,
-    this.height = 34,
+    this.height = 32,
     this.fontSize = 12,
     this.autofocus = false,
     this.enabled = true,
@@ -197,7 +204,7 @@ class AppDropdownField<T> extends StatelessWidget {
     required this.value,
     required this.items,
     required this.onChanged,
-    this.height = 34,
+    this.height = 32,
     this.fontSize = 12,
     this.isExpanded = true,
     this.enabled = true,
@@ -216,8 +223,17 @@ class AppDropdownField<T> extends StatelessWidget {
       child: DropdownButtonHideUnderline(
         child: DropdownButton<T>(
           value: value,
-          dropdownColor: menuColor ?? t.bg1,
+          // Default popup background matches the canonical `surface1`
+          // tone every other floating surface uses (popupMenuTheme,
+          // dialogTheme, AppContextMenu, UndoPill). Previously dropdowns
+          // floated on `bg1` — a different shade — so the theme dropdown
+          // looked unrelated to the keybinding dropdown right next to it.
+          dropdownColor: menuColor ?? t.surface1,
           iconEnabledColor: t.textMuted,
+          // The disabled icon was falling back to Material's default
+          // mid-gray, which broke the disabled-state language used by
+          // AppInputShell (border alpha drops to 0.45). Match that fade.
+          iconDisabledColor: t.textMuted.withValues(alpha: 0.45),
           style: TextStyle(
             color: enabled ? t.textNormal : t.textMuted,
             fontSize: fontSize,
@@ -370,6 +386,69 @@ class _AppMultilineTextFieldState extends State<AppMultilineTextField> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Single checkbox primitive for the app. Replaces every Material
+/// [Checkbox] call site so disabled states, accent treatment, and
+/// corner radius stay in lockstep with the surface language. Radius
+/// comes from the active theme's geometry token (square on pixelated
+/// themes, rounded elsewhere) — same source as AppInputShell.
+class AppCheckbox extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final double size;
+  final bool enabled;
+
+  const AppCheckbox({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.size = 14,
+    this.enabled = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final radius = themeDefinitionFor(t.id).shader.geometry.tinyRadius;
+    final fillColor = value
+        ? (enabled
+            ? t.accentBright.withValues(alpha: 0.18)
+            : t.accentBright.withValues(alpha: 0.08))
+        : t.btnBg;
+    final borderColor = value ? t.accentBright : t.btnBorder;
+    final iconAlpha = enabled ? 1.0 : 0.45;
+    final box = AnimatedContainer(
+      duration: context.motion(AppMotion.snap),
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: fillColor,
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(
+          color: borderColor.withValues(alpha: enabled ? 1 : 0.45),
+          width: 1.2,
+        ),
+      ),
+      child: value
+          ? Icon(
+              Icons.check,
+              size: size * 0.64,
+              color: t.accentBright.withValues(alpha: iconAlpha),
+            )
+          : null,
+    );
+    if (!enabled || onChanged == null) return box;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onChanged!(!value),
+        child: box,
       ),
     );
   }

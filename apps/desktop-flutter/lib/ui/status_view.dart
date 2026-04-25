@@ -75,16 +75,21 @@ class AppStatusView extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: compact ? 11 : 13,
-                  height: 1.4,
+              // Skip the secondary line entirely when there's no copy.
+              // Lets callers render title-only without an empty Text
+              // reserving 1.4× line-height of vertical space below.
+              if (message.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: compact ? 11 : 13,
+                    height: 1.4,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),

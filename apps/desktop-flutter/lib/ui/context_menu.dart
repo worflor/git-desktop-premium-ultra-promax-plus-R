@@ -10,14 +10,27 @@ import 'tokens.dart';
 /// position of the pointer-down event; the menu inserts an OverlayEntry
 /// with a full-screen tap-catcher behind it so any pointer-down outside
 /// the menu dismisses it.
-void showAppContextMenu(
+///
+/// Returns a [Future] that resolves when the menu closes (item picked
+/// or outside-tap). Lets the caller pre-highlight the row that opened
+/// the menu and clear the highlight when this future completes — the
+/// row visually owns the menu while it's open, matching the changes
+/// panel pattern.
+Future<void> showAppContextMenu(
   BuildContext context,
   Offset globalPos,
   List<List<AppContextMenuItem>> sections,
 ) {
   final overlay = Overlay.of(context);
   final t = context.tokens;
+  final completer = Completer<void>();
   late OverlayEntry entry;
+  void dismiss() {
+    if (completer.isCompleted) return;
+    entry.remove();
+    completer.complete();
+  }
+
   entry = OverlayEntry(
     builder: (ctx) {
       return Stack(
@@ -25,7 +38,7 @@ void showAppContextMenu(
           Positioned.fill(
             child: Listener(
               behavior: HitTestBehavior.translucent,
-              onPointerDown: (_) => entry.remove(),
+              onPointerDown: (_) => dismiss(),
             ),
           ),
           Positioned(
@@ -34,7 +47,7 @@ void showAppContextMenu(
             child: AppContextMenu(
               tokens: t,
               sections: sections,
-              onDismiss: () => entry.remove(),
+              onDismiss: dismiss,
             ),
           ),
         ],
@@ -42,6 +55,7 @@ void showAppContextMenu(
     },
   );
   overlay.insert(entry);
+  return completer.future;
 }
 
 class AppContextMenu extends StatelessWidget {
@@ -285,7 +299,12 @@ class _AppContextMenuRowState extends State<AppContextMenuRow> {
 
   void _scheduleSubmenuClose() {
     _submenuCloseTimer?.cancel();
-    _submenuCloseTimer = Timer(const Duration(milliseconds: 140), () {
+    // 90ms is the minimum gap a cursor traversal needs to cross the
+    // 4px gutter between parent row and submenu without the close
+    // firing mid-traversal. Shorter than the previous 140ms — the
+    // extra time made cascading menus feel deliberate rather than
+    // immediate when the user wasn't pausing on the parent row.
+    _submenuCloseTimer = Timer(const Duration(milliseconds: 90), () {
       if (!_hovered && !_submenuHovered) _closeSubmenu();
     });
   }

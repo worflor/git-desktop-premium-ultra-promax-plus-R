@@ -5407,11 +5407,10 @@ class _HunkDropdown extends StatelessWidget {
     return PopupMenuButton<int>(
       tooltip: 'Jump to change block. Git calls these hunks.',
       offset: const Offset(0, 28),
-      color: t.surface2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: t.chromeBorder.withValues(alpha: 0.3)),
-      ),
+      // No color/shape override — let popupMenuTheme drive the chrome
+      // so this menu matches the keybinding and theme dropdowns. The
+      // old `surface2` + hardcoded radius:8 painted a different popup
+      // than every other floating surface in the app.
       onSelected: onJump,
       itemBuilder: (_) => hunks
           .asMap()
@@ -7148,12 +7147,17 @@ class _HunkInlineHint extends StatelessWidget {
         ? Color.lerp(t.textFaint, t.accentBright, 0.4 + 0.4 * strength)!
             .withValues(alpha: baseAlpha)
         : t.textFaint.withValues(alpha: baseAlpha);
+    // Lerp toward the active theme's add/delete state colors instead of
+    // the stock Material Colors.greenAccent/redAccent so the highlight
+    // belongs to the theme. Petrichor/blackboard get muted hues that
+    // suit the surface; vivid themes still read green/red because their
+    // own state tokens are vivid.
     final addColor = approaching
-        ? Color.lerp(t.accentBright, Colors.greenAccent, 0.4)!
+        ? Color.lerp(t.accentBright, t.stateAdded, 0.55)!
             .withValues(alpha: baseAlpha)
         : t.textFaint.withValues(alpha: baseAlpha * 0.9);
     final delColor = approaching
-        ? Color.lerp(t.accentBright, Colors.redAccent, 0.4)!
+        ? Color.lerp(t.accentBright, t.stateDeleted, 0.55)!
             .withValues(alpha: baseAlpha)
         : t.textFaint.withValues(alpha: baseAlpha * 0.9);
     final textStyle = TextStyle(

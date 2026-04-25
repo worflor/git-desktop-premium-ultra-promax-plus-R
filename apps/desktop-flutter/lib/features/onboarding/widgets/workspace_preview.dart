@@ -5,6 +5,7 @@ import '../../../app/app_identity.dart';
 import '../../../components/hypercube_logo.dart';
 import '../../../components/icons/app_icons.dart';
 import '../../../ui/design_primitives.dart';
+import '../../../ui/form_controls.dart';
 import '../../../ui/motion.dart';
 import '../../../ui/tokens.dart';
 
@@ -720,10 +721,9 @@ class _FileRowState extends State<_FileRow> {
           ),
           child: Row(
             children: [
-              GestureDetector(
-                onTap: widget.onToggle,
-                behavior: HitTestBehavior.opaque,
-                child: _Checkbox(tokens: t, checked: widget.staged),
+              AppCheckbox(
+                value: widget.staged,
+                onChanged: (_) => widget.onToggle(),
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -774,35 +774,6 @@ class _FileRowState extends State<_FileRow> {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _Checkbox extends StatelessWidget {
-  final AppTokens tokens;
-  final bool checked;
-  const _Checkbox({required this.tokens, required this.checked});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: context.motion(AppMotion.snap),
-      width: 14,
-      height: 14,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: checked
-            ? tokens.accentBright.withValues(alpha: 0.18)
-            : tokens.btnBg,
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(
-          color: checked ? tokens.accentBright : tokens.btnBorder,
-          width: 1.2,
-        ),
-      ),
-      child: checked
-          ? Icon(Icons.check, size: 9, color: tokens.accentBright)
-          : null,
     );
   }
 }

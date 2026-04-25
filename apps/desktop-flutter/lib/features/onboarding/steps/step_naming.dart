@@ -30,14 +30,18 @@ class _NamingStepPageState extends State<NamingStepPage>
   @override
   void initState() {
     super.initState();
-    final reduceMotion = context.reduceMotionRead;
+    // Two-phase fade: question lands first, sentence follows. Total
+    // budget honors the snappy default — 1100ms had the user looking
+    // at static screens before the field appeared, which read as
+    // "loading" rather than "presenting." 480ms total, scaled by the
+    // motion preference (Duration.zero at rate=0 collapses to instant).
     _introController = AnimationController(
       vsync: this,
-      duration: Duration(milliseconds: reduceMotion ? 0 : 1100),
+      duration: context.motionRead(const Duration(milliseconds: 480)),
     );
     _questionFade = CurvedAnimation(
       parent: _introController,
-      curve: const Interval(0, 0.45, curve: Curves.easeOutCubic),
+      curve: const Interval(0, 0.55, curve: Curves.easeOutCubic),
     );
     _sentenceFade = CurvedAnimation(
       parent: _introController,
@@ -118,20 +122,6 @@ class _NamingStepPageState extends State<NamingStepPage>
                 focusNode: _focusNode,
                 onChanged: _onChanged,
                 onSubmitted: (_) => _onContinue(),
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          FadeTransition(
-            opacity: _sentenceFade,
-            child: Center(
-              child: Text(
-                "this is what i'll go by. change it anytime.",
-                style: TextStyle(
-                  color: t.textFaint,
-                  fontSize: 11.5,
-                  letterSpacing: 0.2,
-                ),
               ),
             ),
           ),

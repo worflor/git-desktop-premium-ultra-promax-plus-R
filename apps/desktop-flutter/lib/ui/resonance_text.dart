@@ -197,7 +197,11 @@ TextStyle _styleFor(_Cat cat, TextStyle base, AppTokens t) {
         color: t.chromeAccent,
         fontFamily: 'JetBrainsMono',
         fontSize: codeFontSize,
-        backgroundColor: t.bg0.withValues(alpha: 0.4),
+        // Tint the inline code background with the chrome accent (same
+        // hue as the text) instead of `bg0`, which collapsed to ~zero
+        // contrast on light themes (aether, barbie) where bg0 *is* the
+        // page color. Low-alpha accent reads on any background.
+        backgroundColor: t.chromeAccent.withValues(alpha: 0.10),
       ),
     _Cat.tech => base.copyWith(
         color: t.accentBright.withValues(alpha: 0.85),

@@ -276,11 +276,18 @@ class _HyperhealthTextState extends State<HyperhealthText>
         // Refresh takes precedence when active — it's a decisive
         // gesture that shouldn't be diluted by ambient layers.
         final refreshing = _refresh != null;
+        // Sheen highlight color follows the theme's brightness: white
+        // on dark themes (the original specular intent), strong text
+        // ink on light themes where a white sheen against light glyphs
+        // is invisible. The sheen is *light passing across* — its hue
+        // has to contrast the glyph it sweeps over, not the substrate.
+        final sheenHighlight =
+            tokens.isDark ? Colors.white : tokens.textStrong;
         if (refreshing) {
           return _RefreshSheenStack(
             text: widget.text,
             baseStyle: effectiveStyle,
-            overlayStyle: widget.style.copyWith(color: Colors.white),
+            overlayStyle: widget.style.copyWith(color: sheenHighlight),
             overflow: widget.overflow,
             phase: _refresh!.value,
             chroma1: tokens.hyperChromatic1,
@@ -292,7 +299,7 @@ class _HyperhealthTextState extends State<HyperhealthText>
         return _AmbientSheenStack(
           text: widget.text,
           baseStyle: effectiveStyle,
-          overlayStyle: widget.style.copyWith(color: Colors.white),
+          overlayStyle: widget.style.copyWith(color: sheenHighlight),
           overflow: widget.overflow,
           phase: _ambient!.value,
           sweepSeed: _sweepSeed,

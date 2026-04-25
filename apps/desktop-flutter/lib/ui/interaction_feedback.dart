@@ -54,7 +54,12 @@ class _InteractionFeedbackState extends State<InteractionFeedback>
     // responsive; drop the decoration.
     if (context.reduceMotionRead) return;
     _origin = local;
-    _ac.duration = _durationFor(mode);
+    // Scale the per-mode authored duration through the user's
+    // motionRate preference so users who picked "faster motion"
+    // also get faster feedback flashes (and slower for the inverse).
+    // Without this scaling, every other timed animation in the app
+    // honored the rate but click feedback didn't.
+    _ac.duration = context.motionRead(_durationFor(mode));
     _ac
       ..stop()
       ..value = 0

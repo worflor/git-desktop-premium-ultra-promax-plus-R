@@ -97,15 +97,13 @@ ThemeData _buildTheme(AppTokens t) {
           _ => t.inputBorder,
         },
       ),
+      // Pull the corner radius from the same geometry token surfaces
+      // and pills consume so the checkbox tracks the theme's roundness
+      // language without a separate per-theme switch. tinyRadius is
+      // already 0 on pixelated themes (crafty/phosphor/blackboard) and
+      // scales smoothly elsewhere.
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(
-          switch (t.id) {
-            AppThemeId.crafty => 0,
-            AppThemeId.loverboy => 0,
-            AppThemeId.blackboard => 2,
-            _ => 4,
-          },
-        ),
+        borderRadius: BorderRadius.circular(shader.geometry.tinyRadius),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -188,6 +186,83 @@ ThemeData _buildTheme(AppTokens t) {
       thumbColor: WidgetStatePropertyAll(t.scrollbarThumb),
       thickness: WidgetStatePropertyAll(4),
       radius: const Radius.circular(4),
+    ),
+    // Drop the default Material gray Tooltip in favor of the app's
+    // surface language. Every Tooltip(message: ...) call site picks
+    // this up with no edits.
+    tooltipTheme: TooltipThemeData(
+      decoration: BoxDecoration(
+        color: opaqueSurface,
+        borderRadius: BorderRadius.circular(radius * 0.5),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.4)),
+      ),
+      textStyle: TextStyle(
+        color: t.textNormal,
+        fontSize: 11 * fontScale,
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFallback,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      waitDuration: const Duration(milliseconds: 350),
+    ),
+    // Theme SnackBar so every ScaffoldMessenger.showSnackBar() in the
+    // app picks up the surface language without a custom wrapper.
+    // Behavior (text content, action) stays Material; only chrome
+    // is themed. Floating + roundish corners + chromeBorder reads as
+    // a peer to UndoPill / context menus.
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: opaqueSurface,
+      contentTextStyle: TextStyle(
+        color: t.textNormal,
+        fontSize: 12 * fontScale,
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFallback,
+      ),
+      actionTextColor: t.accentBright,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radius),
+        side: BorderSide(color: t.chromeBorder.withValues(alpha: 0.35)),
+      ),
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    ),
+    // Theme Material's Dialog/AlertDialog so existing showDialog()
+    // call sites stop leaking default light/dark Material surfaces
+    // into the app shell. Scrim is pulled from t.bg0 with high alpha
+    // — quiet but readable, never the system black wash.
+    dialogTheme: DialogThemeData(
+      backgroundColor: opaqueSurface,
+      surfaceTintColor: Colors.transparent,
+      barrierColor: t.bg0.withValues(alpha: 0.72),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radius),
+        side: BorderSide(color: t.chromeBorder.withValues(alpha: 0.35)),
+      ),
+      titleTextStyle: TextStyle(
+        color: t.textStrong,
+        fontSize: 14 * fontScale,
+        fontWeight: FontWeight.w700,
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFallback,
+      ),
+      contentTextStyle: TextStyle(
+        color: t.textNormal,
+        fontSize: 12 * fontScale,
+        height: 1.4,
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFallback,
+      ),
+    ),
+    // Drive text-selection visuals from the theme so every TextField,
+    // EditableText, and SelectableText shares the cursor + selection
+    // colors without per-widget override. The selection fill picks up
+    // the accent at low alpha so it doesn't fight the themed chrome
+    // on aether/glass surfaces.
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: t.accentBright,
+      selectionColor: t.accentBright.withValues(alpha: 0.28),
+      selectionHandleColor: t.accentBright,
     ),
     splashFactory: NoSplash.splashFactory,
     highlightColor: Colors.transparent,
@@ -691,9 +766,21 @@ class _DropletSliderThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final canvas = context.canvas;
+    // Petrichor's thumb is deliberately plain; quality lives in how
+    // it responds to interaction, not in idle decoration. While the
+    // user is dragging the thumb, [activationAnimation] runs from 0
+    // to 1 — flex the droplet horizontally and tighten its tail to
+    // read as a "squeezed" droplet. The visual budget is tiny (a few
+    // percent) so the still state stays calm.
+    final press = activationAnimation.value;
+    final wScale = 1.0 + 0.12 * press; // squash horizontally
+    final hScale = 1.0 - 0.06 * press; // contract vertically
+    final tailRadius = 2.0 + 1.5 * press; // tail rounds out under press
+
     canvas.save();
     canvas.translate(center.dx, center.dy);
     canvas.rotate(0.78539816339);
+    canvas.scale(wScale, hScale);
     final rect =
         Rect.fromCenter(center: Offset.zero, width: size, height: size);
     final rrect = RRect.fromRectAndCorners(
@@ -701,7 +788,7 @@ class _DropletSliderThumbShape extends SliderComponentShape {
       topLeft: Radius.circular(size / 2),
       topRight: Radius.circular(size / 2),
       bottomLeft: Radius.circular(size / 2),
-      bottomRight: const Radius.circular(2),
+      bottomRight: Radius.circular(tailRadius),
     );
     canvas.drawRRect(
       rrect,

@@ -752,7 +752,10 @@ class _BranchesPageState extends State<BranchesPage> {
   /// Right-click menu on a branch row. V1 surfaces just Rename…
   /// (delete + checkout stay on the card itself); extend here when more
   /// branch-level actions need a hidden surface.
-  void _showBranchContextMenu(
+  /// Returns the future from showAppContextMenu so the row can pre-
+  /// highlight while the menu is open and clear the highlight on
+  /// dismiss — same pattern the changes panel rows use.
+  Future<void> _showBranchContextMenu(
     BuildContext ctx,
     Offset globalPos,
     BranchInfo branch,
@@ -765,7 +768,7 @@ class _BranchesPageState extends State<BranchesPage> {
         onTap: () => _showRenameBranchDialog(repoPath, branch.name),
       ),
     ];
-    showAppContextMenu(ctx, globalPos, [items]);
+    return showAppContextMenu(ctx, globalPos, [items]);
   }
 
   /// Rename dialog. Validates that the new name isn't empty, isn't the
@@ -780,7 +783,6 @@ class _BranchesPageState extends State<BranchesPage> {
       builder: (ctx) {
         final t = ctx.tokens;
         return AlertDialog(
-          backgroundColor: t.surface1,
           title: Text('Rename branch',
               style: TextStyle(color: t.textStrong, fontSize: 14)),
           content: SizedBox(
@@ -796,18 +798,11 @@ class _BranchesPageState extends State<BranchesPage> {
                       fontFamily: 'JetBrainsMono',
                     )),
                 const SizedBox(height: 10),
-                TextField(
+                AppTextField(
                   controller: ctrl,
+                  hintText: 'new name',
                   autofocus: true,
-                  style: TextStyle(
-                      color: t.textNormal,
-                      fontSize: 12,
-                      fontFamily: 'JetBrainsMono'),
-                  decoration: InputDecoration(
-                    labelText: 'new name',
-                    labelStyle: TextStyle(color: t.textMuted),
-                    border: const OutlineInputBorder(),
-                  ),
+                  mono: true,
                   onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
                 ),
               ],
@@ -3074,8 +3069,13 @@ class _BranchesPageState extends State<BranchesPage> {
                       },
                       child: AppTextField(
                         controller: _newBranchCtrl,
-                        height: 34,
                         fontSize: 12,
+                        // Lock the input while the create call is in
+                        // flight so a second keystroke doesn't queue
+                        // a name that no longer matches the visible
+                        // button label or get processed as part of a
+                        // re-fired action.
+                        enabled: !_actionRunning,
                         hintText: _branchNameDream.value ??
                             'branch name (e.g. feature/auth)',
                         onChanged: (_) => setState(() {}),
@@ -9702,7 +9702,9 @@ class _BranchCard extends StatefulWidget {
   final Future<_DeleteBranchOutcome> Function({bool force})? onDelete;
 
   /// Right-click → rename via a dialog. Null disables the affordance.
-  final ValueChanged<Offset>? onSecondaryTap;
+  /// Returns the future from the menu so the row can pre-highlight
+  /// while the menu is open and clear the highlight on dismiss.
+  final Future<void> Function(Offset)? onSecondaryTap;
   const _BranchCard(
       {required this.branch,
       required this.tokens,
@@ -9716,6 +9718,10 @@ class _BranchCard extends StatefulWidget {
 
 class _BranchCardState extends State<_BranchCard> {
   bool _hovered = false;
+  // True while a context menu opened from this row is on screen. The
+  // row paints itself in the hover state for the duration so the user
+  // sees which row "owns" the menu — matches the changes panel.
+  bool _menuOpen = false;
   // Two-stage delete state. After a safe `-d` bounces with "not fully
   // merged", the trash icon morphs into a "Force?" affordance armed
   // for one extra tap. Auto-disarms on a timer or hover-out so a
@@ -9786,7 +9792,14 @@ class _BranchCardState extends State<_BranchCard> {
         behavior: HitTestBehavior.opaque,
         onSecondaryTapDown: widget.onSecondaryTap == null
             ? null
-            : (d) => widget.onSecondaryTap!(d.globalPosition),
+            : (d) async {
+                setState(() => _menuOpen = true);
+                try {
+                  await widget.onSecondaryTap!(d.globalPosition);
+                } finally {
+                  if (mounted) setState(() => _menuOpen = false);
+                }
+              },
         child: MouseRegion(
           onEnter: (_) => setState(() => _hovered = true),
           onExit: (_) {
@@ -9802,7 +9815,7 @@ class _BranchCardState extends State<_BranchCard> {
             decoration: BoxDecoration(
               color: b.current
                   ? t.accentBright.withValues(alpha: 0.06)
-                  : (_hovered ? t.itemHoverBg : t.surface1),
+                  : ((_hovered || _menuOpen) ? t.itemHoverBg : t.surface1),
               borderRadius:
                   BorderRadius.circular(context.surfaceShader.geometry.radius),
               border: Border.all(

@@ -20,6 +20,7 @@ import '../features/xray/repo_xray_panel.dart';
 import '../ui/animated_icons.dart';
 import '../ui/control_chrome.dart';
 import '../ui/dream_hint.dart';
+import '../ui/form_controls.dart';
 import '../ui/hyperhealth_text.dart';
 import '../ui/interaction_feedback.dart';
 import '../ui/material_surface.dart';
@@ -397,7 +398,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
       builder: (ctx) {
         final t = ctx.tokens;
         return AlertDialog(
-          backgroundColor: t.surface1,
           title: Text('Keyboard',
               style: TextStyle(
                 color: t.textStrong,
@@ -1136,10 +1136,8 @@ class _DeskRow extends StatelessWidget {
         final ok = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
-            backgroundColor: t.surface1,
             content: Text(
-              '$localRef already exists locally. Updating it will replace any '
-              'local commits on that branch with the latest from GitHub.',
+              'Overwrite $localRef with the latest from GitHub?',
               style: TextStyle(color: t.textNormal, fontSize: 12),
             ),
             actions: [
@@ -1149,7 +1147,8 @@ class _DeskRow extends StatelessWidget {
               ),
               TextButton(
                 onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('Update'),
+                child: Text('Overwrite',
+                    style: TextStyle(color: t.stateDeleted)),
               ),
             ],
           ),
@@ -1644,32 +1643,27 @@ class _DeskRow extends StatelessWidget {
                         style: t.textTheme.titleSmall
                             ?.copyWith(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 12),
-                    TextField(
+                    AppTextField(
                       controller: titleCtrl,
+                      hintText: 'title',
                       autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'title',
-                        isDense: true,
-                      ),
                     ),
                     const SizedBox(height: 8),
-                    TextField(
+                    AppMultilineTextField(
                       controller: bodyCtrl,
-                      minLines: 4,
-                      maxLines: 10,
-                      decoration: const InputDecoration(
-                        labelText: 'body',
-                        isDense: true,
-                      ),
+                      hintText: 'body',
+                      minHeight: 96,
+                      maxHeight: 220,
                     ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        Checkbox(
+                        AppCheckbox(
                           value: isDraft,
-                          onChanged: (v) => setSt(() => isDraft = v ?? false),
+                          onChanged: (v) => setSt(() => isDraft = v),
                         ),
-                        const Text('draft'),
+                        const SizedBox(width: 8),
+                        const Text('draft', style: TextStyle(fontSize: 12)),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -2217,14 +2211,16 @@ class _CloseDeskDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return AlertDialog(
-      backgroundColor: t.surface1,
       title: Text(
         'Close desk?',
         style: TextStyle(color: t.textStrong, fontSize: 14),
       ),
+      // Buttons carry the verbs; copy just states the situation. The
+      // user already knows what shelve/discard mean — explaining them
+      // turns the dialog into a tutorial.
       content: Text(
-        'This desk has ${desk.dirtyFileCount} uncommitted file${desk.dirtyFileCount == 1 ? '' : 's'}. '
-        'Shelve them so you can pick them back up later, or close anyway and discard the changes?',
+        '${desk.dirtyFileCount} uncommitted '
+        'file${desk.dirtyFileCount == 1 ? '' : 's'}.',
         style: TextStyle(color: t.textNormal, fontSize: 12),
       ),
       actions: [

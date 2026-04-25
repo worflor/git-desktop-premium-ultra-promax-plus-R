@@ -2642,9 +2642,6 @@ class _ProfileSelect extends StatelessWidget {
         Expanded(
           child: AppDropdownField<KeybindingProfile>(
             value: value,
-            height: 32,
-            fontWeight: FontWeight.w600,
-            menuColor: t.surface1,
             items: [
               for (final profile in KeybindingProfile.values)
                 DropdownMenuItem(
@@ -3523,53 +3520,74 @@ class _ModelPickerOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final radius =
+        themeDefinitionFor(t.id).shader.geometry.radius.clamp(0, 18).toDouble();
+    // Match the canonical floating-surface chrome: surface1 fill,
+    // chromeBorder hairline, theme radius. Same vocabulary the
+    // popupMenuTheme, AppContextMenu, and dialogTheme already use —
+    // no more bespoke `bg1 + radius:6 + no border` outlier.
     return Material(
-      color: t.bg1,
-      elevation: 4,
-      borderRadius: BorderRadius.circular(6),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 340),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Flexible(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                shrinkWrap: true,
-                children: [
-                  for (final model in models)
-                    _ModelPickerItem(
-                      model: model,
-                      selected: model.value == selectedValue,
-                      onTap: () => onSelect(model.value),
-                    ),
-                ],
-              ),
+      color: Colors.transparent,
+      child: Container(
+        decoration: BoxDecoration(
+          color: t.surface1,
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: t.chromeBorder.withValues(alpha: 0.25)),
+          boxShadow: [
+            BoxShadow(
+              color: t.shadowElev.withValues(alpha: 0.4),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
             ),
-            if (providers.isNotEmpty) ...[
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: t.chromeBorder.withValues(alpha: 0.12),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-                child: Column(
-                  children: [
-                    for (var i = 0; i < providers.length; i++) ...[
-                      _CustomModelRow(
-                        providerLabel: providers[i].providerLabel,
-                        controller: customControllers[providers[i].providerId]!,
-                        onSubmit: () => onCustomSubmit(providers[i].providerId),
-                      ),
-                      if (i < providers.length - 1) const SizedBox(height: 4),
-                    ],
-                  ],
-                ),
-              ),
-            ],
           ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 340),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Flexible(
+                  child: ListView(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    shrinkWrap: true,
+                    children: [
+                      for (final model in models)
+                        _ModelPickerItem(
+                          model: model,
+                          selected: model.value == selectedValue,
+                          onTap: () => onSelect(model.value),
+                        ),
+                    ],
+                  ),
+                ),
+                if (providers.isNotEmpty) ...[
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: t.chromeBorder.withValues(alpha: 0.12),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < providers.length; i++) ...[
+                          _CustomModelRow(
+                            providerLabel: providers[i].providerLabel,
+                            controller: customControllers[providers[i].providerId]!,
+                            onSubmit: () => onCustomSubmit(providers[i].providerId),
+                          ),
+                          if (i < providers.length - 1) const SizedBox(height: 4),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );

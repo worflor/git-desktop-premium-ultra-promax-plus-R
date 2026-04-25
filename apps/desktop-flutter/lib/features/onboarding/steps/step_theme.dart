@@ -143,13 +143,6 @@ class _ThemeStepPageState extends State<ThemeStepPage> {
           ),
           const SizedBox(height: 10),
           const _ActiveThemeDescription(),
-          const SizedBox(height: 4),
-          // Quiet reassurance across all three steps: nothing here is
-          // final. Pros want to know they can change their mind; noobs
-          // relax when they see it.
-          const _Reassurance(
-            text: 'change any of this later in settings.',
-          ),
           const SizedBox(height: 14),
           OnboardingNavRow(
             onPrimary: _onContinue,
@@ -246,30 +239,6 @@ class _PickerColumnState extends State<_PickerColumn> {
               onTap: () => themeState.setKeybindingProfile(profile),
             ),
         ],
-      ),
-    );
-  }
-}
-
-/// Tiny one-line "you can change this later" message. Same voice and
-/// weight across all three steps.
-class _Reassurance extends StatelessWidget {
-  final String text;
-  const _Reassurance({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Text(
-        text,
-        style: TextStyle(
-          color: t.textFaint,
-          fontSize: 10.5,
-          letterSpacing: 0.1,
-          fontStyle: FontStyle.italic,
-        ),
       ),
     );
   }

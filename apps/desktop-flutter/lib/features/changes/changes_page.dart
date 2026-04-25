@@ -20,6 +20,7 @@ import '../../ui/animated_icons.dart';
 import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
 import '../../ui/dream_hint.dart';
+import '../../ui/form_controls.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/morph_text.dart';
 import '../../ui/status_view.dart';
@@ -2554,26 +2555,18 @@ class _ChangesPageState extends State<ChangesPage> {
             for (final path in likely)
               AppContextMenuItem(
                 icon: Icons.check_box_outline_blank, // fallback; unused
-                leading: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: Checkbox(
-                    value: checkedLikely.contains(path),
-                    // onChanged runs independently of the row's tap
-                    // handler — either surface (clicking the box or
-                    // clicking the row) flips the checkmark. Tapping
-                    // anywhere on the row feels obvious; the checkbox
-                    // just makes the state visually legible.
-                    onChanged: (v) {
-                      if (v == true) {
-                        checkedLikely.add(path);
-                      } else {
-                        checkedLikely.remove(path);
-                      }
-                    },
-                    visualDensity: VisualDensity.compact,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
+                leading: AppCheckbox(
+                  value: checkedLikely.contains(path),
+                  // onChanged fires independently of the row's tap
+                  // handler — either surface (clicking the box or
+                  // clicking the row) flips the checkmark.
+                  onChanged: (v) {
+                    if (v) {
+                      checkedLikely.add(path);
+                    } else {
+                      checkedLikely.remove(path);
+                    }
+                  },
                 ),
                 label: p.basename(path),
                 keepOpen: true,
@@ -10339,28 +10332,17 @@ class _FileRowState extends State<_FileRow> {
                   ),
                   child: Row(
                     children: [
-                      SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: Tooltip(
-                          message: widget.onClusterToggle != null
-                              ? 'double-click: toggle whole group'
-                              : '',
-                          waitDuration: const Duration(milliseconds: 550),
-                          child: GestureDetector(
-                            onDoubleTap: widget.onClusterToggle,
-                            child: Checkbox(
-                              value: widget.included,
-                              onChanged: (value) =>
-                                  widget.onIncludeChanged(value ?? false),
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              visualDensity: VisualDensity.compact,
-                              activeColor: t.accentBright,
-                              checkColor: t.bg0,
-                              side: BorderSide(
-                                  color: t.chromeBorder.withValues(alpha: 0.5)),
-                            ),
+                      Tooltip(
+                        message: widget.onClusterToggle != null
+                            ? 'double-click: toggle whole group'
+                            : '',
+                        waitDuration: const Duration(milliseconds: 550),
+                        child: GestureDetector(
+                          onDoubleTap: widget.onClusterToggle,
+                          child: AppCheckbox(
+                            value: widget.included,
+                            size: 16,
+                            onChanged: widget.onIncludeChanged,
                           ),
                         ),
                       ),
