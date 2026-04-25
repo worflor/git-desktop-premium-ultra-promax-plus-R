@@ -46,7 +46,7 @@ enum AppThemeId {
   barbie,
 }
 
-enum SurfaceMaterialMode { solid, glass }
+enum SurfaceMaterialMode { solid, glass, phosphor }
 
 enum ThemeTexture { none, grain, scanlines, pixels, halftone, iridescent, darkIridescent, gloss }
 
@@ -172,6 +172,83 @@ extension SurfaceMaterialGeometryRadii on SurfaceMaterialGeometry {
   double get tinyRadius => radius * 0.2;
 }
 
+/// Physical material profile for the PBR liquid-glass fragment shader.
+/// Only consumed when [SurfaceMaterialShader.mode] == glass. Every knob
+/// maps to a real optical property:
+///
+///   [ior]         refractive index n. Drives Schlick F0, Cauchy
+///                 dispersion strength, TIR critical angle, and the
+///                 lensmaker focal length that positions the internal
+///                 caustic. Typical values:
+///                   1.46 fused silica   (cold, pure)
+///                   1.52 BK7 crown      (workhorse optical glass)
+///                   1.55 soft flint
+///                   1.62 dense flint    (stronger dispersion)
+///                   1.78 sapphire-ish   (dense, sharp rim)
+///
+///   [roughness]   GGX microfacet α. 0.02..0.08 reads as polished
+///                 optical glass; 1.0 is fully matte. Also modulates
+///                 the micro-grain amplitude.
+///
+///   [absorption]  Beer-Lambert extinction. `.rgb` is per-channel
+///                 coefficient (1/px); `.a` is master strength. Clear
+///                 glass = transparent black. Absorbed channels are
+///                 the ones the glass removes from transmitted light,
+///                 so an `absorption` of red/green gives a blue-ish tint.
+///
+///   [lightColor]  Light-source color. Specular and rim reflect this
+///                 (physical: spec is the light source's color, not
+///                 the material's). Null defers to theme accent.
+class GlassMaterial {
+  final double ior;
+  final double roughness;
+  final Color absorption;
+  final Color? lightColor;
+
+  const GlassMaterial({
+    this.ior = 1.52,
+    this.roughness = 0.05,
+    this.absorption = const Color(0x00000000),
+    this.lightColor,
+  });
+
+  /// Used by solid themes as a no-op placeholder; never reaches the shader.
+  static const GlassMaterial none = GlassMaterial();
+}
+
+/// CRT-phosphor material profile. Only consumed when
+/// [SurfaceMaterialShader.mode] == phosphor. Each knob maps to a real
+/// CRT property:
+///
+///   [tint]           emissive phosphor color (P22 green by default —
+///                    the original IBM/EIA monochrome standard;
+///                    alpha scales the constant glow)
+///   [maskPitch]      pixels per RGB aperture-grille triplet (3 = native
+///                    subpixel, larger reads as coarser shadow mask)
+///   [beamSigma]      horizontal beam Gaussian spread in px
+///                    (0 = pin-sharp, larger blurs along scanlines)
+///   [scanlineDepth]  inter-scanline darkening, 0..1
+///                    (0 = no visible scanlines, 1 = half-dark bands)
+///   [barrelAmount]   faceplate curvature / edge bow
+///                    (0 = flat, 0.12+ reads as fishbowl)
+class PhosphorMaterial {
+  final Color tint;
+  final double maskPitch;
+  final double beamSigma;
+  final double scanlineDepth;
+  final double barrelAmount;
+
+  const PhosphorMaterial({
+    this.tint = const Color(0x5500FF88),
+    this.maskPitch = 3.0,
+    this.beamSigma = 0.55,
+    this.scanlineDepth = 0.18,
+    this.barrelAmount = 0.09,
+  });
+
+  static const PhosphorMaterial none = PhosphorMaterial();
+}
+
 class SurfaceMaterialShader {
   final SurfaceMaterialMode mode;
   final double blurPx;
@@ -196,6 +273,10 @@ class SurfaceMaterialShader {
   /// glyph picks it up without widget-level changes.
   final List<Shadow>? textShadow;
   final SurfaceMaterialGeometry geometry;
+  /// PBR glass parameters. Only consulted when [mode] == glass.
+  final GlassMaterial glassMaterial;
+  /// CRT phosphor parameters. Only consulted when [mode] == phosphor.
+  final PhosphorMaterial phosphorMaterial;
 
   const SurfaceMaterialShader({
     required this.mode,
@@ -214,6 +295,8 @@ class SurfaceMaterialShader {
     this.outlineWidth = 0,
     this.textShadow,
     this.geometry = const SurfaceMaterialGeometry(),
+    this.glassMaterial = GlassMaterial.none,
+    this.phosphorMaterial = PhosphorMaterial.none,
   });
 
   Duration get duration {
@@ -1481,6 +1564,13 @@ const themeDefinitions = <AppThemeDefinition>[
         fontScale: 1.12,
         letterSpacingEm: 0.035,
       ),
+      // Crown glass, pristine polish. Warm-white light leans into the
+      // angelic "halo" identity; every other term stays physical.
+      glassMaterial: GlassMaterial(
+        ior: 1.52,
+        roughness: 0.02,
+        lightColor: Color(0xFFFDECC5),
+      ),
     ),
   ),
   AppThemeDefinition(
@@ -1506,6 +1596,15 @@ const themeDefinitions = <AppThemeDefinition>[
         typography: 'JetBrains Mono',
         fontScale: 0.95,
         letterSpacingEm: -0.01,
+      ),
+      // Sapphire-range IOR for a dense, sharp rim; slightly rougher than
+      // optical glass for a fractured-crystal feel. Cool absorption eats
+      // the warm end so transmitted light is "cold obsidian."
+      glassMaterial: GlassMaterial(
+        ior: 1.78,
+        roughness: 0.06,
+        absorption: Color.fromARGB(255, 2, 3, 4),
+        lightColor: Color(0xFFA0C5E0),
       ),
     ),
   ),
@@ -1533,21 +1632,34 @@ const themeDefinitions = <AppThemeDefinition>[
       'honey tastes sweeter drizzled over expensive emeralds.',
     ),
     SurfaceMaterialShader(
-      mode: SurfaceMaterialMode.solid,
-      blurPx: 0,
-      saturatePct: 100,
-      opacityScale: 1.14,
-      edgeIntensity: 0,
+      // Promoted from solid to glass so the name can stop lying. Surfaces
+      // now transmit the emerald backdrop through an amber-absorbing
+      // medium — the "honey drizzled over emeralds" rendered as real
+      // optics, with embers floating above the golden-green transmission.
+      mode: SurfaceMaterialMode.glass,
+      blurPx: 14,
+      saturatePct: 140,
+      opacityScale: 0.80,
+      edgeIntensity: 0.9,
       texture: ThemeTexture.grain,
       textureOpacity: 0.15,
       motion: ThemeMotion.snappy,
       luminescence: 0.1,
-      // Slow golden embers drifting behind the chrome — matches
-      // "honey over expensive emeralds" without being loud.
       particles: ThemeParticles.embers,
       parallaxStrength: 0.12,
       interaction: ThemeInteraction.caustic,
       textEffect: ThemeTextEffect.emeraldStamp,
+      // Honey/amber: IOR ≈ 1.49 (real honey is 1.48–1.50). Moderate
+      // roughness for viscous softness. Absorption heavy in blue and
+      // moderate in green → red/yellow transmits cleanly; emerald
+      // backdrop arrives as warm golden-green, the exact "honey over
+      // emeralds" the name promises.
+      glassMaterial: GlassMaterial(
+        ior: 1.49,
+        roughness: 0.08,
+        absorption: Color.fromARGB(255, 0, 2, 4),
+        lightColor: Color(0xFFFFD98C),
+      ),
     ),
   ),
   AppThemeDefinition(
@@ -1578,6 +1690,12 @@ const themeDefinitions = <AppThemeDefinition>[
         typography: 'Playfair Display',
         fontScale: 1.08,
         letterSpacingEm: 0.025,
+      ),
+      // BK7 crown glass, polished. Clear — the theme's accent-tinted
+      // light source gives pearl its chromatic personality.
+      glassMaterial: GlassMaterial(
+        ior: 1.52,
+        roughness: 0.05,
       ),
     ),
   ),
@@ -1633,6 +1751,14 @@ const themeDefinitions = <AppThemeDefinition>[
       textEffect: ThemeTextEffect.twinkle,
       parallaxStrength: 0.26,
       interaction: ThemeInteraction.warp,
+      // Fused silica: lower IOR than crown, optically the purest kind of
+      // glass. A whisper of red absorption casts transmitted light cool —
+      // "somewhere between the last star and the first thought."
+      glassMaterial: GlassMaterial(
+        ior: 1.46,
+        roughness: 0.03,
+        absorption: Color.fromARGB(255, 1, 0, 0),
+      ),
     ),
   ),
   AppThemeDefinition(
@@ -1658,6 +1784,13 @@ const themeDefinitions = <AppThemeDefinition>[
       geometry: SurfaceMaterialGeometry(
         letterSpacingEm: 0.02,
       ),
+      // Dense flint glass: higher IOR = stronger Cauchy dispersion, so the
+      // rim throws a visible prismatic fringe — the chromatic pop quanta's
+      // sparkle/quantum-particle identity asks for. Clear body.
+      glassMaterial: GlassMaterial(
+        ior: 1.62,
+        roughness: 0.04,
+      ),
     ),
   ),
   AppThemeDefinition(
@@ -1667,13 +1800,20 @@ const themeDefinitions = <AppThemeDefinition>[
       'something typed here before you. the screen is still warm to the touch.',
     ),
     SurfaceMaterialShader(
-      mode: SurfaceMaterialMode.solid,
+      // Now rendered through the real PBR-CRT fragment shader: aperture
+      // grille + beam Gaussian + scanline darkening + barrel distortion
+      // over the live backdrop. "Still warm to the touch" finally maps
+      // to optics.
+      mode: SurfaceMaterialMode.phosphor,
       blurPx: 0,
-      saturatePct: 100,
+      saturatePct: 120,
       opacityScale: 1,
       edgeIntensity: 0.4,
-      texture: ThemeTexture.scanlines,
-      textureOpacity: 0.22,
+      // Legacy scanlines texture stays off — the shader emits its own,
+      // frequency-locked to the framebuffer grid rather than a noise
+      // overlay.
+      texture: ThemeTexture.none,
+      textureOpacity: 0,
       motion: ThemeMotion.snappy,
       luminescence: 0.7,
       particles: ThemeParticles.none,
@@ -1685,6 +1825,17 @@ const themeDefinitions = <AppThemeDefinition>[
         typography: 'JetBrainsMono',
         fontScale: 0.98,
         letterSpacingEm: 0.01,
+      ),
+      // P22 green (EIA standard phosphor). Mask pitch 3 = native
+      // subpixel granularity. Mild beam spread + scanlines + small
+      // barrel for faceplate curvature. Tuned to read as "old terminal"
+      // not "noisy overlay."
+      phosphorMaterial: PhosphorMaterial(
+        tint: Color(0x4400FFAA),
+        maskPitch: 3.0,
+        beamSigma: 0.55,
+        scanlineDepth: 0.22,
+        barrelAmount: 0.06,
       ),
     ),
   ),
@@ -1717,6 +1868,15 @@ const themeDefinitions = <AppThemeDefinition>[
         radius: 0,
         typography: 'JetBrains Mono',
         letterSpacingEm: 0.01,
+      ),
+      // Soft-flint IOR + slightly rougher surface reads as heat-warped
+      // glass. Heavy green/blue absorption transmits red only — the
+      // spacetime-Doppler metaphor baked into the material.
+      glassMaterial: GlassMaterial(
+        ior: 1.55,
+        roughness: 0.08,
+        absorption: Color.fromARGB(255, 0, 2, 3),
+        lightColor: Color(0xFFE06050),
       ),
     ),
   ),

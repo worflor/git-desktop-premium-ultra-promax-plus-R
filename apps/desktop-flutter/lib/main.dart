@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' as ui show Gradient;
+import 'dart:ui' as ui show Gradient, Image;
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -1803,29 +1805,138 @@ class _Debris {
   }
 }
 
-/// Loverboy app-root cellular background. Subscribes to the
-/// [LiquidGlassProvider] pulse so the shader's time + tilt uniforms
-/// drive repaints in lockstep with the rest of the theme's parallax.
-class _LoveboyBackground extends StatelessWidget {
+/// Loverboy app-root cellular background, now a real Conway's Game of
+/// Life. Each frame captures its own rendered output via the
+/// [RepaintBoundary] and feeds it back to the shader as `uPrevious` —
+/// that's the temporal-feedback channel the CA needs to see last
+/// generation's state. First frame's sampler is a blank placeholder;
+/// the shader's early-seed branch populates the initial generation via
+/// hash, and an ambient spontaneous-birth term prevents heat death.
+class _LoveboyBackground extends StatefulWidget {
   const _LoveboyBackground();
+
+  @override
+  State<_LoveboyBackground> createState() => _LoveboyBackgroundState();
+}
+
+class _LoveboyBackgroundState extends State<_LoveboyBackground> {
+  final GlobalKey _boundaryKey = GlobalKey();
+  ui.Image? _previous;
+  bool _captureScheduled = false;
+  // Snapshot time, on the SAME clock as the shader's uTime (our own
+  // stopwatch seconds). Initialised in the past so the first frame
+  // renders at genProgress = 1 (sentinel: seed fires).
+  double _lastCaptureSeconds = -10.0;
+
+  // Dedicated always-on clock. The global `LiquidGlassPulse` stops
+  // firing when the window loses focus (WindowActivity/TickerMode both
+  // gate it) — that's by design for glass-theme idle-CPU savings, but
+  // it would leave Loverboy's background frozen the moment the user
+  // stops moving the window. A plain `Timer.periodic` + `Stopwatch`
+  // bypasses the TickerMode gate entirely so the CA keeps breathing
+  // regardless. Modest idle cost (one timer, 30Hz) accepted.
+  Timer? _timer;
+  final Stopwatch _stopwatch = Stopwatch();
+  final ValueNotifier<double> _time = ValueNotifier<double>(0.0);
+
+  // Conway generation rate: 3Hz (one capture every ~333ms). The shader
+  // crossfades from captured to newly-computed state across this
+  // interval so transitions are continuous — no strobe between gens.
+  // Keep in sync with `GEN_INTERVAL` in loverboy_bg.frag.
+  static const double _captureIntervalSeconds = 0.333;
+
+  void _scheduleCapture(double currentPulseTime) {
+    if (_captureScheduled) return;
+    _captureScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _captureScheduled = false;
+      if (!mounted) return;
+      if (currentPulseTime - _lastCaptureSeconds < _captureIntervalSeconds) {
+        return;
+      }
+      final boundary =
+          _boundaryKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null || boundary.debugNeedsPaint) return;
+      try {
+        // Snapshot at device pixel ratio so the sampled image matches
+        // the shader's fragment resolution. toImageSync keeps the
+        // backing texture on the GPU — no CPU readback.
+        final dpr = View.maybeOf(context)?.devicePixelRatio ?? 1.0;
+        final next = boundary.toImageSync(pixelRatio: dpr);
+        final old = _previous;
+        _previous = next;
+        _lastCaptureSeconds = currentPulseTime;
+        old?.dispose();
+      } catch (_) {
+        // Snapshot races with layout during window resize etc.; just
+        // skip and try next frame.
+      }
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _stopwatch.start();
+    // 60Hz — matches display refresh. Finer resolution during the
+    // 333ms crossfade gives ~20 alpha steps per gen (vs ~10 at 30Hz),
+    // which reads as a smooth fade instead of visibly-stepped
+    // blinking on cells in transition.
+    _timer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      if (!mounted) return;
+      _time.value = _stopwatch.elapsedMicroseconds / 1e6;
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _stopwatch.stop();
+    _time.dispose();
+    _previous?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final pulse = LiquidGlassProvider.of(context);
     return RepaintBoundary(
-      child: ValueListenableBuilder<LiquidGlassPulse>(
-        valueListenable: pulse,
-        builder: (_, value, __) => CustomPaint(
-          painter: _LoveboyBgPainter(pulse: value),
-        ),
+      key: _boundaryKey,
+      child: ValueListenableBuilder<double>(
+        valueListenable: _time,
+        builder: (_, time, __) {
+          // Tilt still comes from the shared glass pulse — even if the
+          // pulse ticker has paused, `pulse.value` holds the last-known
+          // tilt, which is fine because tilt only matters when the
+          // window is being moved (which wakes the pulse anyway).
+          final tilt = pulse.value.tilt;
+          // After this build's paint, snapshot for the next CA step.
+          _scheduleCapture(time);
+          return CustomPaint(
+            painter: _LoveboyBgPainter(
+              time: time,
+              tilt: tilt,
+              previous: _previous,
+              snapshotTime: _lastCaptureSeconds,
+            ),
+          );
+        },
       ),
     );
   }
 }
 
 class _LoveboyBgPainter extends CustomPainter {
-  final LiquidGlassPulse pulse;
-  const _LoveboyBgPainter({required this.pulse});
+  final double time;
+  final Offset tilt;
+  final ui.Image? previous;
+  final double snapshotTime;
+  const _LoveboyBgPainter({
+    required this.time,
+    required this.tilt,
+    required this.snapshotTime,
+    this.previous,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1833,9 +1944,11 @@ class _LoveboyBgPainter extends CustomPainter {
       width: size.width,
       height: size.height,
       intensity: 1.0,
-      time: pulse.time,
-      tiltX: pulse.tilt.dx,
-      tiltY: pulse.tilt.dy,
+      time: time,
+      tiltX: tilt.dx,
+      tiltY: tilt.dy,
+      snapshotTime: snapshotTime,
+      previous: previous,
     );
     if (fragShader == null) return;
     canvas.drawRect(
@@ -1848,5 +1961,8 @@ class _LoveboyBgPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_LoveboyBgPainter old) =>
-      old.pulse.time != pulse.time || old.pulse.tilt != pulse.tilt;
+      old.time != time ||
+      old.tilt != tilt ||
+      old.snapshotTime != snapshotTime ||
+      !identical(old.previous, previous);
 }

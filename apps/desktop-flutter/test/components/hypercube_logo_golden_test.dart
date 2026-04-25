@@ -129,7 +129,12 @@ void main() {
           dragging: engine.dragging,
           colors: HypercubeLogoColors.fromTokens(tokens),
         );
-        final signature = await _renderSignature(painter, 72);
+        // toImage / toByteData require real frame scheduling, which the
+        // testWidgets fake clock won't provide — without runAsync the
+        // futures never complete and the test hangs to its 10-min cap.
+        final signature = (await tester.runAsync(
+          () => _renderSignature(painter, 72),
+        ))!;
         expect(
           signature,
           isPositive,

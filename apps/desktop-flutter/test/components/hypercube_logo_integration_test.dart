@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/app/hyper_reactivity.dart';
+import 'package:git_desktop/app/preferences_state.dart';
 import 'package:git_desktop/components/hypercube_logo.dart';
 import 'package:git_desktop/ui/theme.dart';
 import 'package:git_desktop/ui/tokens.dart';
@@ -12,8 +13,13 @@ void main() {
     const probeKey = Key('hyper-reactive-probe');
 
     await tester.pumpWidget(
-      ChangeNotifierProvider(
-        create: (_) => HyperReactivity(),
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => HyperReactivity()),
+          // HypercubeLogo reads PreferencesState in didChangeDependencies
+          // for its motion/unfocused-animation gates.
+          ChangeNotifierProvider(create: (_) => PreferencesState()),
+        ],
         child: MaterialApp(
           theme: buildTheme(AppTokens.fromId(defaultThemeId)),
           home: Scaffold(
@@ -54,12 +60,14 @@ void main() {
     final transform = tester.widget<Transform>(transformFinder.first);
     expect(transform.transform.storage[0], greaterThan(1.0));
 
-    final animatedFinder = find.descendant(
+    // HyperReactive renders a plain Container (not AnimatedContainer) —
+    // its foregroundDecoration is the glow/border driven by hyper state.
+    final containerFinder = find.descendant(
       of: find.byKey(probeKey),
-      matching: find.byType(AnimatedContainer),
+      matching: find.byType(Container),
     );
-    final animated = tester.widget<AnimatedContainer>(animatedFinder.first);
-    final decoration = animated.foregroundDecoration as BoxDecoration?;
+    final container = tester.widget<Container>(containerFinder.first);
+    final decoration = container.foregroundDecoration as BoxDecoration?;
     expect(decoration, isNotNull);
     expect(decoration!.border, isNotNull);
 

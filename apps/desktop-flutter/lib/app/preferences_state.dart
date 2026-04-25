@@ -5,6 +5,7 @@ import '../backend/file_coupling.dart';
 import '../backend/settings_store.dart';
 import '../backend/undo_controller.dart';
 import '../diagnostics/diagnostics_state.dart';
+import 'build_info.dart';
 
 /// Single source of truth for the "motion is effectively off" threshold.
 ///
@@ -27,7 +28,8 @@ class PreferencesState extends ChangeNotifier {
   ];
 
   double _guardrailValue = 0.5;
-  String _updateChannel = 'stable';
+  String _updateChannel = BuildInfo.channel.id;
+  bool _updateChannelExplicit = false;
   bool _crashReportingEnabled = false;
   bool _aiReadOnlyDefault = true;
   bool _logoAnimatesWhenUnfocused = true;
@@ -102,7 +104,15 @@ class PreferencesState extends ChangeNotifier {
 
     final settings = await SettingsStore.load();
     _guardrailValue = _normalizeGuardrailValue(settings.guardrailValue);
-    _updateChannel = _normalizeUpdateChannel(settings.updateChannel);
+    // If the user has never tapped the ribbon, the persisted channel is
+    // an auto-default — possibly from before this binary's build channel
+    // even existed. Defer to BuildInfo so a fresh dev/beta/stable binary
+    // self-selects the matching feed instead of inheriting a stale
+    // 'stable' from a legacy install.
+    _updateChannelExplicit = settings.updateChannelExplicit;
+    _updateChannel = _updateChannelExplicit
+        ? BuildInfo.normalizeChannelId(settings.updateChannel)
+        : BuildInfo.channel.id;
     _crashReportingEnabled = settings.crashReportingEnabled;
     _aiReadOnlyDefault = settings.aiReadOnlyDefault;
     _logoAnimatesWhenUnfocused = settings.logoAnimatesWhenUnfocused;
@@ -135,6 +145,7 @@ class PreferencesState extends ChangeNotifier {
     bool? aiReadOnlyDefault,
     bool? logoAnimatesWhenUnfocused,
     String? updateChannel,
+    bool? updateChannelExplicit,
     bool? crashReportingEnabled,
     bool? reduceMotion,
     double? motionRate,
@@ -162,6 +173,7 @@ class PreferencesState extends ChangeNotifier {
         aiReadOnlyDefault: aiReadOnlyDefault,
         logoAnimatesWhenUnfocused: logoAnimatesWhenUnfocused,
         updateChannel: updateChannel,
+        updateChannelExplicit: updateChannelExplicit,
         crashReportingEnabled: crashReportingEnabled,
         reduceMotion: reduceMotion,
         motionRate: motionRate,
@@ -445,8 +457,13 @@ class PreferencesState extends ChangeNotifier {
   }
 
   Future<void> setUpdateChannel(String value) async {
-    final normalized = _normalizeUpdateChannel(value);
-    if (_updateChannel == normalized) {
+    final normalized = BuildInfo.normalizeChannelId(value);
+    final valueChanged = _updateChannel != normalized;
+    // Even a no-op tap (clicking the already-active channel) is a real
+    // signal of intent — it pins the value as explicit so a future
+    // build-channel change won't auto-override it. Skip the disk write
+    // only when nothing on disk would change.
+    if (!valueChanged && _updateChannelExplicit) {
       return;
     }
 
@@ -457,8 +474,12 @@ class PreferencesState extends ChangeNotifier {
     );
     try {
       _updateChannel = normalized;
-      await _persistWith(updateChannel: _updateChannel);
-      notifyListeners();
+      _updateChannelExplicit = true;
+      await _persistWith(
+        updateChannel: _updateChannel,
+        updateChannelExplicit: true,
+      );
+      if (valueChanged) notifyListeners();
       stopwatch.stop();
       DiagnosticsState.instance.recordCommandLifecycleEvent(
         type: 'success',
@@ -572,7 +593,4 @@ class PreferencesState extends ChangeNotifier {
     return value.clamp(0.0, 1.0);
   }
 
-  String _normalizeUpdateChannel(String value) {
-    return value.trim().toLowerCase() == 'beta' ? 'beta' : 'stable';
-  }
 }

@@ -25,8 +25,8 @@ class AiSettingsSnapshot {
   factory AiSettingsSnapshot.defaults() => const AiSettingsSnapshot(
         modelSelections: {},
         modelCategoryLabels: {
-          'quality': 'Quality model',
-          'fast': 'Fast model',
+          'quality': 'Quality',
+          'fast': 'Fast',
         },
         commitMessageModelCategoryId: 'quality',
         reviewCommitModelCategoryId: 'quality',

@@ -19,8 +19,8 @@ class AiSettingsState extends ChangeNotifier {
   List<AiModelCategoryData> _runtimeModelCategoriesView =
       const <AiModelCategoryData>[];
   Map<String, String> _modelCategoryLabels = {
-    'quality': 'Quality model',
-    'fast': 'Fast model',
+    'quality': 'Quality',
+    'fast': 'Fast',
   };
   String _commitMessageModelCategoryId = 'quality';
   String _commitMessagePrompt = '';
@@ -84,8 +84,8 @@ class AiSettingsState extends ChangeNotifier {
     final snapshot = await snapshotFuture;
     _modelSelections = Map<String, String>.from(snapshot.modelSelections);
     _modelCategoryLabels = {
-      'quality': 'Quality model',
-      'fast': 'Fast model',
+      'quality': 'Quality',
+      'fast': 'Fast',
       ...snapshot.modelCategoryLabels,
     };
     _rebuildModelViews();

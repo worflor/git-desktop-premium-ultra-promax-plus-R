@@ -21,6 +21,8 @@ class ThemeShaders {
   static Future<FragmentProgram>? _glassFuture;
   static FragmentProgram? _plastic;
   static Future<FragmentProgram>? _plasticFuture;
+  static FragmentProgram? _phosphor;
+  static Future<FragmentProgram>? _phosphorFuture;
 
   /// Kicks off loading the kirby fragment program if it hasn't
   /// been loaded yet. Safe to call repeatedly — only the first call
@@ -175,8 +177,20 @@ class ThemeShaders {
     return s;
   }
 
-  /// Loverboy background: GoL-inspired fractal cellular field.
-  /// Uniforms: 0..1 uSize, 2 uIntensity, 3 uTime, 4..5 uTilt
+  /// Loverboy background: real Conway's Game of Life. Shader samples
+  /// the previous frame (bound via [setImageSampler]) to count neighbors
+  /// and applies B3/S23 rules per-cell. First frame receives a blank
+  /// placeholder image; the shader's early-seed branch populates the
+  /// initial generation via hash.
+  ///
+  /// Uniforms (declaration order):
+  ///   0..1  uSize          (vec2)
+  ///   2     uIntensity
+  ///   3     uTime
+  ///   4..5  uTilt          (vec2)
+  ///   6     uSnapshotTime  (seconds, when last snapshot was captured)
+  /// Samplers:
+  ///   0     uPrevious      (sampler2D) — previous-frame snapshot
   static FragmentProgram? loveboyBg() {
     if (_loveboyBg != null) return _loveboyBg;
     _loveboyBgFuture ??=
@@ -187,6 +201,21 @@ class ThemeShaders {
     return null;
   }
 
+  /// 1×1 transparent image, cached. Used as a fallback when a shader
+  /// requires a sampler2D uniform but no upstream image is available
+  /// yet (first frame of a feedback loop).
+  static ui.Image? _blankSamplerImage;
+  static ui.Image _blankSampler() {
+    if (_blankSamplerImage != null) return _blankSamplerImage!;
+    final recorder = ui.PictureRecorder();
+    ui.Canvas(recorder).drawColor(
+      const ui.Color(0x00000000),
+      ui.BlendMode.src,
+    );
+    _blankSamplerImage = recorder.endRecording().toImageSync(1, 1);
+    return _blankSamplerImage!;
+  }
+
   static ui.FragmentShader? loveboyBgShader({
     required double width,
     required double height,
@@ -194,6 +223,8 @@ class ThemeShaders {
     double time = 0,
     double tiltX = 0,
     double tiltY = 0,
+    double snapshotTime = -10.0,
+    ui.Image? previous,
   }) {
     final program = loveboyBg();
     if (program == null) return null;
@@ -204,13 +235,16 @@ class ThemeShaders {
       ..setFloat(2, intensity)
       ..setFloat(3, time)
       ..setFloat(4, tiltX)
-      ..setFloat(5, tiltY);
+      ..setFloat(5, tiltY)
+      ..setFloat(6, snapshotTime)
+      ..setImageSampler(0, previous ?? _blankSampler());
     return s;
   }
 
-  /// Real-time glass program: fresnel rim + specular streak +
-  /// chromatic edge fringe. Used by Nacre per-surface; existing
-  /// cosmic-glass themes keep the legacy `_SurfaceGlazePainter`.
+  /// PBR liquid-glass program used as an `ImageFilter.shader` on
+  /// `BackdropFilter`. Impeller auto-binds the live backdrop to the first
+  /// sampler and the surface size into the first `vec2` uniform. Every
+  /// glass theme routes through this; no per-theme specialization needed.
   static FragmentProgram? glass() {
     if (_glass != null) return _glass;
     _glassFuture ??= FragmentProgram.fromAsset('shaders/glass.frag').then((p) {
@@ -220,78 +254,72 @@ class ThemeShaders {
     return null;
   }
 
-  /// Build a configured liquid-glass `FragmentShader`. Uniform order
-  /// matches the `.frag` declaration sequence:
+  /// Build a configured liquid-glass `FragmentShader`. The shader is a
+  /// forward-synthesis model (no backdrop sampling); appearance derives
+  /// from three real physical parameters plus the environment.
+  ///
+  /// Physical material:
+  ///   [ior]         — refractive index n. Drives Schlick F0, Cauchy
+  ///                   dispersion, TIR critical angle, focal length.
+  ///                   Defaults to 1.52 (BK7 crown glass).
+  ///   [roughness]   — GGX microfacet α. 0.02..0.1 reads as polished
+  ///                   optical glass; 1.0 is fully matte. Defaults to 0.05.
+  ///   [absorption]  — Beer-Lambert extinction. `.rgb` is the per-channel
+  ///                   coefficient (1/px); `.a` is master strength. Pass
+  ///                   transparent black for perfectly clear glass.
+  ///
+  /// Uniform order matches the `.frag` declaration:
   ///   0..1   uSize          (vec2)
-  ///   2..5   uTint          (vec4 rgba)
-  ///   6..9   uHighlight     (vec4 rgba) — primary warm rim/spec color
-  ///  10..13  uHighlightCool (vec4 rgba) — dichroic cool wash
-  ///  14..15  uLightDir      (vec2)
-  ///  16..17  uTilt          (vec2) — window-delta tilt, [-1..1]
-  ///  18      uTime          (seconds, monotonic)
-  ///  19      uIntensity     (master strength)
-  ///  20      uFresnelPx     (rim falloff distance)
-  ///  21      uChromatic     (chromatic offset px)
-  ///  22      uSpecSharp     (spec exponent — higher = crispier)
-  ///  23      uSpecCore      (hot-core exponent multiplier)
-  ///  24      uThickness     (center darken amount)
-  ///  25      uCornerRadius  (rim SDF corner radius — gloopy meniscus)
-  ///  26      uNoise         (rim micro-grain)
-  ///  27      uAnim          (multiplier on time + tilt motion)
+  ///   2..5   uAbsorption    (vec4: rgb = 1/px extinction, a = strength)
+  ///   6..9   uLightColor    (vec4 rgba) — light-source color (spec/rim)
+  ///  10..11  uLightDir      (vec2) — direction TO the light
+  ///  12..13  uTilt          (vec2) — window-delta tilt, [-1..1]
+  ///  14      uTime          (seconds, monotonic)
+  ///  15      uIntensity     (master output mix)
+  ///  16      uCornerRadius  (SDF footprint radius, px)
+  ///  17      uIOR           (refractive index n)
+  ///  18      uRoughness     (GGX α)
+  ///  19      uAnim          (motion master, 0..1)
   static ui.FragmentShader? glassShader({
     required double width,
     required double height,
-    required ui.Color tint,
-    required ui.Color highlight,
-    ui.Color? highlightCool,
+    required ui.Color absorption,
+    required ui.Color lightColor,
     double lightDirX = -0.7,
     double lightDirY = -0.7,
     double tiltX = 0,
     double tiltY = 0,
     double time = 0,
     double intensity = 1,
-    double fresnelPx = 22,
-    double chromatic = 1.4,
-    double specSharp = 8,
-    double specCore = 3.5,
-    double thickness = 0.6,
     double cornerRadius = 14,
-    double noise = 0.6,
+    double ior = 1.52,
+    double roughness = 0.05,
     double anim = 1,
   }) {
     final program = glass();
     if (program == null) return null;
-    final cool = highlightCool ?? highlight;
     final s = program.fragmentShader();
     s
       ..setFloat(0, width)
       ..setFloat(1, height)
-      ..setFloat(2, tint.r)
-      ..setFloat(3, tint.g)
-      ..setFloat(4, tint.b)
-      ..setFloat(5, tint.a)
-      ..setFloat(6, highlight.r)
-      ..setFloat(7, highlight.g)
-      ..setFloat(8, highlight.b)
-      ..setFloat(9, highlight.a)
-      ..setFloat(10, cool.r)
-      ..setFloat(11, cool.g)
-      ..setFloat(12, cool.b)
-      ..setFloat(13, cool.a)
-      ..setFloat(14, lightDirX)
-      ..setFloat(15, lightDirY)
-      ..setFloat(16, tiltX)
-      ..setFloat(17, tiltY)
-      ..setFloat(18, time)
-      ..setFloat(19, intensity)
-      ..setFloat(20, fresnelPx)
-      ..setFloat(21, chromatic)
-      ..setFloat(22, specSharp)
-      ..setFloat(23, specCore)
-      ..setFloat(24, thickness)
-      ..setFloat(25, cornerRadius)
-      ..setFloat(26, noise)
-      ..setFloat(27, anim);
+      ..setFloat(2, absorption.r)
+      ..setFloat(3, absorption.g)
+      ..setFloat(4, absorption.b)
+      ..setFloat(5, absorption.a)
+      ..setFloat(6, lightColor.r)
+      ..setFloat(7, lightColor.g)
+      ..setFloat(8, lightColor.b)
+      ..setFloat(9, lightColor.a)
+      ..setFloat(10, lightDirX)
+      ..setFloat(11, lightDirY)
+      ..setFloat(12, tiltX)
+      ..setFloat(13, tiltY)
+      ..setFloat(14, time)
+      ..setFloat(15, intensity)
+      ..setFloat(16, cornerRadius)
+      ..setFloat(17, ior)
+      ..setFloat(18, roughness)
+      ..setFloat(19, anim);
     return s;
   }
 
@@ -354,6 +382,61 @@ class ThemeShaders {
       ..setFloat(16, tiltY)
       ..setFloat(17, time)
       ..setFloat(18, edgePx);
+    return s;
+  }
+
+  /// CRT phosphor program used as an `ImageFilter.shader` on
+  /// `BackdropFilter`. Impeller auto-binds the live backdrop so the
+  /// whole scene gets barrel-warped, beam-spread, aperture-gridded, and
+  /// scanline-darkened in one pass.
+  static FragmentProgram? phosphor() {
+    if (_phosphor != null) return _phosphor;
+    _phosphorFuture ??=
+        FragmentProgram.fromAsset('shaders/phosphor.frag').then((p) {
+      _phosphor = p;
+      return p;
+    });
+    return null;
+  }
+
+  /// Uniform layout (declaration order):
+  ///   0..1   uSize          (vec2) — auto-set by ImageFilter.shader
+  ///   2      uIntensity
+  ///   3      uTime
+  ///   4..7   uPhosphorTint  (vec4 rgba)
+  ///   8      uMaskPitch     (px per RGB triplet)
+  ///   9      uBeamSigma     (horizontal Gaussian spread, px)
+  ///  10      uScanlineDepth (0..1)
+  ///  11      uBarrelAmount  (0..0.2 — faceplate curvature)
+  /// Samplers:
+  ///   0      uBackdrop      — auto-bound live scene
+  static ui.FragmentShader? phosphorShader({
+    required double width,
+    required double height,
+    double intensity = 1.0,
+    double time = 0,
+    ui.Color tint = const ui.Color(0x5500FF88), // P22 green default
+    double maskPitch = 3.0,
+    double beamSigma = 0.55,
+    double scanlineDepth = 0.18,
+    double barrelAmount = 0.09,
+  }) {
+    final program = phosphor();
+    if (program == null) return null;
+    final s = program.fragmentShader();
+    s
+      ..setFloat(0, width)
+      ..setFloat(1, height)
+      ..setFloat(2, intensity)
+      ..setFloat(3, time)
+      ..setFloat(4, tint.r)
+      ..setFloat(5, tint.g)
+      ..setFloat(6, tint.b)
+      ..setFloat(7, tint.a)
+      ..setFloat(8, maskPitch)
+      ..setFloat(9, beamSigma)
+      ..setFloat(10, scanlineDepth)
+      ..setFloat(11, barrelAmount);
     return s;
   }
 }

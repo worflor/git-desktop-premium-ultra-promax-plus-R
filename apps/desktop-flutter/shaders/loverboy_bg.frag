@@ -1,6 +1,25 @@
-// Loverboy background. Game-of-Life-ish cellular grid with a parallax
-// lighting trick on each cell's edges and a set of dead cells that
-// shift as you drag the window.
+// Loverboy background — Conway's Game of Life, crossfaded.
+//
+// Binary B3/S23 rules (Conway 1970), sampled from the previous frame
+// via `uPrevious`. Generations advance at 3Hz (333ms/gen) — slow
+// enough to read as ambient, fast enough to feel alive. Between
+// generations the shader CROSSFADES from the captured snapshot to
+// the newly-computed state using `genProgress ∈ [0, 1]`, so the
+// visual transitions are continuous without the hard pop of a naive
+// redraw-on-tick renderer.
+//
+// Logos-y touches:
+//   • Slow sine drift of the ambient spontaneous-birth rate so the
+//     board has "seasons" — periods of dense perturbation interleaved
+//     with quieter stretches (history-aware rhythm).
+//   • Pixel-accurate crossfade: each pixel fades from its previous-
+//     snapshot value to its new-render value, preserving the tile
+//     geometry through the transition.
+//   • The usual tiled visual language: adaptive cells, inner glow,
+//     rim/ink lighting rotating with tilt, pink/violet tint, grid
+//     lines, and the regional blacked-out cascade.
+//
+// Rules: B3/S23. Gardner, "Mathematical Games" (Sci. Am., Oct 1970).
 
 #version 460 core
 #include <flutter/runtime_effect.glsl>
@@ -10,7 +29,17 @@ uniform float uIntensity;
 uniform float uTime;
 uniform vec2  uTilt;
 
+// Seconds since the last snapshot was captured (same clock as uTime).
+// Drives the crossfade interpolation across the generation interval.
+// Negative means "no snapshot yet" — triggers initial seeding.
+uniform float uSnapshotTime;
+
+uniform sampler2D uPrevious;
+
 out vec4 fragColor;
+
+const float ALIVE_THRESH = 0.30;
+const float GEN_INTERVAL = 0.333;  // 3Hz — keep in sync with Dart throttle
 
 float h21(vec2 p) {
     p = fract(p * vec2(127.1, 311.7));
@@ -18,38 +47,74 @@ float h21(vec2 p) {
 }
 
 void main() {
-    vec2 fc = FlutterFragCoord() + uTilt * 6.0;
-    vec2 uv = fc / uSize;
-
+    vec2 fc       = FlutterFragCoord() + uTilt * 6.0;
     float cellPx  = clamp(min(uSize.x, uSize.y) / 22.0, 10.0, 38.0);
     float invCell = 1.0 / cellPx;
 
-    // fract(gridF) reuses the floor above as gridF - g.
     vec2 gridF = fc * invCell;
     vec2 g     = floor(gridF);
     vec2 lcl   = gridF - g;
 
-    float tStep = floor(uTime * 0.5555556);
+    vec2 cellCenterUV = (g + 0.5) * cellPx / uSize;
+    vec2 cellStepUV   = vec2(cellPx) / uSize;
 
-    // Regional + local hash gate. The regional hash is 3x coarser, so
-    // alive cells cluster in blobs instead of salt-and-pepper noise.
-    float regional = h21(floor(g * 0.333333) + tStep * vec2(7.13, 3.97));
-    float local    = h21(g                   + tStep * vec2(13.71, 7.31));
-    float alive    = step(0.45, regional) * step(0.55, local);
+    // ---- Conway step from previous snapshot. ----
+    vec4  prevSelf = texture(uPrevious, cellCenterUV);
+    float self     = step(ALIVE_THRESH, prevSelf.a);
 
-    vec2 inside = step(vec2(0.08), lcl) * step(lcl, vec2(0.92));
-    float inner = inside.x * inside.y;
+    float n = 0.0;
+    n += step(ALIVE_THRESH, texture(uPrevious, cellCenterUV + vec2(-cellStepUV.x, -cellStepUV.y)).a);
+    n += step(ALIVE_THRESH, texture(uPrevious, cellCenterUV + vec2( 0.0,          -cellStepUV.y)).a);
+    n += step(ALIVE_THRESH, texture(uPrevious, cellCenterUV + vec2( cellStepUV.x, -cellStepUV.y)).a);
+    n += step(ALIVE_THRESH, texture(uPrevious, cellCenterUV + vec2(-cellStepUV.x,  0.0)).a);
+    n += step(ALIVE_THRESH, texture(uPrevious, cellCenterUV + vec2( cellStepUV.x,  0.0)).a);
+    n += step(ALIVE_THRESH, texture(uPrevious, cellCenterUV + vec2(-cellStepUV.x,  cellStepUV.y)).a);
+    n += step(ALIVE_THRESH, texture(uPrevious, cellCenterUV + vec2( 0.0,           cellStepUV.y)).a);
+    n += step(ALIVE_THRESH, texture(uPrevious, cellCenterUV + vec2( cellStepUV.x,  cellStepUV.y)).a);
 
-    // Polynomial approximation of exp(-|d|²·k), squared falloff.
+    float survive = step(1.5, n) * (1.0 - step(3.5, n));  // 2 ≤ n ≤ 3
+    float birth   = step(2.5, n) * (1.0 - step(3.5, n));  // n == 3
+    float alive   = mix(birth, survive, self);
+
+    // First-gen seeding only (sentinel uSnapshotTime < 0).
+    float firstGen = 1.0 - step(0.0, uSnapshotTime);
+    float seedHash = h21(g * 1.37 + 7.1);
+    float seeded   = step(0.60, seedHash) * firstGen;
+    alive = max(alive, seeded);
+
+    // Ambient spontaneous birth as 2×2 BLOCKS, not single cells.
+    // A 2×2 block is Conway's smallest still-life — each cell has
+    // exactly 3 neighbours (the other 3 in the block) so B3/S23
+    // keeps it alive indefinitely. Single-cell births, by contrast,
+    // have 0 neighbours and die in one gen — producing exactly the
+    // flashing-in-and-out we want to eliminate.
+    //
+    // Implementation: hash each coarse 2×2 region (g / 2). When that
+    // block "fires", every cell in that region is set alive — the
+    // four cells form a stable block that persists until another
+    // pattern collides with it.
+    //
+    // Rate modulated by a slow sine so perturbation density breathes
+    // over ~78s cycles — Logos-flavoured rhythm.
+    float genClock     = floor(uTime / GEN_INTERVAL);
+    float seasonPhase  = sin(uTime * 0.08) * 0.004;  // ±0.4% drift
+    float blockThresh  = 0.994 - seasonPhase;
+    vec2  coarse       = floor(g * 0.5);
+    float blockSeed    = h21(coarse + vec2(genClock * 0.31, genClock * 0.59));
+    float blockFires   = step(blockThresh, blockSeed);
+    alive = max(alive, blockFires * (1.0 - self));
+
+    // ---- Tiled visual language. ----
+    vec2  inside = step(vec2(0.08), lcl) * step(lcl, vec2(0.92));
+    float inner  = inside.x * inside.y;
+
     vec2  d    = lcl - 0.5;
     float t    = max(0.0, 1.0 - dot(d, d) * 5.0);
     float glow = t * t * 0.55;
 
     float combined = alive * (inner * 0.85 + glow);
 
-    // Light direction. Base is top-left; tilt rotates it. Each edge
-    // tests step(L.y, 0) / step(L.x, 0) to decide rim vs ink.
-    vec2 L = normalize(uTilt * 1.5 + vec2(-0.7, -0.7));
+    vec2  L         = normalize(uTilt * 1.5 + vec2(-0.7, -0.7));
     float litTop    = step(L.y, 0.0);
     float litLeft   = step(L.x, 0.0);
     float litBottom = 1.0 - litTop;
@@ -66,14 +131,11 @@ void main() {
     float eBottomI = step(0.92 - INK_T, lcl.y) * inner;
     float eRightI  = step(0.92 - INK_T, lcl.x) * inner;
 
-    float rim = max(max(eTopR * litTop,    eLeftR * litLeft),
-                    max(eBottomR * litBottom, eRightR * litRight));
-    float ink = max(max(eTopI * (1.0 - litTop),    eLeftI * (1.0 - litLeft)),
-                    max(eBottomI * (1.0 - litBottom), eRightI * (1.0 - litRight)));
+    float rim = max(max(eTopR    * litTop,    eLeftR    * litLeft),
+                    max(eBottomR * litBottom, eRightR   * litRight));
+    float ink = max(max(eTopI    * (1.0 - litTop),    eLeftI    * (1.0 - litLeft)),
+                    max(eBottomI * (1.0 - litBottom), eRightI   * (1.0 - litRight)));
 
-    // Cell-centre sampled tint so every pixel in a cell gets the same
-    // colour, no gradient across the square.
-    vec2  cellCenterUV = (g + 0.5) * cellPx / uSize;
     vec3  pink    = vec3(1.000, 0.431, 0.706);
     vec3  violet  = vec3(0.714, 0.384, 0.902);
     float tint    = fract(cellCenterUV.x * 0.5 + cellCenterUV.y * 0.2 + uTime * 0.03);
@@ -84,20 +146,14 @@ void main() {
 
     float gLine = step(0.96, max(lcl.x, lcl.y)) * 0.10;
 
-    vec3  base = cellCol * combined;
-    float rimA = alive * rim * 0.85;
-    float inkA = alive * ink * 0.92;
-    vec3  col  = mix(base, rimCol, rimA);
-    col        = mix(col,  inkCol, inkA);
-    col       += vec3(gLine * 0.7, gLine * 0.05, gLine * 0.4);
+    vec3 newCol = cellCol * combined;
+    newCol = mix(newCol, rimCol, alive * rim * 0.85);
+    newCol = mix(newCol, inkCol, alive * ink * 0.92);
+    newCol += vec3(gLine * 0.7, gLine * 0.05, gLine * 0.4);
 
-    float alpha = clamp(combined + gLine, 0.0, 1.0) * uIntensity;
+    float newAlpha = clamp(combined + gLine, 0.0, 1.0);
 
-    // Dead cells. Each cell has a tilt threshold (hash of its position);
-    // a per-region flow direction projects the tilt onto a signal; dead
-    // when signal > threshold. Regional hash dominates so dead cells
-    // cluster, and each region has its own flow direction so the cascade
-    // snakes rather than sweeping uniformly.
+    // ---- Blacked-out cascade (visual overlay; alpha preserved). ----
     vec2  clusterG      = floor(g * 0.25);
     float regionalPhase = h21(clusterG + vec2(31.7, 47.3));
     float localPhase    = h21(g        + vec2(71.3, 89.1));
@@ -106,15 +162,44 @@ void main() {
     float regionAngle = h21(clusterG + vec2(11.1, 13.7)) * 6.2831853;
     vec2  flowDir     = vec2(cos(regionAngle), sin(regionAngle));
 
-    // Signal sampled at cell centre so step() flips the whole square,
-    // never mid-cell.
     float tiltSignal = dot(uTilt * 1.8, flowDir)
                      + dot(cellCenterUV - 0.5, flowDir) * 1.2;
+    float blackedOut = step(cellThresh, tiltSignal) * inner * alive;
 
-    float dead = step(cellThresh, tiltSignal) * inner;
+    newCol   = mix(newCol,   vec3(0.0), blackedOut);
+    newAlpha = mix(newAlpha, 1.0,       blackedOut);
 
-    col   = mix(col,   vec3(0.0), dead);
-    alpha = mix(alpha, uIntensity, dead);
+    // ---- Pixel-accurate crossfade to new state. ----
+    // Sample the previous snapshot at THIS pixel's UV. Previous snapshot
+    // is stored PREMULTIPLIED (see output below), so prevPixel.rgb is
+    // already col*alpha from last gen. newCol is non-premul here, so
+    // we premultiply it (by newAlpha) before mixing — keeps the crossfade
+    // in a single colour space (premul) end-to-end.
+    vec2  uvPixel   = FlutterFragCoord() / uSize;
+    vec4  prevPixel = texture(uPrevious, uvPixel);
 
-    fragColor = vec4(col * uIntensity, alpha);
+    float genProgress = clamp((uTime - uSnapshotTime) / GEN_INTERVAL, 0.0, 1.0);
+    float gp          = smoothstep(0.0, 1.0, genProgress);
+
+    float finalAlpha    = mix(prevPixel.a, newAlpha * uIntensity, gp);
+    vec3  newColPremul  = newCol * uIntensity * newAlpha;
+    vec3  finalColPremul = mix(prevPixel.rgb, newColPremul, gp);
+
+    // ---- Ambient motion layer (no CA impact, visual polish only). ----
+    // Slow diagonal "light wave" sweeping across the board. Direction
+    // tilts subtly with window position. Added in premul space, so the
+    // contribution is proportional to alpha — dead regions stay clean.
+    vec2  waveDir  = normalize(vec2(0.707, 0.707) + uTilt * 0.35);
+    vec2  uvN      = FlutterFragCoord() / uSize;
+    float waveAxis = dot(uvN, waveDir);
+    float wavePos  = fract(uTime * 0.058 - waveAxis);
+    float waveAmp  = exp(-pow(wavePos - 0.5, 2.0) * 22.0);
+    finalColPremul += cellCol * waveAmp * finalAlpha * 0.18;
+
+    // ---- Global breath. ----
+    // Multiplies the premultiplied colour only — alpha is untouched so
+    // compositing stays correct.
+    finalColPremul *= 1.0 + sin(uTime * 0.30) * 0.04;
+
+    fragColor = vec4(finalColPremul, finalAlpha);
 }

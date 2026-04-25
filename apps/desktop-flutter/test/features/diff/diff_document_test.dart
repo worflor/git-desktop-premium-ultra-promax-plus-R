@@ -74,7 +74,12 @@ index abc..def 100644
         'lib/bar.dart',
       ]);
       expect(document.sections.first.startLine, 0);
-      expect(document.sections.last.startLine, foo.lines.length);
+      // Section startLine indexes into the *combined* document.lines, where
+      // each file's path-meta lines (`diff --git`, `index`, `---`, `+++`)
+      // are condensed into a single line. So foo's 6 raw parsed lines
+      // contribute 5 lines to the merged document, and bar's section
+      // begins at line 5.
+      expect(document.sections.last.startLine, 5);
       expect(document.stats.adds, 2);
       expect(document.stats.dels, 2);
       expect(document.stats.hunks, 2);

@@ -4439,13 +4439,13 @@ class _ChangesPageState extends State<ChangesPage> {
     final buffer = StringBuffer()
       ..writeln('${review.verdict} | ${review.score}')
       ..writeln(review.summary);
-    // Skip the RR section entirely when the model didn't return
-    // reasoning — avoids dumping a stray "RR" header with no body
+    // Skip the Review Report section entirely when the model didn't
+    // return reasoning — avoids dumping a stray header with no body
     // into the user's clipboard.
     if (review.reasoningReport.isNotEmpty) {
       buffer
         ..writeln()
-        ..writeln('RR')
+        ..writeln('Review Report')
         ..writeln(review.reasoningReport);
     }
     if (review.findings.isNotEmpty) {

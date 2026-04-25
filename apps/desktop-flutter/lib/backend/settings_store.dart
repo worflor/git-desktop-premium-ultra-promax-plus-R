@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../app/build_info.dart';
 import 'storage_paths.dart';
 
 class AppSettingsSnapshot {
@@ -10,6 +11,15 @@ class AppSettingsSnapshot {
   final int telemetryRetentionDays;
   final int telemetryRetentionMb;
   final String updateChannel;
+  /// True once the user has actively chosen an update channel via the
+  /// ribbon. False means [updateChannel] is whatever the binary's build
+  /// channel was at the time the snapshot was written — i.e. an auto
+  /// default, not a preference. Loaders treat false as "ignore the
+  /// stored value, use the *current* binary's channel instead", so a
+  /// user upgrading from a stable binary to a beta binary sees BETA
+  /// selected automatically rather than being stuck on a legacy 'stable'
+  /// auto-default they never picked.
+  final bool updateChannelExplicit;
   final bool crashReportingEnabled;
   final String themeId;
   final String keybindingProfile;
@@ -99,6 +109,7 @@ class AppSettingsSnapshot {
     required this.telemetryRetentionDays,
     required this.telemetryRetentionMb,
     required this.updateChannel,
+    required this.updateChannelExplicit,
     required this.crashReportingEnabled,
     required this.themeId,
     required this.keybindingProfile,
@@ -137,6 +148,7 @@ class AppSettingsSnapshot {
         'telemetryRetentionDays': telemetryRetentionDays,
         'telemetryRetentionMb': telemetryRetentionMb,
         'updateChannel': updateChannel,
+        'updateChannelExplicit': updateChannelExplicit,
         'crashReportingEnabled': crashReportingEnabled,
         'themeId': themeId,
         'keybindingProfile': keybindingProfile,
@@ -168,13 +180,16 @@ class AppSettingsSnapshot {
         'bondDockOpenedOnce': bondDockOpenedOnce,
       };
 
-  factory AppSettingsSnapshot.defaults() => const AppSettingsSnapshot(
+  factory AppSettingsSnapshot.defaults() => AppSettingsSnapshot(
         guardrailValue: 0.5,
         aiReadOnlyDefault: true,
         logoAnimatesWhenUnfocused: true,
         telemetryRetentionDays: 30,
         telemetryRetentionMb: 128,
-        updateChannel: 'stable',
+        // First-run default tracks whatever build the user installed —
+        // they can re-pin from the deployment-channel ribbon.
+        updateChannel: BuildInfo.channel.id,
+        updateChannelExplicit: false,
         crashReportingEnabled: false,
         themeId: 'aether',
         keybindingProfile: 'classic',
@@ -232,6 +247,29 @@ class AppSettingsSnapshot {
       updateChannel: SettingsStore._normalizeUpdateChannel(
         SettingsStore._stringOr(json['updateChannel'], defaults.updateChannel),
       ),
+      // Pre-flag installs (no `updateChannelExplicit` field) need a
+      // best-effort migration: we can't ask the user, but the old
+      // schema gives us enough signal to keep deliberate choices.
+      //
+      // Pre-flag, every fresh install defaulted to 'stable' and the
+      // old normalizer coerced anything-other-than-'beta' to 'stable'.
+      // So:
+      //   * persisted 'beta'   — could ONLY have been set by the user
+      //                          tapping the ribbon. Treat as explicit
+      //                          so an upgrade to a beta/stable binary
+      //                          doesn't silently revert their pin.
+      //   * persisted 'stable' — ambiguous (default OR explicit). We
+      //                          treat it as defaulted so post-upgrade
+      //                          users naturally track their new build
+      //                          channel rather than getting stuck on
+      //                          a stale auto-default.
+      //   * persisted 'dev'    — couldn't have been written by pre-flag
+      //                          code; if it does appear, it can only
+      //                          come from a hand-edited file, so keep
+      //                          it as explicit.
+      updateChannelExplicit: json.containsKey('updateChannelExplicit')
+          ? SettingsStore._boolOr(json['updateChannelExplicit'], false)
+          : SettingsStore._inferLegacyChannelExplicit(json['updateChannel']),
       crashReportingEnabled: SettingsStore._boolOr(
         json['crashReportingEnabled'],
         defaults.crashReportingEnabled,
@@ -368,6 +406,7 @@ class AppSettingsSnapshot {
     int? telemetryRetentionDays,
     int? telemetryRetentionMb,
     String? updateChannel,
+    bool? updateChannelExplicit,
     bool? crashReportingEnabled,
     String? themeId,
     String? keybindingProfile,
@@ -407,6 +446,8 @@ class AppSettingsSnapshot {
           telemetryRetentionDays ?? this.telemetryRetentionDays,
       telemetryRetentionMb: telemetryRetentionMb ?? this.telemetryRetentionMb,
       updateChannel: updateChannel ?? this.updateChannel,
+      updateChannelExplicit:
+          updateChannelExplicit ?? this.updateChannelExplicit,
       crashReportingEnabled:
           crashReportingEnabled ?? this.crashReportingEnabled,
       themeId: themeId ?? this.themeId,
@@ -562,8 +603,20 @@ class SettingsStore {
     return out;
   }
 
-  static String _normalizeUpdateChannel(String value) {
-    return value.trim().toLowerCase() == 'beta' ? 'beta' : 'stable';
+  static String _normalizeUpdateChannel(String value) =>
+      BuildInfo.normalizeChannelId(value);
+
+  /// Best-effort inference of whether a pre-flag persisted update
+  /// channel was an explicit user choice. Pre-flag schema lacked the
+  /// flag entirely, but the old normalizer's behaviour gives us
+  /// enough signal: it coerced anything-other-than-'beta' to
+  /// 'stable', so a stored 'beta' could ONLY have come from a user
+  /// tapping the ribbon. 'stable' stays ambiguous and we lean
+  /// toward auto-tracking the binary's channel post-upgrade.
+  static bool _inferLegacyChannelExplicit(dynamic raw) {
+    if (raw is! String) return false;
+    final v = raw.trim().toLowerCase();
+    return v == 'beta' || v == 'dev';
   }
 
   static String _normalizeSidebarPosition(String value) {

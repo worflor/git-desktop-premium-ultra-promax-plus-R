@@ -177,6 +177,19 @@ class MaterialSurface extends StatelessWidget {
       resolvedBorder =
           Border.all(color: border.withValues(alpha: borderAlpha));
     }
+    // Every non-solid theme routes its surfaces through the PBR
+    // fragment-shader pipeline: glass uses `glass.frag`, phosphor uses
+    // `phosphor.frag`, each producing a complete material render over
+    // the live backdrop. One material identity per theme, top to
+    // bottom. Falls back to the simpler blur path only when Impeller
+    // isn't available.
+    final useShaderFilter = shader.mode != SurfaceMaterialMode.solid &&
+        ImageFilter.isShaderFilterSupported;
+
+    // For the shader-filter path the surface has no body fill — the shader
+    // emits the full glass render (refracted backdrop + absorption + rim).
+    final bodyFill = useShaderFilter ? const Color(0x00000000) : fill;
+
     Widget content = SizedBox(
       width: width,
       height: height,
@@ -184,7 +197,7 @@ class MaterialSurface extends StatelessWidget {
         constraints: constraints ?? const BoxConstraints(),
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: fill,
+            color: bodyFill,
             borderRadius: BorderRadius.circular(resolvedRadius),
             border: resolvedBorder,
             boxShadow:
@@ -197,17 +210,6 @@ class MaterialSurface extends StatelessWidget {
                 Positioned.fill(
                   child: IgnorePointer(
                     child: MaterialTextureLayer(tokens: t, shader: shader),
-                  ),
-                ),
-              if (_showsStructuralGlaze(t, shader))
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: _GlazeLayer(
-                      tokens: t,
-                      runtime: runtime,
-                      radius: resolvedRadius,
-                      isGlass: shader.mode == SurfaceMaterialMode.glass,
-                    ),
                   ),
                 ),
               if (innerHighlight)
@@ -244,6 +246,19 @@ class MaterialSurface extends StatelessWidget {
       clipBehavior: clipBehavior,
       child: content,
     );
+
+    if (useShaderFilter) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(resolvedRadius),
+        clipBehavior: clipBehavior,
+        child: _MaterialShaderBackdrop(
+          tokens: t,
+          shader: themeDefinitionFor(t.id).shader,
+          radius: resolvedRadius,
+          child: content,
+        ),
+      );
+    }
 
     if (runtime.filter == null) return content;
     return ClipRRect(
@@ -303,13 +318,6 @@ class MaterialSurface extends StatelessWidget {
 
     return base;
   }
-
-  bool _showsStructuralGlaze(AppTokens t, SurfaceMaterialShader shader) {
-    if (!glaze) return false;
-    if (shader.mode != SurfaceMaterialMode.glass) return false;
-    return t.id != AppThemeId.nightwalker;
-  }
-
 
   bool get _usesRuntimeOverlay {
     switch (tone) {
@@ -716,178 +724,95 @@ class MaterialTextureLayer extends StatelessWidget {
   }
 }
 
-/// Wraps `_SurfaceGlazePainter`. Nacre's glass shader needs pulse
-/// subscription for time/tilt drift; other themes don't. Wrapped in a
-/// `RepaintBoundary` so per-frame glass repaints don't invalidate the
-/// surrounding surface subtree.
-class _GlazeLayer extends StatelessWidget {
+/// Drives a theme's PBR fragment shader as an `ImageFilter.shader` on
+/// a `BackdropFilter`. Impeller auto-binds the live backdrop to the
+/// first sampler and writes the surface size into the first vec2
+/// uniform — no manual sampler plumbing needed. Dispatches to the
+/// appropriate shader (glass, phosphor, …) based on `shader.mode`.
+///
+/// Rebuilt on every `LiquidGlassPulse` tick (30Hz) so `uTime`/`uTilt`
+/// stay live. Wrapped in `RepaintBoundary` so per-frame repaints don't
+/// invalidate sibling content. Falls through to the child unfiltered
+/// if the shader program hasn't finished loading yet.
+class _MaterialShaderBackdrop extends StatelessWidget {
   final AppTokens tokens;
-  final SurfaceMaterialRuntime runtime;
+  final SurfaceMaterialShader shader;
   final double radius;
-  final bool isGlass;
+  final Widget child;
 
-  const _GlazeLayer({
+  const _MaterialShaderBackdrop({
     required this.tokens,
-    required this.runtime,
+    required this.shader,
     required this.radius,
-    required this.isGlass,
+    required this.child,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (isGlass && tokens.id == AppThemeId.nacre) {
-      final pulse = LiquidGlassProvider.of(context);
-      return RepaintBoundary(
-        child: ValueListenableBuilder<LiquidGlassPulse>(
-          valueListenable: pulse,
-          builder: (_, value, __) => CustomPaint(
-            painter: _SurfaceGlazePainter(
-              tokens: tokens,
-              runtime: runtime,
-              radius: radius,
-              isGlass: isGlass,
-              pulse: value,
-            ),
-          ),
-        ),
-      );
-    }
-    return CustomPaint(
-      painter: _SurfaceGlazePainter(
-        tokens: tokens,
-        runtime: runtime,
-        radius: radius,
-        isGlass: isGlass,
+    final pulse = LiquidGlassProvider.of(context);
+    return RepaintBoundary(
+      child: LayoutBuilder(
+        builder: (_, constraints) {
+          return ValueListenableBuilder<LiquidGlassPulse>(
+            valueListenable: pulse,
+            child: child,
+            builder: (_, value, c) {
+              final fragShader = _buildShader(
+                constraints.maxWidth,
+                constraints.maxHeight,
+                value,
+              );
+              if (fragShader == null) return c!;
+              return BackdropFilter(
+                filter: ImageFilter.shader(fragShader),
+                child: c,
+              );
+            },
+          );
+        },
       ),
     );
   }
-}
 
-/// Draws the structural glaze + (for glass) a bottom-right falloff wash.
-/// Per-instance seeded from canvas size so adjacent surfaces read as
-/// independent panes instead of stamped copies. Stable across paints:
-/// same size → same seed → no flicker on scroll or rebuild.
-class _SurfaceGlazePainter extends CustomPainter {
-  final AppTokens tokens;
-  final SurfaceMaterialRuntime runtime;
-  final double radius;
-  final bool isGlass;
-  /// Live state from `LiquidGlassProvider` — drives the glass shader's
-  /// time/tilt drift. Only consumed by the nacre branch; other themes
-  /// ignore it and the painter compares-equal across pulse changes so
-  /// they don't repaint.
-  final LiquidGlassPulse pulse;
-
-  const _SurfaceGlazePainter({
-    required this.tokens,
-    required this.runtime,
-    required this.radius,
-    required this.isGlass,
-    this.pulse = LiquidGlassPulse.zero,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rrect = RRect.fromRectAndRadius(
-      Offset.zero & size,
-      Radius.circular(radius),
-    );
-    canvas.save();
-    canvas.clipRRect(rrect);
-
-    // Nacre uses the liquid-glass fragment shader. First-frame falls
-    // through to no glaze while the shader program loads.
-    if (isGlass && tokens.id == AppThemeId.nacre) {
-      // biased larger than clip radius so the meniscus reads gloopier
-      final cornerR = math.max(radius * 1.6, 12.0);
-      final coolColor = tokens.accentBright;
-      final fragShader = ThemeShaders.glassShader(
-        width: size.width,
-        height: size.height,
-        tint: const Color(0x00000000),
-        highlight: Colors.white,
-        highlightCool: coolColor,
-        tiltX: pulse.tilt.dx,
-        tiltY: pulse.tilt.dy,
-        time: pulse.time,
-        intensity: 1.0,
-        fresnelPx: 24,
-        chromatic: 1.6,
-        specSharp: 10,
-        specCore: 4,
-        thickness: 0.55,
-        cornerRadius: cornerR,
-        noise: 0.55,
-        anim: 1,
-      );
-      if (fragShader != null) {
-        canvas.drawRect(
-          Offset.zero & size,
-          Paint()
-            ..shader = fragShader
-            ..blendMode = BlendMode.plus,
+  FragmentShader? _buildShader(
+    double width,
+    double height,
+    LiquidGlassPulse pulse,
+  ) {
+    switch (shader.mode) {
+      case SurfaceMaterialMode.glass:
+        // biased larger than clip radius so the meniscus reads gloopier
+        final cornerR = math.max(radius * 1.6, 12.0);
+        final gm = shader.glassMaterial;
+        return ThemeShaders.glassShader(
+          width: width,
+          height: height,
+          absorption: gm.absorption,
+          lightColor: gm.lightColor ?? tokens.accentBright,
+          tiltX: pulse.tilt.dx,
+          tiltY: pulse.tilt.dy,
+          time: pulse.time,
+          intensity: 1.0,
+          cornerRadius: cornerR,
+          ior: gm.ior,
+          roughness: gm.roughness,
+          anim: 1,
         );
-      }
-      canvas.restore();
-      return;
+      case SurfaceMaterialMode.phosphor:
+        final pm = shader.phosphorMaterial;
+        return ThemeShaders.phosphorShader(
+          width: width,
+          height: height,
+          intensity: 1.0,
+          time: pulse.time,
+          tint: pm.tint,
+          maskPitch: pm.maskPitch,
+          beamSigma: pm.beamSigma,
+          scanlineDepth: pm.scanlineDepth,
+          barrelAmount: pm.barrelAmount,
+        );
+      case SurfaceMaterialMode.solid:
+        return null; // gated out by caller
     }
-
-    // Per-instance geometry: rotation in [-0.14, 0.14] rad (~±8°) and
-    // stop offset in [-0.04, 0.04] pulled from a hash of the surface size.
-    // Two panels of different sizes get visually distinct glazes without
-    // any randomness at paint-time.
-    final seed = (size.width.toInt() * 73 + size.height.toInt() * 131) & 0xFFFF;
-    final angle = ((seed % 29) - 14) / 100.0;
-    final stopShift = (((seed >> 5) % 9) - 4) / 100.0;
-
-    final mid = (0.24 + stopShift).clamp(0.1, 0.38);
-    final far = (0.72 + stopShift).clamp(0.55, 0.9);
-
-    final diag = math.sqrt(size.width * size.width + size.height * size.height);
-    final center = Offset(size.width / 2, size.height / 2);
-    final dir = Offset(math.cos(angle - math.pi / 4), math.sin(angle - math.pi / 4));
-    final start = center - dir * (diag / 2);
-    final end = center + dir * (diag / 2);
-
-    final rect = Offset.zero & size;
-    final glazePaint = Paint()
-      ..shader = LinearGradient(
-        begin: FractionalOffset(start.dx / size.width, start.dy / size.height),
-        end: FractionalOffset(end.dx / size.width, end.dy / size.height),
-        colors: [runtime.glazeTopTint, runtime.glazeMidTint, const Color(0x00000000)],
-        stops: [0.0, mid, far],
-      ).createShader(rect);
-    canvas.drawRect(rect, glazePaint);
-
-    // Glass-only bottom-right falloff — reads as light dropping off across
-    // the pane, not just a flat overlay. Uses runtime.cellShadow which is
-    // already theme-tinted (ambient-blended black), so it inherits identity
-    // for free.
-    if (isGlass) {
-      final falloff = Paint()
-        ..shader = LinearGradient(
-          begin: const FractionalOffset(0.45, 0.45),
-          end: const FractionalOffset(1, 1),
-          colors: [
-            const Color(0x00000000),
-            runtime.cellShadow.withValues(alpha: 0.12),
-          ],
-        ).createShader(rect);
-      canvas.drawRect(rect, falloff);
-    }
-
-    canvas.restore();
   }
-
-  @override
-  bool shouldRepaint(_SurfaceGlazePainter old) =>
-      old.tokens != tokens ||
-      old.runtime != runtime ||
-      old.radius != radius ||
-      old.isGlass != isGlass ||
-      // Nacre is the only theme that consumes pulse — comparing on
-      // every shouldRepaint is fine because the AnimatedBuilder above
-      // already gates non-nacre surfaces from receiving pulse changes.
-      old.pulse.time != pulse.time ||
-      old.pulse.tilt != pulse.tilt;
 }

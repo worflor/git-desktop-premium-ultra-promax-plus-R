@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/app/app_identity.dart';
 import 'package:git_desktop/app/brand_lockup.dart';
+import 'package:git_desktop/app/hyper_reactivity.dart';
+import 'package:git_desktop/app/preferences_state.dart';
 import 'package:git_desktop/app/repository_state.dart';
 import 'package:git_desktop/app/titlebar_strip.dart';
 import 'package:git_desktop/ui/theme.dart';
@@ -37,7 +39,10 @@ void main() {
     final tokens = AppTokens.fromId(AppThemeId.crafty);
     final shader = themeDefinitionFor(AppThemeId.crafty).shader;
     expect(tokens.bg2, const Color(0xFF29211C));
-    expect(tokens.bg3, const Color(0xFF3F342D));
+    // bg3 was retuned from 0xFF3F342D to 0xFF332821 to tighten the
+    // brown ramp; the prior step was ~4x the earlier bg steps and
+    // read as a seam.
+    expect(tokens.bg3, const Color(0xFF332821));
     expect(tokens.themeSparkOpacity, 0);
     expect(shader.particles, ThemeParticles.voxels);
     expect(shader.parallaxStrength, greaterThan(0));
@@ -99,6 +104,7 @@ Widget _buildHarness(
   Widget child, {
   AppIdentityState? identityState,
   RepositoryState? repositoryState,
+  PreferencesState? preferencesState,
 }) {
   return MultiProvider(
     providers: [
@@ -108,6 +114,16 @@ Widget _buildHarness(
       ChangeNotifierProvider.value(
         value: repositoryState ?? RepositoryState(),
       ),
+      // BrandLockup selects on PreferencesState for the unfocused-logo
+      // animation gate; without it the widget throws ProviderNotFound.
+      // The default instance is fine — its in-memory defaults are
+      // valid and load() is never called from these tests.
+      ChangeNotifierProvider.value(
+        value: preferencesState ?? PreferencesState(),
+      ),
+      // HypercubeLogo (nested in BrandLockup) reaches for HyperReactivity
+      // to flip its drag-affordance state.
+      ChangeNotifierProvider(create: (_) => HyperReactivity()),
     ],
     child: MaterialApp(
       theme: buildTheme(AppTokens.fromId(defaultThemeId)),

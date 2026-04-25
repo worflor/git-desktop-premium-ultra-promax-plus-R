@@ -181,18 +181,31 @@ class HypercubeLogoEngine {
     }
 
     if (!dragging) {
-      final double damping = math.exp(-_dampingPerSecond * dt);
-      final double ax = -_spring * warpX;
-      final double ay = -_spring * warpY;
-      warpVx = (warpVx + ax * dt) * damping;
-      warpVy = (warpVy + ay * dt) * damping;
-      warpX += warpVx * dt;
-      warpY += warpVy * dt;
+      // Pre-integration idle check: if the warp is already settled
+      // (sub-threshold position + velocity) we snap to zero and skip
+      // the spring. Without this guard, even a tiny offset like
+      // warpX=0.002 gets a spring kick of ~-_spring*dt that pushes
+      // |v| above the threshold, so the post-integration check below
+      // can't snap it — the cube would jitter eternally around home.
       if (isIdleVisualState) {
         warpX = 0;
         warpY = 0;
         warpVx = 0;
         warpVy = 0;
+      } else {
+        final double damping = math.exp(-_dampingPerSecond * dt);
+        final double ax = -_spring * warpX;
+        final double ay = -_spring * warpY;
+        warpVx = (warpVx + ax * dt) * damping;
+        warpVy = (warpVy + ay * dt) * damping;
+        warpX += warpVx * dt;
+        warpY += warpVy * dt;
+        if (isIdleVisualState) {
+          warpX = 0;
+          warpY = 0;
+          warpVx = 0;
+          warpVy = 0;
+        }
       }
     }
   }

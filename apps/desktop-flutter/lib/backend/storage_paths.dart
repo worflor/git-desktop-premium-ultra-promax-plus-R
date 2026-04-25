@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:meta/meta.dart';
+
 class StoragePaths {
   static const String _appDataDirName = 'gdpu';
 
@@ -53,6 +55,27 @@ class StoragePaths {
     }
 
     throw StateError('failed to resolve cross-platform app data directory');
+  }
+
+  /// Removes the entire app data directory (settings, ai prefs, telemetry,
+  /// engram caches — everything under [gdpuDataDir]). The user's repos and
+  /// any state outside this dir are untouched.
+  ///
+  /// Idempotent: a missing dir is a no-op. Callers that intend a "factory
+  /// reset" workflow are responsible for terminating the process
+  /// immediately afterwards — any state object still in memory will
+  /// happily re-persist itself if given a chance, recreating the file
+  /// we just deleted.
+  static Future<void> purgeDataDir() async => deleteIfExists(await gdpuDataDir());
+
+  /// Recursively removes [dir] when it exists, otherwise no-ops. Exposed
+  /// for tests so they can exercise the idempotency contract without
+  /// touching the real app data dir on the developer's machine.
+  @visibleForTesting
+  static Future<void> deleteIfExists(Directory dir) async {
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
   }
 
   static String? _envNonEmpty(String name) {

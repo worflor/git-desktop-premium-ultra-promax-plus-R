@@ -1,5 +1,6 @@
 ﻿import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show ValueListenable;
@@ -7,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../backend/ai.dart';
 import '../../backend/ai_audit_store.dart';
 import '../../backend/command_telemetry_store.dart';
@@ -14,8 +16,13 @@ import '../../backend/dtos.dart';
 import '../../backend/commit_format.dart';
 import '../../backend/file_coupling.dart';
 import '../../backend/logos_git.dart';
+import '../../backend/release_check.dart';
+import '../../backend/settings_store.dart';
+import '../../backend/storage_paths.dart';
+import '../../backend/system_browser.dart';
 import '../../backend/undo_controller.dart';
 import '../../app/ai_settings_state.dart';
+import '../../app/build_info.dart';
 import '../../app/logos_git_state.dart';
 import '../../app/preferences_state.dart';
 import '../../app/repository_state.dart';
@@ -51,6 +58,8 @@ class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _musePromptController = TextEditingController();
   String _diagnosticsFocus = 'command';
   String? _actionError;
+  bool _releaseChecking = false;
+  ReleaseCheckResult? _releaseCheck;
   bool _dataMaintenanceBusy = false;
   bool _aiProvidersLoading = false;
   bool _aiModelOptionsLoading = false;
@@ -195,18 +204,26 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _saveUpdateChannel(String value) async {
+    final prefs = context.read<PreferencesState>();
+    // Resolve through the same normalisation the persistence layer uses,
+    // so a no-op tap (e.g. clicking the already-active channel, or a
+    // value that's about to be coerced — 'dev' on a beta build) doesn't
+    // wipe the last poll result.
+    final normalized = BuildInfo.normalizeChannelId(value);
+    final changed = normalized != prefs.updateChannel;
     setState(() {
       _actionError = null;
+      if (changed) {
+        // The previous poll was against a different channel; clearing
+        // avoids "Up to date on BETA" lingering after a flip to STABLE.
+        _releaseCheck = null;
+      }
     });
     try {
-      await context.read<PreferencesState>().setUpdateChannel(value);
-      if (!mounted) {
-        return;
-      }
+      await prefs.setUpdateChannel(value);
+      if (!mounted) return;
     } catch (_) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() => _actionError = 'Failed to save update channel.');
     }
   }
@@ -588,10 +605,65 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
-  void _showUpdateStubMessage() {
+  Future<void> _pollForUpdates() async {
+    if (_releaseChecking) return;
+    final channel = context.read<PreferencesState>().updateChannel;
     setState(() {
-      _actionError = 'Update actions are not wired in the Flutter build yet.';
+      _releaseChecking = true;
+      _actionError = null;
     });
+    final result = await ReleaseChecker.check(channel: channel);
+    if (!mounted) return;
+    setState(() {
+      _releaseChecking = false;
+      _releaseCheck = result;
+    });
+  }
+
+  Future<void> _resetLocalData({required bool wipeRecents}) async {
+    if (!await _confirmLocalDataAction(
+      wipeRecents
+          ? 'Wipe all local app data — including the recent repos list — '
+              'and quit? Your actual git repos on disk are not touched.'
+          : 'Reset local app data and quit?\n\n'
+              'Settings, theme, onboarding, AI preferences, telemetry, and '
+              'engram caches are cleared. Your recent repos list survives.',
+    )) {
+      return;
+    }
+    // Drop the in-memory snapshot so nothing in this process tries to
+    // satisfy a future load() from the (now-stale) cache and re-persist it.
+    SettingsStore.invalidateCache();
+    try {
+      if (wipeRecents) {
+        // SharedPreferences holds the recent_repos list (plus a few minor
+        // UI flags like file-pills-wrap). Clear before the gdpu purge —
+        // its native backend is independent of our data dir.
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.clear();
+      }
+      await StoragePaths.purgeDataDir();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _actionError = 'Could not clear local data: $e');
+      return;
+    }
+    // Hard exit, intentionally synchronous: any ChangeNotifier disposal
+    // running through windowManager.destroy() would happily re-write
+    // settings.json from in-memory state and undo the purge. Process.exit
+    // skips that lifecycle entirely.
+    exit(0);
+  }
+
+  Future<void> _forceDeploy() async {
+    final url = _releaseCheck?.manifest?.downloadUrl;
+    if (url == null || url.isEmpty) return;
+    try {
+      await openInSystemBrowser(url);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _actionError = 'Could not open the download URL.');
+    }
   }
 
   List<_ProviderCard> _buildProviderCards() {
@@ -1354,6 +1426,8 @@ class _SettingsPageState extends State<SettingsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const _BuildInfoRow(),
+              const SizedBox(height: 16),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1394,20 +1468,35 @@ class _SettingsPageState extends State<SettingsPage> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   _DeckButton(
-                    label: 'POLL FOR UPDATES',
+                    label: _releaseChecking
+                        ? 'CHECKING…'
+                        : 'POLL FOR UPDATES',
                     icon: Icons.radar_outlined,
-                    onTap: _showUpdateStubMessage,
+                    enabled: !_releaseChecking,
+                    onTap: () => unawaited(_pollForUpdates()),
                   ),
                   const SizedBox(width: 8),
                   _DeckButton(
-                    label: 'FORCE DEPLOY',
+                    label: 'OPEN DOWNLOAD',
                     icon: Icons.system_update_alt_outlined,
-                    enabled: false,
-                    onTap: _showUpdateStubMessage,
+                    enabled: _releaseCheck?.hasUpdate == true &&
+                        (_releaseCheck?.manifest?.downloadUrl?.isNotEmpty ??
+                            false),
+                    onTap: () => unawaited(_forceDeploy()),
                   ),
                   const Spacer(),
+                  _ResetQuitControl(
+                    onKeepRepos: () =>
+                        unawaited(_resetLocalData(wipeRecents: false)),
+                    onWipeAll: () =>
+                        unawaited(_resetLocalData(wipeRecents: true)),
+                  ),
                 ],
               ),
+              if (_releaseCheck != null) ...[
+                const SizedBox(height: 12),
+                _ReleaseCheckBanner(result: _releaseCheck!),
+              ],
             ],
           ),
         ),
@@ -2083,12 +2172,12 @@ class _ChannelRibbon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final channels = [
-      ('stable', 'STABLE', true),
-      ('beta', 'BETA', true),
-      ('dev', 'DEV', true), // Enabled because user is in dev build
-    ];
-
+    // The DEV feed is real only for users running a dev build — beta
+    // and stable releases shouldn't expose an in-development update
+    // stream they can't actually consume. On those builds the slot
+    // looks disabled by default but secretly toggles into a contact
+    // link when clicked — see [_DevSlotEasterEgg].
+    final isDevBuild = BuildInfo.channel == BuildChannel.dev;
     return Container(
       height: 32,
       decoration: BoxDecoration(
@@ -2102,20 +2191,31 @@ class _ChannelRibbon extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          for (final channel in channels)
+          _ChannelRibbonItem(
+            label: 'STABLE',
+            active: value == 'stable',
+            onTap: () => onChanged('stable'),
+          ),
+          _ChannelRibbonItem(
+            label: 'BETA',
+            active: value == 'beta',
+            onTap: () => onChanged('beta'),
+          ),
+          if (isDevBuild)
             _ChannelRibbonItem(
-              label: channel.$2,
-              active: value == channel.$1,
-              enabled: channel.$3,
-              onTap: () => onChanged(channel.$1),
-            ),
+              label: 'DEV',
+              active: value == 'dev',
+              onTap: () => onChanged('dev'),
+            )
+          else
+            const _DevSlotEasterEgg(url: 'https://woflo.dev'),
         ],
       ),
     );
   }
 }
 
-class _ChannelRibbonItem extends StatefulWidget {
+class _ChannelRibbonItem extends StatelessWidget {
   final String label;
   final bool active;
   final bool enabled;
@@ -2129,72 +2229,393 @@ class _ChannelRibbonItem extends StatefulWidget {
   });
 
   @override
-  State<_ChannelRibbonItem> createState() => _ChannelRibbonItemState();
-}
-
-class _ChannelRibbonItemState extends State<_ChannelRibbonItem> {
-  bool _hovered = false;
-
-  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final activeColor = t.accentBright;
 
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor:
-          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
       child: GestureDetector(
-        onTap: widget.enabled ? widget.onTap : null,
+        onTap: enabled ? onTap : null,
         child: Opacity(
-          opacity: widget.enabled ? 1.0 : 0.35,
+          opacity: enabled ? 1.0 : 0.35,
           child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          margin: const EdgeInsets.only(right: 16),
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: widget.active ? activeColor : activeColor.withValues(alpha: 0),
-                width: 2,
+            duration: const Duration(milliseconds: 120),
+            margin: const EdgeInsets.only(right: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: active ? activeColor : activeColor.withValues(alpha: 0),
+                  width: 2,
+                ),
               ),
             ),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    widget.label,
-                    style: TextStyle(
-                      color: widget.active ? activeColor : t.textNormal,
-                      fontSize: 10,
-                      fontFamily: 'JetBrainsMono',
-                      fontWeight:
-                          widget.active ? FontWeight.w800 : FontWeight.w600,
-                      letterSpacing: 0.2,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: active ? activeColor : t.textNormal,
+                        fontSize: 10,
+                        fontFamily: 'JetBrainsMono',
+                        fontWeight:
+                            active ? FontWeight.w800 : FontWeight.w600,
+                        letterSpacing: 0.2,
+                      ),
                     ),
-                  ),
-                  if (widget.active) ...[
-                    const SizedBox(width: 4),
-                    Container(
-                      width: 1,
-                      height: 8,
-                      color: activeColor.withValues(alpha: 0.4),
-                    ),
+                    if (active) ...[
+                      const SizedBox(width: 4),
+                      Container(
+                        width: 1,
+                        height: 8,
+                        color: activeColor.withValues(alpha: 0.4),
+                      ),
+                    ],
                   ],
-                ],
-              ),
-              const SizedBox(height: 4),
-            ],
-          ),
+                ),
+                const SizedBox(height: 4),
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+}
+
+/// The DEV ribbon slot, on non-dev builds, doubles as an Easter-egg
+/// contact link. By default it looks indistinguishable from a normal
+/// disabled DEV channel item — same dim opacity, same DEV label, same
+/// uninviting cursor — so it doesn't telegraph itself or get in the
+/// way of the normal deployment-channel UX. Click it once and it
+/// secretly toggles into a `WOFLO.DEV ↗` link affordance with
+/// hoverable brightness; click that and the maintainer's site opens
+/// in the system browser, the slot reverts back to its dormant DEV
+/// disguise.
+///
+/// Outside-taps (TapRegion) also revert it. The toggle state is
+/// per-instance and never persisted — every visit to settings starts
+/// from the dormant face.
+class _DevSlotEasterEgg extends StatefulWidget {
+  final String url;
+
+  const _DevSlotEasterEgg({required this.url});
+
+  @override
+  State<_DevSlotEasterEgg> createState() => _DevSlotEasterEggState();
+}
+
+class _DevSlotEasterEggState extends State<_DevSlotEasterEgg> {
+  bool _revealed = false;
+  bool _hovered = false;
+  // One-shot OS-scheduled timer — fires a single event when the
+  /// 5s budget elapses, no per-frame polling. Lives only while the
+  /// egg is revealed and not actively hovered; cancelled on every
+  /// state transition that supersedes it.
+  Timer? _autoConcealTimer;
+
+  static const _autoConcealDelay = Duration(seconds: 5);
+
+  void _scheduleAutoConceal() {
+    _autoConcealTimer?.cancel();
+    _autoConcealTimer = Timer(_autoConcealDelay, () {
+      if (!mounted) return;
+      _conceal();
+    });
+  }
+
+  void _cancelAutoConceal() {
+    _autoConcealTimer?.cancel();
+    _autoConcealTimer = null;
+  }
+
+  void _conceal() {
+    _cancelAutoConceal();
+    if (_revealed || _hovered) {
+      setState(() {
+        _revealed = false;
+        _hovered = false;
+      });
+    }
+  }
+
+  void _onTap() {
+    if (!_revealed) {
+      // First click: discovery — the dormant DEV disguise reveals
+      // itself as the link affordance. Start the auto-conceal countdown
+      // so the egg quietly puts its mask back on if the user moves on.
+      setState(() => _revealed = true);
+      _scheduleAutoConceal();
+      return;
+    }
+    // Second click: actually visit. Conceal first so the slot is
+    // back to its dormant face by the time the browser steals focus.
+    _cancelAutoConceal();
+    setState(() {
+      _revealed = false;
+      _hovered = false;
+    });
+    unawaited(openInSystemBrowser(widget.url).catchError((_) {}));
+  }
+
+  @override
+  void dispose() {
+    _autoConcealTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    // TapRegion gives the egg its escape hatch — anywhere the user
+    // clicks outside the slot snaps the disguise back on, so a
+    // half-revealed link doesn't linger after they look away.
+    return TapRegion(
+      onTapOutside: (_) => _conceal(),
+      child: MouseRegion(
+        // Cursor stays as `basic` while dormant so nothing about the
+        // slot whispers "I'm clickable" — that preserves the easter
+        // egg. Once revealed, the link cursor sells the affordance.
+        cursor: _revealed
+            ? SystemMouseCursors.click
+            : SystemMouseCursors.basic,
+        onEnter: (_) {
+          if (!_revealed) return;
+          // User is engaging — pause the auto-conceal so it doesn't
+          // snap closed mid-hover. Re-armed on exit below.
+          _cancelAutoConceal();
+          setState(() => _hovered = true);
+        },
+        onExit: (_) {
+          if (!_hovered) return;
+          setState(() => _hovered = false);
+          if (_revealed) _scheduleAutoConceal();
+        },
+        child: GestureDetector(
+          onTap: _onTap,
+          // AnimatedContainer + AnimatedSwitcher keep the swap snappy
+          // and on-brand with the rest of the ribbon: 120ms ease, the
+          // same heartbeat the channel items use for active-state
+          // transitions.
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 120),
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder: (child, anim) =>
+                FadeTransition(opacity: anim, child: child),
+            child: _revealed
+                ? _buildRevealed(t)
+                : _buildDormant(t),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Dormant face: pixel-identical to a disabled `_ChannelRibbonItem`
+  /// labelled DEV. Mirrors that widget's structure so the ribbon
+  /// underline gutter aligns and nothing about the slot betrays the
+  /// egg.
+  Widget _buildDormant(AppTokens t) {
+    return Opacity(
+      key: const ValueKey('dormant'),
+      opacity: 0.35,
+      child: Container(
+        margin: const EdgeInsets.only(right: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        decoration: const BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: Colors.transparent, width: 2),
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            Text(
+              'DEV',
+              style: TextStyle(
+                color: t.textNormal,
+                fontSize: 10,
+                fontFamily: 'JetBrainsMono',
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.2,
+              ),
+            ),
+            const SizedBox(height: 4),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Revealed face: the contact-link affordance. Same alignment as
+  /// the dormant face, but a `WOFLO.DEV` label, a trailing
+  /// `open_in_new` glyph, and a hover-driven brightness shift to
+  /// signal interactivity.
+  Widget _buildRevealed(AppTokens t) {
+    final color = _hovered ? t.accentBright : t.textMuted;
+    return Container(
+      key: const ValueKey('revealed'),
+      margin: const EdgeInsets.only(right: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.transparent, width: 2),
+        ),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 120),
+                style: TextStyle(
+                  color: color,
+                  fontSize: 10,
+                  fontFamily: 'JetBrainsMono',
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
+                ),
+                child: const Text('WOFLO.DEV'),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.open_in_new, size: 9, color: color),
+            ],
+          ),
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+}
+
+/// Status row at the top of the Release Deployment card.
+/// Shows what binary the user is actually running — version, channel,
+/// and short sha when available — so DEV vs BETA vs STABLE is honest.
+class _BuildInfoRow extends StatelessWidget {
+  const _BuildInfoRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final channel = BuildInfo.channel;
+    final channelLabel = channel.id.toUpperCase();
+    final version = BuildInfo.version.isEmpty ? 'dev' : BuildInfo.version;
+    final sha = BuildInfo.gitSha;
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: t.chromeAccent.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: t.chromeAccent.withValues(alpha: 0.30)),
+          ),
+          child: Text(
+            channelLabel,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 10,
+              fontFamily: 'JetBrainsMono',
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1,
+              height: 1,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          version,
+          style: TextStyle(
+            color: t.textStrong,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'JetBrainsMono',
+          ),
+        ),
+        if (sha != null) ...[
+          const SizedBox(width: 6),
+          Text(
+            sha,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 11,
+              fontFamily: 'JetBrainsMono',
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ReleaseCheckBanner extends StatelessWidget {
+  final ReleaseCheckResult result;
+
+  const _ReleaseCheckBanner({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final isError = result.status == ReleaseCheckStatus.networkError ||
+        result.status == ReleaseCheckStatus.parseError;
+    final isUpdate = result.status == ReleaseCheckStatus.updateAvailable;
+    final color = isError
+        ? t.stateDeleted
+        : isUpdate
+            ? t.accentBright
+            : t.stateAdded;
+    final message = _messageFor(result);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(
+          color: isError ? t.textStrong : color,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  static String _messageFor(ReleaseCheckResult r) {
+    final channel = r.channel.toUpperCase();
+    switch (r.status) {
+      case ReleaseCheckStatus.upToDate:
+        return 'Up to date on $channel.';
+      case ReleaseCheckStatus.updateAvailable:
+        final m = r.manifest!;
+        return '$channel ${m.version} is available.';
+      case ReleaseCheckStatus.notConfigured:
+        // errorDetail surfaces deployment-specific reasons (e.g. an
+        // HTTP base URL got rejected for not being HTTPS). The plain
+        // case is "no MANIFOLD_UPDATE_BASE_URL was set at build time."
+        final detail = r.errorDetail;
+        return detail != null && detail.isNotEmpty
+            ? 'Update server not configured: $detail'
+            : 'No update server configured for this build.';
+      case ReleaseCheckStatus.notFound:
+        return 'No releases on the $channel channel yet.';
+      case ReleaseCheckStatus.networkError:
+        final detail = r.errorDetail ?? 'unreachable';
+        return 'Update check failed: $detail';
+      case ReleaseCheckStatus.parseError:
+        final detail = r.errorDetail ?? 'invalid manifest';
+        return 'Update check failed: $detail';
+    }
   }
 }
 
@@ -5835,6 +6256,98 @@ class _DeckButtonState extends State<_DeckButton> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Two-stage destructive control. Collapsed it shows a single
+/// `RESET & QUIT` button; tapping it reveals two inline sub-buttons
+/// — KEEP REPOS (soft reset, preserves recent repos list) and WIPE
+/// ALL (hard reset, also nukes SharedPreferences). Outside-tap or a
+/// second toggle collapses without committing.
+class _ResetQuitControl extends StatefulWidget {
+  final VoidCallback onKeepRepos;
+  final VoidCallback onWipeAll;
+
+  const _ResetQuitControl({
+    required this.onKeepRepos,
+    required this.onWipeAll,
+  });
+
+  @override
+  State<_ResetQuitControl> createState() => _ResetQuitControlState();
+}
+
+class _ResetQuitControlState extends State<_ResetQuitControl> {
+  bool _expanded = false;
+
+  void _collapse() {
+    if (_expanded) setState(() => _expanded = false);
+  }
+
+  void _toggle() {
+    setState(() => _expanded = !_expanded);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // TapRegion gives us the "click anywhere outside to dismiss" affordance
+    // without needing a manual overlay. The animated wrapper handles the
+    // width transition between the single-button and two-button states;
+    // the AnimatedSwitcher inside cross-fades the contents in step.
+    return TapRegion(
+      onTapOutside: (_) => _collapse(),
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOut,
+        alignment: Alignment.centerRight,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 120),
+          switchInCurve: Curves.easeOut,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder: (child, anim) =>
+              FadeTransition(opacity: anim, child: child),
+          child: _expanded
+              ? _buildExpanded(context)
+              : _buildCollapsed(context),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCollapsed(BuildContext context) {
+    return _DeckButton(
+      label: 'RESET & QUIT',
+      icon: Icons.delete_sweep_outlined,
+      isDestructive: true,
+      onTap: _toggle,
+    );
+  }
+
+  Widget _buildExpanded(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _DeckButton(
+          label: 'KEEP REPOS',
+          icon: Icons.history_outlined,
+          isDestructive: true,
+          onTap: () {
+            _collapse();
+            widget.onKeepRepos();
+          },
+        ),
+        const SizedBox(width: 6),
+        _DeckButton(
+          label: 'WIPE ALL',
+          icon: Icons.delete_forever_outlined,
+          isDestructive: true,
+          onTap: () {
+            _collapse();
+            widget.onWipeAll();
+          },
+        ),
+      ],
     );
   }
 }
@@ -9674,5 +10187,6 @@ class _CommitFormatChipLabel<T> extends StatelessWidget {
     );
   }
 }
+
 
 

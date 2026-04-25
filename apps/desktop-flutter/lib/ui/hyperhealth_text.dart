@@ -155,7 +155,13 @@ class _HyperhealthTextState extends State<HyperhealthText>
   void _syncTickers() {
     if (!mounted) return;
     final intensity = _clampedIntensity();
-    final motionRate = context.motionRate;
+    // `motionRate` (watch variant) would subscribe via context.select,
+    // which Provider asserts is only valid during build. _syncTickers
+    // fires from onWindowAwakeChanged / didChangeDependencies / timers
+    // — callback land, not build land — so use the read variant.
+    // The ticker schedule picks up later motionRate changes via
+    // didUpdateWidget → _syncTickers on the next build.
+    final motionRate = context.motionRateRead;
     final awake = WindowActivity.instance.awake;
     final motionActive = motionRate > 0.05 && awake;
     final rate = motionRate.clamp(0.1, 2.0);

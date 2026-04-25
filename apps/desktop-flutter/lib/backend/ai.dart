@@ -832,6 +832,17 @@ bool _isLikelyPatchLine(String line) {
 String extractPatchFromModelOutputForTesting(String raw) =>
     _extractPatchFromModelOutput(raw);
 
+@visibleForTesting
+String? extractDeepestErrorMessageForTesting(dynamic node) =>
+    _extractDeepestErrorMessage(node);
+
+@visibleForTesting
+String? parseCodexJsonlForTesting(String stdout) => _parseCodexJsonl(stdout);
+
+@visibleForTesting
+String? parseOpenCodeJsonlForTesting(String stdout) =>
+    _parseOpenCodeJsonl(stdout);
+
 Future<GitResult<AiCommitReviewData>> reviewCommit({
   required String repositoryPath,
   required String modelValue,
@@ -8020,6 +8031,67 @@ String? _formatProviderOutput(
   }
 }
 
+/// Walks an arbitrarily nested provider error payload and returns the
+/// deepest human-readable message it can find. Providers wrap the
+/// same text inside multiple layers — `{error: {message: ...}}`,
+/// `{errors: [{message: ...}]}`, `{message: "<json blob>"}` — so
+/// surfacing the outer object verbatim shows the user a glob of JSON
+/// instead of a sentence. The walker descends through the well-known
+/// nesting keys (in priority order: `error`, `errors`, `data`,
+/// `cause`, then `message`) and treats any string that looks like
+/// JSON as a chance to recurse one more level. Bounded by [maxDepth]
+/// so a circular or pathologically nested payload can't hang us.
+///
+/// Provider-agnostic on purpose — codex, opencode, claude, and any
+/// future SDK that nests structured errors the same way will all
+/// benefit without bespoke parsing code.
+String? _extractDeepestErrorMessage(dynamic node, {int maxDepth = 6}) {
+  String? walk(dynamic n, int depth) {
+    if (depth > maxDepth) return null;
+    if (n is String) {
+      final trimmed = n.trim();
+      if (trimmed.isEmpty) return null;
+      // Don't try to JSON-decode every string — only those that
+      // actually look like a JSON object/array head.
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          return walk(jsonDecode(trimmed), depth + 1) ?? trimmed;
+        } catch (_) {
+          return trimmed;
+        }
+      }
+      return trimmed;
+    }
+    if (n is Map) {
+      // Prefer the most-specific nested locations first. Each of these
+      // is a known shape used by at least one provider in the wild.
+      for (final key in const ['error', 'errors', 'data', 'cause']) {
+        if (n.containsKey(key)) {
+          final inner = walk(n[key], depth + 1);
+          if (inner != null && inner.isNotEmpty) return inner;
+        }
+      }
+      // Fall through to the leaf-ish `message` field. Recurse so a
+      // JSON-encoded string here is unwrapped one more level.
+      if (n['message'] != null) {
+        final inner = walk(n['message'], depth + 1);
+        if (inner != null && inner.isNotEmpty) return inner;
+      }
+      return null;
+    }
+    if (n is List) {
+      for (final item in n) {
+        final inner = walk(item, depth + 1);
+        if (inner != null && inner.isNotEmpty) return inner;
+      }
+      return null;
+    }
+    return null;
+  }
+
+  return walk(node, 0);
+}
+
 String? _parseCodexJsonl(String stdout) {
   var response = '';
   var errorMessage = '';
@@ -8040,13 +8112,15 @@ String? _parseCodexJsonl(String stdout) {
           response = item['text'] as String;
         }
       }
-      if ((type == 'error' || type == 'turn.failed') &&
-          value['message'] is String) {
-        errorMessage = value['message'] as String;
-      }
-      final error = value['error'];
-      if (errorMessage.isEmpty && error is Map && error['message'] is String) {
-        errorMessage = error['message'] as String;
+      if (type == 'error' || type == 'turn.failed') {
+        // Codex nests the human-readable text behind a JSON-encoded
+        // string field (and sometimes again behind an `error.message`)
+        // — let the deep extractor unwrap to the leaf rather than
+        // surfacing the wrapper JSON blob to the user.
+        final extracted = _extractDeepestErrorMessage(value);
+        if (extracted != null && extracted.isNotEmpty) {
+          errorMessage = extracted;
+        }
       }
     } catch (_) {}
   }
@@ -8112,18 +8186,13 @@ String? _parseOpenCodeJsonl(String stdout) {
         continue;
       }
       if (value['type'] == 'error') {
-        final error = value['error'];
-        if (error is Map && error['message'] is String) {
-          errorMessage = error['message'] as String;
+        // Same emergent extraction as the codex parser — opencode also
+        // ships `error.data.message` for some providers, plus the
+        // occasional JSON-encoded string at top level.
+        final extracted = _extractDeepestErrorMessage(value);
+        if (extracted != null && extracted.isNotEmpty) {
+          errorMessage = extracted;
         }
-        if (error is Map && error['data'] is Map) {
-          final data = error['data'];
-          if (data is Map && data['message'] is String) {
-            errorMessage = data['message'] as String;
-          }
-        }
-        errorMessage ??=
-            value['message'] is String ? value['message'] as String : null;
         continue;
       }
       if (value['type'] != 'text' &&

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../backend/settings_store.dart';
+import 'build_info.dart';
 
 const Object _tagSentinel = Object();
 
@@ -36,18 +37,20 @@ class AppIdentity {
   }
 }
 
-// Branch/build tag policy lives here:
-// development = 'DEV', beta = 'BETA', release = null.
-const defaultAppIdentity = AppIdentity(
-  shortName: 'Manifold',
-  fullName: 'Manifold Git Client',
-  description: 'Your Personal Git Client',
-  tag: 'DEV',
-);
+/// Branding template. The build-channel tag (DEV / BETA / null) is
+/// resolved from [BuildInfo] at access time so a single binary is
+/// honest about what it is — a beta release no longer wears the DEV
+/// badge baked in at compile time of this file.
+AppIdentity get defaultAppIdentity => AppIdentity(
+      shortName: 'Manifold',
+      fullName: 'Manifold Git Client',
+      description: 'Your Personal Git Client',
+      tag: BuildInfo.tag,
+    );
 
 class AppIdentityState extends ChangeNotifier {
-  AppIdentityState([AppIdentity identity = defaultAppIdentity])
-      : _identity = identity;
+  AppIdentityState([AppIdentity? identity])
+      : _identity = identity ?? defaultAppIdentity;
 
   AppIdentity _identity;
 

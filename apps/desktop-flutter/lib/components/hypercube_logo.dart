@@ -38,6 +38,10 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   bool _hasViewFocus = true;
   AppLifecycleState? _appLifecycleState;
   PreferencesState? _prefs;
+  // Captured in didChangeDependencies so dispose() can deactivate
+  // without doing an ancestor lookup on an already-deactivated
+  // element (which Flutter forbids).
+  HyperReactivity? _hyperReactivity;
 
   @override
   void initState() {
@@ -55,6 +59,7 @@ class _HypercubeLogoState extends State<HypercubeLogo>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _isTickerModeVisible = TickerMode.of(context);
+    _hyperReactivity = context.read<HyperReactivity>();
 
     // Use a manual listener so only logoAnimatesWhenUnfocused changes (not all
     // of PreferencesState) trigger _syncTicker — equivalent to context.select
@@ -172,10 +177,12 @@ class _HypercubeLogoState extends State<HypercubeLogo>
 
   @override
   void dispose() {
+    // Stop the ticker first so a frame callback can't fire setState
+    // mid-teardown (the element is on its way to defunct).
+    _ticker.dispose();
     _prefs?.removeListener(_onPrefsChanged);
     WidgetsBinding.instance.removeObserver(this);
-    context.read<HyperReactivity>().deactivate();
-    _ticker.dispose();
+    _hyperReactivity?.deactivate();
     super.dispose();
   }
 

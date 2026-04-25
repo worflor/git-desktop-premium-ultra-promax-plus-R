@@ -54,13 +54,13 @@ class _RepoXrayPanelState extends State<RepoXrayPanel> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Narrow from watch<RepositoryState>() → select((s) => s.activePath).
-    // The panel only rebuilds when the active path changes, not on every
-    // `git status` tick. Paired with the same narrowing in [build] below
-    // — previously both methods held the whole-object subscription.
-    final repoPath = context.select<RepositoryState, String?>(
-      (s) => s.activePath,
-    );
+    // Provider's `context.select` asserts `debugDoingBuild`, which is
+    // only true during `build` — not during `didChangeDependencies`.
+    // The narrowing subscription lives in [build] below; here we just
+    // need a one-shot READ of the active path to decide whether to
+    // kick off a post-frame load. `context.read` is the valid accessor
+    // outside build.
+    final repoPath = context.read<RepositoryState>().activePath;
     final xrayState = context.read<RepositoryXrayState>();
     if (repoPath == null) {
       _lastLoadedRepoPath = null;
@@ -2409,8 +2409,18 @@ class _TerritoryCell extends StatelessWidget {
     // accent palette.
     final accent = parcel.accent;
     return LayoutBuilder(builder: (context, c) {
+      // Height thresholds account for the two-row (label + count)
+      // content the tile renders at each tier PLUS the tile's own
+      // margin (`EdgeInsets.all(isChild ? 1.5 : 2.5)`, so up to 5px
+      // consumed by chrome). The medium breakpoint's old value of
+      // `> 30` let the two-row layout engage at inner heights of ~25,
+      // but the two rows want ~27 px (text ~14 + spacer 1 + count ~12),
+      // producing an overflow of a few pixels on small orphan tiles.
+      // `> 34` is the smallest height that reliably fits the two-row
+      // content plus the 5px margin. Purely a typography bound — the
+      // same shape as [_kMinReadableTileArea]'s min-legible size.
       final big = c.maxWidth > 140 && c.maxHeight > 60;
-      final medium = c.maxWidth > 80 && c.maxHeight > 30;
+      final medium = c.maxWidth > 80 && c.maxHeight > 34;
       final tiny = c.maxWidth < 40 || c.maxHeight < 18;
       // Region = cell that contains nested child cells. Label goes into a
       // compact top band (26px) so children don't overlap the text. If the
@@ -2620,9 +2630,19 @@ class _TerritoryCell extends StatelessWidget {
 /// Walk the laid-out cell tree and collect the rect of every hotspot
 /// (non-stratum) cell, keyed by its hotspot path. Used by the coupling
 /// overlay to look up where a co-changer's tile lives on the board.
+///
+/// **Must apply the same readability cull as [_renderCells]**. Cells
+/// below [_kMinReadableTileArea] are dropped from the render stack;
+/// if we recorded their rects here, the coupling overlay would draw
+/// lines to empty regions where no tile is painted. When a parent
+/// is culled, its children are unreachable in the rendered tree, so
+/// we stop recursing too (matching `_renderCells`'s `continue`).
 void _collectHotspotRects(
     List<_TreemapLayout> cells, Map<String, Rect> out) {
   for (final cell in cells) {
+    if (cell.rect.width * cell.rect.height < _kMinReadableTileArea) {
+      continue;
+    }
     final key = cell.parcel.key;
     if (key.startsWith('h:')) {
       out[key.substring(2)] = cell.rect;
