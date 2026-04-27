@@ -32,6 +32,7 @@ import 'backend/undo_controller.dart';
 import 'diagnostics/diagnostics_state.dart';
 import 'features/onboarding/onboarding_flow.dart';
 import 'features/onboarding/onboarding_state.dart';
+import 'ui/design_primitives.dart';
 import 'ui/liquid_glass.dart';
 import 'ui/material_surface.dart';
 import 'ui/theme.dart';
@@ -62,12 +63,19 @@ void main() async {
   final onboardingState = OnboardingState();
   onboardingState.hydrateFromSettings(settings);
 
+  // First-paint window backgroundColor: derive from the persisted theme
+  // so the window frame doesn't flash a hardcoded dark navy on light
+  // themes (petrichor, barbie, nacre, halo, kirby, crafty) before
+  // Flutter mounts. AppTokens.fromId is cheap (color-array lookup) and
+  // settings is already loaded synchronously above.
+  final preMountTokens =
+      AppTokens.fromId(normalizeThemeId(settings.themeId));
   final windowOptions = WindowOptions(
     size: Size(980, 660),
     minimumSize: Size(620, 500),
     center: true,
     title: appIdentityState.identity.shortName,
-    backgroundColor: Color(0xFF0A0D12),
+    backgroundColor: preMountTokens.bg0,
     titleBarStyle: TitleBarStyle.normal,
     windowButtonVisibility: true,
   );
@@ -298,9 +306,13 @@ class LiquidGlassProviderWithSwitcher extends StatelessWidget {
         context.select<OnboardingState, bool>((o) => o.isComplete);
     return LiquidGlassProvider(
       child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 500),
-        switchInCurve: Curves.easeOutCubic,
-        switchOutCurve: Curves.easeInCubic,
+        // Root shell transition. Was hardcoded 500ms — too slow against
+        // the snappy-motion mandate. AppMotion.fluid (300ms) keeps the
+        // crossfade legible without lingering, and is the same tier the
+        // panel-show / treemap-reflow / page-load animations use.
+        duration: AppMotion.fluid,
+        switchInCurve: AppMotion.fluidCurve,
+        switchOutCurve: AppMotion.fluidCurve,
         child: onboardingComplete
             ? const _AppFrame(key: ValueKey('workspace'))
             : const OnboardingFlow(key: ValueKey('onboarding')),

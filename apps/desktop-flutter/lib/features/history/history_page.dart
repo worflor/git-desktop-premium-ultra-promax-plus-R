@@ -6,7 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/design_primitives.dart';
 import '../../ui/form_controls.dart';
+import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/morph_text.dart';
 import '../../ui/status_view.dart';
@@ -1160,18 +1162,18 @@ class _CommitImpact extends StatelessWidget {
           style: TextStyle(
               color: t.stateAdded.withValues(alpha: 0.9),
               fontSize: 9,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w700)),
       Text('/',
           style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.3),
               fontSize: 9,
-              fontFamily: 'JetBrainsMono')),
+              fontFamily: AppFonts.mono)),
       Text('$dels',
           style: TextStyle(
               color: t.stateDeleted.withValues(alpha: 0.9),
               fontSize: 9,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w700)),
       const SizedBox(width: 4),
       // 5-block bar
@@ -2357,6 +2359,7 @@ class _CommitRow extends StatefulWidget {
 
 class _CommitRowState extends State<_CommitRow> {
   bool _hovered = false;
+  bool _pressed = false;
 
   /// Computes the auto-tags for this row. Kept trivial and
   /// synchronous — the heavy lifting (profile construction) already
@@ -2407,21 +2410,27 @@ class _CommitRowState extends State<_CommitRow> {
     final t = widget.tokens;
     final c = widget.commit;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () {
-          final shift = HardwareKeyboard.instance.logicalKeysPressed
-                  .contains(LogicalKeyboardKey.shiftLeft) ||
-              HardwareKeyboard.instance.logicalKeysPressed
-                  .contains(LogicalKeyboardKey.shiftRight);
-          widget.onTap(shift);
-        },
-        onSecondaryTapDown: widget.onSecondaryTap == null
-            ? null
-            : (d) => widget.onSecondaryTap!(d.globalPosition),
+    return InteractionFeedback(
+      onTap: () {
+        final shift = HardwareKeyboard.instance.logicalKeysPressed
+                .contains(LogicalKeyboardKey.shiftLeft) ||
+            HardwareKeyboard.instance.logicalKeysPressed
+                .contains(LogicalKeyboardKey.shiftRight);
+        widget.onTap(shift);
+      },
+      onSecondaryTapDown: widget.onSecondaryTap,
+      onHoverChanged: (h) {
+        if (h == _hovered) return;
+        setState(() => _hovered = h);
+      },
+      onPressedChanged: (p) {
+        if (p == _pressed) return;
+        setState(() => _pressed = p);
+      },
+      child: AnimatedScale(
+        duration: AppMotion.snap,
+        curve: AppMotion.snapCurve,
+        scale: _pressed ? 0.99 : 1.0,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
           padding: const EdgeInsets.fromLTRB(0, 9, 12, 9),
@@ -2453,7 +2462,7 @@ class _CommitRowState extends State<_CommitRow> {
                   style: TextStyle(
                     color: widget.isSelected ? t.textStrong : t.textMuted,
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight:
                         widget.isSelected ? FontWeight.w700 : FontWeight.w600,
                   ),
@@ -2573,7 +2582,7 @@ class _FittingTagRow extends StatelessWidget {
   static const double _pillSpacing = 4;
   static const TextStyle _pillTextStyle = TextStyle(
     fontSize: 9,
-    fontFamily: 'JetBrainsMono',
+    fontFamily: AppFonts.mono,
     letterSpacing: 0.2,
   );
 
@@ -2645,7 +2654,7 @@ class _TagPill extends StatelessWidget {
                 color: t.accentBright,
                 fontSize: 9,
                 fontWeight: FontWeight.w600,
-                fontFamily: 'JetBrainsMono')),
+                fontFamily: AppFonts.mono)),
       ]),
     );
   }
@@ -2690,7 +2699,7 @@ class _ReflogRowState extends State<_ReflogRow> {
                     style: TextStyle(
                         color: t.accentBright,
                         fontSize: 9,
-                        fontFamily: 'JetBrainsMono')),
+                        fontFamily: AppFonts.mono)),
               ),
               const SizedBox(width: 6),
               Expanded(
@@ -2701,7 +2710,7 @@ class _ReflogRowState extends State<_ReflogRow> {
                   style: TextStyle(
                       color: t.textMuted,
                       fontSize: 10,
-                      fontFamily: 'JetBrainsMono')),
+                      fontFamily: AppFonts.mono)),
             ]),
           ),
         ),
@@ -2838,7 +2847,7 @@ class _CommitDetail extends StatelessWidget {
                 style: TextStyle(
                     color: t.accentBright,
                     fontSize: 11,
-                    fontFamily: 'JetBrainsMono')),
+                    fontFamily: AppFonts.mono)),
           ),
           Text('·',
               style: TextStyle(
@@ -3159,7 +3168,7 @@ class _CommitFileDiffPaneState extends State<_CommitFileDiffPane> {
                   style: TextStyle(
                     color: t.textStrong,
                     fontSize: 12,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -3374,7 +3383,7 @@ class _RebaseEditorState extends State<_RebaseEditor> {
                     style: TextStyle(
                         color: t.textMuted,
                         fontSize: 10,
-                        fontFamily: 'JetBrainsMono')),
+                        fontFamily: AppFonts.mono)),
                 const SizedBox(width: 8),
                 Expanded(
                     child: Text(entry['subject']!,
@@ -3688,7 +3697,7 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
                 style: TextStyle(
                   color: _hovered ? t.textStrong : t.textNormal,
                   fontSize: 10.5,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -3698,7 +3707,7 @@ class _InFlightDeskChipState extends State<_InFlightDeskChip> {
                 style: TextStyle(
                   color: t.stateAdded,
                   fontSize: 10,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w800,
                   fontFeatures: const [FontFeature.tabularFigures()],
                 ),
@@ -3807,13 +3816,13 @@ class _PreviewCommitRowState extends State<_PreviewCommitRow>
                       color: t.stateAdded,
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
-                      fontFamily: 'JetBrainsMono')),
+                      fontFamily: AppFonts.mono)),
               const SizedBox(width: 6),
               Text(shortHash,
                   style: TextStyle(
                       color: t.textMuted,
                       fontSize: 10,
-                      fontFamily: 'JetBrainsMono')),
+                      fontFamily: AppFonts.mono)),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(

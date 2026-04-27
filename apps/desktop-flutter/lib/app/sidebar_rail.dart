@@ -4,8 +4,10 @@ import '../backend/file_picker.dart';
 import '../backend/git.dart';
 import '../components/icons/app_icons.dart';
 import '../ui/control_chrome.dart';
+import '../ui/design_primitives.dart';
 import '../ui/form_controls.dart';
 import '../ui/hover_lift.dart';
+import '../ui/interaction_feedback.dart';
 import '../ui/material_surface.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart';
@@ -493,13 +495,22 @@ class _PathEntry extends StatelessWidget {
             if (error!.contains('Initialize'))
               Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: GestureDetector(
+                child: HoverableTap(
                   onTap: running
                       ? null
                       : () => onModeChanged(_RepositoryEntryMode.create),
-                  child: Text(
-                    'Switch to Create repo',
-                    style: TextStyle(color: t.accentBright, fontSize: 10),
+                  builder: (context, hovered) => AnimatedDefaultTextStyle(
+                    duration: AppMotion.snap,
+                    curve: AppMotion.snapCurve,
+                    style: TextStyle(
+                      color: hovered ? t.textStrong : t.accentBright,
+                      fontSize: 10,
+                      decoration: hovered
+                          ? TextDecoration.underline
+                          : TextDecoration.none,
+                      decorationColor: t.accentBright,
+                    ),
+                    child: const Text('Switch to Create repo'),
                   ),
                 ),
               ),
@@ -524,18 +535,21 @@ class _ModeChoiceBtn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return GestureDetector(
+    final radius =
+        BorderRadius.circular(context.surfaceShader.geometry.radius);
+    return ChromeButton(
       onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
+      borderRadius: radius,
+      padding: EdgeInsets.zero,
+      chromeBuilder: ({required hovered, required pressed}) =>
+          modeButtonChrome(
+        t,
+        hovered: hovered,
+        pressed: pressed,
+        active: active,
+      ),
+      child: SizedBox(
         height: 24,
-        decoration: BoxDecoration(
-          color: active ? t.itemActiveBg : t.surface0,
-          borderRadius: BorderRadius.circular(context.surfaceShader.geometry.radius),
-          border: Border.all(
-            color: active ? t.itemActiveBorder : t.secondaryBtnBorder,
-          ),
-        ),
         child: Center(
           child: Text(
             label,
@@ -585,7 +599,7 @@ class _StyledInputState extends State<_StyledInput> {
   }
 }
 
-class _PrimaryButton extends StatefulWidget {
+class _PrimaryButton extends StatelessWidget {
   final String label;
   final bool enabled;
   final VoidCallback onTap;
@@ -597,59 +611,30 @@ class _PrimaryButton extends StatefulWidget {
   });
 
   @override
-  State<_PrimaryButton> createState() => _PrimaryButtonState();
-}
-
-class _PrimaryButtonState extends State<_PrimaryButton> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final chrome = primaryButtonChrome(
-      t,
-      hovered: _hovered,
-      pressed: _pressed,
-      enabled: widget.enabled,
-    );
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor:
-          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      child: GestureDetector(
-        onTap: widget.enabled ? widget.onTap : null,
-        onTapDown:
-            widget.enabled ? (_) => setState(() => _pressed = true) : null,
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
-        child: AnimatedScale(
-          duration: const Duration(milliseconds: 80),
-          scale: chrome.scale,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
-            decoration: BoxDecoration(
-              color: chrome.background,
-              gradient: chrome.gradient,
-              borderRadius: BorderRadius.circular(context.surfaceShader.geometry.radius),
-              border: Border.all(
-                color: chrome.borderColor,
-              ),
-              boxShadow: chrome.shadows,
-            ),
-            alignment: Alignment.center,
-            child: Transform.translate(
-              offset: chrome.offset,
-              child: Text(
-                widget.label,
-                style: TextStyle(
-                  color: widget.enabled ? t.btnText : t.textMuted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
+    final radius =
+        BorderRadius.circular(context.surfaceShader.geometry.radius);
+    return ChromeButton(
+      onTap: enabled ? onTap : null,
+      enabled: enabled,
+      borderRadius: radius,
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      padding: EdgeInsets.zero,
+      chromeBuilder: ({required hovered, required pressed}) =>
+          primaryButtonChrome(
+        t,
+        hovered: hovered,
+        pressed: pressed,
+        enabled: enabled,
+      ),
+      child: Center(
+        child: Text(
+          label,
+          style: TextStyle(
+            color: enabled ? t.btnText : t.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
@@ -678,6 +663,7 @@ class _ProjectItem extends StatefulWidget {
 
 class _ProjectItemState extends State<_ProjectItem> {
   bool _hovered = false;
+  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
@@ -691,73 +677,89 @@ class _ProjectItemState extends State<_ProjectItem> {
     final borderColor = widget.isActive
         ? t.itemActiveBorder
         : t.itemActiveBorder.withValues(alpha: 0);
+    final radius =
+        BorderRadius.circular(context.surfaceShader.geometry.radius);
 
     return HoverLift(
       liftBy: widget.isActive ? 0 : 2,
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: widget.onTap,
+      child: InteractionFeedback(
+        onTap: widget.onTap,
+        borderRadius: radius,
+        onHoverChanged: (h) {
+          if (h == _hovered) return;
+          setState(() => _hovered = h);
+        },
+        onPressedChanged: (p) {
+          if (p == _pressed) return;
+          setState(() => _pressed = p);
+        },
+        child: AnimatedScale(
+          duration: AppMotion.snap,
+          curve: AppMotion.snapCurve,
+          scale: _pressed ? 0.99 : 1.0,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
+            duration: AppMotion.snap,
+            curve: AppMotion.snapCurve,
             margin: const EdgeInsets.symmetric(vertical: 1),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: background,
-              borderRadius: BorderRadius.circular(context.surfaceShader.geometry.radius),
+              borderRadius: radius,
               border: Border.all(color: borderColor),
             ),
-          // Tooltip exposes the full path so duplicate-named entries (e.g.
-          // the same repo cloned in two locations) can be told apart.
-          child: Tooltip(
-            message: widget.path,
-            waitDuration: const Duration(milliseconds: 400),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    widget.name,
-                    style: TextStyle(
-                      color: widget.isActive ? t.textStrong : t.textNormal,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+            // Tooltip exposes the full path so duplicate-named entries
+            // (e.g. the same repo cloned in two locations) can be told
+            // apart.
+            child: Tooltip(
+              message: widget.path,
+              waitDuration: const Duration(milliseconds: 400),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.name,
+                      style: TextStyle(
+                        color: widget.isActive ? t.textStrong : t.textNormal,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                // Hover-reveal "forget" action. Removes the entry from
-                // recents without touching the repo on disk.
-                if (_hovered && widget.onForget != null)
-                  Tooltip(
-                    message: 'Forget this project',
-                    child: GestureDetector(
-                      onTap: widget.onForget,
-                      behavior: HitTestBehavior.opaque,
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: Center(
-                          child: Text(
-                            '×',
-                            style: TextStyle(
-                              color: t.textMuted,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              height: 1,
+                  // Hover-reveal "forget" action. Removes the entry
+                  // from recents without touching the repo on disk.
+                  // Inner GestureDetector with opaque behavior wins
+                  // the gesture arena so clicking × doesn't also
+                  // trigger the parent's row-tap.
+                  if (_hovered && widget.onForget != null)
+                    Tooltip(
+                      message: 'Forget this project',
+                      child: GestureDetector(
+                        onTap: widget.onForget,
+                        behavior: HitTestBehavior.opaque,
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: Center(
+                            child: Text(
+                              '×',
+                              style: TextStyle(
+                                color: t.textMuted,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                height: 1,
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
-    ),
     );
   }
 }
@@ -778,43 +780,33 @@ class _SidebarIconBtn extends StatefulWidget {
 }
 
 class _SidebarIconBtnState extends State<_SidebarIconBtn> {
-  bool _hovered = false;
-
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
+    final radius =
+        BorderRadius.circular(context.surfaceShader.geometry.radius);
+    return HyperReactive(
+      selected: widget.active,
+      borderRadius: 6,
+      child: ChromeButton(
         onTap: widget.onTap,
-        child: HyperReactive(
-          selected: widget.active,
-          borderRadius: 6,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: widget.active
-                  ? t.itemActiveBg
-                  : (_hovered
-                      ? t.secondaryBtnHoverBg
-                      : t.secondaryBtnHoverBg.withValues(alpha: 0)),
-              borderRadius: BorderRadius.circular(context.surfaceShader.geometry.radius),
-              border: Border.all(
-                color: widget.active || _hovered
-                    ? t.secondaryBtnBorder
-                    : t.secondaryBtnBorder.withValues(alpha: 0),
-              ),
-            ),
-            child: Center(
-              child: AppIcon(
-                name: widget.icon,
-                size: 16,
-                color: widget.active ? t.accentBright : t.textMuted,
-              ),
+        borderRadius: radius,
+        padding: EdgeInsets.zero,
+        chromeBuilder: ({required hovered, required pressed}) =>
+            modeButtonChrome(
+          t,
+          hovered: hovered,
+          pressed: pressed,
+          active: widget.active,
+        ),
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: Center(
+            child: AppIcon(
+              name: widget.icon,
+              size: 16,
+              color: widget.active ? t.accentBright : t.textMuted,
             ),
           ),
         ),

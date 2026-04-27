@@ -11,6 +11,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../app/preferences_state.dart';
+import '../../ui/design_primitives.dart';
+import '../../ui/interaction_feedback.dart';
 import '../../ui/motion.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/form_controls.dart';
@@ -2756,7 +2758,7 @@ class _DiffShellState extends State<DiffShell> {
     final painter = TextPainter(
       text: const TextSpan(
         text: 'M',
-        style: TextStyle(fontFamily: 'JetBrainsMono', fontSize: 12),
+        style: TextStyle(fontFamily: AppFonts.mono, fontSize: 12),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
@@ -3666,7 +3668,7 @@ class _DiffShellState extends State<DiffShell> {
               style: TextStyle(
                 color: t.stateDeleted,
                 fontSize: 10.5,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
               ),
             ),
           ),
@@ -4051,7 +4053,7 @@ class _DiffLineState extends State<DiffLineView> {
                   : t.textMuted)
               : t.textMuted.withValues(alpha: 0.5),
           fontSize: 10,
-          fontFamily: 'JetBrainsMono',
+          fontFamily: AppFonts.mono,
         ),
       ),
     );
@@ -4368,7 +4370,7 @@ class _DiffLineState extends State<DiffLineView> {
                             style: TextStyle(
                               color: t.hyperChromatic1,
                               fontSize: 9,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -4490,7 +4492,7 @@ class _StageSigil extends StatelessWidget {
                     color: effective,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     height: 1.0,
                   ),
                 ),
@@ -4634,7 +4636,7 @@ Widget _buildPlainDiffText(
           : semanticTint.withValues(
               alpha: (0.015 + 0.035 * semanticSignal).clamp(0.0, 0.06)),
       fontSize: fontSize,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
       height: height,
       fontWeight: fontWeight,
       fontStyle: fontStyle,
@@ -4715,7 +4717,7 @@ Widget _buildSearchText(
     text: TextSpan(
       style: TextStyle(
         fontSize: fontSize,
-        fontFamily: 'JetBrainsMono',
+        fontFamily: AppFonts.mono,
         height: height,
         fontWeight: fontWeight,
         fontStyle: fontStyle,
@@ -4774,7 +4776,7 @@ TextPainter _cachedDiffLineTextPainter({
 
 class _DiffMeltTextPainter extends CustomPainter {
   static const _fontSize = 12.0;
-  static const _fontFamily = 'JetBrainsMono';
+  static const _fontFamily = AppFonts.mono;
   static const _lineHeight = 1.5;
   static const _maxMeltGlyphs = 180;
   static double? _cachedCharWidth;
@@ -5454,28 +5456,28 @@ class _HunkDropdownRow extends StatelessWidget {
     final scopeStyle = TextStyle(
       color: t.accentBright,
       fontSize: 11,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
     );
     final mutedStyle = TextStyle(
       color: t.textMuted,
       fontSize: 11,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
     );
     final fadedStyle = TextStyle(
       color: t.textMuted.withValues(alpha: 0.55),
       fontSize: 11,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
     );
     final addStyle = TextStyle(
       color: t.stateAdded,
       fontSize: 10,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
       fontWeight: FontWeight.w600,
     );
     final delStyle = TextStyle(
       color: t.stateDeleted,
       fontSize: 10,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
       fontWeight: FontWeight.w600,
     );
     final hasScope = hunk.scope.isNotEmpty;
@@ -5676,13 +5678,20 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
                         _pageSwitch(t),
                       ],
                       const SizedBox(width: 6),
-                      InkWell(
+                      // HoverableTap supplies cursor + per-theme tap
+                      // effect — InkWell here had no Material ancestor
+                      // and rendered no visible ripple on the diff
+                      // header surface.
+                      HoverableTap(
                         onTap: widget.onClose,
-                        borderRadius: BorderRadius.circular(8),
-                        child: Padding(
+                        borderRadius: AppRadii.baseAll,
+                        builder: (context, hovered) => Padding(
                           padding: const EdgeInsets.all(4),
-                          child:
-                              Icon(Icons.close, size: 14, color: t.textFaint),
+                          child: Icon(
+                            Icons.close,
+                            size: 14,
+                            color: hovered ? t.textStrong : t.textFaint,
+                          ),
                         ),
                       ),
                     ],
@@ -6280,7 +6289,12 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
     final title = preview.lineNumber == null
         ? _diffDisplayName(preview.filePath)
         : '${_diffDisplayName(preview.filePath)}:${preview.lineNumber}';
-    return InkWell(
+    // Material(color: transparent) provides the InkController so the
+    // InkWell ripple actually renders. Without it, taps on echo nodes
+    // were silent on the dark diff panel.
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
       borderRadius: BorderRadius.circular(4),
       onTap: () => widget.onRhymeTap(preview.displayIndex),
       child: Container(
@@ -6319,6 +6333,7 @@ class _PinnedContextDossierState extends State<_PinnedContextPanel> {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -7288,7 +7303,7 @@ class _StickyHunkHeader extends StatelessWidget {
     final labelStyle = TextStyle(
       color: tokens.accentBright,
       fontSize: 11,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
       height: 1.3,
     );
     final leftStrip = IgnorePointer(

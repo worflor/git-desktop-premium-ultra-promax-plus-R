@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/design_primitives.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
 import '../../ui/motion.dart';
@@ -837,7 +838,7 @@ class _ActivityLog extends StatelessWidget {
             style: TextStyle(
                 color: t.textNormal,
                 fontSize: 11,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 height: 1.6),
           ),
         ),

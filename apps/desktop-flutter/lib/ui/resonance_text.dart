@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import 'design_primitives.dart';
 import 'tokens.dart';
 
 /// Lightweight inline rich text renderer for AI-generated output.
@@ -195,7 +196,7 @@ TextStyle _styleFor(_Cat cat, TextStyle base, AppTokens t) {
       ),
     _Cat.code || _Cat.quoted => base.copyWith(
         color: t.chromeAccent,
-        fontFamily: 'JetBrainsMono',
+        fontFamily: AppFonts.mono,
         fontSize: codeFontSize,
         // Tint the inline code background with the chrome accent (same
         // hue as the text) instead of `bg0`, which collapsed to ~zero
@@ -209,18 +210,18 @@ TextStyle _styleFor(_Cat cat, TextStyle base, AppTokens t) {
       ),
     _Cat.camel => base.copyWith(
         color: t.chromeAccent.withValues(alpha: 0.75),
-        fontFamily: 'JetBrainsMono',
+        fontFamily: AppFonts.mono,
         fontSize: codeFontSize,
       ),
     _Cat.constant => base.copyWith(
         color: t.accentBright.withValues(alpha: 0.7),
         fontWeight: FontWeight.w600,
-        fontFamily: 'JetBrainsMono',
+        fontFamily: AppFonts.mono,
         fontSize: codeFontSize,
       ),
     _Cat.filePath => base.copyWith(
         color: t.chromeAccent.withValues(alpha: 0.8),
-        fontFamily: 'JetBrainsMono',
+        fontFamily: AppFonts.mono,
         fontSize: codeFontSize,
       ),
     _Cat.entity => base.copyWith(
@@ -263,7 +264,7 @@ class _CollapsibleCodeBlockState extends State<_CollapsibleCodeBlock> {
     final isLong = hiddenLines >= 4;
     final codeStyle = TextStyle(
       color: t.chromeAccent,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
       fontSize: widget.fontSize,
       height: 1.5,
     );

@@ -1588,7 +1588,7 @@ class _DiagnosticsOffenderButton extends StatelessWidget {
                 style: TextStyle(
                   color: t.accentBright,
                   fontSize: 9,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -1611,7 +1611,7 @@ class _DiagnosticsOffenderButton extends StatelessWidget {
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 9,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                     ),
                   ),
                 ],
@@ -1624,7 +1624,7 @@ class _DiagnosticsOffenderButton extends StatelessWidget {
               style: TextStyle(
                 color: t.accentBright.withValues(alpha: 0.8),
                 fontSize: 10,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -2021,7 +2021,7 @@ class _InputWithUnitState extends State<_InputWithUnit> {
                 style: TextStyle(
                   color: t.textStrong,
                   fontSize: 12,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                 ),
                 onSubmitted: (raw) {
                   final parsed = int.tryParse(raw.trim());
@@ -2124,7 +2124,7 @@ class _HybridRetentionActions extends StatelessWidget {
           style: TextStyle(
             color: t.textMuted.withValues(alpha: 0.55),
             fontSize: 10,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
             fontStyle: FontStyle.italic,
             fontWeight: FontWeight.w500,
             letterSpacing: -0.2,
@@ -2262,7 +2262,7 @@ class _ChannelRibbonItem extends StatelessWidget {
                       style: TextStyle(
                         color: active ? activeColor : t.textNormal,
                         fontSize: 10,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight:
                             active ? FontWeight.w800 : FontWeight.w600,
                         letterSpacing: 0.2,
@@ -2441,7 +2441,7 @@ class _DevSlotEasterEggState extends State<_DevSlotEasterEgg> {
               style: TextStyle(
                 color: t.textNormal,
                 fontSize: 10,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.2,
               ),
@@ -2479,7 +2479,7 @@ class _DevSlotEasterEggState extends State<_DevSlotEasterEgg> {
                 style: TextStyle(
                   color: color,
                   fontSize: 10,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.2,
                 ),
@@ -2523,7 +2523,7 @@ class _BuildInfoRow extends StatelessWidget {
             style: TextStyle(
               color: t.textMuted,
               fontSize: 10,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w800,
               letterSpacing: 1,
               height: 1,
@@ -2537,7 +2537,7 @@ class _BuildInfoRow extends StatelessWidget {
             color: t.textStrong,
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
           ),
         ),
         if (sha != null) ...[
@@ -2547,7 +2547,7 @@ class _BuildInfoRow extends StatelessWidget {
             style: TextStyle(
               color: t.textMuted,
               fontSize: 11,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
             ),
           ),
         ],
@@ -2724,7 +2724,7 @@ class _ShortcutsTable extends StatelessWidget {
                       style: TextStyle(
                         color: t.textMuted,
                         fontSize: 11,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -2755,7 +2755,7 @@ class _ShortcutsTable extends StatelessWidget {
                         color: t.textStrong,
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                       ),
                     ),
                   ),
@@ -2841,7 +2841,7 @@ class _ProviderNode extends StatelessWidget {
                 style: TextStyle(
                   color: t.textMuted,
                   fontSize: 10,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                 ),
               ),
               if (detail != null && detail!.trim().isNotEmpty) ...[
@@ -3244,7 +3244,7 @@ class _CompactModelSlotState extends State<_CompactModelSlot> {
               style: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.65),
                 fontSize: 10,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
               ),
             ),
           ],
@@ -3278,7 +3278,7 @@ class _CustomModelRow extends StatelessWidget {
             style: TextStyle(
               color: t.textMuted.withValues(alpha: 0.50),
               fontSize: 10,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
             ),
             overflow: TextOverflow.ellipsis,
           ),
@@ -3291,7 +3291,7 @@ class _CustomModelRow extends StatelessWidget {
             style: TextStyle(
               color: t.textStrong,
               fontSize: 11,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
             ),
             cursorColor: t.accentBright,
             onSubmitted: (_) => onSubmit(),
@@ -3318,7 +3318,7 @@ class _CustomModelRow extends StatelessWidget {
               hintStyle: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.30),
                 fontSize: 11,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
               ),
             ),
           ),
@@ -5627,7 +5627,7 @@ class _AiSupportLine extends StatelessWidget {
         color: strong ? t.textNormal : t.textMuted,
         fontSize: 10.5,
         fontWeight: strong ? FontWeight.w600 : FontWeight.w500,
-        fontFamily: 'JetBrainsMono',
+        fontFamily: AppFonts.mono,
       ),
     );
   }
@@ -5839,7 +5839,7 @@ class _TelemetrySwitcherItemState extends State<_TelemetrySwitcherItem> {
                       style: TextStyle(
                         color: activeColor.withValues(alpha: 0.7),
                         fontSize: 8,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -5891,7 +5891,7 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
           style: TextStyle(
             color: context.tokens.textMuted,
             fontSize: 10,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
           ),
         ),
         const SizedBox(height: 12),
@@ -5948,7 +5948,7 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
           style: TextStyle(
             color: context.tokens.textMuted,
             fontSize: 10,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
           ),
         ),
         const SizedBox(height: 10),
@@ -6025,7 +6025,7 @@ class _DiffDiagnosticsPanel extends StatelessWidget {
           style: TextStyle(
             color: context.tokens.textMuted,
             fontSize: 10,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
           ),
         ),
         const SizedBox(height: 12),
@@ -6113,7 +6113,7 @@ class _UiDiagnosticsPanel extends StatelessWidget {
           style: TextStyle(
             color: context.tokens.textMuted,
             fontSize: 10,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
           ),
         ),
         const SizedBox(height: 12),
@@ -6264,7 +6264,7 @@ class _DeckButtonState extends State<_DeckButton> {
                   style: TextStyle(
                     color: _hovered && widget.enabled ? t.textStrong : t.textNormal,
                     fontSize: 9,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.4,
                   ),
@@ -6528,7 +6528,7 @@ class _RecentSamplesList extends StatelessWidget {
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     height: 1.5,
                   ),
                 ),
@@ -7006,7 +7006,7 @@ class _SortGuideBadge extends StatelessWidget {
         style: TextStyle(
           color: previewing ? tokens.textMuted : tokens.accentBright,
           fontSize: 9,
-          fontFamily: 'JetBrainsMono',
+          fontFamily: AppFonts.mono,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.4,
         ),
@@ -7122,7 +7122,7 @@ class _SortDemoStage extends StatelessWidget {
                               alpha: inverted ? 0.9 : 0.35),
                           fontSize: 11,
                           height: 1.0,
-                          fontFamily: 'JetBrainsMono',
+                          fontFamily: AppFonts.mono,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -7185,7 +7185,7 @@ class _SortDemoTileBody extends StatelessWidget {
               color: color.withValues(alpha: 0.9),
               fontSize: 9,
               height: 1.0,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -7687,7 +7687,7 @@ class _HzBadge extends StatelessWidget {
             style: TextStyle(
               color: fg,
               fontSize: 9,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.4,
               fontFeatures: const [FontFeature.tabularFigures()],
@@ -8635,7 +8635,7 @@ class _CabinetMiniIndicator extends StatelessWidget {
                         color: expanded ? active : muted,
                         fontSize: 6,
                         height: 1.0,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -9868,7 +9868,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
                         color:
                             peeking ? t.textMuted : t.accentBright,
                         fontSize: 9,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.4,
                       ),
@@ -9891,7 +9891,7 @@ class _CommitFormatStageState extends State<_CommitFormatStage> {
                 color: t.textNormal,
                 fontSize: 11.5,
                 height: 1.5,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
               );
               final innerWidth =
                   constraints.maxWidth - horizontalPad * 2;

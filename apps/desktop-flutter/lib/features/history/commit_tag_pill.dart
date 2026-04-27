@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../ui/design_primitives.dart';
 import '../../ui/tokens.dart';
 import 'commit_tagger.dart';
 
@@ -65,7 +66,7 @@ class CommitTagPill extends StatelessWidget {
           fontSize: 9,
           fontWeight: emphasis.weight,
           fontStyle: isBorrowed ? FontStyle.italic : FontStyle.normal,
-          fontFamily: 'JetBrainsMono',
+          fontFamily: AppFonts.mono,
           letterSpacing: 0.2,
         ),
       ),

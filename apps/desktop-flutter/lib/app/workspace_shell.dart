@@ -19,6 +19,7 @@ import '../features/settings/settings_page.dart';
 import '../features/xray/repo_xray_panel.dart';
 import '../ui/animated_icons.dart';
 import '../ui/control_chrome.dart';
+import '../ui/design_primitives.dart';
 import '../ui/dream_hint.dart';
 import '../ui/form_controls.dart';
 import '../ui/hyperhealth_text.dart';
@@ -84,6 +85,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
+    final t = context.tokens;
     final syncMaxHeight = size.height > 64 ? size.height - 64 : size.height;
     final activeRepoPath = context.select<RepositoryState, String?>(
       (s) => s.activePath,
@@ -202,8 +204,13 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: () => setState(() => _panel = _Panel.none),
+                        // Scrim sourced from t.bg0 to match the
+                        // dialogTheme.barrierColor formula. Hardcoded
+                        // Colors.black @ 0.4 read as a muddy smear on
+                        // light themes (petrichor, halo, nacre, barbie)
+                        // and clashed with the themed dialog scrim.
                         child: Container(
-                            color: Colors.black.withValues(alpha: 0.4)),
+                            color: t.bg0.withValues(alpha: 0.72)),
                       ),
                     ),
                   ),
@@ -422,7 +429,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                             style: TextStyle(
                               color: t.accentBright,
                               fontSize: 11,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -2014,7 +2021,7 @@ class _DeskTabState extends State<_DeskTab>
                       style: TextStyle(
                         color: t.accentBright,
                         fontSize: 9.5,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w800,
                         fontFeatures: const [FontFeature.tabularFigures()],
                       ),
@@ -2191,7 +2198,7 @@ class _DeskTrendGlyph extends StatelessWidget {
           style: TextStyle(
             color: color,
             fontSize: 9.5,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
             fontWeight: FontWeight.w700,
             fontFeatures: const [FontFeature.tabularFigures()],
           ),
@@ -2936,30 +2943,38 @@ class _BranchRowState extends State<_BranchRow> {
                 if (widget.alreadyOpenAsDesk)
                   Tooltip(
                     message: 'Jump to desk',
-                    child: GestureDetector(
+                    child: HoverableTap(
                       onTap: widget.onOpenAsDesk,
-                      child: Text(
-                        '→ open',
+                      builder: (context, hovered) =>
+                          AnimatedDefaultTextStyle(
+                        duration: AppMotion.snap,
+                        curve: AppMotion.snapCurve,
                         style: TextStyle(
-                          color: t.accentBright.withValues(alpha: 0.7),
+                          color: hovered
+                              ? t.accentBright
+                              : t.accentBright.withValues(alpha: 0.7),
                           fontSize: 9,
                           fontWeight: FontWeight.w600,
                         ),
+                        child: const Text('→ open'),
                       ),
                     ),
                   )
                 else if (_hovered)
                   Tooltip(
                     message: 'Open on a new desk',
-                    child: GestureDetector(
+                    child: HoverableTap(
                       onTap: widget.onOpenAsDesk,
-                      child: Text(
-                        '+ desk',
+                      builder: (context, hovered) =>
+                          AnimatedDefaultTextStyle(
+                        duration: AppMotion.snap,
+                        curve: AppMotion.snapCurve,
                         style: TextStyle(
-                          color: t.textMuted,
+                          color: hovered ? t.textStrong : t.textMuted,
                           fontSize: 9,
                           fontWeight: FontWeight.w600,
                         ),
+                        child: const Text('+ desk'),
                       ),
                     ),
                   ),
@@ -3110,13 +3125,20 @@ class _NewDeskRowState extends State<_NewDeskRow> {
                 ),
               ),
             ),
-            GestureDetector(
+            HoverableTap(
               onTap: () => setState(() {
                 _expanded = false;
                 _ctrl.clear();
               }),
-              child: Text('esc',
-                  style: TextStyle(color: t.textMuted, fontSize: 9)),
+              builder: (context, hovered) => AnimatedDefaultTextStyle(
+                duration: AppMotion.snap,
+                curve: AppMotion.snapCurve,
+                style: TextStyle(
+                  color: hovered ? t.textStrong : t.textMuted,
+                  fontSize: 9,
+                ),
+                child: const Text('esc'),
+              ),
             ),
           ],
         ),

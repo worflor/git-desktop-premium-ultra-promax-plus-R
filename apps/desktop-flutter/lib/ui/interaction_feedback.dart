@@ -5,8 +5,12 @@ import 'motion.dart';
 import 'tokens.dart';
 
 /// Wrap any tap target in this to get the active theme's `ThemeInteraction`
-/// rendered on click. Themes declaring `ThemeInteraction.none` (petrichor,
-/// helix, redshift, crafty) get a transparent pass-through — zero overhead.
+/// rendered on click. Themes declaring `ThemeInteraction.none` (only
+/// petrichor, by design — its restraint mandate) get a transparent
+/// pass-through — zero overhead. Every other theme paints its per-tap
+/// effect: caustic ripples, etch stamps, warp rings, vibration specks,
+/// chalk dust, ink splats, block-break shards, gloss streaks.
+///
 /// Each instance owns a single reusable [AnimationController]; retriggers
 /// reset + re-forward instead of allocating. The feedback layer is above
 /// the child in a `Stack`, clipped to the provided [borderRadius] so
@@ -17,6 +21,17 @@ class InteractionFeedback extends StatefulWidget {
   final VoidCallback? onTap;
   final BorderRadius? borderRadius;
   final ValueChanged<bool>? onHoverChanged;
+  /// Fires `true` on `onTapDown`, `false` on `onTapUp`/`onTapCancel`.
+  /// Lets a parent (e.g. `ChromeButton`) drive press-state visuals
+  /// without nesting its own gesture detector inside this one — since
+  /// nested opaque detectors would compete for the tap and one would
+  /// silently lose to the other.
+  final ValueChanged<bool>? onPressedChanged;
+  /// Right-click handler. Receives the global tap position so callers
+  /// can position popovers / context menus. Without this, list rows
+  /// that need right-click support would have to nest their own
+  /// gesture detector and compete with this one.
+  final void Function(Offset globalPosition)? onSecondaryTapDown;
   final MouseCursor cursor;
   final HitTestBehavior behavior;
 
@@ -26,6 +41,8 @@ class InteractionFeedback extends StatefulWidget {
     required this.onTap,
     this.borderRadius,
     this.onHoverChanged,
+    this.onPressedChanged,
+    this.onSecondaryTapDown,
     this.cursor = SystemMouseCursors.click,
     this.behavior = HitTestBehavior.opaque,
   });
@@ -36,9 +53,13 @@ class InteractionFeedback extends StatefulWidget {
 
 class _InteractionFeedbackState extends State<InteractionFeedback>
     with SingleTickerProviderStateMixin {
+  // Initial duration is overwritten in `_fire()` before the controller
+  // ever runs (`_ac.duration = context.motionRead(_durationFor(mode))`).
+  // We use the longest possible mode duration so a forgotten fire-without-
+  // reset has a sane upper bound rather than the framework default 0.
   late final AnimationController _ac = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 500),
+    duration: const Duration(milliseconds: 460),
   );
   Offset _origin = Offset.zero;
 
@@ -77,6 +98,7 @@ class _InteractionFeedbackState extends State<InteractionFeedback>
         : shader.interaction;
     final t = context.tokens;
 
+    final hasPressCallback = widget.onPressedChanged != null;
     return MouseRegion(
       cursor: widget.onTap == null ? MouseCursor.defer : widget.cursor,
       onEnter: widget.onHoverChanged == null
@@ -84,13 +106,33 @@ class _InteractionFeedbackState extends State<InteractionFeedback>
           : (_) => widget.onHoverChanged!(true),
       onExit: widget.onHoverChanged == null
           ? null
-          : (_) => widget.onHoverChanged!(false),
+          : (_) {
+              widget.onHoverChanged!(false);
+              // Mouse leaving while pressed should unstick the press
+              // visual. Without this, dragging the cursor off mid-press
+              // leaves the parent stuck in `_pressed = true`.
+              if (hasPressCallback) widget.onPressedChanged!(false);
+            },
       child: GestureDetector(
         behavior: widget.behavior,
-        onTapDown: mode == ThemeInteraction.none
+        onTapDown: mode == ThemeInteraction.none && !hasPressCallback
             ? null
-            : (details) => _fire(mode, details.localPosition),
+            : (details) {
+                if (mode != ThemeInteraction.none) {
+                  _fire(mode, details.localPosition);
+                }
+                if (hasPressCallback) widget.onPressedChanged!(true);
+              },
+        onTapUp: hasPressCallback
+            ? (_) => widget.onPressedChanged!(false)
+            : null,
+        onTapCancel: hasPressCallback
+            ? () => widget.onPressedChanged!(false)
+            : null,
         onTap: widget.onTap,
+        onSecondaryTapDown: widget.onSecondaryTapDown == null
+            ? null
+            : (d) => widget.onSecondaryTapDown!(d.globalPosition),
         child: Stack(
           children: [
             widget.child,
@@ -128,6 +170,51 @@ class _InteractionFeedbackState extends State<InteractionFeedback>
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Tiny stateful wrapper that tracks hover and rebuilds with the new
+/// state. For places where a tap target needs hover-driven visual change
+/// (e.g., text link brightening on hover) without each call site
+/// hand-rolling a StatefulWidget for two booleans. The `builder` receives
+/// the current hover state and returns the visible widget; the wrapper
+/// handles cursor + per-theme tap effect via [InteractionFeedback].
+class HoverableTap extends StatefulWidget {
+  final Widget Function(BuildContext context, bool hovered) builder;
+  final VoidCallback? onTap;
+  final BorderRadius? borderRadius;
+  final MouseCursor cursor;
+  final HitTestBehavior behavior;
+
+  const HoverableTap({
+    super.key,
+    required this.builder,
+    required this.onTap,
+    this.borderRadius,
+    this.cursor = SystemMouseCursors.click,
+    this.behavior = HitTestBehavior.opaque,
+  });
+
+  @override
+  State<HoverableTap> createState() => _HoverableTapState();
+}
+
+class _HoverableTapState extends State<HoverableTap> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return InteractionFeedback(
+      onTap: widget.onTap,
+      borderRadius: widget.borderRadius,
+      cursor: widget.cursor,
+      behavior: widget.behavior,
+      onHoverChanged: (h) {
+        if (h == _hovered) return;
+        setState(() => _hovered = h);
+      },
+      child: widget.builder(context, _hovered),
     );
   }
 }

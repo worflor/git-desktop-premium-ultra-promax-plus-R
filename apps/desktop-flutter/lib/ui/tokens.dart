@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'design_primitives.dart';
+
 // Theme-independent signal colors used for review verdicts, guardrail
 // stages, and any UI that communicates a confidence/risk level.
 // Order: safe → informational → cautious → risky → critical.
@@ -1822,7 +1824,7 @@ const themeDefinitions = <AppThemeDefinition>[
       textEffect: ThemeTextEffect.phosphor,
       geometry: SurfaceMaterialGeometry(
         radius: 0,
-        typography: 'JetBrainsMono',
+        typography: AppFonts.mono,
         fontScale: 0.98,
         letterSpacingEm: 0.01,
       ),

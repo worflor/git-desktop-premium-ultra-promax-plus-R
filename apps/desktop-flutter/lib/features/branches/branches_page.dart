@@ -13,8 +13,10 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/design_primitives.dart';
 import '../../ui/dream_hint.dart';
 import '../../ui/form_controls.dart';
+import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/status_view.dart';
 import '../../ui/motion.dart';
@@ -90,7 +92,6 @@ class _AiReviewProgressDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return AlertDialog(
-      backgroundColor: t.surface1,
       content: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -131,7 +132,6 @@ class _PrAiReviewDialog extends StatelessWidget {
             ? t.stateDeleted
             : t.textNormal;
     return AlertDialog(
-      backgroundColor: t.surface1,
       title: Row(
         children: [
           Text(
@@ -141,7 +141,7 @@ class _PrAiReviewDialog extends StatelessWidget {
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 2,
-                fontFamily: 'JetBrainsMono'),
+                fontFamily: AppFonts.mono),
           ),
           const SizedBox(width: 10),
           Text(
@@ -150,7 +150,7 @@ class _PrAiReviewDialog extends StatelessWidget {
                 color: verdictColor,
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
-                fontFamily: 'JetBrainsMono'),
+                fontFamily: AppFonts.mono),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -194,14 +194,14 @@ class _PrAiReviewDialog extends StatelessWidget {
                               color: t.accentBright,
                               fontSize: 9,
                               fontWeight: FontWeight.w800,
-                              fontFamily: 'JetBrainsMono'),
+                              fontFamily: AppFonts.mono),
                         ),
                         if (f.filePath != null && f.filePath!.isNotEmpty)
                           Text(f.filePath!,
                               style: TextStyle(
                                   color: t.textMuted,
                                   fontSize: 10,
-                                  fontFamily: 'JetBrainsMono')),
+                                  fontFamily: AppFonts.mono)),
                         const SizedBox(height: 2),
                         Text(f.title,
                             style: TextStyle(
@@ -795,7 +795,7 @@ class _BranchesPageState extends State<BranchesPage> {
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 11,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                     )),
                 const SizedBox(height: 10),
                 AppTextField(
@@ -1206,8 +1206,7 @@ class _BranchesPageState extends State<BranchesPage> {
       final ok = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          backgroundColor: t.surface1,
-          content: Text(
+              content: Text(
             '$localRef already exists locally. Updating it will replace any '
             'local commits on that branch with the latest from GitHub.',
             style: TextStyle(color: t.textNormal, fontSize: 12),
@@ -3319,7 +3318,7 @@ class _BranchesPageState extends State<BranchesPage> {
                       style: TextStyle(
                         color: t.textMuted.withValues(alpha: 0.85),
                         fontSize: 10,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w700,
                         fontFeatures: const [FontFeature.tabularFigures()],
                         letterSpacing: 0.4,
@@ -3869,8 +3868,7 @@ class _BranchesPageState extends State<BranchesPage> {
       builder: (ctx) {
         final t = ctx.tokens;
         return AlertDialog(
-          backgroundColor: t.surface1,
-          title: Text(
+              title: Text(
             'Merge PR #${pr.number} into ${desk.branch}',
             style: TextStyle(color: t.textStrong, fontSize: 14),
           ),
@@ -3888,7 +3886,7 @@ class _BranchesPageState extends State<BranchesPage> {
                 style: TextStyle(
                   color: t.textMuted,
                   fontSize: 10,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                 ),
               ),
               if (!preflight.available) ...[
@@ -3929,7 +3927,7 @@ class _BranchesPageState extends State<BranchesPage> {
                           style: TextStyle(
                             color: t.textNormal,
                             fontSize: 10,
-                            fontFamily: 'JetBrainsMono',
+                            fontFamily: AppFonts.mono,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -4098,8 +4096,7 @@ class _BranchesPageState extends State<BranchesPage> {
       final proceed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          backgroundColor: t.surface1,
-          title: Text(
+              title: Text(
             'Conflicts detected',
             style: TextStyle(color: t.textStrong, fontSize: 14),
           ),
@@ -4119,7 +4116,7 @@ class _BranchesPageState extends State<BranchesPage> {
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 10,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                     )),
               if (preflight.conflictingPaths.length > 6)
                 Text(
@@ -4503,7 +4500,7 @@ class _LensRibbon extends StatelessWidget {
                       style: TextStyle(
                         color: t.textMuted,
                         fontSize: 13,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w800,
                       )),
                 ),
@@ -4522,7 +4519,7 @@ class _LensRibbon extends StatelessWidget {
                         style: TextStyle(
                           color: t.textMuted,
                           fontSize: 11,
-                          fontFamily: 'JetBrainsMono',
+                          fontFamily: AppFonts.mono,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.3,
                         )),
@@ -4583,7 +4580,7 @@ class _FilterRow extends StatelessWidget {
               style: TextStyle(
                 color: t.textNormal,
                 fontSize: 11,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
               ),
               decoration: InputDecoration(
                 isDense: true,
@@ -4593,7 +4590,7 @@ class _FilterRow extends StatelessWidget {
                 hintStyle: TextStyle(
                   color: t.textMuted.withValues(alpha: 0.65),
                   fontSize: 11,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                 ),
               ),
             ),
@@ -4691,7 +4688,7 @@ class _FilterPillWidgetState extends State<_FilterPillWidget> {
                 style: TextStyle(
                   color: fg,
                   fontSize: 9.5,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.6,
                 ),
@@ -4703,7 +4700,7 @@ class _FilterPillWidgetState extends State<_FilterPillWidget> {
                   style: TextStyle(
                     color: fg.withValues(alpha: 0.75),
                     fontSize: 9,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w700,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
@@ -4790,7 +4787,7 @@ class _KeyboardHelpOverlay extends StatelessWidget {
                             style: TextStyle(
                               color: t.accentBright,
                               fontSize: 11,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -4814,7 +4811,7 @@ class _KeyboardHelpOverlay extends StatelessWidget {
                   style: TextStyle(
                     color: t.textMuted.withValues(alpha: 0.7),
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   ),
                 ),
               ],
@@ -4845,6 +4842,7 @@ class _LensRibbonSegment extends StatefulWidget {
 
 class _LensRibbonSegmentState extends State<_LensRibbonSegment> {
   bool _hovered = false;
+  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
@@ -4853,13 +4851,20 @@ class _LensRibbonSegmentState extends State<_LensRibbonSegment> {
     final color =
         widget.isActive ? accent : (_hovered ? t.textStrong : t.textNormal);
     final shader = context.surfaceShader;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
+    return InteractionFeedback(
+      onTap: widget.onTap,
+      onHoverChanged: (h) {
+        if (h == _hovered) return;
+        setState(() => _hovered = h);
+      },
+      onPressedChanged: (p) {
+        if (p == _pressed) return;
+        setState(() => _pressed = p);
+      },
+      child: AnimatedScale(
+        duration: AppMotion.snap,
+        curve: AppMotion.snapCurve,
+        scale: _pressed ? 0.97 : 1.0,
         child: Padding(
           padding: const EdgeInsets.only(right: 20),
           child: Column(
@@ -4891,7 +4896,7 @@ class _LensRibbonSegmentState extends State<_LensRibbonSegment> {
                           ? accent.withValues(alpha: 0.85)
                           : t.textMuted.withValues(alpha: 0.75),
                       fontSize: 10,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                       fontWeight: FontWeight.w700,
                       fontFeatures: const [FontFeature.tabularFigures()],
                       letterSpacing: 0.4,
@@ -4995,23 +5000,21 @@ class _RefreshGlyphState extends State<_RefreshGlyph>
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: RotationTransition(
-            turns: _spin,
-            child: Text(
-              '✦',
-              style: TextStyle(
-                color: t.textMuted,
-                fontSize: 14,
-                fontWeight: FontWeight.w400,
-              ),
+    return HoverableTap(
+      onTap: widget.onTap,
+      builder: (context, hovered) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: RotationTransition(
+          turns: _spin,
+          child: AnimatedDefaultTextStyle(
+            duration: AppMotion.snap,
+            curve: AppMotion.snapCurve,
+            style: TextStyle(
+              color: hovered ? t.textStrong : t.textMuted,
+              fontSize: 14,
+              fontWeight: FontWeight.w400,
             ),
+            child: const Text('✦'),
           ),
         ),
       ),
@@ -5203,6 +5206,7 @@ class _PullRequestRow extends StatefulWidget {
 
 class _PullRequestRowState extends State<_PullRequestRow> {
   bool _hovered = false;
+  bool _pressed = false;
 
   Color _stateColor(AppTokens t) {
     switch (widget.pr.state) {
@@ -5407,14 +5411,17 @@ class _PullRequestRowState extends State<_PullRequestRow> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: widget.onTap,
-                      onSecondaryTapDown: widget.onSecondaryTap == null
-                          ? null
-                          : (d) => widget.onSecondaryTap!(d.globalPosition),
+                  InteractionFeedback(
+                    onTap: widget.onTap,
+                    onSecondaryTapDown: widget.onSecondaryTap,
+                    onPressedChanged: (p) {
+                      if (p == _pressed) return;
+                      setState(() => _pressed = p);
+                    },
+                    child: AnimatedScale(
+                      duration: AppMotion.snap,
+                      curve: AppMotion.snapCurve,
+                      scale: _pressed ? 0.99 : 1.0,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -5679,7 +5686,7 @@ class _PrHeader extends StatelessWidget {
                 style: TextStyle(
                   color: t.textStrong,
                   fontSize: 12,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w700,
                   fontFeatures: const [FontFeature.tabularFigures()],
                   letterSpacing: 0.3,
@@ -5723,7 +5730,7 @@ class _PrHeader extends StatelessWidget {
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 10.5,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                       letterSpacing: 0.1,
                     ),
                     children: [
@@ -5779,7 +5786,7 @@ class _PrHeader extends StatelessWidget {
               style: TextStyle(
                 color: t.chromeAccent,
                 fontSize: 9,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 0.6,
               ),
@@ -5798,7 +5805,7 @@ class _PrHeader extends StatelessWidget {
             style: TextStyle(
               color: stateColor,
               fontSize: 9,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w800,
               letterSpacing: 0.6,
             ),
@@ -5857,7 +5864,7 @@ class _BucketDivider extends StatelessWidget {
             style: TextStyle(
               color: labelColor.withValues(alpha: 0.7),
               fontSize: 9,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w700,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
@@ -5905,7 +5912,7 @@ class _MyReviewPill extends StatelessWidget {
         style: TextStyle(
           color: color,
           fontSize: 9.5,
-          fontFamily: 'JetBrainsMono',
+          fontFamily: AppFonts.mono,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.4,
         ),
@@ -5934,7 +5941,7 @@ class _ConversationTailPill extends StatelessWidget {
     final mono = TextStyle(
       color: t.textMuted,
       fontSize: 10,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
       letterSpacing: 0.2,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
@@ -5969,7 +5976,7 @@ class _ConversationTailPill extends StatelessWidget {
             style: TextStyle(
               color: color,
               fontSize: 10,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -6089,7 +6096,7 @@ class _DiffSparkline extends StatelessWidget {
     final mono = TextStyle(
       color: t.textMuted,
       fontSize: 9,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
       letterSpacing: 0.2,
       fontFeatures: const [FontFeature.tabularFigures()],
       fontWeight: FontWeight.w700,
@@ -6317,7 +6324,7 @@ class _WorklineConnectorState extends State<_WorklineConnector> {
                     color: fg,
                     fontSize: 12,
                     height: 1,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -6327,7 +6334,7 @@ class _WorklineConnectorState extends State<_WorklineConnector> {
                     color: fg,
                     fontSize: 9,
                     height: 1.2,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w800,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
@@ -6386,7 +6393,7 @@ class _PrMetricLine extends StatelessWidget {
     final mono = TextStyle(
       color: t.textMuted,
       fontSize: 10,
-      fontFamily: 'JetBrainsMono',
+      fontFamily: AppFonts.mono,
       letterSpacing: 0.2,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
@@ -6405,7 +6412,7 @@ class _PrMetricLine extends StatelessWidget {
                   style: TextStyle(
                     color: _checkColor(t, c),
                     fontSize: 11,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -6433,7 +6440,7 @@ class _PrMetricLine extends StatelessWidget {
                   style: TextStyle(
                     color: _reviewerColor(t, r.state),
                     fontSize: 11,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -7055,7 +7062,7 @@ class _PersonRow extends StatelessWidget {
                     ? _reviewerColor(t, entry.state)
                     : t.textMuted.withValues(alpha: 0.55),
                 fontSize: 12,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -7065,7 +7072,7 @@ class _PersonRow extends StatelessWidget {
             style: TextStyle(
               color: entry.isReviewer ? t.textNormal : t.textMuted,
               fontSize: 11,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: entry.isReviewer ? FontWeight.w600 : FontWeight.w400,
             ),
           ),
@@ -7106,7 +7113,7 @@ class _PersonRow extends StatelessWidget {
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 9.5,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontFeatures: const [FontFeature.tabularFigures()],
                     fontWeight: FontWeight.w700,
                   ),
@@ -7250,7 +7257,7 @@ class _WillFightRowState extends State<_WillFightRow> {
                   style: TextStyle(
                     color: t.stateConflicted,
                     fontSize: 11,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w700,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
@@ -7279,7 +7286,7 @@ class _WillFightRowState extends State<_WillFightRow> {
                       style: TextStyle(
                         color: t.stateConflicted.withValues(alpha: 0.85),
                         fontSize: 10,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontFeatures: const [FontFeature.tabularFigures()],
                         fontWeight: FontWeight.w700,
                       ),
@@ -7293,7 +7300,7 @@ class _WillFightRowState extends State<_WillFightRow> {
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontFeatures: const [FontFeature.tabularFigures()],
                     fontWeight: FontWeight.w700,
                   ),
@@ -7351,7 +7358,7 @@ class _ConflictsWithYouSection extends StatelessWidget {
                 style: TextStyle(
                   color: t.textNormal,
                   fontSize: 11,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                 ),
               ),
             ),
@@ -7449,7 +7456,7 @@ class _IssueLinkChipState extends State<_IssueLinkChip> {
             style: TextStyle(
               color: t.accentBright,
               fontSize: 10.5,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.4,
             ),
@@ -7520,7 +7527,7 @@ class _PrLinkChipState extends State<_PrLinkChip> {
                 style: TextStyle(
                   color: state,
                   fontSize: 10.5,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.4,
                 ),
@@ -7531,7 +7538,7 @@ class _PrLinkChipState extends State<_PrLinkChip> {
                 style: TextStyle(
                   color: state.withValues(alpha: 0.75),
                   fontSize: 9.5,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   letterSpacing: 0.3,
                 ),
               ),
@@ -7742,7 +7749,7 @@ class _FilesSectionHeader extends StatelessWidget {
                   style: TextStyle(
                     color: t.textMuted.withValues(alpha: 0.65),
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -7783,7 +7790,7 @@ class _FilesSectionHeader extends StatelessWidget {
                 style: TextStyle(
                   color: _orientationColor(t, orientation),
                   fontSize: 11,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -7804,7 +7811,7 @@ class _FilesSectionHeader extends StatelessWidget {
                       ? dotActive
                       : t.textMuted.withValues(alpha: 0.6),
                   fontSize: 10,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -7815,7 +7822,7 @@ class _FilesSectionHeader extends StatelessWidget {
             style: TextStyle(
               color: t.textMuted,
               fontSize: 9.5,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontFeatures: const [FontFeature.tabularFigures()],
               letterSpacing: 0.4,
             ),
@@ -7968,7 +7975,7 @@ class _GhostFilePill extends StatelessWidget {
             style: TextStyle(
               color: t.textMuted,
               fontSize: 10.5,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: FontWeight.w500,
               fontStyle: FontStyle.italic,
             ),
@@ -8365,7 +8372,7 @@ class _FilePillState extends State<_FilePill> {
                                 style: TextStyle(
                                   color: accent.withValues(alpha: 0.9),
                                   fontSize: 9.5,
-                                  fontFamily: 'JetBrainsMono',
+                                  fontFamily: AppFonts.mono,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
@@ -8377,7 +8384,7 @@ class _FilePillState extends State<_FilePill> {
                             color:
                                 widget.isActive ? t.textStrong : t.textNormal,
                             fontSize: 10.5,
-                            fontFamily: 'JetBrainsMono',
+                            fontFamily: AppFonts.mono,
                             fontWeight: widget.isActive
                                 ? FontWeight.w700
                                 : FontWeight.w500,
@@ -8388,7 +8395,7 @@ class _FilePillState extends State<_FilePill> {
                             style: TextStyle(
                               color: t.stateAdded.withValues(alpha: 0.85),
                               fontSize: 9,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                               fontFeatures: const [
                                 FontFeature.tabularFigures()
                               ],
@@ -8398,7 +8405,7 @@ class _FilePillState extends State<_FilePill> {
                             style: TextStyle(
                               color: t.stateDeleted.withValues(alpha: 0.85),
                               fontSize: 9,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                               fontFeatures: const [
                                 FontFeature.tabularFigures()
                               ],
@@ -8452,7 +8459,7 @@ class _ReviewFormState extends State<_ReviewForm> {
             style: TextStyle(
               color: t.textNormal,
               fontSize: 11,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               height: 1.4,
             ),
             decoration: InputDecoration(
@@ -8462,7 +8469,7 @@ class _ReviewFormState extends State<_ReviewForm> {
               hintStyle: TextStyle(
                 color: t.textMuted.withValues(alpha: 0.6),
                 fontSize: 11,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
               ),
             ),
           ),
@@ -8582,7 +8589,7 @@ class _ActionButtonState extends State<_ActionButton> {
               style: TextStyle(
                 color: fg,
                 fontSize: 10.5,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.4,
               ),
@@ -8871,7 +8878,7 @@ class _CheckLine extends StatelessWidget {
               style: TextStyle(
                 color: color,
                 fontSize: 12,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w800,
               ),
             ),
@@ -8884,7 +8891,7 @@ class _CheckLine extends StatelessWidget {
               style: TextStyle(
                 color: t.textNormal,
                 fontSize: 11,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
               ),
             ),
           ),
@@ -8894,7 +8901,7 @@ class _CheckLine extends StatelessWidget {
               style: TextStyle(
                 color: t.textMuted,
                 fontSize: 10,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
@@ -8936,7 +8943,7 @@ class _CommentBlock extends StatelessWidget {
                 style: TextStyle(
                     color: t.accentBright,
                     fontSize: 10.5,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w700)),
             const SizedBox(width: 8),
             Text(_relativeTime(comment.createdAt),
@@ -9000,7 +9007,7 @@ class _CommentBlock extends StatelessWidget {
               ),
               code: TextStyle(
                 color: t.accentBright,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontSize: 10.5,
                 backgroundColor: t.bg0,
               ),
@@ -9213,7 +9220,7 @@ class _IssueRowState extends State<_IssueRow> {
                               style: TextStyle(
                                 color: t.textStrong,
                                 fontSize: 12,
-                                fontFamily: 'JetBrainsMono',
+                                fontFamily: AppFonts.mono,
                                 fontWeight: FontWeight.w700,
                                 fontFeatures: const [
                                   FontFeature.tabularFigures()
@@ -9250,7 +9257,7 @@ class _IssueRowState extends State<_IssueRow> {
                                   style: TextStyle(
                                     color: t.textMuted,
                                     fontSize: 10.5,
-                                    fontFamily: 'JetBrainsMono',
+                                    fontFamily: AppFonts.mono,
                                     letterSpacing: 0.1,
                                   ),
                                 ),
@@ -9261,7 +9268,7 @@ class _IssueRowState extends State<_IssueRow> {
                                   style: TextStyle(
                                     color: t.textMuted.withValues(alpha: 0.8),
                                     fontSize: 10,
-                                    fontFamily: 'JetBrainsMono',
+                                    fontFamily: AppFonts.mono,
                                     fontFeatures: const [
                                       FontFeature.tabularFigures()
                                     ],
@@ -9290,7 +9297,7 @@ class _IssueRowState extends State<_IssueRow> {
                                 style: TextStyle(
                                   color: t.chromeAccent,
                                   fontSize: 9,
-                                  fontFamily: 'JetBrainsMono',
+                                  fontFamily: AppFonts.mono,
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: 0.6,
                                 ),
@@ -9310,7 +9317,7 @@ class _IssueRowState extends State<_IssueRow> {
                               style: TextStyle(
                                 color: rail,
                                 fontSize: 9,
-                                fontFamily: 'JetBrainsMono',
+                                fontFamily: AppFonts.mono,
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: 0.6,
                               ),
@@ -9881,7 +9888,7 @@ class _BranchCardState extends State<_BranchCard> {
                               style: TextStyle(
                                   color: t.textMuted,
                                   fontSize: 11,
-                                  fontFamily: 'JetBrainsMono'),
+                                  fontFamily: AppFonts.mono),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -10082,7 +10089,7 @@ class _TagCard extends StatelessWidget {
                 style: TextStyle(
                     color: t.textMuted.withValues(alpha: 0.7),
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono'),
+                    fontFamily: AppFonts.mono),
               ),
             ],
             if (tag.tagType == 'annotated') ...[
@@ -10482,7 +10489,7 @@ class _PatchSourceRowState extends State<_PatchSourceRow> {
                   style: TextStyle(
                     color: t.textNormal,
                     fontSize: 12,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w600,
                   )),
               const SizedBox(width: 14),
@@ -10490,7 +10497,7 @@ class _PatchSourceRowState extends State<_PatchSourceRow> {
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   )),
             ],
           ),
@@ -11261,7 +11268,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                           color: t.textMuted,
                           fontSize: 10,
                           letterSpacing: 1.4,
-                          fontFamily: 'JetBrainsMono',
+                          fontFamily: AppFonts.mono,
                           fontWeight: FontWeight.w700,
                         )),
                     const SizedBox(width: 10),
@@ -11271,7 +11278,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                           style: TextStyle(
                             color: t.textNormal,
                             fontSize: 13,
-                            fontFamily: 'JetBrainsMono',
+                            fontFamily: AppFonts.mono,
                             fontWeight: FontWeight.w600,
                           )),
                     ),
@@ -11292,7 +11299,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                               style: TextStyle(
                                 color: t.textMuted,
                                 fontSize: 18,
-                                fontFamily: 'JetBrainsMono',
+                                fontFamily: AppFonts.mono,
                                 fontWeight: FontWeight.w700,
                                 height: 1.0,
                               )),
@@ -11426,7 +11433,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                       style: TextStyle(
                         color: t.textMuted,
                         fontSize: 11,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                       ),
                     ),
                     const SizedBox(width: 14),
@@ -11435,7 +11442,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                           style: TextStyle(
                             color: t.stateAdded,
                             fontSize: 11,
-                            fontFamily: 'JetBrainsMono',
+                            fontFamily: AppFonts.mono,
                             fontWeight: FontWeight.w600,
                           ))
                     else if (_applyError != null)
@@ -11445,7 +11452,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                             style: TextStyle(
                               color: t.stateConflicted,
                               fontSize: 11,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                             )),
                       )
                     else if (_resolveError != null)
@@ -11455,7 +11462,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
                             style: TextStyle(
                               color: t.stateConflicted,
                               fontSize: 11,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                             )),
                       ),
                     const Spacer(),
@@ -11577,7 +11584,7 @@ class _RefineBarState extends State<_RefineBar> {
               style: TextStyle(
                 color: t.textMuted,
                 fontSize: 13,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w600,
               )),
           const SizedBox(width: 10),
@@ -11589,7 +11596,7 @@ class _RefineBarState extends State<_RefineBar> {
               style: TextStyle(
                 color: t.textNormal,
                 fontSize: 12,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
               ),
               decoration: InputDecoration(
                 isDense: true,
@@ -11600,7 +11607,7 @@ class _RefineBarState extends State<_RefineBar> {
                 hintStyle: TextStyle(
                   color: t.textMuted.withValues(alpha: 0.7),
                   fontSize: 12,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontStyle: FontStyle.italic,
                 ),
                 contentPadding: const EdgeInsets.symmetric(vertical: 4),
@@ -11663,7 +11670,7 @@ class _ReverseToggleState extends State<_ReverseToggle> {
                 style: TextStyle(
                   color: accent,
                   fontSize: 10.5,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.3,
                 )),
@@ -11722,7 +11729,7 @@ class _DroppedPathsBanner extends StatelessWidget {
                   style: TextStyle(
                     color: t.textNormal,
                     fontSize: 11,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w600,
                   )),
             ],
@@ -11735,7 +11742,7 @@ class _DroppedPathsBanner extends StatelessWidget {
                   style: TextStyle(
                     color: t.textNormal,
                     fontSize: 11,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   )),
             ),
           const SizedBox(height: 6),
@@ -11830,7 +11837,7 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
                             color: t.textMuted,
                             fontSize: 9,
                             letterSpacing: 1.4,
-                            fontFamily: 'JetBrainsMono',
+                            fontFamily: AppFonts.mono,
                             fontWeight: FontWeight.w800,
                           )),
                     ),
@@ -11876,7 +11883,7 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
           style: TextStyle(
             color: t.textMuted,
             fontSize: 10.5,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
             fontStyle: FontStyle.italic,
           ));
     }
@@ -11925,7 +11932,7 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
                     style: TextStyle(
                       color: t.accentBright,
                       fontSize: 11,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0.3,
                     ),
@@ -11962,7 +11969,7 @@ class _PatchResolveSplitButtonState extends State<_PatchResolveSplitButton> {
                       style: TextStyle(
                         color: t.accentBright,
                         fontSize: 10,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w800,
                       )),
                 ),
@@ -12016,7 +12023,7 @@ class _PatchResolveMenuRowState extends State<_PatchResolveMenuRow> {
                   style: TextStyle(
                     color: t.textNormal,
                     fontSize: 12,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w600,
                   )),
               const SizedBox(width: 14),
@@ -12024,7 +12031,7 @@ class _PatchResolveMenuRowState extends State<_PatchResolveMenuRow> {
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   )),
             ],
           ),
@@ -12068,7 +12075,7 @@ class _ApplyBadge extends StatelessWidget {
                 style: TextStyle(
                   color: c,
                   fontSize: 10,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.4,
                 )),
@@ -12119,7 +12126,7 @@ class _PatchFileBlock extends StatelessWidget {
                         style: TextStyle(
                           color: t.textMuted,
                           fontSize: 10,
-                          fontFamily: 'JetBrainsMono',
+                          fontFamily: AppFonts.mono,
                         )),
                     const SizedBox(width: 8),
                     Expanded(
@@ -12128,7 +12135,7 @@ class _PatchFileBlock extends StatelessWidget {
                           style: TextStyle(
                             color: t.textNormal,
                             fontSize: 12,
-                            fontFamily: 'JetBrainsMono',
+                            fontFamily: AppFonts.mono,
                           )),
                     ),
                     const SizedBox(width: 10),
@@ -12136,14 +12143,14 @@ class _PatchFileBlock extends StatelessWidget {
                         style: TextStyle(
                           color: t.stateAdded,
                           fontSize: 11,
-                          fontFamily: 'JetBrainsMono',
+                          fontFamily: AppFonts.mono,
                         )),
                     const SizedBox(width: 6),
                     Text('−$dels',
                         style: TextStyle(
                           color: t.stateConflicted,
                           fontSize: 11,
-                          fontFamily: 'JetBrainsMono',
+                          fontFamily: AppFonts.mono,
                         )),
                   ],
                 ),
@@ -12294,7 +12301,7 @@ class _NewLocalIssueActionState extends State<_NewLocalIssueAction> {
                 style: TextStyle(
                   color: t.chromeAccent,
                   fontSize: 10.5,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.4,
                 ),
@@ -12355,7 +12362,7 @@ class _DeskDragFeedback extends StatelessWidget {
                   color: t.accentBright,
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                 ),
               ),
             ),
@@ -12658,7 +12665,7 @@ class _LinkCandidateRowState extends State<_LinkCandidateRow> {
                               ? t.accentBright
                               : t.textMuted.withValues(alpha: 0.5),
                           fontSize: 11,
-                          fontFamily: 'JetBrainsMono',
+                          fontFamily: AppFonts.mono,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -12677,7 +12684,7 @@ class _LinkCandidateRowState extends State<_LinkCandidateRow> {
                   style: TextStyle(
                     color: c.isRemote ? t.textMuted : t.chromeAccent,
                     fontSize: 9,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -12688,7 +12695,7 @@ class _LinkCandidateRowState extends State<_LinkCandidateRow> {
                 style: TextStyle(
                   color: t.textNormal,
                   fontSize: 11,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -12715,7 +12722,7 @@ class _LinkCandidateRowState extends State<_LinkCandidateRow> {
                   style: TextStyle(
                     color: t.accentBright.withValues(alpha: 0.85),
                     fontSize: 9,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w700,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),

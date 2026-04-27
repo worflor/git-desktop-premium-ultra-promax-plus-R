@@ -19,8 +19,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../ui/animated_icons.dart';
 import '../../ui/context_menu.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/design_primitives.dart';
 import '../../ui/dream_hint.dart';
 import '../../ui/form_controls.dart';
+import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/morph_text.dart';
 import '../../ui/status_view.dart';
@@ -4481,22 +4483,29 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
-  Future<void> _copyMuseReport(AiMuseData muse) async {
+  Future<void> _copyMuseReport(AiMuseData muse,
+      {List<AiMuseProposal>? subset}) async {
     final buf = StringBuffer();
     buf.writeln('Muse · ${muse.scopeLabel}');
     buf.writeln('Model: ${muse.providerId} / ${muse.modelId}');
     buf.writeln();
+    void emitProposal(AiMuseProposal p) {
+      buf.writeln('- ${p.title}');
+      buf.writeln('    ${p.vision}');
+      buf.writeln('    foothold: ${p.foothold}');
+      if (p.citations.isNotEmpty) {
+        buf.writeln('    cite: ${p.citations.join(", ")}');
+      }
+    }
     void tierBlock(AiMuseIdeaTier tier, String label) {
-      final group = muse.proposalsForTier(tier);
+      final source = subset ?? muse.proposalsForTier(tier);
+      final group = subset == null
+          ? source
+          : source.where((p) => p.tier == tier).toList(growable: false);
       if (group.isEmpty) return;
       buf.writeln(label);
       for (final p in group) {
-        buf.writeln('- ${p.title}');
-        buf.writeln('    ${p.vision}');
-        buf.writeln('    foothold: ${p.foothold}');
-        if (p.citations.isNotEmpty) {
-          buf.writeln('    cite: ${p.citations.join(", ")}');
-        }
+        emitProposal(p);
       }
       buf.writeln();
     }
@@ -4506,9 +4515,12 @@ class _ChangesPageState extends State<ChangesPage> {
     tierBlock(AiMuseIdeaTier.fever, 'FEVER');
     await Clipboard.setData(ClipboardData(text: buf.toString().trim()));
     if (!mounted) return;
+    final n = subset?.length ?? 0;
     setState(() {
       _actionError = null;
-      _actionMessage = 'Copied muse output.';
+      _actionMessage = subset == null
+          ? 'Copied muse output.'
+          : 'Copied $n muse ${n == 1 ? 'entry' : 'entries'}.';
     });
   }
 
@@ -6031,7 +6043,8 @@ class _ChangesPageState extends State<ChangesPage> {
                             },
                             onCopy: _museResult == null
                                 ? null
-                                : () => _copyMuseReport(_museResult!),
+                                : (subset) => _copyMuseReport(_museResult!,
+                                    subset: subset),
                           ),
                         );
                       }
@@ -6735,7 +6748,9 @@ class _MusePane extends StatefulWidget {
   final String guardrailLabel;
   final VoidCallback onBack;
   final VoidCallback onRerun;
-  final VoidCallback? onCopy;
+  /// Copy callback. `subset == null` means copy everything; a non-null
+  /// list copies only those proposals (selection-driven copy).
+  final void Function(List<AiMuseProposal>? subset)? onCopy;
 
   const _MusePane({
     required this.tokens,
@@ -6755,6 +6770,34 @@ class _MusePane extends StatefulWidget {
 class _MusePaneState extends State<_MusePane> {
   bool _brainstormExpanded = false;
   int? _highlightedIdeaIndex;
+  // Selection keyed by object identity. AiMuseProposal doesn't override
+  // hashCode/== so default identity semantics apply — two proposals
+  // with the same title remain distinct entries. Identity is stable
+  // across rebuilds while the result reference holds.
+  final Set<AiMuseProposal> _selected = <AiMuseProposal>{};
+  AiMuseProposal? _hovered;
+
+  void _toggleSelection(AiMuseProposal p) {
+    setState(() {
+      if (!_selected.add(p)) _selected.remove(p);
+    });
+  }
+
+  List<AiMuseProposal> _orderedSelection(AiMuseData r) {
+    if (_selected.isEmpty) return const [];
+    return r.proposals.where(_selected.contains).toList(growable: false);
+  }
+
+  @override
+  void didUpdateWidget(covariant _MusePane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Result swap (rerun finished) — drop stale references that point
+    // at proposals from the previous run.
+    if (!identical(oldWidget.result, widget.result)) {
+      if (_selected.isNotEmpty) _selected.clear();
+      _hovered = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -6833,7 +6876,32 @@ class _MusePaneState extends State<_MusePane> {
             tokens: t, label: 'back to diff', onTap: widget.onBack),
         if (widget.onCopy != null) ...[
           const SizedBox(width: 6),
-          _GhostActionChip(tokens: t, label: 'copy', onTap: widget.onCopy!),
+          _GhostActionChip(
+            tokens: t,
+            label: _selected.isEmpty
+                ? 'copy'
+                : 'copy ${_selected.length} selected',
+            onTap: () {
+              if (_selected.isEmpty) {
+                widget.onCopy!(null);
+                return;
+              }
+              final r = widget.result;
+              if (r == null) return;
+              final subset = _orderedSelection(r);
+              if (subset.isEmpty) return;
+              widget.onCopy!(subset);
+              setState(() => _selected.clear());
+            },
+          ),
+          if (_selected.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            _GhostActionChip(
+              tokens: t,
+              label: 'clear',
+              onTap: () => setState(() => _selected.clear()),
+            ),
+          ],
         ],
         const SizedBox(width: 6),
         _GhostActionChip(tokens: t, label: 'rerun', onTap: widget.onRerun),
@@ -6921,14 +6989,18 @@ class _MusePaneState extends State<_MusePane> {
   }
 
   /// Render one ambition tier as a labelled block of proposal cards.
-  /// `fever` gets a distinctive glyph and accent treatment so the
-  /// register reads as different at a glance — the rest share a
-  /// common spark/current/horizon look.
+  /// Cards within a tier share a continuous left rail so siblings read
+  /// as belonging to one group rather than four loose cards. `fever`
+  /// gets a distinctive glyph and accent treatment so the register
+  /// reads as different at a glance.
   Widget _tierSection(AppTokens t, AiMuseData r, AiMuseIdeaTier tier,
       String label) {
     final group = r.proposalsForTier(tier);
     if (group.isEmpty) return const SizedBox.shrink();
     final isFever = tier == AiMuseIdeaTier.fever;
+    final railColor = isFever
+        ? t.accentBright.withValues(alpha: 0.42)
+        : t.textFaint.withValues(alpha: 0.32);
     return Padding(
       padding: const EdgeInsets.only(bottom: 18),
       child: Column(
@@ -6960,10 +7032,34 @@ class _MusePaneState extends State<_MusePane> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          for (final p in group)
-            _proposalCard(t, p, r.brainstormIdeas, r.userBoostedPaths,
-                fever: isFever),
+          const SizedBox(height: 6),
+          // The continuous rail. The ✦/☽ glyph above sits at x≈4 (icon
+          // half-width); aligning the rail at left:5 makes the glyph
+          // visually anchor the head of the stem.
+          Padding(
+            padding: const EdgeInsets.only(left: 5),
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: railColor, width: 1),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < group.length; i++)
+                    _proposalCard(
+                      t,
+                      group[i],
+                      r.brainstormIdeas,
+                      r.userBoostedPaths,
+                      fever: isFever,
+                      isLast: i == group.length - 1,
+                    ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -6975,6 +7071,7 @@ class _MusePaneState extends State<_MusePane> {
     List<AiMuseIdea> ideas,
     Set<String> userBoostedPaths, {
     required bool fever,
+    required bool isLast,
   }) {
     // A proposal is "pulled" when at least one of its cited paths
     // matches a spoke the user yanked during the loading canvas —
@@ -6991,99 +7088,154 @@ class _MusePaneState extends State<_MusePane> {
         ? null
         : ideas.where((i) => i.index == p.originatingIdeaIndex).firstOrNull;
     final highlighted = idea != null && _highlightedIdeaIndex == idea.index;
-    final railColor = isPulled
-        ? t.accentBright
-        : fever
-            ? t.accentBright.withValues(alpha: 0.55)
-            : t.textFaint.withValues(alpha: 0.4);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        decoration: BoxDecoration(
-          color: highlighted
-              ? t.textStrong.withValues(alpha: 0.04)
-              : Colors.transparent,
-          border: Border(
-            left: BorderSide(
-              color: railColor,
-              width: isPulled ? 2.5 : 2,
-            ),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (isPulled) ...[
-              Row(
-                children: [
-                  Container(
-                    width: 5,
-                    height: 5,
+    final selected = _selected.contains(p);
+    final hovered = identical(_hovered, p);
+
+    // Dot color tier: pulled/selected take accent at full strength;
+    // hover lifts the resting tone partway so the affordance reads;
+    // resting tones are quiet so the rail stays calm at rest.
+    final Color dotColor;
+    if (isPulled || selected) {
+      dotColor = t.accentBright;
+    } else if (hovered) {
+      dotColor = fever
+          ? t.accentBright.withValues(alpha: 0.85)
+          : t.textMuted.withValues(alpha: 0.85);
+    } else if (fever) {
+      dotColor = t.accentBright.withValues(alpha: 0.65);
+    } else {
+      dotColor = t.textFaint.withValues(alpha: 0.55);
+    }
+    final dotSize = (selected || isPulled) ? 7.0 : 5.0;
+
+    final bgColor = selected
+        ? t.accentBright.withValues(alpha: 0.06)
+        : hovered
+            ? t.textStrong.withValues(alpha: 0.025)
+            : highlighted
+                ? t.textStrong.withValues(alpha: 0.04)
+                : Colors.transparent;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = p),
+      onExit: (_) => setState(() {
+        if (identical(_hovered, p)) _hovered = null;
+      }),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _toggleSelection(p),
+        child: Padding(
+          padding: EdgeInsets.only(bottom: isLast ? 0 : 12),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 110),
+                curve: Curves.easeOut,
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                decoration: BoxDecoration(color: bgColor),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (isPulled) ...[
+                      Row(
+                        children: [
+                          Container(
+                            width: 5,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: t.accentBright,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text('you pulled this',
+                              style: TextStyle(
+                                color: t.accentBright.withValues(alpha: 0.9),
+                                fontSize: 10,
+                                letterSpacing: 0.8,
+                              )),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    // Title — the proposal's name, displayed with more
+                    // weight than the body so the idea is scannable at
+                    // a glance.
+                    SelectableText(
+                      p.title,
+                      style: TextStyle(
+                        color: t.textStrong,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        height: 1.3,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    // Vision — the present-tense description of the
+                    // future the muse is proposing.
+                    SelectableText(
+                      p.vision,
+                      style: TextStyle(
+                        color: t.textStrong,
+                        fontSize: 12.5,
+                        height: 1.55,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // Foothold — the grounding sentence. Rendered muted
+                    // so it reads as supporting footnote rather than a
+                    // claim of equal weight with the vision.
+                    _footholdRow(t, p, pulledCitations),
+                    if (idea != null) ...[
+                      const SizedBox(height: 6),
+                      HoverableTap(
+                        onTap: () => setState(() {
+                          _highlightedIdeaIndex =
+                              _highlightedIdeaIndex == idea.index
+                                  ? null
+                                  : idea.index;
+                          _brainstormExpanded = true;
+                        }),
+                        builder: (context, hovered) =>
+                            AnimatedDefaultTextStyle(
+                          duration: AppMotion.snap,
+                          curve: AppMotion.snapCurve,
+                          style: TextStyle(
+                            color: hovered
+                                ? t.textMuted
+                                : t.textFaint.withValues(alpha: 0.85),
+                            fontSize: 10.5,
+                            fontStyle: FontStyle.italic,
+                          ),
+                          child: Text('from idea: "${idea.text}"'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              // Node on the rail. Sits at the title baseline so each
+              // entry reads as hanging off the shared stem.
+              Positioned(
+                left: -(dotSize / 2 + 0.5),
+                top: 14 + (isPulled ? 17 : 0),
+                child: IgnorePointer(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 110),
+                    curve: Curves.easeOut,
+                    width: dotSize,
+                    height: dotSize,
                     decoration: BoxDecoration(
-                      color: t.accentBright,
+                      color: dotColor,
                       shape: BoxShape.circle,
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text('you pulled this',
-                      style: TextStyle(
-                        color: t.accentBright.withValues(alpha: 0.9),
-                        fontSize: 10,
-                        letterSpacing: 0.8,
-                      )),
-                ],
-              ),
-              const SizedBox(height: 6),
-            ],
-            // Title — the proposal's name, displayed with more weight
-            // than the body so the idea is scannable at a glance.
-            SelectableText(
-              p.title,
-              style: TextStyle(
-                color: t.textStrong,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                height: 1.3,
-              ),
-            ),
-            const SizedBox(height: 6),
-            // Vision — the present-tense description of the future
-            // the muse is proposing.
-            SelectableText(
-              p.vision,
-              style: TextStyle(
-                color: t.textStrong,
-                fontSize: 12.5,
-                height: 1.55,
-              ),
-            ),
-            const SizedBox(height: 8),
-            // Foothold — the grounding sentence. Rendered muted so it
-            // reads as supporting footnote rather than a claim of
-            // equal weight with the vision.
-            _footholdRow(t, p, pulledCitations),
-            if (idea != null) ...[
-              const SizedBox(height: 6),
-              GestureDetector(
-                onTap: () => setState(() {
-                  _highlightedIdeaIndex =
-                      _highlightedIdeaIndex == idea.index
-                          ? null
-                          : idea.index;
-                  _brainstormExpanded = true;
-                }),
-                child: Text(
-                  'from idea: "${idea.text}"',
-                  style: TextStyle(
-                    color: t.textFaint.withValues(alpha: 0.85),
-                    fontSize: 10.5,
-                    fontStyle: FontStyle.italic,
                   ),
                 ),
               ),
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -7151,26 +7303,38 @@ class _MusePaneState extends State<_MusePane> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
+          HoverableTap(
             onTap: () =>
                 setState(() => _brainstormExpanded = !_brainstormExpanded),
-            child: Row(
-              children: [
-                Icon(
-                  _brainstormExpanded ? Icons.expand_less : Icons.expand_more,
-                  size: 14,
-                  color: t.textFaint,
-                ),
-                const SizedBox(width: 4),
-                Text('brainstorm spew',
+            builder: (context, hovered) {
+              final color = hovered ? t.textMuted : t.textFaint;
+              return Row(
+                children: [
+                  AnimatedContainer(
+                    duration: AppMotion.snap,
+                    curve: AppMotion.snapCurve,
+                    child: Icon(
+                      _brainstormExpanded
+                          ? Icons.expand_less
+                          : Icons.expand_more,
+                      size: 14,
+                      color: color,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  AnimatedDefaultTextStyle(
+                    duration: AppMotion.snap,
+                    curve: AppMotion.snapCurve,
                     style: TextStyle(
-                      color: t.textFaint,
+                      color: color,
                       fontSize: 10,
                       letterSpacing: 1.2,
-                    )),
-              ],
-            ),
+                    ),
+                    child: const Text('brainstorm spew'),
+                  ),
+                ],
+              );
+            },
           ),
           if (_brainstormExpanded) ...[
             const SizedBox(height: 8),
@@ -8120,47 +8284,53 @@ class _ReviewDisclosureCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            onTap: onToggle,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          label,
-                          style: TextStyle(
-                            color: tokens.textMuted,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        if (!expanded) ...[
-                          const SizedBox(height: 5),
+          // Material(color: transparent) provides the InkController so
+          // the InkWell ripple actually renders. Without it (the prior
+          // shape), the InkWell was silent on the dark panel surface.
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onToggle,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Text(
-                            _oneLinePreview(preview),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            label,
                             style: TextStyle(
-                              color: tokens.textNormal,
-                              fontSize: 11,
+                              color: tokens.textMuted,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
+                          if (!expanded) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              _oneLinePreview(preview),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: tokens.textNormal,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                  Icon(
-                    expanded
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
-                    color: tokens.textMuted,
-                    size: 16,
-                  ),
-                ],
+                    Icon(
+                      expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: tokens.textMuted,
+                      size: 16,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -8266,7 +8436,7 @@ class _ReviewFindingCard extends StatelessWidget {
                         style: TextStyle(
                           color: tokens.textMuted,
                           fontSize: 10.5,
-                          fontFamily: 'JetBrainsMono',
+                          fontFamily: AppFonts.mono,
                         ),
                       ),
                     ],
@@ -8346,30 +8516,36 @@ class _TracePanel extends StatelessWidget {
       ),
       child: Column(
         children: [
-          InkWell(
-            onTap: onToggle,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Verification trace',
-                      style: TextStyle(
-                        color: tokens.textStrong,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
+          // Material(color: transparent) provides the InkController so
+          // the InkWell ripple actually renders. Without it the toggle
+          // was silent on the dark trace surface.
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: onToggle,
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Verification trace',
+                        style: TextStyle(
+                          color: tokens.textStrong,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                  ),
-                  Icon(
-                    expanded
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
-                    color: tokens.textMuted,
-                    size: 16,
-                  ),
-                ],
+                    Icon(
+                      expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: tokens.textMuted,
+                      size: 16,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -8546,7 +8722,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
                     color: aheadColor,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   ),
                 ),
                 Text(
@@ -8563,7 +8739,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
                     color: behindColor,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   ),
                 ),
                 Text(
@@ -8601,85 +8777,31 @@ class _GhostActionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _GhostActionChipButton(
-      tokens: tokens,
-      label: label,
-      fetching: fetching,
+    return ChromeButton(
       onTap: onTap,
-    );
-  }
-}
-
-class _GhostActionChipButton extends StatefulWidget {
-  final AppTokens tokens;
-  final String label;
-  final bool fetching;
-  final VoidCallback onTap;
-
-  const _GhostActionChipButton({
-    required this.tokens,
-    required this.label,
-    this.fetching = false,
-    required this.onTap,
-  });
-
-  @override
-  State<_GhostActionChipButton> createState() => _GhostActionChipButtonState();
-}
-
-class _GhostActionChipButtonState extends State<_GhostActionChipButton> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final chrome = ghostButtonChrome(
-      widget.tokens,
-      hovered: _hovered,
-      pressed: _pressed,
-      enabled: true,
-      baseBorderColor: widget.tokens.chromeBorder.withValues(alpha: 0.16),
-    );
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() {
-        _hovered = false;
-        _pressed = false;
-      }),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
-        child: AnimatedScale(
-          duration: const Duration(milliseconds: 80),
-          scale: chrome.scale,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 80),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color: chrome.background,
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: chrome.borderColor),
-              boxShadow: chrome.shadows,
-            ),
-            child: Text(
-              widget.label,
-              style: TextStyle(
-                color: widget.tokens.textMuted,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
+      borderRadius: AppRadii.pillAll,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      chromeBuilder: ({required hovered, required pressed}) =>
+          ghostButtonChrome(
+        tokens,
+        hovered: hovered,
+        pressed: pressed,
+        enabled: true,
+        baseBorderColor: tokens.chromeBorder.withValues(alpha: 0.16),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: tokens.textMuted,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
   }
 }
 
-class _InlineActionLink extends StatefulWidget {
+class _InlineActionLink extends StatelessWidget {
   final AppTokens tokens;
   final String label;
   final VoidCallback onTap;
@@ -8691,36 +8813,24 @@ class _InlineActionLink extends StatefulWidget {
   });
 
   @override
-  State<_InlineActionLink> createState() => _InlineActionLinkState();
-}
-
-class _InlineActionLinkState extends State<_InlineActionLink> {
-  bool _hovered = false;
-
-  @override
   Widget build(BuildContext context) {
-    final color =
-        _hovered ? widget.tokens.textStrong : widget.tokens.accentBright;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Text(
-          widget.label,
-          style: TextStyle(
-            color: color,
-            fontSize: 10.2,
-            fontWeight: FontWeight.w700,
-          ),
+    return HoverableTap(
+      onTap: onTap,
+      builder: (context, hovered) => AnimatedDefaultTextStyle(
+        duration: AppMotion.snap,
+        curve: AppMotion.snapCurve,
+        style: TextStyle(
+          color: hovered ? tokens.textStrong : tokens.accentBright,
+          fontSize: 10.2,
+          fontWeight: FontWeight.w700,
         ),
+        child: Text(label),
       ),
     );
   }
 }
 
-class _ActionBtn extends StatefulWidget {
+class _ActionBtn extends StatelessWidget {
   final String label;
   final AppTokens t;
   final bool enabled;
@@ -8736,66 +8846,40 @@ class _ActionBtn extends StatefulWidget {
   });
 
   @override
-  State<_ActionBtn> createState() => _ActionBtnState();
-}
-
-class _ActionBtnState extends State<_ActionBtn> {
-  bool _hovered = false;
-  bool _pressed = false;
-
-  @override
   Widget build(BuildContext context) {
-    final t = widget.t;
-    final chrome = widget.primary
-        ? primaryButtonChrome(
-            t,
-            hovered: _hovered,
-            pressed: _pressed,
-            enabled: widget.enabled,
-          )
-        : ghostButtonChrome(
-            t,
-            hovered: _hovered,
-            pressed: _pressed,
-            enabled: widget.enabled,
-            baseBorderColor: t.secondaryBtnBorder,
-          );
-
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      cursor:
-          widget.enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      child: GestureDetector(
-        onTap: widget.enabled ? widget.onTap : null,
-        onTapDown:
-            widget.enabled ? (_) => setState(() => _pressed = true) : null,
-        onTapCancel: () => setState(() => _pressed = false),
-        onTapUp: (_) => setState(() => _pressed = false),
-        child: AnimatedContainer(
-          duration: context.motion(const Duration(milliseconds: 100)),
-          height: 28,
-          decoration: BoxDecoration(
-            color: chrome.background,
-            gradient: chrome.gradient,
-            borderRadius:
-                BorderRadius.circular(context.surfaceShader.geometry.radius),
-            border: Border.all(color: chrome.borderColor),
-            boxShadow: chrome.shadows,
-          ),
-          child: Transform.translate(
-            offset: chrome.offset,
-            child: Center(
-              child: Text(
-                widget.label,
-                style: TextStyle(
-                  color: widget.primary
-                      ? (widget.enabled ? t.btnText : t.textMuted)
-                      : (widget.enabled ? t.textNormal : t.textMuted),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+    final radius =
+        BorderRadius.circular(context.surfaceShader.geometry.radius);
+    return ChromeButton(
+      onTap: enabled ? onTap : null,
+      enabled: enabled,
+      borderRadius: radius,
+      padding: EdgeInsets.zero,
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      chromeBuilder: ({required hovered, required pressed}) => primary
+          ? primaryButtonChrome(
+              t,
+              hovered: hovered,
+              pressed: pressed,
+              enabled: enabled,
+            )
+          : ghostButtonChrome(
+              t,
+              hovered: hovered,
+              pressed: pressed,
+              enabled: enabled,
+              baseBorderColor: t.secondaryBtnBorder,
+            ),
+      child: SizedBox(
+        height: 28,
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: primary
+                  ? (enabled ? t.btnText : t.textMuted)
+                  : (enabled ? t.textNormal : t.textMuted),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ),
@@ -8883,13 +8967,16 @@ class _AskAnswerCard extends StatelessWidget {
                   ),
                 ),
               ),
-              InkWell(
+              HoverableTap(
                 onTap: onDismiss,
-                borderRadius: BorderRadius.circular(4),
-                child: Padding(
+                borderRadius: AppRadii.xsAll,
+                builder: (context, hovered) => Padding(
                   padding: const EdgeInsets.all(2),
-                  child: Icon(Icons.close,
-                      size: 12, color: tokens.textFaint),
+                  child: Icon(
+                    Icons.close,
+                    size: 12,
+                    color: hovered ? tokens.textStrong : tokens.textFaint,
+                  ),
                 ),
               ),
             ],
@@ -9243,7 +9330,7 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
                             style: TextStyle(
                               color: mainEnabled ? t.btnText : t.textMuted,
                               fontSize: 12,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
@@ -9289,7 +9376,7 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
                           style: TextStyle(
                             color: t.btnText.withValues(alpha: 0.80),
                             fontSize: 12,
-                            fontFamily: 'JetBrainsMono',
+                            fontFamily: AppFonts.mono,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -10044,7 +10131,7 @@ class _StashFileRow extends StatelessWidget {
                         color: t.stateDeleted,
                         fontSize: 9,
                         fontWeight: FontWeight.w700,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                       ),
                     ),
                   )
@@ -10062,7 +10149,7 @@ class _StashFileRow extends StatelessWidget {
                             style: TextStyle(
                               color: textColor.withValues(alpha: 0.42),
                               fontSize: 10,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                             ),
                           ),
                         TextSpan(
@@ -10070,7 +10157,7 @@ class _StashFileRow extends StatelessWidget {
                           style: TextStyle(
                             color: textColor,
                             fontSize: 10.5,
-                            fontFamily: 'JetBrainsMono',
+                            fontFamily: AppFonts.mono,
                           ),
                         ),
                       ],
@@ -10084,7 +10171,7 @@ class _StashFileRow extends StatelessWidget {
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 9,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                     ),
                   )
                 else ...[
@@ -10093,7 +10180,7 @@ class _StashFileRow extends StatelessWidget {
                     style: TextStyle(
                       color: t.stateAdded,
                       fontSize: 9.5,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -10103,7 +10190,7 @@ class _StashFileRow extends StatelessWidget {
                     style: TextStyle(
                       color: t.stateDeleted,
                       fontSize: 9.5,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -10134,15 +10221,20 @@ class _StashAction extends StatelessWidget {
   Widget build(BuildContext context) {
     return Tooltip(
       message: tooltip,
-      child: GestureDetector(
+      // HoverableTap supplies cursor + hover signal + per-theme tap
+      // effect. Was a bare GestureDetector(child: Text) — invisible
+      // as a control once the user found the stash card.
+      child: HoverableTap(
         onTap: onTap,
-        child: Text(
-          icon,
+        builder: (context, hovered) => AnimatedDefaultTextStyle(
+          duration: AppMotion.snap,
+          curve: AppMotion.snapCurve,
           style: TextStyle(
-            color: color,
+            color: hovered ? color : color.withValues(alpha: 0.7),
             fontSize: 13,
             fontWeight: FontWeight.w700,
           ),
+          child: Text(icon),
         ),
       ),
     );
@@ -10403,7 +10495,7 @@ class _FileRowState extends State<_FileRow> {
                                 style: TextStyle(
                                   color: t.textMuted,
                                   fontSize: 10,
-                                  fontFamily: 'JetBrainsMono',
+                                  fontFamily: AppFonts.mono,
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -11175,7 +11267,7 @@ class _AnimatedShapeIconState extends State<_AnimatedShapeIcon>
                 style: TextStyle(
                   color: glintColor,
                   fontSize: widget.size,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontWeight: FontWeight.w800,
                   height: 1.0,
                   shadows: glint > 0.4
@@ -11804,7 +11896,7 @@ class _MergeResolveStrip extends StatelessWidget {
               style: TextStyle(
                 color: t.stateConflicted,
                 fontSize: 14,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w700,
               )),
           const SizedBox(width: 10),
@@ -11816,7 +11908,7 @@ class _MergeResolveStrip extends StatelessWidget {
               style: TextStyle(
                 color: t.textNormal,
                 fontSize: 12,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0.2,
               ),
@@ -11827,7 +11919,7 @@ class _MergeResolveStrip extends StatelessWidget {
                 style: TextStyle(
                   color: t.textMuted,
                   fontSize: 10.5,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   fontStyle: FontStyle.italic,
                 ))
           else
@@ -11913,7 +12005,7 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
                         color: t.textMuted,
                         fontSize: 9,
                         letterSpacing: 1.4,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w800,
                       )),
                 ),
@@ -12027,7 +12119,7 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
                       style: TextStyle(
                         color: t.accentBright,
                         fontSize: 11,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.3,
                       ),
@@ -12075,7 +12167,7 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
                       style: TextStyle(
                         color: t.accentBright,
                         fontSize: 10,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -12132,7 +12224,7 @@ class _ModelCategoryRowState extends State<_ModelCategoryRow> {
                   style: TextStyle(
                     color: t.textNormal,
                     fontSize: 12,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     fontWeight: FontWeight.w600,
                   )),
               const SizedBox(width: 14),
@@ -12140,7 +12232,7 @@ class _ModelCategoryRowState extends State<_ModelCategoryRow> {
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   )),
             ],
           ),
@@ -12222,7 +12314,7 @@ class _ShapePopover extends StatelessWidget {
                       style: TextStyle(
                         color: t.accentBright,
                         fontSize: 12,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                         fontWeight: FontWeight.w800,
                       )),
                   const SizedBox(width: 8),
@@ -12245,7 +12337,7 @@ class _ShapePopover extends StatelessWidget {
                             style: TextStyle(
                               color: t.textMuted,
                               fontSize: 14,
-                              fontFamily: 'JetBrainsMono',
+                              fontFamily: AppFonts.mono,
                               fontWeight: FontWeight.w700,
                               height: 1.0,
                             )),
@@ -12304,7 +12396,7 @@ class _ShapePopover extends StatelessWidget {
                         style: TextStyle(
                           color: t.textMuted,
                           fontSize: 10.5,
-                          fontFamily: 'JetBrainsMono',
+                          fontFamily: AppFonts.mono,
                           fontStyle: FontStyle.italic,
                         ))
                   else

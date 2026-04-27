@@ -19,6 +19,7 @@ import '../../backend/repo_summary/api.dart';
 import '../../backend/repo_summary/types.dart' as rs;
 import '../../components/icons/app_icons.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/design_primitives.dart';
 import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
 import '../../ui/motion.dart';
@@ -481,7 +482,7 @@ class _Header extends StatelessWidget {
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 11,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                     ),
                   ),
                   if (snapshot.metabolism.activeDays > 0) ...[
@@ -602,7 +603,7 @@ class _DiagnosisStrip extends StatelessWidget {
               style: TextStyle(
                 color: t.textFaint,
                 fontSize: 10,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1141,7 +1142,7 @@ class _OverviewInspector extends StatelessWidget {
                   color: t.textStrong,
                   fontSize: 26,
                   fontWeight: FontWeight.w800,
-                  fontFamily: 'JetBrainsMono')),
+                  fontFamily: AppFonts.mono)),
           const SizedBox(width: 6),
           Text('commits',
               style: TextStyle(color: t.textMuted, fontSize: 11)),
@@ -1153,7 +1154,7 @@ class _OverviewInspector extends StatelessWidget {
             style: TextStyle(
                 color: t.textFaint,
                 fontSize: 10,
-                fontFamily: 'JetBrainsMono')),
+                fontFamily: AppFonts.mono)),
       ],
 
       const SizedBox(height: 14),
@@ -1227,7 +1228,7 @@ class _OverviewInspector extends StatelessWidget {
         style: TextStyle(
           color: t.textFaint,
           fontSize: 9.5,
-          fontFamily: 'JetBrainsMono',
+          fontFamily: AppFonts.mono,
           letterSpacing: 0.3,
         ),
       ),
@@ -1291,7 +1292,7 @@ class _HotspotInspector extends StatelessWidget {
           style: TextStyle(
               color: t.textMuted,
               fontSize: 9.5,
-              fontFamily: 'JetBrainsMono')),
+              fontFamily: AppFonts.mono)),
       const SizedBox(height: 12),
       // Touch count + owner count as large numbers side-by-side
       Row(children: [
@@ -1317,7 +1318,7 @@ class _HotspotInspector extends StatelessWidget {
             style: TextStyle(
               color: t.accentBright,
               fontSize: 9.5,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               letterSpacing: 0.2,
             ),
           ),
@@ -1355,7 +1356,7 @@ class _StratumInspector extends StatelessWidget {
               color: t.textStrong,
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              fontFamily: 'JetBrainsMono')),
+              fontFamily: AppFonts.mono)),
       if (stratum.summary.isNotEmpty) ...[
         const SizedBox(height: 10),
         // Summary is the most valuable info
@@ -1408,13 +1409,13 @@ class _PivotInspector extends StatelessWidget {
               style: TextStyle(
                   color: t.accentBright,
                   fontSize: 10,
-                  fontFamily: 'JetBrainsMono')),
+                  fontFamily: AppFonts.mono)),
         ),
         Text(pivot.authoredAt,
             style: TextStyle(
                 color: t.textMuted,
                 fontSize: 10,
-                fontFamily: 'JetBrainsMono')),
+                fontFamily: AppFonts.mono)),
         Text(pivot.authorName,
             style: TextStyle(color: t.textMuted, fontSize: 10)),
       ]),
@@ -1426,21 +1427,21 @@ class _PivotInspector extends StatelessWidget {
                 color: t.stateAdded,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-                fontFamily: 'JetBrainsMono')),
+                fontFamily: AppFonts.mono)),
         const SizedBox(width: 8),
         Text('-${pivot.deletions}',
             style: TextStyle(
                 color: t.stateDeleted,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-                fontFamily: 'JetBrainsMono')),
+                fontFamily: AppFonts.mono)),
         const SizedBox(width: 10),
         Text(
             '${pivot.filesChanged} file${pivot.filesChanged == 1 ? '' : 's'}',
             style: TextStyle(
                 color: t.textMuted,
                 fontSize: 10,
-                fontFamily: 'JetBrainsMono')),
+                fontFamily: AppFonts.mono)),
       ]),
       if (onCommitSelected != null) ...[
         const SizedBox(height: 14),
@@ -1469,7 +1470,7 @@ class _InspectorRow extends StatelessWidget {
                   color: t.textMuted,
                   fontSize: 9,
                   letterSpacing: 1.0,
-                  fontFamily: 'JetBrainsMono'))),
+                  fontFamily: AppFonts.mono))),
       Expanded(
           child: Text(value,
               style:
@@ -1503,7 +1504,7 @@ class _InspectorModeBar extends StatelessWidget {
               fontSize: 10.5,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.4,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
             ),
           ),
         ),
@@ -1529,7 +1530,7 @@ class _InspectorStat extends StatelessWidget {
             color: t.textStrong,
             fontSize: 22,
             fontWeight: FontWeight.w800,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
             height: 1,
           ),
         ),
@@ -2282,7 +2283,7 @@ class _TerritoryBoard extends StatelessWidget {
                   color: t.textFaint,
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                 ),
               ),
             ]),
@@ -2567,7 +2568,7 @@ class _TerritoryCell extends StatelessWidget {
                 color: t.textStrong,
                 fontSize: compact ? 11 : (big ? 12 : (medium ? 10.5 : 9.5)),
                 fontWeight: FontWeight.w700,
-                fontFamily: isChild ? 'JetBrainsMono' : null,
+                fontFamily: isChild ? AppFonts.mono : null,
                 letterSpacing: 0.1,
               ),
             ),
@@ -2583,7 +2584,7 @@ class _TerritoryCell extends StatelessWidget {
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 9,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                     ),
                   ),
                   if (big && parcel.recencyLabel != null) ...[
@@ -2593,7 +2594,7 @@ class _TerritoryCell extends StatelessWidget {
                       style: TextStyle(
                         color: t.textFaint,
                         fontSize: 9,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                       ),
                     ),
                   ],
@@ -2611,7 +2612,7 @@ class _TerritoryCell extends StatelessWidget {
             color: t.textMuted,
             fontSize: 9,
             fontWeight: FontWeight.w600,
-            fontFamily: 'JetBrainsMono',
+            fontFamily: AppFonts.mono,
           ),
         ),
         const SizedBox(width: 6),
@@ -2920,7 +2921,7 @@ class _CadenceRhythmBoard extends StatelessWidget {
                     color: t.textFaint.withValues(alpha: 0.85),
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                     letterSpacing: 0.3,
                   ),
                 ),
@@ -2981,7 +2982,7 @@ class _CadenceRhythmBoard extends StatelessWidget {
                   color: t.textStrong,
                   fontSize: 10,
                   fontWeight: FontWeight.w800,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                 ),
               ),
             ),
@@ -3000,7 +3001,7 @@ class _CadenceRhythmBoard extends StatelessWidget {
                   color: t.textMuted,
                   fontSize: 9,
                   fontWeight: FontWeight.w600,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                   letterSpacing: 0.2,
                 ),
               ),
@@ -3039,7 +3040,7 @@ class _CadenceRhythmBoard extends StatelessWidget {
                               color: _cadenceAccent(t, 'reflog'),
                               fontSize: 9,
                               fontWeight: FontWeight.w700,
-                              fontFamily: 'JetBrainsMono')),
+                              fontFamily: AppFonts.mono)),
                     ],
                   ),
                 ),
@@ -3227,7 +3228,7 @@ class _PivotList extends StatelessWidget {
                           style: TextStyle(
                             color: t.textFaint,
                             fontSize: 9.5,
-                            fontFamily: 'JetBrainsMono',
+                            fontFamily: AppFonts.mono,
                           ),
                         ),
                       ),
@@ -3244,7 +3245,7 @@ class _PivotList extends StatelessWidget {
                             style: TextStyle(
                                 color: t.accentBright,
                                 fontSize: 9,
-                                fontFamily: 'JetBrainsMono')),
+                                fontFamily: AppFonts.mono)),
                       ),
                       const SizedBox(width: 8),
                       // Subject
@@ -3272,7 +3273,7 @@ class _PivotList extends StatelessWidget {
                               style: TextStyle(
                                   color: t.textFaint,
                                   fontSize: 8.5,
-                                  fontFamily: 'JetBrainsMono')),
+                                  fontFamily: AppFonts.mono)),
                           const SizedBox(height: 2),
                           Container(
                             height: 3,
@@ -4090,7 +4091,7 @@ class _RingsClassificationRow extends StatelessWidget {
                   style: TextStyle(
                     color: t.textStrong,
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   )),
               const SizedBox(width: 6),
               Text(entry.value,
@@ -4160,7 +4161,7 @@ class _TrajectoryRow extends StatelessWidget {
               style: TextStyle(
                 color: t.textMuted,
                 fontSize: 10,
-                fontFamily: 'JetBrainsMono',
+                fontFamily: AppFonts.mono,
               ),
             ),
           ),
@@ -4174,7 +4175,7 @@ class _TrajectoryRow extends StatelessWidget {
                   style: TextStyle(
                     color: t.textNormal,
                     fontSize: 12,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -4226,7 +4227,7 @@ class _EventCard extends StatelessWidget {
                     color: t.textStrong,
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -4235,7 +4236,7 @@ class _EventCard extends StatelessWidget {
                   style: TextStyle(
                     color: t.textMuted,
                     fontSize: 10,
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppFonts.mono,
                   ),
                 ),
               ],
@@ -4262,7 +4263,7 @@ class _EventCard extends StatelessWidget {
                       style: TextStyle(
                         color: t.textNormal,
                         fontSize: 10,
-                        fontFamily: 'JetBrainsMono',
+                        fontFamily: AppFonts.mono,
                       ),
                     ),
                   ),
@@ -4470,7 +4471,7 @@ class _SummaryViewState extends State<_SummaryView> {
         ),
         code: TextStyle(
           color: t.accentBright,
-          fontFamily: 'JetBrainsMono',
+          fontFamily: AppFonts.mono,
           fontSize: 11,
           backgroundColor: t.chromeBorder.withValues(alpha: 0.3),
         ),
@@ -4561,15 +4562,25 @@ class _SummaryActionButton extends StatelessWidget {
     final bg = primary && !disabled
         ? t.accentBright.withValues(alpha: 0.12)
         : Colors.transparent;
-    return InkWell(
+    final radius = BorderRadius.circular(6);
+    // HoverableTap supplies cursor + per-theme InteractionFeedback —
+    // replaces the prior InkWell which had no Material ancestor and
+    // rendered no visible ripple on the dark xray panel.
+    return HoverableTap(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Container(
+      borderRadius: radius,
+      builder: (context, hovered) => AnimatedContainer(
+        duration: AppMotion.snap,
+        curve: AppMotion.snapCurve,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: bg,
+          color: hovered && !disabled
+              ? (primary
+                  ? t.accentBright.withValues(alpha: 0.18)
+                  : t.itemHoverBg)
+              : bg,
           border: Border.all(color: t.chromeBorder, width: 1),
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: radius,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

@@ -5,6 +5,7 @@ import '../../app/repository_state.dart';
 import '../../backend/dtos.dart';
 import '../../backend/git.dart';
 import '../../ui/control_chrome.dart';
+import '../../ui/design_primitives.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/status_view.dart';
 import '../../ui/motion.dart';
@@ -324,7 +325,7 @@ class _ResultRowState extends State<_ResultRow> {
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 10,
-                      fontFamily: 'JetBrainsMono',
+                      fontFamily: AppFonts.mono,
                       fontWeight: FontWeight.w600,
                     ),
                   ),

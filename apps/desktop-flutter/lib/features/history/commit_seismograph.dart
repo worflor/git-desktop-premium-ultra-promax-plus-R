@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../../backend/dtos.dart';
 import '../../backend/file_lifecycle.dart';
+import '../../ui/design_primitives.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import 'commit_seismograph_layout.dart';
@@ -209,11 +210,11 @@ class _CommitSeismographState extends State<CommitSeismograph>
 
       // Sizes below derive from text metrics measured at these styles.
       final trackLabelStyle = TextStyle(
-        color: t.textNormal, fontSize: 11, fontFamily: 'JetBrainsMono',
+        color: t.textNormal, fontSize: 11, fontFamily: AppFonts.mono,
         fontWeight: FontWeight.w600, height: 1.15,
       );
       final segLabelStyle = TextStyle(
-        color: t.textNormal, fontSize: 10, fontFamily: 'JetBrainsMono',
+        color: t.textNormal, fontSize: 10, fontFamily: AppFonts.mono,
         height: 1.1,
       );
       final segLabelHeight = _measureHeight('Mg', segLabelStyle);
@@ -459,7 +460,7 @@ class _Breadcrumb extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Text('›',
             style: TextStyle(
-                color: t.textFaint, fontSize: 11, fontFamily: 'JetBrainsMono')),
+                color: t.textFaint, fontSize: 11, fontFamily: AppFonts.mono)),
       ));
       final upto = focusPath.sublist(0, i + 1);
       crumbs.add(_crumb(focusPath[i], () => onTap(upto),
@@ -490,7 +491,7 @@ class _Breadcrumb extends StatelessWidget {
                   ? t.textStrong
                   : (accentWhenAction ? t.accentBright : t.textMuted),
               fontSize: 11,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
               fontWeight: isLast ? FontWeight.w700 : FontWeight.w500,
             ),
           ),
@@ -740,7 +741,7 @@ class _TrackHeaderState extends State<_TrackHeader> {
                 style: TextStyle(
                   color: t.textFaint,
                   fontSize: 9,
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppFonts.mono,
                 ),
               ),
             ],
@@ -1419,7 +1420,7 @@ class _SplitBar extends StatelessWidget {
       final glyphStyle = TextStyle(
         color: neutralColor.withValues(alpha: 0.55),
         fontSize: 9,
-        fontFamily: 'JetBrainsMono',
+        fontFamily: AppFonts.mono,
         fontWeight: FontWeight.w700,
         height: 1.0,
       );
@@ -1494,7 +1495,7 @@ class _SingleFileRow extends StatelessWidget {
             segment.label,
             style: TextStyle(
               color: t.textStrong, fontSize: 12,
-              fontFamily: 'JetBrainsMono',
+              fontFamily: AppFonts.mono,
             ),
             overflow: TextOverflow.ellipsis,
           ),

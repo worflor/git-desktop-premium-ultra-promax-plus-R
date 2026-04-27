@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'design_primitives.dart';
+import 'interaction_feedback.dart';
 import 'tokens.dart';
 
 /// Per-theme button-chrome quirks. Lets the chrome builders stay declarative
@@ -387,4 +389,133 @@ List<BoxShadow> _ghostButtonShadows(
   required bool enabled,
 }) {
   return const [];
+}
+
+/// Closure that returns a `ControlChromeState` for the current
+/// hover/press state. Lets `ChromeButton` stay generic — the caller
+/// binds whichever chrome function (primary/ghost/mode) and the
+/// caller's static params (enabled, active, baseBorderColor) into a
+/// single thunk, and `ChromeButton` invokes it on every state flip.
+typedef ChromeBuilder = ControlChromeState Function({
+  required bool hovered,
+  required bool pressed,
+});
+
+/// One shared button base. Replaces the ~9 duplicated MouseRegion +
+/// GestureDetector + AnimatedScale + AnimatedContainer scaffolds that
+/// each feature file used to inline. By routing every press through
+/// `InteractionFeedback`, this also wires the per-theme tap effect
+/// (kirby's inkSplat, blackboard's chalk dust, crafty's voxel shards,
+/// barbie's gloss streak, etc.) into every button automatically.
+///
+/// Caller supplies a [chromeBuilder] thunk — usually a closure that
+/// calls one of the chrome functions (`primaryButtonChrome`,
+/// `ghostButtonChrome`, `modeButtonChrome`) with the caller's static
+/// params bound in.
+///
+/// `onTap == null` disables the button: the gesture detector and the
+/// interaction effect both no-op, the cursor reverts to default, and
+/// hover/press state never flips.
+class ChromeButton extends StatefulWidget {
+  final Widget child;
+  final VoidCallback? onTap;
+  final ChromeBuilder chromeBuilder;
+  final EdgeInsets padding;
+  final BorderRadius borderRadius;
+  final Duration animationDuration;
+  /// When false, the button paints in its disabled chrome state and
+  /// does not respond to taps. Equivalent to `onTap: null` for visuals.
+  /// Use this when the disabled appearance differs from "no callback"
+  /// (e.g., a button that's loading and shouldn't fire but should still
+  /// look engaged).
+  final bool enabled;
+  /// Explicit override for the cursor on hover. Defaults to
+  /// `SystemMouseCursors.click` when enabled, deferred otherwise.
+  final MouseCursor? cursor;
+  /// Optional behavior override for the underlying gesture detector.
+  /// Defaults to `HitTestBehavior.opaque` so the whole padded area is
+  /// the hit target.
+  final HitTestBehavior behavior;
+  /// Optional callback fired alongside the internal hover state flip
+  /// — useful when the parent needs to mirror hover for sibling
+  /// affordances (e.g., revealing extra rows on hover).
+  final ValueChanged<bool>? onHoverChanged;
+
+  const ChromeButton({
+    super.key,
+    required this.child,
+    required this.onTap,
+    required this.chromeBuilder,
+    this.padding = const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+    this.borderRadius = AppRadii.smAll,
+    this.animationDuration = AppMotion.snap,
+    this.enabled = true,
+    this.cursor,
+    this.behavior = HitTestBehavior.opaque,
+    this.onHoverChanged,
+  });
+
+  @override
+  State<ChromeButton> createState() => _ChromeButtonState();
+}
+
+class _ChromeButtonState extends State<ChromeButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final isEnabled = widget.enabled && widget.onTap != null;
+    final chrome = widget.chromeBuilder(
+      hovered: isEnabled && _hovered,
+      pressed: isEnabled && _pressed,
+    );
+    final feedback = InteractionFeedback(
+      onTap: isEnabled ? widget.onTap : null,
+      borderRadius: widget.borderRadius,
+      cursor: widget.cursor ??
+          (isEnabled ? SystemMouseCursors.click : MouseCursor.defer),
+      behavior: widget.behavior,
+      onHoverChanged: (h) {
+        if (!isEnabled) return;
+        if (h == _hovered) return;
+        setState(() => _hovered = h);
+        widget.onHoverChanged?.call(h);
+      },
+      onPressedChanged: (p) {
+        if (!isEnabled) return;
+        if (p == _pressed) return;
+        setState(() => _pressed = p);
+      },
+      child: AnimatedScale(
+        duration: widget.animationDuration,
+        curve: AppMotion.snapCurve,
+        scale: chrome.scale,
+        child: AnimatedContainer(
+          duration: widget.animationDuration,
+          curve: AppMotion.snapCurve,
+          padding: widget.padding,
+          decoration: BoxDecoration(
+            color: chrome.background,
+            gradient: chrome.gradient,
+            borderRadius: widget.borderRadius,
+            border: Border.all(color: chrome.borderColor),
+            boxShadow: chrome.shadows,
+          ),
+          // Chrome offset is in PIXELS (e.g., (1,1) on press, (-1.25,
+          // -1.25) on nightwalker hover). Apply with Transform.translate
+          // — no animation — because the offset is small enough that
+          // snapping reads as crisp. Matches the existing pattern in
+          // _PrimaryButtonState etc. before consolidation.
+          child: chrome.offset == Offset.zero
+              ? widget.child
+              : Transform.translate(
+                  offset: chrome.offset,
+                  child: widget.child,
+                ),
+        ),
+      ),
+    );
+    return feedback;
+  }
 }
