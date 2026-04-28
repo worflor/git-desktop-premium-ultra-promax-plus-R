@@ -1828,7 +1828,7 @@ class _HistoryPageState extends State<HistoryPage> {
         onTap: () => _revert(repoPath, commit.commitHash),
       ),
     ];
-    showAppContextMenu(ctx, globalPos, [items]);
+    showAppContextMenu(ctx, globalPos, [ListMenuSection(items)]);
   }
 
   Future<void> _cherryPick(String repoPath, String hash) async {
@@ -1921,7 +1921,7 @@ class _HistoryPageState extends State<HistoryPage> {
     Offset globalPos,
   ) {
     showAppContextMenu(context, globalPos, [
-      [
+      ListMenuSection([
         AppContextMenuItem(
           icon: Icons.alt_route_outlined,
           label: 'Create branch from here…',
@@ -1933,7 +1933,7 @@ class _HistoryPageState extends State<HistoryPage> {
           onTap: () =>
               Clipboard.setData(ClipboardData(text: entry.commitHash)),
         ),
-      ],
+      ]),
     ]);
   }
 

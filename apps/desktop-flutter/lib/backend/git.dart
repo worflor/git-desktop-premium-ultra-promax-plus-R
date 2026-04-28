@@ -642,18 +642,18 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
 }) async {
   if (commits.isEmpty) return GitResult.ok({});
 
-  final meta = {for (final c in commits) c.commitHash: c};
   final args = ['log', '--format=>>>%H', '-n', '$limit'];
   if (branch != null) args.add(branch);
-  // Single `git log --numstat --name-status` replaces the old two
-  // parallel invocations. Git emits both blocks per commit (name-status
-  // first, numstat second), distinguishable by line shape:
-  //   numstat    : starts with a digit or `-` (binary)  e.g. `42\t7\tpath`
-  //   name-status: starts with a letter                  e.g. `M\tpath`
-  // Parsing by first-char discriminates the two streams without needing
-  // a separator pass — one log walk replaces two.
+  // `--raw` (status letters) + `--numstat` (additions/deletions) coexist
+  // in a single `git log` pass; `--name-status` and `--numstat` do NOT —
+  // git silently honours only the last of those two, dropping the other
+  // block entirely. Combining `--raw` with `--numstat` is the
+  // single-call way to get both file paths AND churn:
+  //   raw    : `:mode mode sha sha STATUS\tpath`            ('A', 'M', 'D', 'R100', etc.)
+  //   numstat: `<adds>\t<dels>\t<path>` (or `-\t-\t<path>` for binary)
+  // Discriminated by line prefix without needing a separator pass.
+  args.add('--raw');
   args.add('--numstat');
-  args.add('--name-status');
   final r = await _git(repo, args);
   if (r.exitCode != 0) {
     return GitResult.err(r.stderr.toString().trim());
@@ -672,6 +672,41 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
     if (cur == null) continue;
     if (line.isEmpty) continue;
     final first = line.codeUnitAt(0);
+    if (first == 0x3a /* ':' */) {
+      // Raw row format:
+      //   single parent: `:srcMode dstMode srcSha dstSha STATUS\tpath`
+      //                  (rename/copy: `STATUS<score>\told\tnew`)
+      //   merge commit:  `::m1 m2 m3 m4 s1 s2 STATUS\tpath`
+      //                  (combined-diff, leading `::` and one extra
+      //                   mode + sha pair per parent).
+      // We accept both shapes, key off "first whitespace-separated
+      // token whose first char is A–Z" as the status. Anything else
+      // (malformed, no tab, no recognisable letter token) is skipped
+      // — the numstat block on the same commit will still land its
+      // adds/dels even if status couldn't be classified.
+      final tabIdx = line.indexOf('\t');
+      if (tabIdx <= 0) continue;
+      final head = line.substring(0, tabIdx);
+      final rest = line.substring(tabIdx + 1);
+      final tokens = head.split(' ');
+      String? status;
+      for (var i = tokens.length - 1; i >= 0; i--) {
+        final tok = tokens[i];
+        if (tok.isEmpty) continue;
+        final c = tok.codeUnitAt(0);
+        if (c >= 0x41 && c <= 0x5a) {
+          status = tok;
+          break;
+        }
+      }
+      if (status == null || status.isEmpty) continue;
+      // Rename/copy: `STATUS<score>\told\tnew` — destination wins.
+      final path = rest.contains('\t') ? rest.split('\t').last : rest;
+      final pathTrim = path.trim();
+      if (pathTrim.isEmpty) continue;
+      changeTypesByHash[cur]![pathTrim] = status.substring(0, 1);
+      continue;
+    }
     final isDigit = first >= 0x30 && first <= 0x39;
     final isDash = first == 0x2d; // '-' — binary file in numstat
     if (isDigit || isDash) {
@@ -685,14 +720,6 @@ Future<GitResult<Map<String, CommitDetailData>>> bulkGetCommitDetails(
           numstatByHash[cur]!.add(_BulkFileStat(path, adds, dels));
         }
       }
-    } else if (first >= 0x41 && first <= 0x5a) {
-      // Name-status row: <letter><score?>\t<path>  (rename: <letter>\t<old>\t<new>)
-      final tabIdx = line.indexOf('\t');
-      if (tabIdx < 0) continue;
-      final type = line.substring(0, 1);
-      final rest = line.substring(tabIdx + 1);
-      final path = rest.contains('\t') ? rest.split('\t').last : rest;
-      changeTypesByHash[cur]![path.trim()] = type;
     }
   }
 

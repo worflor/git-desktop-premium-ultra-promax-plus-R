@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'ai_activity_state.dart';
 import '../backend/external_tools.dart';
 import '../backend/file_picker.dart';
 import '../backend/git.dart';
@@ -17,6 +18,7 @@ import '../ui/design_primitives.dart';
 import '../ui/form_controls.dart';
 import '../ui/hover_lift.dart';
 import '../ui/interaction_feedback.dart';
+import '../ui/animated_icons.dart';
 import '../ui/material_surface.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart';
@@ -868,85 +870,104 @@ class _ProjectItemState extends State<_ProjectItem> {
     final webInfo = _webInfo;
     final originUrl = _originUrl;
     final readmePath = _readmePath;
-    final sections = <List<AppContextMenuItem>>[
-      [
+    // Tile/chip section: locked-3 always-tiles on top (Explorer,
+    // Terminal, Copy path — every project has these), conditional
+    // chips beneath (Open Host, Copy URL, README, Open with…) in
+    // canonical order. Chips read as ambient secondary register so
+    // a wrap-laid position doesn't violate the muscle-memory rule
+    // the way a tile-position shuffle would.
+    final tiles = <AppContextMenuItem>[
+      AppContextMenuItem(
+        icon: Icons.folder_open_outlined,
+        label: 'Explorer',
+        onTap: _openInFileManager,
+      ),
+      AppContextMenuItem(
+        icon: Icons.terminal,
+        label: 'Terminal',
+        onTap: _openInTerminal,
+      ),
+      AppContextMenuItem(
+        icon: Icons.content_copy_outlined,
+        label: 'Copy path',
+        onTap: _copyPath,
+      ),
+    ];
+    final chips = <AppContextMenuItem>[
+      // "Open on <Host>" — project-intrinsic action, only shown when
+      // the repo's origin remote resolves to a clean https URL.
+      // Label is brand-pretty for github/gitlab/bitbucket.com, bare
+      // host otherwise (Codeberg, sourcehut, Gitea, self-hosted all
+      // show as their actual hostname).
+      if (webInfo != null)
         AppContextMenuItem(
-          icon: Icons.folder_open_outlined,
-          label: 'Open in Explorer',
-          onTap: _openInFileManager,
+          icon: Icons.public_outlined,
+          label: webInfo.label,
+          onTap: _openOnWeb,
         ),
+      // Clone URL → "Clone" + link icon. The action is "copy the
+      // clone URL to clipboard" but the chip rail can't fit
+      // "Clone URL" without truncation; the link icon already carries
+      // the URL semantics, and "Clone" is the verb the user reaches
+      // for ("git clone <this>") which preserves intent.
+      if (originUrl != null)
         AppContextMenuItem(
-          icon: Icons.terminal,
-          label: 'Open in Terminal',
-          onTap: _openInTerminal,
+          icon: Icons.link,
+          label: 'Clone',
+          onTap: _copyCloneUrl,
         ),
-        // "Open on <Host>" — project-intrinsic action, only shown
-        // when the repo's origin remote resolves to a clean https
-        // URL. Label is brand-pretty for github/gitlab/bitbucket.com,
-        // bare host otherwise (Codeberg, sourcehut, Gitea, self-
-        // hosted instances all show as their actual hostname).
-        if (webInfo != null)
-          AppContextMenuItem(
-            icon: Icons.public_outlined,
-            label: 'Open on ${webInfo.label}',
-            onTap: _openOnWeb,
-          ),
-        // "Open README" — orientation aid, surfaces only when a
-        // README file actually exists in the repo root.
-        if (readmePath != null)
-          AppContextMenuItem(
-            icon: Icons.description_outlined,
-            label: 'Open README',
-            onTap: _openReadme,
-          ),
-        if (tools.isNotEmpty)
-          AppContextMenuItem(
-            icon: Icons.launch,
-            label: 'Open with',
-            // Submenu opens on hover; we still set onTap to a no-op
-            // so a click on the parent row doesn't dismiss the menu
-            // before the user reaches the submenu.
-            onTap: () {},
-            submenuBuilder: () => [
-              for (final tool in tools)
-                AppContextMenuItem(
-                  icon: tool.mode == ToolLaunchMode.newTerminal
-                      ? Icons.terminal
-                      : Icons.open_in_new,
-                  label: tool.displayLabel,
-                  onTap: () => _runTool(tool),
-                ),
+      // README — orientation aid, surfaces only when a README file
+      // actually exists in the repo root.
+      if (readmePath != null)
+        AppContextMenuItem(
+          icon: Icons.description_outlined,
+          label: 'README',
+          onTap: _openReadme,
+        ),
+      // "Open with…" — only when the user has set up at least one
+      // external tool. Fits the philosophy: this slot exists because
+      // *the user* opted in, not because the project happens to have
+      // a remote / README / etc.
+      if (tools.isNotEmpty)
+        AppContextMenuItem(
+          icon: Icons.launch,
+          // "Tools" instead of "Open with" — fits the cell, and the
+          // launch icon already carries the "open externally"
+          // semantics. Chevron after the label hints the chip
+          // expands to a submenu of configured tools.
+          label: 'Tools',
+          // Chip opens the submenu on click (cells in the mosaic
+          // are stable, so a click-anchored submenu stays aligned
+          // for its lifetime).
+          onTap: () {},
+          submenuBuilder: () => [
+            for (final tool in tools)
               AppContextMenuItem(
-                icon: Icons.tune,
-                label: 'Edit tools…',
-                onTap: _openExternalToolsSettings,
+                icon: tool.mode == ToolLaunchMode.newTerminal
+                    ? Icons.terminal
+                    : Icons.open_in_new,
+                label: tool.displayLabel,
+                onTap: () => _runTool(tool),
               ),
-            ],
-          ),
-        AppContextMenuItem(
-          icon: Icons.content_copy_outlined,
-          label: 'Copy path',
-          onTap: _copyPath,
+            AppContextMenuItem(
+              icon: Icons.tune,
+              label: 'Edit tools…',
+              onTap: _openExternalToolsSettings,
+            ),
+          ],
         ),
-        // "Copy clone URL" — sits next to "Copy path" because both
-        // are clipboard actions; bare-emit of the origin remote so
-        // the user gets back exactly what their git config holds.
-        if (originUrl != null)
-          AppContextMenuItem(
-            icon: Icons.link,
-            label: 'Copy clone URL',
-            onTap: _copyCloneUrl,
-          ),
-      ],
+    ];
+    final sections = <MenuSection>[
+      TileChipMenuSection(tiles: tiles, chips: chips),
       if (widget.onForget != null)
-        [
+        ListMenuSection([
           AppContextMenuItem(
             icon: Icons.close,
             label: 'Forget this project',
             destructive: true,
             onTap: widget.onForget!,
           ),
-        ],
+        ]),
     ];
     showAppContextMenu(context, globalPos, sections);
   }
@@ -1003,59 +1024,220 @@ class _ProjectItemState extends State<_ProjectItem> {
             child: Tooltip(
               message: widget.path,
               waitDuration: const Duration(milliseconds: 400),
-              child: Row(
+              // Stack so the AI activity overlay can float in the
+              // upper-right corner of the pill without being part of
+              // the row's flex math. The base Row keeps text + folder
+              // button at their natural baseline; the overlay sits
+              // above the text vertically and beside the folder
+              // button horizontally, slightly transparent.
+              child: Stack(
+                clipBehavior: Clip.none,
                 children: [
-                  Expanded(
-                    child: Text(
-                      widget.name,
-                      style: TextStyle(
-                        color: widget.isActive ? t.textStrong : t.textNormal,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.name,
+                          style: TextStyle(
+                            color: widget.isActive
+                                ? t.textStrong
+                                : t.textNormal,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  // Hover-reveal "open in explorer" action. Inner
-                  // MouseRegion + GestureDetector with opaque behavior
-                  // wins the gesture arena so the icon's own click
-                  // doesn't bubble up to the parent's row-tap. The
-                  // destructive "forget" action moved to the right-
-                  // click context menu — the inline affordance is
-                  // reserved for the most-common positive action.
-                  if (_hovered)
-                    MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      onEnter: (_) =>
-                          setState(() => _affordanceHovered = true),
-                      onExit: (_) =>
-                          setState(() => _affordanceHovered = false),
-                      child: Tooltip(
-                        message: 'Open in Explorer',
-                        child: GestureDetector(
-                          onTap: _openInFileManager,
-                          behavior: HitTestBehavior.opaque,
-                          child: SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: Center(
-                              child: Icon(
-                                Icons.folder_open,
-                                size: 14,
-                                color: _affordanceHovered
-                                    ? t.textStrong
-                                    : t.textMuted,
+                      // Hover-reveal "open in explorer" action. Inner
+                      // MouseRegion + GestureDetector with opaque
+                      // behavior wins the gesture arena so the
+                      // icon's own click doesn't bubble up to the
+                      // parent's row-tap. The destructive "forget"
+                      // action moved to the right-click context menu
+                      // — the inline affordance is reserved for the
+                      // most-common positive action.
+                      if (_hovered)
+                        MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          onEnter: (_) =>
+                              setState(() => _affordanceHovered = true),
+                          onExit: (_) =>
+                              setState(() => _affordanceHovered = false),
+                          child: Tooltip(
+                            message: 'Open in Explorer',
+                            child: GestureDetector(
+                              onTap: _openInFileManager,
+                              behavior: HitTestBehavior.opaque,
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: Center(
+                                  child: Icon(
+                                    Icons.folder_open,
+                                    size: 14,
+                                    color: _affordanceHovered
+                                        ? t.textStrong
+                                        : t.textMuted,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
+                    ],
+                  ),
+                  // Floats above the text and BESIDE the folder button.
+                  // The hover-shown folder occupies an 18px slot at the
+                  // row's right edge plus a 4px gap; offsetting the
+                  // badge by that distance keeps the two icons in the
+                  // same right-aligned column when both are visible
+                  // and slides the badge back to the edge when the
+                  // folder hides. AnimatedPositioned syncs the slide
+                  // with the folder's reveal so the transition reads
+                  // as one motion, not two.
+                  AnimatedPositioned(
+                    duration: AppMotion.snap,
+                    curve: AppMotion.snapCurve,
+                    top: -3,
+                    right: _hovered ? 22 : 0,
+                    child: _ProjectAiStatusOverlay(repoPath: widget.path),
+                  ),
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Floating AI-activity badge in the upper-right of a project entry.
+/// Renders one tiny icon per running-or-unread record on the repo,
+/// reading from [AiActivityState] keyed by [repoPath]. Returns an
+/// empty widget when there's nothing to surface so the pill stays
+/// visually clean for repos with no in-flight or unread runs.
+///
+/// Visual treatment intentionally mirrors the open-in-explorer
+/// affordance — same 14px icon size, same muted-ish colour story,
+/// same placement language — but the alpha is lowered so the badge
+/// reads as ambient signal rather than a primary action. The user
+/// is meant to glance at it, not click it: the affordance is
+/// non-interactive for now (clicking the row still routes to the
+/// repo, where the result is reviewable in-place).
+class _ProjectAiStatusOverlay extends StatelessWidget {
+  final String repoPath;
+
+  const _ProjectAiStatusOverlay({required this.repoPath});
+
+  @override
+  Widget build(BuildContext context) {
+    // `select` so this widget only rebuilds when its own repo's
+    // records change — sidebar rails of unrelated projects don't
+    // re-layout on every state tick.
+    final records = context.select<AiActivityState, List<AiActivityRecord>>(
+      (s) => s.activeFor(repoPath),
+    );
+    if (records.isEmpty) return const SizedBox.shrink();
+    final t = context.tokens;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        for (final r in records)
+          Padding(
+            padding: const EdgeInsets.only(left: 3),
+            child: _AiKindBadge(record: r, tokens: t),
+          ),
+      ],
+    );
+  }
+}
+
+class _AiKindBadge extends StatelessWidget {
+  final AiActivityRecord record;
+  final AppTokens tokens;
+
+  const _AiKindBadge({required this.record, required this.tokens});
+
+  /// Maps a record's status onto the toolbar icons' shared
+  /// [IconAnimState] vocabulary. Same loading spin / success flash /
+  /// error shake the toolbar paints — only difference is no `hovered`
+  /// (the badge isn't hover-target driven; tooltip handles disclosure).
+  IconAnimState get _animState {
+    if (record.isRunning) return IconAnimState.loading;
+    if (record.isError) return IconAnimState.error;
+    if (record.isDone) return IconAnimState.success;
+    return IconAnimState.idle;
+  }
+
+  Color get _color {
+    // Slightly transparent so the badge stays ambient. Hue carries
+    // the meaning:
+    //   * running — accentBright (catches the eye, says "active")
+    //   * done    — stateAdded   (positive, available to read)
+    //   * error   — stateDeleted (gentle red, says "didn't go well")
+    if (record.isRunning) return tokens.accentBright.withValues(alpha: 0.7);
+    if (record.isError) return tokens.stateDeleted.withValues(alpha: 0.7);
+    return tokens.stateAdded.withValues(alpha: 0.7);
+  }
+
+  String get _tooltipMessage {
+    final kind = switch (record.kind) {
+      AiActivityKind.generate => 'commit message',
+      AiActivityKind.review => 'review',
+      AiActivityKind.muse => 'muse',
+      AiActivityKind.ask => 'ask',
+    };
+    if (record.isRunning) return '$kind running';
+    if (record.isError) return '$kind failed (unread)';
+    return '$kind ready (unread)';
+  }
+
+  /// Icon body, picked to match the same glyph the composer toolbar
+  /// renders for that flow:
+  ///   * generate → AnimatedSparkleIcon (toolbar uses the same)
+  ///   * review   → AnimatedSearchIcon, lens morphs to the verdict
+  ///                shield/check/eye/warn/x on success — exactly like
+  ///                the toolbar
+  ///   * muse     → bubble_chart_outlined (toolbar is static here too)
+  ///   * ask      → diamond_outlined (toolbar's ◈ shape is page-local;
+  ///                the static fallback still tracks state via colour)
+  Widget _iconForState(double size) {
+    final state = _animState;
+    final color = _color;
+    switch (record.kind) {
+      case AiActivityKind.generate:
+        return AnimatedSparkleIcon(state: state, color: color, size: size);
+      case AiActivityKind.review:
+        // Pull the verdict off the typed result so the lens morphs into
+        // the same shape the toolbar's review button shows on done.
+        final verdict = switch (record.result) {
+          AiReviewResult(:final data) => data.verdict,
+          _ => null,
+        };
+        return AnimatedSearchIcon(
+          state: state,
+          color: color,
+          size: size,
+          verdict: verdict,
+        );
+      case AiActivityKind.muse:
+        return Icon(Icons.bubble_chart_outlined, size: size, color: color);
+      case AiActivityKind.ask:
+        return Icon(Icons.diamond_outlined, size: size, color: color);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: _tooltipMessage,
+      waitDuration: const Duration(milliseconds: 400),
+      child: SizedBox(
+        width: 14,
+        height: 14,
+        child: Center(child: _iconForState(13)),
       ),
     );
   }

@@ -8,11 +8,19 @@
 // → context packed → transmitted.
 //
 // The stream is **observational**. Emitters publish events; nobody
-// blocks on subscribers. A missing subscriber means the events are
-// dropped (no pressure on the pipeline). The UI canvas subscribes
-// only while it's visible; backlogged events before it subscribes
-// are gone — the UI instead derives its opening state from whatever
-// event arrives next plus the cumulative snapshot on the session.
+// blocks on subscribers. The bus retains the current session's event
+// log so a subscriber that attaches mid-session catches up on the
+// events that already fired — without it, the canvas misses the
+// `EngineResolving` / `EngineReady` / early `DiffSources` events
+// that fire between the parent's `setState(loading=true)` and the
+// canvas's own `initState` running, and the corresponding visual
+// elements (topology dots, ignition, heat rings) silently never
+// appear because their `_birth` timestamps stay at -1.
+//
+// The retained log is bounded by session: the next session clears it
+// at the first emit. Memory shape is the same as `_userSpokeBoosts`
+// already on the bus — session-scoped collection cleared on the next
+// run boundary.
 //
 // Sessions are scoped by the review request. A user can kick off
 // multiple reviews; only the most-recent session's events matter.
@@ -211,6 +219,14 @@ class LogosVisBus {
   final StreamController<LogosVisEvent> _controller =
       StreamController<LogosVisEvent>.broadcast(sync: false);
 
+  /// Retained event log for the most recent session. Cleared the
+  /// instant a higher session id arrives so we never carry stale
+  /// state across runs. Bounded by session length (~10–20 events for
+  /// a typical pipeline) and cleared on every new run, so it can't
+  /// grow unboundedly. See [subscribe] for the replay path.
+  final List<LogosVisEvent> _sessionLog = [];
+  int? _sessionLogId;
+
   int _nextSessionId = 1;
 
   /// Out-of-band signal from the canvas back into the pipeline: when
@@ -267,15 +283,57 @@ class LogosVisBus {
     return v is int ? v : null;
   }
 
-  /// Stream of all emitted events. Canvas subscribes here and filters
-  /// by its tracked session id.
+  /// Stream of all emitted events. Prefer [subscribe] for UI consumers
+  /// — it folds in the session-log replay so a late-attaching listener
+  /// catches up on events that already fired. The raw stream stays
+  /// exposed for tests / non-UI consumers that don't need the replay.
   Stream<LogosVisEvent> get stream => _controller.stream;
+
+  /// Subscribe with mid-session catch-up. Listens for live events AND
+  /// replays whatever's in [_sessionLog] in original order, so a
+  /// handler attaching after the pipeline has started still sees the
+  /// `EngineResolving` / `EngineReady` / early `DiffSources` events
+  /// it would otherwise miss. The replay runs in a microtask so it
+  /// happens after the State that called us has finished initState
+  /// (`mounted == true`, `setState` is safe). Live events from the
+  /// broadcast stream arrive after the microtask drains, so order is
+  /// preserved.
+  ///
+  /// The handler must be idempotent w.r.t. duplicates — the canvas's
+  /// `_birth[element] < 0` checks already guarantee that.
+  StreamSubscription<LogosVisEvent> subscribe(
+    void Function(LogosVisEvent) handler,
+  ) {
+    final replay = List<LogosVisEvent>.unmodifiable(_sessionLog);
+    final sub = _controller.stream.listen(handler);
+    if (replay.isNotEmpty) {
+      scheduleMicrotask(() {
+        for (final ev in replay) {
+          handler(ev);
+        }
+      });
+    }
+    return sub;
+  }
 
   /// Emit unconditionally. Prefer [emitInSession] unless the caller
   /// has an explicit session id (e.g. an isolate helper that received
   /// it via message passing).
   void emit(LogosVisEvent event) {
     if (_controller.isClosed) return;
+    // Maintain the per-session log alongside the broadcast. New
+    // session id → drop the old log; same id → append. Older ids
+    // (out-of-order emits, pathological) are added to the live stream
+    // for any direct subscribers but skipped from the log so we don't
+    // pollute a fresh session's replay.
+    if (_sessionLogId == null || event.sessionId > _sessionLogId!) {
+      _sessionLogId = event.sessionId;
+      _sessionLog
+        ..clear()
+        ..add(event);
+    } else if (event.sessionId == _sessionLogId) {
+      _sessionLog.add(event);
+    }
     _controller.add(event);
   }
 

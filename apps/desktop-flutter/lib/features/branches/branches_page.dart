@@ -802,7 +802,7 @@ class _BranchesPageState extends State<BranchesPage> {
         onTap: () => _showRenameBranchDialog(repoPath, branch.name),
       ),
     ];
-    return showAppContextMenu(ctx, globalPos, [items]);
+    return showAppContextMenu(ctx, globalPos, [ListMenuSection(items)]);
   }
 
   /// Rename dialog. Validates that the new name isn't empty, isn't the
@@ -1069,8 +1069,8 @@ class _BranchesPageState extends State<BranchesPage> {
                 d.branch != pr.headRef)
             .toList()
         : const <WorktreeData>[];
-    final sections = <List<AppContextMenuItem>>[
-      [
+    final sections = <MenuSection>[
+      ListMenuSection([
         // Apply to active changes — overlays the PR's diff onto the
         // current worktree (staged or unstaged per the preview dialog's
         // choice). No commit, no branch switch. The preview surfaces
@@ -1129,15 +1129,15 @@ class _BranchesPageState extends State<BranchesPage> {
             label: 'Merge into new desk…',
             onTap: () => _openPrAsDesk(repoPath, pr),
           ),
-      ],
-      [
+      ]),
+      ListMenuSection([
         AppContextMenuItem(
           icon: Icons.link,
           label: 'Link to issue…',
           onTap: () => _showLinkToIssuePicker(repoPath, pr, isLocal),
         ),
-      ],
-      [
+      ]),
+      ListMenuSection([
         AppContextMenuItem(
           icon: Icons.file_download_outlined,
           label: 'Download as .patch',
@@ -1190,8 +1190,8 @@ class _BranchesPageState extends State<BranchesPage> {
             label: 'Open in browser',
             onTap: () => _openPrInBrowser(repoPath, pr.number),
           ),
-      ],
-      [
+      ]),
+      ListMenuSection([
         AppContextMenuItem(
           icon: unread
               ? Icons.mark_email_read_outlined
@@ -1200,7 +1200,7 @@ class _BranchesPageState extends State<BranchesPage> {
           onTap: () =>
               unread ? _markPrSeen(pr.number) : _unmarkPrSeen(pr.number),
         ),
-      ],
+      ]),
     ];
     showAppContextMenu(context, globalPos, sections);
   }
@@ -4407,13 +4407,13 @@ class _BranchesPageState extends State<BranchesPage> {
     String repoPath,
   ) {
     showAppContextMenu(context, pos, [
-      [
+      ListMenuSection([
         AppContextMenuItem(
           icon: Icons.link,
           label: 'Link to PR…',
           onTap: () => _showLinkToPrPickerFromIssue(repoPath, issue, isLocal),
         ),
-      ],
+      ]),
     ]);
   }
 

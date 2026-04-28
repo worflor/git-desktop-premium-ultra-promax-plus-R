@@ -8,6 +8,7 @@ import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'app/app_identity.dart';
+import 'app/ai_activity_state.dart';
 import 'app/ai_settings_state.dart';
 import 'app/preferences_state.dart';
 import 'app/repository_state.dart';
@@ -210,6 +211,10 @@ void main() async {
         ChangeNotifierProvider.value(value: remoteIssueCacheState),
         ChangeNotifierProvider.value(value: preferencesState),
         ChangeNotifierProvider.value(value: aiSettingsState),
+        // Per-repo, in-memory AI activity records (running runs +
+        // unseen results). Lifted out of ChangesPage so they survive
+        // repo switches and tab switches; cleared on session restart.
+        ChangeNotifierProvider(create: (_) => AiActivityState()),
         ChangeNotifierProvider.value(value: externalToolsState),
         ChangeNotifierProvider.value(value: toolDetectionState),
         ChangeNotifierProvider(create: (_) => SettingsNavigationState()),

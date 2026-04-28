@@ -46,6 +46,7 @@ import '../../backend/logos_refactor.dart';
 import '../../backend/logos_spaghetti.dart';
 import '../../backend/undo_controller.dart';
 import '../../ui/logos_glyph_strip.dart';
+import '../../app/ai_activity_state.dart';
 import '../../app/ai_settings_state.dart';
 import '../../app/file_coupling_state.dart';
 import '../../app/symbol_frequency_state.dart';
@@ -290,31 +291,43 @@ class _ChangesPageState extends State<ChangesPage> {
   // to the previous section during an animated jump.
   bool _multiDiffUserDriving = false;
   bool _actionRunning = false;
-  bool _generateRunning = false;
-  bool _generateSuccess = false;
-  // Monotonic counter for commit-message generation requests. Each call
-  // captures the counter at start; when the awaited result returns, it
-  // only applies if the counter still matches — otherwise the user
-  // cancelled (by clicking the button again) and we discard the result.
-  int _generateRequestId = 0;
-  bool _reviewRunning = false;
-  bool _reviewSuccess = false;
+
+  // ── AI flows: state is hoisted into AiActivityState (per-repo,
+  // session-scoped). The fields below are LOCAL UI view state — drawer
+  // visibility, expanders, the generate-success flash timer — kept on
+  // the page because they're per-render intent, not per-run identity.
+  // Anything tied to a run's identity (running flag, scope key, result,
+  // error) reads through the `_reviewRecord` / `_museRecord` /
+  // `_generateRecord` / `_askRecord` helpers below.
   bool _commitAiLoading = false;
   String? _commitAiError;
   List<AiModelCategoryData> _commitAiCategories = const [];
   bool _reviewActive = false;
   bool _reviewTraceExpanded = false;
   bool _reviewReasoningExpanded = false;
-  String? _reviewScopeKey;
-  AiCommitReviewData? _reviewResult;
-  String? _reviewError;
-  // ── Muse (3-phase oracle) state — mirrors review's pattern.
-  bool _museRunning = false;
-  bool _museSuccess = false;
   bool _museActive = false;
-  String? _museScopeKey;
-  AiMuseData? _museResult;
-  String? _museError;
+  // Transient flash flag for "the generate just succeeded." Cleared by
+  // a 1.5s timer in [_generateCommitMessage] so the affordance bumps
+  // green for a beat then settles. The success state of review/muse
+  // is derived from their record's terminal status instead.
+  bool _generateFlash = false;
+  // Monotonic counter for commit-message generation requests, keyed
+  // by repoPath so that a generate kicked off on repo B doesn't bump
+  // the guard for an in-flight generate on repo A — that misfire used
+  // to orphan repo A's running record (it was guard-rejected before
+  // any complete/fail/clear could fire). Each call reads + bumps the
+  // bucket for its own repo; cross-repo runs are now genuinely
+  // independent on the cancel path too.
+  final Map<String, int> _generateRequestIds = {};
+
+  int _bumpGenerateRequestId(String repoPath) {
+    final next = (_generateRequestIds[repoPath] ?? 0) + 1;
+    _generateRequestIds[repoPath] = next;
+    return next;
+  }
+
+  int _peekGenerateRequestId(String repoPath) =>
+      _generateRequestIds[repoPath] ?? 0;
   String? _actionMessage;
   String? _actionError;
   double _leftPanelWidth = 320.0;
@@ -324,15 +337,11 @@ class _ChangesPageState extends State<ChangesPage> {
   static const int _kMaxFileDiffCacheEntries = 256;
   bool _commitOnlyMode = false;
   bool _mergeResolving = false;
-  bool _shaping = false;
-  // Ask-mode answer state. The shape-mode composer infrastructure is
-  // reused for the new "ask the manifold" feature — same field morph,
-  // same Ctrl/Cmd+Enter routing — but the backend returns prose
-  // instead of a patch, and the answer lives inline under the composer
-  // until the user dismisses or asks again.
-  String? _askQuestion;
-  String? _askAnswer;
-  String? _askError;
+  // Ask-mode question/answer/error/in-flight all live in the per-repo
+  // AiActivityState now. See `_askRecord` below for the read path. The
+  // shape-mode composer infrastructure (composer takeover) is what
+  // _shapeMode/_shapeCtrl/_shapeFocus track — unrelated to whether a
+  // run is in flight.
   // Inline shape-commit mode. When true, the composer field swaps to
   // bind the shape controller (preserving the commit draft in the
   // background) and the bottom split-button morphs into "ask with [cat]"
@@ -509,6 +518,83 @@ class _ChangesPageState extends State<ChangesPage> {
   List<String>? _appliedLogosRerankPaths;
   String? _pendingLogosRerankKey;
   int _logosRerankRequestId = 0;
+
+  // ── AI activity bridges ────────────────────────────────────────────
+  // Records live in [AiActivityState], keyed by (repoPath, kind), so a
+  // running review on repo A and a running muse on repo B coexist and
+  // both linger across repo / tab switches. The accessors below are
+  // build-context bound — they read whatever record matches the
+  // currently active repo. The page's build() narrows the rebuild
+  // signal via `context.select<AiActivityState, List<AiActivityRecord>>
+  // ((s) => s.activeFor(repoPath))` so only the active repo's slice
+  // drives rebuilds — the bare `watch` would refire on every cross-
+  // repo mutation.
+
+  AiActivityRecord? _activityRecord(AiActivityKind kind) {
+    if (!mounted) return null;
+    final repoPath = context.read<RepositoryState>().activePath;
+    if (repoPath == null) return null;
+    return context.read<AiActivityState>().recordFor(repoPath, kind);
+  }
+
+  AiActivityRecord? get _generateRecord =>
+      _activityRecord(AiActivityKind.generate);
+  AiActivityRecord? get _reviewRecord => _activityRecord(AiActivityKind.review);
+  AiActivityRecord? get _museRecord => _activityRecord(AiActivityKind.muse);
+  AiActivityRecord? get _askRecord => _activityRecord(AiActivityKind.ask);
+
+  bool get _generateRunning => _generateRecord?.isRunning ?? false;
+  bool get _reviewRunning => _reviewRecord?.isRunning ?? false;
+  bool get _museRunning => _museRecord?.isRunning ?? false;
+  bool get _shaping => _askRecord?.isRunning ?? false;
+
+  bool get _reviewSuccess => _reviewRecord?.isDone ?? false;
+  bool get _museSuccess => _museRecord?.isDone ?? false;
+
+  String? get _reviewScopeKey => _reviewRecord?.scopeKey;
+  String? get _museScopeKey => _museRecord?.scopeKey;
+
+  AiCommitReviewData? get _reviewResult {
+    final r = _reviewRecord;
+    if (r == null || !r.isDone) return null;
+    final payload = r.result;
+    return payload is AiReviewResult ? payload.data : null;
+  }
+
+  AiMuseData? get _museResult {
+    final r = _museRecord;
+    if (r == null || !r.isDone) return null;
+    final payload = r.result;
+    return payload is AiMuseResult ? payload.data : null;
+  }
+
+  String? get _reviewError =>
+      _reviewRecord?.isError == true ? _reviewRecord!.error : null;
+  String? get _museError =>
+      _museRecord?.isError == true ? _museRecord!.error : null;
+  String? get _askError =>
+      _askRecord?.isError == true ? _askRecord!.error : null;
+
+  String? get _askQuestion => _askRecord?.scopeLabel;
+  String? get _askAnswer {
+    final r = _askRecord;
+    if (r == null || !r.isDone) return null;
+    final payload = r.result;
+    return payload is AiAskResult ? payload.answer : null;
+  }
+
+  /// Convenience snapshot for setState callers that need to mutate the
+  /// activity state for the active repo. Returns null when there's no
+  /// active repo (caller bails — the AI flows can't run there anyway).
+  ({String repoPath, AiActivityState state})? _activitySite() {
+    if (!mounted) return null;
+    final repoPath = context.read<RepositoryState>().activePath;
+    if (repoPath == null) return null;
+    return (
+      repoPath: repoPath,
+      state: context.read<AiActivityState>(),
+    );
+  }
 
   @override
   void initState() {
@@ -1740,35 +1826,32 @@ class _ChangesPageState extends State<ChangesPage> {
     _seenByContextKey[key] = current;
   }
 
+  /// Closes the review/muse drawers and resets per-render UI state on
+  /// the page. Records in [AiActivityState] are NOT touched — they're
+  /// per-repo and per-scope and outlive these surface-level resets.
+  /// If the user wants to forget a record entirely they can dismiss
+  /// it via the sidebar pill or by starting a fresh run on the same
+  /// slot (which replaces the record).
   void _clearReviewState() {
-    _reviewRunning = false;
-    _reviewSuccess = false;
     _reviewActive = false;
     _reviewTraceExpanded = false;
     _reviewReasoningExpanded = false;
-    _reviewScopeKey = null;
-    _reviewResult = null;
-    _reviewError = null;
-    _museRunning = false;
-    _museSuccess = false;
     _museActive = false;
-    _museScopeKey = null;
-    _museResult = null;
-    _museError = null;
   }
 
   void _hideReviewPane() {
     _reviewActive = false;
   }
 
+  /// User-driven cancel of the active review run on this repo. Drops
+  /// the provider record and resets the drawer.
   void _cancelReviewRequest() {
+    final site = _activitySite();
+    if (site != null) {
+      site.state.clear(repoPath: site.repoPath, kind: AiActivityKind.review);
+    }
     setState(() {
-      _reviewRunning = false;
-      _reviewSuccess = false;
       _reviewActive = false;
-      _reviewScopeKey = null;
-      _reviewError = null;
-      _reviewResult = null;
       _reviewTraceExpanded = false;
       _reviewReasoningExpanded = false;
     });
@@ -2628,10 +2711,10 @@ class _ChangesPageState extends State<ChangesPage> {
       ),
     ];
 
-    final sections = <List<AppContextMenuItem>>[
-      if (!fileStatus.isSilent) glyphStrip,
-      if (logosSection.isNotEmpty) logosSection,
-      [
+    final sections = <MenuSection>[
+      if (!fileStatus.isSilent) ListMenuSection(glyphStrip),
+      if (logosSection.isNotEmpty) ListMenuSection(logosSection),
+      ListMenuSection([
         AppContextMenuItem(
           icon: isUntracked ? Icons.delete_outline : Icons.history_outlined,
           label: multi
@@ -2646,8 +2729,8 @@ class _ChangesPageState extends State<ChangesPage> {
               ? () => _confirmDiscardFiles(context, selectedFiles, repoPath)
               : () => _confirmDiscardFile(context, file, repoPath),
         ),
-      ],
-      [
+      ]),
+      ListMenuSection([
         AppContextMenuItem(
           icon: Icons.block_outlined,
           label: 'Ignore file (add to .gitignore)',
@@ -2659,21 +2742,21 @@ class _ChangesPageState extends State<ChangesPage> {
             label: 'Ignore all .$ext files (add to .gitignore)',
             onTap: () => _ignorePattern(context, repoPath, '*.$ext'),
           ),
-      ],
-      [
+      ]),
+      ListMenuSection([
         AppContextMenuItem(
           icon: Icons.content_copy_outlined,
           label: 'Copy file path',
           onTap: () => _copyToClipboard(file.path),
         ),
-      ],
-      [
+      ]),
+      ListMenuSection([
         AppContextMenuItem(
           icon: Icons.folder_open_outlined,
           label: 'Show in Explorer',
           onTap: () => _revealInExplorer(repoPath, file.path),
         ),
-      ],
+      ]),
     ];
     showAppContextMenu(context, globalPos, sections);
   }
@@ -3362,6 +3445,13 @@ class _ChangesPageState extends State<ChangesPage> {
     if (!_hasReviewStateForCurrentSelection()) {
       return;
     }
+    final site = _activitySite();
+    if (site != null) {
+      // Opening the drawer is the "user has read this" signal — drop
+      // the unread flag so the sidebar pill clears.
+      site.state
+          .markSeen(repoPath: site.repoPath, kind: AiActivityKind.review);
+    }
     setState(() {
       _reviewActive = true;
     });
@@ -3636,13 +3726,22 @@ class _ChangesPageState extends State<ChangesPage> {
       return;
     }
 
-    setState(() => _shaping = true);
+    final activity = context.read<AiActivityState>();
+    // Use the question text as both scope key and label — the same
+    // question on the same repo coalesces (existing record returns).
+    activity.start(
+      repoPath: repoPath,
+      kind: AiActivityKind.ask,
+      scopeKey: trimmed,
+      scopeLabel: trimmed,
+    );
     try {
       // Grab the full working-tree diff (staged + unstaged, over every
       // dirty file). The AI needs to see everything to decide what to
       // include and what to exclude.
       final diffResult = await getSelectionDiff(repoPath, status.files);
       if (!diffResult.ok) {
+        activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not read diff: ${diffResult.error}')),
@@ -3651,6 +3750,7 @@ class _ChangesPageState extends State<ChangesPage> {
       }
       final fullDiffRaw = (diffResult.data ?? '').trim();
       if (fullDiffRaw.isEmpty) {
+        activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Nothing to shape — diff is empty.')),
@@ -3663,6 +3763,7 @@ class _ChangesPageState extends State<ChangesPage> {
       // a leak. No config, no toggle.
       final fullDiff = _stripSensitivePathsFromDiff(fullDiffRaw);
       if (fullDiff.isEmpty) {
+        activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -3675,6 +3776,7 @@ class _ChangesPageState extends State<ChangesPage> {
       final prompt = _buildAskPrompt(trimmed, fullDiff);
       final secretHit = detectLikelySecretInPrompt(prompt);
       if (secretHit != null) {
+        activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -3692,11 +3794,12 @@ class _ChangesPageState extends State<ChangesPage> {
       );
       if (!mounted) return;
       if (!r.ok) {
-        setState(() {
-          _askQuestion = trimmed;
-          _askAnswer = null;
-          _askError = r.error;
-        });
+        activity.fail(
+          repoPath: repoPath,
+          kind: AiActivityKind.ask,
+          scopeKey: trimmed,
+          error: r.error ?? 'Ask failed.',
+        );
         return;
       }
       // Render the answer inline under the composer. The ask-mode
@@ -3704,14 +3807,22 @@ class _ChangesPageState extends State<ChangesPage> {
       // text leaves the scaffolding but frees the field for the next
       // question. Escape or the close-chip on the answer card
       // dismisses.
-      setState(() {
-        _askQuestion = trimmed;
-        _askAnswer = r.data;
-        _askError = null;
-        _shapeCtrl.clear();
-      });
-    } finally {
-      if (mounted) setState(() => _shaping = false);
+      activity.complete(
+        repoPath: repoPath,
+        kind: AiActivityKind.ask,
+        scopeKey: trimmed,
+        result: AiAskResult(r.data ?? ''),
+      );
+      // Acknowledge immediately — the answer is rendered in-place
+      // under the composer on this page, so the sidebar pill should
+      // not also nag.
+      activity.markSeen(repoPath: repoPath, kind: AiActivityKind.ask);
+      if (mounted) setState(() => _shapeCtrl.clear());
+    } catch (_) {
+      // Provider record stays in 'running' on unexpected throw —
+      // `cancel` clears it so the UI doesn't get stuck.
+      activity.clear(repoPath: repoPath, kind: AiActivityKind.ask);
+      rethrow;
     }
   }
 
@@ -4000,13 +4111,15 @@ class _ChangesPageState extends State<ChangesPage> {
     // but the handler guards against keyboard routes or programmatic
     // invocations we haven't traced.
     if (context.read<PreferencesState>().hideAiFeatures) return;
+    final activity = context.read<AiActivityState>();
     // Click while a generation is running = cancel. Bumping the counter
     // invalidates any in-flight result; the click itself doesn't wait
     // for the backend to unwind — the UI returns to idle immediately.
+    // Drop the provider record too so the sidebar pill clears.
     if (_generateRunning) {
+      _bumpGenerateRequestId(repoPath);
+      activity.clear(repoPath: repoPath, kind: AiActivityKind.generate);
       setState(() {
-        _generateRequestId++;
-        _generateRunning = false;
         _actionError = null;
         _actionMessage = null;
       });
@@ -4024,20 +4137,28 @@ class _ChangesPageState extends State<ChangesPage> {
       return;
     }
 
-    final requestId = ++_generateRequestId;
+    final requestId = _bumpGenerateRequestId(repoPath);
+    final scopeKey = _buildMultiDiffScopeKey(included);
+    activity.start(
+      repoPath: repoPath,
+      kind: AiActivityKind.generate,
+      scopeKey: scopeKey,
+    );
     setState(() {
-      _generateRunning = true;
       _actionError = null;
       _actionMessage = null;
     });
 
     final categories = await _resolveCommitAiCategories();
-    if (!mounted || requestId != _generateRequestId) {
-      return;
-    }
+    if (!mounted || requestId != _peekGenerateRequestId(repoPath)) return;
     if (categories == null) {
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.generate,
+        scopeKey: scopeKey,
+        error: _commitAiError ?? 'Commit-message AI is not available yet.',
+      );
       setState(() {
-        _generateRunning = false;
         _actionError =
             _commitAiError ?? 'Commit-message AI is not available yet.';
       });
@@ -4056,8 +4177,13 @@ class _ChangesPageState extends State<ChangesPage> {
         categories.where((category) => category.models.isNotEmpty).firstOrNull;
 
     if (selectedCategory == null) {
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.generate,
+        scopeKey: scopeKey,
+        error: 'No runtime-discovered models are available for commit messages.',
+      );
       setState(() {
-        _generateRunning = false;
         _actionError =
             'No runtime-discovered models are available for commit messages.';
       });
@@ -4109,29 +4235,58 @@ class _ChangesPageState extends State<ChangesPage> {
       symbolIndex: symbolIndex,
       couplingMatrix: couplingMatrix,
     );
-    if (!mounted || requestId != _generateRequestId) {
-      return;
-    }
+    if (!mounted || requestId != _peekGenerateRequestId(repoPath)) return;
 
-    setState(() {
-      _generateRunning = false;
-      _generateSuccess = result.ok;
-      if (_generateSuccess) {
-        // Auto-clear success after a beat so the icon returns to idle.
-        Future.delayed(const Duration(milliseconds: 1500), () {
-          if (mounted) setState(() => _generateSuccess = false);
-        });
-      }
-      if (result.ok) {
+    if (result.ok) {
+      activity.complete(
+        repoPath: repoPath,
+        kind: AiActivityKind.generate,
+        scopeKey: scopeKey,
+        result: AiGenerateResult(result.data!.message),
+      );
+      // Apply the message to the composer only if we're still on the
+      // originating repo (and the active record is still ours — a
+      // mid-flight repo switch + new generate would have replaced it).
+      // If we've moved on, the message stays in the record (the
+      // sidebar badge surfaces it as an unread done-record) but
+      // there's no automatic retrieval path back to the composer
+      // when the user returns to the originating repo. That
+      // affordance — clicking the badge to switch repos and apply
+      // the saved message — is intentionally a follow-up; landing
+      // it here would expand the hoist commit's scope into UI work
+      // that wants its own focused pass.
+      final stillHere =
+          context.read<RepositoryState>().activePath == repoPath &&
+              _generateRecord?.scopeKey == scopeKey;
+      if (stillHere) {
         _commitMsgCtrl.text = result.data!.message;
         _commitMsgCtrl.selection = TextSelection.collapsed(
           offset: _commitMsgCtrl.text.length,
         );
-        _actionMessage = null;
-      } else {
-        _actionError = result.error;
+        // Once the user sees the message in their composer, the
+        // sidebar pill should stop nagging.
+        activity.markSeen(
+            repoPath: repoPath, kind: AiActivityKind.generate);
+        setState(() {
+          _actionMessage = null;
+          _generateFlash = true;
+        });
+        // Auto-clear success-flash after a beat so the icon resets.
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (mounted) setState(() => _generateFlash = false);
+        });
       }
-    });
+    } else {
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.generate,
+        scopeKey: scopeKey,
+        error: result.error ?? 'Generate failed.',
+      );
+      if (context.read<RepositoryState>().activePath == repoPath) {
+        setState(() => _actionError = result.error);
+      }
+    }
   }
 
   Future<void> _reviewCommit(
@@ -4152,20 +4307,29 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     final scopeKey = _buildMultiDiffScopeKey(included);
-    if (_reviewScopeKey == scopeKey &&
-        (_reviewRunning || _reviewResult != null || _reviewError != null)) {
+    final activity = context.read<AiActivityState>();
+    final existingReview = _reviewRecord;
+    if (existingReview != null &&
+        existingReview.scopeKey == scopeKey &&
+        (existingReview.isRunning ||
+            existingReview.isDone ||
+            existingReview.isError)) {
+      // Same scope, same record — re-show the drawer rather than
+      // re-running. Mark seen so the sidebar pill clears.
+      activity.markSeen(repoPath: repoPath, kind: AiActivityKind.review);
       setState(() {
         _reviewActive = true;
       });
       return;
     }
 
+    activity.start(
+      repoPath: repoPath,
+      kind: AiActivityKind.review,
+      scopeKey: scopeKey,
+    );
     setState(() {
-      _reviewRunning = true;
       _reviewActive = true;
-      _reviewScopeKey = scopeKey;
-      _reviewError = null;
-      _reviewResult = null;
       _reviewTraceExpanded = false;
       _reviewReasoningExpanded = false;
       _actionError = null;
@@ -4173,14 +4337,14 @@ class _ChangesPageState extends State<ChangesPage> {
     });
 
     final categories = await _resolveCommitAiCategories();
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
     if (categories == null) {
-      setState(() {
-        _reviewRunning = false;
-        _reviewError = _commitAiError ?? 'Review AI is not available yet.';
-      });
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.review,
+        scopeKey: scopeKey,
+        error: _commitAiError ?? 'Review AI is not available yet.',
+      );
       return;
     }
 
@@ -4196,11 +4360,12 @@ class _ChangesPageState extends State<ChangesPage> {
         categories.where((category) => category.models.isNotEmpty).firstOrNull;
 
     if (selectedCategory == null) {
-      setState(() {
-        _reviewRunning = false;
-        _reviewError =
-            'No runtime-discovered models are available for commit review.';
-      });
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.review,
+        scopeKey: scopeKey,
+        error: 'No runtime-discovered models are available for commit review.',
+      );
       return;
     }
 
@@ -4243,31 +4408,38 @@ class _ChangesPageState extends State<ChangesPage> {
       symbolIndex: reviewSymbolIndex,
       couplingMatrix: reviewCouplingMatrix,
     );
-    if (!mounted) {
-      return;
-    }
-    if (_reviewScopeKey != scopeKey) {
-      // Scope changed while this review was in flight — discard result but
-      // still clear the running flag so UI doesn't get stuck.
-      setState(() {
-        _reviewRunning = false;
-      });
-      return;
-    }
-
-    setState(() {
-      _reviewRunning = false;
-      _reviewSuccess = result.ok;
-      if (result.ok) {
-        _reviewResult = result.data;
-        _reviewError = null;
-        _reviewActive = true;
-        _reviewReasoningExpanded = result.data!.findings.isEmpty;
-      } else {
-        _reviewError = result.error;
-        _reviewActive = true;
+    if (!mounted) return;
+    // The scope-key gate inside `activity.complete`/`fail` already
+    // handles the "user moved on" case (provider drops the result if
+    // the slot's scope doesn't match). We still need to land terminal
+    // state into the provider here.
+    if (result.ok) {
+      activity.complete(
+        repoPath: repoPath,
+        kind: AiActivityKind.review,
+        scopeKey: scopeKey,
+        result: AiReviewResult(result.data!),
+      );
+      // The reasoning expander is purely a per-render UI hint about
+      // the empty-findings shape; safe to set when our scope still
+      // matches what landed.
+      if (_reviewScopeKey == scopeKey) {
+        setState(() {
+          _reviewActive = true;
+          _reviewReasoningExpanded = result.data!.findings.isEmpty;
+        });
       }
-    });
+    } else {
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.review,
+        scopeKey: scopeKey,
+        error: result.error ?? 'Review failed.',
+      );
+      if (_reviewScopeKey == scopeKey) {
+        setState(() => _reviewActive = true);
+      }
+    }
   }
 
   Future<void> _runMuse(
@@ -4288,18 +4460,25 @@ class _ChangesPageState extends State<ChangesPage> {
     }
 
     final scopeKey = _buildMultiDiffScopeKey(included);
-    if (_museScopeKey == scopeKey &&
-        (_museRunning || _museResult != null || _museError != null)) {
+    final activity = context.read<AiActivityState>();
+    final existingMuse = _museRecord;
+    if (existingMuse != null &&
+        existingMuse.scopeKey == scopeKey &&
+        (existingMuse.isRunning ||
+            existingMuse.isDone ||
+            existingMuse.isError)) {
+      activity.markSeen(repoPath: repoPath, kind: AiActivityKind.muse);
       setState(() => _museActive = true);
       return;
     }
 
+    activity.start(
+      repoPath: repoPath,
+      kind: AiActivityKind.muse,
+      scopeKey: scopeKey,
+    );
     setState(() {
-      _museRunning = true;
       _museActive = true;
-      _museScopeKey = scopeKey;
-      _museError = null;
-      _museResult = null;
       _actionError = null;
       _actionMessage = null;
     });
@@ -4307,10 +4486,12 @@ class _ChangesPageState extends State<ChangesPage> {
     final categories = await _resolveCommitAiCategories();
     if (!mounted) return;
     if (categories == null) {
-      setState(() {
-        _museRunning = false;
-        _museError = _commitAiError ?? 'Muse AI is not available yet.';
-      });
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.muse,
+        scopeKey: scopeKey,
+        error: _commitAiError ?? 'Muse AI is not available yet.',
+      );
       return;
     }
 
@@ -4345,19 +4526,23 @@ class _ChangesPageState extends State<ChangesPage> {
             synthesisCategory;
 
     if (synthesisCategory == null || brainstormCategory == null) {
-      setState(() {
-        _museRunning = false;
-        _museError = 'No runtime-discovered models are available for the muse.';
-      });
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.muse,
+        scopeKey: scopeKey,
+        error: 'No runtime-discovered models are available for the muse.',
+      );
       return;
     }
     final synthesisModel = pickModel(synthesisCategory);
     final brainstormModel = pickModel(brainstormCategory);
     if (synthesisModel == null || brainstormModel == null) {
-      setState(() {
-        _museRunning = false;
-        _museError = 'Muse needs at least one configured model.';
-      });
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.muse,
+        scopeKey: scopeKey,
+        error: 'Muse needs at least one configured model.',
+      );
       return;
     }
 
@@ -4388,23 +4573,27 @@ class _ChangesPageState extends State<ChangesPage> {
       couplingMatrix: museCouplingMatrix,
     );
     if (!mounted) return;
-    if (_museScopeKey != scopeKey) {
-      setState(() => _museRunning = false);
-      return;
+    if (result.ok) {
+      activity.complete(
+        repoPath: repoPath,
+        kind: AiActivityKind.muse,
+        scopeKey: scopeKey,
+        result: AiMuseResult(result.data!),
+      );
+    } else {
+      activity.fail(
+        repoPath: repoPath,
+        kind: AiActivityKind.muse,
+        scopeKey: scopeKey,
+        error: result.error ?? 'Muse failed.',
+      );
     }
-
-    setState(() {
-      _museRunning = false;
-      _museSuccess = result.ok;
-      if (result.ok) {
-        _museResult = result.data;
-        _museError = null;
-        _museActive = true;
-      } else {
-        _museError = result.error;
-        _museActive = true;
-      }
-    });
+    // Single check — `_museScopeKey` is just the getter view of
+    // `_museRecord?.scopeKey`, so the prior `A || A`-style disjunction
+    // collapses to one comparison.
+    if (_museScopeKey == scopeKey) {
+      setState(() => _museActive = true);
+    }
   }
 
   void _openReviewFinding(
@@ -4543,7 +4732,7 @@ class _ChangesPageState extends State<ChangesPage> {
   ) {
     if (!status.hasHeadCommit) return;
     showAppContextMenu(context, globalPos, [
-      [
+      ListMenuSection([
         AppContextMenuItem(
           icon: Icons.edit_note_outlined,
           label: 'Amend last commit',
@@ -4565,7 +4754,7 @@ class _ChangesPageState extends State<ChangesPage> {
               amend: true,
             ),
           ),
-      ],
+      ]),
     ]);
   }
 
@@ -4883,6 +5072,21 @@ class _ChangesPageState extends State<ChangesPage> {
     final repo = context.read<RepositoryState>();
     final repoPath =
         context.select<RepositoryState, String?>((state) => state.activePath);
+    // Rebuild signal for AI activity, narrowed to the ACTIVE repo's
+    // slice. Piggybacks on AiActivityState's `_activeCache` (see the
+    // doc-comment on that field): `activeFor(repoPath)` returns the
+    // same `List` instance until that repo's slice actually mutates,
+    // so cross-repo notifies (e.g. a muse completing on repo B while
+    // we're viewing repo A) compare equal and don't re-run the
+    // 600+ line build tree. The accessors below (`_reviewRecord`,
+    // `_generateRecord`, …) still read records via `recordFor`, which
+    // sees terminal-but-seen records too — the select is just the
+    // change-detection lever, not the data source.
+    if (repoPath != null) {
+      context.select<AiActivityState, List<AiActivityRecord>>(
+        (s) => s.activeFor(repoPath),
+      );
+    }
     final couplingMatrix = repoPath == null
         ? null
         : context.select<FileCouplingState, FileCouplingMatrix?>(
@@ -5298,23 +5502,31 @@ class _ChangesPageState extends State<ChangesPage> {
         !_reviewRunning &&
         _commitMsgCtrl.text.trim().isNotEmpty &&
         includedCount > 0;
+    // Each AI button gates ONLY on its own kind's running flag — generate
+    // does not block review, review does not block muse, etc. The three
+    // flows are independent per (repo, kind) slots in AiActivityState, so
+    // the UI mirrors that. Generate intentionally stays clickable while
+    // running so the in-handler "click again to cancel" branch can fire.
     final canGenerate = !_actionRunning &&
-        !_generateRunning &&
-        !_reviewRunning &&
         !_commitAiLoading &&
         includedCount > 0 &&
         hasCommitAiSelection;
-    // Allow clicking the review button when a review is running (to navigate
-    // back to the spinner view) or when a persistent review exists.
-    // Enable when: not busy with other actions AND either there's a review
-    // to show or we can start one. When a review is running AND we're already
-    // viewing it (_reviewActive), disable — we're already there.
+    // Review can be clicked while running to re-show the spinner view, or
+    // when a persistent review exists to re-show the drawer. Disabled only
+    // when we're already viewing the running spinner (no-op click) or
+    // there's nothing to show / start.
     final canReview = !_actionRunning &&
-        !_generateRunning &&
         !_commitAiLoading &&
         !(_reviewRunning && _reviewActive) &&
         includedCount > 0 &&
         (_reviewRunning || hasReviewAiSelection || hasPersistentReview);
+    // Muse mirrors review: clickable while running to surface the drawer,
+    // disabled only when we're already viewing it.
+    final canMuse = !_actionRunning &&
+        !_commitAiLoading &&
+        !(_museRunning && _museActive) &&
+        includedCount > 0 &&
+        hasCommitAiSelection;
 
     return DragTarget<DeskDropPayload>(
       onWillAcceptWithDetails: (d) =>
@@ -5892,7 +6104,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                 },
                                 aiEnabled: canGenerate,
                                 aiLoading: _generateRunning || _commitAiLoading,
-                                aiSuccess: _generateSuccess,
+                                aiSuccess: _generateFlash,
                                 aiTooltip:
                                     _commitAiTooltip(aiSettings, includedCount),
                                 reviewEnabled: canReview,
@@ -5912,7 +6124,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                   }
                                   _reviewCommit(repoPath, status);
                                 },
-                                museEnabled: canReview,
+                                museEnabled: canMuse,
                                 museLoading: _museRunning,
                                 museSuccess: _museSuccess,
                                 museTooltip:
@@ -6088,11 +6300,16 @@ class _ChangesPageState extends State<ChangesPage> {
                             error: _askError,
                             onBack: () =>
                                 setState(() => _shapeActive = false),
-                            onDismissAnswer: () => setState(() {
-                              _askQuestion = null;
-                              _askAnswer = null;
-                              _askError = null;
-                            }),
+                            onDismissAnswer: () {
+                              final site = _activitySite();
+                              if (site != null) {
+                                site.state.clear(
+                                  repoPath: site.repoPath,
+                                  kind: AiActivityKind.ask,
+                                );
+                              }
+                              setState(() {});
+                            },
                             onCitationTap: (path, line) =>
                                 _jumpToMultiDiffPath(path,
                                     fallbackStartLine: line),
@@ -6116,13 +6333,13 @@ class _ChangesPageState extends State<ChangesPage> {
                               _museActive = false;
                             }),
                             onRerun: () {
-                              setState(() {
-                                _museRunning = false;
-                                _museSuccess = false;
-                                _museScopeKey = null;
-                                _museResult = null;
-                                _museError = null;
-                              });
+                              // Drop the existing record so _runMuse
+                              // doesn't see a same-scope match and
+                              // short-circuit to "show existing."
+                              context.read<AiActivityState>().clear(
+                                    repoPath: repoPath,
+                                    kind: AiActivityKind.muse,
+                                  );
                               _runMuse(repoPath, status);
                             },
                             onCopy: _museResult == null
@@ -6171,6 +6388,18 @@ class _ChangesPageState extends State<ChangesPage> {
                               _clearReviewState();
                             }),
                             onRerun: () {
+                              // Drop the existing record so _reviewCommit
+                              // doesn't see a same-scope match and
+                              // short-circuit to "show existing" — same
+                              // pattern muse's onRerun uses. Without
+                              // this, a rerun re-displays the prior
+                              // result instead of launching a fresh
+                              // run, because the provider record at
+                              // the same scope is still terminal.
+                              context.read<AiActivityState>().clear(
+                                    repoPath: repoPath,
+                                    kind: AiActivityKind.review,
+                                  );
                               _clearReviewState();
                               _reviewCommit(repoPath, status);
                             },
@@ -10409,22 +10638,19 @@ class _FileRowState extends State<_FileRow> {
   bool _hovered = false;
 
   List<_ChangeBadgeSpec> _buildBadges(AppTokens t, RepositoryStatusFile file) {
-    final badges = <_ChangeBadgeSpec>[];
+    // One badge max per row. Staged change wins when both states are
+    // present — what's about to land in a commit is the more relevant
+    // signal than what's still in the working tree. Falling back to
+    // the unstaged badge only when nothing's staged keeps purely-
+    // dirty files visible. Keeping it to a single badge avoids the
+    // Wrap-into-two-lines case that inflates row height under
+    // IntrinsicHeight and leaves dead space below the dir line.
     final staged = _describeGitChange(file.stagedCode, staged: true, tokens: t);
+    if (staged != null) return [staged];
     final unstaged =
         _describeGitChange(file.unstagedCode, staged: false, tokens: t);
-
-    if (staged != null) {
-      badges.add(staged);
-    }
-    if (unstaged != null &&
-        !badges.any(
-          (badge) =>
-              badge.label == unstaged.label && badge.color == unstaged.color,
-        )) {
-      badges.add(unstaged);
-    }
-    return badges;
+    if (unstaged != null) return [unstaged];
+    return const [];
   }
 
   @override

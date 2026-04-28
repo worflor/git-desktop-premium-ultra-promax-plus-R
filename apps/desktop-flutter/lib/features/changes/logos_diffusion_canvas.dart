@@ -169,7 +169,14 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
           setState(() {});
         }
       });
-    _sub = LogosVisBus.instance.stream.listen(_onEvent);
+    // `subscribe` (not `.stream.listen`) so a remount mid-session
+    // replays whatever's already fired. Without it, the canvas misses
+    // every event between the parent's `setState(loading=true)` and
+    // this initState completing — for cached engines that's the
+    // entire opening sequence (Resolving/Ready/early DiffSources),
+    // and the corresponding `_birth` slots stay at -1 so topology
+    // dots, source ignition, heat rings never appear.
+    _sub = LogosVisBus.instance.subscribe(_onEvent);
   }
 
   @override

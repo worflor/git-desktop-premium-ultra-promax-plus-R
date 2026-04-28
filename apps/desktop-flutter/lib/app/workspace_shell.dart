@@ -1294,7 +1294,7 @@ class _DeskRow extends StatelessWidget {
         !currentDesk.isDetached &&
         !currentDesk.isLocked;
     showAppContextMenu(context, pos, [
-      [
+      ListMenuSection([
         if (canPromote)
           AppContextMenuItem(
             icon: Icons.rocket_launch_outlined,
@@ -1342,16 +1342,16 @@ class _DeskRow extends StatelessWidget {
               await deskPrState.abandon(repoPath: repo, branch: branch);
             },
           ),
-      ],
+      ]),
       if (!desk.isMain)
-        [
+        ListMenuSection([
           AppContextMenuItem(
             icon: Icons.close,
             label: 'Close desk',
             destructive: true,
             onTap: () => _closeDeskFlow(context, desk, worktreeState),
           ),
-        ],
+        ]),
     ]);
   }
 
