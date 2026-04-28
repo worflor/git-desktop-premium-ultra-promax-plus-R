@@ -111,12 +111,18 @@ class RepositoryStatus {
   final int ahead;
   final int behind;
   final List<RepositoryStatusFile> files;
+  /// True when HEAD points at an actual commit. False on a fresh repo
+  /// before the first commit (`git status` reports `branch.oid (initial)`)
+  /// — gating affordances like "Amend last commit" on this flag avoids
+  /// surfacing menu items that can only ever return errors.
+  final bool hasHeadCommit;
   const RepositoryStatus(
       {required this.branch,
       this.upstream,
       required this.ahead,
       required this.behind,
-      required this.files});
+      required this.files,
+      this.hasHeadCommit = true});
   factory RepositoryStatus.fromJson(Map<String, dynamic> j) => RepositoryStatus(
         branch: j['branch'] ?? '',
         upstream: j['upstream'],
@@ -125,6 +131,9 @@ class RepositoryStatus {
         files: (j['files'] as List? ?? [])
             .map((f) => RepositoryStatusFile.fromJson(f))
             .toList(),
+        // Default true when the field is absent so older serialised
+        // statuses don't suddenly hide affordances after this rolls in.
+        hasHeadCommit: j['hasHeadCommit'] ?? true,
       );
 
   /// Structural equality. Required so `context.select<RepositoryState,
@@ -140,6 +149,7 @@ class RepositoryStatus {
     if (other.upstream != upstream) return false;
     if (other.ahead != ahead) return false;
     if (other.behind != behind) return false;
+    if (other.hasHeadCommit != hasHeadCommit) return false;
     if (other.files.length != files.length) return false;
     for (var i = 0; i < files.length; i++) {
       if (other.files[i] != files[i]) return false;
@@ -153,6 +163,7 @@ class RepositoryStatus {
         upstream,
         ahead,
         behind,
+        hasHeadCommit,
         // File-list identity collapsed via `Object.hashAll` so two
         // equally-shaped statuses hash the same without materialising
         // a new list.
@@ -262,18 +273,64 @@ class BranchInfo {
   final String? upstream;
   final int ahead;
   final int behind;
-  const BranchInfo(
-      {required this.name,
-      required this.current,
-      this.upstream,
-      required this.ahead,
-      required this.behind});
+
+  /// True when the upstream tracking branch was deleted on the remote
+  /// — `git for-each-ref` reports `[gone]` in the `upstream:track`
+  /// field. This branch was probably the local copy of a now-merged
+  /// PR; cleaning it up is generally safe.
+  final bool gone;
+
+  /// Last commit timestamp on this branch. Drives "stale" detection
+  /// (branches not committed-to in 30+ days) — surfaced as a small
+  /// relative-time pill in the UI without filtering anything out.
+  /// Null when the format string didn't return a date (very old
+  /// branches with weird metadata).
+  final DateTime? lastCommitAt;
+
+  /// True when every commit on this branch has a patch-id-equivalent
+  /// commit on the comparison base (typically default branch). The
+  /// killer signal that `git branch --merged` misses: GitHub/GitLab
+  /// squash-merges flatten history so `--merged` reports false even
+  /// though the branch's work IS in main. Computed lazily via
+  /// `git cherry`. Null when detection hasn't run yet.
+  final bool? squashMerged;
+
+  const BranchInfo({
+    required this.name,
+    required this.current,
+    this.upstream,
+    required this.ahead,
+    required this.behind,
+    this.gone = false,
+    this.lastCommitAt,
+    this.squashMerged,
+  });
+
   factory BranchInfo.fromJson(Map<String, dynamic> j) => BranchInfo(
         name: j['name'] ?? '',
         current: j['current'] ?? false,
         upstream: j['upstream'],
         ahead: j['ahead'] ?? 0,
         behind: j['behind'] ?? 0,
+        gone: j['gone'] ?? false,
+        lastCommitAt: j['lastCommitAt'] is String
+            ? DateTime.tryParse(j['lastCommitAt'] as String)
+            : null,
+        squashMerged: j['squashMerged'] is bool ? j['squashMerged'] as bool : null,
+      );
+
+  BranchInfo copyWith({
+    bool? squashMerged,
+  }) =>
+      BranchInfo(
+        name: name,
+        current: current,
+        upstream: upstream,
+        ahead: ahead,
+        behind: behind,
+        gone: gone,
+        lastCommitAt: lastCommitAt,
+        squashMerged: squashMerged ?? this.squashMerged,
       );
 }
 

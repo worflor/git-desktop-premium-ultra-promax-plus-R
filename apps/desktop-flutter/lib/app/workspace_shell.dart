@@ -16,6 +16,7 @@ import '../features/changes/changes_page.dart';
 import '../features/history/history_page.dart';
 import '../features/search/search_panel.dart';
 import '../features/settings/settings_page.dart';
+import 'settings_navigation_state.dart';
 import '../features/xray/repo_xray_panel.dart';
 import '../ui/animated_icons.dart';
 import '../ui/control_chrome.dart';
@@ -66,6 +67,11 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   String? _selectedCommitHash;
   Stopwatch? _panelOpenStopwatch;
   String? _lastRepoPathForXray;
+  // Deep-link target for the settings page. Consumed once when the
+  // settings panel renders; cleared after a single use so subsequent
+  // panel toggles don't re-focus.
+  SettingsSection? _pendingSettingsFocus;
+  SettingsNavigationState? _settingsNavState;
 
   @override
   void initState() {
@@ -80,6 +86,53 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
         durationMs: _mountedAt.elapsedMicroseconds / 1000,
       );
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final navState = context.read<SettingsNavigationState>();
+    if (!identical(_settingsNavState, navState)) {
+      _settingsNavState?.removeListener(_onSettingsNavChanged);
+      _settingsNavState = navState;
+      navState.addListener(_onSettingsNavChanged);
+    }
+  }
+
+  /// Handle a deep-link request from elsewhere in the app (e.g., the
+  /// project context menu's "Open with…" zero-state). Open the
+  /// settings panel and stash the focus section for the SettingsPage
+  /// to consume on render.
+  void _onSettingsNavChanged() {
+    final section = _settingsNavState?.consume();
+    if (section == null) return;
+    if (!mounted) return;
+    setState(() {
+      _pendingSettingsFocus = section;
+      _panel = _Panel.settings;
+    });
+  }
+
+  /// Single chokepoint for panel transitions. Clearing
+  /// [_pendingSettingsFocus] on every "leaves settings" path used to
+  /// be wired only into the close button — Esc, the backdrop tap,
+  /// mode-switch shortcuts, and topbar panel toggles all bypassed it
+  /// and left a stale deep-link token to fire on the next reopen.
+  /// Funnel every panel write through here so the cleanup happens
+  /// uniformly.
+  void _setPanel(_Panel next) {
+    setState(() {
+      if (_panel == _Panel.settings && next != _Panel.settings) {
+        _pendingSettingsFocus = null;
+      }
+      _panel = next;
+    });
+  }
+
+  @override
+  void dispose() {
+    _settingsNavState?.removeListener(_onSettingsNavChanged);
+    super.dispose();
   }
 
   @override
@@ -116,15 +169,17 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
               _Topbar(
                 mode: _mode,
                 panel: _panel,
-                onModeChanged: (m) => setState(() {
-                  _mode = m;
-                  _panel = _Panel.none;
-                  _awaitingGPrefix = false;
-                }),
-                onTogglePanel: (p) => setState(() {
-                  _panel = _panel == p ? _Panel.none : p;
-                  _awaitingGPrefix = false;
-                }),
+                onModeChanged: (m) {
+                  _setPanel(_Panel.none);
+                  setState(() {
+                    _mode = m;
+                    _awaitingGPrefix = false;
+                  });
+                },
+                onTogglePanel: (p) {
+                  _setPanel(_panel == p ? _Panel.none : p);
+                  setState(() => _awaitingGPrefix = false);
+                },
               ),
               Expanded(
                 child: Padding(
@@ -134,7 +189,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                     child: _KeepAlivePages(
                       mode: _mode,
                       selectedCommitHash: _selectedCommitHash,
-                      onOpenXray: () => setState(() => _panel = _Panel.xray),
+                      onOpenXray: () => _setPanel(_Panel.xray),
                       onOpenChanges: () => _selectMode(_WorkspaceMode.changes),
                     ),
                   ),
@@ -169,12 +224,12 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                     ),
                   ),
                   child: RepoXrayPanel(
-                    onClose: () => setState(() => _panel = _Panel.none),
+                    onClose: () => _setPanel(_Panel.none),
                     onCommitSelected: (hash) {
+                      _setPanel(_Panel.none);
                       setState(() {
                         _selectedCommitHash = hash;
                         _mode = _WorkspaceMode.history;
-                        _panel = _Panel.none;
                       });
                     },
                   ),
@@ -203,14 +258,19 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                               : 0.0,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: () => setState(() => _panel = _Panel.none),
-                        // Scrim sourced from t.bg0 to match the
-                        // dialogTheme.barrierColor formula. Hardcoded
-                        // Colors.black @ 0.4 read as a muddy smear on
-                        // light themes (petrichor, halo, nacre, barbie)
-                        // and clashed with the themed dialog scrim.
+                        onTap: () => _setPanel(_Panel.none),
+                        // Black scrim sized by theme darkness. Pure
+                        // `t.bg0 @ 0.72` washes light themes (kirby,
+                        // petrichor, halo, nacre, barbie) toward gray
+                        // because cream-over-cream lerps to muddy tan;
+                        // a thin black dim on light themes preserves
+                        // the surface vibrance while still signalling
+                        // the workspace is gated behind a panel.
                         child: Container(
-                            color: t.bg0.withValues(alpha: 0.72)),
+                          color: Colors.black.withValues(
+                            alpha: t.isDark ? 0.4 : 0.18,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -241,20 +301,22 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                         _Panel.settings => _SlidePanel(
                             key: const ValueKey('settings'),
                             title: 'Settings',
-                            onClose: () => setState(() => _panel = _Panel.none),
-                            child: const SettingsPage(),
+                            // _setPanel handles the focus-token clear
+                            // because it knows we're transitioning out
+                            // of _Panel.settings.
+                            onClose: () => _setPanel(_Panel.none),
+                            child: SettingsPage(focusSection: _pendingSettingsFocus),
                           ),
                         _Panel.search => _SlidePanel(
                             key: const ValueKey('search'),
-                            onClose: () => setState(() => _panel = _Panel.none),
+                            onClose: () => _setPanel(_Panel.none),
                             child: SearchPanel(
-                              onClose: () =>
-                                  setState(() => _panel = _Panel.none),
+                              onClose: () => _setPanel(_Panel.none),
                               onCommitSelected: (hash) {
+                                _setPanel(_Panel.none);
                                 setState(() {
                                   _selectedCommitHash = hash;
                                   _mode = _WorkspaceMode.history;
-                                  _panel = _Panel.none;
                                 });
                               },
                             ),
@@ -287,8 +349,8 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
 
     if (key == LogicalKeyboardKey.escape) {
       if (_panel != _Panel.none || _awaitingGPrefix) {
+        _setPanel(_Panel.none);
         setState(() {
-          _panel = _Panel.none;
           _awaitingGPrefix = false;
         });
         return KeyEventResult.handled;
@@ -297,8 +359,8 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     }
 
     if (key == LogicalKeyboardKey.slash) {
+      _setPanel(_panel == _Panel.search ? _Panel.none : _Panel.search);
       setState(() {
-        _panel = _panel == _Panel.search ? _Panel.none : _Panel.search;
         _awaitingGPrefix = false;
       });
       return KeyEventResult.handled;
@@ -474,9 +536,9 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   }
 
   void _selectMode(_WorkspaceMode mode) {
+    _setPanel(_Panel.none);
     setState(() {
       _mode = mode;
-      _panel = _Panel.none;
       _awaitingGPrefix = false;
       _panelOpenStopwatch = null;
     });
@@ -487,8 +549,13 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     if (isOpening) {
       _panelOpenStopwatch = Stopwatch()..start();
     }
+    // Route through _setPanel so leaving the settings panel via a
+    // keyboard shortcut clears _pendingSettingsFocus too. Without
+    // this, deep-link tokens (set when "Open with…" zero-state
+    // jumps into Settings) survived a `5` / `g,` close and re-fired
+    // the focus animation on the next settings open.
+    _setPanel(_panel == panel ? _Panel.none : panel);
     setState(() {
-      _panel = _panel == panel ? _Panel.none : panel;
       _awaitingGPrefix = false;
       if (_panel == _Panel.none) {
         _panelOpenStopwatch = null;

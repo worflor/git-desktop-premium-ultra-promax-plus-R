@@ -96,6 +96,34 @@ void main() {
       expect(draft.hasUnstagedChange, isTrue);
     });
 
+    test('hasHeadCommit reports false on a fresh repo with no commits',
+        () async {
+      // Pin the gating signal for "Amend last commit" / reflog
+      // recovery affordances. A fresh init has no HEAD ref, so
+      // surfacing those menu items would just wire the user to a
+      // "nothing to amend" error.
+      final pristine = await Directory.systemTemp.createTemp('gdpu_init_');
+      try {
+        await Process.run('git', ['init', '-q', '-b', 'main'],
+            workingDirectory: pristine.path);
+        final status = await getRepositoryStatus(pristine.path);
+        expect(status.ok, isTrue, reason: status.error);
+        expect(status.data!.hasHeadCommit, isFalse);
+      } finally {
+        if (await pristine.exists()) {
+          await pristine.delete(recursive: true);
+        }
+      }
+    });
+
+    test('hasHeadCommit reports true once a commit lands', () async {
+      // The seedRepo helper already produced a commit, so the
+      // baseline status from a clean checkout reports HEAD-present.
+      final status = await getRepositoryStatus(repo.path);
+      expect(status.ok, isTrue, reason: status.error);
+      expect(status.data!.hasHeadCommit, isTrue);
+    });
+
     test('unstagePaths ignores untracked paths while restoring staged ones',
         () async {
       await repoFile('tracked.txt').writeAsString('root\nnext\n');

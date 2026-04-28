@@ -19,12 +19,16 @@ import 'app/worktree_state.dart';
 import 'app/desk_pr_state.dart';
 import 'app/desk_issue_state.dart';
 import 'app/remote_issue_cache_state.dart';
+import 'app/external_tools_state.dart';
 import 'app/hyper_reactivity.dart';
 import 'app/brand_lockup.dart';
+import 'app/settings_navigation_state.dart';
 import 'app/sidebar_rail.dart';
+import 'app/tool_detection_state.dart';
 import 'app/window_activity.dart';
 import 'app/theme_state.dart';
 import 'app/workspace_shell.dart';
+import 'backend/external_tools.dart';
 import 'backend/engram_bootstrap.dart';
 import 'backend/logos_git_resolver.dart' as logos_resolver;
 import 'backend/settings_store.dart';
@@ -112,12 +116,24 @@ void main() async {
   final repoState = RepositoryState();
   final preferencesState = PreferencesState();
   final aiSettingsState = AiSettingsState();
+  final externalToolsState = ExternalToolsState();
   await Future.wait([
     themeState.load(),
     repoState.loadRecents(),
     preferencesState.load(),
     aiSettingsState.load(),
+    externalToolsState.load(),
   ]);
+
+  // Fire-and-forget: probe PATH for known external tools so the
+  // settings page renders only the chips for actually-installed
+  // tools. ~50–200ms total across N parallel `where`/`which` probes;
+  // never awaited on the main thread. Default empty set is fine
+  // before resolution — settings page shows a brief loading hint.
+  final toolDetectionState = ToolDetectionState();
+  unawaited(
+    toolDetectionState.detect(ExternalToolPresets.detectableExecutables),
+  );
 
   // Pre-warm the most-recently-used repo's LogosGit engine in the
   // background. By the time the user clicks through the repo picker
@@ -194,6 +210,9 @@ void main() async {
         ChangeNotifierProvider.value(value: remoteIssueCacheState),
         ChangeNotifierProvider.value(value: preferencesState),
         ChangeNotifierProvider.value(value: aiSettingsState),
+        ChangeNotifierProvider.value(value: externalToolsState),
+        ChangeNotifierProvider.value(value: toolDetectionState),
+        ChangeNotifierProvider(create: (_) => SettingsNavigationState()),
         ChangeNotifierProvider.value(value: diagnosticsState),
         ChangeNotifierProvider.value(value: appIdentityState),
         ChangeNotifierProvider.value(value: onboardingState),

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <!--
+    Manifold app icon — `:]` smiley register. Two filled eye dots over
+    an angular bracket-smile, single brand-cyan stroke + fill. Matches
+    the `]` shape's angular feel (vs `:)` curved) so the icon reads as
+    cheeky/casual rather than soft. Transparent ground; the system
+    theme decides the surrounding wash.
+
+    Geometry (in the 256 viewBox):
+      eyes   = filled circles, r=14, centers (96, 96) and (160, 96)
+      smile  = angular path, corners high (y=156), base flat (y=184)
+               M 80 156  L 100 184  L 156 184  L 176 156
+
+    10px strokes at the 256 viewBox; the rasterizer in make_icon.py
+    floors the per-frame stroke at the supersample factor so 16- and
+    32-px frames keep at least 1 effective pixel of stroke after
+    LANCZOS downsampling.
+  -->
+  <g fill="#00E5FF" stroke="#00E5FF" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+    <circle cx="96"  cy="96" r="14" />
+    <circle cx="160" cy="96" r="14" />
+    <path d="M 80 156 L 100 184 L 156 184 L 176 156" fill="none" />
+  </g>
+</svg>

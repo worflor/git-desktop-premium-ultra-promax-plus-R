@@ -622,6 +622,15 @@ class _BranchesPageState extends State<BranchesPage> {
         _tags = tResult.data!;
       }
     });
+    // Squash-merge detection runs in the background after the list
+    // renders. Cost is N parallel `git cherry` probes — fast on
+    // typical repos but can be measurable on large ones; deferring
+    // it past the initial paint keeps the lens snappy. The branch
+    // list rebuilds when results arrive and the `squashed` pill
+    // appears on each detected row.
+    if (bResult.ok) {
+      unawaited(_runSquashDetection(repo, bResult.data!));
+    }
     stopwatch.stop();
     await DiagnosticsState.instance.recordUiTiming(
       event: 'branches.snapshot.load',
@@ -642,6 +651,31 @@ class _BranchesPageState extends State<BranchesPage> {
         context.read<PreferencesState>().fetchOnlineIssuesOnBranchLoad) {
       unawaited(_prefetchAll(repo));
     }
+  }
+
+  /// Background pass: probe each non-current branch with `git cherry`
+  /// to identify squash-merged branches that `--merged` misses. Runs
+  /// after the initial branch list paints so the lens stays snappy.
+  /// Bails on a stale repo (mid-flight repo switch).
+  Future<void> _runSquashDetection(
+    String repo,
+    List<BranchInfo> seed,
+  ) async {
+    final defaultRes = await defaultBranchName(repo);
+    if (!mounted) return;
+    final base = defaultRes.ok ? defaultRes.data : null;
+    if (base == null || base.isEmpty) return;
+    final updated = await detectSquashMergedBranches(
+      repo,
+      seed,
+      baseRef: base,
+    );
+    if (!mounted) return;
+    // Re-check that the active repo hasn't changed underneath us;
+    // the user may have switched projects mid-probe.
+    final activeRepo = context.read<RepositoryState>().activePath;
+    if (activeRepo != repo) return;
+    setState(() => _branches = updated);
   }
 
   /// Eagerly populate PR + Issue lists AND per-row details, in the
@@ -9853,7 +9887,15 @@ class _BranchCardState extends State<_BranchCard> {
                             child: Text(
                               b.name,
                               style: TextStyle(
-                                color: b.current ? t.textStrong : t.textNormal,
+                                // `current` always wins styling —
+                                // even a (rare) "current and gone"
+                                // state should keep the active
+                                // branch visually prominent. `gone`
+                                // demotion only applies to non-
+                                // current branches.
+                                color: b.current
+                                    ? t.textStrong
+                                    : (b.gone ? t.textFaint : t.textNormal),
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -9878,18 +9920,80 @@ class _BranchCardState extends State<_BranchCard> {
                                       letterSpacing: 0.02)),
                             ),
                           ],
+                          // Health pills — visual signal only, no
+                          // action attached. Each conveys a state the
+                          // user benefits from seeing at a glance:
+                          //   `gone`     — upstream tracking branch
+                          //                was deleted on the remote;
+                          //                local copy is orphaned.
+                          //   `squashed` — every commit on the branch
+                          //                has a patch-id-equivalent
+                          //                on the default branch (PR
+                          //                merged via squash-merge,
+                          //                which `--merged` misses).
+                          if (b.gone) ...[
+                            const SizedBox(width: 6),
+                            _BranchStatePill(
+                              tokens: t,
+                              label: 'gone',
+                              color: t.textMuted,
+                            ),
+                          ],
+                          if (b.squashMerged == true) ...[
+                            const SizedBox(width: 6),
+                            _BranchStatePill(
+                              tokens: t,
+                              label: 'squashed',
+                              color: t.stateAdded,
+                            ),
+                          ],
                         ]),
                         if (b.upstream != null) ...[
                           const SizedBox(height: 4),
                           Padding(
                             padding: const EdgeInsets.only(left: 20),
+                            child: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    '→ tracking: ${b.upstream}',
+                                    style: TextStyle(
+                                        color: t.textMuted,
+                                        fontSize: 11,
+                                        fontFamily: AppFonts.mono),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                // Stale-age tag, surfaced only when
+                                // >30 days. The tracking row already
+                                // exists — appending here costs no new
+                                // visual surface.
+                                if (_staleLabel(b.lastCommitAt) != null) ...[
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    _staleLabel(b.lastCommitAt)!,
+                                    style: TextStyle(
+                                      color: t.textFaint,
+                                      fontSize: 10.5,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ] else if (_staleLabel(b.lastCommitAt) != null) ...[
+                          // Branch with no upstream but still stale —
+                          // surface the age as a single muted line so
+                          // local-only branches don't escape attention.
+                          const SizedBox(height: 4),
+                          Padding(
+                            padding: const EdgeInsets.only(left: 20),
                             child: Text(
-                              '→ tracking: ${b.upstream}',
+                              _staleLabel(b.lastCommitAt)!,
                               style: TextStyle(
-                                  color: t.textMuted,
-                                  fontSize: 11,
-                                  fontFamily: AppFonts.mono),
-                              overflow: TextOverflow.ellipsis,
+                                color: t.textFaint,
+                                fontSize: 10.5,
+                              ),
                             ),
                           ),
                         ],
@@ -9993,6 +10097,56 @@ class _BranchCardState extends State<_BranchCard> {
 /// Trash icon morphed into a destructive "Force?" pill while the row
 /// is armed for force-delete. Reads as a clear escalation, not as the
 /// safe action the trash icon implies.
+/// Convert a branch's last-commit timestamp to a short age string,
+/// only when the branch is "stale" (>30 days idle). Returns null
+/// otherwise so callers can `if (label != null)` and render nothing
+/// for fresh branches without crowding the row.
+String? _staleLabel(DateTime? lastCommitAt) {
+  if (lastCommitAt == null) return null;
+  final age = DateTime.now().difference(lastCommitAt);
+  if (age.inDays < 30) return null;
+  if (age.inDays < 365) return '${age.inDays}d idle';
+  final years = (age.inDays / 365).floor();
+  return '${years}y idle';
+}
+
+/// Tiny pill for branch-state signals (gone, squashed). Visual-only:
+/// no tap target, no action — the row's primary action (checkout) is
+/// the whole-row click; these pills inform without competing for it.
+class _BranchStatePill extends StatelessWidget {
+  final AppTokens tokens;
+  final String label;
+  final Color color;
+  const _BranchStatePill({
+    required this.tokens,
+    required this.label,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(
+          context.surfaceShader.geometry.pillRadius,
+        ),
+        border: Border.all(color: color.withValues(alpha: 0.35), width: 0.8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
 class _ForceDeletePill extends StatelessWidget {
   final AppTokens tokens;
   final bool enabled;

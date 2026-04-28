@@ -1910,6 +1910,101 @@ class _HistoryPageState extends State<HistoryPage> {
     }
   }
 
+  /// Open the reflog row's recovery menu. The single action is
+  /// "Create branch from here…" — given a SHA from the reflog, prompt
+  /// for a branch name and run `git checkout -b <name> <sha>`. Lets
+  /// the user surface a "lost" commit (post-rebase, post-hard-reset,
+  /// post-branch-delete) into a real branch they can navigate.
+  void _showReflogRecoveryMenu(
+    String repo,
+    ReflogEntryData entry,
+    Offset globalPos,
+  ) {
+    showAppContextMenu(context, globalPos, [
+      [
+        AppContextMenuItem(
+          icon: Icons.alt_route_outlined,
+          label: 'Create branch from here…',
+          onTap: () => _promptReflogRecoverBranch(repo, entry),
+        ),
+        AppContextMenuItem(
+          icon: Icons.content_copy_outlined,
+          label: 'Copy commit hash',
+          onTap: () =>
+              Clipboard.setData(ClipboardData(text: entry.commitHash)),
+        ),
+      ],
+    ]);
+  }
+
+  /// Show a small prompt dialog for the new branch name, default-
+  /// seeded with `recover-<short-hash>`. On confirm: `createBranch`
+  /// against the reflog entry's hash, surface success/failure via
+  /// `_actionMessage`, refresh the branch state.
+  Future<void> _promptReflogRecoverBranch(
+    String repo,
+    ReflogEntryData entry,
+  ) async {
+    final controller = TextEditingController(
+      text: 'recover-${entry.shortHash}',
+    );
+    final t = context.tokens;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          'Create branch from reflog entry',
+          style: TextStyle(color: t.textStrong, fontSize: 14),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Anchor: ${entry.shortHash}  ·  ${entry.actionSummary}',
+              style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 11,
+                  fontFamily: AppFonts.mono),
+            ),
+            const SizedBox(height: 12),
+            AppTextField(
+              controller: controller,
+              hintText: 'branch name',
+              autofocus: true,
+              onSubmitted: (s) => Navigator.of(ctx).pop(s.trim()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty) return;
+    if (!mounted) return;
+    final res = await createBranch(repo, name, from: entry.commitHash);
+    if (!mounted) return;
+    if (!res.ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to create branch: ${res.error}')),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Branch "$name" created at ${entry.shortHash}.')),
+    );
+  }
+
   void _onCommitTap(int index, bool shiftKey) {
     final hash = _commits[index].commitHash;
     if (shiftKey && _selectedHash != null && _selectedHash != hash) {
@@ -2200,7 +2295,9 @@ class _HistoryPageState extends State<HistoryPage> {
                             _commitDiffLoading = false;
                           });
                           _loadDetail(repoPath, entry.commitHash);
-                        });
+                        },
+                        onSecondaryTap: (pos) =>
+                            _showReflogRecoveryMenu(repoPath, entry, pos));
                   }
                   return const SizedBox.shrink();
                 },
@@ -2665,8 +2762,16 @@ class _ReflogRow extends StatefulWidget {
   final ReflogEntryData entry;
   final AppTokens tokens;
   final VoidCallback onTap;
-  const _ReflogRow(
-      {required this.entry, required this.tokens, required this.onTap});
+  /// Right-click → context menu opener. Receives the global pointer
+  /// position so the parent can anchor the menu. Null disables the
+  /// recovery affordance (e.g., when no repo path is bound).
+  final void Function(Offset globalPosition)? onSecondaryTap;
+  const _ReflogRow({
+    required this.entry,
+    required this.tokens,
+    required this.onTap,
+    this.onSecondaryTap,
+  });
   @override
   State<_ReflogRow> createState() => _ReflogRowState();
 }
@@ -2683,6 +2788,13 @@ class _ReflogRowState extends State<_ReflogRow> {
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
+        // Right-click opens the recovery menu — the reflog row's
+        // primary value (recovering "lost" work after a rebase /
+        // hard-reset / branch-delete) was previously locked behind
+        // a CLI dance; now it's one click away.
+        onSecondaryTapDown: widget.onSecondaryTap == null
+            ? null
+            : (d) => widget.onSecondaryTap!(d.globalPosition),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
           padding: const EdgeInsets.fromLTRB(12, 7, 12, 7),

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../app/build_info.dart';
+import 'external_tools.dart';
 import 'storage_paths.dart';
 
 class AppSettingsSnapshot {
@@ -101,6 +102,11 @@ class AppSettingsSnapshot {
   /// One-shot affordance bit: once the bond dock has been opened, discovery
   /// UI should stay silent.
   final bool bondDockOpenedOnce;
+  /// User-configured external tools surfaced by the project row's
+  /// "Open with…" submenu. Empty list = zero-state, the menu shows a
+  /// single "Open with…" item that deep-links into the settings page.
+  /// See `external_tools.dart` for the model + preset starters.
+  final List<ExternalTool> externalTools;
 
   const AppSettingsSnapshot({
     required this.guardrailValue,
@@ -139,6 +145,7 @@ class AppSettingsSnapshot {
     required this.onboardingComplete,
     required this.bondExperimentEnabled,
     required this.bondDockOpenedOnce,
+    required this.externalTools,
   });
 
   Map<String, dynamic> toJson() => {
@@ -178,6 +185,7 @@ class AppSettingsSnapshot {
         'onboardingComplete': onboardingComplete,
         'bondExperimentEnabled': bondExperimentEnabled,
         'bondDockOpenedOnce': bondDockOpenedOnce,
+        'externalTools': [for (final t in externalTools) t.toJson()],
       };
 
   factory AppSettingsSnapshot.defaults() => AppSettingsSnapshot(
@@ -219,6 +227,7 @@ class AppSettingsSnapshot {
         onboardingComplete: false,
         bondExperimentEnabled: false,
         bondDockOpenedOnce: false,
+        externalTools: const [],
       );
 
   factory AppSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -396,6 +405,7 @@ class AppSettingsSnapshot {
         json['bondDockOpenedOnce'],
         defaults.bondDockOpenedOnce,
       ),
+      externalTools: SettingsStore._externalToolsOr(json['externalTools']),
     );
   }
 
@@ -436,6 +446,7 @@ class AppSettingsSnapshot {
     bool? onboardingComplete,
     bool? bondExperimentEnabled,
     bool? bondDockOpenedOnce,
+    List<ExternalTool>? externalTools,
   }) {
     return AppSettingsSnapshot(
       guardrailValue: guardrailValue ?? this.guardrailValue,
@@ -487,6 +498,7 @@ class AppSettingsSnapshot {
       bondExperimentEnabled:
           bondExperimentEnabled ?? this.bondExperimentEnabled,
       bondDockOpenedOnce: bondDockOpenedOnce ?? this.bondDockOpenedOnce,
+      externalTools: externalTools ?? this.externalTools,
     );
   }
 }
@@ -583,6 +595,20 @@ class SettingsStore {
 
   static String _stringOr(dynamic value, String fallback) {
     return value is String && value.trim().isNotEmpty ? value.trim() : fallback;
+  }
+
+  /// Parse the persisted external-tools list. Drops malformed entries
+  /// silently — same best-effort approach the other parsers take. An
+  /// entry is malformed when [ExternalTool.fromJson] returns null
+  /// (typically: missing executable).
+  static List<ExternalTool> _externalToolsOr(dynamic value) {
+    if (value is! List) return const [];
+    final out = <ExternalTool>[];
+    for (final entry in value) {
+      final tool = ExternalTool.fromJson(entry);
+      if (tool != null) out.add(tool);
+    }
+    return out;
   }
 
   /// Parse a JSON `Map<String, dynamic>` where every value is expected

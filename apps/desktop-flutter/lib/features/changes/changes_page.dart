@@ -4524,10 +4524,56 @@ class _ChangesPageState extends State<ChangesPage> {
     });
   }
 
+  /// Right-click on the commit button surfaces amend variants
+  /// without crowding the base UI with a visible toggle. The user
+  /// picks "Amend last commit" or "Amend & sync"; both run the
+  /// existing commit flow with `amend: true` so the prior commit
+  /// gets the staged changes folded in (and optionally a new
+  /// message, if the user typed one).
+  ///
+  /// Hidden entirely on a fresh repo (no HEAD commit yet) — the
+  /// menu would render with items that can only ever return
+  /// "nothing to amend" errors, which is misleading. The right-
+  /// click does nothing visible until there's at least one commit.
+  void _showCommitContextMenu(
+    Offset globalPos,
+    String repoPath,
+    RepositoryStatus status,
+    _PrimaryCommitAction primaryAction,
+  ) {
+    if (!status.hasHeadCommit) return;
+    showAppContextMenu(context, globalPos, [
+      [
+        AppContextMenuItem(
+          icon: Icons.edit_note_outlined,
+          label: 'Amend last commit',
+          onTap: () => _commit(
+            repoPath,
+            status,
+            mode: _CommitRunMode.commitOnly,
+            amend: true,
+          ),
+        ),
+        if (primaryAction.syncAfterCommit)
+          AppContextMenuItem(
+            icon: Icons.merge_type_outlined,
+            label: 'Amend & ${primaryAction.label.toLowerCase()}',
+            onTap: () => _commit(
+              repoPath,
+              status,
+              mode: _CommitRunMode.commitAndSync,
+              amend: true,
+            ),
+          ),
+      ],
+    ]);
+  }
+
   Future<void> _commit(
     String repoPath,
     RepositoryStatus status, {
     required _CommitRunMode mode,
+    bool amend = false,
   }) async {
     final message = _commitMsgCtrl.text.trim();
     final included = status.files
@@ -4540,7 +4586,10 @@ class _ChangesPageState extends State<ChangesPage> {
           () => _actionError = 'Choose at least one file for the next commit.');
       return;
     }
-    if (message.isEmpty) {
+    // Amend allows empty message — `git commit --amend` keeps the
+    // previous commit's message when no new one is supplied. Regular
+    // commits still require a message.
+    if (message.isEmpty && !amend) {
       setState(() => _actionError = 'Write a commit message first.');
       return;
     }
@@ -4565,7 +4614,7 @@ class _ChangesPageState extends State<ChangesPage> {
       label: label,
       window: Duration(seconds: windowSec),
       run: () =>
-          _runCommitFlow(repoPath, status, mode, included, message),
+          _runCommitFlow(repoPath, status, mode, included, message, amend: amend),
     );
 
     if (!mounted) return;
@@ -4612,8 +4661,9 @@ class _ChangesPageState extends State<ChangesPage> {
     RepositoryStatus status,
     _CommitRunMode mode,
     List<String> included,
-    String message,
-  ) async {
+    String message, {
+    bool amend = false,
+  }) async {
     final stageResult = await stagePaths(repoPath, included);
     if (!stageResult.ok) {
       return _CommitOutcome.err(
@@ -4629,7 +4679,11 @@ class _ChangesPageState extends State<ChangesPage> {
       }
     }
 
-    final commitResult = await createCommit(repoPath, message);
+    final commitResult = await createCommit(
+      repoPath,
+      message,
+      amend: amend,
+    );
     if (!commitResult.ok) {
       await _refreshAndReadStatus();
       return _CommitOutcome.err(
@@ -4736,7 +4790,16 @@ class _ChangesPageState extends State<ChangesPage> {
 
   Future<void> _shelveFiles(String repo, List<String> paths,
       {String? label}) async {
-    final result = await stashPush(repo, message: label, paths: paths);
+    // Path-restricted stash: `-u` (includeUntracked: true) tells git
+    // to also capture any untracked files among the listed paths,
+    // not all untracked files in the tree. Matches the user's
+    // expectation when they pick specific files to shelve.
+    final result = await stashPush(
+      repo,
+      message: label,
+      paths: paths,
+      includeUntracked: true,
+    );
     if (!mounted) return;
     if (!result.ok) {
       setState(() => _actionError = result.error);
@@ -4747,7 +4810,13 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   Future<void> _shelveAll(String repo, {String? label}) async {
-    final result = await stashPush(repo, message: label);
+    // "Shelve all" — capture untracked too so a fresh-cloned WIP file
+    // doesn't get silently left behind. Matches the user-facing label.
+    final result = await stashPush(
+      repo,
+      message: label,
+      includeUntracked: true,
+    );
     if (!mounted) return;
     if (!result.ok) {
       setState(() => _actionError = result.error);
@@ -5907,32 +5976,47 @@ class _ChangesPageState extends State<ChangesPage> {
                                 },
                               )
                             else
-                              _SplitCommitBtn(
-                                label: _actionRunning
-                                    ? 'Working…'
-                                    : (_commitOnlyMode
-                                        ? 'Commit only'
-                                        : primaryAction.label),
-                                alternateLabel: _commitOnlyMode
-                                    ? primaryAction.label
-                                    : 'Commit only',
-                                commitOnlyMode: _commitOnlyMode,
-                                t: t,
-                                enabled: canCommit,
-                                aiGenerating:
-                                    _generateRunning || _commitAiLoading,
-                                actionRunning: _actionRunning,
-                                onCommit: () => _commit(
+                              // Right-click on the button reveals the
+                              // amend variants — no visible chip /
+                              // toggle clutters the base UI. Discovery
+                              // path: standard "more options" mental
+                              // model on a primary action button.
+                              GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onSecondaryTapDown: (d) =>
+                                    _showCommitContextMenu(
+                                  d.globalPosition,
                                   repoPath,
                                   status,
-                                  mode: _commitOnlyMode
-                                      ? _CommitRunMode.commitOnly
-                                      : (primaryAction.syncAfterCommit
-                                          ? _CommitRunMode.commitAndSync
-                                          : _CommitRunMode.commitOnly),
+                                  primaryAction,
                                 ),
-                                onToggleMode: () => setState(
-                                    () => _commitOnlyMode = !_commitOnlyMode),
+                                child: _SplitCommitBtn(
+                                  label: _actionRunning
+                                      ? 'Working…'
+                                      : (_commitOnlyMode
+                                          ? 'Commit only'
+                                          : primaryAction.label),
+                                  alternateLabel: _commitOnlyMode
+                                      ? primaryAction.label
+                                      : 'Commit only',
+                                  commitOnlyMode: _commitOnlyMode,
+                                  t: t,
+                                  enabled: canCommit,
+                                  aiGenerating:
+                                      _generateRunning || _commitAiLoading,
+                                  actionRunning: _actionRunning,
+                                  onCommit: () => _commit(
+                                    repoPath,
+                                    status,
+                                    mode: _commitOnlyMode
+                                        ? _CommitRunMode.commitOnly
+                                        : (primaryAction.syncAfterCommit
+                                            ? _CommitRunMode.commitAndSync
+                                            : _CommitRunMode.commitOnly),
+                                  ),
+                                  onToggleMode: () => setState(() =>
+                                      _commitOnlyMode = !_commitOnlyMode),
+                                ),
                               ),
                             if (_actionError != null)
                               Padding(

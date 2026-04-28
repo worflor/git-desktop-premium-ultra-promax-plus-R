@@ -441,6 +441,10 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
     String? upstreamName;
     int ahead = 0;
     int behind = 0;
+    // True until the parser sees `# branch.oid (initial)` — a fresh
+    // repo with no commits. Lets the UI hide affordances that only
+    // make sense once HEAD is a real ref (amend, reflog recovery).
+    bool hasHeadCommit = true;
     final files = <RepositoryStatusFile>[];
 
     for (final rawLine in status.stdout.toString().split('\n')) {
@@ -448,7 +452,10 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
       final first = rawLine.codeUnitAt(0);
       if (first == 0x23) {
         // '#' — header line. Match by key prefix.
-        if (rawLine.startsWith('# branch.head ')) {
+        if (rawLine.startsWith('# branch.oid ')) {
+          final v = rawLine.substring(13).trim();
+          if (v == '(initial)') hasHeadCommit = false;
+        } else if (rawLine.startsWith('# branch.head ')) {
           final v = rawLine.substring(14).trim();
           if (v != '(detached)') branchName = v;
         } else if (rawLine.startsWith('# branch.upstream ')) {
@@ -526,7 +533,8 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
         upstream: upstreamName,
         ahead: ahead,
         behind: behind,
-        files: files));
+        files: files,
+        hasHeadCommit: hasHeadCommit));
   } catch (error) {
     return GitResult.err(error.toString());
   }
@@ -1321,10 +1329,13 @@ Future<String> _buildSyntheticUntrackedDiff(
 }
 
 Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {
+  // Five fields: name, HEAD-marker, upstream short, upstream track,
+  // committer date (ISO8601). Tab-delimited because branch names can
+  // contain spaces and committerdate's ISO form contains them too.
   final r = await _git(repo, [
     'branch',
     '-vv',
-    '--format=%(refname:short)%09%(HEAD)%09%(upstream:short)%09%(upstream:track)'
+    '--format=%(refname:short)%09%(HEAD)%09%(upstream:short)%09%(upstream:track)%09%(committerdate:iso8601)'
   ]);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
 
@@ -1337,6 +1348,7 @@ Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {
     final upstream =
         parts.length > 2 && parts[2].trim().isNotEmpty ? parts[2].trim() : null;
     int ahead = 0, behind = 0;
+    var gone = false;
     if (parts.length > 3) {
       final track = parts[3];
       final aheadMatch = RegExp(r'ahead (\d+)').firstMatch(track);
@@ -1344,16 +1356,109 @@ Future<GitResult<List<BranchInfo>>> listBranches(String repo) async {
       if (aheadMatch != null) ahead = int.tryParse(aheadMatch.group(1)!) ?? 0;
       if (behindMatch != null)
         behind = int.tryParse(behindMatch.group(1)!) ?? 0;
+      // git reports `[gone]` in the upstream:track field when the
+      // remote tracking branch was deleted (typically: PR merged +
+      // remote branch deleted on the forge). The local copy is now
+      // orphaned — safe to delete. Match on the bracket form
+      // explicitly so a branch literally named "gone" or unusual
+      // tracking strings can't false-positive.
+      if (track.contains('[gone]')) gone = true;
+    }
+    DateTime? lastCommitAt;
+    if (parts.length > 4) {
+      lastCommitAt = DateTime.tryParse(parts[4].trim());
     }
     branches.add(BranchInfo(
-        name: name,
-        current: isCurrent,
-        upstream: upstream,
-        ahead: ahead,
-        behind: behind));
+      name: name,
+      current: isCurrent,
+      upstream: upstream,
+      ahead: ahead,
+      behind: behind,
+      gone: gone,
+      lastCommitAt: lastCommitAt,
+    ));
   }
   return GitResult.ok(branches);
 }
+
+/// For each branch in [branches], determine whether all of its
+/// commits have a patch-id-equivalent commit on [baseRef]. The killer
+/// detection that `git branch --merged` misses: a PR merged via
+/// squash-merge produces a single commit on main with a different
+/// SHA from the branch's commits, so `--merged` reports false even
+/// though the branch's work IS in main.
+///
+/// Uses `git cherry <base> <branch>`: each line begins with `+` or
+/// `-`. `-` means the patch-id is already in [baseRef] (squash-merged
+/// or cherry-picked). `+` means unique work. A branch is "fully
+/// squash-merged" iff every line is `-` (and there's at least one
+/// line — empty output means the branch is identical to base).
+///
+/// Probed via a bounded worker pool. Branches with their `current`
+/// flag set are skipped (don't waste a probe on the active branch).
+/// Returns a fresh list with [BranchInfo.squashMerged] populated;
+/// preserves all other fields and ordering.
+///
+/// Concurrency is capped at [_squashProbeMaxConcurrency] so a repo
+/// with 50+ branches doesn't fork 50+ git processes in one tick.
+/// `git cherry` is cheap individually but each probe is a full
+/// process spawn + index walk; a hard cap keeps Manifold from
+/// behaving differently on big repos than small ones.
+Future<List<BranchInfo>> detectSquashMergedBranches(
+  String repo,
+  List<BranchInfo> branches, {
+  required String baseRef,
+}) async {
+  Future<bool?> probe(BranchInfo b) async {
+    if (b.current) return null;
+    if (b.name == baseRef) return null;
+    try {
+      final r = await _git(repo, ['cherry', baseRef, b.name]);
+      if (r.exitCode != 0) return null;
+      final lines = r.stdout
+          .toString()
+          .split('\n')
+          .where((l) => l.trim().isNotEmpty)
+          .toList();
+      if (lines.isEmpty) return null; // identical to base; --merged catches it
+      return lines.every((l) => l.startsWith('- '));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  final flags = List<bool?>.filled(branches.length, null);
+  // Index-stream worker pool: an atomic counter hands the next
+  // unclaimed branch index to each worker as it finishes its
+  // current probe. Cheaper than chunking (no idle workers waiting
+  // on the slowest probe in their batch) and order-preserving
+  // because we write into `flags` by the original index.
+  var next = 0;
+  final workers = math.min(_squashProbeMaxConcurrency, branches.length);
+  await Future.wait(
+    List.generate(workers, (_) => Future(() async {
+      while (true) {
+        final i = next++;
+        if (i >= branches.length) return;
+        flags[i] = await probe(branches[i]);
+      }
+    })),
+  );
+  return [
+    for (var i = 0; i < branches.length; i++)
+      branches[i].copyWith(squashMerged: flags[i]),
+  ];
+}
+
+/// Cap on the number of `git cherry` probes we'll run concurrently in
+/// [detectSquashMergedBranches]. Each probe is a full process spawn,
+/// so unbounded fan-out has the same wall-clock as a small pool on a
+/// repo of any meaningful size — the bottleneck is the OS process
+/// budget, not Dart's scheduler. 8 workers keeps the fork rate
+/// modest while still completing a 50-branch repo in roughly
+/// 50/8 ≈ 7 batches.
+const int _squashProbeMaxConcurrency = 8;
+
 
 Future<GitResult<void>> createBranch(String repo, String name,
     {String? from}) async {
@@ -2039,19 +2144,41 @@ Future<GitResult<void>> applyFileStaging(
   return applyPatch(repo, patch, cached: true);
 }
 
+/// Create a commit. When [amend] is true, an empty [message] is
+/// allowed and routes to `git commit --amend --no-edit` so git
+/// keeps the prior commit's message (rather than rewriting it to
+/// the empty string). A non-empty [message] always wins — both
+/// amend and regular commits use `-m <message>` in that case.
 Future<GitResult<CommitData>> createCommit(String repo, String message,
     {bool amend = false, bool signoff = false}) async {
   final args = ['commit'];
   if (amend) args.add('--amend');
   if (signoff) args.add('-s');
-  args.addAll(['-m', message]);
+  if (message.isEmpty) {
+    if (amend) {
+      // Amend with no new message → keep the previous commit's
+      // message. Without `--no-edit` git would launch the editor;
+      // we want a non-interactive flow.
+      args.add('--no-edit');
+    } else {
+      // Regular commits with empty messages would be rejected by
+      // the upstream caller (`_commit` in `changes_page.dart`),
+      // but defend the API surface anyway: an empty `-m ""` on a
+      // non-amend commit produces an actually-empty subject and
+      // is almost never what the caller wanted.
+      return GitResult.err('Commit message is required.');
+    }
+  } else {
+    args.addAll(['-m', message]);
+  }
   final r = await _git(repo, args);
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   // Parse: "[branch abc1234] Subject line"
   final out = r.stdout.toString();
   final match = RegExp(r'\[(?:[^\s]+)\s+([a-f0-9]+)\]\s*(.+)').firstMatch(out);
   final hash = match?.group(1) ?? '';
-  final summary = match?.group(2)?.trim() ?? message.split('\n').first;
+  final summary = match?.group(2)?.trim() ??
+      (message.isEmpty ? '(amend)' : message.split('\n').first);
   return GitResult.ok(
       CommitData(repositoryPath: repo, commitHash: hash, summary: summary));
 }
@@ -2084,14 +2211,19 @@ Future<GitResult<SyncData>> pushRemote(String repo,
     bool setUpstream = false,
     bool forceWithLease = false}) async {
   final r = remote ?? 'origin';
+  // Canonical arg order: subcommand → flags → positional refspec.
+  // Modern git is permissive about flags after positional args, but
+  // the canonical form is unambiguous and stable across the parser
+  // tightening that older releases occasionally apply (e.g. when
+  // POSIXLY_CORRECT is set, trailing flags get treated as paths).
   final args = ['push'];
+  if (forceWithLease) args.add('--force-with-lease');
   if (setUpstream) {
     args.addAll(['--set-upstream', r, branch ?? 'HEAD']);
   } else {
     args.add(r);
     if (branch != null) args.add(branch);
   }
-  if (forceWithLease) args.add('--force-with-lease');
   final result = await _git(repo, args);
   if (result.exitCode != 0)
     return GitResult.err(result.stderr.toString().trim());
@@ -2244,14 +2376,27 @@ Future<GitResult<List<StashEntryData>>> listStashes(String repo) async {
   return GitResult.ok(entries);
 }
 
+/// Stash the working tree. [includeUntracked] is required (no default)
+/// because the bare-git default silently leaves untracked new files
+/// behind — a well-known footgun ("I thought I stashed everything").
+/// Forcing every caller to declare intent at the call site means the
+/// behavior is auditable: searching for `includeUntracked: false`
+/// finds every "leave untracked behind" case, and the absence of a
+/// default keeps any future caller from inheriting whichever choice
+/// happened to be in fashion when this signature was last touched.
 Future<GitResult<String>> stashPush(
   String repo, {
   String? message,
   List<String>? paths,
   bool keepIndex = false,
+  required bool includeUntracked,
 }) async {
   final args = <String>['stash', 'push'];
   if (keepIndex) args.add('--keep-index');
+  // -u captures untracked files; pairs cleanly with --keep-index when
+  // the user wants "stage these, stash everything else including new
+  // files." Mutually exclusive with `--all` (which we don't use).
+  if (includeUntracked) args.add('--include-untracked');
   if (message != null && message.trim().isNotEmpty) {
     args.addAll(['-m', message.trim()]);
   }

@@ -307,6 +307,9 @@ class WorktreeState extends ChangeNotifier {
         final stash = await stashPush(
           worktreePath,
           message: 'Auto-shelved on desk close',
+          // Capture untracked too — closing a desk should preserve
+          // every uncommitted artifact, not just tracked changes.
+          includeUntracked: true,
         );
         if (!stash.ok) return stash.error;
       }

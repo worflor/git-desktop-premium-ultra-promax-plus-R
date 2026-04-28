@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
+import 'package:meta/meta.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../backend/ai.dart';
@@ -27,7 +28,12 @@ import '../../app/logos_git_state.dart';
 import '../../app/preferences_state.dart';
 import '../../app/repository_state.dart';
 import '../../app/window_activity.dart';
+import '../../app/external_tools_state.dart';
+import '../../app/settings_navigation_state.dart';
 import '../../app/theme_state.dart';
+import '../../app/tool_detection_state.dart';
+import '../../backend/external_tools.dart';
+import '../../backend/system_paths.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../onboarding/onboarding_state.dart';
 import '../../ui/control_chrome.dart';
@@ -44,14 +50,35 @@ const _guardrailStageColors = AppSeverityPalette.guardrailStages;
 enum _PromptSaveState { idle, typing, saving, saved, error }
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  /// Optional section to scroll to + briefly highlight on mount. Set
+  /// by callers that deep-link into a specific section (e.g., the
+  /// project context menu's "Open with…" zero-state). Null = default
+  /// scroll position.
+  final SettingsSection? focusSection;
+
+  const SettingsPage({super.key, this.focusSection});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
+class _SettingsPageState extends State<SettingsPage>
+    with SingleTickerProviderStateMixin {
   final Stopwatch _mountedAt = Stopwatch()..start();
+  // Section keys for deep-link scroll. Each [SettingsSection] enum
+  // value gets a key here; the section's top widget passes the same
+  // key. `Scrollable.ensureVisible` then scrolls and we briefly flash
+  // the section header to confirm the focus.
+  final Map<SettingsSection, GlobalKey> _sectionKeys = {
+    SettingsSection.externalTools: GlobalKey(),
+  };
+  // Drives a brief border / bg pulse on the focused section header
+  // after deep-link. Forward-only — fires once per focus request.
+  late final AnimationController _focusFlash = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+  SettingsSection? _flashingSection;
   final Map<String, TextEditingController> _categoryLabelControllers = {};
   final TextEditingController _commitPromptController = TextEditingController();
   final TextEditingController _reviewPromptController = TextEditingController();
@@ -97,6 +124,54 @@ class _SettingsPageState extends State<SettingsPage> {
       _musePromptController.text = aiSettings.musePrompt;
       _refreshAiDiagnostics();
     });
+    if (widget.focusSection != null) {
+      // Defer to post-frame so the section keys have rendered and
+      // `Scrollable.ensureVisible` can find them in the tree.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _focusSection(widget.focusSection!);
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Re-fire the focus pulse when the deep-link target changes
+    // mid-mount — e.g., the user navigates from one settings link to
+    // another without closing the panel.
+    if (widget.focusSection != null &&
+        widget.focusSection != oldWidget.focusSection) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _focusSection(widget.focusSection!);
+      });
+    }
+  }
+
+  /// Scroll the section into view and start the highlight pulse.
+  /// Safe to call at any time; ignores requests for sections that
+  /// haven't rendered yet (key.currentContext == null).
+  void _focusSection(SettingsSection section) {
+    final key = _sectionKeys[section];
+    final ctx = key?.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: AppMotion.fluid,
+      curve: AppMotion.fluidCurve,
+      alignment: 0.08,
+    );
+    setState(() => _flashingSection = section);
+    _focusFlash
+      ..stop()
+      ..value = 0
+      ..forward().whenComplete(() {
+        if (!mounted) return;
+        if (_flashingSection == section) {
+          setState(() => _flashingSection = null);
+        }
+      });
   }
 
   @override
@@ -107,6 +182,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _commitPromptController.dispose();
     _reviewPromptController.dispose();
     _musePromptController.dispose();
+    _focusFlash.dispose();
     for (final controller in _categoryLabelControllers.values) {
       controller.dispose();
     }
@@ -1345,6 +1421,14 @@ class _SettingsPageState extends State<SettingsPage> {
               ], // end of `if (!preferences.hideAiFeatures) ...[` AI subtree
             ],
           ),
+        ),
+        const SizedBox(height: 10),
+        _SectionFlashFrame(
+          key: _sectionKeys[SettingsSection.externalTools],
+          flash: _flashingSection == SettingsSection.externalTools
+              ? _focusFlash
+              : null,
+          child: const _ExternalToolsCard(),
         ),
         const SizedBox(height: 10),
         const _SettingsGap(),
@@ -10206,5 +10290,432 @@ class _CommitFormatChipLabel<T> extends StatelessWidget {
   }
 }
 
+/// Section wrapper that paints a brief border pulse when [flash] is
+/// non-null and animating. Used by the deep-link flow to confirm a
+/// scroll-to-section landing — the user sees the section header
+/// briefly outlined in accent so the focus is unmissable.
+///
+/// The pulse fades from accent at full alpha to transparent over the
+/// controller's duration, so the visual disturbance is short-lived.
+class _SectionFlashFrame extends StatelessWidget {
+  final Widget child;
+  final Animation<double>? flash;
 
+  const _SectionFlashFrame({
+    super.key,
+    required this.child,
+    this.flash,
+  });
 
+  @override
+  Widget build(BuildContext context) {
+    final f = flash;
+    if (f == null) return child;
+    final t = context.tokens;
+    return AnimatedBuilder(
+      animation: f,
+      builder: (context, c) {
+        // Pulse: ramps in fast, fades out slow. sin(pi * t) gives a
+        // 0→1→0 envelope; raised to 0.7 to keep the peak visible
+        // longer than a pure sine.
+        final v = f.value;
+        final env = math.pow(math.sin(math.pi * v), 0.7).toDouble();
+        final alpha = (0.55 * env).clamp(0.0, 1.0);
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: t.accentBright.withValues(alpha: alpha),
+              width: 1.5,
+            ),
+          ),
+          child: c,
+        );
+      },
+      child: child,
+    );
+  }
+}
+
+/// External Tools settings card. Top: preset one-click adds plus a
+/// blank "custom" preset for users who want to start from scratch.
+/// Below: editable list of currently-configured tools — each row
+/// owns its own TextEditingControllers and persists changes via
+/// [ExternalToolsState].
+class _ExternalToolsCard extends StatelessWidget {
+  const _ExternalToolsCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<ExternalToolsState>();
+    final detection = context.watch<ToolDetectionState>();
+    final t = context.tokens;
+    final tools = state.tools;
+    // Filter the curated preset list to tools the OS actually has on
+    // PATH. While detection is in flight (typically <200ms), show all
+    // presets dimmed-with-hint until the probe completes.
+    final installedPresets = detection.isLoaded
+        ? [
+            for (final p in ExternalToolPresets.all)
+              if (detection.has(p.executable)) p,
+          ]
+        : <ExternalToolPreset>[];
+    return _StateCard(
+      title: 'External Tools',
+      summary:
+          'Right-click a project in the sidebar to open it with one of these. Args use {path} for the project folder.',
+      wide: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Preset chips. The chip row reflects what's actually on
+          // PATH — no chips for tools the user doesn't have. Custom
+          // is always present as the escape hatch for tools we don't
+          // ship a preset for.
+          if (!detection.isLoaded)
+            Text(
+              'Detecting installed tools…',
+              style: TextStyle(color: t.textMuted, fontSize: 12),
+            )
+          else
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final preset in installedPresets)
+                  _GhostMiniButton(
+                    label: preset.label,
+                    onTap: () => context
+                        .read<ExternalToolsState>()
+                        .add(preset.build()),
+                  ),
+                _GhostMiniButton(
+                  label: '+ Custom',
+                  onTap: () => context
+                      .read<ExternalToolsState>()
+                      .add(ExternalToolPresets.blank()),
+                ),
+              ],
+            ),
+          if (detection.isLoaded && installedPresets.isEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              'None of the common tools (claude, code, cursor, lazygit, gh…) '
+              'were found on PATH. Use “+ Custom” to add one manually.',
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 11,
+                height: 1.4,
+              ),
+            ),
+          ],
+          if (tools.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            for (final tool in tools) ...[
+              _ExternalToolRow(
+                key: ValueKey(tool.id),
+                tool: tool,
+              ),
+              const SizedBox(height: 8),
+            ],
+          ] else ...[
+            const SizedBox(height: 8),
+            Text(
+              'No tools configured yet — add one above.',
+              style: TextStyle(color: t.textMuted, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Single editable tool row. Manages its own text controllers + a
+/// debounced persist so typing doesn't fire a disk write on every
+/// keystroke. Owned controllers are seeded from the [tool] passed in
+/// and reseeded whenever an external mutation changes the bound id.
+class _ExternalToolRow extends StatefulWidget {
+  final ExternalTool tool;
+  const _ExternalToolRow({super.key, required this.tool});
+
+  @override
+  State<_ExternalToolRow> createState() => _ExternalToolRowState();
+}
+
+class _ExternalToolRowState extends State<_ExternalToolRow> {
+  late final TextEditingController _labelCtrl;
+  late final TextEditingController _execCtrl;
+  late final TextEditingController _argsCtrl;
+  Timer? _persistDebounce;
+  bool _testInFlight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _labelCtrl = TextEditingController(text: widget.tool.label);
+    _execCtrl = TextEditingController(text: widget.tool.executable);
+    _argsCtrl =
+        TextEditingController(text: _argsToDisplay(widget.tool.args));
+  }
+
+  static String _argsToDisplay(List<String> args) =>
+      argsToDisplayForRoundTrip(args);
+
+  @override
+  void dispose() {
+    _persistDebounce?.cancel();
+    _labelCtrl.dispose();
+    _execCtrl.dispose();
+    _argsCtrl.dispose();
+    super.dispose();
+  }
+
+  /// Debounced persist. Fires 500ms after the last keystroke so the
+  /// user can finish typing before the disk write hits.
+  void _schedulePersist() {
+    _persistDebounce?.cancel();
+    _persistDebounce = Timer(const Duration(milliseconds: 500), _persistNow);
+  }
+
+  Future<void> _persistNow() async {
+    if (!mounted) return;
+    final next = widget.tool.copyWith(
+      label: _labelCtrl.text,
+      executable: _execCtrl.text,
+      args: _parseArgs(_argsCtrl.text),
+    );
+    await context
+        .read<ExternalToolsState>()
+        .update(widget.tool.id, next);
+  }
+
+  List<String> _parseArgs(String raw) => parseArgsForRoundTrip(raw);
+
+  Future<void> _runTest() async {
+    if (_testInFlight) return;
+    final repoPath = context.read<RepositoryState>().activePath;
+    if (repoPath == null) return;
+    setState(() => _testInFlight = true);
+    final args = _parseArgs(_argsCtrl.text)
+        .map((a) => a.replaceAll('{path}', repoPath))
+        .toList();
+    try {
+      if (widget.tool.mode == ToolLaunchMode.detached) {
+        await runDetached(
+          executable: _execCtrl.text.trim(),
+          args: args,
+          workingDirectory: repoPath,
+        );
+      } else {
+        await runInTerminal(
+          executable: _execCtrl.text.trim(),
+          args: args,
+          workingDirectory: repoPath,
+        );
+      }
+    } catch (_) {
+      // Failure is silent — same rationale as system_paths.dart.
+    } finally {
+      if (mounted) setState(() => _testInFlight = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Label field — narrow.
+        SizedBox(
+          width: 120,
+          child: AppTextField(
+            controller: _labelCtrl,
+            hintText: 'Name',
+            onChanged: (_) => _schedulePersist(),
+          ),
+        ),
+        const SizedBox(width: 6),
+        // Executable field — narrow + monospace for command names.
+        SizedBox(
+          width: 110,
+          child: AppTextField(
+            controller: _execCtrl,
+            hintText: 'command',
+            mono: true,
+            onChanged: (_) => _schedulePersist(),
+          ),
+        ),
+        const SizedBox(width: 6),
+        // Args field — wide, monospace, takes remaining space.
+        Expanded(
+          child: AppTextField(
+            controller: _argsCtrl,
+            hintText: '{path}',
+            mono: true,
+            onChanged: (_) => _schedulePersist(),
+          ),
+        ),
+        const SizedBox(width: 6),
+        // Mode toggle — segmented control. Two values fit a small chip.
+        _ToolModeToggle(
+          mode: widget.tool.mode,
+          onChanged: (m) => context
+              .read<ExternalToolsState>()
+              .update(
+                widget.tool.id,
+                widget.tool.copyWith(mode: m),
+              ),
+        ),
+        const SizedBox(width: 6),
+        _GhostMiniButton(
+          label: _testInFlight ? '…' : 'test',
+          onTap: _testInFlight ? null : () => unawaited(_runTest()),
+        ),
+        const SizedBox(width: 4),
+        // Delete affordance — the only destructive action on the row.
+        // Tooltip + close icon to match the "Forget this project"
+        // affordance in the project context menu.
+        Tooltip(
+          message: 'Remove tool',
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: () => context
+                  .read<ExternalToolsState>()
+                  .remove(widget.tool.id),
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: Center(
+                  child: Icon(
+                    Icons.close,
+                    size: 14,
+                    color: t.textFaint,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Two-state toggle for [ToolLaunchMode]. Compact — labels are short
+/// and the chip lives in a horizontal tool row alongside several
+/// other inputs.
+class _ToolModeToggle extends StatelessWidget {
+  final ToolLaunchMode mode;
+  final ValueChanged<ToolLaunchMode> onChanged;
+
+  const _ToolModeToggle({required this.mode, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    Widget seg(ToolLaunchMode value, String label) {
+      final active = mode == value;
+      return GestureDetector(
+        onTap: active ? null : () => onChanged(value),
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: AppMotion.snap,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: active
+                ? t.accentBright.withValues(alpha: 0.12)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active ? t.textStrong : t.textMuted,
+              fontSize: 10,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.25)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          seg(ToolLaunchMode.newTerminal, 'terminal'),
+          seg(ToolLaunchMode.detached, 'detached'),
+        ],
+      ),
+    );
+  }
+}
+
+/// Round-trip safe display of [args]. Tokens containing whitespace
+/// are wrapped in double quotes; literal `"` and `\` inside any
+/// quoted token are backslash-escaped so [parseArgsForRoundTrip] can
+/// decode them back to their original form. Without that escaping a
+/// persisted arg like `--msg="hello world"` would render as
+/// `"--msg="hello world""` and the next parse would silently lose
+/// the inner quotes — a contract violation since the field exists
+/// to edit a list of strings, not interpret shell syntax.
+@visibleForTesting
+String argsToDisplayForRoundTrip(List<String> args) {
+  return args.map((a) {
+    if (RegExp(r'\s|"|\\').hasMatch(a)) {
+      // Escape backslashes first so the quote-escape we add next
+      // doesn't get its own backslash re-escaped on re-parse.
+      final escaped = a.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
+      return '"$escaped"';
+    }
+    return a;
+  }).join(' ');
+}
+
+/// Parse the args field — space-separated tokens, with simple
+/// double-quote support so `"a b"` becomes one arg. Inside a quoted
+/// span, `\\` decodes to `\` and `\"` decodes to `"`, matching the
+/// escaping [argsToDisplayForRoundTrip] produces. Other backslashes
+/// are passed through untouched so the common `--path=C:\foo\bar`
+/// style of arg doesn't need any escaping from the user. Not full
+/// shell quoting — the field exists at edit time only; at launch
+/// time argv is already typed.
+@visibleForTesting
+List<String> parseArgsForRoundTrip(String raw) {
+  final out = <String>[];
+  final buf = StringBuffer();
+  var inQuote = false;
+  for (var i = 0; i < raw.length; i++) {
+    final ch = raw[i];
+    if (inQuote && ch == r'\' && i + 1 < raw.length) {
+      final next = raw[i + 1];
+      if (next == '"' || next == r'\') {
+        buf.write(next);
+        i++;
+        continue;
+      }
+    }
+    if (ch == '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (ch == ' ' && !inQuote) {
+      if (buf.isNotEmpty) {
+        out.add(buf.toString());
+        buf.clear();
+      }
+      continue;
+    }
+    buf.write(ch);
+  }
+  if (buf.isNotEmpty) out.add(buf.toString());
+  return out;
+}

@@ -100,6 +100,10 @@ class SyncPanel extends StatefulWidget {
 class _SyncPanelState extends State<SyncPanel> {
   bool _syncRunning = false;
   bool _fetchRunning = false;
+  // True while the force-push-with-lease recovery is in flight. Used
+  // to disable the recovery button + show "Working…" so a double-tap
+  // can't fire the destructive op twice.
+  bool _forceRunning = false;
   String? _actionError;
   SyncData? _lastResult;
   String? _previousRepositoryPath;
@@ -121,6 +125,127 @@ class _SyncPanelState extends State<SyncPanel> {
       }
     });
     await context.read<RepositoryState>().refreshStatus();
+  }
+
+  /// Force-push-with-lease recovery. Surfaced as a button inside
+  /// `_InlineSyncError` only when the prior sync failed with a
+  /// non-fast-forward error. `--force-with-lease` is the safe form:
+  /// the push fails (instead of overwriting) if the remote has new
+  /// commits since our last fetch.
+  ///
+  /// Targets the *current branch's actual upstream remote*, not
+  /// blindly `origin`. Repos where the active branch tracks a non-
+  /// origin remote (a fork's `upstream`, a personal mirror, etc.)
+  /// would otherwise have their force-push fired at the wrong host
+  /// — a destructive surprise. Bails with a clear error when no
+  /// upstream is configured (the non-FF error path itself implies
+  /// one exists, so this is defensive).
+  Future<void> _runForcePushRecovery(
+    String repo,
+    RepositoryStatus status,
+  ) async {
+    final target = _resolveUpstream(status);
+    if (target == null) {
+      setState(() {
+        _actionError =
+            'Cannot force-push: no upstream is configured for "${status.branch}".';
+      });
+      return;
+    }
+    final confirmed = await _confirmForcePush(target);
+    if (!confirmed) return;
+    if (!mounted) return;
+    setState(() {
+      _forceRunning = true;
+      _actionError = null;
+    });
+    final r = await pushRemote(
+      repo,
+      remote: target.remote,
+      branch: status.branch,
+      forceWithLease: true,
+    );
+    if (!mounted) return;
+    setState(() {
+      _forceRunning = false;
+      if (!r.ok) {
+        _actionError = r.error;
+      } else {
+        _actionError = null;
+      }
+    });
+    await context.read<RepositoryState>().refreshStatus();
+  }
+
+  /// Confirm dialog for force-push. Force-with-lease is safe relative
+  /// to bare `--force` (won't overwrite commits the user hasn't
+  /// fetched), but it still rewrites remote history — worth a
+  /// deliberate confirm. Surfaces the resolved remote + branch ref
+  /// so the user can verify the target before authorising; this is
+  /// the only place where the actual push destination is shown.
+  Future<bool> _confirmForcePush(_UpstreamTarget target) async {
+    final t = context.tokens;
+    final res = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          'Force push (with lease)?',
+          style: TextStyle(color: t.textStrong, fontSize: 14),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Target: ${target.remote}/${target.branch}',
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: 11.5,
+                fontFamily: AppFonts.mono,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'This rewrites the remote branch with your local history. '
+              '“With lease” aborts if someone pushed to the remote after '
+              'your last fetch — but already-fetched changes will still '
+              'be overwritten. Use only when you intended a rebase or '
+              'amend that diverged the branch.',
+              style:
+                  TextStyle(color: t.textNormal, fontSize: 12, height: 1.45),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Force push'),
+          ),
+        ],
+      ),
+    );
+    return res == true;
+  }
+
+  /// Parse `status.upstream` (shape: `<remote>/<remote-branch-ref>`,
+  /// where `<remote-branch-ref>` may itself contain slashes for
+  /// nested branch names like `feature/foo`) into its components.
+  /// Returns null when no upstream is configured or the value is
+  /// malformed. The `remote` is everything before the FIRST slash;
+  /// the rest is the remote ref.
+  _UpstreamTarget? _resolveUpstream(RepositoryStatus status) {
+    final upstream = status.upstream;
+    if (upstream == null || upstream.isEmpty) return null;
+    final slash = upstream.indexOf('/');
+    if (slash <= 0 || slash >= upstream.length - 1) return null;
+    return _UpstreamTarget(
+      remote: upstream.substring(0, slash),
+      branch: upstream.substring(slash + 1),
+    );
   }
 
   Future<void> _runFetch(String repo) async {
@@ -303,6 +428,8 @@ class _SyncPanelState extends State<SyncPanel> {
       lastResult: _lastResult,
       onSync: () => _runSync(repoPath, status),
       onFetch: () => _runFetch(repoPath),
+      onForcePushRecovery: () => _runForcePushRecovery(repoPath, status),
+      forceRunning: _forceRunning,
     );
   }
 
@@ -351,11 +478,22 @@ class _InlineSyncError extends StatelessWidget {
   final AppTokens t;
   final String title;
   final String body;
+  /// Optional contextual recovery action. When the sync error has a
+  /// well-known recovery (e.g., non-fast-forward → force-with-lease),
+  /// the parent threads it here so the action is one click away
+  /// instead of buried in another panel. Null when no recovery is
+  /// available — the row stays a passive error display.
+  final String? recoveryLabel;
+  final VoidCallback? onRecovery;
+  final bool recoveryRunning;
 
   const _InlineSyncError({
     required this.t,
     required this.title,
     required this.body,
+    this.recoveryLabel,
+    this.onRecovery,
+    this.recoveryRunning = false,
   });
 
   @override
@@ -389,10 +527,109 @@ class _InlineSyncError extends StatelessWidget {
               height: 1.45,
             ),
           ),
+          if (recoveryLabel != null && onRecovery != null) ...[
+            const SizedBox(height: 10),
+            _RecoveryButton(
+              tokens: t,
+              label: recoveryLabel!,
+              running: recoveryRunning,
+              onTap: onRecovery!,
+            ),
+          ],
         ],
       ),
     );
   }
+}
+
+/// Thin recovery-action button that lives inside [_InlineSyncError].
+/// Visually distinct from the primary sync button — same chrome
+/// register but a smaller, error-tinted variant. Used today only
+/// for force-push-with-lease; reusable for any future recovery
+/// surface bound to a sync error.
+class _RecoveryButton extends StatefulWidget {
+  final AppTokens tokens;
+  final String label;
+  final VoidCallback onTap;
+  final bool running;
+  const _RecoveryButton({
+    required this.tokens,
+    required this.label,
+    required this.onTap,
+    required this.running,
+  });
+
+  @override
+  State<_RecoveryButton> createState() => _RecoveryButtonState();
+}
+
+class _RecoveryButtonState extends State<_RecoveryButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    return MouseRegion(
+      cursor: widget.running
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.running ? null : widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: AppMotion.snap,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? t.stateConflicted.withValues(alpha: 0.16)
+                : t.stateConflicted.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.pillRadius,
+            ),
+            border: Border.all(
+              color: t.stateConflicted.withValues(alpha: 0.45),
+              width: 0.8,
+            ),
+          ),
+          child: Text(
+            widget.running ? 'Working…' : widget.label,
+            style: TextStyle(
+              color: t.stateConflicted,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Resolved push target — the remote name plus the remote-branch
+/// ref the user's local branch tracks. Threaded through the confirm
+/// dialog so the user sees exactly which destination is about to
+/// be force-pushed.
+class _UpstreamTarget {
+  final String remote;
+  final String branch;
+  const _UpstreamTarget({required this.remote, required this.branch});
+}
+
+/// True when [stderr] looks like git rejected the push for being
+/// non-fast-forward. Matches the canonical phrases git emits across
+/// its localised messages and the older "Updates were rejected"
+/// form. Conservative: false negatives are fine (no recovery offered),
+/// false positives would be worse (offering force-push for non-FF
+/// errors is the wrong fix).
+bool _isNonFastForwardError(String? stderr) {
+  if (stderr == null) return false;
+  final s = stderr.toLowerCase();
+  return s.contains('non-fast-forward') ||
+      (s.contains('rejected') && s.contains('fetch first')) ||
+      (s.contains('rejected') && s.contains('non-fast'));
 }
 
 class _SyncBody extends StatelessWidget {
@@ -407,6 +644,12 @@ class _SyncBody extends StatelessWidget {
   final SyncData? lastResult;
   final VoidCallback onSync;
   final VoidCallback onFetch;
+  /// Force-push-with-lease recovery action — wired through from the
+  /// parent state. Null when there's no active recovery available
+  /// for the current error (the inline error block falls through to
+  /// the no-recovery branch).
+  final VoidCallback? onForcePushRecovery;
+  final bool forceRunning;
 
   const _SyncBody({
     required this.t,
@@ -420,6 +663,8 @@ class _SyncBody extends StatelessWidget {
     required this.lastResult,
     required this.onSync,
     required this.onFetch,
+    this.onForcePushRecovery,
+    this.forceRunning = false,
   });
 
   @override
@@ -459,13 +704,26 @@ class _SyncBody extends StatelessWidget {
           ),
         ),
 
-        // Error
+        // Error — with optional force-push-with-lease recovery when
+        // the failure looks like a non-fast-forward (the canonical
+        // "you rebased / amended; remote diverged" case). The
+        // recovery action is the only way to surface force-push in
+        // the UI, and it only appears in the exact context where
+        // it's the right answer.
         if (actionError != null) ...[
           const SizedBox(height: 12),
           _InlineSyncError(
             t: t,
             title: 'Sync failed',
             body: actionError!,
+            recoveryLabel: _isNonFastForwardError(actionError) &&
+                    onForcePushRecovery != null
+                ? 'Force push (with lease)'
+                : null,
+            onRecovery: _isNonFastForwardError(actionError)
+                ? onForcePushRecovery
+                : null,
+            recoveryRunning: forceRunning,
           ),
         ],
 

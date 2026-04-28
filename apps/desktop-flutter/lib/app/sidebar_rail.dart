@@ -1,8 +1,17 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../backend/external_tools.dart';
 import '../backend/file_picker.dart';
 import '../backend/git.dart';
+import '../backend/repo_web_url.dart';
+import '../backend/system_browser.dart';
+import '../backend/system_paths.dart';
 import '../components/icons/app_icons.dart';
+import '../ui/context_menu.dart';
 import '../ui/control_chrome.dart';
 import '../ui/design_primitives.dart';
 import '../ui/form_controls.dart';
@@ -11,9 +20,10 @@ import '../ui/interaction_feedback.dart';
 import '../ui/material_surface.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart';
-import 'brand_lockup.dart';
+import 'external_tools_state.dart';
 import 'hyper_reactivity.dart';
 import 'repository_state.dart';
+import 'settings_navigation_state.dart';
 
 bool _isGitUrl(String value) {
   final trimmed = value.trim();
@@ -664,6 +674,282 @@ class _ProjectItem extends StatefulWidget {
 class _ProjectItemState extends State<_ProjectItem> {
   bool _hovered = false;
   bool _pressed = false;
+  bool _affordanceHovered = false;
+  // Cached web URL info for this project's `origin` remote, or null
+  // when the repo has no remote / no derivable web URL. Resolved
+  // asynchronously on mount.
+  RepoWebInfo? _webInfo;
+  // Cached origin remote URL for the "Copy clone URL" action. Stored
+  // verbatim — preserves whatever form (SSH-shorthand, ssh://,
+  // https://) the user configured locally.
+  String? _originUrl;
+  // Cached path to a README file in the repo root, or null when none
+  // exists. Detected synchronously on mount (cheap fs check).
+  String? _readmePath;
+
+  @override
+  void initState() {
+    super.initState();
+    _detectReadmeSync();
+    _resolveRemoteAndWeb();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProjectItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path) {
+      _webInfo = null;
+      _originUrl = null;
+      _detectReadmeSync();
+      _resolveRemoteAndWeb();
+    }
+  }
+
+  /// Walk a small priority-ordered list of common README filenames
+  /// in the repo root. First hit wins; null when none exist.
+  /// Synchronous — `existsSync` is microseconds and we want the
+  /// menu row to render the first time the user right-clicks
+  /// without waiting on an async hop.
+  void _detectReadmeSync() {
+    const candidates = [
+      'README.md',
+      'readme.md',
+      'README.MD',
+      'Readme.md',
+      'README',
+      'README.txt',
+      'README.rst',
+    ];
+    final sep = Platform.pathSeparator;
+    for (final name in candidates) {
+      final path = '${widget.path}$sep$name';
+      if (File(path).existsSync()) {
+        _readmePath = path;
+        return;
+      }
+    }
+    _readmePath = null;
+  }
+
+  /// Resolve `origin` once, derive both the raw URL (for "Copy clone
+  /// URL") and the classified web info (for "Open on <Host>") in a
+  /// single subprocess spawn. Stale-result guard handles the case
+  /// where the bound path changed between spawn and resolve.
+  Future<void> _resolveRemoteAndWeb() async {
+    final pathAtCallTime = widget.path;
+    String? raw;
+    try {
+      final r = await Process.run(
+        'git',
+        ['remote', 'get-url', 'origin'],
+        workingDirectory: pathAtCallTime,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      if (r.exitCode == 0) {
+        final s = (r.stdout as String).trim();
+        if (s.isNotEmpty) raw = s;
+      }
+    } catch (_) {/* silent — local-only repo */}
+    if (!mounted || pathAtCallTime != widget.path) return;
+    final info = raw == null ? null : classifyRemote(raw);
+    setState(() {
+      _originUrl = raw;
+      _webInfo = info;
+    });
+  }
+
+  /// Open the project's web page in the system browser. No-op if
+  /// the web URL hasn't been resolved yet — the menu row only
+  /// renders after resolution succeeds, so in practice this is
+  /// always available when the row is.
+  Future<void> _openOnWeb() async {
+    final info = _webInfo;
+    if (info == null) return;
+    try {
+      await openInSystemBrowser(info.webUrl);
+    } catch (_) {/* silent — same rationale as system_paths.dart */}
+  }
+
+  /// Copy the origin remote URL verbatim. Preserves the form (SSH /
+  /// HTTPS / ssh://) the user configured — they chose it for a
+  /// reason; we don't try to be clever.
+  Future<void> _copyCloneUrl() async {
+    final url = _originUrl;
+    if (url == null) return;
+    await Clipboard.setData(ClipboardData(text: url));
+  }
+
+  /// Open the detected README file via the OS default app. Routes
+  /// through `openInDefaultApp` which handles the platform dispatch
+  /// — the actual editor that opens depends on the user's OS-level
+  /// file association.
+  Future<void> _openReadme() async {
+    final path = _readmePath;
+    if (path == null) return;
+    try {
+      await openInDefaultApp(path);
+    } catch (_) {/* silent */}
+  }
+
+  /// Open the OS file manager at the project's folder. Failures are
+  /// silent on purpose — see `system_paths.dart` rationale.
+  Future<void> _openInFileManager() async {
+    try {
+      await openInDefaultApp(widget.path);
+    } catch (_) {
+      // Tool missing or access denied — nothing useful to surface here.
+    }
+  }
+
+  /// Open a terminal session with cwd at the project's folder.
+  Future<void> _openInTerminal() async {
+    try {
+      await openTerminalAt(widget.path);
+    } catch (_) {/* ignore */}
+  }
+
+  /// Copy the absolute project path to the clipboard.
+  Future<void> _copyPath() async {
+    await Clipboard.setData(ClipboardData(text: widget.path));
+  }
+
+  /// Run [tool] against the project. Substitutes `{path}` into the
+  /// argv slots and dispatches via the appropriate launcher mode.
+  /// Failures are silent — same rationale as `system_paths.dart`.
+  Future<void> _runTool(ExternalTool tool) async {
+    final exec = tool.executable.trim();
+    if (exec.isEmpty) return;
+    final args = tool.resolveArgs(widget.path);
+    try {
+      switch (tool.mode) {
+        case ToolLaunchMode.newTerminal:
+          await runInTerminal(
+            executable: exec,
+            args: args,
+            workingDirectory: widget.path,
+          );
+        case ToolLaunchMode.detached:
+          await runDetached(
+            executable: exec,
+            args: args,
+            workingDirectory: widget.path,
+          );
+      }
+    } catch (_) {/* silent — see system_paths.dart */}
+  }
+
+  /// Deep-link into Settings, scrolling to the External Tools section.
+  /// Used by both the zero-state "Open with…" entry and the
+  /// "Edit tools…" footer of a populated submenu.
+  void _openExternalToolsSettings() {
+    context
+        .read<SettingsNavigationState>()
+        .requestFocus(SettingsSection.externalTools);
+  }
+
+  /// Open the right-click context menu at [globalPos]. Sections build
+  /// the canonical project actions (open / terminal / open-with /
+  /// copy) above a destructive forget row, separated by a divider so
+  /// the dangerous action stays visually quarantined from the safe
+  /// ones.
+  ///
+  /// "Open with" only appears when at least one external tool is
+  /// configured — when none are set, the row is omitted entirely so
+  /// the menu stays focused on the project-intrinsic actions. First-
+  /// time setup discoverability lives in Settings rather than as a
+  /// ghost menu entry that just deep-links there.
+  void _showContextMenu(BuildContext context, Offset globalPos) {
+    // Outlined-icon variants in the context menu match the register
+    // used by changes_page.dart's right-click menus. The inline
+    // affordance icon (filled folder_open) stays filled since it's
+    // an action button, not a menu glyph.
+    final tools = context.read<ExternalToolsState>().tools;
+    final webInfo = _webInfo;
+    final originUrl = _originUrl;
+    final readmePath = _readmePath;
+    final sections = <List<AppContextMenuItem>>[
+      [
+        AppContextMenuItem(
+          icon: Icons.folder_open_outlined,
+          label: 'Open in Explorer',
+          onTap: _openInFileManager,
+        ),
+        AppContextMenuItem(
+          icon: Icons.terminal,
+          label: 'Open in Terminal',
+          onTap: _openInTerminal,
+        ),
+        // "Open on <Host>" — project-intrinsic action, only shown
+        // when the repo's origin remote resolves to a clean https
+        // URL. Label is brand-pretty for github/gitlab/bitbucket.com,
+        // bare host otherwise (Codeberg, sourcehut, Gitea, self-
+        // hosted instances all show as their actual hostname).
+        if (webInfo != null)
+          AppContextMenuItem(
+            icon: Icons.public_outlined,
+            label: 'Open on ${webInfo.label}',
+            onTap: _openOnWeb,
+          ),
+        // "Open README" — orientation aid, surfaces only when a
+        // README file actually exists in the repo root.
+        if (readmePath != null)
+          AppContextMenuItem(
+            icon: Icons.description_outlined,
+            label: 'Open README',
+            onTap: _openReadme,
+          ),
+        if (tools.isNotEmpty)
+          AppContextMenuItem(
+            icon: Icons.launch,
+            label: 'Open with',
+            // Submenu opens on hover; we still set onTap to a no-op
+            // so a click on the parent row doesn't dismiss the menu
+            // before the user reaches the submenu.
+            onTap: () {},
+            submenuBuilder: () => [
+              for (final tool in tools)
+                AppContextMenuItem(
+                  icon: tool.mode == ToolLaunchMode.newTerminal
+                      ? Icons.terminal
+                      : Icons.open_in_new,
+                  label: tool.displayLabel,
+                  onTap: () => _runTool(tool),
+                ),
+              AppContextMenuItem(
+                icon: Icons.tune,
+                label: 'Edit tools…',
+                onTap: _openExternalToolsSettings,
+              ),
+            ],
+          ),
+        AppContextMenuItem(
+          icon: Icons.content_copy_outlined,
+          label: 'Copy path',
+          onTap: _copyPath,
+        ),
+        // "Copy clone URL" — sits next to "Copy path" because both
+        // are clipboard actions; bare-emit of the origin remote so
+        // the user gets back exactly what their git config holds.
+        if (originUrl != null)
+          AppContextMenuItem(
+            icon: Icons.link,
+            label: 'Copy clone URL',
+            onTap: _copyCloneUrl,
+          ),
+      ],
+      if (widget.onForget != null)
+        [
+          AppContextMenuItem(
+            icon: Icons.close,
+            label: 'Forget this project',
+            destructive: true,
+            onTap: widget.onForget!,
+          ),
+        ],
+    ];
+    showAppContextMenu(context, globalPos, sections);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -693,6 +979,10 @@ class _ProjectItemState extends State<_ProjectItem> {
           if (p == _pressed) return;
           setState(() => _pressed = p);
         },
+        // Right-click anywhere on the row opens the project context
+        // menu. `globalPosition` anchors the overlay; the menu owns
+        // its own dismiss tap-catcher via `showAppContextMenu`.
+        onSecondaryTapDown: (pos) => _showContextMenu(context, pos),
         child: AnimatedScale(
           duration: AppMotion.snap,
           curve: AppMotion.snapCurve,
@@ -726,28 +1016,35 @@ class _ProjectItemState extends State<_ProjectItem> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  // Hover-reveal "forget" action. Removes the entry
-                  // from recents without touching the repo on disk.
-                  // Inner GestureDetector with opaque behavior wins
-                  // the gesture arena so clicking × doesn't also
-                  // trigger the parent's row-tap.
-                  if (_hovered && widget.onForget != null)
-                    Tooltip(
-                      message: 'Forget this project',
-                      child: GestureDetector(
-                        onTap: widget.onForget,
-                        behavior: HitTestBehavior.opaque,
-                        child: SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: Center(
-                            child: Text(
-                              '×',
-                              style: TextStyle(
-                                color: t.textMuted,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                height: 1,
+                  // Hover-reveal "open in explorer" action. Inner
+                  // MouseRegion + GestureDetector with opaque behavior
+                  // wins the gesture arena so the icon's own click
+                  // doesn't bubble up to the parent's row-tap. The
+                  // destructive "forget" action moved to the right-
+                  // click context menu — the inline affordance is
+                  // reserved for the most-common positive action.
+                  if (_hovered)
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      onEnter: (_) =>
+                          setState(() => _affordanceHovered = true),
+                      onExit: (_) =>
+                          setState(() => _affordanceHovered = false),
+                      child: Tooltip(
+                        message: 'Open in Explorer',
+                        child: GestureDetector(
+                          onTap: _openInFileManager,
+                          behavior: HitTestBehavior.opaque,
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: Center(
+                              child: Icon(
+                                Icons.folder_open,
+                                size: 14,
+                                color: _affordanceHovered
+                                    ? t.textStrong
+                                    : t.textMuted,
                               ),
                             ),
                           ),
