@@ -606,28 +606,27 @@ class _TileChipMenuSection extends StatelessWidget {
   }
 }
 
-/// The chip rail rendered as a real mosaic — equal-width cells laid
-/// back-to-back inside one continuous inset surface, with jagged
-/// per-open seams between adjacent cells. The inset uses
-/// [AppTokens.surface2] (one tone deeper than the menu's `surface1`)
-/// so the rail reads as recessed into the menu chrome rather than
-/// floating above it. Cells are pure rectangles in their own layout
-/// (so hover wash, hit-testing, and submenu anchors stay predictable);
-/// the irregular tile-edge feel comes from a [_JaggedSeamPainter]
-/// drawn on top, with each seam jittered ±10 % of its cell's width
-/// from the nominal split. Seams are seeded once at [initState] so
-/// they're stable while the menu is open and fresh on the next.
-///
-/// Width is capped to the tile strip's width via [maxWidth] (the
-/// caller knows it). Without the cap, [Row]'s child sum would
-/// dominate the menu's IntrinsicWidth solver and push it past the
-/// tile strip.
+/// Shattered mosaic chip rail — equal-width cells inside one inset
+/// surface, with jagged per-open seams between adjacent cells. Hover
+/// wash and hit-testing follow the seam polygons 1:1 via per-cell
+/// [ClipPath] clipping. Layout uses a three-layer [Stack]:
+///   1. Invisible sizing child (`Visibility(maintainSize)`) — gives
+///      [IntrinsicHeight] a height to query without painting.
+///   2. [Positioned] cells — each extends ±[_kJitterFrac] of its
+///      nominal width into both neighbours so the clip can follow
+///      seam jitter without clamping at the cell edge.
+///   3. Decorative seam painter on top (`IgnorePointer`).
 class _ChipRailMosaic extends StatefulWidget {
   final AppTokens tokens;
   final List<AppContextMenuItem> chips;
   final double maxWidth;
   final VoidCallback onDismiss;
   final VoidCallback? onChanged;
+
+  /// Fraction of nominal cell width a seam vertex can bleed into
+  /// either neighbour. Shared by the painter, the clipper, and the
+  /// positioning math. 0.10 = ±10 %.
+  static const double _kJitterFrac = 0.10;
 
   const _ChipRailMosaic({
     required this.tokens,
@@ -641,30 +640,13 @@ class _ChipRailMosaic extends StatefulWidget {
   State<_ChipRailMosaic> createState() => _ChipRailMosaicState();
 }
 
-/// One crack between two cells of the mosaic. Geometry is pre-rolled
-/// in normalized space so paint stays cheap; the painter scales it to
-/// the rail's actual size at draw time.
-///
-/// Each seam carries its own width and alpha multiplier so individual
-/// cracks read as having different "violence" — a real shattered
-/// surface has dominant fractures and quieter satellites, not a
-/// uniform set of identical lines. [segmentWidthScales] lengths is
-/// `vertices.length - 1`, and each entry scales the base stroke width
-/// for that segment so a single crack thickens and thins along its
-/// length the way a real fracture does.
+/// One crack between two mosaic cells. Vertices in normalised space
+/// (dx [-1..1], dy [0..1]); painter + clipper scale identically.
 class _MosaicSeam {
-  /// Vertices in normalized space: dx in [-1..1] (sign + magnitude of
-  /// the bleed beyond the nominal cell boundary), dy in [0..1] (top
-  /// to bottom of the rail).
   final List<Offset> vertices;
-  /// Per-seam stroke-width multiplier: 0.6..1.4 of the base.
-  final double widthScale;
-  /// Per-seam alpha multiplier: 0.7..1.3 of the base.
-  final double alphaScale;
-  /// Per-segment stroke-width multiplier (length = vertices - 1).
-  /// Lets a single crack thicken in the middle, thin at the ends, etc.
-  final List<double> segmentWidthScales;
-
+  final double widthScale; // 0.6..1.4
+  final double alphaScale; // 0.7..1.3
+  final List<double> segmentWidthScales; // per-segment, length = vertices - 1
   const _MosaicSeam({
     required this.vertices,
     required this.widthScale,
@@ -674,43 +656,24 @@ class _MosaicSeam {
 }
 
 class _ChipRailMosaicState extends State<_ChipRailMosaic> {
-  /// Pre-rolled cracks between each adjacent pair of cells, seeded
-  /// once at [initState] so they stay still while the menu's open and
-  /// reroll fresh on the next open (every menu open builds a fresh
-  /// State).
   late final List<_MosaicSeam> _seams;
 
   @override
   void initState() {
     super.initState();
     final rng = math.Random();
-    final boundaryCount = math.max(0, widget.chips.length - 1);
-    _seams = List.generate(boundaryCount, (_) => _generateSeam(rng));
+    _seams = List.generate(
+      math.max(0, widget.chips.length - 1),
+      (_) => _generateSeam(rng),
+    );
   }
 
-  /// Builds one shattered crack. Variation everywhere — segment
-  /// count, vertex spacing, jitter amplitude, occasional big-lurch
-  /// vertices — so no two seams look the same and the rail reads as
-  /// shattered rather than patterned.
   static _MosaicSeam _generateSeam(math.Random rng) {
-    // 4..8 segments → 5..9 vertices. Variable count is half the
-    // anti-pattern signal (the other half is non-uniform spacing).
     final segments = 4 + rng.nextInt(5);
-
-    // Build vertex y positions — non-uniform: random in [0..1] then
-    // sorted top-to-bottom, with the first/last forced to the rail
-    // edges so the crack actually divides cells edge-to-edge.
     final ys = <double>[0.0];
-    for (var i = 1; i < segments; i++) {
-      ys.add(rng.nextDouble());
-    }
+    for (var i = 1; i < segments; i++) ys.add(rng.nextDouble());
     ys.add(1.0);
     ys.sort();
-
-    // Per-vertex jitter — most stay within ±0.6 (= 6 % of cell width
-    // when the painter scales by 0.10), occasional ~25 % of vertices
-    // lurch out to ±1.0 (= 10 %, the user-specified ceiling). The
-    // mix creates dominant kinks alongside smaller wobbles.
     final vertices = <Offset>[
       for (final y in ys)
         Offset(
@@ -719,82 +682,67 @@ class _ChipRailMosaicState extends State<_ChipRailMosaic> {
           y,
         ),
     ];
-
-    final widthScale = 0.6 + rng.nextDouble() * 0.8; // 0.6..1.4
-    final alphaScale = 0.7 + rng.nextDouble() * 0.6; // 0.7..1.3
-
-    // Per-segment width: each segment gets its own thickness
-    // multiplier so a single crack varies along its length. Range
-    // tightened (0.7..1.3) so a single seam still reads as continuous
-    // — too much per-segment variance and the line looks broken into
-    // disjoint pieces.
-    final segmentWidthScales = List<double>.generate(
-      vertices.length - 1,
-      (_) => 0.7 + rng.nextDouble() * 0.6,
-    );
-
     return _MosaicSeam(
       vertices: vertices,
-      widthScale: widthScale,
-      alphaScale: alphaScale,
-      segmentWidthScales: segmentWidthScales,
+      widthScale: 0.6 + rng.nextDouble() * 0.8,
+      alphaScale: 0.7 + rng.nextDouble() * 0.6,
+      segmentWidthScales: List.generate(
+        vertices.length - 1,
+        (_) => 0.7 + rng.nextDouble() * 0.6,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final n = widget.chips.length;
+    if (n == 0) return const SizedBox.shrink();
+    final railW = widget.maxWidth.isFinite ? widget.maxWidth : 200.0;
+    final cellW = railW / n;
+    final jitter = cellW * _ChipRailMosaic._kJitterFrac;
+
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: widget.maxWidth),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          // surface2: one depth below the menu's surface1. Reads as
-          // recessed into the menu chrome rather than floating above
-          // it. Glassy themes get the live shader's surface2;
-          // pixelated themes get a flat fill — material character
-          // carries through automatically.
           color: widget.tokens.surface2,
-          // Top + bottom hairlines mark the rail as a band carved
-          // into the menu chrome — left/right are dropped because the
-          // rail goes edge-to-edge of the menu (no side seams). 0.10
-          // alpha keeps it ambient on light themes without becoming a
-          // hard frame on dark / pixelated.
-          border: Border(
-            top: BorderSide(
-              color: widget.tokens.chromeBorder.withValues(alpha: 0.12),
-              width: 0.5,
-            ),
-            bottom: BorderSide(
-              color: widget.tokens.chromeBorder.withValues(alpha: 0.12),
+          border: Border.symmetric(
+            horizontal: BorderSide(
+              color:
+                  widget.tokens.chromeBorder.withValues(alpha: 0.12),
               width: 0.5,
             ),
           ),
         ),
-        // IntrinsicHeight so all cells share the tallest one's
-        // height — Stack needs a definite height for Positioned.fill,
-        // and we want seam strokes that reach top to bottom of the
-        // rail.
         child: IntrinsicHeight(
           child: Stack(
             children: [
-              Row(
-                children: [
-                  for (var i = 0; i < widget.chips.length; i++)
-                    Expanded(
-                      child: _MosaicChipCell(
-                        tokens: widget.tokens,
-                        item: widget.chips[i],
-                        onDismiss: widget.onDismiss,
-                        onChanged: widget.onChanged,
-                      ),
+              // Layer 1 — invisible sizing reference.
+              Visibility(
+                visible: false,
+                maintainSize: true,
+                maintainAnimation: false,
+                maintainState: false,
+                child: Row(children: [
+                  Expanded(
+                    child: _MosaicChipCell(
+                      tokens: widget.tokens,
+                      item: widget.chips.first,
+                      onDismiss: widget.onDismiss,
                     ),
-                ],
+                  ),
+                ]),
               ),
+              // Layer 2 — real cells (overlapping Positioned).
+              for (var i = 0; i < n; i++)
+                _cell(i, n, cellW, jitter, railW),
+              // Layer 3 — decorative seam strokes.
               if (_seams.isNotEmpty)
                 Positioned.fill(
                   child: IgnorePointer(
                     child: CustomPaint(
                       painter: _ShatteredSeamPainter(
-                        cellCount: widget.chips.length,
+                        cellCount: n,
                         seams: _seams,
                         baseColor: widget.tokens.chromeBorder,
                         baseAlpha: 0.34,
@@ -809,6 +757,111 @@ class _ChipRailMosaicState extends State<_ChipRailMosaic> {
       ),
     );
   }
+
+  Widget _cell(
+      int i, int n, double cellW, double jitter, double railW) {
+    final isFirst = i == 0;
+    final isLast = i == n - 1;
+    final left = isFirst ? 0.0 : i * cellW - jitter;
+    final right = isLast ? railW : (i + 1) * cellW + jitter;
+    final leftNom = isFirst ? 0.0 : jitter;
+    final rightNom = isFirst ? cellW : jitter + cellW;
+    return Positioned(
+      left: left,
+      width: right - left,
+      top: 0,
+      bottom: 0,
+      child: ClipPath(
+        clipper: _MosaicCellClipper(
+          leftNominal: leftNom,
+          rightNominal: rightNom,
+          jitter: jitter,
+          leftSeam: i > 0 ? _seams[i - 1] : null,
+          rightSeam: i < n - 1 ? _seams[i] : null,
+        ),
+        child: _MosaicChipCell(
+          tokens: widget.tokens,
+          item: widget.chips[i],
+          onDismiss: widget.onDismiss,
+          onChanged: widget.onChanged,
+        ),
+      ),
+    );
+  }
+}
+
+/// Clips a mosaic cell to its polygon between adjacent seams.
+/// [leftNominal] / [rightNominal] are the nominal seam x in cell-
+/// local coords. Vertices jitter ±[jitter] from those nominals using
+/// the same formula [_ShatteredSeamPainter] uses — pixel-aligned.
+class _MosaicCellClipper extends CustomClipper<Path> {
+  final double leftNominal;
+  final double rightNominal;
+  final double jitter;
+  final _MosaicSeam? leftSeam;
+  final _MosaicSeam? rightSeam;
+
+  _MosaicCellClipper({
+    required this.leftNominal,
+    required this.rightNominal,
+    required this.jitter,
+    required this.leftSeam,
+    required this.rightSeam,
+  });
+
+  @override
+  Path getClip(Size size) {
+    final w = size.width;
+    final h = size.height;
+    final path = Path();
+    // Top-left.
+    path.moveTo(
+      leftSeam != null
+          ? leftNominal + leftSeam!.vertices.first.dx * jitter
+          : 0,
+      0,
+    );
+    // Top-right.
+    path.lineTo(
+      rightSeam != null
+          ? rightNominal + rightSeam!.vertices.first.dx * jitter
+          : w,
+      0,
+    );
+    // Right edge (seam top → bottom, or straight down).
+    if (rightSeam != null) {
+      for (var k = 1; k < rightSeam!.vertices.length; k++) {
+        final v = rightSeam!.vertices[k];
+        path.lineTo(rightNominal + v.dx * jitter, v.dy * h);
+      }
+    } else {
+      path.lineTo(w, h);
+    }
+    // Bottom-left.
+    if (leftSeam != null) {
+      final v = leftSeam!.vertices.last;
+      path.lineTo(leftNominal + v.dx * jitter, h);
+    } else {
+      path.lineTo(0, h);
+    }
+    // Left edge (seam bottom → top, reversed).
+    if (leftSeam != null) {
+      for (var k = leftSeam!.vertices.length - 2; k >= 0; k--) {
+        final v = leftSeam!.vertices[k];
+        path.lineTo(leftNominal + v.dx * jitter, v.dy * h);
+      }
+    }
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(_MosaicCellClipper old) =>
+      old.leftNominal != leftNominal ||
+      old.rightNominal != rightNominal ||
+      old.jitter != jitter ||
+      !identical(old.leftSeam, leftSeam) ||
+      !identical(old.rightSeam, rightSeam);
 }
 
 /// Draws each [_MosaicSeam] as a piecewise-stroked polyline so per-
@@ -838,7 +891,7 @@ class _ShatteredSeamPainter extends CustomPainter {
     // The user-specified ceiling: a vertex can bleed up to 10 % of a
     // cell width into either neighbour. Per-vertex jitter in the
     // [-1..1] dx is multiplied by this to give the actual offset.
-    final jitterCeiling = cellWidth * 0.10;
+    final jitterCeiling = cellWidth * _ChipRailMosaic._kJitterFrac;
     final paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
