@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -22,6 +23,7 @@ import '../ui/animated_icons.dart';
 import '../ui/material_surface.dart';
 import '../ui/motion.dart';
 import '../ui/tokens.dart';
+import 'window_activity.dart';
 import 'external_tools_state.dart';
 import 'hyper_reactivity.dart';
 import 'repository_state.dart';
@@ -673,10 +675,27 @@ class _ProjectItem extends StatefulWidget {
   State<_ProjectItem> createState() => _ProjectItemState();
 }
 
-class _ProjectItemState extends State<_ProjectItem> {
+class _ProjectItemState extends State<_ProjectItem>
+    with WindowAwakeMixin<_ProjectItem> {
   bool _hovered = false;
   bool _pressed = false;
   bool _affordanceHovered = false;
+
+  /// The badge's slide-into-place animation depends on the engine
+  /// scheduling continuous frames. When the window is unfocused the
+  /// platform throttles frame production, so [AnimatedPositioned]
+  /// kicks off its tween but never gets a second tick to advance —
+  /// the badge stays at its starting `right: 0` while the hover-
+  /// reveal "Open in Explorer" icon renders inline at that same
+  /// edge, and the two visually overlap. We rebuild on awake-state
+  /// changes so the build below can pick the right widget shape:
+  /// [AnimatedPositioned] when awake (smooth slide), plain
+  /// [Positioned] when not (instant snap, no intermediate frames
+  /// required to land at the target).
+  @override
+  void onWindowAwakeChanged() {
+    if (mounted) setState(() {});
+  }
   // Cached web URL info for this project's `origin` remote, or null
   // when the repo has no remote / no derivable web URL. Resolved
   // asynchronously on mount.
@@ -1092,16 +1111,27 @@ class _ProjectItemState extends State<_ProjectItem> {
                   // badge by that distance keeps the two icons in the
                   // same right-aligned column when both are visible
                   // and slides the badge back to the edge when the
-                  // folder hides. AnimatedPositioned syncs the slide
-                  // with the folder's reveal so the transition reads
-                  // as one motion, not two.
-                  AnimatedPositioned(
-                    duration: AppMotion.snap,
-                    curve: AppMotion.snapCurve,
-                    top: -3,
-                    right: _hovered ? 22 : 0,
-                    child: _ProjectAiStatusOverlay(repoPath: widget.path),
-                  ),
+                  // folder hides. When the window is awake we use
+                  // [AnimatedPositioned] so the slide reads as one
+                  // motion with the folder reveal; when unfocused the
+                  // engine throttles frames and the tween would stick
+                  // at its starting position, so we fall back to a
+                  // plain [Positioned] that lays out at the target
+                  // value without needing intermediate frames.
+                  if (WindowActivity.instance.awake)
+                    AnimatedPositioned(
+                      duration: AppMotion.snap,
+                      curve: AppMotion.snapCurve,
+                      top: -3,
+                      right: _hovered ? 22 : 0,
+                      child: _ProjectAiStatusOverlay(repoPath: widget.path),
+                    )
+                  else
+                    Positioned(
+                      top: -3,
+                      right: _hovered ? 22 : 0,
+                      child: _ProjectAiStatusOverlay(repoPath: widget.path),
+                    ),
                 ],
               ),
             ),
@@ -1118,13 +1148,14 @@ class _ProjectItemState extends State<_ProjectItem> {
 /// empty widget when there's nothing to surface so the pill stays
 /// visually clean for repos with no in-flight or unread runs.
 ///
-/// Visual treatment intentionally mirrors the open-in-explorer
-/// affordance — same 14px icon size, same muted-ish colour story,
-/// same placement language — but the alpha is lowered so the badge
-/// reads as ambient signal rather than a primary action. The user
-/// is meant to glance at it, not click it: the affordance is
-/// non-interactive for now (clicking the row still routes to the
-/// repo, where the result is reviewable in-place).
+/// Each badge is clickable: tapping switches the active repo to
+/// [repoPath] and queues a `requestDrawerOpen` on AiActivityState
+/// for the kind. The changes page reads that queue at build time
+/// and opens the matching drawer (also firing markSeen so the
+/// badge clears). Generate badges are clickable but don't open a
+/// drawer — generate has no drawer; the click just routes the
+/// user to the repo so they can re-engage with the message-apply
+/// flow, and markSeen quiets the pill.
 class _ProjectAiStatusOverlay extends StatelessWidget {
   final String repoPath;
 
@@ -1147,18 +1178,54 @@ class _ProjectAiStatusOverlay extends StatelessWidget {
         for (final r in records)
           Padding(
             padding: const EdgeInsets.only(left: 3),
-            child: _AiKindBadge(record: r, tokens: t),
+            child: _AiKindBadge(
+              record: r,
+              tokens: t,
+              onTap: () => _activate(context, r),
+            ),
           ),
       ],
     );
+  }
+
+  void _activate(BuildContext context, AiActivityRecord record) {
+    final repoState = context.read<RepositoryState>();
+    final activity = context.read<AiActivityState>();
+    // Queue the drawer-open intent BEFORE the repo switch — the
+    // changes page rebuilds when the active path lands and drains
+    // the queue on its next build for `repoPath`. Registering after
+    // the switch would race the rebuild on a same-repo click.
+    if (record.kind == AiActivityKind.generate) {
+      // Generate has no drawer — the click just brings the user to
+      // the originating repo. Mark seen so the badge clears; the
+      // user will see the toolbar's "unread" half-lit state if the
+      // result is still pending application.
+      activity.markSeen(repoPath: repoPath, kind: record.kind);
+    } else {
+      activity.requestDrawerOpen(repoPath, record.kind);
+    }
+    if (repoState.activePath != repoPath) {
+      // Async, but we don't await it — the user wants the click to
+      // feel instant and the changes page reads its own active path
+      // each build. Errors (rare; only fire on a missing repo) are
+      // logged via RepositoryState's existing surfacing.
+      unawaited(repoState.setActivePath(repoPath));
+    }
   }
 }
 
 class _AiKindBadge extends StatelessWidget {
   final AiActivityRecord record;
   final AppTokens tokens;
+  /// Optional click handler. When non-null the badge becomes
+  /// interactive (cursor + tap region). Null = pure indicator.
+  final VoidCallback? onTap;
 
-  const _AiKindBadge({required this.record, required this.tokens});
+  const _AiKindBadge({
+    required this.record,
+    required this.tokens,
+    this.onTap,
+  });
 
   /// Maps a record's status onto the toolbar icons' shared
   /// [IconAnimState] vocabulary. Same loading spin / success flash /
@@ -1223,7 +1290,7 @@ class _AiKindBadge extends StatelessWidget {
           verdict: verdict,
         );
       case AiActivityKind.muse:
-        return Icon(Icons.bubble_chart_outlined, size: size, color: color);
+        return AnimatedBubbleIcon(state: state, color: color, size: size);
       case AiActivityKind.ask:
         return Icon(Icons.diamond_outlined, size: size, color: color);
     }
@@ -1231,14 +1298,24 @@ class _AiKindBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final inner = SizedBox(
+      width: 14,
+      height: 14,
+      child: Center(child: _iconForState(13)),
+    );
     return Tooltip(
       message: _tooltipMessage,
       waitDuration: const Duration(milliseconds: 400),
-      child: SizedBox(
-        width: 14,
-        height: 14,
-        child: Center(child: _iconForState(13)),
-      ),
+      child: onTap == null
+          ? inner
+          : MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onTap,
+                child: inner,
+              ),
+            ),
     );
   }
 }

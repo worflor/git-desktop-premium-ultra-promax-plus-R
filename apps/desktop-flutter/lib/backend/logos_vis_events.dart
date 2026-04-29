@@ -267,12 +267,31 @@ class LogosVisBus {
   /// tagged with this id and ignore events from older sessions.
   /// Returns whatever [body] returned. If [body] throws the zone is
   /// closed normally.
+  ///
+  /// On exit, clears [_sessionLog] iff this session was the latest
+  /// one to emit. Without that clear, a canvas mounting between runs
+  /// (typical user flow: run completes, user clicks again) would
+  /// snapshot the stale log at [subscribe] time and replay the
+  /// previous run's events as if they were current — the canvas
+  /// animates through the old session, then the new session's first
+  /// live event triggers its [_sessionId] reset and the animation
+  /// plays a second time. The latest-session check protects the
+  /// overlapping-runs case (review + muse fire concurrently): only
+  /// the most-recent emitter's exit is allowed to clear; an
+  /// already-superseded session leaving has no log to clear.
   Future<T> runInSession<T>(Future<T> Function(int sessionId) body) async {
     final sessionId = _nextSessionId++;
-    return runZoned(
-      () => body(sessionId),
-      zoneValues: {_zoneSessionKey: sessionId},
-    );
+    try {
+      return await runZoned(
+        () => body(sessionId),
+        zoneValues: {_zoneSessionKey: sessionId},
+      );
+    } finally {
+      if (_sessionLogId == sessionId) {
+        _sessionLog.clear();
+        _sessionLogId = null;
+      }
+    }
   }
 
   /// The active session id, or null if the caller isn't inside a

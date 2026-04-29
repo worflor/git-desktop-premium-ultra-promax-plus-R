@@ -302,15 +302,28 @@ class _ChangesPageState extends State<ChangesPage> {
   bool _commitAiLoading = false;
   String? _commitAiError;
   List<AiModelCategoryData> _commitAiCategories = const [];
-  bool _reviewActive = false;
+  // Single source of UI intent for "which AI drawer is currently
+  // showing." Replaces the prior triple of `_reviewActive`,
+  // `_museActive`, `_shapeActive` — those let the page reach states
+  // where two drawers were "active" simultaneously even though the
+  // panel render only ever shows one (mutually exclusive `if/else if`
+  // chain), and made cross-drawer navigation a state-mismatch trap
+  // rather than a clean swap. Now: one field, one render branch, one
+  // mutator path. Null = no drawer (the diff view shows). Generate
+  // never opens a drawer — its result lands in the composer — so this
+  // field is only ever `null`, `review`, `muse`, or `ask`.
+  AiActivityKind? _openDrawer;
   bool _reviewTraceExpanded = false;
   bool _reviewReasoningExpanded = false;
-  bool _museActive = false;
-  // Transient flash flag for "the generate just succeeded." Cleared by
-  // a 1.5s timer in [_generateCommitMessage] so the affordance bumps
-  // green for a beat then settles. The success state of review/muse
-  // is derived from their record's terminal status instead.
+  // Transient flash flags for "the X just succeeded." Cleared by a
+  // 1.5s timer in the respective complete branches so the affordance
+  // bumps green for a beat then settles. After the flash, the button
+  // falls back to the "unread terminal" half-lit visual until the
+  // user opens the drawer (which fires markSeen and quiets the
+  // button).
   bool _generateFlash = false;
+  bool _reviewFlash = false;
+  bool _museFlash = false;
   // Monotonic counter for commit-message generation requests, keyed
   // by repoPath so that a generate kicked off on repo B doesn't bump
   // the guard for an in-flight generate on repo A — that misfire used
@@ -351,13 +364,8 @@ class _ChangesPageState extends State<ChangesPage> {
   /// toolbar button toggles this.
   bool _shapeMode = false;
 
-  /// When true, the right-hand panel is taken over by `_ShapeAskPane`
-  /// to display the ask result (loading / answer / error). Set by the
-  /// ask submit, cleared by the pane's back chip. Independent from
-  /// [_shapeMode] — you can be in ask-composer mode without an active
-  /// result, and you can view a prior result while the composer is
-  /// back in commit mode.
-  bool _shapeActive = false;
+  // (formerly `_shapeActive`; now folded into [_openDrawer] above —
+  // ask drawer visibility is `_openDrawer == AiActivityKind.ask`.)
   final TextEditingController _shapeCtrl = TextEditingController();
   final FocusNode _shapeFocus = FocusNode();
   int _shapeCategoryIndex = 0;
@@ -548,8 +556,9 @@ class _ChangesPageState extends State<ChangesPage> {
   bool get _museRunning => _museRecord?.isRunning ?? false;
   bool get _shaping => _askRecord?.isRunning ?? false;
 
-  bool get _reviewSuccess => _reviewRecord?.isDone ?? false;
-  bool get _museSuccess => _museRecord?.isDone ?? false;
+  // (formerly `_reviewSuccess` / `_museSuccess` — replaced by the
+  // transient `_reviewFlash` / `_museFlash` for celebration and
+  // `_isUnreadFor(kind)` for the persistent half-lit visual.)
 
   String? get _reviewScopeKey => _reviewRecord?.scopeKey;
   String? get _museScopeKey => _museRecord?.scopeKey;
@@ -572,6 +581,80 @@ class _ChangesPageState extends State<ChangesPage> {
       _reviewRecord?.isError == true ? _reviewRecord!.error : null;
   String? get _museError =>
       _museRecord?.isError == true ? _museRecord!.error : null;
+
+  // ── Drawer accessors ──────────────────────────────────────────────
+  bool get _isReviewDrawerOpen => _openDrawer == AiActivityKind.review;
+  bool get _isMuseDrawerOpen => _openDrawer == AiActivityKind.muse;
+  bool get _isAskDrawerOpen => _openDrawer == AiActivityKind.ask;
+
+  /// True when the (repo, kind) record is terminal and the user
+  /// hasn't acknowledged it yet — the trigger for the toolbar's
+  /// "half-lit / unread" visual. Drawer-open implicitly counts as
+  /// "viewing" so the half-lit state doesn't render against the
+  /// drawer the user is staring at right now.
+  bool _isUnreadFor(AiActivityKind kind) {
+    final record = _activityRecord(kind);
+    if (record == null || !record.isTerminal || record.seen) return false;
+    return _openDrawer != kind;
+  }
+
+  /// Open one of the AI drawers. Generate is intentionally rejected —
+  /// it never had a drawer and never will. Calling this also flips
+  /// the unread flag on the record (the act of opening IS the user's
+  /// "I've seen this" signal), so the sidebar pill quiets and the
+  /// toolbar drops out of the half-lit state on the next build.
+  void _openDrawerFor(AiActivityKind kind) {
+    assert(kind != AiActivityKind.generate,
+        'generate has no drawer — its result lands in the composer.');
+    final site = _activitySite();
+    if (site != null && _activityRecord(kind) != null) {
+      site.state.markSeen(repoPath: site.repoPath, kind: kind);
+    }
+    setState(() => _openDrawer = kind);
+  }
+
+  /// Close whichever drawer is currently open. No-op when nothing's
+  /// open. The complementary [_openDrawerFor] handles the open path;
+  /// keeping the open/close symmetric here keeps the file-toggle
+  /// callers from needing to know which drawer is visible right now.
+  void _closeDrawer() {
+    if (_openDrawer == null) return;
+    setState(() => _openDrawer = null);
+  }
+
+  /// Close the drawer + reset review-pane-internal expander state.
+  /// Used by the review pane's `onBack` / `onRerun` so a re-open
+  /// starts with collapsed traces, and by the repo / branch switch
+  /// reset so a fresh context lands clean.
+  void _closeAndResetReviewDrawer() {
+    setState(() {
+      if (_openDrawer == AiActivityKind.review) _openDrawer = null;
+      _reviewTraceExpanded = false;
+      _reviewReasoningExpanded = false;
+    });
+  }
+
+  /// Per-kind clear timers for the celebratory flash bools. Stored
+  /// here (vs the original fire-and-forget `Future.delayed`) so we
+  /// can cancel on dispose (no closure-retained State after unmount)
+  /// and on rapid re-schedule (a second completion within the 1.5 s
+  /// window cancels the first timer instead of stacking — the
+  /// last-scheduled clear wins, which lines up with the user's
+  /// mental model of "the latest run is what's flashing").
+  final Map<AiActivityKind, Timer> _flashClearTimers = {};
+
+  /// Schedule a 1.5 s clear of the given flash bool. Used by the
+  /// generate / review / muse complete paths so the toolbar button
+  /// celebrates briefly, then settles into either "unread" (if the
+  /// drawer wasn't open when it landed) or quiet success (if it was).
+  void _scheduleFlashClear(AiActivityKind kind, void Function() clear) {
+    _flashClearTimers.remove(kind)?.cancel();
+    _flashClearTimers[kind] =
+        Timer(const Duration(milliseconds: 1500), () {
+      _flashClearTimers.remove(kind);
+      if (mounted) setState(clear);
+    });
+  }
   String? get _askError =>
       _askRecord?.isError == true ? _askRecord!.error : null;
 
@@ -944,7 +1027,23 @@ class _ChangesPageState extends State<ChangesPage> {
     _multiDiffJumpLineIndex = null;
     _actionError = null;
     _actionMessage = null;
-    _clearReviewState();
+    // Repo / context switch — drawers from the previous context no
+    // longer match the user's mental scope. Close everything; the
+    // records persist in AiActivityState so a re-visit still finds
+    // its content.
+    _openDrawer = null;
+    _reviewTraceExpanded = false;
+    _reviewReasoningExpanded = false;
+    // Drop any in-flight flash. The flash bools are page-local and
+    // not keyed to a repo path; without this reset, a completion that
+    // landed on the previous repo within the 1.5 s decay window would
+    // bleed onto the new repo's toolbar as a phantom celebratory
+    // flash. The pending Future.delayed clears are idempotent (just
+    // set the bool false again later), so leaving them in flight is
+    // safe.
+    _generateFlash = false;
+    _reviewFlash = false;
+    _museFlash = false;
   }
 
   Future<void> _loadSelectionStateForRepo(String repoPath) async {
@@ -1605,6 +1704,15 @@ class _ChangesPageState extends State<ChangesPage> {
   @override
   void dispose() {
     _commitDraftSaveDebounce?.cancel();
+    // Cancel any in-flight flash-clear timers. Each timer's callback
+    // captures `this`, so leaving them uncancelled would keep the
+    // State alive for up to 1.5 s after unmount. The mounted guard
+    // inside the callback would prevent any setState fault, but the
+    // retention itself is the avoidable cost.
+    for (final t in _flashClearTimers.values) {
+      t.cancel();
+    }
+    _flashClearTimers.clear();
     _flushSelectionPersistenceBestEffort();
     // Flush on dispose so closing the app doesn't lose the draft.
     final repo = _lastDraftRepoPath;
@@ -1636,7 +1744,7 @@ class _ChangesPageState extends State<ChangesPage> {
           .toList(growable: false);
 
   /// Fire the ask and lift the result into the side panel. The
-  /// takeover happens synchronously (`_shapeActive = true`) before
+  /// takeover happens synchronously (drawer flipped to ask) before
   /// `_runShape` awaits anything, so the user sees a loading pane
   /// instead of a silent pause while the model is contacted.
   void _askInPanel(
@@ -1645,7 +1753,7 @@ class _ChangesPageState extends State<ChangesPage> {
     String sentence,
     String categoryId,
   ) {
-    setState(() => _shapeActive = true);
+    setState(() => _openDrawer = AiActivityKind.ask);
     unawaited(_runShape(repoPath, status, sentence, categoryId));
   }
 
@@ -1656,7 +1764,9 @@ class _ChangesPageState extends State<ChangesPage> {
   void _toggleShapeMode() {
     setState(() {
       _shapeMode = !_shapeMode;
-      if (!_shapeMode) _shapeActive = false;
+      if (!_shapeMode && _openDrawer == AiActivityKind.ask) {
+        _openDrawer = null;
+      }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -1723,12 +1833,19 @@ class _ChangesPageState extends State<ChangesPage> {
       _seenByContextKey[nextKey] = {for (final f in status.files) f.path};
     }
     _trackFirstSeenFingerprints(status);
-    // AI review state is scoped to a specific (branch, diff) pair. It
-    // could in principle be cached per context too, but reviews are
-    // expensive state (full LLM output) and can grow stale if the diff
-    // changes while we were on another desk. Drop it — the user can
-    // re-run review if they return and want fresh analysis.
-    _clearReviewState();
+    // Branch / commit-context switch — close any drawers from the
+    // prior context. Records persist in AiActivityState so a same-
+    // scope visit later still finds the result; surface UI state
+    // (which drawer's open, expander state, transient flash) is
+    // per-context and resets here. Flash reset matches the repo-
+    // switch handler — see _resetSelectionScopeState for the bleed
+    // rationale.
+    _openDrawer = null;
+    _reviewTraceExpanded = false;
+    _reviewReasoningExpanded = false;
+    _generateFlash = false;
+    _reviewFlash = false;
+    _museFlash = false;
   }
 
   /// Sentinel fingerprint returned when the file's diff magnitude
@@ -1826,21 +1943,10 @@ class _ChangesPageState extends State<ChangesPage> {
     _seenByContextKey[key] = current;
   }
 
-  /// Closes the review/muse drawers and resets per-render UI state on
-  /// the page. Records in [AiActivityState] are NOT touched — they're
-  /// per-repo and per-scope and outlive these surface-level resets.
-  /// If the user wants to forget a record entirely they can dismiss
-  /// it via the sidebar pill or by starting a fresh run on the same
-  /// slot (which replaces the record).
-  void _clearReviewState() {
-    _reviewActive = false;
-    _reviewTraceExpanded = false;
-    _reviewReasoningExpanded = false;
-    _museActive = false;
-  }
-
   void _hideReviewPane() {
-    _reviewActive = false;
+    if (_openDrawer == AiActivityKind.review) {
+      setState(() => _openDrawer = null);
+    }
   }
 
   /// User-driven cancel of the active review run on this repo. Drops
@@ -1850,11 +1956,7 @@ class _ChangesPageState extends State<ChangesPage> {
     if (site != null) {
       site.state.clear(repoPath: site.repoPath, kind: AiActivityKind.review);
     }
-    setState(() {
-      _reviewActive = false;
-      _reviewTraceExpanded = false;
-      _reviewReasoningExpanded = false;
-    });
+    _closeAndResetReviewDrawer();
   }
 
   int _includedDirtyCount(RepositoryStatus status) {
@@ -2521,8 +2623,13 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   void _toggleIncluded(String path, bool include) {
+    // File-toggle no longer force-closes the drawer. The record's
+    // scopeKey check elsewhere already gates whether to surface
+    // existing results; if the user wants to re-run on the new
+    // selection they can hit the toolbar button. Closing wholesale
+    // here was the cause of "I had a result open, toggled one file,
+    // it disappeared" — surprising and unwanted.
     setState(() {
-      _clearReviewState();
       if (include) {
         _includedPaths.add(path);
       } else {
@@ -2542,7 +2649,6 @@ class _ChangesPageState extends State<ChangesPage> {
     if (list.isEmpty) return;
     final target = include ?? !list.every(_includedPaths.contains);
     setState(() {
-      _clearReviewState();
       if (target) {
         _includedPaths.addAll(list);
       } else {
@@ -3275,7 +3381,6 @@ class _ChangesPageState extends State<ChangesPage> {
 
   void _includeAll(RepositoryStatus status) {
     setState(() {
-      _clearReviewState();
       _includedPaths
         ..clear()
         ..addAll(status.files.map((file) => file.path));
@@ -3290,7 +3395,6 @@ class _ChangesPageState extends State<ChangesPage> {
         .map((file) => file.path)
         .toSet();
     setState(() {
-      _clearReviewState();
       _includedPaths
         ..clear()
         ..addAll(staged);
@@ -3356,8 +3460,9 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   String _museTooltip(AiSettingsState aiSettings, int includedCount) {
-    if (_museRunning)
-      return _museActive ? 'consulting the muse...' : 'show muse';
+    if (_museRunning) {
+      return _isMuseDrawerOpen ? 'consulting the muse...' : 'show muse';
+    }
     if (includedCount == 0) return 'select at least one file for the muse.';
     if (_museResult != null) return 'show muse';
     if (_museError != null) return 'show muse error';
@@ -3397,7 +3502,7 @@ class _ChangesPageState extends State<ChangesPage> {
         .toLowerCase();
     final guardrail = _guardrailLabelForStage(guardrailStage).toLowerCase();
     if (_reviewRunning) {
-      return _reviewActive ? 'reviewing...' : 'show review';
+      return _isReviewDrawerOpen ? 'reviewing...' : 'show review';
     }
     if (_commitAiLoading) {
       return 'preparing commit review...';
@@ -3409,7 +3514,7 @@ class _ChangesPageState extends State<ChangesPage> {
       return _commitAiError ?? 'configure review AI in settings.';
     }
     if (hasPersistentReview) {
-      if (_reviewActive) {
+      if (_isReviewDrawerOpen) {
         final verdict = _reviewResult?.verdict;
         return verdict != null ? verdict.toLowerCase() : 'viewing review';
       }
@@ -3424,6 +3529,20 @@ class _ChangesPageState extends State<ChangesPage> {
       return false;
     }
     return _reviewRunning || _reviewResult != null || _reviewError != null;
+  }
+
+  /// Mirror of [_hasReviewStateForCurrentSelection] for muse — same
+  /// scope-key shape (both flows scope-key off the included file
+  /// set), different record. Lets the muse toolbar button stay
+  /// clickable when there's an existing same-scope result waiting
+  /// to be re-shown, even before the LogosGit engine has resolved
+  /// (re-show doesn't need the engine; only a fresh run does).
+  bool _hasMuseStateForCurrentSelection() {
+    final scopeKey = _currentReviewScopeKey();
+    if (scopeKey == null || _museScopeKey != scopeKey) {
+      return false;
+    }
+    return _museRunning || _museResult != null || _museError != null;
   }
 
   String? _currentReviewScopeKey() {
@@ -3442,19 +3561,32 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   void _showExistingReview() {
-    if (!_hasReviewStateForCurrentSelection()) {
-      return;
-    }
-    final site = _activitySite();
-    if (site != null) {
-      // Opening the drawer is the "user has read this" signal — drop
-      // the unread flag so the sidebar pill clears.
-      site.state
-          .markSeen(repoPath: site.repoPath, kind: AiActivityKind.review);
-    }
-    setState(() {
-      _reviewActive = true;
-    });
+    if (!_hasReviewStateForCurrentSelection()) return;
+    _openDrawerFor(AiActivityKind.review);
+  }
+
+  /// True when the review record exists but its scopeKey doesn't
+  /// match the current file selection — i.e. the user toggled files
+  /// in/out after the review landed. The drawer keeps showing the
+  /// (older-scope) result; a banner inside the drawer surfaces the
+  /// mismatch and offers a one-click rerun.
+  bool _isReviewScopeStale() {
+    final record = _reviewRecord;
+    if (record == null || !record.isTerminal) return false;
+    final current = _currentReviewScopeKey();
+    if (current == null) return false;
+    return record.scopeKey != current;
+  }
+
+  /// Mirror of [_isReviewScopeStale] for the muse drawer. Same
+  /// scope-key construction since both flows feed off the same
+  /// `_buildMultiDiffScopeKey` of the included file set.
+  bool _isMuseScopeStale() {
+    final record = _museRecord;
+    if (record == null || !record.isTerminal) return false;
+    final current = _currentReviewScopeKey();
+    if (current == null) return false;
+    return record.scopeKey != current;
   }
 
   String _reviewModelLabel(AiSettingsState aiSettings) {
@@ -4271,10 +4403,10 @@ class _ChangesPageState extends State<ChangesPage> {
           _actionMessage = null;
           _generateFlash = true;
         });
-        // Auto-clear success-flash after a beat so the icon resets.
-        Future.delayed(const Duration(milliseconds: 1500), () {
-          if (mounted) setState(() => _generateFlash = false);
-        });
+        // Auto-clear success-flash after a beat — same 1.5 s rhythm
+        // review/muse use, single helper so the timing stays in sync.
+        _scheduleFlashClear(
+            AiActivityKind.generate, () => _generateFlash = false);
       }
     } else {
       activity.fail(
@@ -4315,11 +4447,9 @@ class _ChangesPageState extends State<ChangesPage> {
             existingReview.isDone ||
             existingReview.isError)) {
       // Same scope, same record — re-show the drawer rather than
-      // re-running. Mark seen so the sidebar pill clears.
-      activity.markSeen(repoPath: repoPath, kind: AiActivityKind.review);
-      setState(() {
-        _reviewActive = true;
-      });
+      // re-running. Centralised through `_openDrawerFor` so the
+      // markSeen + open-drawer pair fire together.
+      _openDrawerFor(AiActivityKind.review);
       return;
     }
 
@@ -4329,7 +4459,7 @@ class _ChangesPageState extends State<ChangesPage> {
       scopeKey: scopeKey,
     );
     setState(() {
-      _reviewActive = true;
+      _openDrawer = AiActivityKind.review;
       _reviewTraceExpanded = false;
       _reviewReasoningExpanded = false;
       _actionError = null;
@@ -4424,10 +4554,41 @@ class _ChangesPageState extends State<ChangesPage> {
       // the empty-findings shape; safe to set when our scope still
       // matches what landed.
       if (_reviewScopeKey == scopeKey) {
-        setState(() {
-          _reviewActive = true;
-          _reviewReasoningExpanded = result.data!.findings.isEmpty;
-        });
+        // Branch on what drawer the user is currently watching:
+        //   * review's drawer is open (or no drawer is open) → land
+        //     the result on screen, fire markSeen, fire the flash.
+        //     The user is staring at the spinner / blank pane and
+        //     gets the immediate result they triggered.
+        //   * a *different* drawer is open (e.g. user kicked off a
+        //     review then switched to muse mid-run) → leave the
+        //     drawer alone. DON'T markSeen and DON'T force-open
+        //     review; the toolbar button half-lights with the
+        //     unread state instead, signalling "click to see the
+        //     result that just landed" without yanking the user
+        //     out of what they're reading.
+        final isWatching = _openDrawer == null ||
+            _openDrawer == AiActivityKind.review;
+        if (isWatching) {
+          setState(() {
+            _openDrawer = AiActivityKind.review;
+            _reviewReasoningExpanded = result.data!.findings.isEmpty;
+            _reviewFlash = true;
+          });
+          _scheduleFlashClear(
+              AiActivityKind.review, () => _reviewFlash = false);
+          activity.markSeen(
+              repoPath: repoPath, kind: AiActivityKind.review);
+        } else {
+          // Quiet completion. Flash still fires so the toolbar
+          // button celebrates briefly, then settles into half-lit
+          // unread until the user navigates over.
+          setState(() {
+            _reviewReasoningExpanded = result.data!.findings.isEmpty;
+            _reviewFlash = true;
+          });
+          _scheduleFlashClear(
+              AiActivityKind.review, () => _reviewFlash = false);
+        }
       }
     } else {
       activity.fail(
@@ -4437,7 +4598,15 @@ class _ChangesPageState extends State<ChangesPage> {
         error: result.error ?? 'Review failed.',
       );
       if (_reviewScopeKey == scopeKey) {
-        setState(() => _reviewActive = true);
+        final isWatching = _openDrawer == null ||
+            _openDrawer == AiActivityKind.review;
+        if (isWatching) {
+          setState(() => _openDrawer = AiActivityKind.review);
+          activity.markSeen(
+              repoPath: repoPath, kind: AiActivityKind.review);
+        }
+        // Else: leave the drawer alone; toolbar's error-tinted
+        // unread state surfaces the failure without preempting.
       }
     }
   }
@@ -4467,8 +4636,7 @@ class _ChangesPageState extends State<ChangesPage> {
         (existingMuse.isRunning ||
             existingMuse.isDone ||
             existingMuse.isError)) {
-      activity.markSeen(repoPath: repoPath, kind: AiActivityKind.muse);
-      setState(() => _museActive = true);
+      _openDrawerFor(AiActivityKind.muse);
       return;
     }
 
@@ -4478,7 +4646,7 @@ class _ChangesPageState extends State<ChangesPage> {
       scopeKey: scopeKey,
     );
     setState(() {
-      _museActive = true;
+      _openDrawer = AiActivityKind.muse;
       _actionError = null;
       _actionMessage = null;
     });
@@ -4573,7 +4741,8 @@ class _ChangesPageState extends State<ChangesPage> {
       couplingMatrix: museCouplingMatrix,
     );
     if (!mounted) return;
-    if (result.ok) {
+    final landed = result.ok;
+    if (landed) {
       activity.complete(
         repoPath: repoPath,
         kind: AiActivityKind.muse,
@@ -4592,7 +4761,24 @@ class _ChangesPageState extends State<ChangesPage> {
     // `_museRecord?.scopeKey`, so the prior `A || A`-style disjunction
     // collapses to one comparison.
     if (_museScopeKey == scopeKey) {
-      setState(() => _museActive = true);
+      // Same branch logic as the review path: only land the result
+      // on screen + markSeen when the user is actually watching
+      // (muse drawer open or no drawer open). If the user kicked
+      // off muse and switched to review's drawer mid-run, leave
+      // the drawer alone — the toolbar's half-lit unread state
+      // surfaces the completion without yanking the view.
+      final isWatching = _openDrawer == null ||
+          _openDrawer == AiActivityKind.muse;
+      setState(() {
+        if (isWatching) _openDrawer = AiActivityKind.muse;
+        if (landed) _museFlash = true;
+      });
+      if (landed) {
+        _scheduleFlashClear(AiActivityKind.muse, () => _museFlash = false);
+      }
+      if (isWatching) {
+        activity.markSeen(repoPath: repoPath, kind: AiActivityKind.muse);
+      }
     }
   }
 
@@ -5086,6 +5272,31 @@ class _ChangesPageState extends State<ChangesPage> {
       context.select<AiActivityState, List<AiActivityRecord>>(
         (s) => s.activeFor(repoPath),
       );
+      // Cross-widget drawer-open intent. The sidebar AI badge writes
+      // a pending kind via `AiActivityState.requestDrawerOpen`. We
+      // drain it on the build that runs once the request lands. The
+      // selector below is what triggers our rebuild when a pending
+      // entry arrives for the same repo we're already viewing —
+      // without it, the records-only `select` above wouldn't fire
+      // on a `requestDrawerOpen` notify (it doesn't mutate records).
+      final pendingDrawer = context.select<AiActivityState, AiActivityKind?>(
+        (s) => s.peekPendingDrawerOpen(repoPath),
+      );
+      if (pendingDrawer != null && pendingDrawer != AiActivityKind.generate) {
+        // PostFrame: don't setState during build, and re-check that
+        // we're still on this repo + nothing else has consumed the
+        // intent in the meantime (the record check is paranoia —
+        // single consumer in practice).
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (context.read<RepositoryState>().activePath != repoPath) return;
+          final drained = context
+              .read<AiActivityState>()
+              .consumePendingDrawerOpen(repoPath);
+          if (drained == null) return;
+          _openDrawerFor(drained);
+        });
+      }
     }
     final couplingMatrix = repoPath == null
         ? null
@@ -5497,6 +5708,21 @@ class _ChangesPageState extends State<ChangesPage> {
     final hasCommitAiSelection = _hasCommitAiSelection(aiSettings);
     final hasReviewAiSelection = _hasReviewAiSelection(aiSettings);
     final hasPersistentReview = _hasReviewStateForCurrentSelection();
+    // The LogosGit engine for this repo. Every AI flow (generate /
+    // review / muse / ask) feeds the engine's coupling matrix +
+    // semantic priors into its prompt, so a click before the engine
+    // resolves would either crash on a null deref inside the
+    // pipeline or silently produce a degraded result. Gate every AI
+    // button on this AND on `hasCommitAiSelection` (which captures
+    // "AI providers loaded"). Two orthogonal axes, both required.
+    // Re-runs of the existing record (the same-scope path) are
+    // exempt — the result is already on disk and doesn't need the
+    // engine to surface it.
+    final engineReady = repoPath == null
+        ? false
+        : context.select<LogosGitState, bool>(
+            (s) => s.engineFor(repoPath) != null,
+          );
     final canCommit = !_actionRunning &&
         !_generateRunning &&
         !_reviewRunning &&
@@ -5509,24 +5735,33 @@ class _ChangesPageState extends State<ChangesPage> {
     // running so the in-handler "click again to cancel" branch can fire.
     final canGenerate = !_actionRunning &&
         !_commitAiLoading &&
+        engineReady &&
         includedCount > 0 &&
         hasCommitAiSelection;
     // Review can be clicked while running to re-show the spinner view, or
     // when a persistent review exists to re-show the drawer. Disabled only
     // when we're already viewing the running spinner (no-op click) or
-    // there's nothing to show / start.
+    // there's nothing to show / start. The engine-ready gate is
+    // skipped on the "show existing" path — a persisted review is
+    // independent of the live engine.
     final canReview = !_actionRunning &&
         !_commitAiLoading &&
-        !(_reviewRunning && _reviewActive) &&
+        !(_reviewRunning && _isReviewDrawerOpen) &&
         includedCount > 0 &&
-        (_reviewRunning || hasReviewAiSelection || hasPersistentReview);
-    // Muse mirrors review: clickable while running to surface the drawer,
-    // disabled only when we're already viewing it.
+        (hasPersistentReview ||
+            _reviewRunning ||
+            (engineReady && hasReviewAiSelection));
+    // Muse mirrors review: clickable while running to surface the
+    // drawer, clickable when there's an existing same-scope record to
+    // re-show, and otherwise gated on engine-ready + AI selection.
+    final hasPersistentMuse = _hasMuseStateForCurrentSelection();
     final canMuse = !_actionRunning &&
         !_commitAiLoading &&
-        !(_museRunning && _museActive) &&
+        !(_museRunning && _isMuseDrawerOpen) &&
         includedCount > 0 &&
-        hasCommitAiSelection;
+        (hasPersistentMuse ||
+            _museRunning ||
+            (engineReady && hasCommitAiSelection));
 
     return DragTarget<DeskDropPayload>(
       onWillAcceptWithDetails: (d) =>
@@ -5663,8 +5898,13 @@ class _ChangesPageState extends State<ChangesPage> {
                                         onToggleIncluded: (path, value) =>
                                             _toggleIncluded(path, value),
                                         onCarve: (paths) {
+                                          // Carve / untie reshape the
+                                          // selection but don't close
+                                          // open drawers — the user
+                                          // can re-run from the
+                                          // toolbar if they want
+                                          // results for the new set.
                                           setState(() {
-                                            _clearReviewState();
                                             _includedPaths
                                               ..clear()
                                               ..addAll(paths);
@@ -5674,7 +5914,6 @@ class _ChangesPageState extends State<ChangesPage> {
                                         },
                                         onUntieCluster: (paths) {
                                           setState(() {
-                                            _clearReviewState();
                                             _includedPaths.removeAll(paths);
                                             _actionError = null;
                                             _actionMessage = null;
@@ -6041,16 +6280,15 @@ class _ChangesPageState extends State<ChangesPage> {
                                 return KeyEventResult.handled;
                               },
                               child: Builder(builder: (context) {
-                                // Subscribe to engine-ready for this repo
-                                // specifically — when logos finishes
-                                // loading the Builder rebuilds and the
-                                // scheduler re-fires with an updated
-                                // signature, which is how the first dream
-                                // after a cold start actually lands.
-                                final engineReady = context.select<
-                                    LogosGitState, bool>(
-                                  (s) => s.engineFor(repoPath) != null,
-                                );
+                                // Reuse the outer-scope `engineReady`
+                                // (computed once per page build above
+                                // via context.select). It already
+                                // triggers the rebuild on engine-ready
+                                // flip, so re-subscribing here would
+                                // duplicate the listener for no extra
+                                // signal — the first-dream-after-cold-
+                                // start landing is preserved by the
+                                // outer subscription.
                                 if (!_shapeMode &&
                                     _commitMsgCtrl.text.trim().isEmpty &&
                                     status.files.isNotEmpty) {
@@ -6104,12 +6342,27 @@ class _ChangesPageState extends State<ChangesPage> {
                                 },
                                 aiEnabled: canGenerate,
                                 aiLoading: _generateRunning || _commitAiLoading,
+                                // success = transient celebration flash;
+                                // unread = persistent half-lit while a
+                                // terminal record waits with no drawer
+                                // open. Generate has no drawer, so
+                                // "unread" here is just "result waiting
+                                // to be applied by a re-click" — the
+                                // generate complete branch already
+                                // applies the message synchronously
+                                // when the user is on the originating
+                                // repo, so unread fires only for the
+                                // cross-repo "completed elsewhere" case.
                                 aiSuccess: _generateFlash,
+                                aiUnread:
+                                    _isUnreadFor(AiActivityKind.generate),
                                 aiTooltip:
                                     _commitAiTooltip(aiSettings, includedCount),
                                 reviewEnabled: canReview,
                                 reviewLoading: _reviewRunning,
-                                reviewSuccess: _reviewSuccess,
+                                reviewSuccess: _reviewFlash,
+                                reviewUnread:
+                                    _isUnreadFor(AiActivityKind.review),
                                 reviewVerdict: _reviewResult?.verdict,
                                 reviewTooltip: _reviewAiTooltip(aiSettings,
                                     includedCount, preferences.guardrailStage),
@@ -6126,29 +6379,42 @@ class _ChangesPageState extends State<ChangesPage> {
                                 },
                                 museEnabled: canMuse,
                                 museLoading: _museRunning,
-                                museSuccess: _museSuccess,
+                                museSuccess: _museFlash,
+                                museUnread: _isUnreadFor(AiActivityKind.muse),
                                 museTooltip:
                                     _museTooltip(aiSettings, includedCount),
                                 onMuse: () {
                                   if (_museResult != null ||
                                       _museError != null) {
-                                    setState(() => _museActive = true);
+                                    _openDrawerFor(AiActivityKind.muse);
                                     return;
                                   }
                                   _runMuse(repoPath, status);
                                 },
                                 // ◈ shape: toggles the composer between
                                 // commit and ask modes. Pressing the ask
-                                // submit button lifts the result into the
-                                // side panel (`_shapeActive = true`).
+                                // submit button opens the ask drawer.
+                                // Engine-ready gates this so the user
+                                // can't enter shape mode before the
+                                // LogosGit engine has resolved — ask's
+                                // semantic-search pipeline depends on
+                                // the engine for grounding citations,
+                                // so a click pre-engine would either
+                                // crash on null or produce a degraded
+                                // result without the diff context.
+                                // Already-in-shape-mode is exempt so a
+                                // mid-resolve repo switch doesn't trap
+                                // the user with no exit affordance.
                                 shapeEnabled: status.files.isNotEmpty &&
                                     !_actionRunning &&
-                                    !_shaping,
+                                    !_shaping &&
+                                    (engineReady || _shapeMode),
                                 shapeLoading: _shaping,
                                 shapeTooltip: _shapeMode
                                     ? 'exit · restore your commit draft'
                                     : 'ask the manifold',
-                                onToggleShape: status.files.isEmpty
+                                onToggleShape: (status.files.isEmpty ||
+                                        (!engineReady && !_shapeMode))
                                     ? null
                                     : _toggleShapeMode,
                                 hideAi: preferences.hideAiFeatures,
@@ -6162,7 +6428,16 @@ class _ChangesPageState extends State<ChangesPage> {
                                 categories: _shapeCategories(aiSettings),
                                 categoryIndex: _shapeCategoryIndex,
                                 busy: _shaping,
+                                // Submit gated on engine-ready too —
+                                // even though the user has already
+                                // entered shape mode, kicking off a
+                                // run before the engine resolves would
+                                // produce a citation-less answer
+                                // (degraded). Letting the user wait at
+                                // the disabled submit until the engine
+                                // lands is honest signalling.
                                 enabled: !_actionRunning &&
+                                    engineReady &&
                                     _shapeCtrl.text.trim().isNotEmpty,
                                 onCycle: () {
                                   final cats = _shapeCategories(aiSettings);
@@ -6286,7 +6561,7 @@ class _ChangesPageState extends State<ChangesPage> {
                               _inspectSingleDiff(repoPath, path),
                         );
                       }
-                      if (_shapeActive && !preferences.hideAiFeatures) {
+                      if (_isAskDrawerOpen && !preferences.hideAiFeatures) {
                         return MaterialSurface(
                           tone: AppMaterialTone.surface0,
                           radius: 0,
@@ -6298,8 +6573,7 @@ class _ChangesPageState extends State<ChangesPage> {
                             question: _askQuestion,
                             answer: _askAnswer,
                             error: _askError,
-                            onBack: () =>
-                                setState(() => _shapeActive = false),
+                            onBack: _closeDrawer,
                             onDismissAnswer: () {
                               final site = _activitySite();
                               if (site != null) {
@@ -6316,7 +6590,7 @@ class _ChangesPageState extends State<ChangesPage> {
                           ),
                         );
                       }
-                      if (_museActive && !preferences.hideAiFeatures) {
+                      if (_isMuseDrawerOpen && !preferences.hideAiFeatures) {
                         return MaterialSurface(
                           tone: AppMaterialTone.surface0,
                           radius: 0,
@@ -6327,11 +6601,10 @@ class _ChangesPageState extends State<ChangesPage> {
                             loading: _museRunning,
                             error: _museError,
                             result: _museResult,
+                            staleScope: _isMuseScopeStale(),
                             guardrailLabel: _guardrailLabelForStage(
                                 preferences.guardrailStage),
-                            onBack: () => setState(() {
-                              _museActive = false;
-                            }),
+                            onBack: _closeDrawer,
                             onRerun: () {
                               // Drop the existing record so _runMuse
                               // doesn't see a same-scope match and
@@ -6349,7 +6622,7 @@ class _ChangesPageState extends State<ChangesPage> {
                           ),
                         );
                       }
-                      if (_reviewActive && !preferences.hideAiFeatures) {
+                      if (_isReviewDrawerOpen && !preferences.hideAiFeatures) {
                         final stats =
                             (showMultiDiff ? _multiDiffDocument : _diffDocument)
                                     ?.stats ??
@@ -6373,6 +6646,7 @@ class _ChangesPageState extends State<ChangesPage> {
                             loading: _reviewRunning,
                             error: _reviewError,
                             result: _reviewResult,
+                            staleScope: _isReviewScopeStale(),
                             traceExpanded: _reviewTraceExpanded,
                             reasoningExpanded: _reviewReasoningExpanded,
                             onToggleTrace: () => setState(
@@ -6384,9 +6658,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                   !_reviewReasoningExpanded,
                             ),
                             onCancel: _cancelReviewRequest,
-                            onBack: () => setState(() {
-                              _clearReviewState();
-                            }),
+                            onBack: _closeAndResetReviewDrawer,
                             onRerun: () {
                               // Drop the existing record so _reviewCommit
                               // doesn't see a same-scope match and
@@ -6400,7 +6672,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                     repoPath: repoPath,
                                     kind: AiActivityKind.review,
                                   );
-                              _clearReviewState();
+                              _closeAndResetReviewDrawer();
                               _reviewCommit(repoPath, status);
                             },
                             onCopy: _reviewResult == null
@@ -7061,6 +7333,12 @@ class _MusePane extends StatefulWidget {
   final String guardrailLabel;
   final VoidCallback onBack;
   final VoidCallback onRerun;
+  /// True when the record's scope key no longer matches the current
+  /// file selection (the user toggled files in/out after the run).
+  /// The pane shows a thin banner at the top with a "rerun" link;
+  /// the result body still renders so the user can read it before
+  /// deciding to refresh.
+  final bool staleScope;
   /// Copy callback. `subset == null` means copy everything; a non-null
   /// list copies only those proposals (selection-driven copy).
   final void Function(List<AiMuseProposal>? subset)? onCopy;
@@ -7073,6 +7351,7 @@ class _MusePane extends StatefulWidget {
     required this.guardrailLabel,
     required this.onBack,
     required this.onRerun,
+    this.staleScope = false,
     this.onCopy,
   });
 
@@ -7120,6 +7399,8 @@ class _MusePaneState extends State<_MusePane> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.staleScope)
+            _StaleScopeBanner(tokens: t, onRerun: widget.onRerun),
           _museHeader(t),
           const SizedBox(height: 14),
           // While loading, the logos canvas owns the pane. No
@@ -7813,6 +8094,11 @@ class _CommitReviewPane extends StatelessWidget {
   final VoidCallback onRerun;
   final VoidCallback? onCopy;
   final void Function(String path, String? hunkLabel) onOpenFinding;
+  /// True when the record's scope key no longer matches the current
+  /// file selection. Pane shows a banner at the top with a "rerun"
+  /// link; the body still renders so the user can read the existing
+  /// review before deciding to refresh.
+  final bool staleScope;
 
   const _CommitReviewPane({
     required this.tokens,
@@ -7835,6 +8121,7 @@ class _CommitReviewPane extends StatelessWidget {
     required this.onRerun,
     required this.onCopy,
     required this.onOpenFinding,
+    this.staleScope = false,
   });
 
   @override
@@ -8330,7 +8617,77 @@ class _CommitReviewPane extends StatelessWidget {
       radius: 0,
       borderAlpha: 0,
       elevated: false,
-      child: child,
+      // staleScope banner sits above whatever the body is (loading
+      // canvas, error message, or full review). Single Column wrap
+      // here keeps the banner inside the pane's MaterialSurface so
+      // it inherits the same chrome and never visually escapes the
+      // drawer.
+      child: staleScope
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _StaleScopeBanner(tokens: tokens, onRerun: onRerun),
+                Expanded(child: child),
+              ],
+            )
+          : child,
+    );
+  }
+}
+
+/// Thin warning banner shown at the top of the review / muse drawer
+/// when the user toggles file selection after the run lands. The
+/// drawer's body still renders the original record's content; this
+/// banner just signals "the result is for a different selection"
+/// and offers a one-click rerun.
+class _StaleScopeBanner extends StatelessWidget {
+  final AppTokens tokens;
+  final VoidCallback onRerun;
+  const _StaleScopeBanner({required this.tokens, required this.onRerun});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: tokens.stateModified.withValues(alpha: 0.10),
+        border: Border(
+          bottom: BorderSide(
+            color: tokens.chromeBorder.withValues(alpha: 0.18),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline,
+              size: 13, color: tokens.stateModified),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'selection changed since this ran',
+              style: TextStyle(
+                color: tokens.textMuted,
+                fontSize: 11,
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: onRerun,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: Text(
+                'rerun',
+                style: TextStyle(
+                  color: tokens.accentBright,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -11026,11 +11383,24 @@ class _CommitComposerField extends StatefulWidget {
   final String hintText;
   final bool aiEnabled;
   final bool aiLoading;
+  /// Transient celebratory flash on completion (~1.5 s). Parent
+  /// schedules the auto-clear; the button lights up brightly then
+  /// settles into either [aiUnread] (drawer wasn't open when result
+  /// landed) or quiet idle.
   final bool aiSuccess;
+  /// Persistent half-lit visual: there's a terminal record the user
+  /// hasn't acknowledged yet AND the corresponding drawer isn't open.
+  /// Click → opens the drawer + clears unread. The kind that's
+  /// "currently being viewed" reads as quiet, the others read as
+  /// "you have unread results here" — exactly the multi-flow
+  /// awareness the muse-vs-review interleave needs.
+  final bool aiUnread;
   final String aiTooltip;
   final bool reviewEnabled;
   final bool reviewLoading;
   final bool reviewSuccess;
+  /// Persistent half-lit visual; see [aiUnread] for the pattern.
+  final bool reviewUnread;
   final String? reviewVerdict;
   final String reviewTooltip;
   final VoidCallback onGenerate;
@@ -11038,6 +11408,8 @@ class _CommitComposerField extends StatefulWidget {
   final bool museEnabled;
   final bool museLoading;
   final bool museSuccess;
+  /// Persistent half-lit visual; see [aiUnread] for the pattern.
+  final bool museUnread;
   final String museTooltip;
   final VoidCallback onMuse;
 
@@ -11079,10 +11451,12 @@ class _CommitComposerField extends StatefulWidget {
     required this.aiEnabled,
     required this.aiLoading,
     this.aiSuccess = false,
+    this.aiUnread = false,
     required this.aiTooltip,
     required this.reviewEnabled,
     required this.reviewLoading,
     this.reviewSuccess = false,
+    this.reviewUnread = false,
     this.reviewVerdict,
     required this.reviewTooltip,
     required this.onGenerate,
@@ -11090,6 +11464,7 @@ class _CommitComposerField extends StatefulWidget {
     this.museEnabled = false,
     this.museLoading = false,
     this.museSuccess = false,
+    this.museUnread = false,
     this.museTooltip = '',
     required this.onMuse,
     this.shapeMode = false,
@@ -11385,6 +11760,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                             enabled: widget.museEnabled,
                             loading: widget.museLoading,
                             success: widget.museSuccess,
+                            unread: widget.museUnread,
                             tooltip: widget.museTooltip,
                             hasText: hasText,
                             fieldRadius: effectiveRadius,
@@ -11397,6 +11773,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                             enabled: widget.reviewEnabled,
                             loading: widget.reviewLoading,
                             success: widget.reviewSuccess,
+                            unread: widget.reviewUnread,
                             verdict: widget.reviewVerdict,
                             tooltip: widget.reviewTooltip,
                             hasText: hasText,
@@ -11410,6 +11787,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                             enabled: widget.aiEnabled,
                             loading: widget.aiLoading,
                             success: widget.aiSuccess,
+                            unread: widget.aiUnread,
                             tooltip: widget.aiTooltip,
                             hasText: hasText,
                             fieldRadius: effectiveRadius,
@@ -11603,6 +11981,15 @@ class _CommitAiToolbarBtn extends StatefulWidget {
   final bool enabled;
   final bool loading;
   final bool success;
+  /// Persistent half-lit state for "you have an unread terminal
+  /// record on this slot AND the corresponding drawer isn't open."
+  /// Visually a softer wash than [success] (which is a transient
+  /// celebration) so the user reads it as "click to view" rather
+  /// than "look what just happened." Mutually exclusive with
+  /// [success] in practice — the parent's flash timer expires before
+  /// `unread` would be set, but the resolution order below treats
+  /// success as the higher-priority state if both happen to be true.
+  final bool unread;
   final String? verdict; // review verdict for search icon morph
   final String tooltip;
   final bool hasText; // de-emphasise when the user already typed something
@@ -11615,6 +12002,7 @@ class _CommitAiToolbarBtn extends StatefulWidget {
     required this.enabled,
     required this.loading,
     this.success = false,
+    this.unread = false,
     this.verdict,
     required this.tooltip,
     required this.hasText,
@@ -11645,18 +12033,27 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
 
     // Icon colour: full accent when empty & enabled, dimmed when there's
     // already text (de-emphasise without hiding), muted when disabled.
+    // [unread] forces full opacity even with text-present so the
+    // "you have results to read" cue isn't lost behind composer text.
     final iconOpacity = !widget.enabled
         ? 0.30
-        : widget.hasText && !_hovered
-            ? 0.50
-            : 1.0;
+        : widget.unread
+            ? 1.0
+            : widget.hasText && !_hovered
+                ? 0.50
+                : 1.0;
 
-    // Background: transparent normally, subtle tint on hover/press.
+    // Background: persistent half-lit wash when [unread] (no drawer
+    // is open, but a terminal record waits for the user). Hover /
+    // press still deepen on top so the button reads as interactive
+    // even in its half-lit resting state.
     final bgAlpha = _pressed
         ? 0.16
         : _hovered
             ? 0.10
-            : 0.0;
+            : widget.unread
+                ? 0.06
+                : 0.0;
 
     final iconColor = t.accentBright.withValues(alpha: iconOpacity);
 
@@ -11707,8 +12104,8 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
                     color: iconColor,
                     size: 13,
                   ),
-                _AiToolbarIconKind.oracle => Icon(
-                    Icons.bubble_chart_outlined,
+                _AiToolbarIconKind.oracle => AnimatedBubbleIcon(
+                    state: _iconState,
                     color: iconColor,
                     size: 14,
                   ),

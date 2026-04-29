@@ -54,14 +54,6 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
   @override
   void onWindowAwakeChanged() => _syncAwake();
 
-  /// Pending flash replay. Set when a [IconAnimState.success] transition
-  /// fires while the window is blurred — the visual "ta-da" would be
-  /// lost to TickerMode mute otherwise (either held at 0 or jumped to 1
-  /// on unmute, neither of which plays the actual animation). Consumed
-  /// by [_syncAwake] when focus returns, which re-fires the flash from
-  /// 0 so the user sees the confirmation they missed.
-  bool _pendingFlashReplay = false;
-
   void _syncAwake() {
     if (!mounted) return;
     final reduce = context.reduceMotionRead;
@@ -72,10 +64,6 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
       if (_loop.isAnimating) _loop.stop();
     } else {
       if (wantsLoop && !_loop.isAnimating) _loop.repeat();
-      if (_pendingFlashReplay) {
-        _pendingFlashReplay = false;
-        _flash.forward(from: 0);
-      }
     }
   }
 
@@ -125,18 +113,21 @@ abstract class _AnimatedIconBaseState<T extends _AnimatedIconBase>
       case IconAnimState.success:
         _loop.stop();
         reduce ? _hover.value = 0 : _hover.reverse();
-        if (reduce) {
-          // Reduce-motion: user explicitly opted out of animations.
-          // Land at the final value without playing.
-          _flash.value = 1;
-        } else if (awake) {
+        if (awake && !reduce) {
+          // Focused & motion-on: play the celebration.
           _flash.forward(from: 0);
         } else {
-          // Blurred: defer the replay until focus returns. Held at 0
-          // so the TickerMode mute doesn't silently advance-and-end the
-          // controller while the user isn't looking.
-          _flash.value = 0;
-          _pendingFlashReplay = true;
+          // Blurred (or reduce-motion): land at the final settled
+          // success state immediately. The user explicitly wants
+          // status indicators to stay STATIC while unfocused but
+          // still REFLECT completed work — re-focusing should reveal
+          // the icon already in its complete pose, not a delayed
+          // celebratory replay. Reduce-motion shares this behaviour
+          // (user opted out of animation entirely). Either way the
+          // controller jumps to its rest-after-success value with
+          // no in-flight tween that could stall under TickerMode
+          // mute.
+          _flash.value = 1;
         }
       case IconAnimState.error:
         reduce ? _hover.value = 0 : _hover.reverse();
@@ -440,6 +431,304 @@ class _SparklePainter extends CustomPainter {
   bool shouldRepaint(_SparklePainter old) =>
       loop != old.loop || flash != old.flash || hover != old.hover ||
       state != old.state || color != old.color;
+}
+
+// 1b. BUBBLES  —  muse / oracle
+//
+//     Three outlined circles laid out like Material's
+//     `bubble_chart_outlined`: a large lower-left bubble, a small
+//     upper-right bubble, a medium lower-right bubble. Loading motion
+//     is layered multi-frequency noise driven off a continuously-
+//     rising elapsed-time clock — not a wrapping loop value — so the
+//     cluster never visibly repeats. Each bubble samples three
+//     independent sine octaves at incommensurable frequencies for
+//     dx / dy / scale / alpha; the mix gives organic-feeling drift
+//     that reads as one continuous "thinking" gesture rather than a
+//     ticked cycle.
+//
+//     idle:    rest layout, no motion
+//     hover:   each bubble swells slightly, brightens
+//     loading: layered noise — quasi-periodic, never repeats
+//     success: bubbles converge to centre, fold into a checkmark stroke
+//     error:   bubbles scatter outward then snap back into formation
+class AnimatedBubbleIcon extends _AnimatedIconBase {
+  const AnimatedBubbleIcon({
+    super.key,
+    required super.state,
+    required super.color,
+    super.size,
+  });
+
+  @override
+  State<AnimatedBubbleIcon> createState() => _AnimatedBubbleIconState();
+}
+
+class _AnimatedBubbleIconState
+    extends _AnimatedIconBaseState<AnimatedBubbleIcon> {
+  /// Continuously-rising clock for the loading motion. We don't use
+  /// the base class's [_loop] for phase because it wraps every
+  /// 1200 ms — even with irrational period multipliers, the COMBINED
+  /// phase of all three bubbles re-aligns at every wrap, giving the
+  /// eye a perceptible repeat. A monotonic clock + multi-octave sine
+  /// sum gives quasi-periodic motion that doesn't loop.
+  ///
+  /// Paused on window blur (matches the loop controller's behavior
+  /// via WindowAwakeMixin) so the animation resumes smoothly from
+  /// where it left off rather than jumping forward by however long
+  /// the user was tabbed out.
+  final Stopwatch _clock = Stopwatch();
+
+  @override
+  void initState() {
+    super.initState();
+    if (WindowActivity.instance.awake) _clock.start();
+  }
+
+  @override
+  void onWindowAwakeChanged() {
+    super.onWindowAwakeChanged();
+    if (!mounted) return;
+    final awake = WindowActivity.instance.awake;
+    if (awake) {
+      if (!_clock.isRunning) _clock.start();
+    } else {
+      if (_clock.isRunning) _clock.stop();
+    }
+  }
+
+  @override
+  CustomPainter createPainter({
+    required Color color,
+    required double loopValue,
+    required double flashValue,
+    required double hoverValue,
+    required IconAnimState state,
+  }) =>
+      _BubblePainter(
+        color: color,
+        loop: loopValue,
+        flash: flashValue,
+        hover: hoverValue,
+        state: state,
+        time: _clock.elapsedMicroseconds / 1e6,
+      );
+}
+
+class _BubblePainter extends CustomPainter {
+  final Color color;
+  final double loop, flash, hover;
+  final IconAnimState state;
+  /// Continuously-rising elapsed seconds since the icon mounted (or
+  /// since the last `awake` resume). Used as the phase reference for
+  /// the loading motion's multi-octave sine sum — see
+  /// [_AnimatedBubbleIconState._clock] for why this isn't the base
+  /// class's [loop].
+  final double time;
+
+  _BubblePainter({
+    required this.color,
+    required this.loop,
+    required this.flash,
+    required this.hover,
+    required this.state,
+    required this.time,
+  });
+
+  /// Resting layout for the three bubbles, in `u = size/16` units.
+  /// Tuned to read as `bubble_chart_outlined` at 14 px: large lower-
+  /// left, small upper-right, medium lower-right.
+  static const _rest = <_BubbleSpec>[
+    _BubbleSpec(cxU: -1.8, cyU: 1.4, rU: 3.0, phase: 0.0),
+    _BubbleSpec(cxU: 3.0, cyU: -3.0, rU: 1.7, phase: 1.6),
+    _BubbleSpec(cxU: 2.4, cyU: 2.6, rU: 2.3, phase: 3.0),
+  ];
+
+  /// Sum of three sine octaves at incommensurable frequencies — the
+  /// core of the "never repeats" feel. Frequencies in Hz: a slow
+  /// drift (~5 s period), a medium wobble (~1.2 s), a fast micro-
+  /// pulse (~0.5 s). The amplitude mix tapers down at each octave
+  /// so the slow drift dominates the eye while the fast layer adds
+  /// life rather than noise. Frequency ratios pulled from irrational
+  /// neighbourhoods (no small-integer relationships) so the combined
+  /// wave's period is enormous — perceptually never.
+  static double _layered(double t, double seed,
+      {double a1 = 0.55, double a2 = 0.30, double a3 = 0.15}) {
+    final p1 = math.sin(t * 1.27 + seed) * a1;
+    final p2 = math.sin(t * 5.21 + seed * 1.7) * a2;
+    final p3 = math.sin(t * 12.83 + seed * 0.43) * a3;
+    return p1 + p2 + p3;
+  }
+
+  /// Slow swell-gate: a very-low-frequency sine that produces a
+  /// peak-and-fade pulse for each bubble at staggered times. When
+  /// the gate's value is above 0.7 the bubble briefly grows a
+  /// touch larger (a "thought peaking" moment); below 0.7 the gate
+  /// returns 0 and the bubble follows the regular layered drift.
+  /// Different seeds per bubble mean they peak at different
+  /// times — never simultaneously.
+  static double _swellGate(double t, double seed) {
+    final s = math.sin(t * 0.41 + seed);
+    return s > 0.7 ? (s - 0.7) / 0.3 : 0.0;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final u = size.width / 16;
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5 * u
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    if (state == IconAnimState.success && flash > 0) {
+      _paintMergeToCheck(canvas, paint, cx, cy, u);
+      return;
+    }
+
+    if (state == IconAnimState.error) {
+      _paintScatter(canvas, paint, cx, cy, u);
+      return;
+    }
+
+    for (final spec in _rest) {
+      double scale = 1.0;
+      double dy = 0.0;
+      double dx = 0.0;
+      double alpha = 1.0;
+
+      if (state == IconAnimState.hovered) {
+        // Each bubble swells a little; phase-staggered so the cluster
+        // reads as alive, not as a uniform highlight.
+        final stagger = math.sin((hover * math.pi) + spec.phase * 0.3);
+        scale += 0.18 * hover * (0.8 + 0.2 * stagger);
+        alpha = 0.85 + 0.15 * hover;
+      }
+
+      if (state == IconAnimState.loading) {
+        // Each axis samples the layered noise at a DIFFERENT seed
+        // offset so the bubble's dx/dy/scale/alpha aren't locked to
+        // each other. Combined with per-bubble phase offsets, no two
+        // bubbles ever share the same instantaneous configuration.
+        final s = spec.phase;
+        dx = _layered(time, s) * u * 0.55;
+        dy = _layered(time, s + 17.31) * u * 0.45;
+        scale += _layered(time, s + 41.07,
+                a1: 0.40, a2: 0.20, a3: 0.10) *
+            0.22;
+
+        // Slow swell-gate: a "thought peaking" moment. Each bubble
+        // briefly surges every ~15 s (different times via seed),
+        // adding a sense of internal life beyond the constant drift.
+        scale += _swellGate(time, s) * 0.30;
+
+        // Alpha follows its own slow octave so brightness drifts on
+        // a longer timescale than position — gives depth rather than
+        // a flicker.
+        alpha = 0.78 +
+            0.22 * (0.5 + 0.5 * math.sin(time * 0.83 + s + 7.0));
+      }
+
+      paint.color = color.withValues(alpha: alpha);
+      canvas.drawCircle(
+        Offset(cx + spec.cxU * u + dx, cy + spec.cyU * u + dy),
+        spec.rU * u * scale,
+        paint,
+      );
+    }
+  }
+
+  void _paintMergeToCheck(
+      Canvas canvas, Paint paint, double cx, double cy, double u) {
+    final et = Curves.easeOutCubic.transform(flash);
+
+    // Phase 1 (0→0.45): bubbles slide to centre and shrink.
+    // Phase 2 (0.35→1): checkmark draws out from where they merged.
+    if (et < 0.45) {
+      final t = et / 0.45; // 0→1
+      for (final spec in _rest) {
+        final scale = (1.0 - t * 0.85);
+        final cxs = (spec.cxU * u) * (1.0 - t);
+        final cys = (spec.cyU * u) * (1.0 - t);
+        canvas.drawCircle(
+          Offset(cx + cxs, cy + cys),
+          spec.rU * u * scale,
+          paint,
+        );
+      }
+    }
+    if (et > 0.35) {
+      final checkT = ((et - 0.35) / 0.65).clamp(0.0, 1.0);
+      final pop = 1.0 + 0.12 * math.sin(checkT * math.pi);
+      canvas.save();
+      canvas.translate(cx, cy);
+      canvas.scale(pop);
+      canvas.translate(-cx, -cy);
+      final checkPath = Path()
+        ..moveTo(u * 3.5, cy)
+        ..lineTo(u * 6.5, cy + u * 3)
+        ..lineTo(u * 12.5, cy - u * 3);
+      final metric = checkPath.computeMetrics().first;
+      canvas.drawPath(metric.extractPath(0, metric.length * checkT), paint);
+      canvas.restore();
+    }
+  }
+
+  void _paintScatter(
+      Canvas canvas, Paint paint, double cx, double cy, double u) {
+    // loop runs 0→1 over the error duration. Bubbles fly outward then
+    // damp back into formation — same impulse-response shape the
+    // sparkle's `_paintCrumple` uses (recognisable as "something went
+    // wrong").
+    final t = loop;
+    final disperse = math.sin(t * math.pi * 4) * (1.0 - t); // damped osc
+    for (var i = 0; i < _rest.length; i++) {
+      final spec = _rest[i];
+      // Each bubble flies in its own direction — angle is the
+      // bubble's resting polar angle, distance modulated by disperse.
+      final angle = math.atan2(spec.cyU, spec.cxU);
+      final reach = u * 2.5 * disperse;
+      final cxs = spec.cxU * u + math.cos(angle) * reach;
+      final cys = spec.cyU * u + math.sin(angle) * reach;
+      paint.color = color.withValues(alpha: 0.6 + 0.4 * (1 - t.abs()));
+      canvas.drawCircle(
+        Offset(cx + cxs, cy + cys),
+        spec.rU * u * (1.0 - 0.15 * disperse.abs()),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BubblePainter old) =>
+      time != old.time ||
+      loop != old.loop ||
+      flash != old.flash ||
+      hover != old.hover ||
+      state != old.state ||
+      color != old.color;
+}
+
+class _BubbleSpec {
+  /// Centre offset from the icon's centre, in `u` units.
+  final double cxU;
+  final double cyU;
+  /// Radius in `u` units.
+  final double rU;
+  /// Phase offset in radians — shifts each bubble's wave so they
+  /// don't all peak at the same moment. Used as the seed for the
+  /// painter's layered-noise sampler too, giving each bubble a
+  /// unique coordinate in the noise field.
+  final double phase;
+  const _BubbleSpec({
+    required this.cxU,
+    required this.cyU,
+    required this.rU,
+    required this.phase,
+  });
 }
 
 // 2.  SEARCH / LENS  —  review commit
