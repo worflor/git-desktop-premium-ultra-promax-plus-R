@@ -516,8 +516,11 @@ class _SubjectCorpus {
 
     final scored = <_LabelCandidate>[];
     for (final entry in bucketMass.entries) {
-      // Drop tokens that appear in only one bucket commit — typo-like.
-      if ((bucketCommitFreq[entry.key] ?? 0) < 2) continue;
+      // Drop singleton tokens in large buckets (noise). In small
+      // buckets (≤3 commits) a single occurrence is all we have —
+      // the gate relaxes so small repos still produce labels.
+      final freq = bucketCommitFreq[entry.key] ?? 0;
+      if (freq < 2 && indices.length > 3) continue;
       final pBucket = (entry.value + 0.5) / (bucketTotal + priorMass);
       final corpusCount = globalFreq[entry.key] ?? 0.0;
       final pCorpus =

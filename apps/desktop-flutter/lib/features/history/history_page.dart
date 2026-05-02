@@ -1604,13 +1604,14 @@ class _HistoryPageState extends State<HistoryPage> {
         _error = r.error;
       }
     });
-    // Kick off bulk prefetch immediately — runs in background, no await
     if (r.ok) {
       unawaited(_prefetchAllDetails(repo));
-      // First profile build runs on subject-only data (no details yet).
-      // Prefix/scope/merge tags light up immediately; axis + cluster
-      // tags fill in as the bulk prefetch populates the detail cache.
       _scheduleTagProfileRebuild(repo);
+      // Ensure the coupling matrix is available for hub/focused/sprawl
+      // tags. Idempotent if already loaded from the changes page.
+      unawaited(
+        context.read<FileCouplingState>().loadForRepo(repo),
+      );
     }
 
     final initialHash = widget.initialCommitHash;
@@ -2063,6 +2064,15 @@ class _HistoryPageState extends State<HistoryPage> {
 
     if (repoPath == null) {
       return const AppStatusView.noRepository();
+    }
+
+    // Subscribe to the coupling matrix so tag profiles rebuild when it
+    // arrives (hub, focused/sprawl, borrowed tags depend on it).
+    final couplingReady = context.select<FileCouplingState, bool>(
+      (s) => s.matrixFor(repoPath) != null,
+    );
+    if (couplingReady && _tagProfile.commitCount > 0 && _commits.isNotEmpty) {
+      _scheduleTagProfileRebuild(repoPath);
     }
 
     if (_lastRepo != repoPath) {
