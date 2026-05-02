@@ -88,10 +88,12 @@ class AiActivityRecord {
   /// [AiActivityStatus.error].
   final String? error;
 
-  /// True once the user has acknowledged a terminal state (opened the
-  /// drawer, dismissed the result, etc.). The sidebar pill only
-  /// surfaces records that are running OR not-yet-seen.
-  final bool seen;
+  /// Timestamp of the user's last acknowledgement (opened the drawer,
+  /// dismissed the result, etc.). Attention is temporal: a record is
+  /// "seen" when [seenAt] is non-null and not before [endedAt]. If a
+  /// new run completes after the user last looked, the record becomes
+  /// unread again automatically — no explicit reset needed.
+  final DateTime? seenAt;
 
   final DateTime startedAt;
   final DateTime? endedAt;
@@ -104,7 +106,7 @@ class AiActivityRecord {
     this.scopeLabel,
     this.result,
     this.error,
-    this.seen = false,
+    this.seenAt,
     this.endedAt,
   });
 
@@ -113,17 +115,19 @@ class AiActivityRecord {
   bool get isError => status == AiActivityStatus.error;
   bool get isTerminal => isDone || isError;
 
-  /// Sentinel-defaulted copy. Each nullable field can be left
-  /// untouched (omit the argument), assigned a new value (pass it),
-  /// or explicitly cleared (pass `null`). Required fields ([kind],
-  /// [startedAt]) carry forward unchanged.
+  /// Derived from temporal ordering: the user has seen this result iff
+  /// they looked after it landed. A run that completes after the last
+  /// look is automatically unread.
+  bool get seen =>
+      seenAt != null && (endedAt == null || !seenAt!.isBefore(endedAt!));
+
   AiActivityRecord copyWith({
     AiActivityStatus? status,
     Object? scopeKey = _kSentinel,
     Object? scopeLabel = _kSentinel,
     Object? result = _kSentinel,
     Object? error = _kSentinel,
-    bool? seen,
+    Object? seenAt = _kSentinel,
     Object? endedAt = _kSentinel,
   }) =>
       AiActivityRecord(
@@ -142,7 +146,9 @@ class AiActivityRecord {
         error: identical(error, _kSentinel)
             ? this.error
             : error as String?,
-        seen: seen ?? this.seen,
+        seenAt: identical(seenAt, _kSentinel)
+            ? this.seenAt
+            : seenAt as DateTime?,
         endedAt: identical(endedAt, _kSentinel)
             ? this.endedAt
             : endedAt as DateTime?,
@@ -292,7 +298,6 @@ class AiActivityState extends ChangeNotifier {
       status: AiActivityStatus.done,
       result: result,
       endedAt: DateTime.now(),
-      seen: false,
     );
     _activeCache.remove(repoPath);
     notifyListeners();
@@ -313,18 +318,18 @@ class AiActivityState extends ChangeNotifier {
       status: AiActivityStatus.error,
       error: error,
       endedAt: DateTime.now(),
-      seen: false,
     );
     _activeCache.remove(repoPath);
     notifyListeners();
   }
 
-  /// User opened the drawer / read the result — drop the unread mark
-  /// so the sidebar pill stops surfacing it.
+  /// Stamp attention: the user opened the drawer / read the result.
+  /// The timestamp gates unread state — if a new result lands after
+  /// this stamp, the record becomes unread again automatically.
   void markSeen({required String repoPath, required AiActivityKind kind}) {
     final r = _records[repoPath]?[kind];
     if (r == null || r.seen) return;
-    _records[repoPath]![kind] = r.copyWith(seen: true);
+    _records[repoPath]![kind] = r.copyWith(seenAt: DateTime.now());
     _activeCache.remove(repoPath);
     notifyListeners();
   }

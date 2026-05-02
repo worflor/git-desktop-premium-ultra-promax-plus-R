@@ -105,26 +105,34 @@ void main() async {
   // pure Jaccard.
   EngramRuntime.instance.assets();
 
-  // Four independent Provider loads: theme, recent-repos, preferences,
-  // AI settings. Each hits disk through either `SettingsStore.load()`
-  // (now process-memoised — first caller pays, rest hit the cache)
-  // or its own JSON file. None depend on the others, so one
-  // `Future.wait` fan-out turns four sequential awaits into one
-  // round-trip. DiagnosticsState is deferred entirely to after the
-  // first frame — its telemetry samples are only consumed by the
-  // diagnostics panel, never by the hot first-paint path.
+  // Theme must resolve before runApp so the first paint has the
+  // right colors/fonts. Everything else (recent repos, preferences,
+  // AI settings, external tools) fires concurrently WITHOUT being
+  // awaited — each calls notifyListeners on completion, so their
+  // Provider consumers rebuild naturally when the data arrives.
+  // This shaves ~0.5–0.8 s off the blank-window phase (the old
+  // `Future.wait` blocked runApp until ALL five loaded).
   final themeState = ThemeState();
   final repoState = RepositoryState();
   final preferencesState = PreferencesState();
   final aiSettingsState = AiSettingsState();
   final externalToolsState = ExternalToolsState();
-  await Future.wait([
-    themeState.load(),
-    repoState.loadRecents(),
-    preferencesState.load(),
-    aiSettingsState.load(),
-    externalToolsState.load(),
-  ]);
+  await themeState.load();
+  // Fire-and-forget: sidebar shows a brief empty state until
+  // loadRecents resolves (~50-200 ms post-runApp). Preferences,
+  // AI settings, and external tools resolve in parallel and their
+  // UI surfaces rebuild on arrival.
+  void logInitError(String name, Object e) {
+    debugPrint('[$name] init failed: $e');
+  }
+  unawaited(repoState.loadRecents().catchError(
+      (Object e) => logInitError('recents', e)));
+  unawaited(preferencesState.load().catchError(
+      (Object e) => logInitError('preferences', e)));
+  unawaited(aiSettingsState.load().catchError(
+      (Object e) => logInitError('aiSettings', e)));
+  unawaited(externalToolsState.load().catchError(
+      (Object e) => logInitError('externalTools', e)));
 
   // Fire-and-forget: probe PATH for known external tools so the
   // settings page renders only the chips for actually-installed

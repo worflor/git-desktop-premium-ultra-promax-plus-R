@@ -12,9 +12,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Time-weighted Jaccard (computeFileCoupling decay semantics)', () {
-    test('coherenceFor averages pairwise scores at high confidence', () {
-      // Build a tiny hand-crafted matrix. High commitsAnalyzed so the
-      // confidence gate doesn't trip.
+    test('coherenceFor averages pairwise scores scaled by confidence', () {
+      // commitsAnalyzed=100 → confidence=0.5. Raw mean Jaccard = 0.4.
+      // Result = 0.5 + (0.4 - 0.5) * 0.5 = 0.45
       final m = FileCouplingMatrix(
         jaccard: {
           'a.dart': {'b.dart': 0.6, 'c.dart': 0.4},
@@ -25,14 +25,13 @@ void main() {
         commitsAnalyzed: 100,
       );
       final coh = m.coherenceFor(const ['a.dart', 'b.dart', 'c.dart']);
-      expect(coh, closeTo(0.4, 1e-9));
+      expect(coh, closeTo(0.45, 1e-9));
     });
 
-    test('coherenceFor gates to 0.5 on cold-start (confidence gate)', () {
-      // Same data, but with commitsAnalyzed below the threshold (50)
-      // — must return the max-uncertainty prior 0.5 instead of the
-      // false-confident 0.4. Closes the cold-start false-coherence
-      // regression the branches-page PR focus score surfaces.
+    test('coherenceFor pulls toward 0.5 on cold-start', () {
+      // commitsAnalyzed=10 → confidence=0.05. Even with 0.9 Jaccard
+      // everywhere, the result stays near 0.5 (the max-uncertainty
+      // prior) because the evidence is too sparse to trust.
       final m = FileCouplingMatrix(
         jaccard: {
           'a.dart': {'b.dart': 0.9, 'c.dart': 0.9},
@@ -40,11 +39,11 @@ void main() {
           'c.dart': {'a.dart': 0.9, 'b.dart': 0.9},
         },
         headHash: 'h',
-        commitsAnalyzed: 10, // below the 50-commit gate
+        commitsAnalyzed: 10,
       );
       final coh = m.coherenceFor(const ['a.dart', 'b.dart', 'c.dart']);
-      expect(coh, 0.5,
-          reason: 'cold-start repos must not report spurious coherence');
+      expect(coh, closeTo(0.5, 0.03),
+          reason: 'cold-start repos must pull toward neutral');
     });
   });
 }

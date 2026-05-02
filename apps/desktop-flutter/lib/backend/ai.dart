@@ -3198,17 +3198,15 @@ void _parseCodexToml(String payload, Set<String> models) {
   }
 }
 
-/// `claude models` isn't a subcommand (the Claude Code CLI treats it
-/// as a chat message), so discovery walks the artifacts Claude Code
-/// has already written on this machine:
-///   - `~/.claude/settings.json` — any `model` key the user configured.
-///   - `~/.claude/projects/<hash>/*.jsonl` — every model ID the CLI
-///     has invoked in recent sessions, captured as `"model":"<id>"`.
-///
-/// No hardcoded aliases. If the user has never run Claude Code, the
-/// settings-only discovery may still surface their configured model;
-/// if they have, the session logs expand the list naturally as new
-/// models get used.
+/// `claude models` isn't a subcommand, so discovery walks three
+/// artifact sources Claude Code already writes to disk:
+///   - `~/.claude/settings.json` — the user's configured model.
+///   - `~/.claude/projects/<hash>/*.jsonl` — model IDs from session
+///     conversations (the user's direct invocations).
+///   - `~/.claude/telemetry/*.json` — model IDs from sub-agent runs,
+///     background tasks, and fallback invocations. This is where
+///     haiku/sonnet surface even when the user only runs opus — Claude
+///     Code's internal agents use smaller models automatically.
 Future<_ProviderModelDiscovery?> _discoverClaudeModels(
   _ProviderResolution? resolution,
 ) async {
@@ -3216,6 +3214,9 @@ Future<_ProviderModelDiscovery?> _discoverClaudeModels(
   final configured = _discoverClaudeConfiguredModel();
   if (configured != null) models.add(configured);
   for (final id in _discoverClaudeSessionModels()) {
+    models.add(id);
+  }
+  for (final id in _discoverClaudeTelemetryModels()) {
     models.add(id);
   }
   if (models.isEmpty) return null;
@@ -3272,6 +3273,54 @@ List<String> _discoverClaudeSessionModels() {
           for (final match in _codexLogModelRegex.allMatches(text)) {
             final id = match.namedGroup('id')?.trim() ?? '';
             if (id.isNotEmpty) models.add(id);
+          }
+        } finally {
+          raf.closeSync();
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return models.toList();
+}
+
+/// Scan Claude Code's telemetry directory for model IDs. Sub-agent
+/// runs, background tasks, and fallback-model invocations log here
+/// even when the user never directly selected the model — this is
+/// where haiku/sonnet surface from Claude Code's own internal usage.
+/// Bounded: reads at most 20 newest files, first 64 KB each.
+List<String> _discoverClaudeTelemetryModels() {
+  final models = <String>{};
+  try {
+    final home = _userHomeDir();
+    if (home == null) return const [];
+    final telemetryDir = Directory(p.join(home, '.claude', 'telemetry'));
+    if (!telemetryDir.existsSync()) return const [];
+    final files = <File>[];
+    for (final f in telemetryDir.listSync()) {
+      if (f is File && f.path.toLowerCase().endsWith('.json')) {
+        files.add(f);
+      }
+    }
+    files.sort((a, b) {
+      try {
+        return b.lastModifiedSync().compareTo(a.lastModifiedSync());
+      } catch (_) {
+        return 0;
+      }
+    });
+    const maxFiles = 20;
+    const headBytes = 64 * 1024;
+    for (final file in files.take(maxFiles)) {
+      try {
+        final raf = file.openSync();
+        try {
+          final toRead =
+              raf.lengthSync() < headBytes ? raf.lengthSync() : headBytes;
+          final bytes = raf.readSync(toRead);
+          final text = utf8.decode(bytes, allowMalformed: true);
+          for (final match in _codexLogModelRegex.allMatches(text)) {
+            final id = match.namedGroup('id')?.trim() ?? '';
+            if (id.isNotEmpty && id != '<synthetic>') models.add(id);
           }
         } finally {
           raf.closeSync();

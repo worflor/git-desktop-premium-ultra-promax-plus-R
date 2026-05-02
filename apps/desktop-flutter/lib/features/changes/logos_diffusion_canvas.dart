@@ -218,29 +218,18 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     } else if (event is LogosVisEngineReady) {
       _nodeCount = event.nodeCount;
       _cached = event.cached;
-      if (_birth[_Element.topologyDense]! < 0) {
-        _birth[_Element.topologyDense] = now;
-      }
+      _birth[_Element.topologyDense] = now;
       _phase = _Phase.ready;
       wantSetState = true;
     } else if (event is LogosVisDiffSources) {
       _sourceWeights = event.weights;
       _sourceWeightsList = event.weights.entries.toList(growable: false);
       _churn = event.churn;
-      if (_birth[_Element.sourceIgnition]! < 0) {
-        _birth[_Element.sourceIgnition] = now;
-      }
-      if (_birth[_Element.heatRings]! < 0) {
-        _birth[_Element.heatRings] = now + 220;
-      }
+      _birth[_Element.sourceIgnition] = now;
+      _birth[_Element.heatRings] = now + 220;
       _phase = _Phase.ignited;
       wantSetState = true;
     } else if (event is LogosVisReseedSources) {
-      // Brainstorm landed; the seed map is now a blend of the original
-      // diff anchors and the K-space / well-expansion paths. Update
-      // the canvas' sourceWeights so the source starburst shows the
-      // wider field, and kick off a second wavefront that rides on
-      // top of the first.
       _sourceWeights = event.weights;
       _sourceWeightsList = event.weights.entries.toList(growable: false);
       _reseedIdeaCount = event.brainstormIdeas;
@@ -252,20 +241,14 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     } else if (event is LogosVisDiffusionComplete) {
       _phi = event.phi;
       _wellByPath = event.wellByPath;
-      // Precompute sorts once per event so paint() stays O(1).
       _phiSortedDesc = _phi.entries.toList()
         ..sort((a, b) => b.value.compareTo(a.value));
       _phiValuesSortedAsc = _phi.values.where((v) => v > 0.02).toList()
         ..sort();
       _wellLayout = _buildWellLayout(_wellByPath);
       _attentionConcentration = _computeConcentration(_phiValuesSortedAsc);
-      // Wells fade in first, then neighbours cascade.
-      if (_birth[_Element.wellSectors]! < 0) {
-        _birth[_Element.wellSectors] = now;
-      }
-      if (_birth[_Element.neighbourNodes]! < 0) {
-        _birth[_Element.neighbourNodes] = now + 200;
-      }
+      _birth[_Element.wellSectors] = now;
+      _birth[_Element.neighbourNodes] = now + 200;
       _phase = _Phase.diffused;
       wantSetState = true;
     } else if (event is LogosVisHunksRanked) {
@@ -273,18 +256,12 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       _hunksAdmitted = event.admitted;
       _hunksSkipped = event.skipped;
       _budgetFraction = event.budgetFraction;
-      if (_birth[_Element.footer]! < 0) {
-        _birth[_Element.footer] = now;
-      }
-      if (_birth[_Element.budgetMeter]! < 0) {
-        _birth[_Element.budgetMeter] = now + 350;
-      }
+      _birth[_Element.footer] = now;
+      _birth[_Element.budgetMeter] = now + 350;
       _phase = _Phase.ranked;
       wantSetState = true;
     } else if (event is LogosVisTransmit) {
-      if (_birth[_Element.transmitBeam]! < 0) {
-        _birth[_Element.transmitBeam] = now;
-      }
+      _birth[_Element.transmitBeam] = now;
       _phase = _Phase.transmit;
       wantSetState = true;
     } else if (event is LogosVisComplete) {

@@ -5720,8 +5720,13 @@ class _AiSupportLine extends StatelessWidget {
 class _GhostMiniButton extends StatefulWidget {
   final String label;
   final VoidCallback? onTap;
+  final bool dimmed;
 
-  const _GhostMiniButton({required this.label, required this.onTap});
+  const _GhostMiniButton({
+    required this.label,
+    required this.onTap,
+    this.dimmed = false,
+  });
 
   @override
   State<_GhostMiniButton> createState() => _GhostMiniButtonState();
@@ -5771,11 +5776,14 @@ class _GhostMiniButtonState extends State<_GhostMiniButton> {
             ),
             child: Transform.translate(
               offset: chrome.offset,
-              child: Text(
-                widget.label,
-                style: TextStyle(
-                  color: widget.onTap != null ? t.textNormal : t.textMuted,
-                  fontSize: 10,
+              child: Opacity(
+                opacity: widget.dimmed ? 0.45 : 1.0,
+                child: Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: widget.onTap != null ? t.textNormal : t.textMuted,
+                    fontSize: 10,
+                  ),
                 ),
               ),
             ),
@@ -5985,30 +5993,18 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
             style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
           )
         else
-          Column(
-            children: [
-              for (final summary in summaries) ...[
-                _TelemetrySummaryRow(
-                  title: summary.command,
-                  cells: [
-                    _TelemetryCell(
-                      label: 'p50',
-                      value: '${summary.p50Ms.toStringAsFixed(1)}ms',
-                    ),
-                    _TelemetryCell(
-                      label: 'Reliability',
-                      value:
-                          '${((summary.successCount / summary.count) * 100).round()}%',
-                    ),
-                    _TelemetryCell(
-                      label: 'Range',
-                      value:
-                          '${summary.minMs.round()}-${summary.maxMs.round()}ms',
-                    ),
+          _TelemetryTable(
+            headers: const ['command', 'p50', 'reliability', 'range'],
+            rows: [
+              for (final s in summaries)
+                _TelemetryTableRow(
+                  label: s.command,
+                  values: [
+                    '${s.p50Ms.toStringAsFixed(1)}ms',
+                    '${((s.successCount / s.count) * 100).round()}%',
+                    '${s.minMs.round()}–${s.maxMs.round()}ms',
                   ],
                 ),
-                const SizedBox(height: 8),
-              ],
             ],
           ),
         if (report.recentSamples.isNotEmpty) ...[
@@ -6042,22 +6038,18 @@ class _CommandDiagnosticsPanel extends StatelessWidget {
             style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
           )
         else
-          Column(
-            children: [
-              for (final summary in backendReport.summaries.take(10)) ...[
-                _TelemetrySummaryRow(
-                  title: '${summary.scope}:${summary.command}',
-                  cells: [
-                    _TelemetryCell(label: 'p50', value: '${summary.p50Ms}ms'),
-                    _TelemetryCell(label: 'p95', value: '${summary.p95Ms}ms'),
-                    _TelemetryCell(
-                      label: 'Failures',
-                      value: '${summary.failureCount}/${summary.sampleCount}',
-                    ),
+          _TelemetryTable(
+            headers: const ['scope', 'p50', 'p95', 'failures'],
+            rows: [
+              for (final s in backendReport.summaries.take(10))
+                _TelemetryTableRow(
+                  label: '${s.scope}:${s.command}',
+                  values: [
+                    '${s.p50Ms}ms',
+                    '${s.p95Ms}ms',
+                    '${s.failureCount}/${s.sampleCount}',
                   ],
                 ),
-                const SizedBox(height: 6),
-              ],
             ],
           ),
         if (backendReport.recentSamples.isNotEmpty) ...[
@@ -6119,33 +6111,19 @@ class _DiffDiagnosticsPanel extends StatelessWidget {
             style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
           )
         else
-          Column(
-            children: [
-              for (final summary in report.modeSummaries) ...[
-                _TelemetrySummaryRow(
-                  title: 'Renderer: ${summary.rendererMode}',
-                  cells: [
-                    _TelemetryCell(
-                      label: 'First Paint',
-                      value: '${summary.firstPaintP50Ms.toStringAsFixed(0)}ms',
-                    ),
-                    _TelemetryCell(
-                      label: 'Frame p95',
-                      value: '${summary.frameTimeP95Ms.toStringAsFixed(1)}ms',
-                    ),
-                    _TelemetryCell(
-                      label: 'Raster p95',
-                      value: '${summary.rasterTimeP95Ms.toStringAsFixed(1)}ms',
-                    ),
-                    _TelemetryCell(
-                      label: 'Jank',
-                      value:
-                          '${(summary.jankyFrameRate * 100).toStringAsFixed(0)}%',
-                    ),
+          _TelemetryTable(
+            headers: const ['renderer', 'first paint', 'frame p95', 'raster p95', 'jank'],
+            rows: [
+              for (final s in report.modeSummaries)
+                _TelemetryTableRow(
+                  label: s.rendererMode,
+                  values: [
+                    '${s.firstPaintP50Ms.toStringAsFixed(0)}ms',
+                    '${s.frameTimeP95Ms.toStringAsFixed(1)}ms',
+                    '${s.rasterTimeP95Ms.toStringAsFixed(1)}ms',
+                    '${(s.jankyFrameRate * 100).toStringAsFixed(0)}%',
                   ],
                 ),
-                const SizedBox(height: 8),
-              ],
             ],
           ),
         if (report.recentSamples.isNotEmpty) ...[
@@ -6207,29 +6185,18 @@ class _UiDiagnosticsPanel extends StatelessWidget {
             style: TextStyle(color: context.tokens.textMuted, fontSize: 12),
           )
         else
-          Column(
-            children: [
-              for (final summary in summaries) ...[
-                _TelemetrySummaryRow(
-                  title: '${summary.phase}: ${summary.event}',
-                  cells: [
-                    _TelemetryCell(
-                      label: 'p50',
-                      value: '${summary.p50Ms.toStringAsFixed(1)}ms',
-                    ),
-                    _TelemetryCell(
-                      label: 'Failures',
-                      value: '${summary.failureCount}',
-                    ),
-                    _TelemetryCell(
-                      label: 'Range',
-                      value:
-                          '${summary.minMs.round()}-${summary.maxMs.round()}ms',
-                    ),
+          _TelemetryTable(
+            headers: const ['event', 'p50', 'failures', 'range'],
+            rows: [
+              for (final s in summaries)
+                _TelemetryTableRow(
+                  label: '${s.phase}:${s.event}',
+                  values: [
+                    '${s.p50Ms.toStringAsFixed(1)}ms',
+                    '${s.failureCount}',
+                    '${s.minMs.round()}–${s.maxMs.round()}ms',
                   ],
                 ),
-                const SizedBox(height: 8),
-              ],
             ],
           ),
         if (report.recentSamples.isNotEmpty) ...[
@@ -6454,107 +6421,100 @@ class _ResetQuitControlState extends State<_ResetQuitControl> {
   }
 }
 
-class _TelemetryCell {
+class _TelemetryTableRow {
   final String label;
-  final String value;
-
-  const _TelemetryCell({required this.label, required this.value});
+  final List<String> values;
+  const _TelemetryTableRow({required this.label, required this.values});
 }
 
-class _TelemetrySummaryRow extends StatelessWidget {
-  final String title;
-  final List<_TelemetryCell> cells;
+class _TelemetryTable extends StatelessWidget {
+  final List<String> headers;
+  final List<_TelemetryTableRow> rows;
 
-  const _TelemetrySummaryRow({required this.title, required this.cells});
+  const _TelemetryTable({required this.headers, required this.rows});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final colCount = headers.length;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       decoration: BoxDecoration(
-        color: t.rowBg.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(2),
         border: Border(
-          left: BorderSide(color: t.accentBright.withValues(alpha: 0.4), width: 1.5),
+          left: BorderSide(
+            color: t.accentBright.withValues(alpha: 0.3),
+            width: 1.5,
+          ),
         ),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: TextStyle(
-              color: t.textStrong,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
+          _buildRow(
+            t,
+            cells: headers,
+            isHeader: true,
+            colCount: colCount,
+          ),
+          for (var i = 0; i < rows.length; i++)
+            _buildRow(
+              t,
+              cells: [rows[i].label, ...rows[i].values],
+              isHeader: false,
+              colCount: colCount,
+              tinted: i.isOdd,
             ),
-          ),
-          const SizedBox(height: 4),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth < 420;
-              if (compact) {
-                return Column(
-                  children: [
-                    for (var i = 0; i < cells.length; i++) ...[
-                      _TelemetryCellView(cell: cells[i]),
-                      if (i < cells.length - 1) const SizedBox(height: 8),
-                    ],
-                  ],
-                );
-              }
-              return Row(
-                children: [
-                  for (var i = 0; i < cells.length; i++) ...[
-                    Expanded(child: _TelemetryCellView(cell: cells[i])),
-                    if (i < cells.length - 1) const SizedBox(width: 8),
-                  ],
-                ],
-              );
-            },
-          ),
         ],
       ),
     );
   }
-}
 
-class _TelemetryCellView extends StatelessWidget {
-  final _TelemetryCell cell;
-
-  const _TelemetryCellView({required this.cell});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
+  Widget _buildRow(
+    dynamic t, {
+    required List<String> cells,
+    required bool isHeader,
+    required int colCount,
+    bool tinted = false,
+  }) {
+    final padded = List<String>.generate(
+      colCount,
+      (i) => i < cells.length ? cells[i] : '',
+    );
     return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: t.surface0,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      color: tinted && !isHeader
+          ? (t.rowBg as Color).withValues(alpha: 0.10)
+          : null,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
         children: [
-          Text(
-            cell.label,
-            style: TextStyle(
-              color: t.textMuted,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
+          Expanded(
+            flex: 3,
+            child: Text(
+              padded[0],
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isHeader ? t.textMuted : t.textStrong,
+                fontSize: isHeader ? 9 : 10,
+                fontWeight: isHeader ? FontWeight.w600 : FontWeight.w600,
+                fontFamily: isHeader ? null : AppFonts.mono,
+                letterSpacing: isHeader ? 0.4 : 0,
+              ),
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            cell.value,
-            style: TextStyle(
-              color: t.textStrong,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+          for (var i = 1; i < colCount; i++)
+            Expanded(
+              flex: 2,
+              child: Text(
+                padded[i],
+                textAlign: TextAlign.right,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isHeader ? t.textMuted : t.textNormal,
+                  fontSize: isHeader ? 9 : 10,
+                  fontWeight: isHeader ? FontWeight.w600 : FontWeight.w500,
+                  fontFamily: isHeader ? null : AppFonts.mono,
+                  letterSpacing: isHeader ? 0.4 : 0,
+                ),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -10351,13 +10311,32 @@ class _ExternalToolsCard extends StatelessWidget {
     final detection = context.watch<ToolDetectionState>();
     final t = context.tokens;
     final tools = state.tools;
-    // Filter the curated preset list to tools the OS actually has on
-    // PATH. While detection is in flight (typically <200ms), show all
-    // presets dimmed-with-hint until the probe completes.
-    final installedPresets = detection.isLoaded
+    // Only show presets that are (a) actually installed on PATH AND
+    // (b) not already configured. Dedup uses label (not just
+    // executable) because multiple presets can share the same
+    // executable with different args (e.g. the git-based "eldritch"
+    // operations all use `git` but have different labels/args).
+    final addedLabels = <String>{
+      for (final tool in tools) tool.label.trim().toLowerCase(),
+    };
+    final addedExecutables = <String>{
+      for (final tool in tools) tool.executable.trim().toLowerCase(),
+    };
+    final availablePresets = detection.isLoaded
         ? [
             for (final p in ExternalToolPresets.all)
-              if (detection.has(p.executable)) p,
+              if (detection.has(p.executable) &&
+                  !addedLabels.contains(
+                      p.label.replaceFirst('+ ', '').toLowerCase()) &&
+                  // For unique-executable presets (editors, AI tools),
+                  // also suppress if the executable is already added
+                  // under a different label (manual rename). Git-based
+                  // presets share `git` as executable, so they skip
+                  // this check — each is differentiated by label.
+                  (p.executable == 'git' ||
+                      !addedExecutables.contains(
+                          p.executable.toLowerCase())))
+                p,
           ]
         : <ExternalToolPreset>[];
     return _StateCard(
@@ -10368,40 +10347,17 @@ class _ExternalToolsCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Preset chips. The chip row reflects what's actually on
-          // PATH — no chips for tools the user doesn't have. Custom
-          // is always present as the escape hatch for tools we don't
-          // ship a preset for.
           if (!detection.isLoaded)
             Text(
               'Detecting installed tools…',
               style: TextStyle(color: t.textMuted, fontSize: 12),
             )
           else
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final preset in installedPresets)
-                  _GhostMiniButton(
-                    label: preset.label,
-                    onTap: () => context
-                        .read<ExternalToolsState>()
-                        .add(preset.build()),
-                  ),
-                _GhostMiniButton(
-                  label: '+ Custom',
-                  onTap: () => context
-                      .read<ExternalToolsState>()
-                      .add(ExternalToolPresets.blank()),
-                ),
-              ],
-            ),
-          if (detection.isLoaded && installedPresets.isEmpty) ...[
+            ..._buildPresetShelves(context, availablePresets, t),
+          if (detection.isLoaded && availablePresets.isEmpty && tools.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
-              'None of the common tools (claude, code, cursor, lazygit, gh…) '
-              'were found on PATH. Use “+ Custom” to add one manually.',
+              'All known presets are already added. Use “+ Custom” to add more.',
               style: TextStyle(
                 color: t.textMuted,
                 fontSize: 11,
@@ -10421,13 +10377,90 @@ class _ExternalToolsCard extends StatelessWidget {
           ] else ...[
             const SizedBox(height: 8),
             Text(
-              'No tools configured yet — add one above.',
+              'No tools configured yet. Add one above.',
               style: TextStyle(color: t.textMuted, fontSize: 12),
             ),
           ],
         ],
       ),
     );
+  }
+
+  static const _categoryLabels = {
+    ExternalToolCategory.ai: 'ai',
+    ExternalToolCategory.editors: 'editors',
+    ExternalToolCategory.explore: 'explore',
+    ExternalToolCategory.gitOps: 'git ops',
+  };
+
+  static List<Widget> _buildPresetShelves(
+    BuildContext context,
+    List<ExternalToolPreset> available,
+    dynamic t,
+  ) {
+    final grouped = <ExternalToolCategory, List<ExternalToolPreset>>{};
+    for (final p in available) {
+      (grouped[p.category] ??= []).add(p);
+    }
+    final accent = (t.accentBright as Color).withValues(alpha: 0.40);
+    final shelves = <Widget>[];
+    for (final cat in ExternalToolCategory.values) {
+      final presets = grouped[cat];
+      if (presets == null || presets.isEmpty) continue;
+      if (shelves.isNotEmpty) shelves.add(const SizedBox(height: 10));
+      shelves.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 5),
+          child: Row(
+            children: [
+              Container(
+                width: 2,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(1),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                _categoryLabels[cat] ?? cat.name,
+                style: TextStyle(
+                  color: t.accentBright,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      shelves.add(
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final preset in presets)
+              _GhostMiniButton(
+                label: preset.label,
+                onTap: () => context
+                    .read<ExternalToolsState>()
+                    .add(preset.build()),
+              ),
+          ],
+        ),
+      );
+    }
+    shelves.add(const SizedBox(height: 10));
+    shelves.add(
+      _GhostMiniButton(
+        label: '+ Custom',
+        onTap: () => context
+            .read<ExternalToolsState>()
+            .add(ExternalToolPresets.blank()),
+      ),
+    );
+    return shelves;
   }
 }
 

@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 
 import '../app/preferences_state.dart';
 import '../backend/undo_controller.dart';
+import 'design_primitives.dart';
+import 'morph_text.dart';
 import 'motion.dart';
 import 'tokens.dart';
 
@@ -33,6 +35,8 @@ class _UndoPillState extends State<UndoPill>
   );
   Timer? _tick;
   bool _hasPending = false;
+  bool _goHovered = false;
+  bool _goPressed = false;
   PreferencesState? _prefs;
 
   @override
@@ -97,10 +101,8 @@ class _UndoPillState extends State<UndoPill>
     final hasPending = pending != null;
     if (hasPending != _hasPending) {
       _hasPending = hasPending;
-      // Ensure the duration reflects the current motionRate BEFORE we
-      // start the transition — otherwise a user who changed motionRate
-      // while the pill was dormant would get a transition at the old
-      // scaled duration for its first frame.
+      _goHovered = false;
+      _goPressed = false;
       _applyMotionDuration();
       if (hasPending) {
         _intro.forward(from: 0);
@@ -143,11 +145,9 @@ class _UndoPillState extends State<UndoPill>
               ),
               const SizedBox(width: 8),
               ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 260),
+                constraints: const BoxConstraints(maxWidth: 220),
                 child: Text(
-                  pending != null
-                      ? '${pending.label} · ${remainingSec}s'
-                      : '',
+                  pending?.label ?? '',
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: tokens.textNormal,
@@ -156,7 +156,57 @@ class _UndoPillState extends State<UndoPill>
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              if (hasPending) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                  child: Text(
+                    '·',
+                    style: TextStyle(
+                      color: tokens.textMuted.withValues(alpha: 0.5),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  onEnter: (_) => setState(() => _goHovered = true),
+                  onExit: (_) => setState(() {
+                    _goHovered = false;
+                    _goPressed = false;
+                  }),
+                  child: GestureDetector(
+                    onTapDown: (_) => setState(() => _goPressed = true),
+                    onTapCancel: () => setState(() => _goPressed = false),
+                    onTapUp: (_) {
+                      setState(() => _goPressed = false);
+                      coord.flushNow();
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 120),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _goHovered
+                            ? tokens.accentBright.withValues(alpha: 0.12)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: AnimatedScale(
+                        duration: const Duration(milliseconds: 80),
+                        scale: _goPressed ? 0.92 : 1.0,
+                        child: _GoCountdown(
+                          hovered: _goHovered,
+                          remainingSec: remainingSec,
+                          tokens: tokens,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 6),
               TextButton(
                 onPressed: hasPending ? coord.cancel : null,
                 style: TextButton.styleFrom(
@@ -196,5 +246,72 @@ class _UndoPillState extends State<UndoPill>
       case UndoActionKind.other:
         return Icons.schedule;
     }
+  }
+}
+
+class _GoCountdown extends StatefulWidget {
+  final bool hovered;
+  final int remainingSec;
+  final AppTokens tokens;
+
+  const _GoCountdown({
+    required this.hovered,
+    required this.remainingSec,
+    required this.tokens,
+  });
+
+  @override
+  State<_GoCountdown> createState() => _GoCountdownState();
+}
+
+class _GoCountdownState extends State<_GoCountdown>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final text = widget.hovered ? 'go' : '${widget.remainingSec}s';
+    if (widget.hovered) {
+      return ThemeMorphText(
+        text,
+        style: TextStyle(
+          color: t.accentBright,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      );
+    }
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, child) {
+        final v = _pulse.value;
+        final alpha = 0.45 + 0.55 * v;
+        return ThemeMorphText(
+          text,
+          style: TextStyle(
+            color: t.textMuted.withValues(alpha: alpha),
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            fontFamily: AppFonts.mono,
+          ),
+        );
+      },
+    );
   }
 }

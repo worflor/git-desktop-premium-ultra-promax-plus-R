@@ -210,17 +210,18 @@ String? dreamCommitPhrase({
   bool includeDreamedModifier = true,
 }) {
   if (probe.sourceWeights.length < minSources) return null;
-  final primary = _strongestWeight(probe.sourceWeights);
-  if (primary == null) return null;
-  final subjectPhrase = phraseForPath(primary);
+  // Rank source files by weight and gather the top phrases from the
+  // actual diff — not from the mind's speculative neighborhood. The
+  // strongest file is the subject; the next distinct phrases become
+  // modifiers. This keeps the dream grounded in what the user actually
+  // touched rather than what the engine imagines.
+  final ranked = probe.sourceWeights.entries.toList()
+    ..sort((a, b) => b.value.compareTo(a.value));
+  if (ranked.isEmpty) return null;
+
+  final subjectPhrase = phraseForPath(ranked.first.key);
   if (subjectPhrase.isEmpty) return null;
 
-  // Verb + structural skeleton both harvested from the repo's own
-  // commits. The repo is teaching its voice to itself. Verb selection
-  // is a weighted sample (inverse-frequency blended with raw freq) so
-  // we don't always land on the #1 most-used verb — variety without
-  // drifting into nouns-masquerading-as-verbs. Diff-hashed RNG keeps
-  // the pick stable per diff.
   final trimmedSubjects =
       recentSubjects.take(maxVerbsConsidered).toList(growable: false);
   final verbCounts = harvestVerbCounts(trimmedSubjects);
@@ -234,9 +235,9 @@ String? dreamCommitPhrase({
           fallback: defaultVerb,
         );
 
-  // Gather up to 2 modifier phrases from the mind's retrieval
-  // neighborhood. Skip the subject itself and any duplicates.
-  final response = mind.ask(MindQuery.weighted(probe.sourceWeights));
+  // Modifiers from the OTHER files in the actual diff, not from
+  // speculative mind queries. Keeps the phrase honest about what
+  // changed while still reading naturally.
   final modifiers = <String>[];
   void addModifier(String phrase) {
     if (phrase.isEmpty) return;
@@ -244,29 +245,17 @@ String? dreamCommitPhrase({
     if (modifiers.contains(phrase)) return;
     modifiers.add(phrase);
   }
-  for (final c in response.candidates) {
-    if (modifiers.length >= 2) break;
-    addModifier(phraseForPath(c.path));
+  for (var i = 1; i < ranked.length && modifiers.length < 2; i++) {
+    addModifier(phraseForPath(ranked[i].key));
   }
 
-  // Optionally swap in a dreamed completion as a second modifier — a
-  // node the engine imagines this diff is reaching toward. Makes the
-  // phrase subtly predictive rather than purely descriptive. Uses a
-  // diff-keyed rng so it's stable per diff but varied across diffs.
+  // Only reach into the mind's neighborhood when the diff itself
+  // didn't produce enough modifier phrases (single-file diffs).
   if (includeDreamedModifier && modifiers.length < 2) {
-    final seedHash = _diffHash(probe.sourceWeights);
-    final rng = math.Random(seedHash & 0x7fffffff);
-    final dreams = mind.dream(
-      MindQuery.weighted(probe.sourceWeights),
-      samples: 1,
-      rng: rng,
-      topN: 5,
-    );
-    if (dreams.isNotEmpty) {
-      for (final c in dreams.first.top) {
-        if (modifiers.length >= 2) break;
-        addModifier(phraseForPath(c.path));
-      }
+    final response = mind.ask(MindQuery.weighted(probe.sourceWeights));
+    for (final c in response.candidates) {
+      if (modifiers.length >= 2) break;
+      addModifier(phraseForPath(c.path));
     }
   }
 
@@ -656,14 +645,3 @@ String slugifyForBranch(String phrase, {int maxLen = 48}) {
   return out;
 }
 
-String? _strongestWeight(Map<String, double> weights) {
-  String? best;
-  var bestW = -1.0;
-  weights.forEach((path, w) {
-    if (w > bestW) {
-      bestW = w;
-      best = path;
-    }
-  });
-  return best;
-}

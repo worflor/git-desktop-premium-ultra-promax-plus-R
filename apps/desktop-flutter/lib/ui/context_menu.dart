@@ -88,14 +88,12 @@ class AppContextMenu extends StatelessWidget {
     final children = <Widget>[];
     for (var s = 0; s < sections.length; s++) {
       // Hairline divider between adjacent sections — except when the
-      // previous section was a [TileChipMenuSection]. The chip rail
-      // already paints its own bottom hairline, AND the surface tone
-      // shifts from surface2 (rail) to surface1 (next section); two
-      // close-spaced horizontal lines on top of that material change
-      // reads as a busy double-rule. Letting the surface shift do
-      // the delineation keeps the menu feeling architectural rather
-      // than ruled-off.
-      if (s > 0 && sections[s - 1] is! TileChipMenuSection) {
+      // previous section was a surface-owning section (TileChip or
+      // Status). Those paint their own edge treatment, and the
+      // surface tone shift is enough delineation without a hairline.
+      if (s > 0 &&
+          sections[s - 1] is! TileChipMenuSection &&
+          sections[s - 1] is! StatusMenuSection) {
         children.add(
           Container(
             height: 1,
@@ -114,11 +112,15 @@ class AppContextMenu extends StatelessWidget {
               onChanged: onItemChanged,
             ));
           }
-        case TileChipMenuSection(:final tiles, :final chips):
+        case StatusMenuSection(:final child):
+          children.add(child);
+        case TileChipMenuSection(
+              :final tiles, :final chips, :final toolChips):
           children.add(_TileChipMenuSection(
             tokens: tokens,
             tiles: tiles,
             chips: chips,
+            toolChips: toolChips,
             onDismiss: onDismiss,
             onChanged: onItemChanged,
           ));
@@ -187,10 +189,26 @@ class ListMenuSection extends MenuSection {
 /// items — callers filter before passing — so the section can render
 /// just tiles, just chips, or both. An empty section is a no-op (the
 /// caller is responsible for not constructing one when nothing's left).
+/// Full-bleed inert section — renders [child] directly with no row
+/// chrome, no padding, no hover state. Used for status strips and
+/// other ambient information surfaces that own their full width.
+class StatusMenuSection extends MenuSection {
+  final Widget child;
+  const StatusMenuSection(this.child);
+}
+
 class TileChipMenuSection extends MenuSection {
   final List<AppContextMenuItem> tiles;
   final List<AppContextMenuItem> chips;
-  const TileChipMenuSection({required this.tiles, this.chips = const []});
+  /// External-tool chips — rendered as their own mosaic row(s) below
+  /// the main chips rail. Max 3 per row; 4+ wraps. Each tool gets
+  /// its own direct-click cell (no submenu).
+  final List<AppContextMenuItem> toolChips;
+  const TileChipMenuSection({
+    required this.tiles,
+    this.chips = const [],
+    this.toolChips = const [],
+  });
 }
 
 class AppContextMenuItem {
@@ -518,19 +536,19 @@ class _TileChipMenuSection extends StatelessWidget {
   final AppTokens tokens;
   final List<AppContextMenuItem> tiles;
   final List<AppContextMenuItem> chips;
+  final List<AppContextMenuItem> toolChips;
   final VoidCallback onDismiss;
   final VoidCallback? onChanged;
 
-  // Tile geometry — kept in sync with [_ContextMenuTile]'s width and
-  // the tile strip's inter-tile spacing so the rail-width cap matches
-  // the strip exactly.
   static const double _kTileWidth = 64;
   static const double _kTileSpacing = 4;
+  static const int _kMaxToolsPerRow = 3;
 
   const _TileChipMenuSection({
     required this.tokens,
     required this.tiles,
     required this.chips,
+    this.toolChips = const [],
     required this.onDismiss,
     this.onChanged,
   });
@@ -587,19 +605,32 @@ class _TileChipMenuSection extends StatelessWidget {
             _ChipRailMosaic(
               tokens: tokens,
               chips: chips,
-              // Cap to tile-strip-plus-horizontal-padding so the menu
-              // sizes to (tile strip + 24 horizontal margin) and the
-              // rail then fills that width edge-to-edge. Without the
-              // cap, the rail's intrinsic max would dominate the
-              // menu's IntrinsicWidth solver. With it, menu width =
-              // tile strip width + 24 = 224 px for a 3-tile strip,
-              // and the rail visually flows to the menu's edges.
               maxWidth: tiles.isEmpty
                   ? double.infinity
                   : _tileStripWidth + 24,
               onDismiss: onDismiss,
               onChanged: onChanged,
             ),
+          // ── Tool rows — own mosaic row(s) below the chips ────
+          // Each row is its own _ChipRailMosaic with fresh seams.
+          // Max 3 per row; 4+ wraps. Visually connected: same
+          // surface2 tone, no gap, just stacked.
+          if (toolChips.isNotEmpty)
+            for (var start = 0;
+                start < toolChips.length;
+                start += _kMaxToolsPerRow)
+              _ChipRailMosaic(
+                tokens: tokens,
+                chips: toolChips.sublist(
+                  start,
+                  (start + _kMaxToolsPerRow).clamp(0, toolChips.length),
+                ),
+                maxWidth: tiles.isEmpty
+                    ? double.infinity
+                    : _tileStripWidth + 24,
+                onDismiss: onDismiss,
+                onChanged: onChanged,
+              ),
         ],
       ),
     );

@@ -187,22 +187,19 @@ class ExternalTool {
 /// display order in the chip row, grouped: AI assistants → editors
 /// → git/dev TUIs → browser/web — so the user's eye lands on the
 /// register they want first.
+/// Category for grouping presets on the settings shelf.
+enum ExternalToolCategory { ai, editors, explore, gitOps }
+
 class ExternalToolPreset {
-  /// Display label for the "+" chip — e.g. "Claude", "LazyGit".
   final String label;
-
-  /// PATH-resolved executable. Detection probes this name; the
-  /// preset only renders when the OS finds it.
   final String executable;
-
-  /// Factory that produces a fresh `ExternalTool` seeded with the
-  /// preset's defaults (label, args, launch mode). Always returns a
-  /// new instance with a fresh id — safe to call multiple times.
+  final ExternalToolCategory category;
   final ExternalTool Function() build;
 
   const ExternalToolPreset({
     required this.label,
     required this.executable,
+    required this.category,
     required this.build,
   });
 }
@@ -267,10 +264,7 @@ class ExternalToolPresets {
         mode: ToolLaunchMode.detached,
       );
 
-  /// LazyGit — TUI git interface. Operates on the cwd, no args
-  /// needed. Massive time-saver for users who prefer keyboard-
-  /// driven git over Manifold's mouse-driven panels for certain
-  /// flows (rebase, cherry-pick, interactive staging).
+  /// LazyGit — TUI git interface.
   static ExternalTool lazygit() => ExternalTool.create(
         label: 'LazyGit',
         executable: 'lazygit',
@@ -278,8 +272,258 @@ class ExternalToolPresets {
         mode: ToolLaunchMode.newTerminal,
       );
 
-  /// Empty preset — what "Add custom tool" produces. The settings
-  /// editor lets the user fill in the fields after.
+  // ── Additional AI CLI tools ──────────────────────────────────
+
+  /// OpenAI Codex CLI agent.
+  static ExternalTool codex() => ExternalTool.create(
+        label: 'Codex',
+        executable: 'codex',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Google Gemini CLI.
+  static ExternalTool gemini() => ExternalTool.create(
+        label: 'Gemini',
+        executable: 'gemini',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// OpenCode — open-source AI coding agent.
+  static ExternalTool opencode() => ExternalTool.create(
+        label: 'OpenCode',
+        executable: 'opencode',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── Additional editors ───────────────────────────────────────
+
+  /// Windsurf (Codeium) — AI-first editor.
+  static ExternalTool windsurf() => ExternalTool.create(
+        label: 'Windsurf',
+        executable: 'windsurf',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// JetBrains IntelliJ IDEA.
+  static ExternalTool idea() => ExternalTool.create(
+        label: 'IntelliJ',
+        executable: 'idea',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// Neovim — terminal editor.
+  static ExternalTool nvim() => ExternalTool.create(
+        label: 'Neovim',
+        executable: 'nvim',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Helix — modern terminal editor.
+  static ExternalTool helix() => ExternalTool.create(
+        label: 'Helix',
+        executable: 'hx',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── Terminals / utilities ────────────────────────────────────
+
+  /// Windows Terminal — opens a shell at the project path.
+  static ExternalTool windowsTerminal() => ExternalTool.create(
+        label: 'Terminal',
+        executable: 'wt',
+        args: const ['-d', '{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// GitHub CLI — opens the repo in the browser.
+  static ExternalTool ghBrowse() => ExternalTool.create(
+        label: 'GitHub',
+        executable: 'gh',
+        args: const ['browse'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  // ── Git power-user TUIs ───────────────────────────────────────
+
+  /// Tig — TUI git log/blame/diff viewer. Read-focused.
+  static ExternalTool tig() => ExternalTool.create(
+        label: 'Tig',
+        executable: 'tig',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// GitUI — modern Rust TUI git interface.
+  static ExternalTool gitui() => ExternalTool.create(
+        label: 'GitUI',
+        executable: 'gitui',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── Analysis / workflow ──────────────────────────────────────
+
+  /// Tokei — lines of code / language breakdown.
+  static ExternalTool tokei() => ExternalTool.create(
+        label: 'Tokei',
+        executable: 'tokei',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Just — modern command runner. Shows the justfile's recipes.
+  static ExternalTool just() => ExternalTool.create(
+        label: 'Just',
+        executable: 'just',
+        args: const ['--list'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Docker Compose — spin up the project's containers.
+  static ExternalTool docker() => ExternalTool.create(
+        label: 'Docker',
+        executable: 'docker',
+        args: const ['compose', 'up'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── File exploration / analysis ───────────────────────────────
+
+  /// Broot — smart tree explorer with fuzzy search.
+  static ExternalTool broot() => ExternalTool.create(
+        label: 'Broot',
+        executable: 'broot',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Yazi — blazing fast TUI file manager.
+  static ExternalTool yazi() => ExternalTool.create(
+        label: 'Yazi',
+        executable: 'yazi',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Glow — render README.md beautifully in terminal.
+  static ExternalTool glow() => ExternalTool.create(
+        label: 'Glow',
+        executable: 'glow',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Dust — disk usage tree visualizer.
+  static ExternalTool dust() => ExternalTool.create(
+        label: 'Dust',
+        executable: 'dust',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── CI / build / orchestration ──────────────────────────────
+
+  /// Act — run GitHub Actions locally.
+  static ExternalTool act() => ExternalTool.create(
+        label: 'Act',
+        executable: 'act',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Make — classic build tool.
+  static ExternalTool make() => ExternalTool.create(
+        label: 'Make',
+        executable: 'make',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Task — Go Task runner (modern make alternative).
+  static ExternalTool taskRunner() => ExternalTool.create(
+        label: 'Task',
+        executable: 'task',
+        args: const ['--list'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// K9s — Kubernetes TUI.
+  static ExternalTool k9s() => ExternalTool.create(
+        label: 'K9s',
+        executable: 'k9s',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── Eldritch git operations ───────────────────────────────────
+  // Raw git commands that reveal hidden repo knowledge or do
+  // powerful single-command operations. Executable is `git` itself;
+  // args are the arcane subcommand + flags.
+
+  /// Who built this? Contributor leaderboard by commit count.
+  static ExternalTool contributors() => ExternalTool.create(
+        label: 'Contributors',
+        executable: 'git',
+        args: const ['shortlog', '-sn', '--all'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Visual branch topology — THE wizard view of repo structure.
+  static ExternalTool branchMap() => ExternalTool.create(
+        label: 'Branch Map',
+        executable: 'git',
+        args: const ['log', '--oneline', '--graph', '--all', '--decorate', '-40'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// What happened recently? Last week's work in one glance.
+  static ExternalTool thisWeek() => ExternalTool.create(
+        label: 'This Week',
+        executable: 'git',
+        args: const ['log', '--since=1 week ago', '--oneline', '--all'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Is this repo healthy? Full integrity check.
+  static ExternalTool integrity() => ExternalTool.create(
+        label: 'Integrity',
+        executable: 'git',
+        args: const ['fsck', '--full'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Show me everything that ever happened. Recovery archaeology.
+  static ExternalTool reflog() => ExternalTool.create(
+        label: 'Reflog',
+        executable: 'git',
+        args: const ['reflog', '--all', '--date=relative'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// What was deleted? Ghost files — everything that was removed.
+  static ExternalTool ghosts() => ExternalTool.create(
+        label: 'Ghosts',
+        executable: 'git',
+        args: const ['log', '--all', '--diff-filter=D', '--name-only', '--pretty=format:--- %h %s'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Nuclear cleanup — aggressive garbage collection + prune.
+  static ExternalTool cleanup() => ExternalTool.create(
+        label: 'Cleanup',
+        executable: 'git',
+        args: const ['gc', '--aggressive', '--prune=now'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Empty preset — what "Add custom tool" produces.
   static ExternalTool blank() => ExternalTool.create(
         label: '',
         executable: '',
@@ -287,23 +531,49 @@ class ExternalToolPresets {
         mode: ToolLaunchMode.newTerminal,
       );
 
-  /// All curated detectable presets, in display order. Excludes the
-  /// "custom" preset, which is rendered separately as an always-on
-  /// escape hatch.
+  /// All curated detectable presets, in display order.
   static List<ExternalToolPreset> get all => [
-        // AI assistants first — the highest-leverage, most-novel
-        // tools and the user's stated focus.
-        ExternalToolPreset(label: '+ Claude', executable: 'claude', build: claude),
-        ExternalToolPreset(label: '+ Aider', executable: 'aider', build: aider),
-        // Editors. VS Code and Cursor before Zed/Sublime because
-        // they're the modal majority share.
-        ExternalToolPreset(label: '+ VS Code', executable: 'code', build: vscode),
-        ExternalToolPreset(label: '+ Cursor', executable: 'cursor', build: cursor),
-        ExternalToolPreset(label: '+ Zed', executable: 'zed', build: zed),
-        ExternalToolPreset(label: '+ Sublime', executable: 'subl', build: sublime),
-        // Git / dev power-tool: TUI git frontend. Time-saver for
-        // anyone who lives in lazygit.
-        ExternalToolPreset(label: '+ LazyGit', executable: 'lazygit', build: lazygit),
+        // AI assistants
+        ExternalToolPreset(label: '+ Claude', executable: 'claude', category: ExternalToolCategory.ai, build: claude),
+        ExternalToolPreset(label: '+ Codex', executable: 'codex', category: ExternalToolCategory.ai, build: codex),
+        ExternalToolPreset(label: '+ Gemini', executable: 'gemini', category: ExternalToolCategory.ai, build: gemini),
+        ExternalToolPreset(label: '+ OpenCode', executable: 'opencode', category: ExternalToolCategory.ai, build: opencode),
+        ExternalToolPreset(label: '+ Aider', executable: 'aider', category: ExternalToolCategory.ai, build: aider),
+        // Editors
+        ExternalToolPreset(label: '+ VS Code', executable: 'code', category: ExternalToolCategory.editors, build: vscode),
+        ExternalToolPreset(label: '+ Cursor', executable: 'cursor', category: ExternalToolCategory.editors, build: cursor),
+        ExternalToolPreset(label: '+ Windsurf', executable: 'windsurf', category: ExternalToolCategory.editors, build: windsurf),
+        ExternalToolPreset(label: '+ Zed', executable: 'zed', category: ExternalToolCategory.editors, build: zed),
+        ExternalToolPreset(label: '+ IntelliJ', executable: 'idea', category: ExternalToolCategory.editors, build: idea),
+        ExternalToolPreset(label: '+ Sublime', executable: 'subl', category: ExternalToolCategory.editors, build: sublime),
+        ExternalToolPreset(label: '+ Neovim', executable: 'nvim', category: ExternalToolCategory.editors, build: nvim),
+        ExternalToolPreset(label: '+ Helix', executable: 'hx', category: ExternalToolCategory.editors, build: helix),
+        // Explore — file browsers, analysis, git TUIs, terminals
+        ExternalToolPreset(label: '+ LazyGit', executable: 'lazygit', category: ExternalToolCategory.explore, build: lazygit),
+        ExternalToolPreset(label: '+ Tig', executable: 'tig', category: ExternalToolCategory.explore, build: tig),
+        ExternalToolPreset(label: '+ GitUI', executable: 'gitui', category: ExternalToolCategory.explore, build: gitui),
+        ExternalToolPreset(label: '+ Broot', executable: 'broot', category: ExternalToolCategory.explore, build: broot),
+        ExternalToolPreset(label: '+ Yazi', executable: 'yazi', category: ExternalToolCategory.explore, build: yazi),
+        ExternalToolPreset(label: '+ Glow', executable: 'glow', category: ExternalToolCategory.explore, build: glow),
+        ExternalToolPreset(label: '+ Dust', executable: 'dust', category: ExternalToolCategory.explore, build: dust),
+        ExternalToolPreset(label: '+ Tokei', executable: 'tokei', category: ExternalToolCategory.explore, build: tokei),
+        ExternalToolPreset(label: '+ Terminal', executable: 'wt', category: ExternalToolCategory.explore, build: windowsTerminal),
+        ExternalToolPreset(label: '+ GitHub', executable: 'gh', category: ExternalToolCategory.explore, build: ghBrowse),
+        // CI / build / orchestration
+        ExternalToolPreset(label: '+ Just', executable: 'just', category: ExternalToolCategory.explore, build: just),
+        ExternalToolPreset(label: '+ Task', executable: 'task', category: ExternalToolCategory.explore, build: taskRunner),
+        ExternalToolPreset(label: '+ Make', executable: 'make', category: ExternalToolCategory.explore, build: make),
+        ExternalToolPreset(label: '+ Act', executable: 'act', category: ExternalToolCategory.explore, build: act),
+        ExternalToolPreset(label: '+ Docker', executable: 'docker', category: ExternalToolCategory.explore, build: docker),
+        ExternalToolPreset(label: '+ K9s', executable: 'k9s', category: ExternalToolCategory.explore, build: k9s),
+        // Git operations
+        ExternalToolPreset(label: '+ Contributors', executable: 'git', category: ExternalToolCategory.gitOps, build: contributors),
+        ExternalToolPreset(label: '+ Branch Map', executable: 'git', category: ExternalToolCategory.gitOps, build: branchMap),
+        ExternalToolPreset(label: '+ This Week', executable: 'git', category: ExternalToolCategory.gitOps, build: thisWeek),
+        ExternalToolPreset(label: '+ Integrity', executable: 'git', category: ExternalToolCategory.gitOps, build: integrity),
+        ExternalToolPreset(label: '+ Reflog', executable: 'git', category: ExternalToolCategory.gitOps, build: reflog),
+        ExternalToolPreset(label: '+ Ghosts', executable: 'git', category: ExternalToolCategory.gitOps, build: ghosts),
+        ExternalToolPreset(label: '+ Cleanup', executable: 'git', category: ExternalToolCategory.gitOps, build: cleanup),
       ];
 
   /// All executable names worth probing on PATH — derived from

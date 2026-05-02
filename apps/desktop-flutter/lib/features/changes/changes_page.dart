@@ -238,17 +238,12 @@ class _ChangesPageState extends State<ChangesPage> {
   // toggling the pref mid-session behaves as if it'd always been on.
   final Map<String, Set<String>> _seenByContextKey = {};
 
-  /// Per-context first-seen record per file. Holds the file's
-  /// fingerprint (stage chars + diff magnitude) AND the
-  /// [RepositoryState.userRefreshEpoch] captured at first-seen time.
-  /// A file is "stale" iff its current fingerprint still matches the
-  /// snapshot AND the snapshot was captured in a strictly earlier
-  /// refresh epoch — i.e. it has persisted unchanged across at least
-  /// one deliberate user "show me what's new" event. This keeps newly-
-  /// appearing files and freshly-edited files out of the dim bucket
-  /// until the user has explicitly had a chance to see them.
-  final Map<String, Map<String, _FirstSeenRecord>>
-      _firstSeenByContextKey = {};
+  /// Cached per-file dim opacity derived from the Logos engine's
+  /// integrity signal. Recomputed when the engine or status changes.
+  /// Files below the changeset's median integrity dim; files at or
+  /// above stay vivid. Empty until the engine loads — all files
+  /// render at full opacity until then.
+  Map<String, double> _fileDimOpacity = const {};
   String? _selectedDiffPath;
   String? _inspectionDiffPath;
   String? _visibleDiffPath;
@@ -613,12 +608,17 @@ class _ChangesPageState extends State<ChangesPage> {
     setState(() => _openDrawer = kind);
   }
 
-  /// Close whichever drawer is currently open. No-op when nothing's
-  /// open. The complementary [_openDrawerFor] handles the open path;
-  /// keeping the open/close symmetric here keeps the file-toggle
-  /// callers from needing to know which drawer is visible right now.
+  /// Close whichever drawer is currently open + mark the record as
+  /// seen so the sidebar badge clears. Without the markSeen, a user
+  /// who dismisses the drawer mid-run would see the sidebar pill
+  /// linger as "unread" even though they explicitly chose to leave.
   void _closeDrawer() {
-    if (_openDrawer == null) return;
+    final kind = _openDrawer;
+    if (kind == null) return;
+    final site = _activitySite();
+    if (site != null) {
+      site.state.markSeen(repoPath: site.repoPath, kind: kind);
+    }
     setState(() => _openDrawer = null);
   }
 
@@ -627,6 +627,13 @@ class _ChangesPageState extends State<ChangesPage> {
   /// starts with collapsed traces, and by the repo / branch switch
   /// reset so a fresh context lands clean.
   void _closeAndResetReviewDrawer() {
+    if (_openDrawer == AiActivityKind.review) {
+      final site = _activitySite();
+      if (site != null) {
+        site.state.markSeen(
+            repoPath: site.repoPath, kind: AiActivityKind.review);
+      }
+    }
     setState(() {
       if (_openDrawer == AiActivityKind.review) _openDrawer = null;
       _reviewTraceExpanded = false;
@@ -1011,7 +1018,7 @@ class _ChangesPageState extends State<ChangesPage> {
     _includedPaths.clear();
     _includedByContextKey.clear();
     _seenByContextKey.clear();
-    _firstSeenByContextKey.clear();
+    _fileDimOpacity = const {};
     _selectedDiffPath = null;
     _inspectionDiffPath = null;
     _visibleDiffPath = null;
@@ -1081,7 +1088,7 @@ class _ChangesPageState extends State<ChangesPage> {
         ..clear()
         ..addAll(restored);
       _seenByContextKey.clear();
-      _firstSeenByContextKey.clear();
+      _fileDimOpacity = const {};
       if (currentStatus != null) {
         _syncDraftFromStatus(currentStatus);
       }
@@ -1619,6 +1626,14 @@ class _ChangesPageState extends State<ChangesPage> {
     try {
       final gitDir = await _resolveGitDir(repoPath);
       if (gitDir == null) return;
+      // Stale guard: _resolveGitDir spawns a git subprocess. By the
+      // time it returns, the user might have switched repos/branches
+      // again. If so, this load is for a scope the user has already
+      // left — applying it would flash stale text in the composer
+      // for one frame before the next switch clears it.
+      if (_lastDraftRepoPath != repoPath || _lastDraftBranch != branch) {
+        return;
+      }
       final file = _draftFile(gitDir, branch);
       // Honor the "remember work in progress" pref: when off, treat any
       // lingering draft file as stale — delete it on touch and start
@@ -1633,10 +1648,18 @@ class _ChangesPageState extends State<ChangesPage> {
       }
       if (await file.exists()) {
         final draft = await file.readAsString();
-        if (mounted && (force || _commitMsgCtrl.text.isEmpty)) {
+        // Second stale guard: the file read is another async gap.
+        if (!mounted) return;
+        if (_lastDraftRepoPath != repoPath || _lastDraftBranch != branch) {
+          return;
+        }
+        if (force || _commitMsgCtrl.text.isEmpty) {
           _commitMsgCtrl.text = draft;
         }
       } else if (force && mounted) {
+        if (_lastDraftRepoPath != repoPath || _lastDraftBranch != branch) {
+          return;
+        }
         _commitMsgCtrl.clear();
       }
     } catch (_) {}
@@ -1792,7 +1815,6 @@ class _ChangesPageState extends State<ChangesPage> {
       // stashed something). Reconcile the selection rather than
       // resetting it — preserve everything the user touched.
       _reconcileIncludedPaths(status);
-      _trackFirstSeenFingerprints(status);
       return;
     }
     // Stash the outgoing context's selection before switching so we
@@ -1832,7 +1854,6 @@ class _ChangesPageState extends State<ChangesPage> {
         ..addAll(staged.isNotEmpty ? staged : status.files.map((f) => f.path));
       _seenByContextKey[nextKey] = {for (final f in status.files) f.path};
     }
-    _trackFirstSeenFingerprints(status);
     // Branch / commit-context switch — close any drawers from the
     // prior context. Records persist in AiActivityState so a same-
     // scope visit later still finds the result; surface UI state
@@ -1848,74 +1869,106 @@ class _ChangesPageState extends State<ChangesPage> {
     _museFlash = false;
   }
 
-  /// Sentinel fingerprint returned when the file's diff magnitude
-  /// isn't available yet (change-weights are loaded asynchronously
-  /// after status). We deliberately do NOT snapshot this value —
-  /// locking in a pending fingerprint would flip every file to
-  /// "fresh" the moment weights actually arrive.
-  static const String _fingerprintPending = '__pending__';
-
-  /// Compact fingerprint of a file's current state — stage codes plus
-  /// diff magnitude. Returns [_fingerprintPending] when change-weights
-  /// haven't arrived yet; callers treat that as "don't snapshot this
-  /// file yet." Including `adds`/`dels` is what lets edit-in-place
-  /// (same staging status, different diff size) bump a stale file
-  /// back to fresh without needing a full content hash.
-  String _fileFreshnessFingerprint(RepositoryStatusFile f) {
-    final w = _changeWeights[f.path];
-    if (w == null) return _fingerprintPending;
-    return '${f.staged}|${f.unstaged}|${w.adds}|${w.dels}|${w.binary}';
-  }
-
-  /// Capture first-seen records for freshly-appearing files and prune
-  /// entries for files that have left the change set. `putIfAbsent`
-  /// locks each file's first-seen fingerprint and epoch at the moment
-  /// it first enters the change set — subsequent edits change the
-  /// LIVE fingerprint, but the snapshot is frozen, so `_isFileStale`
-  /// correctly reports fresh.
+  /// Recompute per-file dim opacity from the Logos engine's integrity
+  /// + volatility signals. Files whose integrity is below the
+  /// changeset's adaptive threshold dim; the rest stay vivid.
   ///
-  /// Pending-fingerprint files (change-weights not loaded yet) are
-  /// skipped; they'll get captured on the next sync after the async
-  /// weights arrive.
-  void _trackFirstSeenFingerprints(RepositoryStatus status) {
-    final key = _draftKey;
-    if (key == null) return;
-    final epoch = context.read<RepositoryState>().userRefreshEpoch;
-    final snapshot = _firstSeenByContextKey.putIfAbsent(key, () => {});
-    final currentPaths = <String>{};
-    for (final f in status.files) {
-      currentPaths.add(f.path);
-      final fp = _fileFreshnessFingerprint(f);
-      if (fp == _fingerprintPending) continue;
-      snapshot.putIfAbsent(
-        f.path,
-        () => _FirstSeenRecord(fingerprint: fp, epoch: epoch),
-      );
+  /// The threshold is the changeset's own median integrity, so a repo
+  /// full of generated files doesn't dim everything — the dimming is
+  /// always relative to what's in front of the user right now.
+  /// Derive per-file attention weight from three Logos axes, then map
+  /// the bottom half of the distribution to reduced opacity.
+  ///
+  /// Axes (each normalised to [0, 1] within the current changeset):
+  ///
+  ///  1. **Surprise** — inverse of historical volatility. A lockfile
+  ///     that changes every commit scores 0; a rarely-touched config
+  ///     that suddenly appears scores 1. "Is this change unusual?"
+  ///
+  ///  2. **Centrality** — mean coupling to the other files in the same
+  ///     changeset. A tightly-coupled peer scores high; an incidental
+  ///     bystander scores 0. "Does this file belong with the others?"
+  ///
+  ///  3. **Integrity** — Logos' semantic transmissibility score. Filters
+  ///     generated code, lockfiles, vendor noise. "Is this a real
+  ///     source file?"
+  ///
+  /// Centrality dominates because it's the one axis that's context-
+  /// sensitive to *this* changeset rather than to the file's history.
+  void _recomputeFileDimOpacity(
+    RepositoryStatus status,
+    LogosGit? engine,
+    FileCouplingMatrix? coupling,
+  ) {
+    if (engine == null || status.files.length < 3) {
+      _fileDimOpacity = const {};
+      return;
     }
-    // Drop entries for files that left the change set — if they come
-    // back in a different state the next appearance counts as fresh.
-    snapshot.removeWhere((path, _) => !currentPaths.contains(path));
+    final stats = engine.stats;
+    final paths = status.files.map((f) => f.path).toList();
+
+    // ── Axis 1: Surprise ──────────────────────────────────────────
+    // Normalise volatility within the changeset so the score is
+    // relative to what's on screen, not to the whole repo.
+    double volMax = 0;
+    final volRaw = <double>[];
+    for (final p in paths) {
+      final v = stats.volatility[p] ?? 0.0;
+      volRaw.add(v);
+      if (v > volMax) volMax = v;
+    }
+    final surprise = <String, double>{};
+    for (var i = 0; i < paths.length; i++) {
+      surprise[paths[i]] = volMax > 0 ? 1.0 - volRaw[i] / volMax : 1.0;
+    }
+
+    // ── Axis 2: Centrality ────────────────────────────────────────
+    // Mean pairwise coupling to every other changed file. Falls back
+    // to 0.5 (neutral) when the matrix isn't ready.
+    final centrality = <String, double>{};
+    if (coupling != null && paths.length > 1) {
+      for (final p in paths) {
+        double sum = 0;
+        for (final q in paths) {
+          if (q == p) continue;
+          sum += combinedCouplingScore(p, q, coupling);
+        }
+        centrality[p] = sum / (paths.length - 1);
+      }
+    }
+
+    // ── Axis 3: Integrity ─────────────────────────────────────────
+    final integrity = stats.integrityByPath;
+
+    // ── Blend ─────────────────────────────────────────────────────
+    final weights = <String, double>{};
+    for (final p in paths) {
+      final s = surprise[p] ?? 1.0;
+      final c = centrality[p] ?? 0.5;
+      final g = integrity[p] ?? 0.85;
+      weights[p] = c * 0.45 + s * 0.35 + g * 0.20;
+    }
+
+    // Adaptive threshold from the changeset's own distribution.
+    final sorted = weights.values.toList()..sort();
+    if (sorted.last - sorted.first < 0.04) {
+      _fileDimOpacity = const {};
+      return;
+    }
+    final median = sorted[sorted.length ~/ 2];
+
+    final result = <String, double>{};
+    for (final e in weights.entries) {
+      if (e.value < median) {
+        final t =
+            ((median - e.value) / median.clamp(0.01, 1.0)).clamp(0.0, 1.0);
+        result[e.key] = 1.0 - 0.45 * t;
+      }
+    }
+    _fileDimOpacity = result;
   }
 
-  /// True iff the file's current fingerprint matches its first-seen
-  /// fingerprint AND first-seen happened in an earlier refresh epoch
-  /// than the current one. The epoch gate is what keeps freshly-
-  /// loaded or freshly-edited files out of the stale bucket until the
-  /// user has explicitly clicked refresh at least once since they
-  /// appeared — first-seen-in-this-epoch always reads as fresh.
-  bool _isFileStale(RepositoryStatusFile f) {
-    final key = _draftKey;
-    if (key == null) return false;
-    final snapshot = _firstSeenByContextKey[key];
-    if (snapshot == null) return false;
-    final rec = snapshot[f.path];
-    if (rec == null) return false;
-    final current = _fileFreshnessFingerprint(f);
-    if (current == _fingerprintPending) return false;
-    if (rec.fingerprint != current) return false;
-    final epoch = context.read<RepositoryState>().userRefreshEpoch;
-    return rec.epoch < epoch;
-  }
+  double _fileDimFor(String path) => _fileDimOpacity[path] ?? 1.0;
 
   /// Reconcile [_includedPaths] against [status].
   ///
@@ -4554,20 +4607,11 @@ class _ChangesPageState extends State<ChangesPage> {
       // the empty-findings shape; safe to set when our scope still
       // matches what landed.
       if (_reviewScopeKey == scopeKey) {
-        // Branch on what drawer the user is currently watching:
-        //   * review's drawer is open (or no drawer is open) → land
-        //     the result on screen, fire markSeen, fire the flash.
-        //     The user is staring at the spinner / blank pane and
-        //     gets the immediate result they triggered.
-        //   * a *different* drawer is open (e.g. user kicked off a
-        //     review then switched to muse mid-run) → leave the
-        //     drawer alone. DON'T markSeen and DON'T force-open
-        //     review; the toolbar button half-lights with the
-        //     unread state instead, signalling "click to see the
-        //     result that just landed" without yanking the user
-        //     out of what they're reading.
-        final isWatching = _openDrawer == null ||
-            _openDrawer == AiActivityKind.review;
+        // Only land the result on screen if the user is actively
+        // viewing review's drawer. If they dismissed it or switched
+        // to another drawer mid-run, the toolbar's half-lit unread
+        // state surfaces the completion without yanking the view.
+        final isWatching = _openDrawer == AiActivityKind.review;
         if (isWatching) {
           setState(() {
             _openDrawer = AiActivityKind.review;
@@ -4598,8 +4642,7 @@ class _ChangesPageState extends State<ChangesPage> {
         error: result.error ?? 'Review failed.',
       );
       if (_reviewScopeKey == scopeKey) {
-        final isWatching = _openDrawer == null ||
-            _openDrawer == AiActivityKind.review;
+        final isWatching = _openDrawer == AiActivityKind.review;
         if (isWatching) {
           setState(() => _openDrawer = AiActivityKind.review);
           activity.markSeen(
@@ -4761,14 +4804,9 @@ class _ChangesPageState extends State<ChangesPage> {
     // `_museRecord?.scopeKey`, so the prior `A || A`-style disjunction
     // collapses to one comparison.
     if (_museScopeKey == scopeKey) {
-      // Same branch logic as the review path: only land the result
-      // on screen + markSeen when the user is actually watching
-      // (muse drawer open or no drawer open). If the user kicked
-      // off muse and switched to review's drawer mid-run, leave
-      // the drawer alone — the toolbar's half-lit unread state
-      // surfaces the completion without yanking the view.
-      final isWatching = _openDrawer == null ||
-          _openDrawer == AiActivityKind.muse;
+      // Only land the result if the user is actively viewing
+      // muse's drawer. Otherwise the toolbar badge handles it.
+      final isWatching = _openDrawer == AiActivityKind.muse;
       setState(() {
         if (isWatching) _openDrawer = AiActivityKind.muse;
         if (landed) _museFlash = true;
@@ -5298,11 +5336,17 @@ class _ChangesPageState extends State<ChangesPage> {
         });
       }
     }
+    // The Logos engine drives file-dimming and provides a fallback
+    // coupling matrix when FileCouplingState is mid-reload.
+    final logosForDim = context.select<LogosGitState, LogosGit?>(
+      (state) => state.engineFor(repoPath ?? ''),
+    );
     final couplingMatrix = repoPath == null
         ? null
-        : context.select<FileCouplingState, FileCouplingMatrix?>(
-            (state) => state.matrixFor(repoPath),
-          );
+        : (context.select<FileCouplingState, FileCouplingMatrix?>(
+              (state) => state.matrixFor(repoPath),
+            ) ??
+            logosForDim?.stats.coupling);
     final corpusIndex = repoPath == null
         ? null
         : context.select<SymbolFrequencyState, SymbolFrequencyIndex?>(
@@ -5314,12 +5358,6 @@ class _ChangesPageState extends State<ChangesPage> {
         context.select<RepositoryState, String?>((state) => state.statusError);
     final statusLoading =
         context.select<RepositoryState, bool>((state) => state.statusLoading);
-    // Subscribe to the user-refresh epoch so the stale-dim flips apply
-    // on explicit refresh even when the status object is structurally
-    // equal to the prior one (empty-refresh case). The value itself is
-    // read through [_isFileStale] at row-build time; the select here
-    // exists purely to trigger rebuild on epoch change.
-    context.select<RepositoryState, int>((state) => state.userRefreshEpoch);
 
     // Seed the stash drawer from the user's "default expanded" preference
     // once per session, as soon as we actually have shelves to show. After
@@ -5564,6 +5602,8 @@ class _ChangesPageState extends State<ChangesPage> {
     final includedFiles = status.files
         .where((file) => _includedPaths.contains(file.path))
         .toList();
+
+    _recomputeFileDimOpacity(status, logosForDim, couplingMatrix);
 
     // Coupling clusters for the current change set. Computed once per build;
     // falls back to "all isolated" when the matrix isn't ready yet.
@@ -6007,7 +6047,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                           inRealCluster: inRealCluster,
                                           peerScore: peerScore,
                                           isRailSubject: isRailSubject,
-                                          isStale: _isFileStale(file),
+                                          dimOpacity: _fileDimFor(file.path),
                                           onRailEnter: inRealCluster
                                               ? () {
                                                   if (_railHoverPath !=
@@ -6077,32 +6117,52 @@ class _ChangesPageState extends State<ChangesPage> {
                                     );
                                   }),
                                 ),
-                                // Floating shelve control — sits over the
-                                // bottom-right of the file list, no chrome
-                                // around it. The drawer that expands when
-                                // toggled lives inside the commit-composer
-                                // area below (it's just a sibling of this
-                                // Stack in the parent column structure), so
-                                // hitting the button still raises the
-                                // filing-cabinet drawer from the commit
-                                // area exactly as before.
                                 Positioned(
                                   right: 12,
                                   bottom: 12,
-                                  child: _ShelfControl(
-                                    tokens: t,
-                                    count: _stashes.length,
-                                    loading: _stashesLoading,
-                                    expanded: _stashesExpanded,
-                                    canShelve: status.files.isNotEmpty,
-                                    onShelve: status.files.isNotEmpty
-                                        ? () => _shelveAll(repoPath)
-                                        : null,
-                                    onToggleExpanded: _stashes.isEmpty
-                                        ? null
-                                        : () => setState(() =>
-                                            _stashesExpanded =
-                                                !_stashesExpanded),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      if (couplingMatrix != null &&
+                                          includedCount > 0)
+                                        Builder(builder: (ctx) {
+                                          final nudges = suggestMissingPeers(
+                                            selected: _includedPaths,
+                                            allChanged: status.files
+                                                .map((f) => f.path),
+                                            matrix: couplingMatrix,
+                                          );
+                                          if (nudges.isEmpty) {
+                                            return const SizedBox.shrink();
+                                          }
+                                          return Padding(
+                                            padding:
+                                                const EdgeInsets.only(right: 8),
+                                            child: _CouplingNudgeBanner(
+                                              tokens: t,
+                                              nudges: nudges,
+                                              onAdd: (path) =>
+                                                  _toggleIncluded(path, true),
+                                            ),
+                                          );
+                                        }),
+                                      _ShelfControl(
+                                        tokens: t,
+                                        count: _stashes.length,
+                                        loading: _stashesLoading,
+                                        expanded: _stashesExpanded,
+                                        canShelve: status.files.isNotEmpty,
+                                        onShelve: status.files.isNotEmpty
+                                            ? () => _shelveAll(repoPath)
+                                            : null,
+                                        onToggleExpanded: _stashes.isEmpty
+                                            ? null
+                                            : () => setState(() =>
+                                                _stashesExpanded =
+                                                    !_stashesExpanded),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ]),
@@ -6190,28 +6250,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                   ),
                                 ),
                               ),
-                            if (couplingMatrix != null &&
-                                includedCount > 0 &&
-                                includedCount < status.files.length)
-                              Builder(builder: (ctx) {
-                                final nudges = suggestMissingPeers(
-                                  selected: _includedPaths,
-                                  allChanged: status.files.map((f) => f.path),
-                                  matrix: couplingMatrix,
-                                );
-                                if (nudges.isEmpty)
-                                  return const SizedBox.shrink();
-                                return Padding(
-                                  padding: const EdgeInsets.only(top: 6),
-                                  child: _CouplingNudgeBanner(
-                                    tokens: t,
-                                    nudges: nudges,
-                                    onAdd: (path) =>
-                                        _toggleIncluded(path, true),
-                                  ),
-                                );
-                              }),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 4),
                             Focus(
                               onKeyEvent: (node, event) {
                                 if (event is! KeyDownEvent) {
@@ -10959,13 +10998,12 @@ class _FileRow extends StatefulWidget {
   /// one go. Null for isolated rows — nothing to batch.
   final VoidCallback? onClusterToggle;
 
-  /// True when the file has persisted in the change set unchanged
-  /// across at least one explicit user refresh since first-seen. The
-  /// checkbox and cluster stripe stay vivid (still interactive /
-  /// informative); the filename column and state badges fade so the
-  /// user's attention flows naturally to freshly-appeared or
-  /// freshly-edited files.
-  final bool isStale;
+  /// Continuous opacity for the file's content area (filename, dir,
+  /// badges). 1.0 = fully vivid, < 1.0 = dimmed by the Logos engine's
+  /// integrity + volatility signal. Checkbox and cluster stripe stay
+  /// vivid regardless so interactive/structural signals keep full
+  /// legibility.
+  final double dimOpacity;
 
   const _FileRow({
     required this.file,
@@ -10984,7 +11022,7 @@ class _FileRow extends StatefulWidget {
     this.onRailExit,
     this.onSecondaryTap,
     this.onClusterToggle,
-    this.isStale = false,
+    this.dimOpacity = 1.0,
   });
 
   @override
@@ -11117,7 +11155,7 @@ class _FileRowState extends State<_FileRow> {
                       Expanded(
                         child: AnimatedOpacity(
                           duration: const Duration(milliseconds: 140),
-                          opacity: widget.isStale ? 0.45 : 1.0,
+                          opacity: widget.dimOpacity,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -11187,17 +11225,6 @@ class _ChangeBadgeSpec {
   final Color color;
 
   const _ChangeBadgeSpec({required this.label, required this.color});
-}
-
-/// Per-file snapshot used by the stale-dim mechanic. The fingerprint
-/// captures stage codes plus diff magnitude at first-seen time; the
-/// epoch records which user-refresh epoch that capture happened in,
-/// so a file isn't considered stale until at least one explicit
-/// user refresh has elapsed with it unchanged.
-class _FirstSeenRecord {
-  final String fingerprint;
-  final int epoch;
-  const _FirstSeenRecord({required this.fingerprint, required this.epoch});
 }
 
 /// Cluster stripe color derived from the active theme. Returns null for

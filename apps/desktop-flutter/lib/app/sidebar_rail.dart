@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'ai_activity_state.dart';
+import 'logos_git_state.dart';
 import '../backend/external_tools.dart';
+import '../backend/logos_git.dart';
 import '../backend/file_picker.dart';
 import '../backend/git.dart';
 import '../backend/repo_web_url.dart';
@@ -707,12 +709,18 @@ class _ProjectItemState extends State<_ProjectItem>
   // Cached path to a README file in the repo root, or null when none
   // exists. Detected synchronously on mount (cheap fs check).
   String? _readmePath;
+  // Lightweight repo stats for the status strip. Probed once on mount
+  // via two cheap git commands so every repo gets a strip, not just
+  // the active one.
+  int? _cachedFileCount;
+  int? _cachedCommitCount;
 
   @override
   void initState() {
     super.initState();
-    _detectReadmeSync();
+    _detectReadmeAsync();
     _resolveRemoteAndWeb();
+    _probeRepoStats();
   }
 
   @override
@@ -721,17 +729,23 @@ class _ProjectItemState extends State<_ProjectItem>
     if (oldWidget.path != widget.path) {
       _webInfo = null;
       _originUrl = null;
-      _detectReadmeSync();
+      _readmePath = null;
+      _cachedFileCount = null;
+      _cachedCommitCount = null;
+      _detectReadmeAsync();
       _resolveRemoteAndWeb();
+      _probeRepoStats();
     }
   }
 
-  /// Walk a small priority-ordered list of common README filenames
-  /// in the repo root. First hit wins; null when none exist.
-  /// Synchronous — `existsSync` is microseconds and we want the
-  /// menu row to render the first time the user right-clicks
-  /// without waiting on an async hop.
-  void _detectReadmeSync() {
+  /// Walk common README filenames asynchronously. Was _detectReadmeSync
+  /// with File.existsSync — 7 stat() calls per project, all on the
+  /// main thread during initState. With 5–10 projects in the sidebar,
+  /// that's 35–70 synchronous filesystem probes on the first frame.
+  /// Now async: the context menu row renders without the README chip
+  /// on cold mount, then picks it up via setState once the exists()
+  /// futures resolve (typically <5 ms total, invisible to the user).
+  Future<void> _detectReadmeAsync() async {
     const candidates = [
       'README.md',
       'readme.md',
@@ -741,15 +755,19 @@ class _ProjectItemState extends State<_ProjectItem>
       'README.txt',
       'README.rst',
     ];
+    final pathAtCallTime = widget.path;
     final sep = Platform.pathSeparator;
     for (final name in candidates) {
-      final path = '${widget.path}$sep$name';
-      if (File(path).existsSync()) {
-        _readmePath = path;
+      final path = '$pathAtCallTime$sep$name';
+      if (await File(path).exists()) {
+        if (!mounted || widget.path != pathAtCallTime) return;
+        setState(() => _readmePath = path);
         return;
       }
     }
-    _readmePath = null;
+    if (mounted && widget.path == pathAtCallTime) {
+      setState(() => _readmePath = null);
+    }
   }
 
   /// Resolve `origin` once, derive both the raw URL (for "Copy clone
@@ -778,6 +796,27 @@ class _ProjectItemState extends State<_ProjectItem>
       _originUrl = raw;
       _webInfo = info;
     });
+  }
+
+  Future<void> _probeRepoStats() async {
+    final pathAtCallTime = widget.path;
+    try {
+      final results = await Future.wait([
+        runGitProbe(pathAtCallTime, ['rev-list', '--count', 'HEAD']),
+        runGitProbe(pathAtCallTime, ['ls-files']),
+      ]);
+      if (!mounted || pathAtCallTime != widget.path) return;
+      final commitCount = results[0].exitCode == 0
+          ? int.tryParse(results[0].stdout.toString().trim())
+          : null;
+      final fileCount = results[1].exitCode == 0
+          ? results[1].stdout.toString().trim().split('\n').where((l) => l.isNotEmpty).length
+          : null;
+      setState(() {
+        _cachedCommitCount = commitCount;
+        _cachedFileCount = fileCount;
+      });
+    } catch (_) {/* silent — broken repo */}
   }
 
   /// Open the project's web page in the system browser. No-op if
@@ -943,41 +982,51 @@ class _ProjectItemState extends State<_ProjectItem>
           label: 'README',
           onTap: _openReadme,
         ),
-      // "Open with…" — only when the user has set up at least one
-      // external tool. Fits the philosophy: this slot exists because
-      // *the user* opted in, not because the project happens to have
-      // a remote / README / etc.
-      if (tools.isNotEmpty)
+    ];
+    // External tools — each gets its own cell in a separate mosaic
+    // row below the conditional chips. No submenu; direct-click
+    // launches.
+    final toolChips = <AppContextMenuItem>[
+      for (final tool in tools)
         AppContextMenuItem(
-          icon: Icons.launch,
-          // "Tools" instead of "Open with" — fits the cell, and the
-          // launch icon already carries the "open externally"
-          // semantics. Chevron after the label hints the chip
-          // expands to a submenu of configured tools.
-          label: 'Tools',
-          // Chip opens the submenu on click (cells in the mosaic
-          // are stable, so a click-anchored submenu stays aligned
-          // for its lifetime).
-          onTap: () {},
-          submenuBuilder: () => [
-            for (final tool in tools)
-              AppContextMenuItem(
-                icon: tool.mode == ToolLaunchMode.newTerminal
-                    ? Icons.terminal
-                    : Icons.open_in_new,
-                label: tool.displayLabel,
-                onTap: () => _runTool(tool),
-              ),
-            AppContextMenuItem(
-              icon: Icons.tune,
-              label: 'Edit tools…',
-              onTap: _openExternalToolsSettings,
-            ),
-          ],
+          icon: tool.mode == ToolLaunchMode.newTerminal
+              ? Icons.terminal
+              : Icons.open_in_new,
+          label: tool.displayLabel,
+          onTap: () => _runTool(tool),
         ),
     ];
+    // ── Status strip data ──────────────────────────────────────────
+    // Snapshot repo state at menu-open time. The strip is inert (no
+    // provider subscription, no rebuild) so it shows what was true
+    // at the moment of the right-click — honest and cheap.
+    final repo = context.read<RepositoryState>();
+    final isActiveRepo = repo.activePath != null &&
+        _normalizePath(repo.activePath!) == _normalizePath(widget.path);
+    final repoStatus = isActiveRepo ? repo.status : null;
+    final aiRecords = context.read<AiActivityState>().activeFor(widget.path);
+    // Logos engine — prefer its stats, fall back to the lightweight
+    // probe cache so every repo gets a status strip.
+    final engine =
+        context.read<LogosGitState>().engineFor(widget.path);
+    final stripFileCount =
+        engine?.stats.touches.length ?? _cachedFileCount;
+    final stripCommitCount =
+        engine?.stats.totalCommits ?? _cachedCommitCount;
+
     final sections = <MenuSection>[
-      TileChipMenuSection(tiles: tiles, chips: chips),
+      TileChipMenuSection(
+          tiles: tiles, chips: chips, toolChips: toolChips),
+      if (stripFileCount != null || stripCommitCount != null)
+        StatusMenuSection(
+          _ProjectStatusStrip(
+            tokens: context.tokens,
+            dirtyCount: repoStatus?.files.length ?? 0,
+            aiRecords: aiRecords,
+            fileCount: stripFileCount,
+            commitCount: stripCommitCount,
+          ),
+        ),
       if (widget.onForget != null)
         ListMenuSection([
           AppContextMenuItem(
@@ -1420,5 +1469,89 @@ class _PulsingDotState extends State<_PulsingDot>
         decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
       ),
     );
+  }
+}
+
+/// Inert status gauge between the mosaic and Forget. Pure icons,
+/// symbols, and animations — zero text labels. Communicates repo
+/// health through visual language: arrows for ahead/behind, a
+/// pip for dirty count, animated AI icons for in-flight work.
+/// Ultra-dim opacity + tiny icon size signals "dashboard readout,
+/// not a button." AI activity icons reuse the toolbar's animated
+/// icon set (sparkle / search / bubble) at miniature scale. — calm green for clean/synced, amber for dirty,
+class _ProjectStatusStrip extends StatelessWidget {
+  final AppTokens tokens;
+  final int dirtyCount;
+  final List<AiActivityRecord> aiRecords;
+  final int? fileCount;
+  final int? commitCount;
+
+  const _ProjectStatusStrip({
+    required this.tokens,
+    required this.dirtyCount,
+    required this.aiRecords,
+    this.fileCount,
+    this.commitCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (fileCount == null && commitCount == null) {
+      return const SizedBox.shrink();
+    }
+
+    final color = tokens.textFaint.withValues(alpha: 0.55);
+    final style = TextStyle(
+      color: color,
+      fontSize: 9.5,
+      letterSpacing: 0.6,
+      fontWeight: FontWeight.w400,
+    );
+    final dot = TextSpan(
+      text: '   ·   ',
+      style: style.copyWith(
+        color: tokens.chromeBorder.withValues(alpha: 0.30),
+      ),
+    );
+
+    final fc = fileCount;
+    final cc = commitCount;
+    final spans = <InlineSpan>[];
+    if (fc != null && fc > 0) {
+      spans.add(TextSpan(text: _compact(fc), style: style));
+      spans.add(TextSpan(
+        text: ' files',
+        style: style.copyWith(
+          color: tokens.chromeBorder.withValues(alpha: 0.40),
+        ),
+      ));
+    }
+    if (cc != null && cc > 0) {
+      if (spans.isNotEmpty) spans.add(dot);
+      spans.add(TextSpan(text: _compact(cc), style: style));
+      spans.add(TextSpan(
+        text: ' commits',
+        style: style.copyWith(
+          color: tokens.chromeBorder.withValues(alpha: 0.40),
+        ),
+      ));
+    }
+    if (spans.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      child: Center(
+        child: Text.rich(
+          TextSpan(children: spans),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+
+  static String _compact(int n) {
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}k';
+    return '$n';
   }
 }

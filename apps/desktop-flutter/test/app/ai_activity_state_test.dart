@@ -271,12 +271,11 @@ void main() {
           scopeLabel: 'orig-label',
           result: const AiAskResult('orig-answer'),
           error: 'orig-error',
-          seen: false,
           endedAt: DateTime(2026, 1, 2),
         );
 
     test('omitting an argument keeps the prior value', () {
-      final r = seed().copyWith(seen: true);
+      final r = seed().copyWith(seenAt: DateTime(2026, 1, 3));
       expect(r.seen, isTrue);
       // Other fields untouched.
       expect(r.scopeKey, 'orig-scope');

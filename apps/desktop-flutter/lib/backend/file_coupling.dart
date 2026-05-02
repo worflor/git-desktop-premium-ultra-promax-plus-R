@@ -272,7 +272,7 @@ class FileCouplingMatrix {
   double coherenceFor(Iterable<String> paths) {
     final list = paths.toList();
     if (list.length < 2) return 1.0;
-    if (commitsAnalyzed < 50) return 0.5;
+    if (commitsAnalyzed <= 0) return 0.5;
     // Resolve every input path to its row id once, so the inner
     // double-loop's lookup goes int→int instead of string→int per
     // pair (k ids vs k×k string lookups for k inputs).
@@ -305,7 +305,12 @@ class FileCouplingMatrix {
         pairs++;
       }
     }
-    return pairs == 0 ? 1.0 : sum / pairs;
+    if (pairs == 0) return 1.0;
+    final raw = sum / pairs;
+    // Pull toward neutral (0.5) proportional to how sparse the data
+    // is — replaces the old binary "< 50 commits = 0.5" gate.
+    final conf = math.min(1.0, commitsAnalyzed / 200.0);
+    return 0.5 + (raw - 0.5) * conf;
   }
 
 
@@ -2538,16 +2543,9 @@ class CouplingNudge {
 }
 
 /// Rank unselected files by how tightly they couple to the current
-/// selection. A nudge fires when the mean coupling to the selection
-/// reaches [threshold] — the same default used by [clusterFiles], so a
-/// nudge aligns with what the clustering engine would have grouped.
-/// Returns at most [limit] nudges, sorted by descending score. Empty when:
-///   * [selected] is empty (nothing to couple *to*),
-///   * [matrix] has fewer commits than the confidence gate in
-///     [FileCouplingMatrix.coherenceFor] (we'd be surfacing noise), or
-///   * no unselected file clears the threshold.
-/// Cost: O(|selected| · |unselected|) combined-coupling lookups. Selection
-/// sizes are small in practice (≤ tens); the whole call is microseconds.
+/// selection. The threshold scales by [couplingConfidence] so sparse
+/// repos demand proportionally stronger signal instead of gating to
+/// zero on an arbitrary commit count.
 List<CouplingNudge> suggestMissingPeers({
   required Iterable<String> selected,
   required Iterable<String> allChanged,
@@ -2557,32 +2555,64 @@ List<CouplingNudge> suggestMissingPeers({
 }) {
   final selectedList = selected.toList(growable: false);
   if (selectedList.isEmpty) return const [];
-  // Gate on the same commit-count confidence bar [coherenceFor] uses —
-  // under 50 commits the Jaccard rows are too noisy to nudge from.
-  if (matrix.commitsAnalyzed < 50) return const [];
+  final confidence = couplingConfidence(matrix);
+  if (confidence <= 0) return const [];
 
   final selectedSet = selectedList.toSet();
-  final nudges = <CouplingNudge>[];
-  for (final p in allChanged) {
+  final changedSet = allChanged.toSet();
+
+  // Phase 1: unselected changed files (the original signal).
+  final nudges = <String, CouplingNudge>{};
+  for (final p in changedSet) {
     if (selectedSet.contains(p)) continue;
-    double sum = 0.0;
-    double best = 0.0;
-    String bestAnchor = selectedList.first;
-    for (final s in selectedList) {
-      final c = combinedCouplingScore(p, s, matrix);
-      sum += c;
-      if (c > best) {
-        best = c;
-        bestAnchor = s;
-      }
+    final (mean, anchor) = _meanCoupling(p, selectedList, matrix);
+    final effective = mean * confidence;
+    if (effective < threshold) continue;
+    nudges[p] = CouplingNudge(path: p, score: mean, anchor: anchor);
+  }
+
+  // Phase 2: files NOT in the changeset but historically coupled to
+  // the selection. These are the "you usually change X with Y but
+  // Y hasn't been touched" signals. Walk the coupling neighbours of
+  // each selected file and score any that aren't already changed.
+  // Higher bar (1.5× threshold) since these are speculative.
+  final absentThreshold = threshold * 1.5;
+  final visited = <String>{...changedSet};
+  for (final s in selectedList) {
+    for (final entry in matrix.jaccardEntriesOf(s)) {
+      if (visited.contains(entry.key)) continue;
+      visited.add(entry.key);
+      final (mean, anchor) = _meanCoupling(entry.key, selectedList, matrix);
+      final effective = mean * confidence;
+      if (effective < absentThreshold) continue;
+      nudges.putIfAbsent(
+        entry.key,
+        () => CouplingNudge(path: entry.key, score: mean, anchor: anchor),
+      );
     }
-    final mean = sum / selectedList.length;
-    if (mean < threshold) continue;
-    nudges.add(CouplingNudge(path: p, score: mean, anchor: bestAnchor));
   }
-  nudges.sort((a, b) => b.score.compareTo(a.score));
-  if (nudges.length > limit) {
-    return nudges.sublist(0, limit);
+
+  final result = nudges.values.toList()
+    ..sort((a, b) => b.score.compareTo(a.score));
+  if (result.length > limit) return result.sublist(0, limit);
+  return result;
+}
+
+(double, String) _meanCoupling(
+  String path,
+  List<String> selected,
+  FileCouplingMatrix matrix,
+) {
+  double sum = 0.0;
+  double best = 0.0;
+  String bestAnchor = selected.first;
+  for (final s in selected) {
+    final c = combinedCouplingScore(path, s, matrix);
+    sum += c;
+    if (c > best) {
+      best = c;
+      bestAnchor = s;
+    }
   }
-  return nudges;
+  return (sum / selected.length, bestAnchor);
 }
