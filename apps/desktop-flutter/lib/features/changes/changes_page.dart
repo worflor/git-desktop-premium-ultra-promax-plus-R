@@ -5,7 +5,6 @@ import 'dart:ffi' hide Size;
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
@@ -24,7 +23,6 @@ import '../../ui/dream_hint.dart';
 import '../../ui/form_controls.dart';
 import '../../ui/interaction_feedback.dart';
 import '../../ui/material_surface.dart';
-import '../../ui/morph_text.dart';
 import '../../ui/status_view.dart';
 import '../../ui/resonance_text.dart';
 import '../../ui/motion.dart';
@@ -56,7 +54,6 @@ import '../../app/window_activity.dart';
 import '../../app/desk_drop_payload.dart';
 import '../../app/desk_pr_state.dart';
 import '../../app/repository_state.dart';
-import '../../app/worktree_state.dart';
 import '../../diagnostics/diagnostics_state.dart';
 import '../branches/branches_page.dart' show showPatchPreviewDialog;
 import '../diff/diff_document.dart';
@@ -339,7 +336,6 @@ class _ChangesPageState extends State<ChangesPage> {
 
   int _peekGenerateRequestId(String repoPath) =>
       _generateRequestIds[repoPath] ?? 0;
-  String? _actionMessage;
   String? _actionError;
   double _leftPanelWidth = 320.0;
   static const _minLeftPanelWidth = 220.0;
@@ -1036,7 +1032,6 @@ class _ChangesPageState extends State<ChangesPage> {
     _multiDiffCurrentPath = null;
     _multiDiffJumpLineIndex = null;
     _actionError = null;
-    _actionMessage = null;
     // Repo / context switch — drawers from the previous context no
     // longer match the user's mental scope. Close everything; the
     // records persist in AiActivityState so a re-visit still finds
@@ -1613,15 +1608,6 @@ class _ChangesPageState extends State<ChangesPage> {
     // Sanitize branch name for use as a filename suffix.
     final safe = branch.replaceAll(RegExp(r'[^\w.-]'), '_');
     return File(p.join(gitDir, 'MANIFOLD_COMMIT_MSG_$safe'));
-  }
-
-  void _loadCommitDraft() {
-    final repoState = context.read<RepositoryState>();
-    final repoPath = repoState.activePath;
-    if (repoPath == null) return;
-    _lastDraftRepoPath = repoPath;
-    _lastDraftBranch = repoState.status?.branch;
-    _loadCommitDraftForRepo(repoPath, branch: _lastDraftBranch);
   }
 
   Future<void> _loadCommitDraftForRepo(String repoPath,
@@ -2692,7 +2678,6 @@ class _ChangesPageState extends State<ChangesPage> {
         _includedPaths.remove(path);
       }
       _actionError = null;
-      _actionMessage = null;
     });
   }
 
@@ -2711,7 +2696,6 @@ class _ChangesPageState extends State<ChangesPage> {
         _includedPaths.removeAll(list);
       }
       _actionError = null;
-      _actionMessage = null;
     });
   }
 
@@ -2769,9 +2753,6 @@ class _ChangesPageState extends State<ChangesPage> {
       changedPathSet,
       _includedPaths,
     );
-    final companions =
-        _topCompanionsFor(context, repoPath, file.path, limit: 3);
-
     final engine = context.read<LogosGitState>().engineFor(repoPath);
     final rippleItems = engine == null
         ? const <AppContextMenuItem>[]
@@ -3029,31 +3010,6 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   /// Top-N historical companions for [filePath] from the coupling
-  /// matrix — the files that have most often been touched alongside
-  /// it across commit history. Used as always-on nav items in the
-  /// context menu so a user can jump to a file's "usual neighbours"
-  /// without needing anything else modified. Semantic similarity is
-  /// deliberately excluded here: the intent is "what do I usually
-  /// edit with this?" — a historical question — not "what other
-  /// file reads like this?".
-  List<String> _topCompanionsFor(
-    BuildContext ctx,
-    String repoPath,
-    String filePath, {
-    int limit = 3,
-  }) {
-    final matrix = ctx.read<FileCouplingState>().matrixFor(repoPath);
-    if (matrix == null || !matrix.containsPath(filePath)) return const [];
-    return [
-      for (final e in matrix.topJaccardNeighbours(
-        filePath,
-        minScore: 0.10,
-        limit: limit,
-      ))
-        e.key,
-    ];
-  }
-
   /// File extension *without* the leading dot, or null when the path
   /// has none (e.g. `Makefile`, `.env`). Used to decide whether the
   /// "Ignore all .ext files" row is meaningful.
@@ -3078,7 +3034,6 @@ class _ChangesPageState extends State<ChangesPage> {
     if (!result.ok) {
       setState(() {
         _actionError = result.error ?? 'Failed to update .gitignore.';
-        _actionMessage = null;
       });
       return;
     }
@@ -3125,7 +3080,6 @@ class _ChangesPageState extends State<ChangesPage> {
       if (!mounted) return;
       setState(() {
         _actionError = 'Failed to open file explorer: $e';
-        _actionMessage = null;
       });
     }
   }
@@ -3163,10 +3117,13 @@ class _ChangesPageState extends State<ChangesPage> {
     RepositoryStatusFile file,
     String repoPath,
   ) async {
-    // Capture the RepositoryState reference before any await so we
-    // don't have to revisit `context` after async gaps. The `mounted`
-    // checks below still gate the setState calls.
+    // Capture everything from context before any await so we
+    // don't have to revisit `context` after async gaps.
     final repoState = context.read<RepositoryState>();
+    final coord = context.read<UndoCoordinator>();
+    final windowSec = context
+        .read<PreferencesState>()
+        .undoWindowFor(UndoActionKind.discard);
     final isUntracked = file.isUntracked;
     final basename = p.basename(file.path);
     final confirmed = await showDialog<bool>(
@@ -3211,10 +3168,6 @@ class _ChangesPageState extends State<ChangesPage> {
     // nothing happens at all, so we no longer need to capture bytes
     // for a bytes-replay restore. Cleaner, safer, and symmetric with
     // every other destructive action in the app.
-    final coord = context.read<UndoCoordinator>();
-    final windowSec = context
-        .read<PreferencesState>()
-        .undoWindowFor(UndoActionKind.discard);
     await coord.schedule<void>(
       kind: UndoActionKind.discard,
       label: isUntracked ? 'Deleting $basename' : 'Discarding $basename',
@@ -3251,6 +3204,10 @@ class _ChangesPageState extends State<ChangesPage> {
   ) async {
     if (files.isEmpty) return;
     final repoState = context.read<RepositoryState>();
+    final coord = context.read<UndoCoordinator>();
+    final windowSec = context
+        .read<PreferencesState>()
+        .undoWindowFor(UndoActionKind.discard);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -3317,10 +3274,6 @@ class _ChangesPageState extends State<ChangesPage> {
     // Bulk discard through the coordinator — same pattern as the
     // single-file path, just one pill for the whole batch. If the
     // user cancels mid-window, nothing in the batch runs.
-    final coord = context.read<UndoCoordinator>();
-    final windowSec = context
-        .read<PreferencesState>()
-        .undoWindowFor(UndoActionKind.discard);
     await coord.schedule<void>(
       kind: UndoActionKind.discard,
       label: 'Discarding ${files.length} files',
@@ -3370,26 +3323,28 @@ class _ChangesPageState extends State<ChangesPage> {
       );
       return;
     }
+    // Capture context-dependent values before async gap.
     final repoState = ctx.read<RepositoryState>();
+    final messenger = ScaffoldMessenger.of(ctx);
     final targetRef = repoState.status?.branch ?? 'HEAD';
     final result = await getDeskDumpDiff(deskPath, targetRef);
     if (!mounted) return;
     if (!result.ok) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(content: Text('Diff failed: ${result.error}')),
       );
       return;
     }
     final diff = result.data ?? '';
     if (diff.trim().isEmpty) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
             content: Text('Desk has nothing ahead of you — empty dump.')),
       );
       return;
     }
     await showPatchPreviewDialog(
-      ctx,
+      context,
       repoPath: repoPath,
       rawPatch: diff,
       sourceLabel: 'desk $label',
@@ -3408,29 +3363,32 @@ class _ChangesPageState extends State<ChangesPage> {
     String label,
     String repoPath,
   ) async {
+    // Capture context-dependent values before async gap.
+    final messenger = ScaffoldMessenger.of(ctx);
+    final repoState = ctx.read<RepositoryState>();
     final result = await stashShow(repoPath, index: index);
     if (!mounted) return;
     if (!result.ok) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(content: Text('Shelf read failed: ${result.error}')),
       );
       return;
     }
     final diff = result.data ?? '';
     if (diff.trim().isEmpty) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(content: Text('Empty shelf — nothing to dump.')),
       );
       return;
     }
     await showPatchPreviewDialog(
-      ctx,
+      context,
       repoPath: repoPath,
       rawPatch: diff,
       sourceLabel: 'shelf $label',
       onApplied: () async {
         if (!mounted) return;
-        await ctx.read<RepositoryState>().refreshStatus();
+        await repoState.refreshStatus();
       },
     );
   }
@@ -3441,21 +3399,6 @@ class _ChangesPageState extends State<ChangesPage> {
         ..clear()
         ..addAll(status.files.map((file) => file.path));
       _actionError = null;
-      _actionMessage = null;
-    });
-  }
-
-  void _includeOnlyStaged(RepositoryStatus status) {
-    final staged = status.files
-        .where((file) => file.hasStagedChange)
-        .map((file) => file.path)
-        .toSet();
-    setState(() {
-      _includedPaths
-        ..clear()
-        ..addAll(staged);
-      _actionError = null;
-      _actionMessage = null;
     });
   }
 
@@ -4014,56 +3957,6 @@ class _ChangesPageState extends State<ChangesPage> {
     }
   }
 
-  /// Shape-staging prompt. Very strict: output must be a SUBSET of the
-  /// supplied diff. The model is explicitly forbidden from inventing
-  /// hunks — that's the invariant that lets `apply --check` act as a
-  /// hard safety gate. Ambiguity defaults to exclusion.
-  String _buildShapePrompt(String sentence, String fullDiff) {
-    final buf = StringBuffer();
-    buf.writeln(
-        'You are shaping a git commit by staging a subset of the working tree.');
-    buf.writeln(
-        'The user will describe what to include, in plain English. Your job is');
-    buf.writeln(
-        'to return a unified diff that is a strict SUBSET of the diff below —');
-    buf.writeln(
-        'include only the hunks matching the description, omit the rest.');
-    buf.writeln();
-    buf.writeln('Rules:');
-    buf.writeln(
-        '  1. Output ONLY a unified diff. No fences, no prose, no explanation.');
-    buf.writeln(
-        '  2. Every hunk you emit MUST exist in the diff below — never invent.');
-    buf.writeln(
-        '  3. You may omit hunks; you may NOT reorder, merge, split, or edit them.');
-    buf.writeln(
-        '  4. Preserve hunk headers exactly (line numbers, @@ markers).');
-    buf.writeln(
-        '  5. If the user\'s sentence is ambiguous about a hunk, OMIT it.');
-    buf.writeln(
-        '  6. File headers (--- a/ +++ b/) are required for each file you emit.');
-    buf.writeln(
-        '  7. Edge-case files: for a NEW file keep its full "new file mode"');
-    buf.writeln(
-        '     preamble verbatim; for a RENAME keep the "rename from/to"');
-    buf.writeln(
-        '     lines; for a BINARY file ("GIT binary patch" marker) emit the');
-    buf.writeln(
-        '     entire binary hunk UNCHANGED or omit the file — never try to');
-    buf.writeln('     partial-stage a binary blob.');
-    buf.writeln();
-    buf.writeln('<user_intent>');
-    buf.writeln(sentence);
-    buf.writeln('</user_intent>');
-    buf.writeln();
-    buf.writeln('<working_tree_diff>');
-    buf.writeln(fullDiff);
-    buf.writeln('</working_tree_diff>');
-    buf.writeln();
-    buf.writeln(
-        'Emit the subset unified diff now. Remember: strict subset only.');
-    return buf.toString();
-  }
 
   /// Hint shown in the ask composer — one short line that shifts
   /// character with the active guardrail. Longer instructional text
@@ -4309,7 +4202,6 @@ class _ChangesPageState extends State<ChangesPage> {
       activity.clear(repoPath: repoPath, kind: AiActivityKind.generate);
       setState(() {
         _actionError = null;
-        _actionMessage = null;
       });
       return;
     }
@@ -4320,7 +4212,6 @@ class _ChangesPageState extends State<ChangesPage> {
     if (included.isEmpty) {
       setState(() {
         _actionError = 'Choose at least one file before generating.';
-        _actionMessage = null;
       });
       return;
     }
@@ -4334,7 +4225,6 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     setState(() {
       _actionError = null;
-      _actionMessage = null;
     });
 
     final categories = await _resolveCommitAiCategories();
@@ -4456,7 +4346,6 @@ class _ChangesPageState extends State<ChangesPage> {
         activity.markSeen(
             repoPath: repoPath, kind: AiActivityKind.generate);
         setState(() {
-          _actionMessage = null;
           _generateFlash = true;
         });
         // Auto-clear success-flash after a beat — same 1.5 s rhythm
@@ -4489,7 +4378,6 @@ class _ChangesPageState extends State<ChangesPage> {
     if (included.isEmpty) {
       setState(() {
         _actionError = 'Choose at least one file before reviewing.';
-        _actionMessage = null;
       });
       return;
     }
@@ -4518,7 +4406,6 @@ class _ChangesPageState extends State<ChangesPage> {
       _reviewTraceExpanded = false;
       _reviewReasoningExpanded = false;
       _actionError = null;
-      _actionMessage = null;
     });
 
     final categories = await _resolveCommitAiCategories();
@@ -4672,7 +4559,6 @@ class _ChangesPageState extends State<ChangesPage> {
     if (included.isEmpty) {
       setState(() {
         _actionError = 'Choose at least one file before invoking the muse.';
-        _actionMessage = null;
       });
       return;
     }
@@ -4699,7 +4585,6 @@ class _ChangesPageState extends State<ChangesPage> {
     setState(() {
       _openDrawer = AiActivityKind.muse;
       _actionError = null;
-      _actionMessage = null;
     });
 
     final categories = await _resolveCommitAiCategories();
@@ -4901,7 +4786,6 @@ class _ChangesPageState extends State<ChangesPage> {
     }
     setState(() {
       _actionError = null;
-      _actionMessage = 'Copied review report.';
     });
   }
 
@@ -4937,12 +4821,8 @@ class _ChangesPageState extends State<ChangesPage> {
     tierBlock(AiMuseIdeaTier.fever, 'FEVER');
     await Clipboard.setData(ClipboardData(text: buf.toString().trim()));
     if (!mounted) return;
-    final n = subset?.length ?? 0;
     setState(() {
       _actionError = null;
-      _actionMessage = subset == null
-          ? 'Copied muse output.'
-          : 'Copied $n muse ${n == 1 ? 'entry' : 'entries'}.';
     });
   }
 
@@ -5019,7 +4899,6 @@ class _ChangesPageState extends State<ChangesPage> {
     setState(() {
       _actionRunning = true;
       _actionError = null;
-      _actionMessage = null;
     });
 
     final coord = context.read<UndoCoordinator>();
@@ -5053,7 +4932,6 @@ class _ChangesPageState extends State<ChangesPage> {
       if (outcome.ok) {
         _commitMsgCtrl.clear();
         unawaited(_clearCommitDraft());
-        _actionMessage = outcome.successMessage;
         _actionError = outcome.syncError;
       } else {
         _actionError = outcome.error;
@@ -5156,8 +5034,9 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 
   Future<void> _loadStashFiles(String repo, int index) async {
-    if (_stashFiles.containsKey(index) || _stashFilesLoading.contains(index))
+    if (_stashFiles.containsKey(index) || _stashFilesLoading.contains(index)) {
       return;
+    }
     setState(() => _stashFilesLoading.add(index));
     final r = await stashFiles(repo, index: index);
     if (!mounted) return;
@@ -5208,27 +5087,6 @@ class _ChangesPageState extends State<ChangesPage> {
     if (_stashOpenIndices.contains(index)) {
       unawaited(_loadStashFiles(repo, index));
     }
-  }
-
-  Future<void> _shelveFiles(String repo, List<String> paths,
-      {String? label}) async {
-    // Path-restricted stash: `-u` (includeUntracked: true) tells git
-    // to also capture any untracked files among the listed paths,
-    // not all untracked files in the tree. Matches the user's
-    // expectation when they pick specific files to shelve.
-    final result = await stashPush(
-      repo,
-      message: label,
-      paths: paths,
-      includeUntracked: true,
-    );
-    if (!mounted) return;
-    if (!result.ok) {
-      setState(() => _actionError = result.error);
-      return;
-    }
-    await _refreshAndReadStatus();
-    if (mounted) _loadStashes(repo);
   }
 
   Future<void> _shelveAll(String repo, {String? label}) async {
@@ -5616,7 +5474,7 @@ class _ChangesPageState extends State<ChangesPage> {
 
     // Coupling clusters for the current change set. Computed once per build;
     // falls back to "all isolated" when the matrix isn't ready yet.
-    final _currentPaths = status.files.map((f) => f.path).toList();
+    final currentPaths = status.files.map((f) => f.path).toList();
 
     // Universal: gather merge-conflict paths. Any file with 'U' on either
     // side is conflicted and must float to the top regardless of sort.
@@ -5688,7 +5546,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final clusters = _clustersFor(
       status: status,
       effectiveMatrix: effectiveMatrix,
-      currentPaths: _currentPaths,
+      currentPaths: currentPaths,
       sortGuide: preferences.fileSortGuide,
       impactSignals: impactSignals,
       conflictedPaths: conflictedPaths,
@@ -5767,11 +5625,9 @@ class _ChangesPageState extends State<ChangesPage> {
     // Re-runs of the existing record (the same-scope path) are
     // exempt — the result is already on disk and doesn't need the
     // engine to surface it.
-    final engineReady = repoPath == null
-        ? false
-        : context.select<LogosGitState, bool>(
-            (s) => s.engineFor(repoPath) != null,
-          );
+    final engineReady = context.select<LogosGitState, bool>(
+        (s) => s.engineFor(repoPath) != null,
+      );
     final canCommit = !_actionRunning &&
         !_generateRunning &&
         !_reviewRunning &&
@@ -5897,7 +5753,6 @@ class _ChangesPageState extends State<ChangesPage> {
                               onDeselectAll: () => setState(() {
                                 _includedPaths.clear();
                                 _actionError = null;
-                                _actionMessage = null;
                               }),
                             ),
                           ],
@@ -5932,8 +5787,9 @@ class _ChangesPageState extends State<ChangesPage> {
                                     // Defensive: any file that didn't land in ordered.
                                     final orderedSet = orderedPaths.toSet();
                                     for (final f in status.files) {
-                                      if (!orderedSet.contains(f.path))
+                                      if (!orderedSet.contains(f.path)) {
                                         ordered.add(f);
+                                      }
                                     }
                                     if (_constellationOpen &&
                                         status.files.length >= 2) {
@@ -5958,14 +5814,12 @@ class _ChangesPageState extends State<ChangesPage> {
                                               ..clear()
                                               ..addAll(paths);
                                             _actionError = null;
-                                            _actionMessage = null;
                                           });
                                         },
                                         onUntieCluster: (paths) {
                                           setState(() {
                                             _includedPaths.removeAll(paths);
                                             _actionError = null;
-                                            _actionMessage = null;
                                           });
                                         },
                                         onSelectDiff: (path) =>
@@ -7001,18 +6855,6 @@ class _ChangesPageState extends State<ChangesPage> {
   }
 }
 
-bool _samePathSet(Set<String> a, Set<String> b) {
-  if (a.length != b.length) {
-    return false;
-  }
-  for (final value in a) {
-    if (!b.contains(value)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 class _CombinedDiffSection {
   final String path;
   final String displayName;
@@ -7326,7 +7168,7 @@ class _MultiDiffProgressRailPainter extends CustomPainter {
     }
 
     const horizontalInset = 6.0;
-    final left = horizontalInset;
+    const left = horizontalInset;
     final right = size.width - horizontalInset;
     final centerY = size.height / 2;
     final usableWidth = right - left;
@@ -7594,7 +7436,7 @@ class _MusePaneState extends State<_MusePane> {
       return Padding(
         padding: const EdgeInsets.only(top: 24),
         child: Text(err,
-            style: TextStyle(
+            style: const TextStyle(
               color: AppSeverityPalette.caution,
               fontSize: 12,
             )),
@@ -9554,63 +9396,6 @@ class _InlineActionLink extends StatelessWidget {
   }
 }
 
-class _ActionBtn extends StatelessWidget {
-  final String label;
-  final AppTokens t;
-  final bool enabled;
-  final bool primary;
-  final VoidCallback onTap;
-
-  const _ActionBtn({
-    required this.label,
-    required this.t,
-    required this.enabled,
-    required this.onTap,
-    this.primary = true,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final radius =
-        BorderRadius.circular(context.surfaceShader.geometry.radius);
-    return ChromeButton(
-      onTap: enabled ? onTap : null,
-      enabled: enabled,
-      borderRadius: radius,
-      padding: EdgeInsets.zero,
-      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      chromeBuilder: ({required hovered, required pressed}) => primary
-          ? primaryButtonChrome(
-              t,
-              hovered: hovered,
-              pressed: pressed,
-              enabled: enabled,
-            )
-          : ghostButtonChrome(
-              t,
-              hovered: hovered,
-              pressed: pressed,
-              enabled: enabled,
-              baseBorderColor: t.secondaryBtnBorder,
-            ),
-      child: SizedBox(
-        height: 28,
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              color: primary
-                  ? (enabled ? t.btnText : t.textMuted)
-                  : (enabled ? t.textNormal : t.textMuted),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 /// Inline answer panel for the "ask the manifold" flow. Lives under
 /// the commit composer; renders the last question + its prose answer
@@ -10569,13 +10354,6 @@ class _StashDrawerCardState extends State<_StashDrawerCard> {
             : (_hovered
                 ? t.secondaryBtnHoverBg
                 : t.secondaryBtnHoverBg.withValues(alpha: 0)));
-
-    // Border: left accent strip conveys orientation at a glance.
-    final borderColor = widget.isPeeking
-        ? t.chromeAccent.withValues(alpha: 0.45)
-        : (widget.isOpen || _hovered
-            ? t.chromeBorder.withValues(alpha: 0.25)
-            : Colors.transparent);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
@@ -12691,24 +12469,10 @@ class _MergeResolveSplitButton extends StatefulWidget {
   final bool busy;
   final ValueChanged<String> onResolve;
 
-  /// Verb prefix shown before the category label. Merge resolver uses
-  /// 'resolve with', shape-staging uses 'shape with'. Keeps the grammar
-  /// aligned while letting one widget serve both features.
-  final String actionLabel;
-
-  /// When the button's chevron menu is hosted inside another overlay
-  /// (e.g. the shape popover), passing the host's [TapRegion] groupId
-  /// here makes the menu register in the same group. A tap on the menu
-  /// then doesn't count as "outside" the host, so the host doesn't
-  /// self-dismiss mid-menu-interaction — which otherwise disposes the
-  /// button's State and invalidates the menu's LayerLink.
-  final Object? menuTapRegionGroupId;
   const _MergeResolveSplitButton({
     required this.defaultCategoryId,
     required this.busy,
     required this.onResolve,
-    this.actionLabel = 'resolve with',
-    this.menuTapRegionGroupId,
   });
   @override
   State<_MergeResolveSplitButton> createState() =>
@@ -12730,9 +12494,8 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
         .where((e) => e.value.isNotEmpty && e.key != widget.defaultCategoryId)
         .toList();
     if (alt.isEmpty) return;
-    final groupId = widget.menuTapRegionGroupId;
     _entry = OverlayEntry(builder: (ctx) {
-      Widget menuCard = CompositedTransformFollower(
+      final menuCard = CompositedTransformFollower(
         link: _link,
         followerAnchor: Alignment.topRight,
         targetAnchor: Alignment.bottomRight,
@@ -12772,28 +12535,13 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
           ),
         ),
       );
-      // When a host groupId is provided, register the menu in the same
-      // tap group so the host's TapRegion.onTapOutside doesn't fire on
-      // menu clicks (which would dispose this button's state and
-      // invalidate the menu's LayerLink mid-interaction).
-      if (groupId != null) {
-        menuCard = TapRegion(
-          groupId: groupId,
-          onTapOutside: (_) => _closeMenu(),
-          child: menuCard,
-        );
-      }
       return Stack(children: [
-        // Fallback dismiss catcher for non-grouped usage (the merge
-        // resolve strip) — opaque so it doesn't consume hits meant
-        // for widgets in overlays stacked above.
-        if (groupId == null)
-          Positioned.fill(
-            child: Listener(
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: (_) => _closeMenu(),
-            ),
+        Positioned.fill(
+          child: Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (_) => _closeMenu(),
           ),
+        ),
         Positioned(child: menuCard),
       ]);
     });
@@ -12838,8 +12586,8 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
                     : () => widget.onResolve(widget.defaultCategoryId),
                 child: Tooltip(
                   message: modelDisplay.isEmpty
-                      ? '${widget.actionLabel} $label'
-                      : '${widget.actionLabel} $label  ·  $modelDisplay',
+                      ? 'resolve with $label'
+                      : 'resolve with $label  ·  $modelDisplay',
                   child: AnimatedContainer(
                     duration: context.motion(shader.duration),
                     curve: shader.safeCurve,
@@ -12860,11 +12608,7 @@ class _MergeResolveSplitButtonState extends State<_MergeResolveSplitButton> {
                       ),
                     ),
                     child: Text(
-                      widget.busy
-                          ? (widget.actionLabel == 'shape with'
-                              ? 'shaping…'
-                              : 'resolving…')
-                          : '↵  ${widget.actionLabel} $label',
+                      widget.busy ? 'resolving…' : '↵  resolve with $label',
                       style: TextStyle(
                         color: t.accentBright,
                         fontSize: 11,
@@ -13001,8 +12745,6 @@ String _modelDisplayName(String modelValue) {
 }
 
 // ◈ Shape staging — natural-language partial staging. A glyph next to
-// the select-all toggle expands a slim prompt bar; the sentence goes
-// to the AI with the working-tree diff; the returned subset patch is
 // previewed in stage mode and applied via `git apply --cached`.
 // Working tree never mutates — only the index shapes.
 
@@ -13010,161 +12752,6 @@ String _modelDisplayName(String modelValue) {
 /// button. Compact card — one input, one submit split button. Lives
 /// alongside the other AI toolbar buttons (review, generate) so all
 /// AI affordances share the same region of the screen.
-class _ShapePopover extends StatelessWidget {
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final bool busy;
-  final ValueChanged<String> onSubmit;
-  final VoidCallback onClose;
-
-  /// Tap-group the popover was opened under. The chevron menu on the
-  /// submit split button registers in the same group so clicking a
-  /// menu item doesn't dismiss the popover.
-  final Object? tapRegionGroupId;
-  const _ShapePopover({
-    required this.controller,
-    required this.focusNode,
-    required this.busy,
-    required this.onSubmit,
-    required this.onClose,
-    this.tapRegionGroupId,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final ai = context.watch<AiSettingsState>();
-    final defaultCategory = ai.modelSelections.containsKey('fast') &&
-            ai.modelSelections['fast']!.isNotEmpty
-        ? 'fast'
-        : (ai.modelSelections.entries
-            .firstWhere(
-              (e) => e.value.isNotEmpty,
-              orElse: () => const MapEntry('', ''),
-            )
-            .key);
-    return Material(
-      color: Colors.transparent,
-      child: MaterialSurface(
-        tone: AppMaterialTone.surface1,
-        radius: context.surfaceShader.geometry.cardRadius,
-        elevated: true,
-        padding: const EdgeInsets.all(10),
-        child: SizedBox(
-          width: 360,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Heading row: glyph + tiny label + close ×.
-              Row(
-                children: [
-                  Text('◈',
-                      style: TextStyle(
-                        color: t.accentBright,
-                        fontSize: 12,
-                        fontFamily: AppFonts.mono,
-                        fontWeight: FontWeight.w800,
-                      )),
-                  const SizedBox(width: 8),
-                  Text('SHAPE COMMIT',
-                      style: TextStyle(
-                        color: t.textMuted,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.4,
-                      )),
-                  const Spacer(),
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: busy ? null : onClose,
-                      child: Padding(
-                        padding: const EdgeInsets.all(2),
-                        child: Text('×',
-                            style: TextStyle(
-                              color: t.textMuted,
-                              fontSize: 14,
-                              fontFamily: AppFonts.mono,
-                              fontWeight: FontWeight.w700,
-                              height: 1.0,
-                            )),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // Input field.
-              Container(
-                decoration: BoxDecoration(
-                  color: t.inputBg,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: t.inputBorder.withValues(alpha: 0.85),
-                  ),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                child: TextField(
-                  controller: controller,
-                  focusNode: focusNode,
-                  enabled: !busy,
-                  onSubmitted: (_) {
-                    if (defaultCategory.isNotEmpty) onSubmit(defaultCategory);
-                  },
-                  style: TextStyle(
-                    color: t.textStrong,
-                    fontSize: 12,
-                  ),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    hintText: busy
-                        ? 'drafting subset patch…'
-                        : 'describe what to stage, in your own words',
-                    hintStyle: TextStyle(
-                      color: t.textMuted.withValues(alpha: 0.7),
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 9),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              // Submit row: right-aligned split button. Mirrors the
-              // merge resolver's submit grammar ("ask with <category>").
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (defaultCategory.isEmpty)
-                    Text('no AI model configured',
-                        style: TextStyle(
-                          color: t.textMuted,
-                          fontSize: 10.5,
-                          fontFamily: AppFonts.mono,
-                          fontStyle: FontStyle.italic,
-                        ))
-                  else
-                    _MergeResolveSplitButton(
-                      defaultCategoryId: defaultCategory,
-                      busy: busy,
-                      onResolve: onSubmit,
-                      actionLabel: 'ask with',
-                      menuTapRegionGroupId: tapRegionGroupId,
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 /// Ambient text animation for the muse loading state — each character
 /// drifts on its own y-axis as if breathing. Two phases blend over

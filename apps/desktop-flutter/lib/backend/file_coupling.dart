@@ -2590,7 +2590,6 @@ List<CouplingNudge> suggestMissingPeers({
   final selectedSet = selectedList.toSet();
   final changedSet = allChanged.toSet();
 
-  // Phase 1: unselected changed files (the original signal).
   final nudges = <String, CouplingNudge>{};
   for (final p in changedSet) {
     if (selectedSet.contains(p)) continue;
@@ -2598,27 +2597,6 @@ List<CouplingNudge> suggestMissingPeers({
     final effective = mean * confidence;
     if (effective < threshold) continue;
     nudges[p] = CouplingNudge(path: p, score: mean, anchor: anchor);
-  }
-
-  // Phase 2: files NOT in the changeset but historically coupled to
-  // the selection. These are the "you usually change X with Y but
-  // Y hasn't been touched" signals. Walk the coupling neighbours of
-  // each selected file and score any that aren't already changed.
-  // Higher bar (1.5× threshold) since these are speculative.
-  final absentThreshold = threshold * 1.5;
-  final visited = <String>{...changedSet};
-  for (final s in selectedList) {
-    for (final entry in matrix.jaccardEntriesOf(s)) {
-      if (visited.contains(entry.key)) continue;
-      visited.add(entry.key);
-      final (mean, anchor) = _meanCoupling(entry.key, selectedList, matrix);
-      final effective = mean * confidence;
-      if (effective < absentThreshold) continue;
-      nudges.putIfAbsent(
-        entry.key,
-        () => CouplingNudge(path: entry.key, score: mean, anchor: anchor),
-      );
-    }
   }
 
   final result = nudges.values.toList()
