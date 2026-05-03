@@ -34,7 +34,6 @@ class LogosGitState extends ChangeNotifier {
       _loading.clear();
       _loadingWithCoupling.clear();
       _errors.clear();
-      resolver.invalidateAllLogosGit();
       notifyListeners();
       return;
     }

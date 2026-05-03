@@ -309,7 +309,8 @@ class FileCouplingMatrix {
     final raw = sum / pairs;
     // Pull toward neutral (0.5) proportional to how sparse the data
     // is — replaces the old binary "< 50 commits = 0.5" gate.
-    final conf = math.min(1.0, commitsAnalyzed / 200.0);
+    final sat = math.max(50.0, _pathToId.length * 0.4);
+    final conf = math.min(1.0, commitsAnalyzed / sat);
     return 0.5 + (raw - 0.5) * conf;
   }
 
@@ -323,6 +324,8 @@ class FileCouplingMatrix {
   /// need the stricter "has git co-change history" check should use
   /// [hasJaccardRow].
   bool containsPath(String path) => _pathToId.containsKey(path);
+
+  int get trackedFileCount => _pathToId.length;
 
   /// Stricter companion to [containsPath]: `true` iff the file has at
   /// least one historical co-change edge in the jaccard CSR.
@@ -1247,7 +1250,7 @@ class FileClusters {
 FileClusters clusterFiles(
   List<String> currentPaths,
   FileCouplingMatrix matrix, {
-  double threshold = 0.25,
+  double? threshold,
   FileSortGuide sortGuide = FileSortGuide.relatedProximity,
   // Per-path diff signal used by [FileSortGuide.impact]. The sort
   // computes effective impact from these AND the coupling matrix —
@@ -1286,6 +1289,27 @@ FileClusters clusterFiles(
   if (n == 0) {
     return const FileClusters(byPath: {}, clusterCount: 0, orderedPaths: []);
   }
+
+  // Derive the admission threshold from the changeset's own coupling
+  // distribution when not explicitly provided. Uses the mean Jaccard
+  // score across all edges touching the current paths — dense repos
+  // get a higher bar so clusters are meaningful, sparse repos get a
+  // lower bar so weak signals still surface.
+  if (threshold == null) {
+    var sum = 0.0;
+    var count = 0;
+    final pathSet = currentPaths.toSet();
+    for (final p in currentPaths) {
+      for (final entry in matrix.jaccardEntriesOf(p)) {
+        if (!pathSet.contains(entry.key)) continue;
+        sum += entry.value;
+        count++;
+      }
+    }
+    final mean = count > 0 ? sum / count : 0.25;
+    threshold = mean.clamp(0.15, 0.50);
+  }
+  final effectiveThreshold = threshold ?? 0.25;
 
   // Index paths so we can refer to them by int everywhere.
   final pathIndex = <String, int>{
@@ -1340,14 +1364,14 @@ FileClusters clusterFiles(
     final a = currentPaths[i];
     for (final entry in matrix.jaccardEntriesOf(a)) {
       final s = entry.value;
-      if (s < threshold) continue;
+      if (s < effectiveThreshold) continue;
       final j = pathIndex[entry.key];
       if (j == null) continue;
       recordPair(i, j, s, RelatednessAxis.coChange);
     }
     for (final entry in matrix.symbolEntriesOf(a)) {
       final s = entry.value;
-      if (s < threshold) continue;
+      if (s < effectiveThreshold) continue;
       final j = pathIndex[entry.key];
       if (j == null) continue;
       recordPair(i, j, s, RelatednessAxis.symbol);
@@ -1423,7 +1447,7 @@ FileClusters clusterFiles(
         final bHasHistory = matrix.hasJaccardRow(b);
         if (aHasHistory && bHasHistory) continue; // history is authoritative
         final s = pathAffinity(a, b);
-        if (s < threshold) continue;
+        if (s < effectiveThreshold) continue;
         recordPair(i, j, s, RelatednessAxis.pathAffinity);
       }
     }
@@ -2517,7 +2541,12 @@ const int kFileClusterPaletteSize = 4;
 /// Useful when rendering the header signal (low data → less confident).
 double couplingConfidence(FileCouplingMatrix matrix) {
   if (matrix.commitsAnalyzed <= 0) return 0;
-  return math.min(1.0, matrix.commitsAnalyzed / 200.0);
+  // Saturation point adapts to the matrix's own density: the number
+  // of tracked files is a proxy for how many commits are needed to
+  // build reliable pairwise evidence. A 50-file repo saturates much
+  // faster than a 5000-file repo.
+  final saturation = math.max(50.0, matrix.trackedFileCount * 0.4);
+  return math.min(1.0, matrix.commitsAnalyzed / saturation);
 }
 
 /// A single "you might have forgotten this" signal: an unselected changed

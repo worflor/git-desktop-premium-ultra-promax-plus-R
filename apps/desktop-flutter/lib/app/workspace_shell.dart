@@ -150,8 +150,10 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
           return;
         }
         context.read<RepositoryXrayState>().invalidateAllExcept(activeRepoPath);
-        context.read<LogosGitState>().invalidateAllExcept(activeRepoPath);
-        context.read<FileCouplingState>().invalidateAllExcept(activeRepoPath);
+        // LogosGitState and FileCouplingState keep their LRU caches
+        // across repo switches — the resolver manages its own budget.
+        // Only xray and symbol frequency evict aggressively (larger
+        // footprint, less value when cached across repos).
         context
             .read<SymbolFrequencyState>()
             .invalidateAllExcept(activeRepoPath);

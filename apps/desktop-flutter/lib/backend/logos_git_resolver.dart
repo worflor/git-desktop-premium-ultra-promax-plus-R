@@ -50,17 +50,17 @@ class _HeadSnapshot {
   });
 }
 
-/// Hard cap on the number of engines the resolver retains. Each engine
-/// can be tens of MB; without a ceiling, every repo a user opens stays
-/// pinned in memory forever. 3 covers the typical "active repo plus
-/// one or two recently-visited" pattern; the rest get evicted LRU.
-const int _kMaxEngines = 3;
+/// Hard cap on retained engines. 5 covers the active repo + a few
+/// IPC-warmed repos without unbounded growth.
+const int _kMaxEngines = 5;
 
 final LruCache<String, _ResolverEntry> _engines =
     LruCache<String, _ResolverEntry>(maxSize: _kMaxEngines);
 final Map<String, Future<LogosGit?>> _inflight = {};
 final Map<String, _HeadSnapshot> _headSnapshots = {};
+final Map<String, DateTime> _lastAccess = {};
 const Duration _kHeadProbeTtl = Duration(seconds: 2);
+const Duration _kEngineDecayTtl = Duration(minutes: 15);
 
 /// Hard ceiling on the cheap `git rev-parse HEAD` probe that precedes
 /// every engine refresh. Without a bound, a hung git (network drive
@@ -327,6 +327,22 @@ void invalidateLogosGit(String repoPath) {
 void invalidateAllLogosGit() {
   _engines.clear();
   _headSnapshots.clear();
+  _lastAccess.clear();
+}
+
+void _pruneDecayedEngines() {
+  final now = DateTime.now();
+  final stale = <String>[];
+  for (final entry in _lastAccess.entries) {
+    if (now.difference(entry.value) > _kEngineDecayTtl) {
+      stale.add(entry.key);
+    }
+  }
+  for (final key in stale) {
+    _engines.remove(key);
+    _headSnapshots.remove(key);
+    _lastAccess.remove(key);
+  }
 }
 
 String _inflightKey(
@@ -356,15 +372,15 @@ Future<LogosGit?> _resolveImpl(
 ) async {
   final sw = Stopwatch()..start();
   final log = LogosGitDiagnostics.instance;
-  // Visualisation event: start of engine resolution. If we're inside
-  // a review session (runInSession scope), the canvas narrates the
-  // "terrain materialising" frame while we work below. Outside a
-  // session (e.g. sidebar refresh), no-op.
   LogosVisBus.instance.emitInSession(
     (sid) => LogosVisEngineResolving(sid, repoPath: repoPath),
   );
+  // Prune engines untouched for 15+ minutes before resolving so
+  // idle IPC-warmed repos don't hold memory indefinitely.
+  _pruneDecayedEngines();
   try {
     final cached = _engines.get(repoPath);
+    _lastAccess[repoPath] = DateTime.now();
     final now = DateTime.now();
     final headSnapshot = _headSnapshots[repoPath];
     if (cached != null &&
@@ -511,6 +527,7 @@ Future<LogosGit?> _resolveImpl(
     );
 
     _engines.put(repoPath, _ResolverEntry(hash, engine));
+    _lastAccess[repoPath] = DateTime.now();
     _pruneHeadSnapshotsForEngines();
     log.recordBuild(
       repoPath: repoPath,

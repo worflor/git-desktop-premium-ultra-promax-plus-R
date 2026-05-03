@@ -1502,7 +1502,7 @@ class _SettingsPageState extends State<SettingsPage>
         const SizedBox(height: 10),
         _StateCard(
           title: 'Release Deployment',
-          summary: 'Update feeds, crash diagnostics, and environment posture.',
+          summary: 'Update related settings.',
           wide: true,
           action: _ReplayOnboardingButton(
             onTap: () => context.read<OnboardingState>().replay(),

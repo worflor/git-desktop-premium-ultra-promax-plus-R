@@ -13,8 +13,9 @@ void main() {
 
   group('Time-weighted Jaccard (computeFileCoupling decay semantics)', () {
     test('coherenceFor averages pairwise scores scaled by confidence', () {
-      // commitsAnalyzed=100 → confidence=0.5. Raw mean Jaccard = 0.4.
-      // Result = 0.5 + (0.4 - 0.5) * 0.5 = 0.45
+      // 3 tracked files → saturation = max(50, 3*0.4) = 50.
+      // commitsAnalyzed=100 → conf = min(1, 100/50) = 1.0.
+      // Raw mean Jaccard = 0.4. Result = 0.5 + (0.4-0.5)*1.0 = 0.4.
       final m = FileCouplingMatrix(
         jaccard: {
           'a.dart': {'b.dart': 0.6, 'c.dart': 0.4},
@@ -25,13 +26,13 @@ void main() {
         commitsAnalyzed: 100,
       );
       final coh = m.coherenceFor(const ['a.dart', 'b.dart', 'c.dart']);
-      expect(coh, closeTo(0.45, 1e-9));
+      expect(coh, closeTo(0.4, 1e-9));
     });
 
     test('coherenceFor pulls toward 0.5 on cold-start', () {
-      // commitsAnalyzed=10 → confidence=0.05. Even with 0.9 Jaccard
-      // everywhere, the result stays near 0.5 (the max-uncertainty
-      // prior) because the evidence is too sparse to trust.
+      // commitsAnalyzed=10, saturation=50 → conf=0.2. Raw=0.9.
+      // Result = 0.5 + 0.4*0.2 = 0.58. Still pulled toward neutral
+      // but less aggressively than with the old /200 formula.
       final m = FileCouplingMatrix(
         jaccard: {
           'a.dart': {'b.dart': 0.9, 'c.dart': 0.9},
@@ -42,8 +43,8 @@ void main() {
         commitsAnalyzed: 10,
       );
       final coh = m.coherenceFor(const ['a.dart', 'b.dart', 'c.dart']);
-      expect(coh, closeTo(0.5, 0.03),
-          reason: 'cold-start repos must pull toward neutral');
+      expect(coh, closeTo(0.58, 0.01),
+          reason: 'cold-start repos should pull toward neutral');
     });
   });
 }

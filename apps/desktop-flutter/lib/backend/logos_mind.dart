@@ -422,7 +422,7 @@ class LogosMind {
           gravity = basis.gravitationalPotential(
               seedCenter, id, temperature);
         }
-        reach = _reachAtNode(basis, id);
+        reach = _reachAtNode(basis, id, temperature);
       }
 
       // Engram match: compare AR(2) fit of seed cluster to candidate.
@@ -629,7 +629,7 @@ class LogosMind {
     return engine.pathToId[best!];
   }
 
-  double _reachAtNode(SpectralBasis basis, int nodeId) {
+  double _reachAtNode(SpectralBasis basis, int nodeId, double t) {
     // 1-hot projection in O(k).
     final k = basis.k;
     if (k == 0) return 0.0;
@@ -637,7 +637,7 @@ class LogosMind {
     final weighted = Float64List(k);
     for (var j = 0; j < k; j++) {
       final c = basis.eigenvectors[j * basis.n + nodeId];
-      final w = math.exp(-1.0 * basis.eigenvalues[j]) * c * c;
+      final w = math.exp(-t * basis.eigenvalues[j]) * c * c;
       weighted[j] = w;
       z += w;
     }

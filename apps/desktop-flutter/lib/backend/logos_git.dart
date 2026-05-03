@@ -293,10 +293,12 @@ class _CcAxis {
   AxisObs observe(String a, String b) {
     if (a == b) return const AxisObs(1.0, 1);
     final j = matrix.score(a, b);
-    // Convert Jaccard (already smoothed by the matrix builder) into a
-    // KT-style probability. We bias toward 0.5 when Jaccard is 0 by
-    // blending with the prior at n=commitsAnalyzed/10 evidence.
-    final evidence = (matrix.commitsAnalyzed / 10).clamp(0, 1024).toInt();
+    // Evidence scales with commits-per-file rather than a flat divisor.
+    final filesTracked = matrix.trackedFileCount;
+    final perFileEvidence = filesTracked > 0
+        ? matrix.commitsAnalyzed / filesTracked
+        : matrix.commitsAnalyzed / 10;
+    final evidence = (perFileEvidence * 2).clamp(1, 1024).toInt();
     final p = (j * evidence + 0.5) / (evidence + 1.0);
     return AxisObs(p, evidence);
   }
@@ -322,11 +324,13 @@ class _CcAxis {
 /// tame. Sign-aligned z-matching: z(|v_a - v_b|) inverted via sigmoid.
 class _VAxis {
   final Map<String, double> volatility;
+  final Map<String, int> touches;
   final double mean;
   final double stddev;
 
   const _VAxis({
     required this.volatility,
+    required this.touches,
     required this.mean,
     required this.stddev,
   });
@@ -337,12 +341,11 @@ class _VAxis {
     if (va == null || vb == null) return AxisObs.silent;
     if (stddev <= 0) return AxisObs.silent;
     final z = (va - vb).abs() / stddev;
-    // Small |z| -> high p (volatilities match).
     final p = _sigmoid(2.0 - z);
-    // Evidence grows with the number of observations feeding the EWMA.
-    // We don't track per-file sample counts; use a small fixed evidence
-    // count (axis remains informative but can't dominate).
-    return AxisObs(p, 4);
+    final na = touches[a] ?? 0;
+    final nb = touches[b] ?? 0;
+    final evidence = math.min(na, nb).clamp(2, 20);
+    return AxisObs(p, evidence);
   }
 }
 
@@ -1937,6 +1940,7 @@ class LogosGit {
     // callers, but the build path no longer instantiates it.
     final v = _VAxis(
       volatility: stats.volatility,
+      touches: stats.touches,
       mean: stats.volMean,
       stddev: stats.volStddev,
     );

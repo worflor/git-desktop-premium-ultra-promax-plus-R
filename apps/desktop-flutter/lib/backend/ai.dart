@@ -9263,19 +9263,39 @@ _ProviderAuthStatus _codexAuthStatus() {
   final tokens = value['tokens'];
   final idToken = tokens is Map ? tokens['id_token'] as String? : null;
   final accessToken = tokens is Map ? tokens['access_token'] as String? : null;
-  final planType =
-      idToken == null ? null : _extractCodexPlanFromIdToken(idToken);
-  final planName = planType == null ? null : _humanizeLabel(planType);
   final hasToken = [idToken, accessToken].any(
     (token) => token != null && token.trim().isNotEmpty,
   );
+
+  // The JWT plan claim is stale across plan changes — use the
+  // models_cache instead, which is API-fresh. The count of
+  // available models is concrete and always current.
+  int? modelCount;
+  try {
+    final home = _userHomeDir();
+    if (home != null) {
+      final cache =
+          _readJsonFile(p.join(home, '.codex', 'models_cache.json'));
+      final models = cache?['models'];
+      if (models is List) {
+        modelCount = models
+            .where((m) =>
+                m is Map &&
+                (m['visibility'] == null || m['visibility'] == 'list'))
+            .length;
+      }
+    }
+  } catch (_) {}
+
+  final planName =
+      modelCount != null ? '$modelCount model${modelCount == 1 ? '' : 's'}' : null;
 
   return _ProviderAuthStatus(
     ok: hasToken,
     detail: hasToken
         ? planName != null
-            ? 'codex auth token found ($planName)'
-            : 'codex auth token found'
+            ? 'codex auth ok ($planName)'
+            : 'codex auth ok'
         : 'codex token missing',
     planName: planName,
   );
@@ -9396,29 +9416,6 @@ _ClaudeOAuthCredentials? _readClaudeOAuthCredentials(String path) {
     hasInferenceScope: scopes is List &&
         scopes.any((scope) => scope is String && scope == 'user:inference'),
   );
-}
-
-String? _extractCodexPlanFromIdToken(String idToken) {
-  try {
-    final parts = idToken.split('.');
-    final segment = parts.length > 1 ? parts[1] : null;
-    if (segment == null || segment.isEmpty) {
-      return null;
-    }
-    final decoded = utf8.decode(base64Url.decode(base64Url.normalize(segment)));
-    final payload = jsonDecode(decoded);
-    if (payload is! Map) {
-      return null;
-    }
-    final auth = payload['https://api.openai.com/auth'];
-    if (auth is! Map) {
-      return null;
-    }
-    final plan = auth['chatgpt_plan_type'];
-    return plan is String && plan.trim().isNotEmpty ? plan : null;
-  } catch (_) {
-    return null;
-  }
 }
 
 String? _geminiAccountLabel(String homeDir) {

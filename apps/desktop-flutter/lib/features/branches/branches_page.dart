@@ -6833,10 +6833,8 @@ class _PrExpanded extends StatelessWidget {
                 detail!.files,
                 couplingMatrix,
                 engine: () {
-                  final repo = context.read<RepositoryState>().activePath;
-                  return repo == null
-                      ? null
-                      : context.read<LogosGitState>().engineFor(repo);
+                  final r = context.read<RepositoryState>().activePath;
+                  return r == null ? null : context.read<LogosGitState>().engineFor(r);
                 }(),
               ),
               // Keystone paths = repo-wide load-bearing files (the
@@ -11389,12 +11387,7 @@ class _PatchPreviewDialogState extends State<_PatchPreviewDialog> {
     final ghosts = _resonanceForecast(
       _prFiles,
       widget.couplingMatrix,
-      engine: () {
-        final repo = context.read<RepositoryState>().activePath;
-        return repo == null
-            ? null
-            : context.read<LogosGitState>().engineFor(repo);
-      }(),
+      engine: context.read<LogosGitState>().engineFor(widget.repoPath),
     );
 
     return Dialog(

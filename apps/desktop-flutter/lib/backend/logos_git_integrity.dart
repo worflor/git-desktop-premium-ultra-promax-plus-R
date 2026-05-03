@@ -110,6 +110,15 @@ LogosIntegrityProfile buildLogosIntegrityProfile({
   final ritualness = <String, double>{};
   final reasons = <String, List<String>>{};
 
+  // Derive shrinkage tau from the repo's evidence density: the 25th
+  // percentile of per-file touch counts. Repos where even the
+  // least-touched files have 20 commits need a higher tau than
+  // repos where most files have 2 commits.
+  final touchCounts = rawTouches.values.toList()..sort();
+  final shrinkageTau = touchCounts.isEmpty
+      ? 6.0
+      : math.max(3.0, touchCounts[touchCounts.length ~/ 4].toDouble());
+
   final allPaths = <String>{...rawTouches.keys, ...semanticTouchMass.keys, ...ritualMassByPath.keys};
   for (final path in allPaths) {
     final pathReasons = <String>[];
@@ -135,7 +144,7 @@ LogosIntegrityProfile buildLogosIntegrityProfile({
 
     // Confidence / shrinkage: sparse evidence stays near neutral.
     final evidence = raw + semantic;
-    final confidence = (1.0 - math.exp(-evidence / 6.0)).clamp(0.0, 1.0);
+    final confidence = (1.0 - math.exp(-evidence / shrinkageTau)).clamp(0.0, 1.0);
     final shrunk = kNeutralIntegrity + (estimate - kNeutralIntegrity) * confidence;
     integrity[path] = shrunk.clamp(0.1, 1.0);
     if (ratio >= 0.5) pathReasons.add('ritual-history');

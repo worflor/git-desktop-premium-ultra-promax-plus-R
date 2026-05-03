@@ -319,6 +319,9 @@ class _ChangesPageState extends State<ChangesPage> {
   bool _generateFlash = false;
   bool _reviewFlash = false;
   bool _museFlash = false;
+  final Map<String, String> _snapshotReviewModelLabel = {};
+  final Map<String, int> _snapshotReviewGuardrailStage = {};
+  final Map<String, int> _snapshotMuseGuardrailStage = {};
   // Monotonic counter for commit-message generation requests, keyed
   // by repoPath so that a generate kicked off on repo B doesn't bump
   // the guard for an in-flight generate on repo A — that misfire used
@@ -4496,12 +4499,11 @@ class _ChangesPageState extends State<ChangesPage> {
     final existingReview = _reviewRecord;
     if (existingReview != null &&
         existingReview.scopeKey == scopeKey &&
-        (existingReview.isRunning ||
-            existingReview.isDone ||
-            existingReview.isError)) {
-      // Same scope, same record — re-show the drawer rather than
-      // re-running. Centralised through `_openDrawerFor` so the
-      // markSeen + open-drawer pair fire together.
+        existingReview.isError) {
+      activity.clear(repoPath: repoPath, kind: AiActivityKind.review);
+    } else if (existingReview != null &&
+        existingReview.scopeKey == scopeKey &&
+        (existingReview.isRunning || existingReview.isDone)) {
       _openDrawerFor(AiActivityKind.review);
       return;
     }
@@ -4560,6 +4562,10 @@ class _ChangesPageState extends State<ChangesPage> {
             )
             .firstOrNull ??
         selectedCategory.models.first;
+
+    _snapshotReviewModelLabel[repoPath] =
+        '${selectedModel.providerLabel} | ${selectedModel.modelId}';
+    _snapshotReviewGuardrailStage[repoPath] = preferences.guardrailStage;
 
     final includeStaged = included.any((file) => file.hasStagedChange);
     final includeUnstaged = included.any((file) => file.hasUnstagedChange);
@@ -4676,9 +4682,11 @@ class _ChangesPageState extends State<ChangesPage> {
     final existingMuse = _museRecord;
     if (existingMuse != null &&
         existingMuse.scopeKey == scopeKey &&
-        (existingMuse.isRunning ||
-            existingMuse.isDone ||
-            existingMuse.isError)) {
+        existingMuse.isError) {
+      activity.clear(repoPath: repoPath, kind: AiActivityKind.muse);
+    } else if (existingMuse != null &&
+        existingMuse.scopeKey == scopeKey &&
+        (existingMuse.isRunning || existingMuse.isDone)) {
       _openDrawerFor(AiActivityKind.muse);
       return;
     }
@@ -4708,6 +4716,7 @@ class _ChangesPageState extends State<ChangesPage> {
 
     final aiSettings = context.read<AiSettingsState>();
     final preferences = context.read<PreferencesState>();
+    _snapshotMuseGuardrailStage[repoPath] = preferences.guardrailStage;
 
     // Resolve two distinct slots for the muse:
     //   - brainstorm slot = "fast" if the user has a model assigned to
@@ -6642,7 +6651,8 @@ class _ChangesPageState extends State<ChangesPage> {
                             result: _museResult,
                             staleScope: _isMuseScopeStale(),
                             guardrailLabel: _guardrailLabelForStage(
-                                preferences.guardrailStage),
+                                _snapshotMuseGuardrailStage[repoPath] ??
+                                    preferences.guardrailStage),
                             onBack: _closeDrawer,
                             onRerun: () {
                               // Drop the existing record so _runMuse
@@ -6678,10 +6688,15 @@ class _ChangesPageState extends State<ChangesPage> {
                             diffAdds: stats.adds,
                             diffDels: stats.dels,
                             diffHunks: stats.hunks,
-                            modelLabel: _reviewModelLabel(aiSettings),
+                            modelLabel:
+                                _snapshotReviewModelLabel[repoPath] ??
+                                    _reviewModelLabel(aiSettings),
                             guardrailLabel: _guardrailLabelForStage(
-                                preferences.guardrailStage),
-                            guardrailStage: preferences.guardrailStage,
+                                _snapshotReviewGuardrailStage[repoPath] ??
+                                    preferences.guardrailStage),
+                            guardrailStage:
+                                _snapshotReviewGuardrailStage[repoPath] ??
+                                    preferences.guardrailStage,
                             loading: _reviewRunning,
                             error: _reviewError,
                             result: _reviewResult,

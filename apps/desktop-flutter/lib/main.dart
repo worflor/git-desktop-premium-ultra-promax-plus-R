@@ -28,6 +28,8 @@ import 'app/sidebar_rail.dart';
 import 'app/tool_detection_state.dart';
 import 'app/window_activity.dart';
 import 'app/theme_state.dart';
+import 'backend/ipc/bridge_context.dart';
+import 'backend/ipc/pipe_server.dart';
 import 'app/workspace_shell.dart';
 import 'backend/external_tools.dart';
 import 'backend/engram_bootstrap.dart';
@@ -185,6 +187,22 @@ void main() async {
     diagnosticsState.load().catchError((_) {});
   });
 
+  final undoCoordinator = UndoCoordinator();
+
+  // IPC bridge: expose Logos engine, coupling, and AI flows to
+  // external CLI tools (Claude Code, Codex, aider, custom scripts).
+  final pipeServer = ManifoldPipeServer(ManifoldBridgeContext(
+    repoState: repoState,
+    aiSettingsState: aiSettingsState,
+    preferencesState: preferencesState,
+    logosGitState: logosGitState,
+    undoCoordinator: undoCoordinator,
+    fileCouplingState: fileCouplingState,
+    symbolFrequencyState: symbolFrequencyState,
+  ));
+  unawaited(pipeServer.start().catchError(
+      (Object e) => debugPrint('[IPC] pipe server failed: $e')));
+
   // Idle-GPU probe. Only registered when _kFpsProbe is true (debug
   // builds or explicit --dart-define=FPS_PROBE=true). Zero cost in a
   // default release build — the callback is never added, no per-frame
@@ -230,7 +248,7 @@ void main() async {
         ChangeNotifierProvider.value(value: appIdentityState),
         ChangeNotifierProvider.value(value: onboardingState),
         ChangeNotifierProvider(create: (_) => HyperReactivity()),
-        ChangeNotifierProvider(create: (_) => UndoCoordinator()),
+        ChangeNotifierProvider.value(value: undoCoordinator),
       ],
       child: const GitDesktopApp(),
     ),
