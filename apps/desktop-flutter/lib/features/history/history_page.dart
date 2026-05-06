@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -3672,7 +3673,10 @@ class _DesksInFlightStrip extends StatelessWidget {
     this.onPreviewHover,
   });
 
-  String _normalize(String p) => p.replaceAll('\\', '/').toLowerCase();
+  String _normalize(String p) {
+    final n = p.replaceAll('\\', '/');
+    return Platform.isLinux ? n : n.toLowerCase();
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -1055,9 +1055,7 @@ class _SettingsPageState extends State<SettingsPage>
                 onChanged: themeState.setKeybindingProfile,
               ),
               const SizedBox(height: 12),
-              const _SettingsBody('Core shortcuts for the active profile.'),
-              const SizedBox(height: 8),
-              _ShortcutsTable(profile: themeState.keybindingProfile),
+              _ShortcutsReference(profile: themeState.keybindingProfile),
               const _SettingsGap(),
               const _SettingsSubtitle('Behavioural Dynamics'),
               const SizedBox(height: 12),
@@ -2745,110 +2743,183 @@ class _ProfileSelect extends StatelessWidget {
   }
 }
 
-class _ShortcutsTable extends StatelessWidget {
+class _ShortcutsReference extends StatelessWidget {
   final KeybindingProfile profile;
 
-  const _ShortcutsTable({required this.profile});
+  const _ShortcutsReference({required this.profile});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final rows = profile == KeybindingProfile.classic
-        ? const [
-            ('Changes', 'G C'),
-            ('History', 'G H'),
-            ('Branches', 'G B'),
-            ('Repo X-Ray', 'G S'),
-            ('Search commits', '/'),
-            ('Close panel', 'Esc'),
-            ('Select range (rebase)', 'Shift+Click'),
-          ]
-        : const [
-            ('Changes', '1'),
-            ('History', '2'),
-            ('Branches', '3'),
-            ('Repo X-Ray', '4'),
-            ('Search commits', '/'),
-            ('Close panel', 'Esc'),
-            ('Select range (rebase)', 'Shift+Click'),
-          ];
+    final sections = <(String, List<(String, String)>)>[
+      (
+        'navigate',
+        profile == KeybindingProfile.classic
+            ? const [
+                ('Changes', 'G C'),
+                ('History', 'G H'),
+                ('Branches', 'G B'),
+                ('X-Ray', 'G S'),
+                ('Switch (always)', '⌘ 1/2/3'),
+                ('Search', '/'),
+                ('Dismiss', 'Esc'),
+                ('Refresh', 'F5'),
+                ('Shortcuts', '?'),
+              ]
+            : const [
+                ('Changes', '1'),
+                ('History', '2'),
+                ('Branches', '3'),
+                ('X-Ray', '4'),
+                ('Switch (always)', '⌘ 1/2/3'),
+                ('Search', '/'),
+                ('Dismiss', 'Esc'),
+                ('Refresh', 'F5'),
+                ('Shortcuts', '?'),
+              ],
+      ),
+      (
+        'staging',
+        const [
+          ('Next change', 'J'),
+          ('Prev change', 'K'),
+          ('Toggle line', 'Space'),
+          ('Toggle hunk', 'S'),
+          ('Toggle file', 'F'),
+          ('Pin context', 'P'),
+          ('Commit', '⌘ Enter'),
+          ('Commit', '⌘ S'),
+          ('Accept hint', 'Tab'),
+          ('Undo', '⌘ Z'),
+        ],
+      ),
+      (
+        'branches & PRs',
+        const [
+          ('Navigate', 'J / K'),
+          ('Expand', 'Enter'),
+          ('Checkout', 'C'),
+          ('Approve', 'A'),
+          ('Request changes', 'R'),
+        ],
+      ),
+      (
+        'modifiers',
+        const [
+          ('Select range', 'Shift+Click'),
+          ('Extended menu', 'Shift+Right click'),
+        ],
+      ),
+    ];
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth < 460
-            ? 1
-            : constraints.maxWidth < 720
-                ? 2
-                : 4;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: rows.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisExtent: 32,
-            crossAxisSpacing: 6,
-            mainAxisSpacing: 6,
+    final accent = t.accentBright.withValues(alpha: 0.40);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var s = 0; s < sections.length; s++) ...[
+          if (s > 0) const SizedBox(height: 10),
+          Row(
+            children: [
+              Container(
+                width: 3,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(1.5),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                sections[s].$1,
+                style: TextStyle(
+                  color: t.accentBright,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
-          itemBuilder: (context, index) {
-            final row = rows[index];
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: BoxDecoration(
-                color: t.chromeBorder.withValues(alpha: 0.05),
-                borderRadius: BorderRadius.circular(6),
-                border:
-                    Border.all(color: t.chromeBorder.withValues(alpha: 0.10)),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final row in sections[s].$2)
+                _KeybindChip(tokens: t, label: row.$1, key_: row.$2),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _KeybindChip extends StatelessWidget {
+  final AppTokens tokens;
+  final String label;
+  final String key_;
+
+  const _KeybindChip({
+    required this.tokens,
+    required this.label,
+    required this.key_,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return Container(
+      height: 28,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: t.chromeBorder.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.10)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 11,
+              fontFamily: AppFonts.mono,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            constraints: const BoxConstraints(minWidth: 20),
+            height: 20,
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: t.surface2,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: t.chromeBorder.withValues(alpha: 0.30),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      row.$1,
-                      style: TextStyle(
-                        color: t.textMuted,
-                        fontSize: 11,
-                        fontFamily: AppFonts.mono,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    constraints: const BoxConstraints(minWidth: 20),
-                    height: 20,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: t.surface2,
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: t.chromeBorder.withValues(alpha: 0.30),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: t.chromeBorder.withValues(alpha: 0.15),
-                          offset: const Offset(0, 1.5),
-                          blurRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: Text(
-                      row.$2,
-                      style: TextStyle(
-                        color: t.textStrong,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        fontFamily: AppFonts.mono,
-                      ),
-                    ),
-                  ),
-                ],
+              boxShadow: [
+                BoxShadow(
+                  color: t.chromeBorder.withValues(alpha: 0.15),
+                  offset: const Offset(0, 1.5),
+                  blurRadius: 0,
+                ),
+              ],
+            ),
+            child: Text(
+              key_,
+              style: TextStyle(
+                color: t.textStrong,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                fontFamily: AppFonts.mono,
               ),
-            );
-          },
-        );
-      },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -10390,6 +10461,7 @@ class _ExternalToolsCard extends StatelessWidget {
     ExternalToolCategory.ai: 'ai',
     ExternalToolCategory.editors: 'editors',
     ExternalToolCategory.explore: 'explore',
+    ExternalToolCategory.ops: 'ops',
     ExternalToolCategory.gitOps: 'git ops',
   };
 

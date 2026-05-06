@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'ai_activity_state.dart';
 import 'logos_git_state.dart';
+import 'sidebar_org_state.dart';
 import '../backend/external_tools.dart';
 import '../backend/logos_git.dart';
 import '../backend/file_picker.dart';
@@ -59,7 +60,10 @@ String _toProjectName(String path) {
   return parts.isNotEmpty ? parts.last : path;
 }
 
-String _normalizePath(String path) => path.replaceAll('\\', '/').toLowerCase();
+String _normalizePath(String path) {
+  final p = path.replaceAll('\\', '/');
+  return Platform.isLinux ? p : p.toLowerCase();
+}
 
 enum _RepositoryEntryMode { open, clone, create }
 
@@ -328,14 +332,17 @@ class _SidebarRailState extends State<SidebarRail> {
             ),
           Expanded(
             child: () {
-              // Filter out any worktree paths that may have leaked into
-              // recents (e.g. from pre-fix sessions). Worktrees are desks,
-              // not projects — the sidebar is for distinct repos only.
+              final org = context.watch<SidebarOrgState>();
               final visiblePaths = recentPaths
                   .where((p) =>
                       !p.replaceAll('\\', '/').contains('/.manifold/worktrees/'))
                   .toList();
-              if (visiblePaths.isEmpty) {
+              final organizedPaths = org.organizedPaths;
+              final ungroupedPaths = visiblePaths
+                  .where((p) => !organizedPaths.contains(p))
+                  .toList();
+
+              if (org.isEmpty && ungroupedPaths.isEmpty) {
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
                   child: Text(
@@ -344,36 +351,552 @@ class _SidebarRailState extends State<SidebarRail> {
                   ),
                 );
               }
+
+              final flat = <_FlatItem>[];
+              void flatten(List<SidebarNode> nodes, int depth,
+                  int? color, String? parentId) {
+                for (final n in nodes) {
+                  switch (n) {
+                    case SidebarRepo(:final path):
+                      flat.add(_FlatItem.repo(path, depth, color, parentId));
+                    case SidebarGroup():
+                      final c = n.colorSlot ?? color;
+                      flat.add(_FlatItem.group(n, depth, c, parentId));
+                      if (!n.collapsed) {
+                        flatten(n.children, depth + 1, c, n.id);
+                      }
+                  }
+                }
+              }
+              flatten(org.roots, 0, null, null);
+
+              final hasOrganized = flat.isNotEmpty;
+              final hasUngrouped = ungroupedPaths.isNotEmpty;
+              final hairlineCount =
+                  hasOrganized && hasUngrouped ? 1 : 0;
+
+              Widget wrapDraggable(String path, String label, Widget child) {
+                return LongPressDraggable<String>(
+                  data: path,
+                  dragAnchorStrategy: pointerDragAnchorStrategy,
+                  feedback: _SidebarDragFeedback(label: label, tokens: t),
+                  childWhenDragging: Opacity(opacity: 0.3, child: child),
+                  child: child,
+                );
+              }
+
+              Widget wrapDropTarget({
+                required Widget child,
+                required String? selfPath,
+                required void Function(String sourcePath) onDrop,
+              }) {
+                return DragTarget<String>(
+                  onWillAcceptWithDetails: (d) => d.data != selfPath,
+                  onAcceptWithDetails: (d) => onDrop(d.data),
+                  builder: (ctx, candidates, _) {
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        child,
+                        if (candidates.isNotEmpty)
+                          Positioned(
+                            left: 4,
+                            right: 4,
+                            top: -1,
+                            child: Container(
+                              height: 2,
+                              decoration: BoxDecoration(
+                                color: t.accentBright.withValues(alpha: 0.7),
+                                borderRadius: BorderRadius.circular(1),
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                );
+              }
+
+              const topZone = 1;
+              final totalWithTop =
+                  topZone + flat.length + hairlineCount + ungroupedPaths.length;
+
               return ListView.builder(
-                    padding: EdgeInsets.zero,
-                    itemCount: visiblePaths.length,
-                    itemBuilder: (context, index) {
-                      final path = visiblePaths[index];
-                      return _ProjectItem(
-                        name: _toProjectName(path),
-                        path: path,
-                        isActive: activePath != null &&
+                padding: EdgeInsets.zero,
+                itemCount: totalWithTop,
+                itemBuilder: (context, rawIndex) {
+                  // ── Top pin zone ──
+                  // Drop here to pin at the very top (no nesting).
+                  if (rawIndex == 0) {
+                    return DragTarget<String>(
+                      onWillAcceptWithDetails: (_) => true,
+                      onAcceptWithDetails: (d) =>
+                          org.moveToTopLevel(d.data, index: 0),
+                      builder: (ctx, candidates, _) {
+                        return AnimatedContainer(
+                          duration: AppMotion.snap,
+                          height: candidates.isNotEmpty ? 24 : 4,
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: candidates.isNotEmpty
+                              ? BoxDecoration(
+                                  color: t.accentBright
+                                      .withValues(alpha: 0.08),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                    color: t.accentBright
+                                        .withValues(alpha: 0.4),
+                                  ),
+                                )
+                              : null,
+                        );
+                      },
+                    );
+                  }
+                  final index = rawIndex - topZone;
+
+                  // ── Organized zone ──
+                  if (index < flat.length) {
+                    final item = flat[index];
+                    if (item.group != null) {
+                      final g = item.group!;
+                      final header = _GroupHeader(
+                        key: ValueKey('grp_${g.id}'),
+                        group: g,
+                        depth: item.depth,
+                        effectiveColor: item.colorSlot,
+                        isHeadActive: g.headRepoPath != null &&
+                            activePath != null &&
                             _normalizePath(activePath) ==
-                                _normalizePath(path),
-                        onTap: () async {
-                          try {
-                            final err = await repo.setActivePath(path);
-                            if (err != null && mounted) {
-                              setState(() => _error = err);
-                            }
-                          } catch (error) {
-                            if (mounted) {
-                              setState(() => _error = error.toString());
-                            }
-                          }
-                        },
-                        onForget: () => repo.forgetRecent(path),
+                                _normalizePath(g.headRepoPath!),
+                        onToggleCollapsed: () =>
+                            org.toggleCollapsed(g.id),
+                        onTapHead: g.headRepoPath == null
+                            ? null
+                            : () async {
+                                final err = await repo
+                                    .setActivePath(g.headRepoPath!);
+                                if (err != null && mounted) {
+                                  setState(() => _error = err);
+                                }
+                              },
+                        onDissolve: () =>
+                            org.dissolveGroup(g.id),
+                        onForget: g.headRepoPath == null
+                            ? null
+                            : () {
+                                repo.forgetRecent(g.headRepoPath!);
+                                org.forgetRepo(g.headRepoPath!);
+                              },
                       );
+                      return wrapDropTarget(
+                        selfPath: g.headRepoPath,
+                        onDrop: (src) =>
+                            org.insertIntoGroup(src, g.id),
+                        child: header,
+                      );
+                    }
+                    final repoWidget = _ProjectItem(
+                      key: ValueKey('org_${item.path}'),
+                      name: _toProjectName(item.path!),
+                      path: item.path!,
+                      isActive: activePath != null &&
+                          _normalizePath(activePath) ==
+                              _normalizePath(item.path!),
+                      depth: item.depth,
+                      colorSlot: item.colorSlot,
+                      onTap: () async {
+                        final err =
+                            await repo.setActivePath(item.path!);
+                        if (err != null && mounted) {
+                          setState(() => _error = err);
+                        }
+                      },
+                      onForget: () {
+                        repo.forgetRecent(item.path!);
+                        org.forgetRepo(item.path!);
+                      },
+                    );
+                    // Drop on an organized repo = nest source under it.
+                    return wrapDropTarget(
+                      selfPath: item.path,
+                      onDrop: (src) =>
+                          org.nestUnder(src, item.path!),
+                      child: wrapDraggable(
+                        item.path!,
+                        _toProjectName(item.path!),
+                        repoWidget,
+                      ),
+                    );
+                  }
+                  // ── Hairline ──
+                  if (hasOrganized &&
+                      index == flat.length) {
+                    return wrapDropTarget(
+                      selfPath: null,
+                      onDrop: (src) {
+                        if (org.organizedPaths.contains(src)) {
+                          org.unanchorRepo(src);
+                        } else {
+                          org.moveToTopLevel(src);
+                        }
+                      },
+                      child: _ZoneHairline(color: t.chromeBorder),
+                    );
+                  }
+                  // ── Free space (MRU) ──
+                  // Drop here = nest under target (same as organized).
+                  // Dragging out of organized to here = undo org.
+                  final ui = index -
+                      flat.length -
+                      hairlineCount;
+                  final path = ungroupedPaths[ui];
+                  final mruWidget = _ProjectItem(
+                    key: ValueKey('mru_$path'),
+                    name: _toProjectName(path),
+                    path: path,
+                    isActive: activePath != null &&
+                        _normalizePath(activePath) ==
+                            _normalizePath(path),
+                    onTap: () async {
+                      final err =
+                          await repo.setActivePath(path);
+                      if (err != null && mounted) {
+                        setState(() => _error = err);
+                      }
+                    },
+                    onForget: () {
+                      repo.forgetRecent(path);
+                      org.forgetRepo(path);
                     },
                   );
+                  return wrapDropTarget(
+                    selfPath: path,
+                    onDrop: (src) {
+                      if (org.organizedPaths.contains(src)) {
+                        org.unanchorRepo(src);
+                      } else {
+                        org.nestUnder(src, path);
+                      }
+                    },
+                    child: wrapDraggable(
+                      path,
+                      _toProjectName(path),
+                      mruWidget,
+                    ),
+                  );
+                },
+              );
             }(),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Tree flattening helper ──────────────────────────────────────
+
+class _FlatItem {
+  final SidebarGroup? group;
+  final String? path;
+  final int depth;
+  final int? colorSlot;
+  final String? parentGroupId;
+
+  _FlatItem.group(SidebarGroup g, this.depth, this.colorSlot, this.parentGroupId)
+      : group = g,
+        path = null;
+  _FlatItem.repo(String p, this.depth, this.colorSlot, this.parentGroupId)
+      : path = p,
+        group = null;
+}
+
+// ── Hairline between organized and MRU zones ────────────────────
+
+class _ZoneHairline extends StatelessWidget {
+  final Color color;
+  const _ZoneHairline({required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 4),
+      child: Container(height: 1, color: color.withValues(alpha: 0.35)),
+    );
+  }
+}
+
+// ── Drag feedback pill ───────────────────────────────────────────
+
+class _SidebarDragFeedback extends StatelessWidget {
+  final String label;
+  final AppTokens tokens;
+  const _SidebarDragFeedback({required this.label, required this.tokens});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = tokens;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: t.accentBright.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: t.accentBright),
+          boxShadow: [
+            BoxShadow(
+              color: t.shadowElev.withValues(alpha: 0.35),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: t.accentBright,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            fontFamily: AppFonts.mono,
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Group header row ────────────────────────────────────────────
+
+class _GroupHeader extends StatefulWidget {
+  final SidebarGroup group;
+  final int depth;
+  final int? effectiveColor;
+  final bool isHeadActive;
+  final VoidCallback onToggleCollapsed;
+  final VoidCallback? onTapHead;
+  final VoidCallback onDissolve;
+  final VoidCallback? onForget;
+
+  const _GroupHeader({
+    super.key,
+    required this.group,
+    required this.depth,
+    this.effectiveColor,
+    this.isHeadActive = false,
+    required this.onToggleCollapsed,
+    this.onTapHead,
+    required this.onDissolve,
+    this.onForget,
+  });
+
+  @override
+  State<_GroupHeader> createState() => _GroupHeaderState();
+}
+
+class _GroupHeaderState extends State<_GroupHeader> {
+  bool _hovered = false;
+  bool _editing = false;
+  late TextEditingController _labelCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _labelCtrl = TextEditingController(
+      text: widget.group.label ?? '',
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _GroupHeader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.group.label != widget.group.label && !_editing) {
+      _labelCtrl.text = widget.group.label ?? '';
+    }
+  }
+
+  @override
+  void dispose() {
+    _labelCtrl.dispose();
+    super.dispose();
+  }
+
+  void _submitLabel() {
+    final text = _labelCtrl.text.trim();
+    context.read<SidebarOrgState>().setGroupLabel(
+      widget.group.id,
+      text.isEmpty ? null : text,
+    );
+    setState(() => _editing = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final g = widget.group;
+    final displayName = g.label ?? (g.headRepoPath != null
+        ? _toProjectName(g.headRepoPath!)
+        : '');
+    final hasColor = widget.effectiveColor != null;
+    final tintColor = hasColor
+        ? t.repoTint(widget.effectiveColor!)
+        : null;
+
+    final background = widget.isHeadActive
+        ? t.itemActiveBg
+        : (_hovered
+            ? t.itemHoverBg
+            : t.itemHoverBg.withValues(alpha: 0));
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: g.headRepoPath != null ? widget.onTapHead : null,
+        child: AnimatedContainer(
+          duration: AppMotion.snap,
+          curve: AppMotion.snapCurve,
+          margin: EdgeInsets.only(
+            left: widget.depth * 14.0,
+            top: 1,
+            bottom: 1,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(
+              context.surfaceShader.geometry.radius,
+            ),
+          ),
+          child: Stack(
+            children: [
+              Row(
+                children: [
+                  // Collapse chevron
+                  GestureDetector(
+                    onTap: widget.onToggleCollapsed,
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: Center(
+                        child: Icon(
+                          g.collapsed
+                              ? Icons.chevron_right
+                              : Icons.expand_more,
+                          size: 14,
+                          color: t.textMuted,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  // Label / name
+                  Expanded(
+                    child: _editing
+                        ? SizedBox(
+                            height: 16,
+                            child: TextField(
+                              controller: _labelCtrl,
+                              autofocus: true,
+                              style: TextStyle(
+                                color: t.textNormal,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              onSubmitted: (_) => _submitLabel(),
+                              onEditingComplete: _submitLabel,
+                            ),
+                          )
+                        : GestureDetector(
+                            onDoubleTap: () {
+                              _labelCtrl.text = g.label ?? '';
+                              setState(() => _editing = true);
+                            },
+                            child: Text(
+                              displayName,
+                              style: TextStyle(
+                                color: widget.isHeadActive
+                                    ? t.textStrong
+                                    : t.textMuted,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                  ),
+                  // Child count (when collapsed)
+                  if (g.collapsed && g.children.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: t.textFaint.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${g.descendantCount}',
+                        style: TextStyle(
+                          color: t.textFaint,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  // Dissolve (hover)
+                  if (_hovered)
+                    GestureDetector(
+                      onTap: widget.onDissolve,
+                      behavior: HitTestBehavior.opaque,
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: Tooltip(
+                          message: 'Dissolve group',
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: Center(
+                              child: Icon(
+                                Icons.close,
+                                size: 12,
+                                color: t.textFaint,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              // Color strip
+              if (hasColor)
+                Positioned(
+                  left: -6,
+                  top: -5,
+                  bottom: -5,
+                  child: Container(
+                    width: 3,
+                    decoration: BoxDecoration(
+                      color: tintColor!.withValues(alpha: 0.75),
+                      borderRadius: const BorderRadius.horizontal(
+                        left: Radius.circular(4),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -662,13 +1185,18 @@ class _ProjectItem extends StatefulWidget {
   final String name;
   final String path;
   final bool isActive;
+  final int depth;
+  final int? colorSlot;
   final VoidCallback onTap;
   final VoidCallback? onForget;
 
   const _ProjectItem({
+    super.key,
     required this.name,
     required this.path,
     required this.isActive,
+    this.depth = 0,
+    this.colorSlot,
     required this.onTap,
     this.onForget,
   });
@@ -874,9 +1402,55 @@ class _ProjectItemState extends State<_ProjectItem>
     await Clipboard.setData(ClipboardData(text: widget.path));
   }
 
-  /// Run [tool] against the project. Substitutes `{path}` into the
-  /// argv slots and dispatches via the appropriate launcher mode.
-  /// Failures are silent — same rationale as `system_paths.dart`.
+  Future<void> _exportAsZip() async {
+    try {
+      final picked = await pickDirectory('Export to');
+      if (picked == null) return;
+      final repoName = widget.path
+          .replaceAll('\\', '/')
+          .split('/')
+          .where((s) => s.isNotEmpty)
+          .last;
+      final outputPath = '$picked${Platform.pathSeparator}$repoName.zip';
+      final result = await archiveRepository(widget.path, outputPath);
+      if (result.ok) {
+        await revealInFileManager(outputPath);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _duplicateRepo() async {
+    try {
+      final picked = await pickDirectory('Clone to');
+      if (picked == null) return;
+      final repoName = widget.path
+          .replaceAll('\\', '/')
+          .split('/')
+          .where((s) => s.isNotEmpty)
+          .last;
+      final targetPath = '$picked${Platform.pathSeparator}$repoName-copy';
+      final result = await cloneRepository(widget.path, targetPath);
+      if (!mounted || !result.ok || result.data == null) return;
+      await context.read<RepositoryState>().setActivePath(result.data!);
+    } catch (_) {}
+  }
+
+  Future<void> _templateFromRepo() async {
+    try {
+      final picked = await pickDirectory('Create from template in');
+      if (picked == null) return;
+      final repoName = widget.path
+          .replaceAll('\\', '/')
+          .split('/')
+          .where((s) => s.isNotEmpty)
+          .last;
+      final targetPath = '$picked${Platform.pathSeparator}$repoName-new';
+      final result = await templateFromRepository(widget.path, targetPath);
+      if (!mounted || !result.ok || result.data == null) return;
+      await context.read<RepositoryState>().setActivePath(result.data!);
+    } catch (_) {}
+  }
+
   Future<void> _runTool(ExternalTool tool) async {
     final exec = tool.executable.trim();
     if (exec.isEmpty) return;
@@ -919,21 +1493,15 @@ class _ProjectItemState extends State<_ProjectItem>
   /// the menu stays focused on the project-intrinsic actions. First-
   /// time setup discoverability lives in Settings rather than as a
   /// ghost menu entry that just deep-links there.
-  void _showContextMenu(BuildContext context, Offset globalPos) {
-    // Outlined-icon variants in the context menu match the register
-    // used by changes_page.dart's right-click menus. The inline
-    // affordance icon (filled folder_open) stays filled since it's
-    // an action button, not a menu glyph.
+  void _showContextMenu(BuildContext context, Offset globalPos,
+      {bool shiftHeld = false}) {
     final tools = context.read<ExternalToolsState>().tools;
+    final t = context.tokens;
+    final shiftTint = shiftHeld ? t.hyperChromatic1 : null;
     final webInfo = _webInfo;
     final originUrl = _originUrl;
     final readmePath = _readmePath;
-    // Tile/chip section: locked-3 always-tiles on top (Explorer,
-    // Terminal, Copy path — every project has these), conditional
-    // chips beneath (Open Host, Copy URL, README, Open with…) in
-    // canonical order. Chips read as ambient secondary register so
-    // a wrap-laid position doesn't violate the muscle-memory rule
-    // the way a tile-position shuffle would.
+    final showCloneUrl = shiftHeld && originUrl != null;
     final tiles = <AppContextMenuItem>[
       AppContextMenuItem(
         icon: Icons.folder_open_outlined,
@@ -945,37 +1513,32 @@ class _ProjectItemState extends State<_ProjectItem>
         label: 'Terminal',
         onTap: _openInTerminal,
       ),
-      AppContextMenuItem(
-        icon: Icons.content_copy_outlined,
-        label: 'Copy path',
-        onTap: _copyPath,
-      ),
+      if (showCloneUrl)
+        AppContextMenuItem(
+          icon: Icons.link,
+          label: 'Clone URL',
+          onTap: _copyCloneUrl,
+          iconColor: shiftTint,
+        )
+      else
+        AppContextMenuItem(
+          icon: Icons.content_copy_outlined,
+          label: 'Copy path',
+          onTap: _copyPath,
+        ),
     ];
     final chips = <AppContextMenuItem>[
-      // "Open on <Host>" — project-intrinsic action, only shown when
-      // the repo's origin remote resolves to a clean https URL.
-      // Label is brand-pretty for github/gitlab/bitbucket.com, bare
-      // host otherwise (Codeberg, sourcehut, Gitea, self-hosted all
-      // show as their actual hostname).
       if (webInfo != null)
         AppContextMenuItem(
           icon: Icons.public_outlined,
           label: webInfo.label,
           onTap: _openOnWeb,
         ),
-      // Clone URL → "Clone" + link icon. The action is "copy the
-      // clone URL to clipboard" but the chip rail can't fit
-      // "Clone URL" without truncation; the link icon already carries
-      // the URL semantics, and "Clone" is the verb the user reaches
-      // for ("git clone <this>") which preserves intent.
-      if (originUrl != null)
-        AppContextMenuItem(
-          icon: Icons.link,
-          label: 'Clone',
-          onTap: _copyCloneUrl,
-        ),
-      // README — orientation aid, surfaces only when a README file
-      // actually exists in the repo root.
+      AppContextMenuItem(
+        icon: Icons.archive_outlined,
+        label: 'Export',
+        onTap: _exportAsZip,
+      ),
       if (readmePath != null)
         AppContextMenuItem(
           icon: Icons.description_outlined,
@@ -983,10 +1546,21 @@ class _ProjectItemState extends State<_ProjectItem>
           onTap: _openReadme,
         ),
     ];
-    // External tools — each gets its own cell in a separate mosaic
-    // row below the conditional chips. No submenu; direct-click
-    // launches.
     final toolChips = <AppContextMenuItem>[
+      if (shiftHeld)
+        AppContextMenuItem(
+          icon: Icons.file_copy_outlined,
+          label: 'Duplicate',
+          onTap: _duplicateRepo,
+          iconColor: shiftTint,
+        ),
+      if (shiftHeld)
+        AppContextMenuItem(
+          icon: Icons.auto_awesome_outlined,
+          label: 'Template',
+          onTap: _templateFromRepo,
+          iconColor: shiftTint,
+        ),
       for (final tool in tools)
         AppContextMenuItem(
           icon: tool.mode == ToolLaunchMode.newTerminal
@@ -1043,9 +1617,6 @@ class _ProjectItemState extends State<_ProjectItem>
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    // RGB-matched lerp endpoints (`X.withValues(alpha: 0)` instead of
-    // `Colors.transparent` = transparent BLACK) prevent the gray flash
-    // that mid-lerp transparent-black causes during hover transitions.
     final background = widget.isActive
         ? t.itemActiveBg
         : (_hovered ? t.itemHoverBg : t.itemHoverBg.withValues(alpha: 0));
@@ -1054,6 +1625,7 @@ class _ProjectItemState extends State<_ProjectItem>
         : t.itemActiveBorder.withValues(alpha: 0);
     final radius =
         BorderRadius.circular(context.surfaceShader.geometry.radius);
+    final badgeRight = _hovered ? 22.0 : 0.0;
 
     return HoverLift(
       liftBy: widget.isActive ? 0 : 2,
@@ -1068,10 +1640,12 @@ class _ProjectItemState extends State<_ProjectItem>
           if (p == _pressed) return;
           setState(() => _pressed = p);
         },
-        // Right-click anywhere on the row opens the project context
-        // menu. `globalPosition` anchors the overlay; the menu owns
-        // its own dismiss tap-catcher via `showAppContextMenu`.
-        onSecondaryTapDown: (pos) => _showContextMenu(context, pos),
+        onSecondaryTapDown: (pos) {
+          final shift = HardwareKeyboard.instance.logicalKeysPressed
+              .any((k) => k == LogicalKeyboardKey.shiftLeft ||
+                  k == LogicalKeyboardKey.shiftRight);
+          _showContextMenu(context, pos, shiftHeld: shift);
+        },
         child: AnimatedScale(
           duration: AppMotion.snap,
           curve: AppMotion.snapCurve,
@@ -1079,26 +1653,18 @@ class _ProjectItemState extends State<_ProjectItem>
           child: AnimatedContainer(
             duration: AppMotion.snap,
             curve: AppMotion.snapCurve,
-            margin: const EdgeInsets.symmetric(vertical: 1),
+            margin: EdgeInsets.only(
+              left: widget.depth * 14.0,
+              top: 1,
+              bottom: 1,
+            ),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
               color: background,
               borderRadius: radius,
               border: Border.all(color: borderColor),
             ),
-            // Tooltip exposes the full path so duplicate-named entries
-            // (e.g. the same repo cloned in two locations) can be told
-            // apart.
-            child: Tooltip(
-              message: widget.path,
-              waitDuration: const Duration(milliseconds: 400),
-              // Stack so the AI activity overlay can float in the
-              // upper-right corner of the pill without being part of
-              // the row's flex math. The base Row keeps text + folder
-              // button at their natural baseline; the overlay sits
-              // above the text vertically and beside the folder
-              // button horizontally, slightly transparent.
-              child: Stack(
+            child: Stack(
                 clipBehavior: Clip.none,
                 children: [
                   Row(
@@ -1116,14 +1682,6 @@ class _ProjectItemState extends State<_ProjectItem>
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      // Hover-reveal "open in explorer" action. Inner
-                      // MouseRegion + GestureDetector with opaque
-                      // behavior wins the gesture arena so the
-                      // icon's own click doesn't bubble up to the
-                      // parent's row-tap. The destructive "forget"
-                      // action moved to the right-click context menu
-                      // — the inline affordance is reserved for the
-                      // most-common positive action.
                       if (_hovered)
                         MouseRegion(
                           cursor: SystemMouseCursors.click,
@@ -1132,7 +1690,7 @@ class _ProjectItemState extends State<_ProjectItem>
                           onExit: (_) =>
                               setState(() => _affordanceHovered = false),
                           child: Tooltip(
-                            message: 'Open in Explorer',
+                            message: widget.path,
                             child: GestureDetector(
                               onTap: _openInFileManager,
                               behavior: HitTestBehavior.opaque,
@@ -1154,36 +1712,41 @@ class _ProjectItemState extends State<_ProjectItem>
                         ),
                     ],
                   ),
-                  // Floats above the text and BESIDE the folder button.
-                  // The hover-shown folder occupies an 18px slot at the
-                  // row's right edge plus a 4px gap; offsetting the
-                  // badge by that distance keeps the two icons in the
-                  // same right-aligned column when both are visible
-                  // and slides the badge back to the edge when the
-                  // folder hides. When the window is awake we use
-                  // [AnimatedPositioned] so the slide reads as one
-                  // motion with the folder reveal; when unfocused the
-                  // engine throttles frames and the tween would stick
-                  // at its starting position, so we fall back to a
-                  // plain [Positioned] that lays out at the target
-                  // value without needing intermediate frames.
+                  // Color strip
+                  if (widget.colorSlot != null)
+                    Positioned(
+                      left: -8,
+                      top: -6,
+                      bottom: -6,
+                      child: Container(
+                        width: 3,
+                        decoration: BoxDecoration(
+                          color: t
+                              .repoTint(widget.colorSlot!)
+                              .withValues(alpha: 0.75),
+                          borderRadius: const BorderRadius.horizontal(
+                            left: Radius.circular(4),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // AI activity badge
                   if (WindowActivity.instance.awake)
                     AnimatedPositioned(
                       duration: AppMotion.snap,
                       curve: AppMotion.snapCurve,
                       top: -3,
-                      right: _hovered ? 22 : 0,
+                      right: badgeRight,
                       child: _ProjectAiStatusOverlay(repoPath: widget.path),
                     )
                   else
                     Positioned(
                       top: -3,
-                      right: _hovered ? 22 : 0,
+                      right: badgeRight,
                       child: _ProjectAiStatusOverlay(repoPath: widget.path),
                     ),
                 ],
               ),
-            ),
           ),
         ),
       ),

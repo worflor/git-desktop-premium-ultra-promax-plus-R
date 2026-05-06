@@ -1900,7 +1900,8 @@ class _DiffShellState extends State<DiffShell> {
       _handleSigilTap(line, shift: isShift, alt: false);
       return KeyEventResult.handled;
     }
-    if (key == LogicalKeyboardKey.keyH && _keyboardLineIndex != null) {
+    if ((key == LogicalKeyboardKey.keyS || key == LogicalKeyboardKey.keyH) &&
+        _keyboardLineIndex != null) {
       if (!_stagingEnabled) {
         return KeyEventResult.ignored;
       }

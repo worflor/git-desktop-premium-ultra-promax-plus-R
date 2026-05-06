@@ -29,7 +29,8 @@ class LiquidGlassPulse {
 /// touch this notifier so they pay nothing.
 class LiquidGlassProvider extends StatefulWidget {
   final Widget child;
-  const LiquidGlassProvider({super.key, required this.child});
+  final bool active;
+  const LiquidGlassProvider({super.key, required this.child, this.active = true});
 
   static ValueListenable<LiquidGlassPulse> of(BuildContext context) {
     final scope =
@@ -70,25 +71,26 @@ class _LiquidGlassProviderState extends State<LiquidGlassProvider>
     super.initState();
     windowManager.addListener(this);
     _ticker = createTicker(_onTick);
-    if (WindowActivity.instance.awake) _ticker.start();
+    if (widget.active && WindowActivity.instance.awake) _ticker.start();
+  }
+
+  @override
+  void didUpdateWidget(covariant LiquidGlassProvider old) {
+    super.didUpdateWidget(old);
+    if (old.active != widget.active) _syncAwake();
   }
 
   @override
   void onWindowAwakeChanged() => _syncAwake();
 
-  /// Ride [WindowActivity] so the 30Hz pulse — which fans out to every
-  /// glass surface in the tree — stops the instant the window loses
-  /// focus / gets minimized. This kills the perpetual repaint storm
-  /// across glass surfaces that the audit identified as a top idle-CPU
-  /// contributor, without any behavior change for the focused case.
   void _syncAwake() {
     if (!mounted) return;
-    final awake = WindowActivity.instance.awake;
-    if (awake && !_ticker.isActive) {
+    final shouldRun = widget.active && WindowActivity.instance.awake;
+    if (shouldRun && !_ticker.isActive) {
       _lastTick = Duration.zero;
       _accumulated = Duration.zero;
       _ticker.start();
-    } else if (!awake && _ticker.isActive) {
+    } else if (!shouldRun && _ticker.isActive) {
       _ticker.stop();
     }
   }

@@ -47,6 +47,7 @@ import 'repository_xray_state.dart';
 import 'symbol_frequency_state.dart';
 import 'theme_state.dart';
 import 'worktree_state.dart';
+import '../backend/undo_controller.dart';
 
 enum _WorkspaceMode { changes, history, branches }
 
@@ -338,16 +339,47 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
 
   KeyEventResult _handleKey(KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    if (_isEditableTargetFocused()) {
-      return KeyEventResult.ignored;
-    }
-    if (HardwareKeyboard.instance.isControlPressed ||
-        HardwareKeyboard.instance.isMetaPressed ||
-        HardwareKeyboard.instance.isAltPressed) {
+
+    final key = event.logicalKey;
+    final ctrl = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+
+    // Ctrl/Cmd shortcuts work even when a text field is focused.
+    if (ctrl) {
+      if (key == LogicalKeyboardKey.keyZ) {
+        _triggerUndo();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.keyS) {
+        _triggerCommit();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.digit1) {
+        _selectMode(_WorkspaceMode.changes);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.digit2) {
+        _selectMode(_WorkspaceMode.history);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.digit3) {
+        _selectMode(_WorkspaceMode.branches);
+        return KeyEventResult.handled;
+      }
       return KeyEventResult.ignored;
     }
 
-    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.f5) {
+      _triggerRefresh();
+      return KeyEventResult.handled;
+    }
+
+    if (_isEditableTargetFocused()) {
+      return KeyEventResult.ignored;
+    }
+    if (HardwareKeyboard.instance.isAltPressed) {
+      return KeyEventResult.ignored;
+    }
 
     if (key == LogicalKeyboardKey.escape) {
       if (_panel != _Panel.none || _awaitingGPrefix) {
@@ -442,27 +474,75 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     return KeyEventResult.ignored;
   }
 
+  void _triggerUndo() {
+    context.read<UndoCoordinator>().cancel();
+  }
+
+  void _triggerCommit() {
+    if (_mode != _WorkspaceMode.changes) {
+      _selectMode(_WorkspaceMode.changes);
+    }
+    // The ChangesPage handles Ctrl+Enter/Ctrl+S internally via its
+    // own focus handler — switching to the page is enough to land
+    // the user in the right context. The actual commit fires from
+    // the composer's onKeyEvent.
+  }
+
+  void _triggerRefresh() {
+    final repo = context.read<RepositoryState>();
+    if (repo.activePath != null) {
+      repo.userRefresh();
+    }
+  }
+
   void _showGlobalKeyboardCheatsheet() {
     final profile = context.read<ThemeState>().keybindingProfile;
     final isCompact = profile == KeybindingProfile.compact;
-    final rows = <(String, String)>[
-      if (isCompact) ...[
-        ('1', 'Changes'),
-        ('2', 'History'),
-        ('3', 'Branches'),
-        ('4', 'Xray panel'),
-        ('5', 'Settings panel'),
-      ] else ...[
-        ('g c', 'Changes'),
-        ('g h', 'History'),
-        ('g b', 'Branches'),
-        ('g s', 'Xray panel'),
-        ('g ,', 'Settings panel'),
-        ('g g', 'Re-arm g-prefix (second g)'),
-      ],
-      ('/', 'Search panel'),
-      ('esc', 'Close panel / overlay'),
-      ('?', 'This cheatsheet'),
+    final sections = <(String, List<(String, String)>)>[
+      (
+        'navigate',
+        [
+          if (isCompact) ...[
+            ('1', 'Changes'),
+            ('2', 'History'),
+            ('3', 'Branches'),
+            ('4', 'X-Ray'),
+          ] else ...[
+            ('g c', 'Changes'),
+            ('g h', 'History'),
+            ('g b', 'Branches'),
+            ('g s', 'X-Ray'),
+          ],
+          ('⌘ 1/2/3', 'Switch (always)'),
+          ('/', 'Search'),
+          ('esc', 'Dismiss'),
+          ('F5', 'Refresh'),
+        ],
+      ),
+      (
+        'staging',
+        const [
+          ('j / k', 'Next / prev change'),
+          ('space', 'Toggle line'),
+          ('s', 'Toggle hunk'),
+          ('f', 'Toggle file'),
+          ('p', 'Pin context'),
+          ('⌘ enter', 'Commit'),
+          ('⌘ s', 'Commit'),
+          ('tab', 'Accept AI hint'),
+          ('⌘ z', 'Undo'),
+        ],
+      ),
+      (
+        'branches & PRs',
+        const [
+          ('j / k', 'Navigate'),
+          ('enter', 'Expand'),
+          ('c', 'Checkout PR'),
+          ('a', 'Approve'),
+          ('r', 'Request changes'),
+        ],
+      ),
     ];
     showDialog<void>(
       context: context,
@@ -477,42 +557,55 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                 fontWeight: FontWeight.w800,
               )),
           content: SizedBox(
-            width: 360,
+            width: 400,
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final r in rows)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 80,
-                          child: Text(
-                            r.$1,
-                            style: TextStyle(
-                              color: t.accentBright,
-                              fontSize: 11,
-                              fontFamily: AppFonts.mono,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            r.$2,
-                            style: TextStyle(color: t.textNormal, fontSize: 11),
-                          ),
-                        ),
-                      ],
+                for (var s = 0; s < sections.length; s++) ...[
+                  if (s > 0) const SizedBox(height: 12),
+                  Text(
+                    sections[s].$1,
+                    style: TextStyle(
+                      color: t.accentBright,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
                     ),
                   ),
-                const SizedBox(height: 10),
+                  const SizedBox(height: 4),
+                  for (final r in sections[s].$2)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2.5),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 90,
+                            child: Text(
+                              r.$1,
+                              style: TextStyle(
+                                color: t.textStrong,
+                                fontSize: 11,
+                                fontFamily: AppFonts.mono,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Text(
+                              r.$2,
+                              style: TextStyle(
+                                  color: t.textMuted, fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+                const SizedBox(height: 12),
                 Text(
-                  isCompact
-                      ? 'Using compact profile · switch in Settings'
-                      : 'Using classic profile · switch in Settings',
-                  style: TextStyle(color: t.textMuted, fontSize: 10),
+                  '${profile.label} profile · switch in Settings',
+                  style: TextStyle(color: t.textFaint, fontSize: 10),
                 ),
               ],
             ),
@@ -915,6 +1008,11 @@ class _XrayModeBtn extends StatelessWidget {
   }
 }
 
+String _normalizeDeskPath(String path) {
+  final p = path.replaceAll('\\', '/');
+  return Platform.isLinux ? p : p.toLowerCase();
+}
+
 /// The desk row lives in the second line of the topbar. The first position
 /// is the active desk (rendered as `_BranchPill` — keeps the dropdown
 /// affordance). Subsequent positions are other open worktrees as smaller
@@ -946,14 +1044,14 @@ class _DeskRow extends StatelessWidget {
     final repoActivePath = repoSnap.path;
     final repoStatus = repoSnap.status;
     final repoState = context.read<RepositoryState>();
-    final activeNormalized =
-        activeRepoPath?.replaceAll('\\', '/').toLowerCase();
+    final arp = activeRepoPath;
+    final activeNormalized = arp == null ? null : _normalizeDeskPath(arp);
     final activeDesk = worktreeState.activeDesk;
     final activeActivity =
         activeDesk == null ? null : worktreeState.activityFor(activeDesk.path);
     // Other desks = every known worktree except the one currently active.
     final otherDesks = worktreeState.desks.where((d) {
-      return d.path.replaceAll('\\', '/').toLowerCase() != activeNormalized;
+      return _normalizeDeskPath(d.path) != activeNormalized;
     }).toList();
     final suggestedSyncTargetPath = _suggestedSyncTargetPath(
       activeDesk: activeDesk,
@@ -3999,59 +4097,51 @@ class _KeepAlivePagesState extends State<_KeepAlivePages>
     super.dispose();
   }
 
+  Widget _pageAt(int i) => switch (i) {
+        0 => const ChangesPage(),
+        1 => HistoryPage(
+              initialCommitHash: widget.selectedCommitHash,
+              onOpenXray: widget.onOpenXray,
+              onOpenChanges: widget.onOpenChanges,
+            ),
+        2 => const BranchesPage(),
+        _ => const SizedBox.shrink(),
+      };
+
   @override
   Widget build(BuildContext context) {
-    final pages = <Widget>[
-      const ChangesPage(),
-      HistoryPage(
-        initialCommitHash: widget.selectedCommitHash,
-        onOpenXray: widget.onOpenXray,
-        onOpenChanges: widget.onOpenChanges,
-      ),
-      const BranchesPage(),
-    ];
-    // Pure crossfade — no slide. Sliding looked bad when both pages
-    // shared content (e.g. the "no repository selected" empty state):
-    // identical text would fade out 10px up while identical text faded
-    // in from 10px down, producing a ghost-double effect mid-transition.
-    // With opacity-only, two identical glyphs at the same position lerp
-    // between themselves and visually stay still — the transition reads
-    // as "nothing changed" for shared content, and as a clean fade for
-    // pages with distinct content.
+    final toPage = _pageAt(_to);
+    final fromPage = _from != _to ? _pageAt(_from) : null;
     return ClipRect(
       child: AnimatedBuilder(
         animation: _ac,
         builder: (context, _) {
           final t = _ac.value;
+          final transitioning = fromPage != null && t < 1;
           return Stack(
             fit: StackFit.expand,
             children: [
-              for (var i = 0; i < pages.length; i++)
-                _buildLayer(pages[i], i, t),
+              if (transitioning)
+                IgnorePointer(
+                  ignoring: true,
+                  child: Opacity(
+                    opacity: (1 - t).clamp(0.0, 1.0),
+                    child: TickerMode(
+                      enabled: false,
+                      child: fromPage,
+                    ),
+                  ),
+                ),
+              IgnorePointer(
+                ignoring: transitioning,
+                child: Opacity(
+                  opacity: transitioning ? t.clamp(0.0, 1.0) : 1.0,
+                  child: toPage,
+                ),
+              ),
             ],
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildLayer(Widget page, int i, double t) {
-    final isIncoming = i == _to;
-    final isOutgoing = i == _from && _from != _to && t < 1;
-    // Any page that isn't the incoming or the outgoing stays offstage
-    // but mounted — TickerMode off so its animations don't burn cycles.
-    if (!isIncoming && !isOutgoing) {
-      return Offstage(
-        offstage: true,
-        child: TickerMode(enabled: false, child: page),
-      );
-    }
-    final opacity = isIncoming ? t : (1 - t);
-    return IgnorePointer(
-      ignoring: !isIncoming,
-      child: Opacity(
-        opacity: opacity.clamp(0.0, 1.0),
-        child: TickerMode(enabled: isIncoming, child: page),
       ),
     );
   }

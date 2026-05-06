@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:path/path.dart' as p;
+import 'package:git_desktop/backend/storage_paths.dart';
 
 void main(List<String> args) async {
   if (args.isEmpty || args.first == '--help' || args.first == '-h') {
@@ -128,27 +128,7 @@ class _LockInfo {
   });
 }
 
-String? _ipcDir() {
-  if (Platform.isWindows) {
-    final appData = Platform.environment['APPDATA'];
-    if (appData != null) return p.join(appData, 'gdpu', 'ipc');
-    final userProfile = Platform.environment['USERPROFILE'];
-    if (userProfile != null) {
-      return p.join(userProfile, 'AppData', 'Roaming', 'gdpu', 'ipc');
-    }
-  } else if (Platform.isMacOS) {
-    final home = Platform.environment['HOME'];
-    if (home != null) {
-      return p.join(home, 'Library', 'Application Support', 'gdpu', 'ipc');
-    }
-  } else {
-    final xdg = Platform.environment['XDG_DATA_HOME'];
-    if (xdg != null) return p.join(xdg, 'gdpu', 'ipc');
-    final home = Platform.environment['HOME'];
-    if (home != null) return p.join(home, '.local', 'share', 'gdpu', 'ipc');
-  }
-  return null;
-}
+String? _ipcDir() => StoragePaths.ipcDirPathSync();
 
 Map<String, dynamic> _parseParams(List<String> args) {
   final params = <String, dynamic>{};

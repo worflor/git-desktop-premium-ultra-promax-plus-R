@@ -78,6 +78,43 @@ class StoragePaths {
     }
   }
 
+  /// Synchronous IPC directory path. The CLI entry point (`bin/manifold_cli.dart`)
+  /// can't easily await, so this provides the same resolution logic as
+  /// [gdpuDataDir] but returns a plain path string and appends `/ipc`.
+  /// Returns null when no env vars resolve (same failure mode as gdpuDataDir
+  /// throwing StateError, but non-throwing for the CLI's best-effort flow).
+  static String? ipcDirPathSync() {
+    final overridePath = _envNonEmpty('GDPU_DATA_DIR');
+    if (overridePath != null) {
+      return '$overridePath${Platform.pathSeparator}ipc';
+    }
+    if (Platform.isWindows) {
+      final appData = _envNonEmpty('APPDATA');
+      if (appData != null) {
+        return '$appData${Platform.pathSeparator}$_appDataDirName${Platform.pathSeparator}ipc';
+      }
+      final userProfile = _envNonEmpty('USERPROFILE');
+      if (userProfile != null) {
+        return '$userProfile${Platform.pathSeparator}AppData${Platform.pathSeparator}Roaming${Platform.pathSeparator}$_appDataDirName${Platform.pathSeparator}ipc';
+      }
+    }
+    if (Platform.isMacOS) {
+      final home = _envNonEmpty('HOME');
+      if (home != null) {
+        return '$home${Platform.pathSeparator}Library${Platform.pathSeparator}Application Support${Platform.pathSeparator}$_appDataDirName${Platform.pathSeparator}ipc';
+      }
+    }
+    final xdgDataHome = _envNonEmpty('XDG_DATA_HOME');
+    if (xdgDataHome != null) {
+      return '$xdgDataHome${Platform.pathSeparator}$_appDataDirName${Platform.pathSeparator}ipc';
+    }
+    final home = _envNonEmpty('HOME');
+    if (home != null) {
+      return '$home${Platform.pathSeparator}.local${Platform.pathSeparator}share${Platform.pathSeparator}$_appDataDirName${Platform.pathSeparator}ipc';
+    }
+    return null;
+  }
+
   static String? _envNonEmpty(String name) {
     final value = Platform.environment[name]?.trim();
     if (value == null || value.isEmpty) {

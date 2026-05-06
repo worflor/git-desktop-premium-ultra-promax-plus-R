@@ -24,6 +24,7 @@ import 'app/external_tools_state.dart';
 import 'app/hyper_reactivity.dart';
 import 'app/brand_lockup.dart';
 import 'app/settings_navigation_state.dart';
+import 'app/sidebar_org_state.dart';
 import 'app/sidebar_rail.dart';
 import 'app/tool_detection_state.dart';
 import 'app/window_activity.dart';
@@ -75,8 +76,7 @@ void main() async {
   // themes (petrichor, barbie, nacre, halo, kirby, crafty) before
   // Flutter mounts. AppTokens.fromId is cheap (color-array lookup) and
   // settings is already loaded synchronously above.
-  final preMountTokens =
-      AppTokens.fromId(normalizeThemeId(settings.themeId));
+  final preMountTokens = AppTokens.fromId(normalizeThemeId(settings.themeId));
   final windowOptions = WindowOptions(
     size: Size(980, 660),
     minimumSize: Size(620, 500),
@@ -119,6 +119,7 @@ void main() async {
   final preferencesState = PreferencesState();
   final aiSettingsState = AiSettingsState();
   final externalToolsState = ExternalToolsState();
+  final sidebarOrgState = SidebarOrgState();
   await themeState.load();
   // Fire-and-forget: sidebar shows a brief empty state until
   // loadRecents resolves (~50-200 ms post-runApp). Preferences,
@@ -127,14 +128,22 @@ void main() async {
   void logInitError(String name, Object e) {
     debugPrint('[$name] init failed: $e');
   }
-  unawaited(repoState.loadRecents().catchError(
-      (Object e) => logInitError('recents', e)));
-  unawaited(preferencesState.load().catchError(
-      (Object e) => logInitError('preferences', e)));
-  unawaited(aiSettingsState.load().catchError(
-      (Object e) => logInitError('aiSettings', e)));
-  unawaited(externalToolsState.load().catchError(
-      (Object e) => logInitError('externalTools', e)));
+
+  unawaited(repoState
+      .loadRecents()
+      .catchError((Object e) => logInitError('recents', e)));
+  unawaited(preferencesState
+      .load()
+      .catchError((Object e) => logInitError('preferences', e)));
+  unawaited(aiSettingsState
+      .load()
+      .catchError((Object e) => logInitError('aiSettings', e)));
+  unawaited(externalToolsState
+      .load()
+      .catchError((Object e) => logInitError('externalTools', e)));
+  unawaited(sidebarOrgState
+      .load()
+      .catchError((Object e) => logInitError('sidebarOrg', e)));
 
   // Fire-and-forget: probe PATH for known external tools so the
   // settings page renders only the chips for actually-installed
@@ -158,9 +167,8 @@ void main() async {
   // HEAD) — the user's first explicit interaction still works, it
   // just pays the cold cost then instead of getting the preload
   // discount.
-  final mruRepo = repoState.recentPaths.isNotEmpty
-      ? repoState.recentPaths.first
-      : null;
+  final mruRepo =
+      repoState.recentPaths.isNotEmpty ? repoState.recentPaths.first : null;
   if (mruRepo != null) {
     logos_resolver.resolveLogosGit(mruRepo).then((_) {}, onError: (_) {});
   }
@@ -200,8 +208,9 @@ void main() async {
     fileCouplingState: fileCouplingState,
     symbolFrequencyState: symbolFrequencyState,
   ));
-  unawaited(pipeServer.start().catchError(
-      (Object e) => debugPrint('[IPC] pipe server failed: $e')));
+  unawaited(pipeServer
+      .start()
+      .catchError((Object e) => debugPrint('[IPC] pipe server failed: $e')));
 
   // Idle-GPU probe. Only registered when _kFpsProbe is true (debug
   // builds or explicit --dart-define=FPS_PROBE=true). Zero cost in a
@@ -214,7 +223,8 @@ void main() async {
       frameCount++;
       if (frameSw.elapsedMilliseconds >= 2000) {
         // ignore: avoid_print
-        print('FPS-PROBE: ${(frameCount * 1000 / frameSw.elapsedMilliseconds).toStringAsFixed(1)} fps '
+        print(
+            'FPS-PROBE: ${(frameCount * 1000 / frameSw.elapsedMilliseconds).toStringAsFixed(1)} fps '
             '(${frameCount} frames in ${frameSw.elapsedMilliseconds} ms)');
         frameCount = 0;
         frameSw.reset();
@@ -242,6 +252,7 @@ void main() async {
         // repo switches and tab switches; cleared on session restart.
         ChangeNotifierProvider(create: (_) => AiActivityState()),
         ChangeNotifierProvider.value(value: externalToolsState),
+        ChangeNotifierProvider.value(value: sidebarOrgState),
         ChangeNotifierProvider.value(value: toolDetectionState),
         ChangeNotifierProvider(create: (_) => SettingsNavigationState()),
         ChangeNotifierProvider.value(value: diagnosticsState),
@@ -354,7 +365,11 @@ class LiquidGlassProviderWithSwitcher extends StatelessWidget {
   Widget build(BuildContext context) {
     final onboardingComplete =
         context.select<OnboardingState, bool>((o) => o.isComplete);
+    final themeId = context.select<ThemeState, AppThemeId>((s) => s.themeId);
+    final needsGlass =
+        themeDefinitionFor(themeId).shader.mode == SurfaceMaterialMode.glass;
     return LiquidGlassProvider(
+      active: needsGlass,
       child: AnimatedSwitcher(
         // Root shell transition. Was hardcoded 500ms — too slow against
         // the snappy-motion mandate. AppMotion.fluid (300ms) keeps the
@@ -396,15 +411,19 @@ class _AppFrameState extends State<_AppFrame> {
   /// between its logo, text, and tag. Keeps the sidebar's breathing
   /// room coherent with the lockup's internal proportions.
   static const double _kSidebarUnitPx = 8;
+
   /// Default padding past the brand lockup, in grid units. Matches
   /// the Changes-page content padding so the sidebar feels like the
   /// same visual rhythm.
   static const int _kSidebarDefaultMarginUnits = 2;
+
   /// Minimum padding so the lockup never butts up against the drag
   /// handle or clips the DEV badge on small windows.
   static const int _kSidebarMinMarginUnits = 1;
+
   /// Upper bound so the sidebar can't swallow half the window.
   static const int _kSidebarMaxMarginUnits = 24;
+
   /// Pre-measure fallback used for exactly the first frame. Replaced
   /// by the real measurement via the post-frame callback.
   static const double _kPreMeasureBrandWidthPx = 132;
@@ -639,6 +658,8 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
         WindowListener,
         WindowAwakeMixin {
   late final AnimationController _controller;
+  final ValueNotifier<double> _throttledProgress = ValueNotifier(0);
+  double _lastPublishedProgress = 0;
 
   /// Delta from the first-captured window position. As the user drags the
   /// window around the screen, this tracks `current - base`. The painter
@@ -647,6 +668,7 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
   /// than glued to the window — the "distant stars" depth illusion.
   final ValueNotifier<Offset> _windowDelta = ValueNotifier(Offset.zero);
   Offset? _baseWindowPos;
+
   /// Cached merged listenable for the AnimatedBuilder. Was being
   /// reallocated every build (which is every parent rebuild — and the
   /// parent is `_AppFrame`, which currently rebuilds on every theme
@@ -680,7 +702,7 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
       vsync: this,
       duration: _particleAnimationDuration(widget.shader),
     );
-    _controller.addListener(_tickSim);
+    _controller.addListener(_onControllerTick);
     if (_particlesAnimate(widget.shader) && WindowActivity.instance.awake) {
       _controller.repeat();
     }
@@ -709,8 +731,19 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
 
   void _rebuildBackdropSignal() {
     _backdropSignal = _particlesAnimate(widget.shader)
-        ? Listenable.merge([_controller, _windowDelta])
+        ? Listenable.merge([_throttledProgress, _windowDelta])
         : _windowDelta;
+  }
+
+  void _onControllerTick() {
+    _tickSim();
+    if (!_particlesAnimate(widget.shader)) return;
+    final threshold = _ParticleBackdropPainter._repaintThreshold(widget.shader);
+    final delta = (_controller.value - _lastPublishedProgress).abs();
+    if (delta >= threshold || threshold == 0) {
+      _lastPublishedProgress = _controller.value;
+      _throttledProgress.value = _controller.value;
+    }
   }
 
   void _tickSim() {
@@ -875,6 +908,7 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
     windowManager.removeListener(this);
     WidgetsBinding.instance.removeObserver(this);
     _windowDelta.dispose();
+    _throttledProgress.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -888,8 +922,7 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
           painter: _ParticleBackdropPainter(
             tokens: widget.tokens,
             shader: widget.shader,
-            progress:
-                _particlesAnimate(widget.shader) ? _controller.value : 0,
+            progress: _particlesAnimate(widget.shader) ? _throttledProgress.value : 0,
             windowDelta: _windowDelta.value,
             whisps: _whisps,
             debris: _debris,
@@ -951,6 +984,7 @@ class _ParticleBackdropPainter extends CustomPainter {
   final AppTokens tokens;
   final SurfaceMaterialShader shader;
   final double progress;
+
   /// Window-drag delta. Particles shift by `-windowDelta * parallaxStrength`
   /// so they feel anchored in world-space as the window moves — the
   /// "distant stars stay put" depth illusion.
@@ -1053,12 +1087,12 @@ class _ParticleBackdropPainter extends CustomPainter {
         ..moveTo(cx + radius, cy)
         ..quadraticBezierTo(cx + radius * 1.2, cy - radius * 0.3,
             cx + radius * 0.4, cy - radius)
-        ..quadraticBezierTo(cx - radius * 0.6, cy - radius * 1.1,
-            cx - radius, cy - radius * 0.2)
+        ..quadraticBezierTo(cx - radius * 0.6, cy - radius * 1.1, cx - radius,
+            cy - radius * 0.2)
         ..quadraticBezierTo(cx - radius * 1.1, cy + radius * 0.7,
             cx - radius * 0.3, cy + radius)
-        ..quadraticBezierTo(cx + radius * 0.8, cy + radius * 1.0,
-            cx + radius, cy)
+        ..quadraticBezierTo(
+            cx + radius * 0.8, cy + radius * 1.0, cx + radius, cy)
         ..close();
       canvas.drawPath(_inkblotPath, _inkblotPaint);
     }
@@ -1265,7 +1299,9 @@ class _ParticleBackdropPainter extends CustomPainter {
     // Consume the same RNG sequence as the old haze circles so that
     // removing them doesn't shift the star positions below.
     for (var haze = 0; haze < 3; haze++) {
-      rng.next(); rng.next(); rng.next(); // hazeX, hazeY, hazeRadius
+      rng.next();
+      rng.next();
+      rng.next(); // hazeX, hazeY, hazeRadius
     }
 
     for (var i = 0; i < count; i++) {
@@ -1299,8 +1335,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 1320,
       opacity: 0.2,
-      offset:
-          Offset(-180 * progress, 120 * progress) + _layerOffset(0.5),
+      offset: Offset(-180 * progress, 120 * progress) + _layerOffset(0.5),
       drawTile: (tile, scale) => _drawEmberFieldTile(
         tile,
         seed: 0x0E8B3A12,
@@ -1342,8 +1377,7 @@ class _ParticleBackdropPainter extends CustomPainter {
       size,
       tileSize: 1180,
       opacity: 0.18,
-      offset:
-          Offset(-90 * progress, -1220 * progress) + _layerOffset(1.3),
+      offset: Offset(-90 * progress, -1220 * progress) + _layerOffset(1.3),
       drawTile: (tile, scale) => _drawEmberFieldTile(
         tile,
         seed: 0x0E8B401D,
@@ -1428,14 +1462,12 @@ class _ParticleBackdropPainter extends CustomPainter {
       // 0.35..0.85 rotations per cycle — slow enough to never strobe
       final spinRate = 0.35 + rng.next() * 0.5;
 
-      final angle =
-          spinPhase + progress * math.pi * 2 * spinRate;
+      final angle = spinPhase + progress * math.pi * 2 * spinRate;
       // twinkle floor at 0.35 — sprites dim but never vanish
       final twinkle = 0.35 +
           0.65 *
               (0.5 +
-                  0.5 *
-                      math.sin(twinklePhase + progress * math.pi * 2 * 0.9));
+                  0.5 * math.sin(twinklePhase + progress * math.pi * 2 * 0.9));
 
       path.reset();
       const points = 4;
@@ -1755,7 +1787,8 @@ class _ParticleBackdropPainter extends CustomPainter {
     // changing this doesn't shift the remaining spark positions.
     final nodeCount = (count / 6).round().clamp(2, 5).toInt();
     for (var nodeIndex = 0; nodeIndex < nodeCount; nodeIndex++) {
-      rng.next(); rng.next(); // cx, cy
+      rng.next();
+      rng.next(); // cx, cy
       rng.next(); // coreRadius
       rng.next(); // ringRadius rand
       final orbitCount = 4 + (rng.next() * 5).floor() + orbitStride ~/ 2;
@@ -1763,7 +1796,9 @@ class _ParticleBackdropPainter extends CustomPainter {
       rng.next(); // outer ring gate
       rng.next(); // outer ring radius rand
       for (var orbitIndex = 0; orbitIndex < orbitCount; orbitIndex++) {
-        rng.next(); rng.next(); rng.next(); // angle, orbit, r
+        rng.next();
+        rng.next();
+        rng.next(); // angle, orbit, r
       }
     }
 
@@ -1788,12 +1823,39 @@ class _ParticleBackdropPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ParticleBackdropPainter oldDelegate) =>
-      oldDelegate.tokens != tokens ||
-      oldDelegate.shader != shader ||
-      (_particlesAnimate(shader) && oldDelegate.progress != progress) ||
-      (shader.parallaxStrength > 0 &&
-          oldDelegate.windowDelta != windowDelta);
+  bool shouldRepaint(_ParticleBackdropPainter oldDelegate) {
+    if (oldDelegate.tokens != tokens || oldDelegate.shader != shader) {
+      return true;
+    }
+    if (shader.parallaxStrength > 0 && oldDelegate.windowDelta != windowDelta) {
+      return true;
+    }
+    if (!_particlesAnimate(shader)) return false;
+    final delta = (progress - oldDelegate.progress).abs();
+    return delta >= _repaintThreshold(shader);
+  }
+
+  static double _repaintThreshold(SurfaceMaterialShader shader) {
+    switch (shader.particles) {
+      case ThemeParticles.whisps:
+      case ThemeParticles.voidRain:
+        return 0.0;
+      case ThemeParticles.inkblots:
+      case ThemeParticles.chalkdust:
+      case ThemeParticles.embers:
+      case ThemeParticles.voxels:
+      case ThemeParticles.glitter:
+        // This is normalized controller progress, not seconds. These
+        // particle loops run over 14-200s, so 0.004 suppresses multiple
+        // frame ticks while keeping the slow drift visually continuous.
+        return 0.004;
+      case ThemeParticles.none:
+      case ThemeParticles.stardust:
+      case ThemeParticles.ethereal:
+      case ThemeParticles.quantum:
+        return 0.0;
+    }
+  }
 }
 
 class _SourceRandom {
@@ -1820,10 +1882,7 @@ class _Whisp {
   _Whisp({required this.head, required this.velocity});
 
   bool get offScreen =>
-      head.dx < -0.15 ||
-      head.dx > 1.15 ||
-      head.dy < -0.15 ||
-      head.dy > 1.15;
+      head.dx < -0.15 || head.dx > 1.15 || head.dy < -0.15 || head.dy > 1.15;
 
   void update(double dt, math.Random rng) {
     // Gentle curl so whisps don't just fly in straight lines — each axis
@@ -1916,8 +1975,8 @@ class _LoveboyBackgroundState extends State<_LoveboyBackground> {
       if (currentPulseTime - _lastCaptureSeconds < _captureIntervalSeconds) {
         return;
       }
-      final boundary =
-          _boundaryKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      final boundary = _boundaryKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
       if (boundary == null || boundary.debugNeedsPaint) return;
       try {
         // Snapshot at device pixel ratio so the sampled image matches

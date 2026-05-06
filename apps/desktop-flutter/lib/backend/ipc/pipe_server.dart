@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../process_utils.dart' show isProcessAlive;
 import '../storage_paths.dart';
 import 'bridge_context.dart';
 import 'pipe_commands.dart';
@@ -142,7 +143,7 @@ class ManifoldPipeServer {
           final data = jsonDecode(content);
           if (data is Map && data['pid'] is int) {
             final lockPid = data['pid'] as int;
-            if (!await _isProcessAlive(lockPid)) {
+            if (!await isProcessAlive(lockPid)) {
               await entity.delete();
             }
           }
@@ -153,20 +154,4 @@ class ManifoldPipeServer {
     } catch (_) {}
   }
 
-  static Future<bool> _isProcessAlive(int targetPid) async {
-    try {
-      if (Platform.isWindows) {
-        final r = await Process.run(
-          'tasklist',
-          ['/FI', 'PID eq $targetPid', '/NH', '/FO', 'CSV'],
-        );
-        return r.stdout.toString().contains('$targetPid');
-      } else {
-        final r = await Process.run('kill', ['-0', '$targetPid']);
-        return r.exitCode == 0;
-      }
-    } catch (_) {
-      return false;
-    }
-  }
 }

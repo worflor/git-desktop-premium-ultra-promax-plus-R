@@ -48,6 +48,7 @@ import 'package:path/path.dart' as p;
 import 'git.dart' show extractDiffTouchedPaths;
 import 'logos_git.dart';
 import 'logos_git_calibration.dart';
+import 'process_utils.dart';
 
 final Map<String, Future<DiffProbe>> _inflightProbeBuilds = {};
 final Map<String, Future<Set<String>>> _inflightPickaxeLookups = {};
@@ -464,7 +465,7 @@ class LogosGitProbeBuilder {
       try {
         exitCode = await process.exitCode.timeout(grepTimeout);
       } on TimeoutException {
-        process.kill();
+        await killProcessTree(process, timeout: defaultProcessKillTimeout);
         return {for (final s in symbols) s: <String>{}};
       }
       if (exitCode != 0 && exitCode != 1) {
@@ -560,7 +561,7 @@ class LogosGitProbeBuilder {
       try {
         exitCode = await process.exitCode.timeout(grepTimeout);
       } on TimeoutException {
-        process.kill();
+        await killProcessTree(process, timeout: defaultProcessKillTimeout);
         return const {};
       }
       // exit 1 = no matches; anything else = error (e.g. not a git repo).

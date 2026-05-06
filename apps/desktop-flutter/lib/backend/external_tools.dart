@@ -188,7 +188,7 @@ class ExternalTool {
 /// → git/dev TUIs → browser/web — so the user's eye lands on the
 /// register they want first.
 /// Category for grouping presets on the settings shelf.
-enum ExternalToolCategory { ai, editors, explore, gitOps }
+enum ExternalToolCategory { ai, editors, explore, ops, gitOps }
 
 class ExternalToolPreset {
   final String label;
@@ -298,6 +298,62 @@ class ExternalToolPresets {
         mode: ToolLaunchMode.newTerminal,
       );
 
+  /// Amp — Sourcegraph AI coding agent.
+  static ExternalTool amp() => ExternalTool.create(
+        label: 'Amp',
+        executable: 'amp',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Cline — AI coding agent (VS Code extension CLI).
+  static ExternalTool cline() => ExternalTool.create(
+        label: 'Cline',
+        executable: 'cline',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// GitHub Copilot CLI.
+  static ExternalTool copilot() => ExternalTool.create(
+        label: 'Copilot',
+        executable: 'github-copilot-cli',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Goose — Block's AI coding agent.
+  static ExternalTool goose() => ExternalTool.create(
+        label: 'Goose',
+        executable: 'goose',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Amazon Q Developer CLI.
+  static ExternalTool amazonQ() => ExternalTool.create(
+        label: 'Amazon Q',
+        executable: 'q',
+        args: const ['chat'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Warp — AI-native terminal.
+  static ExternalTool warp() => ExternalTool.create(
+        label: 'Warp',
+        executable: 'warp',
+        args: const [],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// Ollama — local LLM runner.
+  static ExternalTool ollama() => ExternalTool.create(
+        label: 'Ollama',
+        executable: 'ollama',
+        args: const ['run', 'llama3'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
   // ── Additional editors ───────────────────────────────────────
 
   /// Windsurf (Codeium) — AI-first editor.
@@ -330,6 +386,80 @@ class ExternalToolPresets {
         executable: 'hx',
         args: const ['{path}'],
         mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Emacs.
+  static ExternalTool emacs() => ExternalTool.create(
+        label: 'Emacs',
+        executable: 'emacs',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// Vim — terminal editor.
+  static ExternalTool vim() => ExternalTool.create(
+        label: 'Vim',
+        executable: 'vim',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// JetBrains Fleet.
+  static ExternalTool fleet() => ExternalTool.create(
+        label: 'Fleet',
+        executable: 'fleet',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// Lapce — Rust-native editor.
+  static ExternalTool lapce() => ExternalTool.create(
+        label: 'Lapce',
+        executable: 'lapce',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  // ── Git GUIs ────────────────────────────────────────────────
+
+  /// GitHub Desktop.
+  static ExternalTool githubDesktop() => ExternalTool.create(
+        label: 'GitHub Desktop',
+        executable: 'github',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// GitKraken.
+  static ExternalTool gitkraken() => ExternalTool.create(
+        label: 'GitKraken',
+        executable: 'gitkraken',
+        args: const ['-p', '{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// Fork — git GUI.
+  static ExternalTool fork() => ExternalTool.create(
+        label: 'Fork',
+        executable: 'fork',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// Sourcetree.
+  static ExternalTool sourcetree() => ExternalTool.create(
+        label: 'Sourcetree',
+        executable: 'stree',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// Tower — git GUI.
+  static ExternalTool tower() => ExternalTool.create(
+        label: 'Tower',
+        executable: 'gittower',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
       );
 
   // ── Terminals / utilities ────────────────────────────────────
@@ -428,6 +558,168 @@ class ExternalToolPresets {
         mode: ToolLaunchMode.newTerminal,
       );
 
+  /// lf — terminal file manager.
+  static ExternalTool lf() => ExternalTool.create(
+        label: 'lf',
+        executable: 'lf',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// nnn — minimal TUI file manager.
+  static ExternalTool nnn() => ExternalTool.create(
+        label: 'nnn',
+        executable: 'nnn',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Ranger — Python TUI file manager.
+  static ExternalTool ranger() => ExternalTool.create(
+        label: 'Ranger',
+        executable: 'ranger',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Delta — beautiful git diffs in terminal.
+  static ExternalTool delta() => ExternalTool.create(
+        label: 'Delta',
+        executable: 'delta',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Difftastic — structural diff tool.
+  static ExternalTool difftastic() => ExternalTool.create(
+        label: 'Difftastic',
+        executable: 'difft',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Antigravity — the real one. Opens xkcd 353.
+  static ExternalTool antigravity() => ExternalTool.create(
+        label: 'Antigravity',
+        executable: 'python',
+        args: const ['-m', 'antigravity'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  /// Onefetch — git repo info card (languages, LOC, license).
+  static ExternalTool onefetch() => ExternalTool.create(
+        label: 'Onefetch',
+        executable: 'onefetch',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// scc — fast SLOC counter with complexity estimates.
+  static ExternalTool scc() => ExternalTool.create(
+        label: 'scc',
+        executable: 'scc',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Hyperfine — statistical command benchmarking.
+  static ExternalTool hyperfine() => ExternalTool.create(
+        label: 'Hyperfine',
+        executable: 'hyperfine',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// ast-grep — structural code search/lint via AST patterns.
+  static ExternalTool astGrep() => ExternalTool.create(
+        label: 'ast-grep',
+        executable: 'sg',
+        args: const ['scan'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// serpl — TUI project-wide search and replace.
+  static ExternalTool serpl() => ExternalTool.create(
+        label: 'serpl',
+        executable: 'serpl',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// D2 — text-to-diagram renderer.
+  static ExternalTool d2() => ExternalTool.create(
+        label: 'D2',
+        executable: 'd2',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── Dev environment / workflow ──────────────────────────────
+
+  /// mise — unified dev tool version manager.
+  static ExternalTool mise() => ExternalTool.create(
+        label: 'mise',
+        executable: 'mise',
+        args: const ['install'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Watchexec — run commands on file change, respects .gitignore.
+  static ExternalTool watchexec() => ExternalTool.create(
+        label: 'Watchexec',
+        executable: 'watchexec',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// LazyDocker — TUI for Docker containers/images/volumes.
+  static ExternalTool lazydocker() => ExternalTool.create(
+        label: 'LazyDocker',
+        executable: 'lazydocker',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Zellij — modern terminal multiplexer.
+  static ExternalTool zellij() => ExternalTool.create(
+        label: 'Zellij',
+        executable: 'zellij',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// git-cliff — changelog generator from conventional commits.
+  static ExternalTool gitCliff() => ExternalTool.create(
+        label: 'git-cliff',
+        executable: 'git-cliff',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Jujutsu — next-gen VCS, works on existing .git repos.
+  static ExternalTool jujutsu() => ExternalTool.create(
+        label: 'Jujutsu',
+        executable: 'jj',
+        args: const ['status'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Posting — TUI API client with project-local request files.
+  static ExternalTool posting() => ExternalTool.create(
+        label: 'Posting',
+        executable: 'posting',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// DevContainers CLI — build/run dev containers.
+  static ExternalTool devcontainer() => ExternalTool.create(
+        label: 'DevContainer',
+        executable: 'devcontainer',
+        args: const ['up', '--workspace-folder', '{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
   // ── CI / build / orchestration ──────────────────────────────
 
   /// Act — run GitHub Actions locally.
@@ -459,6 +751,94 @@ class ExternalToolPresets {
         label: 'K9s',
         executable: 'k9s',
         args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Stern — Kubernetes log tailing.
+  static ExternalTool stern() => ExternalTool.create(
+        label: 'Stern',
+        executable: 'stern',
+        args: const ['.'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── API / testing ──────────────────────────────────────────
+
+  /// HTTPie — human-friendly HTTP client.
+  static ExternalTool httpie() => ExternalTool.create(
+        label: 'HTTPie',
+        executable: 'http',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Hurl — run HTTP requests from .hurl files in the repo.
+  static ExternalTool hurl() => ExternalTool.create(
+        label: 'Hurl',
+        executable: 'hurl',
+        args: const ['--test', '.'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Bruno — API client (GUI, opens project collection).
+  static ExternalTool bruno() => ExternalTool.create(
+        label: 'Bruno',
+        executable: 'bruno',
+        args: const ['{path}'],
+        mode: ToolLaunchMode.detached,
+      );
+
+  // ── Database ───────────────────────────────────────────────
+
+  /// usql — universal SQL CLI (postgres, mysql, sqlite, etc).
+  static ExternalTool usql() => ExternalTool.create(
+        label: 'usql',
+        executable: 'usql',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// pgcli — Postgres CLI with autocomplete.
+  static ExternalTool pgcli() => ExternalTool.create(
+        label: 'pgcli',
+        executable: 'pgcli',
+        args: const [],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── Security ───────────────────────────────────────────────
+
+  /// Trivy — vulnerability scanner.
+  static ExternalTool trivy() => ExternalTool.create(
+        label: 'Trivy',
+        executable: 'trivy',
+        args: const ['fs', '{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Grype — container/filesystem vulnerability scanner.
+  static ExternalTool grype() => ExternalTool.create(
+        label: 'Grype',
+        executable: 'grype',
+        args: const ['dir:{path}'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  // ── Infrastructure ─────────────────────────────────────────
+
+  /// Terraform.
+  static ExternalTool terraform() => ExternalTool.create(
+        label: 'Terraform',
+        executable: 'terraform',
+        args: const ['plan'],
+        mode: ToolLaunchMode.newTerminal,
+      );
+
+  /// Pulumi.
+  static ExternalTool pulumi() => ExternalTool.create(
+        label: 'Pulumi',
+        executable: 'pulumi',
+        args: const ['preview'],
         mode: ToolLaunchMode.newTerminal,
       );
 
@@ -539,6 +919,13 @@ class ExternalToolPresets {
         ExternalToolPreset(label: '+ Gemini', executable: 'gemini', category: ExternalToolCategory.ai, build: gemini),
         ExternalToolPreset(label: '+ OpenCode', executable: 'opencode', category: ExternalToolCategory.ai, build: opencode),
         ExternalToolPreset(label: '+ Aider', executable: 'aider', category: ExternalToolCategory.ai, build: aider),
+        ExternalToolPreset(label: '+ Amp', executable: 'amp', category: ExternalToolCategory.ai, build: amp),
+        ExternalToolPreset(label: '+ Cline', executable: 'cline', category: ExternalToolCategory.ai, build: cline),
+        ExternalToolPreset(label: '+ Copilot', executable: 'github-copilot-cli', category: ExternalToolCategory.ai, build: copilot),
+        ExternalToolPreset(label: '+ Goose', executable: 'goose', category: ExternalToolCategory.ai, build: goose),
+        ExternalToolPreset(label: '+ Amazon Q', executable: 'q', category: ExternalToolCategory.ai, build: amazonQ),
+        ExternalToolPreset(label: '+ Warp', executable: 'warp', category: ExternalToolCategory.ai, build: warp),
+        ExternalToolPreset(label: '+ Ollama', executable: 'ollama', category: ExternalToolCategory.ai, build: ollama),
         // Editors
         ExternalToolPreset(label: '+ VS Code', executable: 'code', category: ExternalToolCategory.editors, build: vscode),
         ExternalToolPreset(label: '+ Cursor', executable: 'cursor', category: ExternalToolCategory.editors, build: cursor),
@@ -548,24 +935,64 @@ class ExternalToolPresets {
         ExternalToolPreset(label: '+ Sublime', executable: 'subl', category: ExternalToolCategory.editors, build: sublime),
         ExternalToolPreset(label: '+ Neovim', executable: 'nvim', category: ExternalToolCategory.editors, build: nvim),
         ExternalToolPreset(label: '+ Helix', executable: 'hx', category: ExternalToolCategory.editors, build: helix),
-        // Explore — file browsers, analysis, git TUIs, terminals
+        ExternalToolPreset(label: '+ Emacs', executable: 'emacs', category: ExternalToolCategory.editors, build: emacs),
+        ExternalToolPreset(label: '+ Vim', executable: 'vim', category: ExternalToolCategory.editors, build: vim),
+        ExternalToolPreset(label: '+ Fleet', executable: 'fleet', category: ExternalToolCategory.editors, build: fleet),
+        ExternalToolPreset(label: '+ Lapce', executable: 'lapce', category: ExternalToolCategory.editors, build: lapce),
+        // Git GUIs
+        ExternalToolPreset(label: '+ GitHub Desktop', executable: 'github', category: ExternalToolCategory.explore, build: githubDesktop),
+        ExternalToolPreset(label: '+ GitKraken', executable: 'gitkraken', category: ExternalToolCategory.explore, build: gitkraken),
+        ExternalToolPreset(label: '+ Fork', executable: 'fork', category: ExternalToolCategory.explore, build: fork),
+        ExternalToolPreset(label: '+ Sourcetree', executable: 'stree', category: ExternalToolCategory.explore, build: sourcetree),
+        ExternalToolPreset(label: '+ Tower', executable: 'gittower', category: ExternalToolCategory.explore, build: tower),
+        // Explore — file browsers, analysis, git TUIs
         ExternalToolPreset(label: '+ LazyGit', executable: 'lazygit', category: ExternalToolCategory.explore, build: lazygit),
         ExternalToolPreset(label: '+ Tig', executable: 'tig', category: ExternalToolCategory.explore, build: tig),
         ExternalToolPreset(label: '+ GitUI', executable: 'gitui', category: ExternalToolCategory.explore, build: gitui),
         ExternalToolPreset(label: '+ Broot', executable: 'broot', category: ExternalToolCategory.explore, build: broot),
         ExternalToolPreset(label: '+ Yazi', executable: 'yazi', category: ExternalToolCategory.explore, build: yazi),
+        ExternalToolPreset(label: '+ Ranger', executable: 'ranger', category: ExternalToolCategory.explore, build: ranger),
+        ExternalToolPreset(label: '+ lf', executable: 'lf', category: ExternalToolCategory.explore, build: lf),
+        ExternalToolPreset(label: '+ nnn', executable: 'nnn', category: ExternalToolCategory.explore, build: nnn),
         ExternalToolPreset(label: '+ Glow', executable: 'glow', category: ExternalToolCategory.explore, build: glow),
         ExternalToolPreset(label: '+ Dust', executable: 'dust', category: ExternalToolCategory.explore, build: dust),
         ExternalToolPreset(label: '+ Tokei', executable: 'tokei', category: ExternalToolCategory.explore, build: tokei),
+        ExternalToolPreset(label: '+ Delta', executable: 'delta', category: ExternalToolCategory.explore, build: delta),
+        ExternalToolPreset(label: '+ Difftastic', executable: 'difft', category: ExternalToolCategory.explore, build: difftastic),
         ExternalToolPreset(label: '+ Terminal', executable: 'wt', category: ExternalToolCategory.explore, build: windowsTerminal),
         ExternalToolPreset(label: '+ GitHub', executable: 'gh', category: ExternalToolCategory.explore, build: ghBrowse),
-        // CI / build / orchestration
-        ExternalToolPreset(label: '+ Just', executable: 'just', category: ExternalToolCategory.explore, build: just),
-        ExternalToolPreset(label: '+ Task', executable: 'task', category: ExternalToolCategory.explore, build: taskRunner),
-        ExternalToolPreset(label: '+ Make', executable: 'make', category: ExternalToolCategory.explore, build: make),
-        ExternalToolPreset(label: '+ Act', executable: 'act', category: ExternalToolCategory.explore, build: act),
-        ExternalToolPreset(label: '+ Docker', executable: 'docker', category: ExternalToolCategory.explore, build: docker),
-        ExternalToolPreset(label: '+ K9s', executable: 'k9s', category: ExternalToolCategory.explore, build: k9s),
+        ExternalToolPreset(label: '+ Onefetch', executable: 'onefetch', category: ExternalToolCategory.explore, build: onefetch),
+        ExternalToolPreset(label: '+ scc', executable: 'scc', category: ExternalToolCategory.explore, build: scc),
+        ExternalToolPreset(label: '+ ast-grep', executable: 'sg', category: ExternalToolCategory.explore, build: astGrep),
+        ExternalToolPreset(label: '+ serpl', executable: 'serpl', category: ExternalToolCategory.explore, build: serpl),
+        ExternalToolPreset(label: '+ D2', executable: 'd2', category: ExternalToolCategory.explore, build: d2),
+        ExternalToolPreset(label: '+ Hyperfine', executable: 'hyperfine', category: ExternalToolCategory.explore, build: hyperfine),
+        ExternalToolPreset(label: '+ Antigravity', executable: 'python', category: ExternalToolCategory.explore, build: antigravity),
+        ExternalToolPreset(label: '+ Jujutsu', executable: 'jj', category: ExternalToolCategory.explore, build: jujutsu),
+        // Ops — build, CI, infra, security, API, DB
+        ExternalToolPreset(label: '+ Just', executable: 'just', category: ExternalToolCategory.ops, build: just),
+        ExternalToolPreset(label: '+ Task', executable: 'task', category: ExternalToolCategory.ops, build: taskRunner),
+        ExternalToolPreset(label: '+ Make', executable: 'make', category: ExternalToolCategory.ops, build: make),
+        ExternalToolPreset(label: '+ Act', executable: 'act', category: ExternalToolCategory.ops, build: act),
+        ExternalToolPreset(label: '+ Docker', executable: 'docker', category: ExternalToolCategory.ops, build: docker),
+        ExternalToolPreset(label: '+ K9s', executable: 'k9s', category: ExternalToolCategory.ops, build: k9s),
+        ExternalToolPreset(label: '+ Stern', executable: 'stern', category: ExternalToolCategory.ops, build: stern),
+        ExternalToolPreset(label: '+ Terraform', executable: 'terraform', category: ExternalToolCategory.ops, build: terraform),
+        ExternalToolPreset(label: '+ Pulumi', executable: 'pulumi', category: ExternalToolCategory.ops, build: pulumi),
+        ExternalToolPreset(label: '+ Trivy', executable: 'trivy', category: ExternalToolCategory.ops, build: trivy),
+        ExternalToolPreset(label: '+ Grype', executable: 'grype', category: ExternalToolCategory.ops, build: grype),
+        ExternalToolPreset(label: '+ HTTPie', executable: 'http', category: ExternalToolCategory.ops, build: httpie),
+        ExternalToolPreset(label: '+ Hurl', executable: 'hurl', category: ExternalToolCategory.ops, build: hurl),
+        ExternalToolPreset(label: '+ Bruno', executable: 'bruno', category: ExternalToolCategory.ops, build: bruno),
+        ExternalToolPreset(label: '+ LazyDocker', executable: 'lazydocker', category: ExternalToolCategory.ops, build: lazydocker),
+        ExternalToolPreset(label: '+ DevContainer', executable: 'devcontainer', category: ExternalToolCategory.ops, build: devcontainer),
+        ExternalToolPreset(label: '+ Watchexec', executable: 'watchexec', category: ExternalToolCategory.ops, build: watchexec),
+        ExternalToolPreset(label: '+ mise', executable: 'mise', category: ExternalToolCategory.ops, build: mise),
+        ExternalToolPreset(label: '+ Zellij', executable: 'zellij', category: ExternalToolCategory.ops, build: zellij),
+        ExternalToolPreset(label: '+ git-cliff', executable: 'git-cliff', category: ExternalToolCategory.ops, build: gitCliff),
+        ExternalToolPreset(label: '+ Posting', executable: 'posting', category: ExternalToolCategory.ops, build: posting),
+        ExternalToolPreset(label: '+ usql', executable: 'usql', category: ExternalToolCategory.ops, build: usql),
+        ExternalToolPreset(label: '+ pgcli', executable: 'pgcli', category: ExternalToolCategory.ops, build: pgcli),
         // Git operations
         ExternalToolPreset(label: '+ Contributors', executable: 'git', category: ExternalToolCategory.gitOps, build: contributors),
         ExternalToolPreset(label: '+ Branch Map', executable: 'git', category: ExternalToolCategory.gitOps, build: branchMap),

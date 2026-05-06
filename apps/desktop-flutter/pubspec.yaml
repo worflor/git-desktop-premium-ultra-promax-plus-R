@@ -23,11 +23,6 @@ dependencies:
   # Used by logos_git.dart for @visibleForTesting annotations. Pins the
   # transitive dep as a direct dep so it's legal to import.
   meta: ^1.17.0
-  # Used by changes_page.dart's _revealInExplorer to call ShellExecuteW
-  # directly. Dart's Process.start auto-quotes args containing spaces,
-  # which breaks explorer.exe's custom /select,<path> parser — FFI
-  # bypasses the escaping. Already transitive via flutter_svg's chain.
-  ffi: ^2.1.0
 
 dev_dependencies:
   flutter_test:

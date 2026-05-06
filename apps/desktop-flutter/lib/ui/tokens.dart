@@ -2085,4 +2085,14 @@ extension ClusterColors on AppTokens {
   }
 }
 
+extension RepoTintColors on AppTokens {
+  static const tintSlotCount = 5;
 
+  Color repoTint(int slot) => switch (slot % tintSlotCount) {
+        0 => hyperChromatic1,
+        1 => hyperChromatic2,
+        2 => stateAdded,
+        3 => eventStartTone,
+        _ => stateDeleted,
+      };
+}

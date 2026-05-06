@@ -83,9 +83,9 @@ _ActionDescriptor _describeAction(RepositoryStatus? status) {
   }
 
   return _ActionDescriptor(
-    label: 'Check remote',
+    label: 'Sync',
     detail: 'Fetch from ${status.upstream} and refresh upstream status.',
-    buttonLabel: 'Check remote',
+    buttonLabel: 'Sync',
   );
 }
 

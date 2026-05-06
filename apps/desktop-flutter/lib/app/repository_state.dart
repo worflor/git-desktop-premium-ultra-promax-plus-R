@@ -4,8 +4,22 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../backend/git.dart';
 import '../backend/dtos.dart';
+import '../backend/git_result.dart';
 
 class RepositoryState extends ChangeNotifier {
+  RepositoryState({
+    Future<GitResult<String>> Function(String path)? openRepositoryFn,
+    Future<GitResult<RepositoryStatus>> Function(String path)? statusLoader,
+    Duration switchDebounce = const Duration(milliseconds: 80),
+  })  : _openRepository = openRepositoryFn ?? openRepository,
+        _loadRepositoryStatus = statusLoader ?? getRepositoryStatus,
+        _switchDebounceDuration = switchDebounce;
+
+  final Future<GitResult<String>> Function(String path) _openRepository;
+  final Future<GitResult<RepositoryStatus>> Function(String path)
+      _loadRepositoryStatus;
+  final Duration _switchDebounceDuration;
+
   String? _activePath;
   RepositoryStatus? _status;
   bool _statusLoading = false;
@@ -13,6 +27,9 @@ class RepositoryState extends ChangeNotifier {
   List<String> _recentPaths = [];
   int _statusRequestId = 0;
   Timer? _statusLoadingPublish;
+  Timer? _switchDebounce;
+  Completer<String?>? _switchCompleter;
+  bool _disposed = false;
 
   /// Threshold before a loading state is published. Most `git status`
   /// probes complete in a few ms on a warm repo; publishing
@@ -75,9 +92,9 @@ class RepositoryState extends ChangeNotifier {
     }
   }
 
-  Future<void> _saveRecents() async {
+  Future<void> _saveRecents([List<String>? paths]) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('recent_repos', _recentPaths);
+    await prefs.setStringList('recent_repos', paths ?? _recentPaths);
   }
 
   /// Opens a repository path as the active repo.
@@ -85,25 +102,80 @@ class RepositoryState extends ChangeNotifier {
   /// repositories sidebar. Worktree ("desk") switches within the same repo
   /// pass `false` so individual desks don't clutter the project list —
   /// only the primary worktree gets added on initial open.
+  ///
+  /// Rapid successive calls (user spam-clicking repos) are debounced:
+  /// only the last path wins. Intermediate calls resolve with null
+  /// (success) without spawning any git work.
   Future<String?> setActivePath(
     String path, {
     bool addToRecents = true,
+  }) {
+    if (_disposed) return Future.value(null);
+    _switchDebounce?.cancel();
+    final prev = _switchCompleter;
+    final completer = Completer<String?>();
+    _switchCompleter = completer;
+    // Complete the superseded caller as success — it never ran, but
+    // from the caller's perspective the switch was overtaken, not failed.
+    if (prev != null && !prev.isCompleted) prev.complete(null);
+
+    _switchDebounce = Timer(_switchDebounceDuration, () {
+      _doSetActivePath(
+        path,
+        addToRecents: addToRecents,
+        switchCompleter: completer,
+      ).then(
+        (value) {
+          if (!completer.isCompleted) {
+            completer.complete(value);
+          }
+          if (identical(_switchCompleter, completer)) {
+            _switchCompleter = null;
+          }
+        },
+        onError: (Object e) {
+          if (!completer.isCompleted) {
+            completer.complete(e.toString());
+          }
+          if (identical(_switchCompleter, completer)) {
+            _switchCompleter = null;
+          }
+        },
+      );
+    });
+    return completer.future;
+  }
+
+  Future<String?> _doSetActivePath(
+    String path, {
+    required bool addToRecents,
+    required Completer<String?> switchCompleter,
   }) async {
     try {
-      final result = await openRepository(path);
+      final result = await _openRepository(path);
+      // If another switch arrived while we awaited, bail.
+      if (_switchWasSuperseded(switchCompleter)) return null;
       if (!result.ok || result.data == null) {
         return result.error ?? 'Failed to open repository.';
       }
 
       final resolvedPath = result.data!;
+      final nextRecentPaths =
+          addToRecents && !_recentPaths.contains(resolvedPath)
+              ? [resolvedPath, ..._recentPaths].take(20).toList()
+              : null;
+
+      if (nextRecentPaths != null) {
+        await _saveRecents(nextRecentPaths);
+        if (_switchWasSuperseded(switchCompleter)) return null;
+      }
+
       _activePath = resolvedPath;
       _status = null;
       _statusLoading = false;
       _statusError = null;
-
-      if (addToRecents && !_recentPaths.contains(resolvedPath)) {
-        _recentPaths = [resolvedPath, ..._recentPaths].take(20).toList();
-        await _saveRecents();
+      if (nextRecentPaths != null) {
+        _recentPaths = nextRecentPaths;
       }
 
       notifyListeners();
@@ -115,6 +187,12 @@ class RepositoryState extends ChangeNotifier {
     }
   }
 
+  bool _switchWasSuperseded(Completer<String?> completer) {
+    return _disposed ||
+        completer.isCompleted ||
+        !identical(_switchCompleter, completer);
+  }
+
   /// Bump [userRefreshEpoch] then run [refreshStatus]. Call this from
   /// user-facing refresh affordances (repo title refresh icon, manual
   /// refresh shortcuts, post-pull flows) so listeners that distinguish
@@ -124,6 +202,7 @@ class RepositoryState extends ChangeNotifier {
   /// should continue to call [refreshStatus] directly — their work
   /// isn't a "show me what's new" signal from the user.
   Future<void> userRefresh() {
+    if (_disposed) return Future.value();
     _userRefreshEpoch++;
     // Notify listeners synchronously so UI subscribers can observe the
     // epoch change before the async status probe lands. That ordering
@@ -133,6 +212,7 @@ class RepositoryState extends ChangeNotifier {
   }
 
   Future<void> refreshStatus() async {
+    if (_disposed) return;
     final path = _activePath;
     if (path == null) return;
     final requestId = ++_statusRequestId;
@@ -148,14 +228,15 @@ class RepositoryState extends ChangeNotifier {
     _statusLoadingPublish?.cancel();
     _statusLoadingPublish = Timer(_loadingPublishDelay, () {
       _statusLoadingPublish = null;
+      if (_disposed) return;
       if (_activePath != path || requestId != _statusRequestId) return;
       if (!_statusLoading) return; // already resolved — no spinner
       notifyListeners();
     });
 
     try {
-      final result = await getRepositoryStatus(path);
-      if (_activePath != path || requestId != _statusRequestId) {
+      final result = await _loadRepositoryStatus(path);
+      if (_disposed || _activePath != path || requestId != _statusRequestId) {
         return;
       }
       _statusLoading = false;
@@ -167,7 +248,7 @@ class RepositoryState extends ChangeNotifier {
         _statusError = result.error;
       }
     } catch (error) {
-      if (_activePath != path || requestId != _statusRequestId) {
+      if (_disposed || _activePath != path || requestId != _statusRequestId) {
         return;
       }
       _statusLoading = false;
@@ -179,17 +260,23 @@ class RepositoryState extends ChangeNotifier {
     // second (data-arrived) notify and the timer already fired once.
     _statusLoadingPublish?.cancel();
     _statusLoadingPublish = null;
+    if (_disposed) return;
     notifyListeners();
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    _statusRequestId++;
+    _switchDebounce?.cancel();
+    _switchDebounce = null;
+    final pendingSwitch = _switchCompleter;
+    _switchCompleter = null;
+    if (pendingSwitch != null && !pendingSwitch.isCompleted) {
+      pendingSwitch.complete(null);
+    }
     _statusLoadingPublish?.cancel();
     _statusLoadingPublish = null;
-    // Clear the in-flight loading flag so any late observer that
-    // reads state after dispose (possible when an ancestor provider
-    // outlives its widget tree by a frame) sees a coherent "not
-    // loading" state instead of a permanent spinner-trigger.
     _statusLoading = false;
     super.dispose();
   }

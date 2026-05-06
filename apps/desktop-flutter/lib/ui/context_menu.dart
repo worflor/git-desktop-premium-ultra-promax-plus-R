@@ -247,6 +247,7 @@ class AppContextMenuItem {
   /// the informational content doesn't fit the "icon · text" pattern.
   /// Typically pairs with `inert: true`.
   final Widget? custom;
+  final Color? iconColor;
   const AppContextMenuItem({
     required this.icon,
     required this.label,
@@ -258,6 +259,7 @@ class AppContextMenuItem {
     this.inert = false,
     this.keepOpen = false,
     this.custom,
+    this.iconColor,
   });
 }
 
@@ -469,7 +471,8 @@ class _AppContextMenuRowState extends State<AppContextMenuRow>
                 if (widget.item.leading != null)
                   widget.item.leading!
                 else
-                  Icon(widget.item.icon, size: 14, color: fg),
+                  Icon(widget.item.icon, size: 14,
+                      color: widget.item.iconColor ?? fg),
                 const SizedBox(width: 10),
                 Flexible(
                   child: Text(
@@ -1052,10 +1055,9 @@ class _MosaicChipCellState extends State<_MosaicChipCell>
             mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(widget.item.icon, size: 12, color: fg),
+              Icon(widget.item.icon, size: 12,
+                  color: widget.item.iconColor ?? fg),
               const SizedBox(width: 5),
-              // Flexible + ellipsis so a cramped rail still renders
-              // the icon and a partial label rather than overflowing.
               Flexible(
                 child: Text(
                   widget.item.label,
@@ -1146,7 +1148,8 @@ class _ContextMenuTileState extends State<_ContextMenuTile> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(widget.item.icon, size: 18, color: fg),
+              Icon(widget.item.icon, size: 18,
+                  color: widget.item.iconColor ?? fg),
               const SizedBox(height: 4),
               Text(
                 widget.item.label,

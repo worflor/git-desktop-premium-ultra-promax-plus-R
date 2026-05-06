@@ -82,4 +82,46 @@ void main() {
       expect(escapeWtArgForTesting('plain'), 'plain');
     });
   });
+
+  group('windows reveal batch launcher', () {
+    test('keeps explorer select path quoted after the comma', () {
+      final script = windowsRevealBatchScriptForTesting(
+        r'C:\Users\me\My Repo\lib\main.dart',
+      );
+
+      expect(
+        script,
+        contains(
+          r'start "" explorer.exe /select,"C:\Users\me\My Repo\lib\main.dart"',
+        ),
+      );
+      expect(script, isNot(contains('/select, ')));
+    });
+
+    test('escapes percent signs in embedded batch path', () {
+      final script = windowsRevealBatchScriptForTesting(
+        r'C:\Users\me\100% complete\%PATH%\file.dart',
+      );
+
+      expect(
+        script,
+        contains(r'C:\Users\me\100%% complete\%%PATH%%\file.dart'),
+      );
+    });
+
+    test('passes cmd call and temporary script path as separate argv entries',
+        () {
+      expect(
+        windowsRevealBatchArgsForTesting(
+          r'C:\Users\me\AppData\Local\Temp\manifold reveal.cmd',
+        ),
+        [
+          '/d',
+          '/c',
+          'call',
+          r'C:\Users\me\AppData\Local\Temp\manifold reveal.cmd',
+        ],
+      );
+    });
+  });
 }

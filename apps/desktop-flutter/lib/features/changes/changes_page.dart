@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:ffi' hide Size;
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 
-import 'package:ffi/ffi.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:flutter/material.dart';
@@ -42,6 +40,7 @@ import '../../backend/logos_dream.dart';
 import '../../backend/logos_field.dart';
 import '../../backend/logos_refactor.dart';
 import '../../backend/logos_spaghetti.dart';
+import '../../backend/system_paths.dart' show revealInFileManager;
 import '../../backend/undo_controller.dart';
 import '../../ui/logos_glyph_strip.dart';
 import '../../app/ai_activity_state.dart';
@@ -147,8 +146,7 @@ class _ChangesPageState extends State<ChangesPage> {
   /// the payload here carries both the phrase and the diff's field
   /// character so one compute drives both the placeholder text and
   /// any accent chrome that renders alongside it.
-  final DreamHintController<_CommitDream> _commitDream =
-      DreamHintController();
+  final DreamHintController<_CommitDream> _commitDream = DreamHintController();
 
   /// Compose the composer's placeholder hint from the dream payload.
   /// Silent when nothing's resolved; phrase alone when the character
@@ -244,6 +242,7 @@ class _ChangesPageState extends State<ChangesPage> {
   String? _selectedDiffPath;
   String? _inspectionDiffPath;
   String? _visibleDiffPath;
+
   /// Diff-navigation history. Pushed when the user drills into a
   /// related path from the drawer (`onOpenRelatedPath`); popped when
   /// they hit the toolbar's `<` button. Empty stack = button hidden.
@@ -408,8 +407,7 @@ class _ChangesPageState extends State<ChangesPage> {
   final Map<String, List<RelevanceScore>> _rippleDiffuseCache = {};
   int _rippleDiffuseCacheRevision = -1;
 
-  List<RelevanceScore> _cachedRippleDiffuse(
-      LogosGit engine, String filePath) {
+  List<RelevanceScore> _cachedRippleDiffuse(LogosGit engine, String filePath) {
     if (_rippleDiffuseCacheRevision != engine.manifoldRevision) {
       _rippleDiffuseCache.clear();
       _rippleDiffuseCacheRevision = engine.manifoldRevision;
@@ -616,7 +614,12 @@ class _ChangesPageState extends State<ChangesPage> {
     if (kind == null) return;
     final site = _activitySite();
     if (site != null) {
-      site.state.markSeen(repoPath: site.repoPath, kind: kind);
+      final record = site.state.recordFor(site.repoPath, kind);
+      if (record != null && record.isError) {
+        site.state.clear(repoPath: site.repoPath, kind: kind);
+      } else {
+        site.state.markSeen(repoPath: site.repoPath, kind: kind);
+      }
     }
     setState(() => _openDrawer = null);
   }
@@ -629,8 +632,15 @@ class _ChangesPageState extends State<ChangesPage> {
     if (_openDrawer == AiActivityKind.review) {
       final site = _activitySite();
       if (site != null) {
-        site.state.markSeen(
-            repoPath: site.repoPath, kind: AiActivityKind.review);
+        final record =
+            site.state.recordFor(site.repoPath, AiActivityKind.review);
+        if (record != null && record.isError) {
+          site.state
+              .clear(repoPath: site.repoPath, kind: AiActivityKind.review);
+        } else {
+          site.state
+              .markSeen(repoPath: site.repoPath, kind: AiActivityKind.review);
+        }
       }
     }
     setState(() {
@@ -655,12 +665,12 @@ class _ChangesPageState extends State<ChangesPage> {
   /// drawer wasn't open when it landed) or quiet success (if it was).
   void _scheduleFlashClear(AiActivityKind kind, void Function() clear) {
     _flashClearTimers.remove(kind)?.cancel();
-    _flashClearTimers[kind] =
-        Timer(const Duration(milliseconds: 1500), () {
+    _flashClearTimers[kind] = Timer(const Duration(milliseconds: 1500), () {
       _flashClearTimers.remove(kind);
       if (mounted) setState(clear);
     });
   }
+
   String? get _askError =>
       _askRecord?.isError == true ? _askRecord!.error : null;
 
@@ -799,11 +809,9 @@ class _ChangesPageState extends State<ChangesPage> {
 
     final unstaged =
         results[0].exitCode == 0 ? results[0].stdout.toString() : '';
-    final staged =
-        results[1].exitCode == 0 ? results[1].stdout.toString() : '';
-    final diffText = [staged, unstaged]
-        .where((d) => d.trim().isNotEmpty)
-        .join('\n');
+    final staged = results[1].exitCode == 0 ? results[1].stdout.toString() : '';
+    final diffText =
+        [staged, unstaged].where((d) => d.trim().isNotEmpty).join('\n');
     if (diffText.isEmpty) return null;
 
     final subjects = results[2].exitCode == 0
@@ -1198,10 +1206,8 @@ class _ChangesPageState extends State<ChangesPage> {
     required RepositoryStatus status,
     required LogosGit engine,
   }) {
-    final statusChanged =
-        !identical(_correlatednessContextStatusRef, status);
-    final engineChanged =
-        !identical(_correlatednessContextEngineRef, engine);
+    final statusChanged = !identical(_correlatednessContextStatusRef, status);
+    final engineChanged = !identical(_correlatednessContextEngineRef, engine);
     if (!statusChanged &&
         !engineChanged &&
         _correlatednessContextInflight == null) {
@@ -1256,10 +1262,8 @@ class _ChangesPageState extends State<ChangesPage> {
       return; // git unavailable / repo broken — keep whatever's cached
     }
 
-    final unstaged =
-        probes[0].exitCode == 0 ? probes[0].stdout.toString() : '';
-    final staged =
-        probes[1].exitCode == 0 ? probes[1].stdout.toString() : '';
+    final unstaged = probes[0].exitCode == 0 ? probes[0].stdout.toString() : '';
+    final staged = probes[1].exitCode == 0 ? probes[1].stdout.toString() : '';
 
     // `git diff` / `git diff --cached` never emit blocks for untracked
     // files. Those paths are visible in the panel AND we want them
@@ -1549,8 +1553,7 @@ class _ChangesPageState extends State<ChangesPage> {
   /// and stores on miss. Invalidates when the coupling matrix
   /// identity changes (a new FileCouplingMatrix instance implies
   /// potentially-different scores and different path→id mapping).
-  double _cachedPeerScore(
-      String a, String b, FileCouplingMatrix matrix) {
+  double _cachedPeerScore(String a, String b, FileCouplingMatrix matrix) {
     if (!identical(_peerScoreCacheMatrix, matrix)) {
       _peerScoreCache.clear();
       _peerScoreCacheMatrix = matrix;
@@ -1662,8 +1665,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final capturedBranch = _lastDraftBranch;
     // Honor the "remember work in progress" pref: when off, any save
     // attempt becomes a delete so existing drafts don't linger on disk.
-    final remember =
-        context.read<PreferencesState>().rememberWorkInProgress;
+    final remember = context.read<PreferencesState>().rememberWorkInProgress;
     _commitDraftSaveDebounce =
         Timer(const Duration(milliseconds: 500), () async {
       try {
@@ -2263,10 +2265,9 @@ class _ChangesPageState extends State<ChangesPage> {
     // for off-screen targets — once the scroll lands, the target
     // row builds and any subsequent ensureVisible call (e.g., from
     // a follow-up event) refines the position.
-    final avgRowH =
-        (pos.maxScrollExtent + pos.viewportDimension) / totalCount;
-    final target =
-        (idx * avgRowH - pos.viewportDimension * 0.25).clamp(0.0, pos.maxScrollExtent);
+    final avgRowH = (pos.maxScrollExtent + pos.viewportDimension) / totalCount;
+    final target = (idx * avgRowH - pos.viewportDimension * 0.25)
+        .clamp(0.0, pos.maxScrollExtent);
     _changesListCtrl.animateTo(target, duration: duration, curve: curve);
   }
 
@@ -3044,68 +3045,16 @@ class _ChangesPageState extends State<ChangesPage> {
     await Clipboard.setData(ClipboardData(text: text));
   }
 
-  /// Open the OS file explorer with the file selected. Windows: call
-  /// `ShellExecuteW("open", "explorer.exe", "/select,\"<path>\"")` via
-  /// FFI — `Process.start` auto-quotes any arg containing spaces, and
-  /// explorer's custom `/select,` parser treats the wrapping quotes as
-  /// part of the literal path, falling back to `Documents\`. Quoting
-  /// only the path portion (inside the params string we hand to
-  /// ShellExecuteW) is the form explorer actually understands.
-  /// macOS: `open -R <path>`. Linux: `xdg-open <dir>` (no per-file
-  /// selection in standard xdg-open). The spawned Unix Process still
-  /// needs its stdout/stderr pipes drained so the FDs release promptly
-  /// while the file-manager window lives on for the session.
   Future<void> _revealInExplorer(String repoPath, String relPath) async {
     final absPath = '$repoPath${Platform.pathSeparator}'
         '${relPath.replaceAll('/', Platform.pathSeparator)}';
     try {
-      if (Platform.isWindows) {
-        _shellSelectInExplorer(absPath);
-        return;
-      }
-      final Process p;
-      if (Platform.isMacOS) {
-        p = await Process.start('open', ['-R', absPath]);
-      } else {
-        final dir =
-            absPath.substring(0, absPath.lastIndexOf(Platform.pathSeparator));
-        p = await Process.start('xdg-open', [dir]);
-      }
-      // Drain pipes so they don't back-pressure or hold FDs. Errors
-      // are ignored — the OS file-manager output is irrelevant to us.
-      unawaited(p.stdout.drain<void>());
-      unawaited(p.stderr.drain<void>());
-      unawaited(p.exitCode);
+      await revealInFileManager(absPath);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _actionError = 'Failed to open file explorer: $e';
       });
-    }
-  }
-
-  /// Windows-only reveal: call `ShellExecuteW` directly so we control
-  /// the exact command-line handed to explorer.exe. `/select,"<path>"`
-  /// with quotes wrapping only the path is the form explorer's parser
-  /// accepts; `Process.start` wraps the whole arg and breaks that.
-  void _shellSelectInExplorer(String absPath) {
-    final shell32 = DynamicLibrary.open('shell32.dll');
-    final shellExecute = shell32.lookupFunction<
-        IntPtr Function(IntPtr, Pointer<Utf16>, Pointer<Utf16>,
-            Pointer<Utf16>, Pointer<Utf16>, Int32),
-        int Function(int, Pointer<Utf16>, Pointer<Utf16>, Pointer<Utf16>,
-            Pointer<Utf16>, int)>('ShellExecuteW');
-    final op = 'open'.toNativeUtf16();
-    final file = 'explorer.exe'.toNativeUtf16();
-    final params = '/select,"$absPath"'.toNativeUtf16();
-    try {
-      // SW_SHOWNORMAL = 1. Return <= 32 means failure, but even then
-      // there's nothing useful to surface — the user sees no window.
-      shellExecute(0, op, file, params, nullptr, 1);
-    } finally {
-      malloc.free(op);
-      malloc.free(file);
-      malloc.free(params);
     }
   }
 
@@ -3121,9 +3070,8 @@ class _ChangesPageState extends State<ChangesPage> {
     // don't have to revisit `context` after async gaps.
     final repoState = context.read<RepositoryState>();
     final coord = context.read<UndoCoordinator>();
-    final windowSec = context
-        .read<PreferencesState>()
-        .undoWindowFor(UndoActionKind.discard);
+    final windowSec =
+        context.read<PreferencesState>().undoWindowFor(UndoActionKind.discard);
     final isUntracked = file.isUntracked;
     final basename = p.basename(file.path);
     final confirmed = await showDialog<bool>(
@@ -3205,9 +3153,8 @@ class _ChangesPageState extends State<ChangesPage> {
     if (files.isEmpty) return;
     final repoState = context.read<RepositoryState>();
     final coord = context.read<UndoCoordinator>();
-    final windowSec = context
-        .read<PreferencesState>()
-        .undoWindowFor(UndoActionKind.discard);
+    final windowSec =
+        context.read<PreferencesState>().undoWindowFor(UndoActionKind.discard);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
@@ -3957,7 +3904,6 @@ class _ChangesPageState extends State<ChangesPage> {
     }
   }
 
-
   /// Hint shown in the ask composer — one short line that shifts
   /// character with the active guardrail. Longer instructional text
   /// (⌘↵ to send, Esc to exit) was removed; the field is in focus
@@ -4012,8 +3958,7 @@ class _ChangesPageState extends State<ChangesPage> {
         'You are a reading assistant embedded in a git client. You help');
     buf.writeln(
         'the user understand and trust the code they are looking at. You');
-    buf.writeln(
-        'never generate code, never propose edits in patch form. If a');
+    buf.writeln('never generate code, never propose edits in patch form. If a');
     buf.writeln(
         'fix is warranted, describe what to queue as an issue instead.');
     buf.writeln();
@@ -4028,16 +3973,13 @@ class _ChangesPageState extends State<ChangesPage> {
         '     ground it, say so; do not fill the gap with speculation.');
     buf.writeln(
         '  3. Name specific files, commit hashes, authors, or line numbers');
-    buf.writeln(
-        '     when they are in the context. Use exact references.');
+    buf.writeln('     when they are in the context. Use exact references.');
     buf.writeln(
         '  4. Match the user\'s register. If they sound frustrated, stay');
-    buf.writeln(
-        '     dry and factual; no corporate empathy theatre.');
+    buf.writeln('     dry and factual; no corporate empathy theatre.');
     buf.writeln(
         '  5. Never write code changes. Never scaffold diffs. Never edit');
-    buf.writeln(
-        '     files. Read, reason, cite, and stop.');
+    buf.writeln('     files. Read, reason, cite, and stop.');
     buf.writeln();
     buf.writeln('<question>');
     buf.writeln(question);
@@ -4259,7 +4201,8 @@ class _ChangesPageState extends State<ChangesPage> {
         repoPath: repoPath,
         kind: AiActivityKind.generate,
         scopeKey: scopeKey,
-        error: 'No runtime-discovered models are available for commit messages.',
+        error:
+            'No runtime-discovered models are available for commit messages.',
       );
       setState(() {
         _actionError =
@@ -4343,8 +4286,7 @@ class _ChangesPageState extends State<ChangesPage> {
         );
         // Once the user sees the message in their composer, the
         // sidebar pill should stop nagging.
-        activity.markSeen(
-            repoPath: repoPath, kind: AiActivityKind.generate);
+        activity.markSeen(repoPath: repoPath, kind: AiActivityKind.generate);
         setState(() {
           _generateFlash = true;
         });
@@ -4513,8 +4455,7 @@ class _ChangesPageState extends State<ChangesPage> {
           });
           _scheduleFlashClear(
               AiActivityKind.review, () => _reviewFlash = false);
-          activity.markSeen(
-              repoPath: repoPath, kind: AiActivityKind.review);
+          activity.markSeen(repoPath: repoPath, kind: AiActivityKind.review);
         } else {
           // Quiet completion. Flash still fires so the toolbar
           // button celebrates briefly, then settles into half-lit
@@ -4538,8 +4479,7 @@ class _ChangesPageState extends State<ChangesPage> {
         final isWatching = _openDrawer == AiActivityKind.review;
         if (isWatching) {
           setState(() => _openDrawer = AiActivityKind.review);
-          activity.markSeen(
-              repoPath: repoPath, kind: AiActivityKind.review);
+          activity.markSeen(repoPath: repoPath, kind: AiActivityKind.review);
         }
         // Else: leave the drawer alone; toolbar's error-tinted
         // unread state surfaces the failure without preempting.
@@ -4803,6 +4743,7 @@ class _ChangesPageState extends State<ChangesPage> {
         buf.writeln('    cite: ${p.citations.join(", ")}');
       }
     }
+
     void tierBlock(AiMuseIdeaTier tier, String label) {
       final source = subset ?? muse.proposalsForTier(tier);
       final group = subset == null
@@ -4815,6 +4756,7 @@ class _ChangesPageState extends State<ChangesPage> {
       }
       buf.writeln();
     }
+
     tierBlock(AiMuseIdeaTier.spark, 'SPARK');
     tierBlock(AiMuseIdeaTier.current, 'CURRENT');
     tierBlock(AiMuseIdeaTier.horizon, 'HORIZON');
@@ -4903,19 +4845,16 @@ class _ChangesPageState extends State<ChangesPage> {
 
     final coord = context.read<UndoCoordinator>();
     final isSync = mode == _CommitRunMode.commitAndSync;
-    final kind = isSync
-        ? UndoActionKind.commitAndPush
-        : UndoActionKind.commit;
-    final windowSec =
-        context.read<PreferencesState>().undoWindowFor(kind);
+    final kind = isSync ? UndoActionKind.commitAndPush : UndoActionKind.commit;
+    final windowSec = context.read<PreferencesState>().undoWindowFor(kind);
     final label = isSync ? 'Committing and syncing' : 'Committing';
 
     final outcome = await coord.schedule<_CommitOutcome>(
       kind: kind,
       label: label,
       window: Duration(seconds: windowSec),
-      run: () =>
-          _runCommitFlow(repoPath, status, mode, included, message, amend: amend),
+      run: () => _runCommitFlow(repoPath, status, mode, included, message,
+          amend: amend),
     );
 
     if (!mounted) return;
@@ -4966,8 +4905,7 @@ class _ChangesPageState extends State<ChangesPage> {
   }) async {
     final stageResult = await stagePaths(repoPath, included);
     if (!stageResult.ok) {
-      return _CommitOutcome.err(
-          stageResult.error ?? 'Failed to stage files.');
+      return _CommitOutcome.err(stageResult.error ?? 'Failed to stage files.');
     }
 
     final stagedExcluded = _stagedExcludedPaths(status);
@@ -4986,8 +4924,7 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     if (!commitResult.ok) {
       await _refreshAndReadStatus();
-      return _CommitOutcome.err(
-          commitResult.error ?? 'Commit failed.');
+      return _CommitOutcome.err(commitResult.error ?? 'Commit failed.');
     }
 
     final committed = commitResult.data!;
@@ -5357,6 +5294,7 @@ class _ChangesPageState extends State<ChangesPage> {
       final oldRepo = _lastDraftRepoPath;
       final oldBranch = _lastDraftBranch;
       final textToSave = _commitMsgCtrl.text;
+      _commitMsgCtrl.clear();
       _lastDraftRepoPath = repoPath;
       _lastDraftBranch = currentBranch;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -5626,8 +5564,8 @@ class _ChangesPageState extends State<ChangesPage> {
     // exempt — the result is already on disk and doesn't need the
     // engine to surface it.
     final engineReady = context.select<LogosGitState, bool>(
-        (s) => s.engineFor(repoPath) != null,
-      );
+      (s) => s.engineFor(repoPath) != null,
+    );
     final canCommit = !_actionRunning &&
         !_generateRunning &&
         !_reviewRunning &&
@@ -5992,8 +5930,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                         Builder(builder: (ctx) {
                                           final nudges = suggestMissingPeers(
                                             selected: _includedPaths,
-                                            allChanged: status.files
-                                                .map((f) => f.path),
+                                            allChanged:
+                                                status.files.map((f) => f.path),
                                             matrix: couplingMatrix,
                                           );
                                           if (nudges.isEmpty) {
@@ -6127,8 +6065,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                         LogicalKeyboardKey.tab &&
                                     !_shapeMode &&
                                     _commitMsgCtrl.text.isEmpty) {
-                                  final dreamed =
-                                      _commitDream.value?.phrase;
+                                  final dreamed = _commitDream.value?.phrase;
                                   if (dreamed != null && dreamed.isNotEmpty) {
                                     _commitMsgCtrl.text = dreamed;
                                     _commitMsgCtrl.selection =
@@ -6167,8 +6104,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                   if (cats.isEmpty) {
                                     return KeyEventResult.handled;
                                   }
-                                  final cat = cats[_shapeCategoryIndex
-                                      .clamp(0, cats.length - 1)];
+                                  final cat = cats[_shapeCategoryIndex.clamp(
+                                      0, cats.length - 1)];
                                   _askInPanel(repoPath, status, text, cat);
                                   return KeyEventResult.handled;
                                 }
@@ -6204,9 +6141,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                   // doesn't re-trigger on selection.
                                   final sig =
                                       '$repoPath|${engineReady ? 'rdy' : 'wait'}';
-                                  final allPaths = status.files
-                                      .map((f) => f.path)
-                                      .toList();
+                                  final allPaths =
+                                      status.files.map((f) => f.path).toList();
                                   _commitDream.schedule(
                                     sig,
                                     () => _computeCommitDream(
@@ -6216,110 +6152,113 @@ class _ChangesPageState extends State<ChangesPage> {
                                   );
                                 }
                                 return _CommitComposerField(
-                                tokens: t,
-                                // Bind the active controller based on
-                                // shape-mode. Unbound controller keeps
-                                // its text so exiting ask-mode restores
-                                // the commit draft in progress.
-                                controller:
-                                    _shapeMode ? _shapeCtrl : _commitMsgCtrl,
-                                focusNode: _shapeMode
-                                    ? _shapeFocus
-                                    : _commitMsgFocusNode,
-                                hintText: _shapeMode
-                                    ? _askHintForGuardrail(
-                                        preferences.guardrailStage)
-                                    : _composeHint(),
-                                shapeMode: _shapeMode,
-                                dreamHint: _shapeMode
-                                    ? null
-                                    : _commitDream.value?.phrase,
-                                dreamThinking: _commitDream.thinking,
-                                enabled: !_actionRunning,
-                                onChanged: (value) {
-                                  if (!_shapeMode) {
-                                    _saveCommitDraft(value);
-                                  }
-                                  setState(() {});
-                                },
-                                aiEnabled: canGenerate,
-                                aiLoading: _generateRunning || _commitAiLoading,
-                                // success = transient celebration flash;
-                                // unread = persistent half-lit while a
-                                // terminal record waits with no drawer
-                                // open. Generate has no drawer, so
-                                // "unread" here is just "result waiting
-                                // to be applied by a re-click" — the
-                                // generate complete branch already
-                                // applies the message synchronously
-                                // when the user is on the originating
-                                // repo, so unread fires only for the
-                                // cross-repo "completed elsewhere" case.
-                                aiSuccess: _generateFlash,
-                                aiUnread:
-                                    _isUnreadFor(AiActivityKind.generate),
-                                aiTooltip:
-                                    _commitAiTooltip(aiSettings, includedCount),
-                                reviewEnabled: canReview,
-                                reviewLoading: _reviewRunning,
-                                reviewSuccess: _reviewFlash,
-                                reviewUnread:
-                                    _isUnreadFor(AiActivityKind.review),
-                                reviewVerdict: _reviewResult?.verdict,
-                                reviewTooltip: _reviewAiTooltip(aiSettings,
-                                    includedCount, preferences.guardrailStage),
-                                onGenerate: () => _generateCommitMessage(
-                                  repoPath,
-                                  status,
-                                ),
-                                onReview: () {
-                                  if (hasPersistentReview) {
-                                    _showExistingReview();
-                                    return;
-                                  }
-                                  _reviewCommit(repoPath, status);
-                                },
-                                museEnabled: canMuse,
-                                museLoading: _museRunning,
-                                museSuccess: _museFlash,
-                                museUnread: _isUnreadFor(AiActivityKind.muse),
-                                museTooltip:
-                                    _museTooltip(aiSettings, includedCount),
-                                onMuse: () {
-                                  if (_museResult != null ||
-                                      _museError != null) {
-                                    _openDrawerFor(AiActivityKind.muse);
-                                    return;
-                                  }
-                                  _runMuse(repoPath, status);
-                                },
-                                // ◈ shape: toggles the composer between
-                                // commit and ask modes. Pressing the ask
-                                // submit button opens the ask drawer.
-                                // Engine-ready gates this so the user
-                                // can't enter shape mode before the
-                                // LogosGit engine has resolved — ask's
-                                // semantic-search pipeline depends on
-                                // the engine for grounding citations,
-                                // so a click pre-engine would either
-                                // crash on null or produce a degraded
-                                // result without the diff context.
-                                // Already-in-shape-mode is exempt so a
-                                // mid-resolve repo switch doesn't trap
-                                // the user with no exit affordance.
-                                shapeEnabled: status.files.isNotEmpty &&
-                                    !_actionRunning &&
-                                    !_shaping &&
-                                    (engineReady || _shapeMode),
-                                shapeLoading: _shaping,
-                                shapeTooltip: _shapeMode
-                                    ? 'exit · restore your commit draft'
-                                    : 'ask the manifold',
-                                onToggleShape: (status.files.isEmpty ||
-                                        (!engineReady && !_shapeMode))
-                                    ? null
-                                    : _toggleShapeMode,
-                                hideAi: preferences.hideAiFeatures,
+                                  tokens: t,
+                                  // Bind the active controller based on
+                                  // shape-mode. Unbound controller keeps
+                                  // its text so exiting ask-mode restores
+                                  // the commit draft in progress.
+                                  controller:
+                                      _shapeMode ? _shapeCtrl : _commitMsgCtrl,
+                                  focusNode: _shapeMode
+                                      ? _shapeFocus
+                                      : _commitMsgFocusNode,
+                                  hintText: _shapeMode
+                                      ? _askHintForGuardrail(
+                                          preferences.guardrailStage)
+                                      : _composeHint(),
+                                  shapeMode: _shapeMode,
+                                  dreamHint: _shapeMode
+                                      ? null
+                                      : _commitDream.value?.phrase,
+                                  dreamThinking: _commitDream.thinking,
+                                  enabled: !_actionRunning,
+                                  onChanged: (value) {
+                                    if (!_shapeMode) {
+                                      _saveCommitDraft(value);
+                                    }
+                                    setState(() {});
+                                  },
+                                  aiEnabled: canGenerate,
+                                  aiLoading:
+                                      _generateRunning || _commitAiLoading,
+                                  // success = transient celebration flash;
+                                  // unread = persistent half-lit while a
+                                  // terminal record waits with no drawer
+                                  // open. Generate has no drawer, so
+                                  // "unread" here is just "result waiting
+                                  // to be applied by a re-click" — the
+                                  // generate complete branch already
+                                  // applies the message synchronously
+                                  // when the user is on the originating
+                                  // repo, so unread fires only for the
+                                  // cross-repo "completed elsewhere" case.
+                                  aiSuccess: _generateFlash,
+                                  aiUnread:
+                                      _isUnreadFor(AiActivityKind.generate),
+                                  aiTooltip: _commitAiTooltip(
+                                      aiSettings, includedCount),
+                                  reviewEnabled: canReview,
+                                  reviewLoading: _reviewRunning,
+                                  reviewSuccess: _reviewFlash,
+                                  reviewUnread:
+                                      _isUnreadFor(AiActivityKind.review),
+                                  reviewVerdict: _reviewResult?.verdict,
+                                  reviewTooltip: _reviewAiTooltip(
+                                      aiSettings,
+                                      includedCount,
+                                      preferences.guardrailStage),
+                                  onGenerate: () => _generateCommitMessage(
+                                    repoPath,
+                                    status,
+                                  ),
+                                  onReview: () {
+                                    if (hasPersistentReview) {
+                                      _showExistingReview();
+                                      return;
+                                    }
+                                    _reviewCommit(repoPath, status);
+                                  },
+                                  museEnabled: canMuse,
+                                  museLoading: _museRunning,
+                                  museSuccess: _museFlash,
+                                  museUnread: _isUnreadFor(AiActivityKind.muse),
+                                  museTooltip:
+                                      _museTooltip(aiSettings, includedCount),
+                                  onMuse: () {
+                                    if (_museResult != null ||
+                                        _museError != null) {
+                                      _openDrawerFor(AiActivityKind.muse);
+                                      return;
+                                    }
+                                    _runMuse(repoPath, status);
+                                  },
+                                  // ◈ shape: toggles the composer between
+                                  // commit and ask modes. Pressing the ask
+                                  // submit button opens the ask drawer.
+                                  // Engine-ready gates this so the user
+                                  // can't enter shape mode before the
+                                  // LogosGit engine has resolved — ask's
+                                  // semantic-search pipeline depends on
+                                  // the engine for grounding citations,
+                                  // so a click pre-engine would either
+                                  // crash on null or produce a degraded
+                                  // result without the diff context.
+                                  // Already-in-shape-mode is exempt so a
+                                  // mid-resolve repo switch doesn't trap
+                                  // the user with no exit affordance.
+                                  shapeEnabled: status.files.isNotEmpty &&
+                                      !_actionRunning &&
+                                      !_shaping &&
+                                      (engineReady || _shapeMode),
+                                  shapeLoading: _shaping,
+                                  shapeTooltip: _shapeMode
+                                      ? 'exit · restore your commit draft'
+                                      : 'ask the manifold',
+                                  onToggleShape: (status.files.isEmpty ||
+                                          (!engineReady && !_shapeMode))
+                                      ? null
+                                      : _toggleShapeMode,
+                                  hideAi: preferences.hideAiFeatures,
                                 );
                               }),
                             ),
@@ -6359,8 +6298,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                   if (text.isEmpty) return;
                                   final cats = _shapeCategories(aiSettings);
                                   if (cats.isEmpty) return;
-                                  final cat = cats[_shapeCategoryIndex
-                                      .clamp(0, cats.length - 1)];
+                                  final cat = cats[_shapeCategoryIndex.clamp(
+                                      0, cats.length - 1)];
                                   _askInPanel(repoPath, status, text, cat);
                                 },
                               )
@@ -6403,8 +6342,8 @@ class _ChangesPageState extends State<ChangesPage> {
                                             ? _CommitRunMode.commitAndSync
                                             : _CommitRunMode.commitOnly),
                                   ),
-                                  onToggleMode: () => setState(() =>
-                                      _commitOnlyMode = !_commitOnlyMode),
+                                  onToggleMode: () => setState(
+                                      () => _commitOnlyMode = !_commitOnlyMode),
                                 ),
                               ),
                             if (_actionError != null)
@@ -6486,9 +6425,9 @@ class _ChangesPageState extends State<ChangesPage> {
                               }
                               setState(() {});
                             },
-                            onCitationTap: (path, line) =>
-                                _jumpToMultiDiffPath(path,
-                                    fallbackStartLine: line),
+                            onCitationTap: (path, line) => _jumpToMultiDiffPath(
+                                path,
+                                fallbackStartLine: line),
                           ),
                         );
                       }
@@ -6542,9 +6481,8 @@ class _ChangesPageState extends State<ChangesPage> {
                             diffAdds: stats.adds,
                             diffDels: stats.dels,
                             diffHunks: stats.hunks,
-                            modelLabel:
-                                _snapshotReviewModelLabel[repoPath] ??
-                                    _reviewModelLabel(aiSettings),
+                            modelLabel: _snapshotReviewModelLabel[repoPath] ??
+                                _reviewModelLabel(aiSettings),
                             guardrailLabel: _guardrailLabelForStage(
                                 _snapshotReviewGuardrailStage[repoPath] ??
                                     preferences.guardrailStage),
@@ -6710,8 +6648,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                         _jumpToMultiDiffPath(path);
                                         return;
                                       }
-                                      _pushAndInspectSingleDiff(
-                                          repoPath, path);
+                                      _pushAndInspectSingleDiff(repoPath, path);
                                     },
                                     onPinnedFileFocused:
                                         _ensureFileVisibleInChangesList,
@@ -6765,15 +6702,14 @@ class _ChangesPageState extends State<ChangesPage> {
                                     return;
                                   }
                                   if (includedFiles.length > 1) {
-                                    _pushAndInspectSingleDiff(
-                                        repoPath, path);
+                                    _pushAndInspectSingleDiff(repoPath, path);
                                     return;
                                   }
                                   // Single-file selection context — push the
                                   // current focus then load the next one so
                                   // back restores the previous diff.
-                                  final current = _visibleDiffPath ??
-                                      _selectedDiffPath;
+                                  final current =
+                                      _visibleDiffPath ?? _selectedDiffPath;
                                   if (current != null && current != path) {
                                     _diffNavStack.add(current);
                                   }
@@ -7229,12 +7165,14 @@ class _MusePane extends StatefulWidget {
   final String guardrailLabel;
   final VoidCallback onBack;
   final VoidCallback onRerun;
+
   /// True when the record's scope key no longer matches the current
   /// file selection (the user toggled files in/out after the run).
   /// The pane shows a thin banner at the top with a "rerun" link;
   /// the result body still renders so the user can read it before
   /// deciding to refresh.
   final bool staleScope;
+
   /// Copy callback. `subset == null` means copy everything; a non-null
   /// list copies only those proposals (selection-driven copy).
   final void Function(List<AiMuseProposal>? subset)? onCopy;
@@ -7483,8 +7421,8 @@ class _MusePaneState extends State<_MusePane> {
   /// as belonging to one group rather than four loose cards. `fever`
   /// gets a distinctive glyph and accent treatment so the register
   /// reads as different at a glance.
-  Widget _tierSection(AppTokens t, AiMuseData r, AiMuseIdeaTier tier,
-      String label) {
+  Widget _tierSection(
+      AppTokens t, AiMuseData r, AiMuseIdeaTier tier, String label) {
     final group = r.proposalsForTier(tier);
     if (group.isEmpty) return const SizedBox.shrink();
     final isFever = tier == AiMuseIdeaTier.fever;
@@ -7516,8 +7454,7 @@ class _MusePaneState extends State<_MusePane> {
                       : t.textFaint,
                   fontSize: 10,
                   letterSpacing: 1.4,
-                  fontWeight:
-                      isFever ? FontWeight.w700 : FontWeight.normal,
+                  fontWeight: isFever ? FontWeight.w700 : FontWeight.normal,
                 ),
               ),
             ],
@@ -7688,8 +7625,7 @@ class _MusePaneState extends State<_MusePane> {
                                   : idea.index;
                           _brainstormExpanded = true;
                         }),
-                        builder: (context, hovered) =>
-                            AnimatedDefaultTextStyle(
+                        builder: (context, hovered) => AnimatedDefaultTextStyle(
                           duration: AppMotion.snap,
                           curve: AppMotion.snapCurve,
                           style: TextStyle(
@@ -7990,6 +7926,7 @@ class _CommitReviewPane extends StatelessWidget {
   final VoidCallback onRerun;
   final VoidCallback? onCopy;
   final void Function(String path, String? hunkLabel) onOpenFinding;
+
   /// True when the record's scope key no longer matches the current
   /// file selection. Pane shows a banner at the top with a "rerun"
   /// link; the body still renders so the user can read the existing
@@ -8555,8 +8492,7 @@ class _StaleScopeBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.info_outline,
-              size: 13, color: tokens.stateModified),
+          Icon(Icons.info_outline, size: 13, color: tokens.stateModified),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -9192,7 +9128,7 @@ class _CleanTreeDashboard extends StatefulWidget {
   final AppTokens tokens;
   final RepositoryStatus status;
   final String repoPath;
-  final VoidCallback onRefresh;
+  final Future<void> Function() onRefresh;
 
   const _CleanTreeDashboard({
     required this.tokens,
@@ -9213,7 +9149,17 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
     setState(() => _fetching = true);
     try {
       await fetchRemote(widget.repoPath, prune: true);
-      widget.onRefresh();
+      await widget.onRefresh();
+    } finally {
+      if (mounted) setState(() => _fetching = false);
+    }
+  }
+
+  Future<void> _refreshOnly() async {
+    if (_fetching) return;
+    setState(() => _fetching = true);
+    try {
+      await widget.onRefresh();
     } finally {
       if (mounted) setState(() => _fetching = false);
     }
@@ -9227,6 +9173,14 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
         s.ahead > 0 ? AppSeverityPalette.caution : AppSeverityPalette.safe;
     final behindColor =
         s.behind > 0 ? AppSeverityPalette.caution : AppSeverityPalette.safe;
+    final hasUpstream = s.upstream != null;
+    final actionLabel = _fetching
+        ? hasUpstream
+            ? 'Syncing...'
+            : 'Refreshing...'
+        : hasUpstream
+            ? 'Sync'
+            : 'Refresh';
 
     return Center(
       child: Padding(
@@ -9317,9 +9271,9 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
             const SizedBox(height: 16),
             _GhostActionChip(
               tokens: t,
-              label: _fetching ? 'Checking...' : 'Check remote',
+              label: actionLabel,
               fetching: _fetching,
-              onTap: _fetch,
+              onTap: hasUpstream ? _fetch : _refreshOnly,
             ),
           ],
         ),
@@ -9396,7 +9350,6 @@ class _InlineActionLink extends StatelessWidget {
   }
 }
 
-
 /// Inline answer panel for the "ask the manifold" flow. Lives under
 /// the commit composer; renders the last question + its prose answer
 /// (or error) with a single dismiss affordance. Deliberately spare —
@@ -9425,7 +9378,8 @@ List<_AskCitation> _extractAskCitations(String text) {
     // Guard: require the "path" to actually look like a file — contain
     // a slash, or be at least 4 chars with a dot before the extension.
     // Skips false positives like IP addresses with dotted decimals.
-    if (!path.contains('/') && !path.contains('\\') && path.length < 4) continue;
+    if (!path.contains('/') && !path.contains('\\') && path.length < 4)
+      continue;
     final key = '$path:$line';
     if (!seen.add(key)) continue;
     out.add(_AskCitation(path, line));
@@ -11203,11 +11157,13 @@ class _CommitComposerField extends StatefulWidget {
   final String hintText;
   final bool aiEnabled;
   final bool aiLoading;
+
   /// Transient celebratory flash on completion (~1.5 s). Parent
   /// schedules the auto-clear; the button lights up brightly then
   /// settles into either [aiUnread] (drawer wasn't open when result
   /// landed) or quiet idle.
   final bool aiSuccess;
+
   /// Persistent half-lit visual: there's a terminal record the user
   /// hasn't acknowledged yet AND the corresponding drawer isn't open.
   /// Click → opens the drawer + clears unread. The kind that's
@@ -11219,6 +11175,7 @@ class _CommitComposerField extends StatefulWidget {
   final bool reviewEnabled;
   final bool reviewLoading;
   final bool reviewSuccess;
+
   /// Persistent half-lit visual; see [aiUnread] for the pattern.
   final bool reviewUnread;
   final String? reviewVerdict;
@@ -11228,6 +11185,7 @@ class _CommitComposerField extends StatefulWidget {
   final bool museEnabled;
   final bool museLoading;
   final bool museSuccess;
+
   /// Persistent half-lit visual; see [aiUnread] for the pattern.
   final bool museUnread;
   final String museTooltip;
@@ -11255,6 +11213,7 @@ class _CommitComposerField extends StatefulWidget {
   /// pending or compute in flight). Subtly fades the overlay so the
   /// user can tell the engine is working.
   final bool dreamThinking;
+
   /// Master AI hide — when true, the four AI toolbar buttons (ask,
   /// muse, review, generate-message) are elided from the composer
   /// toolbar entirely. Dream hint, logos pad, and every non-AI piece
@@ -11801,6 +11760,7 @@ class _CommitAiToolbarBtn extends StatefulWidget {
   final bool enabled;
   final bool loading;
   final bool success;
+
   /// Persistent half-lit state for "you have an unread terminal
   /// record on this slot AND the corresponding drawer isn't open."
   /// Visually a softer wash than [success] (which is a transient

@@ -2,16 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/system_browser.dart';
 
 void main() {
-  group('WindowsBrowserException', () {
-    test('exposes the Win32 error code', () {
-      final e = WindowsBrowserException(31, 'no association');
-      expect(e.code, 31);
-      expect(e.message, 'no association');
-      expect(e.toString(), contains('31'));
-      expect(e.toString(), contains('no association'));
-    });
-  });
-
   group('isAllowedBrowserUrl', () {
     test('accepts http and https URLs with authority', () {
       expect(isAllowedBrowserUrl('https://example.com'), isTrue);
@@ -56,16 +46,8 @@ void main() {
     });
   });
 
-  // Most of [openInSystemBrowser] is platform-gated and ends in either
-  // an FFI call (Windows) or a Process.start (macOS/Linux), neither of
-  // which is meaningful to drive from a unit test — both have side
-  // effects we don't want during `flutter test`. The security contract
-  // worth pinning here is that no shell metacharacter pass exists in
-  // the source, which a static read of system_browser.dart confirms:
-  // there is no `runInShell`, no `cmd /c`, no string concatenation
-  // into a shell command line. The Windows path goes through
-  // ShellExecuteW with a UTF-16 string handed directly to Win32; the
-  // macOS/Linux paths use Process.start with argv, where Dart's
-  // engine delivers args without re-parsing through a shell. The
-  // scheme allowlist above is the second layer.
+  // openInSystemBrowser is platform-gated and ends in Process.start
+  // on all platforms, which is not meaningful to drive from a unit
+  // test. The security contract pinned here is the URL scheme
+  // allowlist — only http/https with a valid authority pass through.
 }

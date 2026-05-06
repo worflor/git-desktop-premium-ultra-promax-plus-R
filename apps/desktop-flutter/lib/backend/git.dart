@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'repository_xray.dart';
 import 'dtos.dart';
@@ -151,6 +152,62 @@ const Set<String> _kDedupableSubcommands = {
 /// collapses that burst without changing semantics.
 final Map<String, Future<ProcessResult>> _inflightGitReads = {};
 
+/// Caps concurrent git subprocess spawns. Multiple git processes hitting
+/// the same pack files cause OS-scheduler thrashing and antivirus fan-out
+/// on Windows — telemetry shows 8 simultaneous calls ballooning from
+/// ~200ms each to ~7700ms each. Six still leaves headroom for bursty
+/// probes without dropping back to mostly-serial throughput.
+@visibleForTesting
+const int gitSubprocessMaxConcurrency = 6;
+
+final _gitSubprocessSemaphore =
+    GitSubprocessSemaphore(gitSubprocessMaxConcurrency);
+
+@visibleForTesting
+class GitSubprocessSemaphore {
+  GitSubprocessSemaphore(this._max) {
+    if (_max < 1) {
+      throw ArgumentError.value(_max, 'max', 'must be at least 1');
+    }
+  }
+
+  final int _max;
+  int _active = 0;
+  final _waiters = <Completer<void>>[];
+
+  @visibleForTesting
+  int get activeCount => _active;
+
+  @visibleForTesting
+  int get queuedCount => _waiters.length;
+
+  Future<void> acquire() {
+    if (_active < _max) {
+      _active++;
+      return Future.value();
+    }
+    final c = Completer<void>();
+    _waiters.add(c);
+    return c.future;
+  }
+
+  void release() {
+    if (_active <= 0) {
+      throw StateError('Semaphore released without an active permit.');
+    }
+    _active--;
+    if (_waiters.isEmpty) {
+      return;
+    }
+    // Reserve the freed permit for the oldest waiter before completing it.
+    // The waiter resumes on a later microtask, so counting the reservation
+    // here keeps new acquirers from cutting the queue while still reflecting
+    // the real number of permits currently consumed or promised.
+    _active++;
+    _waiters.removeAt(0).complete();
+  }
+}
+
 String _gitDedupKey(String workingDir, List<String> args) {
   // Length-prefixed concatenation: each field is emitted as
   // `"${length}:${field}"`. Decoding is unambiguous — read the
@@ -199,11 +256,19 @@ String? _gitSubcommandToken(List<String> args) {
     if (!a.startsWith('-')) return a; // positional → this is the subcommand
     // Boolean-only global flags: consume one slot.
     const boolFlags = {
-      '-p', '-P', '--paginate', '--no-pager',
-      '--bare', '--no-replace-objects',
-      '--literal-pathspecs', '--glob-pathspecs',
-      '--noglob-pathspecs', '--icase-pathspecs',
-      '-h', '--help', '--version',
+      '-p',
+      '-P',
+      '--paginate',
+      '--no-pager',
+      '--bare',
+      '--no-replace-objects',
+      '--literal-pathspecs',
+      '--glob-pathspecs',
+      '--noglob-pathspecs',
+      '--icase-pathspecs',
+      '-h',
+      '--help',
+      '--version',
     };
     if (boolFlags.contains(a)) {
       i++;
@@ -211,8 +276,14 @@ String? _gitSubcommandToken(List<String> args) {
     }
     // Value-taking flags when split across two args: `-C <dir>` style.
     const splitFlags = {
-      '-C', '-c', '--exec-path', '--git-dir', '--work-tree',
-      '--namespace', '--super-prefix', '--config-env',
+      '-C',
+      '-c',
+      '--exec-path',
+      '--git-dir',
+      '--work-tree',
+      '--namespace',
+      '--super-prefix',
+      '--config-env',
     };
     if (splitFlags.contains(a)) {
       i += 2;
@@ -265,7 +336,9 @@ Future<ProcessResult> _git(String workingDir, List<String> args) async {
     if (inflight != null) {
       DiagnosticsState.instance.recordCommandLifecycleEvent(
         type: 'coalesced',
-        command: args.isEmpty ? 'git' : 'git.${_gitSubcommandToken(args) ?? args.first}',
+        command: args.isEmpty
+            ? 'git'
+            : 'git.${_gitSubcommandToken(args) ?? args.first}',
         message: 'shared with in-flight identical call',
       );
       return inflight;
@@ -293,19 +366,8 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
     type: 'start',
     command: commandLabel,
   );
+  await _gitSubprocessSemaphore.acquire();
   try {
-    // Raw bytes, then strict-first / lenient-fallback decode. Strict
-    // utf8 would throw on the first malformed byte — and git diffs
-    // routinely emit non-UTF-8 (binary file contents in patch hunks,
-    // legacy-encoded source, the occasional latin-1 working tree) —
-    // so a strict-only pipeline kills flows silently through async
-    // onTap callbacks. But defaulting to lenient loses information we
-    // actually care about elsewhere (paths come back C-quoted as
-    // ASCII, and any non-ASCII in git's own output is a bug worth
-    // hearing about loudly). Resolution: try strict, fall back to
-    // allowMalformed only for the streams that actually need it. 99 %
-    // of calls keep strict guarantees; the 1 % that would have thrown
-    // now survives with U+FFFD in the unrecoverable bytes.
     final raw = await Process.run(
       'git',
       args,
@@ -320,8 +382,8 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
     // before the subcommand (`-C`, `--git-dir`, etc.) don't silently
     // downgrade a strict-eligible command to lenient mode.
     final subcommand = _gitSubcommandToken(args);
-    final strictStdout = subcommand != null &&
-        _kStrictDecodeSubcommands.contains(subcommand);
+    final strictStdout =
+        subcommand != null && _kStrictDecodeSubcommands.contains(subcommand);
     final stdoutOut = _decodeGitBytes(raw.stdout, strict: strictStdout);
     final stderrOut = _decodeGitBytes(raw.stderr, strict: false);
     // Surface any lenient-decode fallback as a diagnostic lifecycle
@@ -332,10 +394,8 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
     // are grep-able for encoding audits.
     if (stdoutOut.lenientFallback || stderrOut.lenientFallback) {
       final streams = [
-        if (stdoutOut.lenientFallback)
-          'stdout@${stdoutOut.malformedAtOffset}',
-        if (stderrOut.lenientFallback)
-          'stderr@${stderrOut.malformedAtOffset}',
+        if (stdoutOut.lenientFallback) 'stdout@${stdoutOut.malformedAtOffset}',
+        if (stderrOut.lenientFallback) 'stderr@${stderrOut.malformedAtOffset}',
       ].join(',');
       DiagnosticsState.instance.recordCommandLifecycleEvent(
         type: 'warning',
@@ -344,8 +404,8 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
         message: 'lenient UTF-8 fallback: $streams',
       );
     }
-    final result = ProcessResult(
-        raw.pid, raw.exitCode, stdoutOut.text, stderrOut.text);
+    final result =
+        ProcessResult(raw.pid, raw.exitCode, stdoutOut.text, stderrOut.text);
     stopwatch.stop();
     final elapsedMs = stopwatch.elapsedMicroseconds / 1000;
     final ok = result.exitCode == 0;
@@ -388,6 +448,8 @@ Future<ProcessResult> _gitRaw(String workingDir, List<String> args) async {
       ),
     );
     rethrow;
+  } finally {
+    _gitSubprocessSemaphore.release();
   }
 }
 
@@ -522,8 +584,8 @@ Future<GitResult<RepositoryStatus>> getRepositoryStatus(String repo) async {
         files.add(RepositoryStatusFile(
           path: path,
           staged: canonicalGitStatusCode('', stagedSlot: true),
-          unstaged:
-              canonicalGitStatusCode(first == 0x3f ? '?' : '!', stagedSlot: false),
+          unstaged: canonicalGitStatusCode(first == 0x3f ? '?' : '!',
+              stagedSlot: false),
         ));
       }
     }
@@ -1461,15 +1523,17 @@ Future<List<BranchInfo>> detectSquashMergedBranches(
   // on the slowest probe in their batch) and order-preserving
   // because we write into `flags` by the original index.
   var next = 0;
-  final workers = math.min(_squashProbeMaxConcurrency, branches.length);
+  final workers = math.min(squashProbeMaxConcurrency, branches.length);
   await Future.wait(
-    List.generate(workers, (_) => Future(() async {
-      while (true) {
-        final i = next++;
-        if (i >= branches.length) return;
-        flags[i] = await probe(branches[i]);
-      }
-    })),
+    List.generate(
+        workers,
+        (_) => Future(() async {
+              while (true) {
+                final i = next++;
+                if (i >= branches.length) return;
+                flags[i] = await probe(branches[i]);
+              }
+            })),
   );
   return [
     for (var i = 0; i < branches.length; i++)
@@ -1478,14 +1542,11 @@ Future<List<BranchInfo>> detectSquashMergedBranches(
 }
 
 /// Cap on the number of `git cherry` probes we'll run concurrently in
-/// [detectSquashMergedBranches]. Each probe is a full process spawn,
-/// so unbounded fan-out has the same wall-clock as a small pool on a
-/// repo of any meaningful size — the bottleneck is the OS process
-/// budget, not Dart's scheduler. 8 workers keeps the fork rate
-/// modest while still completing a 50-branch repo in roughly
-/// 50/8 ≈ 7 batches.
-const int _squashProbeMaxConcurrency = 8;
-
+/// [detectSquashMergedBranches]. Keep this below the global git
+/// subprocess cap so background squash detection cannot monopolize every
+/// permit needed by UI-critical status/diff probes.
+@visibleForTesting
+const int squashProbeMaxConcurrency = gitSubprocessMaxConcurrency - 1;
 
 Future<GitResult<void>> createBranch(String repo, String name,
     {String? from}) async {
@@ -1944,9 +2005,8 @@ Future<GitResult<FileSignals>> scanFileSignals(
       curEmail = pipe > 0 ? payload.substring(0, pipe) : payload;
       final tsStr = pipe > 0 ? payload.substring(pipe + 1) : '';
       final ts = int.tryParse(tsStr);
-      curAt = ts != null
-          ? DateTime.fromMillisecondsSinceEpoch(ts * 1000)
-          : null;
+      curAt =
+          ts != null ? DateTime.fromMillisecondsSinceEpoch(ts * 1000) : null;
       curFiles = <String>{};
       continue;
     }
@@ -2290,10 +2350,67 @@ Future<GitResult<SyncData>> syncRemote(
   return fetchRemote(repo);
 }
 
+Future<GitResult<String>> archiveRepository(
+    String repoPath, String outputPath) async {
+  try {
+    final r = await _git(
+        repoPath, ['archive', '--format=zip', '--output=$outputPath', 'HEAD']);
+    if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+    return GitResult.ok(outputPath);
+  } catch (error) {
+    return GitResult.err(error.toString());
+  }
+}
+
+Future<GitResult<String>> templateFromRepository(
+    String sourceRepo, String targetPath) async {
+  try {
+    final dir = Directory(targetPath);
+    if (await dir.exists()) {
+      return GitResult.err('Target directory already exists.');
+    }
+    final clone =
+        await _git(sourceRepo, ['clone', '--depth', '1', sourceRepo, targetPath]);
+    if (clone.exitCode != 0) {
+      return GitResult.err(clone.stderr.toString().trim());
+    }
+    final gitDir = Directory(p.join(targetPath, '.git'));
+    if (await gitDir.exists()) {
+      await gitDir.delete(recursive: true);
+    }
+    final init = await _git(targetPath, ['init']);
+    if (init.exitCode != 0) {
+      return GitResult.err(init.stderr.toString().trim());
+    }
+    final add = await _git(targetPath, ['add', '-A']);
+    if (add.exitCode != 0) {
+      return GitResult.err(_gitStepError('stage template files', add));
+    }
+    final commit = await _git(targetPath, ['commit', '-m', 'Initial commit']);
+    if (commit.exitCode != 0) {
+      return GitResult.err(_gitStepError('commit template repository', commit));
+    }
+    return GitResult.ok(targetPath);
+  } catch (error) {
+    return GitResult.err(error.toString());
+  }
+}
+
+String _gitStepError(String action, ProcessResult result) {
+  final stderr = result.stderr.toString().trim();
+  final stdout = result.stdout.toString().trim();
+  final detail = stderr.isNotEmpty
+      ? stderr
+      : stdout.isNotEmpty
+          ? stdout
+          : 'git exited with code ${result.exitCode}';
+  return 'Failed to $action: $detail';
+}
+
 Future<GitResult<String>> cloneRepository(String url, String targetPath) async {
   try {
-    final r = await Process.run('git', ['clone', url, targetPath],
-        stdoutEncoding: utf8, stderrEncoding: utf8);
+    final parent = p.dirname(targetPath);
+    final r = await _git(parent, ['clone', url, targetPath]);
     if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
     return GitResult.ok(targetPath);
   } catch (error) {
@@ -2316,38 +2433,101 @@ Future<GitResult<String>> initRepository(String path) async {
 Future<GitResult<void>> startInteractiveRebase(
     String repo, List<RebaseTodoEntry> entries) async {
   // Build the todo list content
-  final todo =
-      entries.map((e) => '${e.action} ${e.commitHash} ${e.subject}').join('\n');
+  final todo = interactiveRebaseTodoForTesting(entries);
 
-  // Write a temp file for GIT_SEQUENCE_EDITOR to inject
-  final tmpFile = File(
-      '${Directory.systemTemp.path}/git_rebase_todo_${DateTime.now().millisecondsSinceEpoch}.txt');
+  final tmpDir = await Directory.systemTemp.createTemp('git-rebase-editor-');
+  final tmpFile = File('${tmpDir.path}${Platform.pathSeparator}todo.txt');
   await tmpFile.writeAsString(todo);
 
-  // Use a sequence editor that just copies our pre-built todo
+  // Git invokes GIT_SEQUENCE_EDITOR as: `<editor> <todo-file>`.
+  // Use a tiny script so Windows can read the todo path as %1 inside
+  // batch context; inline `cmd /c ... %1` treats %1 as literal text.
+  final editorScript = File(
+    '${tmpDir.path}${Platform.pathSeparator}sequence-editor'
+    '${Platform.isWindows ? '.cmd' : '.sh'}',
+  );
+  if (Platform.isWindows) {
+    await editorScript.writeAsString(windowsSequenceEditorScriptForTesting(
+      tmpFile.path,
+    ));
+  } else {
+    await editorScript.writeAsString(unixSequenceEditorScriptForTesting(
+      tmpFile.path,
+    ));
+  }
   final sequenceEditor = Platform.isWindows
-      ? 'cmd /c copy /y "${tmpFile.path.replaceAll('/', '\\')}"'
-      : 'cp "${tmpFile.path}"';
+      ? windowsSequenceEditorCommandForTesting(editorScript.path)
+      : unixSequenceEditorCommandForTesting(editorScript.path);
 
   final ontoRef = entries.isNotEmpty
       ? '${entries.last.commitHash}~1'
       : 'HEAD~${entries.length}';
-  final r = await Process.run(
-    'git',
-    ['rebase', '-i', ontoRef],
-    workingDirectory: repo,
-    environment: {
-      ...Platform.environment,
-      'GIT_SEQUENCE_EDITOR': '$sequenceEditor %1',
-    },
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  );
-
-  await tmpFile.delete().catchError((_) => tmpFile);
+  final ProcessResult r;
+  try {
+    r = await Process.run(
+      'git',
+      ['rebase', '-i', ontoRef],
+      workingDirectory: repo,
+      environment: {
+        ...Platform.environment,
+        'GIT_SEQUENCE_EDITOR': sequenceEditor,
+      },
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+  } finally {
+    await tmpDir.delete(recursive: true).catchError((_) => tmpDir);
+  }
 
   if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
   return GitResult.ok(null);
+}
+
+String _shellSingleQuote(String value) {
+  return "'${value.replaceAll("'", r"'\''")}'";
+}
+
+String _windowsBatchDoubleQuotedLiteral(String value) => value
+    .replaceAll('/', '\\')
+    .replaceAll('^', '^^')
+    .replaceAll('%', '%%')
+    .replaceAll('"', '""');
+
+String _windowsCmdDoubleQuotedLiteral(String value) => value
+    .replaceAll('/', '\\')
+    .replaceAll('^', '^^')
+    .replaceAll('%', '^%')
+    .replaceAll('"', '""');
+
+@visibleForTesting
+String interactiveRebaseTodoForTesting(List<RebaseTodoEntry> entries) {
+  if (entries.isEmpty) return '';
+  return '${entries.map((e) => '${e.action} ${e.commitHash} ${e.subject}').join('\n')}\n';
+}
+
+@visibleForTesting
+String windowsSequenceEditorScriptForTesting(String todoPath) {
+  final escapedTodoPath = _windowsBatchDoubleQuotedLiteral(todoPath);
+  return '@echo off\r\n'
+      'copy /y "$escapedTodoPath" "%~1" >NUL\r\n'
+      'exit /b %ERRORLEVEL%\r\n';
+}
+
+@visibleForTesting
+String windowsSequenceEditorCommandForTesting(String scriptPath) {
+  final escapedScriptPath = _windowsCmdDoubleQuotedLiteral(scriptPath);
+  return 'cmd.exe /d /c call "$escapedScriptPath"';
+}
+
+@visibleForTesting
+String unixSequenceEditorScriptForTesting(String todoPath) {
+  return '#!/bin/sh\n'
+      'cp ${_shellSingleQuote(todoPath)} "\$1"\n';
+}
+
+@visibleForTesting
+String unixSequenceEditorCommandForTesting(String scriptPath) {
+  return 'sh ${_shellSingleQuote(scriptPath)}';
 }
 
 Future<GitResult<List<StashEntryData>>> listStashes(String repo) async {

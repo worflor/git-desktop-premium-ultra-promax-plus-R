@@ -17,6 +17,7 @@ import 'engram_text_kspace.dart';
 import 'logos_vis_events.dart';
 import 'git.dart';
 import 'git_result.dart';
+import 'process_utils.dart';
 import 'package:meta/meta.dart';
 
 import 'ai_context_engine.dart';
@@ -8564,7 +8565,7 @@ Future<_CommandResult?> _runCommandWithTimeout(
     try {
       exitCode = await process.exitCode.timeout(timeout);
     } on TimeoutException {
-      process.kill();
+      await killProcessTree(process, timeout: defaultProcessKillTimeout);
       return null;
     }
 
@@ -8667,7 +8668,10 @@ Future<_CommandResult?> _runObservedProcess({
     try {
       exitCode = await process.exitCode.timeout(timeout);
     } on TimeoutException {
-      process.kill();
+      final killed = await killProcessTree(
+        process,
+        timeout: defaultProcessKillTimeout,
+      );
       stopwatch.stop();
       final elapsedMs = stopwatch.elapsedMicroseconds / 1000;
       DiagnosticsState.instance.recordCommandLifecycleEvent(
@@ -8675,7 +8679,9 @@ Future<_CommandResult?> _runObservedProcess({
         command: commandLabel,
         durationMs: elapsedMs,
         errorCode: '$scope.timeout',
-        message: 'Process timed out.',
+        message: killed
+            ? 'Process timed out and was terminated.'
+            : 'Process timed out; termination was not confirmed.',
       );
       unawaited(
         DiagnosticsState.instance.recordCommandLatency(
@@ -8769,8 +8775,12 @@ const _geminiApiClientId =
     '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
 const _geminiApiClientSecret = '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';
 
-// Shared HTTP client for all Gemini API calls (connection pooling).
-final HttpClient _geminiApiHttpClient = HttpClient();
+// Shared HTTP client for all Gemini API calls. Short idle timeout
+// prevents stale keep-alive connections — the server may close its
+// end before Dart's default 15s timeout, causing "Connection closed
+// before full header was received" on the next reuse attempt.
+final HttpClient _geminiApiHttpClient = HttpClient()
+  ..idleTimeout = const Duration(seconds: 5);
 
 // Cached state for the Gemini API session.
 String? _geminiApiAccessToken;
@@ -8921,33 +8931,56 @@ Future<({String? text, String? error, int inputTokens, int outputTokens})>
 
   final model = _geminiApiModelName(modelAlias);
 
-  try {
-    final request = await _geminiApiHttpClient.postUrl(
-      Uri.parse('$_geminiApiEndpoint:generateContent'),
-    );
-    request.headers.set('Authorization', 'Bearer $token');
-    request.headers.contentType = ContentType.json;
-    request.write(jsonEncode({
-      'model': model,
-      'project': project,
-      'user_prompt_id': 'desktop-${DateTime.now().millisecondsSinceEpoch}',
-      'request': {
-        'contents': [
-          {
-            'role': 'user',
-            'parts': [
-              {'text': prompt},
-            ],
-          },
-        ],
-        'generationConfig': {
-          'temperature': 0.3,
+  final payload = jsonEncode({
+    'model': model,
+    'project': project,
+    'user_prompt_id': 'desktop-${DateTime.now().millisecondsSinceEpoch}',
+    'request': {
+      'contents': [
+        {
+          'role': 'user',
+          'parts': [
+            {'text': prompt},
+          ],
         },
+      ],
+      'generationConfig': {
+        'temperature': 0.3,
       },
-    }));
+    },
+  });
 
-    final response = await request.close();
-    final body = await response.transform(utf8.decoder).join();
+  // Retry once on stale keep-alive connections. Dart's HttpClient
+  // can reuse a connection the server already closed, producing
+  // "Connection closed before full header was received."
+  HttpClientResponse? response;
+  String? body;
+  for (var attempt = 0; attempt < 2; attempt++) {
+    try {
+      final request = await _geminiApiHttpClient.postUrl(
+        Uri.parse('$_geminiApiEndpoint:generateContent'),
+      );
+      request.headers.set('Authorization', 'Bearer $token');
+      request.headers.contentType = ContentType.json;
+      request.persistentConnection = false;
+      request.write(payload);
+      response = await request.close();
+      body = await response.transform(utf8.decoder).join();
+      break;
+    } on HttpException {
+      if (attempt == 1) rethrow;
+    }
+  }
+
+  try {
+    if (response == null || body == null) {
+      return (
+        text: null,
+        error: 'Gemini API connection failed.',
+        inputTokens: 0,
+        outputTokens: 0
+      );
+    }
 
     if (response.statusCode != 200) {
       // Try to extract a meaningful error message.

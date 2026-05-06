@@ -370,7 +370,10 @@ class WorktreeState extends ChangeNotifier {
     }
   }
 
-  String _normalize(String path) => path.replaceAll('\\', '/').toLowerCase();
+  String _normalize(String path) {
+    final p = path.replaceAll('\\', '/');
+    return Platform.isLinux ? p : p.toLowerCase();
+  }
 
   // Windows reserved device names. Case-insensitive. A filename is reserved
   // if its stem (part before the first dot) matches any of these — so
