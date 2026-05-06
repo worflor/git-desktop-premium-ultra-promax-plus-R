@@ -12,7 +12,7 @@
 
 import 'dart:convert';
 
-import 'gh.dart' show IssueSummary, IssueDetail, GhComment;
+import 'remote_types.dart';
 
 /// One comment on a local issue. Same shape as DeskThreadEntry minus
 /// the verdict (issues don't have reviews).
@@ -41,7 +41,7 @@ class DeskIssueComment {
             DateTime.fromMillisecondsSinceEpoch(0),
       );
 
-  GhComment asComment() => GhComment(
+  RemoteComment asComment() => RemoteComment(
         authorLogin: author,
         body: body,
         createdAt: at,

@@ -11,8 +11,7 @@
 
 import 'dart:convert';
 
-import 'gh.dart' show PrFile, PrReviewer, GhComment, PullRequestSummary,
-    PullRequestDetail;
+import 'remote_types.dart';
 import '../features/diff/diff_models.dart';
 
 /// One entry in a desk PR's inline thread. Carries a plain comment
@@ -49,9 +48,9 @@ class DeskThreadEntry {
         verdict: (j['verdict'] as String? ?? '').toUpperCase(),
       );
 
-  /// Render as a `GhComment` so the existing comment-rendering code
+  /// Render as a `RemoteComment` so the existing comment-rendering code
   /// works unchanged. Reviews get a `[verdict]` prefix on the body.
-  GhComment asComment() => GhComment(
+  RemoteComment asComment() => RemoteComment(
         authorLogin: author,
         body: verdict.isEmpty ? body : '[${verdict.toLowerCase()}] $body',
         createdAt: at,

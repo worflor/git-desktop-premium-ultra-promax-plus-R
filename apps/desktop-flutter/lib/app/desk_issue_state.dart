@@ -259,7 +259,7 @@ class DeskIssueState extends ChangeNotifier {
   }
 
   //
-  // All methods resolve the forge via detectProvider() and use the
+  // All methods resolve the forge via detectIssueProvider() and use the
   // RemoteIssueProvider interface — no GitHub-specific calls here.
   // Local issues (DeskIssue git refs) are unaffected and always work.
 
@@ -289,7 +289,7 @@ class DeskIssueState extends ChangeNotifier {
         return 'already linked to remote #${issue.remoteNumber}';
       }
 
-      final provider = await detectProvider(main);
+      final provider = await detectIssueProvider(main);
       final status = await provider.status(main);
       if (!status.available) return status.reason ?? 'remote unavailable';
 
@@ -375,7 +375,7 @@ class DeskIssueState extends ChangeNotifier {
     if (issue == null) return 'issue $id not found';
     if (issue.remoteNumber == null) return 'issue $id has no remote link';
 
-    final provider = await detectProvider(main);
+    final provider = await detectIssueProvider(main);
     final status = await provider.status(main);
     if (!status.available) return status.reason ?? 'remote unavailable';
 
@@ -425,7 +425,7 @@ class DeskIssueState extends ChangeNotifier {
       if (issue == null) return 'issue $id not found';
       if (issue.remoteNumber == null) return 'issue $id has no remote link';
 
-      final provider = await detectProvider(main);
+      final provider = await detectIssueProvider(main);
       final status = await provider.status(main);
       if (!status.available) return status.reason ?? 'remote unavailable';
 

@@ -6,8 +6,8 @@
 // be mounted and without knowing which forge hosts the repo.
 //
 // All forge-specific logic lives in RemoteIssueProvider implementations.
-// This class is forge-agnostic: it calls detectProvider() on each refresh
-// and delegates. detectProvider() is a single `git remote get-url` spawn —
+// This class is forge-agnostic: it calls detectIssueProvider() on each refresh
+// and delegates. detectIssueProvider() is a single `git remote get-url` spawn —
 // cheap enough to run per refresh without caching.
 //
 // available=false is a silent no-op (local repo, unknown forge, unauthed
@@ -71,10 +71,10 @@ class RemoteIssueCacheState extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Detect which forge hosts this repo. detectProvider() is a single
+      // Detect which forge hosts this repo. detectIssueProvider() is a single
       // `git remote get-url origin` spawn — cheap and re-runs on each
       // refresh so remote-URL changes are picked up automatically.
-      final provider = await detectProvider(repoPath);
+      final provider = await detectIssueProvider(repoPath);
       if (id != _requestId) return;
 
       final providerStatus = await provider.status(repoPath);

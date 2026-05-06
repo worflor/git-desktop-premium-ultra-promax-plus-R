@@ -8944,7 +8944,7 @@ class _CheckLine extends StatelessWidget {
 }
 
 class _CommentBlock extends StatelessWidget {
-  final GhComment comment;
+  final RemoteComment comment;
   const _CommentBlock({required this.comment});
 
   /// Pre-process before handing to [MarkdownBody]:
@@ -9413,7 +9413,7 @@ class _IssueRowState extends State<_IssueRow> {
                                     _SectionLabel('DESCRIPTION'),
                                     const SizedBox(height: 6),
                                     _CommentBlock(
-                                      comment: GhComment(
+                                      comment: RemoteComment(
                                         authorLogin: widget.issue.authorLogin,
                                         body: widget.detail!.body,
                                         createdAt: widget.issue.updatedAt,

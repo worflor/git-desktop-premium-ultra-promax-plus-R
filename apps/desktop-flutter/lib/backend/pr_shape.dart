@@ -26,7 +26,7 @@ import 'dart:collection';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'gh.dart';
+import 'remote_types.dart';
 import 'logos_git.dart';
 
 /// Single Logos label used for PR-shape diffusion. Per-axis attribution

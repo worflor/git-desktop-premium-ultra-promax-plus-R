@@ -14,7 +14,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show compute;
 
 import 'desk_pr.dart';
-import 'gh.dart';
+import 'remote_types.dart';
 import 'git_result.dart';
 import '../features/diff/diff_models.dart';
 
