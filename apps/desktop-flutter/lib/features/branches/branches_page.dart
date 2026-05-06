@@ -23,8 +23,11 @@ import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/git.dart';
 import '../../backend/ai.dart';
-import '../../backend/gh.dart';
+import '../../backend/gh.dart' show formatPrAsPatch;
 import '../../backend/git_result.dart';
+import '../../backend/remote_types.dart';
+import '../../backend/remote_pr_provider.dart';
+import '../../backend/remote_issue_provider.dart';
 import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
 import '../../backend/logos_dream.dart';
@@ -306,10 +309,9 @@ class _BranchesPageState extends State<BranchesPage> {
   // Per-issue detail cache.
   final Map<int, IssueDetail> _issueDetails = {};
   final Set<int> _issueDetailsLoading = {};
-  // Cached gh availability — probed once per repo open.
-  GhStatus? _ghStatus;
-  // Logged-in user's GitHub login. Used to evaluate the MINE filter and
-  // to skip the "assign me" action for issues you're already assigned to.
+  RemotePrProvider? _prProvider;
+  RemoteIssueProvider? _issueProvider;
+  RemoteProviderStatus? _remoteStatus;
   String _viewerLogin = '';
 
   // Filter state per lens. Empty = no filter; presence of a name = active.
@@ -678,19 +680,23 @@ class _BranchesPageState extends State<BranchesPage> {
     setState(() => _branches = updated);
   }
 
-  /// Eagerly populate PR + Issue lists AND per-row details, in the
-  /// background. Cheap to call when a lens is already loaded — the
-  /// inner `_ensure*` checks short-circuit on cached entries.
-  Future<void> _prefetchAll(String repo) async {
-    // Probe gh once. If unavailable, skip the whole prefetch — every
-    // gh call would return the same "not installed/authed" state and
-    // the user would see those notices when they switched lenses
-    // anyway.
-    _ghStatus ??= await ghStatus();
-    if (!_ghStatus!.usable) return;
-    if (_viewerLogin.isEmpty) {
-      _viewerLogin = await whoami();
+  Future<void> _ensureProviders(String repoPath) async {
+    if (_prProvider != null) return;
+    final results = await Future.wait([
+      detectPrProvider(repoPath),
+      detectIssueProvider(repoPath),
+    ]);
+    _prProvider = results[0] as RemotePrProvider;
+    _issueProvider = results[1] as RemoteIssueProvider;
+    _remoteStatus = await _prProvider!.status(repoPath);
+    if (_remoteStatus!.available && _viewerLogin.isEmpty) {
+      _viewerLogin = await _prProvider!.whoami();
     }
+  }
+
+  Future<void> _prefetchAll(String repo) async {
+    await _ensureProviders(repo);
+    if (_remoteStatus == null || !_remoteStatus!.available) return;
     // Run the two list fetches in parallel — they're independent.
     await Future.wait([
       if (_prs == null && !_prsLoading) _fetchPullRequests(repo),
@@ -955,8 +961,8 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _fetchPullRequests(String repoPath) async {
-    _ghStatus ??= await ghStatus();
-    if (!_ghStatus!.usable) {
+    await _ensureProviders(repoPath);
+    if (_remoteStatus == null || !_remoteStatus!.available) {
       if (!mounted) return;
       setState(() {
         _prs = const [];
@@ -964,14 +970,11 @@ class _BranchesPageState extends State<BranchesPage> {
       });
       return;
     }
-    if (_viewerLogin.isEmpty) {
-      _viewerLogin = await whoami();
-    }
     setState(() {
       _prsLoading = true;
       _prsError = null;
     });
-    final r = await listPullRequests(repoPath);
+    final r = await _prProvider!.listPullRequests(repoPath);
     if (!mounted) return;
     setState(() {
       _prsLoading = false;
@@ -994,8 +997,8 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _fetchIssues(String repoPath) async {
-    _ghStatus ??= await ghStatus();
-    if (!_ghStatus!.usable) {
+    await _ensureProviders(repoPath);
+    if (_remoteStatus == null || !_remoteStatus!.available) {
       if (!mounted) return;
       setState(() {
         _issues = const [];
@@ -1007,7 +1010,7 @@ class _BranchesPageState extends State<BranchesPage> {
       _issuesLoading = true;
       _issuesError = null;
     });
-    final r = await listIssues(repoPath);
+    final r = await _issueProvider!.listIssues(repoPath);
     if (!mounted) return;
     setState(() {
       _issuesLoading = false;
@@ -1850,7 +1853,7 @@ class _BranchesPageState extends State<BranchesPage> {
       return;
     }
     setState(() => _prChecksLoading.add(prNumber));
-    final r = await listChecks(repoPath, prNumber);
+    final r = await _prProvider!.listChecks(repoPath, prNumber);
     if (!mounted) return;
     setState(() {
       _prChecksLoading.remove(prNumber);
@@ -1869,7 +1872,7 @@ class _BranchesPageState extends State<BranchesPage> {
   /// Files in [prFiles] that the user currently has uncommitted work in
   /// (staged or unstaged). Pure local computation — answers "will
   /// merging this PR collide with my work?" before the merge button is
-  /// pressed. No GitHub round-trip; uses the working-tree status that
+  /// pressed. No remote round-trip; uses the working-tree status that
   /// `RepositoryState` already keeps warm.
   Set<String> _conflictingPaths(
     List<PrFile> prFiles,
@@ -2447,7 +2450,7 @@ class _BranchesPageState extends State<BranchesPage> {
       return;
     }
     setState(() => _prDetailsLoading.add(prNumber));
-    final r = await pullRequestDetail(repoPath, prNumber, includeDiff: full);
+    final r = await _prProvider!.getPullRequestDetail(repoPath, prNumber, includeDiff: full);
     if (!mounted) return;
     setState(() {
       _prDetailsLoading.remove(prNumber);
@@ -2508,7 +2511,7 @@ class _BranchesPageState extends State<BranchesPage> {
       return;
     }
     setState(() => _issueDetailsLoading.add(issueNumber));
-    final r = await issueDetail(repoPath, issueNumber);
+    final r = await _issueProvider!.getIssueDetail(repoPath, issueNumber);
     if (!mounted) return;
     setState(() {
       _issueDetailsLoading.remove(issueNumber);
@@ -2559,7 +2562,7 @@ class _BranchesPageState extends State<BranchesPage> {
   /// remove because the user may want to see "just merged" feedback.
   /// Next manual ✦ refresh trims it.
   Future<void> _refreshPrSummary(String repoPath, int number) async {
-    final r = await getPullRequestSummary(repoPath, number);
+    final r = await _prProvider!.getPullRequest(repoPath, number);
     if (!mounted || !r.ok || _prs == null) return;
     final updated = r.data!;
     final i = _prs!.indexWhere((p) => p.number == number);
@@ -2597,7 +2600,7 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Future<void> _refreshIssueSummary(String repoPath, int number) async {
-    final r = await getIssueSummary(repoPath, number);
+    final r = await _issueProvider!.getIssue(repoPath, number);
     if (!mounted || !r.ok || _issues == null) return;
     final updated = r.data!;
     final i = _issues!.indexWhere((it) => it.number == number);
@@ -2609,7 +2612,7 @@ class _BranchesPageState extends State<BranchesPage> {
 
   Future<void> _checkoutPr(String repoPath, int number) async {
     await _runPrAction(
-        repoPath, number, () => checkoutPullRequest(repoPath, number),
+        repoPath, number, () => _prProvider!.checkout(repoPath, number),
         refreshDetail: false);
     if (!mounted) return;
     // Spatial migration cue: pull a fresh branches list so the new
@@ -2682,14 +2685,14 @@ class _BranchesPageState extends State<BranchesPage> {
         }
         if (key == LogicalKeyboardKey.keyA) {
           _runPrAction(repoPath, pr.number,
-              () => submitPrReview(repoPath, pr.number, event: 'approve'));
+              () => _prProvider!.submitReview(repoPath, pr.number, event: 'approve'));
           return KeyEventResult.handled;
         }
         if (key == LogicalKeyboardKey.keyR) {
           _runPrAction(
               repoPath,
               pr.number,
-              () => submitPrReview(repoPath, pr.number,
+              () => _prProvider!.submitReview(repoPath, pr.number,
                   event: 'request-changes',
                   body: '(requested changes from Manifold)'));
           return KeyEventResult.handled;
@@ -2790,9 +2793,8 @@ class _BranchesPageState extends State<BranchesPage> {
       _actionError = null;
       _actionRunning = false;
       // Drop lens caches on repo switch so the new repo doesn't briefly
-      // show the previous repo's PRs/issues. ghStatus is also re-probed
-      // because a repo without a remote may not work even when gh is
-      // installed and authed for the global user.
+      // show the previous repo's PRs/issues. Providers are re-detected
+      // because a different repo may use a different forge.
       _prs = null;
       _issues = null;
       _prChecks.clear();
@@ -2823,7 +2825,9 @@ class _BranchesPageState extends State<BranchesPage> {
       _issueSearch = '';
       _prSearchCtrl.clear();
       _issueSearchCtrl.clear();
-      _ghStatus = null;
+      _prProvider = null;
+      _issueProvider = null;
+      _remoteStatus = null;
       _viewerLogin = '';
       _prsError = null;
       _issuesError = null;
@@ -3200,7 +3204,7 @@ class _BranchesPageState extends State<BranchesPage> {
     } else {
       _prWarmSweepToken = null;
     }
-    final status = _ghStatus;
+    final status = _remoteStatus;
     if (_prsLoading && (_prs == null || _prs!.isEmpty) && deskPrs.isEmpty) {
       return _LensLoadingNotice(label: 'Reading pull requests…');
     }
@@ -3402,8 +3406,8 @@ class _BranchesPageState extends State<BranchesPage> {
     List<IssueSummary> filtered,
     List<IssueSummary> all,
   ) {
-    if (_ghStatus != null && !_ghStatus!.usable) {
-      return _GhMissingNotice(status: _ghStatus!);
+    if (_remoteStatus != null && !_remoteStatus!.available) {
+      return _RemoteMissingNotice(status: _remoteStatus!);
     }
     if (_issuesLoading && (_issues == null || _issues!.isEmpty)) {
       return _LensLoadingNotice(label: 'reading issues…');
@@ -3653,7 +3657,7 @@ class _BranchesPageState extends State<BranchesPage> {
           : (event, body) => _runPrAction(
               repoPath,
               pr.number,
-              () => submitPrReview(repoPath, pr.number,
+              () => _prProvider!.submitReview(repoPath, pr.number,
                   event: event, body: body)),
       onCheckout: isLocalPr
           ? () => _checkoutLocalPr(pr.headRef)
@@ -3682,13 +3686,13 @@ class _BranchesPageState extends State<BranchesPage> {
           : (method, deleteBranch) => _runPrAction(
               repoPath,
               pr.number,
-              () => mergePullRequest(repoPath, pr.number,
+              () => _prProvider!.merge(repoPath, pr.number,
                   method: method, deleteBranch: deleteBranch)),
       onSecondaryTap: (pos) => _showPrContextMenu(context, pos, pr, repoPath),
     );
   }
 
-  /// Map a GitHub-style review event ('APPROVE' / 'REQUEST_CHANGES'
+  /// Map a review event ('APPROVE' / 'REQUEST_CHANGES'
   /// / 'COMMENT') to a DeskPr verdict.
   String _verdictFromEvent(String event) {
     switch (event.toUpperCase()) {
@@ -4220,7 +4224,7 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   Widget _buildIssuesBody(AppTokens t, String repoPath) {
-    final status = _ghStatus;
+    final status = _remoteStatus;
     final deskIssues = context.watch<DeskIssueState>().all;
     // Track DeskPrState so issue rows rebuild when a desk is promoted
     // to a local PR OR when any PR's linked-issues / verdict / state
@@ -4381,19 +4385,19 @@ class _BranchesPageState extends State<BranchesPage> {
           // identity in the system. No-op rather than error.
           ? () {}
           : () => _runIssueAction(repoPath, issue.number,
-              () => assignSelfToIssue(repoPath, issue.number)),
+              () => _issueProvider!.assignSelf(repoPath, issue.number)),
       onClose: isLocal
           ? () => _closeLocalIssue(repoPath, issue.number)
           : () => _runIssueAction(
-              repoPath, issue.number, () => closeIssue(repoPath, issue.number)),
+              repoPath, issue.number, () => _issueProvider!.closeIssue(repoPath, issue.number)),
       onComment: isLocal
           ? (body) => _commentOnLocalIssue(repoPath, issue.number, body)
           : (body) => _runIssueAction(repoPath, issue.number,
-              () => commentOnIssue(repoPath, issue.number, body)),
+              () => _issueProvider!.addComment(repoPath, issue.number, body)),
       onAddLabel: isLocal
           ? (label) => _addLabelToLocalIssue(repoPath, issue.number, label)
           : (label) => _runIssueAction(repoPath, issue.number,
-              () => addIssueLabel(repoPath, issue.number, label)),
+              () => _issueProvider!.addLabel(repoPath, issue.number, label)),
       onSecondaryTap: (pos) =>
           _showIssueContextMenu(context, pos, issue, isLocal, repoPath),
     );
@@ -9647,18 +9651,15 @@ class _LensEmptyNotice extends StatelessWidget {
   }
 }
 
-class _GhMissingNotice extends StatelessWidget {
-  final GhStatus status;
-  const _GhMissingNotice({required this.status});
+class _RemoteMissingNotice extends StatelessWidget {
+  final RemoteProviderStatus status;
+  const _RemoteMissingNotice({required this.status});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final headline =
-        status.installed ? 'gh CLI not authenticated' : 'gh CLI not installed';
-    final hint = status.installed
-        ? 'Run `gh auth login` in a terminal, then refresh this lens.'
-        : 'Install from cli.github.com, then `gh auth login`.';
+    final headline = 'Remote provider unavailable';
+    final hint = status.reason ?? 'No recognised remote host for this repo.';
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
