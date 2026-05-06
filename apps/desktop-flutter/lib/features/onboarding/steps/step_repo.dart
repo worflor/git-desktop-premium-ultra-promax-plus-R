@@ -156,7 +156,7 @@ class _RepoStepPageState extends State<RepoStepPage> {
                   icon: Icons.cloud_download_outlined,
                   title: 'Clone',
                   subtitle: 'from URL',
-                  hint: 'paste a GitHub link',
+                  hint: 'paste a remote URL',
                   expanded: _expanded == _DoorId.clone,
                   compressed: _expanded != null && _expanded != _DoorId.clone,
                   onTap: _busy
@@ -420,7 +420,7 @@ class _CloneForm extends StatelessWidget {
           label: 'Repository URL',
           child: AppTextField(
             controller: urlController,
-            hintText: 'git@github.com:you/repo.git',
+            hintText: 'https://host.com/you/repo.git',
             enabled: !busy,
             height: 32,
             fontSize: 11.5,
