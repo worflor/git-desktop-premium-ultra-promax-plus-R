@@ -134,9 +134,8 @@ _GLayout _buildLayout(
   /// alongside the regular off-trunk nodes. They occupy the FIRST
   /// rows of the output (rows 0..M-1) because they're temporally
   /// newer than HEAD — leftmost positions in this newest-on-the-left
-  /// timeline. The caller is responsible for trimming the oldest
-  /// real commits from [entries] to keep the visible budget constant
-  /// (so adding previews doesn't widen the rail).
+  /// timeline. The full real commit list is preserved (no trimming);
+  /// the rail grows to accommodate both lanes.
   List<CommitHistoryEntry> previewCommits = const [],
 }) {
   final visibleHashes = entries.map((e) => e.commitHash).toSet();
@@ -869,31 +868,45 @@ class _TimelineStripState extends State<_TimelineStrip>
   }
 
   void _rebuildLayout() {
-    // Real + preview commits go through ONE layout pass AND one
-    // percentile pipeline — unified node list, unified x-projection.
-    // To keep the visible budget constant (so adding previews doesn't
-    // widen the rail or shrink node spacing), we trim the oldest real
-    // commits off the end — the count of dropped reals matches the
-    // number of incoming previews. Vertical stability comes from
-    // `_kReservedLaneCount`, not from horizontal spacers.
     final previewCount = widget.previewCommits.length;
-    final budget = widget.commits.length;
-    final trimmedReals = previewCount >= budget
-        ? const <CommitHistoryEntry>[]
-        : widget.commits.sublist(0, budget - previewCount);
+    final trimmedReals = widget.commits;
     _layout = _buildLayout(
       trimmedReals,
-      // Only engage the trunk-aware lane path when we actually have
-      // trunk data AND at least one of our visible commits is off
-      // trunk. If every on-screen commit is an ancestor of main,
-      // there's no fork to show and lane 0 everywhere is correct —
-      // classic single-lane layout reads exactly the same.
       trunkHashes: widget.trunkHashes.isEmpty ? null : widget.trunkHashes,
       previewCommits: widget.previewCommits,
     );
-    _percents = _computePercents(
-      [...widget.previewCommits, ...trimmedReals],
-    );
+    // Compute x-percents from main branch commits only. Preview
+    // commits spread evenly between the left edge (newest) and the
+    // merge base position on the main timeline — they're ahead
+    // commits that don't exist on main, so there's no main-branch
+    // time range to interpolate into.
+    final realPercents = _computePercents(trimmedReals);
+    if (previewCount == 0) {
+      _percents = realPercents;
+    } else {
+      // Find the merge base: the last preview commit's parent that
+      // exists on the main branch gives us the fork point.
+      double forkPercent = realPercents.isEmpty ? 100.0 : realPercents.first;
+      if (widget.previewCommits.isNotEmpty) {
+        final lastPreview = widget.previewCommits.last;
+        for (final ph in lastPreview.parentHashes) {
+          final idx = trimmedReals.indexWhere((e) => e.commitHash == ph);
+          if (idx >= 0) {
+            forkPercent = realPercents[idx];
+            break;
+          }
+        }
+      }
+      // Newest commit (index 0) at the left edge, oldest preview
+      // (last) at the fork point. Even spacing between.
+      final leftEdge = realPercents.isEmpty ? 0.0 : realPercents.first;
+      final previewPercents = List.generate(previewCount, (i) {
+        if (previewCount == 1) return (leftEdge + forkPercent) / 2;
+        final t = i / (previewCount - 1);
+        return leftEdge + (forkPercent - leftEdge) * t;
+      });
+      _percents = [...previewPercents, ...realPercents];
+    }
     _layoutSignature = _signatureOf(widget.commits);
     _rebuildChurnMaps();
   }
@@ -992,11 +1005,10 @@ class _TimelineStripState extends State<_TimelineStrip>
           (height - _kVertInset * 2) / max(laneCount.toDouble(), 1);
       final totalHeight = height + _kVertInset * 2;
 
-      // Unified x-projection: preview + real nodes share one
-      // percentile pipeline (computed in `_rebuildLayout`). Horizontal
-      // budget stays constant because the caller trims the oldest
-      // real commits to match the incoming preview count — the rail's
-      // total node density is invariant under hover.
+      // Unified x-projection: preview + real nodes share one percent list
+      // computed in `_rebuildLayout`. Real commits are preserved; preview
+      // nodes are inserted ahead of them, so hover can increase node
+      // density instead of hiding older real history.
       final baseXs = _projectXs(
         _layout!.nodes.length,
         width,
