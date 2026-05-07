@@ -328,11 +328,9 @@ class LogosGitProbeBuilder {
     required double coherence,
   }) {
     // Size component: few files → default; many files → widen.
-    final sizeScale = primaryPaths.length <= 3
-        ? 0.0
-        : primaryPaths.length <= 10
-            ? 0.3
-            : 0.8;
+    // Linear ramp from 0 at ≤3 files to 0.8 at ~15 files.
+    final sizeScale =
+        (0.8 * (primaryPaths.length - 3) / 12.0).clamp(0.0, 0.8);
 
     // Coherence component: tight cluster → tighten; scattered → widen.
     // Coherence is in [0, 1]; we map to a [-0.4, 0.6] shift.

@@ -170,6 +170,14 @@ class AiActivityRecord {
 ///     escape hatches for explicit user actions ("dismiss this
 ///     result"). The session lifetime guarantees we never accumulate
 ///     stale records past a process restart.
+class DrawerIntent {
+  final AiActivityKind kind;
+  final String? query;
+  final int retries;
+  const DrawerIntent(this.kind, {this.query, this.retries = 0});
+  DrawerIntent retry() => DrawerIntent(kind, query: query, retries: retries + 1);
+}
+
 class AiActivityState extends ChangeNotifier {
   final Map<String, Map<AiActivityKind, AiActivityRecord>> _records = {};
 
@@ -193,20 +201,20 @@ class AiActivityState extends ChangeNotifier {
   /// widget subtree from the changes page — threading a callback
   /// through every intermediary is more coupling than sharing a
   /// transient "intent" map on the state singleton.
-  final Map<String, AiActivityKind> _pendingDrawerOpen = {};
+  final Map<String, DrawerIntent> _pendingDrawerOpen = {};
+
+  void requestAskWithQuery(String repoPath, String query) {
+    _pendingDrawerOpen[repoPath] =
+        DrawerIntent(AiActivityKind.ask, query: query);
+    notifyListeners();
+  }
 
   AiActivityRecord? recordFor(String repoPath, AiActivityKind kind) {
     return _records[repoPath]?[kind];
   }
 
-  /// Register an "open this drawer when next on this repo's changes
-  /// view" request. Called by the sidebar AI badge on click. The
-  /// changes page consumes via [consumePendingDrawerOpen] on its
-  /// next build for the matching repo. Idempotent — a repeat call
-  /// just overwrites the queued kind (the most-recent click wins),
-  /// matching how a user would expect a repeated click to land.
   void requestDrawerOpen(String repoPath, AiActivityKind kind) {
-    _pendingDrawerOpen[repoPath] = kind;
+    _pendingDrawerOpen[repoPath] = DrawerIntent(kind);
     notifyListeners();
   }
 
@@ -216,17 +224,17 @@ class AiActivityState extends ChangeNotifier {
   /// the request is consumed by the first reader. No notify here:
   /// the caller is already inside its build and will react this
   /// frame; another notify would re-trigger the consumer.
-  AiActivityKind? consumePendingDrawerOpen(String repoPath) {
+  void requeueIntent(String repoPath, DrawerIntent intent) {
+    _pendingDrawerOpen[repoPath] = intent;
+    notifyListeners();
+  }
+
+  DrawerIntent? consumePendingDrawerOpen(String repoPath) {
     return _pendingDrawerOpen.remove(repoPath);
   }
 
-  /// Non-consuming peek for [context.select] selectors. Returns the
-  /// queued kind without clearing the entry, so the page's build can
-  /// react to "there's a pending intent for our repo" before
-  /// committing to drain it (the actual drain happens
-  /// post-frame via [consumePendingDrawerOpen]).
   AiActivityKind? peekPendingDrawerOpen(String repoPath) =>
-      _pendingDrawerOpen[repoPath];
+      _pendingDrawerOpen[repoPath]?.kind;
 
   /// Snapshot of every kind's record for [repoPath]. Returns an empty
   /// (unmodifiable) map when no activity exists, so consumers can

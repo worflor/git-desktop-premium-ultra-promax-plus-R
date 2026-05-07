@@ -516,6 +516,17 @@ const int _defaultStabilitySeed = 0xABDE;
 /// polynomial order.
 const int _defaultEdgeDensity = 24;
 
+/// Floor below which a spectral signal is indistinguishable from
+/// numerical noise in the diffusion. Every scattered `> 0.02` gate
+/// in the witness / frontier / summary builders references this
+/// single constant so the engine has one noise floor, not twelve.
+const double _kSignalFloor = 0.02;
+
+/// Transport-edge floor — half the signal floor because transport
+/// pull is a product of two masses (source × edge weight), so its
+/// magnitude is inherently smaller for legitimate connections.
+const double _kTransportFloor = _kSignalFloor * 0.5;
+
 /// Additive boost applied to a file's utility score for its
 /// high-frequency-spectral "surprise" signal — the portion of a
 /// file's diffused mass that lives in modes above the Fiedler scale.
@@ -963,6 +974,25 @@ class LogosResidualView {
       .toDouble();
 }
 
+/// Per-iteration snapshot passed to [gatherEvidenceRecurrent]'s
+/// optional `onIteration` callback. Carries just enough for the
+/// vis layer to pulse a ring — no heavy data, no coupling.
+class RecurrentIterationReport {
+  const RecurrentIterationReport({
+    required this.iteration,
+    required this.noveltyMass,
+    required this.promotedPaths,
+    required this.hfWeight,
+    required this.tpWeight,
+  });
+
+  final int iteration;
+  final double noveltyMass;
+  final int promotedPaths;
+  final double hfWeight;
+  final double tpWeight;
+}
+
 /// Output of [LogosGit.gatherEvidenceRecurrent]. Wraps a single
 /// [LogosEvidenceQueryResult] (the final iteration's snapshot) with
 /// metadata describing how the iterative exploration proceeded —
@@ -976,32 +1006,20 @@ class LogosRecurrentEvidenceResult {
     required this.converged,
     required this.discoveryDepth,
     required this.finalNoveltyMass,
+    this.adaptedHfSurpriseWeight,
+    this.adaptedTransportPullWeight,
   });
 
-  /// The final-iteration evidence snapshot. Null only when the very
-  /// first `gatherEvidence` call returned null (empty graph, empty
-  /// focus). Downstream consumers should treat null as "diffusion
-  /// didn't run" the same way they do for single-pass `gatherEvidence`.
   final LogosEvidenceQueryResult? evidence;
-
-  /// How many iterations actually ran. ≥ 1 when evidence is non-null.
   final int iterations;
-
-  /// True if the loop terminated because novelty fell below threshold
-  /// (distribution is self-consistent); false if it terminated because
-  /// it hit the iteration cap.
   final bool converged;
-
-  /// Iteration at which each surfaced path was first admitted. The
-  /// original focus paths are at depth 0. A path promoted as a new
-  /// source in iteration 1's harvest is at depth 1. Depth bounds the
-  /// graph distance from the original probe to that path.
   final Map<String, int> discoveryDepth;
-
-  /// Sum of `innovationResidual` over non-focus ranked paths at the
-  /// final iteration. Low mass → self-consistent; high mass → the
-  /// iteration cap stopped us before exploration completed.
   final double finalNoveltyMass;
+
+  /// Self-tuned utility weights at termination. Null when the loop
+  /// ran only one iteration (no adaptation occurred).
+  final double? adaptedHfSurpriseWeight;
+  final double? adaptedTransportPullWeight;
 }
 
 class _NoveltyCandidate {
@@ -3206,6 +3224,8 @@ class LogosGit {
     bool includeSupportAttribution = true,
     bool includeSummaryDiagnostics = true,
     double phiThreshold = 0.0,
+    double utilityHfSurpriseWeight = _utilityHfSurpriseWeight,
+    double utilityTransportPullWeight = _utilityTransportPullWeight,
   }) {
     if (graph.n == 0 || focusWeights.isEmpty) return null;
     final attribWanted =
@@ -3475,7 +3495,7 @@ class LogosGit {
       final transportSignal = math.max(transportPull, transportedSupport);
       if (support <= phiThreshold &&
           ambient <= phiThreshold &&
-          transportSignal <= 0.01) {
+          transportSignal <= _kTransportFloor) {
         continue;
       }
       final rawSurplus = support - lambda * ambient;
@@ -3501,8 +3521,8 @@ class LogosGit {
         integrity: integrity,
         utility: math.max(
           surplus * integrity +
-              _utilityHfSurpriseWeight * highFrequencySurprise +
-              _utilityTransportPullWeight * transportPull,
+              utilityHfSurpriseWeight * highFrequencySurprise +
+              utilityTransportPullWeight * transportPull,
           rescue,
         ),
         higherOrderLift: 0.0,
@@ -3553,7 +3573,7 @@ class LogosGit {
       final transportSignal = math.max(transportPull, transportedSupport);
       if (support <= phiThreshold &&
           ambient <= phiThreshold &&
-          transportSignal <= 0.01) {
+          transportSignal <= _kTransportFloor) {
         continue;
       }
       final rawSurplus = support - lambda * ambient;
@@ -3579,8 +3599,8 @@ class LogosGit {
         integrity: integrity,
         utility: math.max(
           surplus * integrity +
-              _utilityHfSurpriseWeight * highFrequencySurprise +
-              _utilityTransportPullWeight * transportPull,
+              utilityHfSurpriseWeight * highFrequencySurprise +
+              utilityTransportPullWeight * transportPull,
           rescue,
         ),
         higherOrderLift: 0.0,
@@ -3795,32 +3815,16 @@ class LogosGit {
     );
   }
 
-  /// Recurrent variant of [gatherEvidence]: runs up to [maxIterations]
-  /// passes, each time promoting the highest-innovation-residual paths
-  /// from the previous pass into the focus set with a decayed weight.
-  /// Stops early when the novelty mass drops below [noveltyThreshold]
-  /// (the distribution has become self-consistent — the lanes already
-  /// explain everything that's lighting up).
+  /// Recurrent [gatherEvidence] with self-tuning utility weights.
   ///
-  /// Physics: single-pass `gatherEvidence` finds the zones one
-  /// diffusion-hop from the probe sources. A file 2 hops away that IS
-  /// structurally load-bearing can get near-zero φ because no source
-  /// probes near it. Each recurrent pass "re-lights" the hottest
-  /// unexplored zone (highest innovation residual) as a new source,
-  /// so the 2nd pass reaches 2 hops, the 3rd reaches 3, etc. Novelty
-  /// falls monotonically as the set of unexplained zones shrinks —
-  /// termination is guaranteed.
+  /// One rule, borrowed from Logos 0D: each weight tracks its signal's
+  /// residual-weighted mean — the correlation between that signal and
+  /// what's currently unexplained. Same principle as
+  /// `w = |p−0.5| · min(log1p(n), cap)` in the Whisper codec tower:
+  /// confidence × evidence, no per-axis special cases.
   ///
-  /// Why `innovationResidual` as the driver: it is literally "focus
-  /// support that transport doesn't explain" — i.e. paths that are
-  /// important to the diff but whose importance isn't yet wired up to
-  /// a known structural lane. Exactly the "unexplored" definition we
-  /// want.
-  ///
-  /// Cost: each iteration is one `gatherEvidence` call. With the
-  /// TransportRoles + detailBudget=4 fixes already in place, a typical
-  /// iteration is 30-250ms; bounding at 4 iterations caps worst-case
-  /// recurrent cost at ~1s on the biggest diffs.
+  /// Convergence requires both novelty mass relaxation (the exploration
+  /// is done) AND weight stability (the attention has settled).
   LogosRecurrentEvidenceResult gatherEvidenceRecurrent({
     required Map<String, double> focusWeights,
     Map<String, String> axisLabelByPath = const {},
@@ -3835,26 +3839,29 @@ class LogosGit {
     bool includeSupportAttribution = true,
     bool includeSummaryDiagnostics = true,
     double phiThreshold = 0.0,
-    int maxIterations = 4,
-    // Per-path admission gate. Paths whose innovation residual falls
-    // below this floor are too weak to re-seed the exploration, even
-    // if collectively their sum is still high.
-    double perPathNoveltyFloor = 0.05,
-    // Relative convergence: stop when the current iteration's total
-    // novelty mass drops below this fraction of the first-iteration
-    // baseline. `e^{-2}` ≈ one additional e-folding — the natural
-    // "the unexplained distribution has relaxed" point, matching the
-    // heat-kernel exp-decay structure the diffusion is built on.
+    int maxIterations = 6,
     double convergenceRatio = 0.1353352832366127, // math.exp(-2)
+    void Function(RecurrentIterationReport)? onIteration,
   }) {
     final focus = Map<String, double>.from(focusWeights);
     final depth = <String, int>{for (final k in focus.keys) k: 0};
-    // Promote a share of the original focus size per iteration — not
-    // a fixed count — so expansion scales with the problem: 2-focus
-    // diffs add ~1 source per iteration, 60-focus diffs add ~20. The
-    // floor of 1 ensures at least one candidate can be promoted on
-    // any non-empty focus.
     final newSourcesPerIter = math.max(1, focusWeights.length ~/ 3);
+
+    var hfW = _utilityHfSurpriseWeight;
+    var tpW = _utilityTransportPullWeight;
+    // Symmetric bounds: self-tuning can shift emphasis to 3× or ⅓ of
+    // the prior, but can't annihilate or dominate. Same rule both axes.
+    const weightBoundFactor = 3.0;
+    final wClampLo = math.min(hfW, tpW) / weightBoundFactor;
+    final wClampHi = math.max(hfW, tpW) * weightBoundFactor;
+    // Stability epsilon derived from the bound range: settled when the
+    // step is <1% of the allowed travel distance.
+    final stabilityEpsilon = (wClampHi - wClampLo) * 0.01;
+
+    // Promoted-source decay from the heat kernel's own timescale:
+    // exp(-t) per depth. Focused t (small) → slow decay (promoted
+    // sources stay strong). Broad t (large) → fast decay.
+    final depthDecay = math.exp(-t);
 
     LogosEvidenceQueryResult? last;
     var ranIterations = 0;
@@ -3863,6 +3870,10 @@ class LogosGit {
     var converged = false;
 
     for (var iter = 0; iter < maxIterations; iter++) {
+      // Adaptive EMA rate: 2/(iter+2). Fast early (the system knows
+      // nothing), decelerating as it settles. Standard EMA derivation.
+      final adaptRate = 2.0 / (iter + 2);
+
       final evidence = gatherEvidence(
         focusWeights: focus,
         axisLabelByPath: axisLabelByPath,
@@ -3877,76 +3888,79 @@ class LogosGit {
         includeSupportAttribution: includeSupportAttribution,
         includeSummaryDiagnostics: includeSummaryDiagnostics,
         phiThreshold: phiThreshold,
+        utilityHfSurpriseWeight: hfW,
+        utilityTransportPullWeight: tpW,
       );
       if (evidence == null) {
-        // Diffusion collapsed (empty graph or all-unknown focus).
-        // Return whatever the previous iteration produced — null on
-        // first-call, a real snapshot otherwise. Iteration count is
-        // the number of iterations that produced a result, not the
-        // attempted count.
         return LogosRecurrentEvidenceResult(
           evidence: last,
           iterations: ranIterations,
           converged: true,
           discoveryDepth: depth,
           finalNoveltyMass: finalNovelty,
+          adaptedHfSurpriseWeight: iter > 0 ? hfW : null,
+          adaptedTransportPullWeight: iter > 0 ? tpW : null,
         );
       }
       last = evidence;
       ranIterations = iter + 1;
 
-      // Harvest novelty: non-focus paths with non-trivial innovation
-      // residual. `innovationResidual ∈ [0, 1]` so summing across
-      // ranked non-focus paths gives a stable "unexplained mass"
-      // scalar whose trajectory is monotone non-increasing.
       final candidates = <_NoveltyCandidate>[];
       var noveltySum = 0.0;
+      var hfCorr = 0.0;
+      var tpCorr = 0.0;
       for (final score in evidence.ranked) {
         if (focus.containsKey(score.path)) continue;
-        final novelty = score.innovationResidual;
-        if (novelty <= 0) continue;
-        noveltySum += novelty;
-        if (novelty >= perPathNoveltyFloor) {
-          candidates.add(_NoveltyCandidate(score.path, novelty));
+        final r = score.innovationResidual;
+        if (r <= 0) continue;
+        noveltySum += r;
+        hfCorr += r * score.highFrequencySurprise;
+        tpCorr += r * score.transportPull;
+        if (r >= _kSignalFloor) {
+          candidates.add(_NoveltyCandidate(score.path, r));
         }
       }
       finalNovelty = noveltySum;
       if (iter == 0) noveltyBaseline = noveltySum;
 
-      // Relative-change convergence: the unexplained-mass trajectory
-      // has relaxed by one additional e-folding (or more) past its
-      // initial value. Monotonically driven by the diffusion operator
-      // — every promoted source reduces `innovationResidual` on
-      // neighbours it explains — so this condition eventually fires
-      // even if each step's improvement is small.
-      if (noveltyBaseline > 0 &&
-          noveltySum < noveltyBaseline * convergenceRatio) {
+      // Self-tune: weight tracks signal–residual correlation.
+      final prevHf = hfW;
+      final prevTp = tpW;
+      if (noveltySum > 0) {
+        hfW += adaptRate * (hfCorr / noveltySum - hfW);
+        tpW += adaptRate * (tpCorr / noveltySum - tpW);
+        hfW = hfW.clamp(wClampLo, wClampHi);
+        tpW = tpW.clamp(wClampLo, wClampHi);
+      }
+
+      onIteration?.call(RecurrentIterationReport(
+        iteration: ranIterations,
+        noveltyMass: noveltySum,
+        promotedPaths: candidates.length,
+        hfWeight: hfW,
+        tpWeight: tpW,
+      ));
+
+      final settled = math.max(
+            (hfW - prevHf).abs(),
+            (tpW - prevTp).abs(),
+          ) <
+          stabilityEpsilon;
+      final noveltyConverged = noveltyBaseline > 0 &&
+          noveltySum < noveltyBaseline * convergenceRatio;
+      if (noveltyConverged && settled) {
         converged = true;
         break;
       }
-
-      // No candidate cleared the per-path floor → the residual mass
-      // that remains is scattered noise, not concentrated zones.
-      // Further iteration would just diffuse noise.
       if (candidates.isEmpty) {
         converged = true;
         break;
       }
 
-      // Promote newcomers at a depth-decayed weight. `0.5^iter` is the
-      // canonical halving schedule — iter 1 promotes at 50%, iter 2
-      // at 25%, iter 3 at 12.5%. A path promoted at depth 3 contributes
-      // 1/8 the influence of a depth-1 path, matching the intuition
-      // that each additional hop on the diffusion graph attenuates the
-      // probe signal by a factor of 2.
       candidates.sort((a, b) => b.novelty.compareTo(a.novelty));
       final iterDepth = iter + 1;
-      final decay = math.pow(0.5, iterDepth).toDouble();
+      final decay = math.pow(depthDecay, iterDepth).toDouble();
       for (final cand in candidates.take(newSourcesPerIter)) {
-        // Already-focus guard: a path that was promoted in an earlier
-        // iteration must not be re-promoted with compounded weight.
-        // Its depth stays at first-sighting; its focus weight stays
-        // at the decay level of that first promotion.
         if (focus.containsKey(cand.path)) continue;
         focus[cand.path] = cand.novelty * decay;
         depth[cand.path] = iterDepth;
@@ -3959,6 +3973,8 @@ class LogosGit {
       converged: converged,
       discoveryDepth: depth,
       finalNoveltyMass: finalNovelty,
+      adaptedHfSurpriseWeight: ranIterations > 1 ? hfW : null,
+      adaptedTransportPullWeight: ranIterations > 1 ? tpW : null,
     );
   }
 
@@ -4062,14 +4078,14 @@ class LogosGit {
       ));
     }
 
-    if (highFrequencySurprise > 0.02) {
+    if (highFrequencySurprise > _kSignalFloor) {
       witnesses.add(LogosEvidenceWitness(
         kind: LogosWitnessKind.spectrum,
         label: 'high-frequency-residual',
         strength: highFrequencySurprise,
       ));
     }
-    if (lowFrequencySupport > 0.02) {
+    if (lowFrequencySupport > _kSignalFloor) {
       witnesses.add(LogosEvidenceWitness(
         kind: LogosWitnessKind.spectrum,
         label: 'multiscale-support',
@@ -4165,7 +4181,7 @@ class LogosGit {
       ));
     }
 
-    if (reducibilityGap > 0.02) {
+    if (reducibilityGap > _kSignalFloor) {
       witnesses.add(LogosEvidenceWitness(
         kind: LogosWitnessKind.reducibility,
         label: 'pairwise-loss',
@@ -4385,7 +4401,7 @@ class LogosGit {
     }
 
     if (hyperedge != null &&
-        (higherOrderLift > 0.02 || reducibilityGap > 0.02)) {
+        (higherOrderLift > _kSignalFloor || reducibilityGap > _kSignalFloor)) {
       final overlapSources = [
         for (final p in hyperedge.paths)
           if (p != path && focusPaths.contains(p)) p,
@@ -4439,7 +4455,7 @@ class LogosGit {
     final laneMass = <String, double>{};
     final frontier = scores
         .where((score) =>
-            math.max(score.transportPull, score.transportedSupport) > 0.02)
+            math.max(score.transportPull, score.transportedSupport) > _kSignalFloor)
         .toList(growable: false)
       ..sort((a, b) {
         final byPull = math
@@ -4506,7 +4522,7 @@ class LogosGit {
     var weightedTransported = 0.0;
     var weightedInnovation = 0.0;
     final frontier = filtered
-        .where((score) => score.innovationResidual > 0.02)
+        .where((score) => score.innovationResidual > _kSignalFloor)
         .toList(growable: false)
       ..sort((a, b) {
         final byInnovation =
@@ -4547,7 +4563,7 @@ class LogosGit {
   }) {
     final filtered = [
       for (final score in scores)
-        if (score.transportedSupport > 0.02 || score.witnessResidual > 0.02)
+        if (score.transportedSupport > _kSignalFloor || score.witnessResidual > _kSignalFloor)
           score,
     ];
     var totalWeight = 0.0;
@@ -4555,7 +4571,7 @@ class LogosGit {
     var residual = 0.0;
     final kindMass = <String, double>{};
     final frontier = filtered
-        .where((score) => score.witnessResidual > 0.02)
+        .where((score) => score.witnessResidual > _kSignalFloor)
         .toList(growable: false)
       ..sort((a, b) {
         final byResidual = b.witnessResidual.compareTo(a.witnessResidual);
@@ -4612,7 +4628,7 @@ class LogosGit {
     }
     final allowedTargets = <int, double>{
       for (final score in frontier)
-        if (math.max(score.transportPull, score.transportedSupport) > 0.02)
+        if (math.max(score.transportPull, score.transportedSupport) > _kSignalFloor)
           if (pathToId[score.path] != null)
             pathToId[score.path]!: math.max(
               score.transportPull,
@@ -4632,7 +4648,7 @@ class LogosGit {
         final targetSignal = allowedTargets[targetId];
         if (targetSignal == null) continue;
         final pull = sourceMass * transportGraph.values[k];
-        if (pull <= 0.01 && targetSignal <= 0.02) continue;
+        if (pull <= _kTransportFloor && targetSignal <= _kSignalFloor) continue;
         final targetPath = nodePaths[targetId];
         final lane = logosTransportLane(sourcePath, targetPath);
         final candidate = LogosTransportFlowEdge(

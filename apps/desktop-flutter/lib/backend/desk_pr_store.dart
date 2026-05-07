@@ -381,8 +381,22 @@ class DeskPrStore {
     return GitResult.ok(next);
   }
 
-  /// Drop the metadata ref entirely. Orphan history becomes
-  /// unreachable and will be pruned by `git gc`.
+  Future<GitResult<DeskPr>> setRemoteNumber(
+      String branch, int remoteNumber) async {
+    final current = await read(branch);
+    if (!current.ok || current.data == null) {
+      return GitResult.err(current.error ?? 'desk PR not found');
+    }
+    final updated = current.data!.copyWith(remoteNumber: remoteNumber);
+    final r = await _commit(updated, message: 'link remote #$remoteNumber');
+    if (!r.ok) return GitResult.err(r.error ?? 'failed to write meta');
+    return GitResult.ok(updated);
+  }
+
+  Future<GitResult<void>> updateFull(DeskPr pr, {String? message}) async {
+    return _commit(pr, message: message ?? 'update from remote');
+  }
+
   Future<GitResult<void>> abandon(String branch) async {
     return refs.deleteRef(refFor(branch));
   }

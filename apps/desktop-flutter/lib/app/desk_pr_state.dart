@@ -16,6 +16,7 @@ import '../backend/desk_pr_diff.dart';
 import '../backend/desk_pr_store.dart';
 import '../backend/git.dart' as git;
 import '../backend/manifold_refs.dart';
+import '../backend/remote_pr_provider.dart' show detectPrProvider;
 import 'app_identity.dart';
 import 'repository_state.dart';
 
@@ -316,5 +317,127 @@ class DeskPrState extends ChangeNotifier {
     if (!r.ok) return r.error;
     await refreshFor(main);
     return null;
+  }
+
+  final Set<String> _promoting = {};
+
+  Future<String?> promoteToRemote({
+    required String repoPath,
+    required String branch,
+  }) async {
+    if (!_promoting.add('$repoPath:$branch')) return 'promotion already in progress';
+    try {
+      final main = await _mainRepoOf(repoPath) ?? repoPath;
+      final store = DeskPrStore(_refsFor(main));
+      final current = await store.read(branch);
+      if (!current.ok || current.data == null) {
+        return current.error ?? 'desk PR not found for $branch';
+      }
+      final desk = current.data!;
+      if (desk.remoteNumber != null) {
+        return 'already linked to remote #${desk.remoteNumber}';
+      }
+      final provider = await detectPrProvider(main);
+      final status = await provider.status(main);
+      if (!status.available) {
+        return status.reason ?? 'remote forge not available';
+      }
+      // Push the branch first — forges require the head ref to exist remotely.
+      final pushResult = await git.pushRemote(main,
+          branch: desk.headRef, setUpstream: true);
+      if (!pushResult.ok) {
+        return 'push failed: ${pushResult.error}';
+      }
+      // Check if a remote PR already exists for this head ref (idempotency
+      // guard for retries after a failed local link).
+      int remoteNumber;
+      final existingPrs = await provider.listPullRequests(main, state: 'open');
+      if (!existingPrs.ok) {
+        return 'could not check for existing PRs: ${existingPrs.error}';
+      }
+      final match = existingPrs.data
+          ?.where((pr) => pr.headRef == desk.headRef)
+          .firstOrNull;
+      if (match != null) {
+        remoteNumber = match.number;
+      } else {
+        final createResult = await provider.createPullRequest(main,
+          title: desk.title,
+          body: desk.body,
+          headRef: desk.headRef,
+          baseRef: desk.baseRef,
+          draft: desk.isDraft,
+          labels: desk.labels,
+          assignees: desk.assignees,
+          reviewers: desk.reviewers.map((r) => r.login).toList(),
+        );
+        if (!createResult.ok || createResult.data == null) {
+          return createResult.error ?? 'failed to create remote PR';
+        }
+        remoteNumber = createResult.data!;
+      }
+      final linkResult = await store.setRemoteNumber(branch, remoteNumber);
+      if (!linkResult.ok) {
+        return 'remote PR #$remoteNumber created but local link failed: '
+            '${linkResult.error}';
+      }
+      await refreshFor(main);
+      return null;
+    } finally {
+      _promoting.remove('$repoPath:$branch');
+    }
+  }
+
+  final Set<String> _reconciling = {};
+
+  Future<void> reconcileRemoteState(String repoPath) async {
+    if (!_reconciling.add(repoPath)) return;
+    try {
+      await _reconcileRemoteStateImpl(repoPath);
+    } catch (e) {
+      debugPrint('reconcileRemoteState($repoPath): $e');
+    } finally {
+      _reconciling.remove(repoPath);
+    }
+  }
+
+  Future<void> _reconcileRemoteStateImpl(String repoPath) async {
+    final main = await _mainRepoOf(repoPath) ?? repoPath;
+    final store = DeskPrStore(_refsFor(main));
+    final promoted = _byBranch.values
+        .where((pr) => pr.remoteNumber != null && pr.state == 'OPEN')
+        .toList();
+    if (promoted.isEmpty) return;
+    final provider = await detectPrProvider(main);
+    final status = await provider.status(main);
+    if (!status.available) return;
+    var changed = false;
+    for (final desk in promoted) {
+      try {
+        final r = await provider.getPullRequest(main, desk.remoteNumber!);
+        if (!r.ok || r.data == null) continue;
+        final remote = r.data!;
+        final needsUpdate = desk.state != remote.state ||
+            desk.mergeable != remote.mergeable ||
+            desk.additions != remote.additions ||
+            desk.deletions != remote.deletions ||
+            desk.changedFiles != remote.changedFiles;
+        if (!needsUpdate) continue;
+        final updated = desk.copyWith(
+          state: remote.state,
+          mergeable: remote.mergeable,
+          additions: remote.additions,
+          deletions: remote.deletions,
+          changedFiles: remote.changedFiles,
+        );
+        final writeResult = await store.updateFull(
+            updated, message: 'reconcile remote #${desk.remoteNumber}');
+        if (writeResult.ok) changed = true;
+      } catch (e) {
+        debugPrint('reconcile PR #${desk.remoteNumber}: $e');
+        continue;
+      }
+    }
+    if (changed) await refreshFor(main);
   }
 }

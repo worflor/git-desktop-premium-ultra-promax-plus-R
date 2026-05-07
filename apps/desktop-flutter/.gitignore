@@ -3,6 +3,10 @@
 *.log
 *.pyc
 *.swp
+
+# Build artifacts
+*.AppImage
+*.AppDir/
 .DS_Store
 .atom/
 .build/

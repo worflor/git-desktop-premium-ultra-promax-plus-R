@@ -57,6 +57,50 @@ class StoragePaths {
     throw StateError('failed to resolve cross-platform app data directory');
   }
 
+  static Directory? gdpuDataDirSync() {
+    final overridePath = _envNonEmpty('GDPU_DATA_DIR');
+    if (overridePath != null) return Directory(overridePath);
+    if (Platform.isWindows) {
+      final appData = _envNonEmpty('APPDATA');
+      if (appData != null) {
+        return Directory(appData)
+            .uri
+            .resolve(_appDataDirName)
+            .toFilePath()
+            .let(Directory.new);
+      }
+      final userProfile = _envNonEmpty('USERPROFILE');
+      if (userProfile != null) {
+        return Directory(
+          '${Directory(userProfile).path}${Platform.pathSeparator}AppData${Platform.pathSeparator}Roaming${Platform.pathSeparator}$_appDataDirName',
+        );
+      }
+    }
+    if (Platform.isMacOS) {
+      final home = _envNonEmpty('HOME');
+      if (home != null) {
+        return Directory(
+          '${Directory(home).path}${Platform.pathSeparator}Library${Platform.pathSeparator}Application Support${Platform.pathSeparator}$_appDataDirName',
+        );
+      }
+    }
+    final xdgDataHome = _envNonEmpty('XDG_DATA_HOME');
+    if (xdgDataHome != null) {
+      return Directory(xdgDataHome)
+          .uri
+          .resolve(_appDataDirName)
+          .toFilePath()
+          .let(Directory.new);
+    }
+    final home = _envNonEmpty('HOME');
+    if (home != null) {
+      return Directory(
+        '${Directory(home).path}${Platform.pathSeparator}.local${Platform.pathSeparator}share${Platform.pathSeparator}$_appDataDirName',
+      );
+    }
+    return null;
+  }
+
   /// Removes the entire app data directory (settings, ai prefs, telemetry,
   /// engram caches — everything under [gdpuDataDir]). The user's repos and
   /// any state outside this dir are untouched.

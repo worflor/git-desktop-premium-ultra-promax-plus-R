@@ -84,11 +84,14 @@ LogosCommitMeaningfulness inferCommitMeaningfulness({
     if (_looksRitualPath(path)) ritualPaths++;
   }
   final ritualShare = ritualPaths / pathList.length;
-  if (ritualShare >= 0.99) {
-    weight *= 0.2;
+  // Smooth exponential decay: 1.0 at ritualShare ≤ 0.4, 0.2 at 1.0.
+  // -ln(0.2) / 0.6 ≈ 2.682 — derived, not tuned.
+  final ritualMul =
+      math.exp(-2.6823623981 * math.max(0.0, ritualShare - 0.4));
+  weight *= ritualMul;
+  if (ritualMul < 0.35) {
     reasons.add('ritual-path-sweep');
-  } else if (ritualShare >= 0.6) {
-    weight *= 0.55;
+  } else if (ritualMul < 0.85) {
     reasons.add('ritual-heavy');
   }
 

@@ -10,11 +10,13 @@ import '../backend/logos_dream.dart';
 import '../backend/logos_free_energy.dart';
 import '../backend/logos_git.dart' show LogosGit;
 import '../backend/logos_spectrogeometry.dart' show UniversalityVector;
+import '../backend/system_browser.dart';
 import '../components/icons/app_icons.dart';
 import '../features/branches/branches_page.dart';
 import '../features/changes/changes_page.dart';
 import '../features/history/history_page.dart';
-import '../features/search/search_panel.dart';
+import '../features/palette/command_palette.dart';
+import '../features/release_notes/release_notes_panel.dart';
 import '../features/settings/settings_page.dart';
 import 'settings_navigation_state.dart';
 import '../features/xray/repo_xray_panel.dart';
@@ -52,7 +54,7 @@ import '../backend/undo_controller.dart';
 
 enum _WorkspaceMode { changes, history, branches }
 
-enum _Panel { none, xray, settings, search }
+enum _Panel { none, xray, settings, palette, releaseNotes }
 
 class WorkspaceShell extends StatefulWidget {
   const WorkspaceShell({super.key});
@@ -63,9 +65,11 @@ class WorkspaceShell extends StatefulWidget {
 
 class _WorkspaceShellState extends State<WorkspaceShell> {
   final Stopwatch _mountedAt = Stopwatch()..start();
+  final FocusNode _shellFocusNode = FocusNode(debugLabel: 'workspace-shell');
   _WorkspaceMode _mode = _WorkspaceMode.changes;
   _Panel _panel = _Panel.none;
   bool _awaitingGPrefix = false;
+  bool _paletteElevated = false;
   String? _selectedCommitHash;
   Stopwatch? _panelOpenStopwatch;
   String? _lastRepoPathForXray;
@@ -123,17 +127,24 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   /// Funnel every panel write through here so the cleanup happens
   /// uniformly.
   void _setPanel(_Panel next) {
+    final wasOpen = _panel != _Panel.none;
     setState(() {
       if (_panel == _Panel.settings && next != _Panel.settings) {
         _pendingSettingsFocus = null;
       }
       _panel = next;
     });
+    if (wasOpen && next == _Panel.none) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _shellFocusNode.requestFocus();
+      });
+    }
   }
 
   @override
   void dispose() {
     _settingsNavState?.removeListener(_onSettingsNavChanged);
+    _shellFocusNode.dispose();
     super.dispose();
   }
 
@@ -163,6 +174,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     }
 
     return Focus(
+      focusNode: _shellFocusNode,
       autofocus: true,
       onKeyEvent: (node, event) => _handleKey(event),
       child: Stack(
@@ -249,7 +261,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
           // frame.
           Positioned.fill(
             child: IgnorePointer(
-              ignoring: _panel != _Panel.settings && _panel != _Panel.search,
+              ignoring: _panel != _Panel.settings && _panel != _Panel.palette && _panel != _Panel.releaseNotes,
               child: Stack(
                 children: [
                   Positioned.fill(
@@ -257,7 +269,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                       duration: context.surfaceShader.duration,
                       curve: context.surfaceShader.safeCurve,
                       opacity:
-                          (_panel == _Panel.settings || _panel == _Panel.search)
+                          (_panel == _Panel.settings || _panel == _Panel.palette || _panel == _Panel.releaseNotes)
                               ? 1.0
                               : 0.0,
                       child: GestureDetector(
@@ -305,16 +317,25 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                         _Panel.settings => _SlidePanel(
                             key: const ValueKey('settings'),
                             title: 'Settings',
-                            // _setPanel handles the focus-token clear
-                            // because it knows we're transitioning out
-                            // of _Panel.settings.
                             onClose: () => _setPanel(_Panel.none),
-                            child: SettingsPage(focusSection: _pendingSettingsFocus),
+                            child: SettingsPage(
+                              focusSection: _pendingSettingsFocus,
+                              onOpenReleaseNotes: () => _setPanel(_Panel.releaseNotes),
+                            ),
                           ),
-                        _Panel.search => _SlidePanel(
-                            key: const ValueKey('search'),
+                        _Panel.releaseNotes => _SlidePanel(
+                            key: const ValueKey('releaseNotes'),
+                            title: 'Release Notes',
                             onClose: () => _setPanel(_Panel.none),
-                            child: SearchPanel(
+                            onBack: () => _setPanel(_Panel.settings),
+                            child: const ReleaseNotesPanel(),
+                          ),
+                        _Panel.palette => _SlidePanel(
+                            key: const ValueKey('palette'),
+                            onClose: () => _setPanel(_Panel.none),
+                            child: CommandPalette(
+                              currentMode: _mode.index,
+                              elevated: _paletteElevated,
                               onClose: () => _setPanel(_Panel.none),
                               onCommitSelected: (hash) {
                                 _setPanel(_Panel.none);
@@ -322,6 +343,40 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                                   _selectedCommitHash = hash;
                                   _mode = _WorkspaceMode.history;
                                 });
+                              },
+                              onModeChanged: (mode) {
+                                _setPanel(_Panel.none);
+                                _selectMode(_WorkspaceMode.values[mode]);
+                              },
+                              onBranchCheckout: (name) {
+                                _setPanel(_Panel.none);
+                                _selectMode(_WorkspaceMode.branches);
+                              },
+                              onFileSelected: (path) {
+                                _setPanel(_Panel.none);
+                                _selectMode(_WorkspaceMode.changes);
+                              },
+                              onOpenXray: () =>
+                                  _togglePanel(_Panel.xray),
+                              onOpenSettings: () =>
+                                  _setPanel(_Panel.settings),
+                              onRefresh: _triggerRefresh,
+                              onUndo: _triggerUndo,
+                              onRepoSwitch: (path) {
+                                context
+                                    .read<RepositoryState>()
+                                    .setActivePath(path);
+                              },
+                              onDeskSwitch: (path) {
+                                context
+                                    .read<RepositoryState>()
+                                    .setActivePath(
+                                      path,
+                                      addToRecents: false,
+                                    );
+                              },
+                              onOpenBrowser: (url) {
+                                openInSystemBrowser(url);
                               },
                             ),
                           ),
@@ -347,6 +402,14 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
 
     // Ctrl/Cmd shortcuts work even when a text field is focused.
     if (ctrl) {
+      if (key == LogicalKeyboardKey.slash) {
+        setState(() {
+          _paletteElevated = true;
+          _awaitingGPrefix = false;
+        });
+        _setPanel(_panel == _Panel.palette ? _Panel.none : _Panel.palette);
+        return KeyEventResult.handled;
+      }
       if (key == LogicalKeyboardKey.keyZ) {
         _triggerUndo();
         return KeyEventResult.handled;
@@ -394,18 +457,14 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     }
 
     if (key == LogicalKeyboardKey.slash) {
-      _setPanel(_panel == _Panel.search ? _Panel.none : _Panel.search);
       setState(() {
+        _paletteElevated = false;
         _awaitingGPrefix = false;
       });
+      _setPanel(_panel == _Panel.palette ? _Panel.none : _Panel.palette);
       return KeyEventResult.handled;
     }
 
-    // `?` (shift + slash) → global keyboard cheatsheet. Covers the
-    // workspace-level bindings (page switch, panels, search, g-prefix
-    // chords) so the shortcuts are discoverable without reading code.
-    // Page-local bindings (j/k nav on the branches lens, etc.) still
-    // live in that page's own overlay when relevant.
     if (key == LogicalKeyboardKey.question ||
         (key == LogicalKeyboardKey.slash &&
             HardwareKeyboard.instance.isShiftPressed)) {
@@ -515,7 +574,8 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
             ('g s', 'X-Ray'),
           ],
           ('⌘ 1/2/3', 'Switch (always)'),
-          ('/', 'Search'),
+          ('/', 'Command Palette'),
+          ('Ctrl+/', 'Elevated Palette'),
           ('esc', 'Dismiss'),
           ('F5', 'Refresh'),
         ],
@@ -4169,12 +4229,14 @@ class _KeepAlivePagesState extends State<_KeepAlivePages>
 class _SlidePanel extends StatelessWidget {
   final String? title;
   final VoidCallback onClose;
+  final VoidCallback? onBack;
   final Widget child;
 
   const _SlidePanel({
     super.key,
     this.title,
     required this.onClose,
+    this.onBack,
     required this.child,
   });
 
@@ -4198,7 +4260,7 @@ class _SlidePanel extends StatelessWidget {
             ? child
             : Column(
                 children: [
-                  _SlideHeader(title: title!, onClose: onClose),
+                  _SlideHeader(title: title!, onClose: onClose, onBack: onBack),
                   Expanded(child: child),
                 ],
               ),
@@ -4210,8 +4272,9 @@ class _SlidePanel extends StatelessWidget {
 class _SlideHeader extends StatelessWidget {
   final String title;
   final VoidCallback onClose;
+  final VoidCallback? onBack;
 
-  const _SlideHeader({required this.title, required this.onClose});
+  const _SlideHeader({required this.title, required this.onClose, this.onBack});
 
   @override
   Widget build(BuildContext context) {
@@ -4225,6 +4288,10 @@ class _SlideHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
+          if (onBack != null) ...[
+            _PanelBackButton(onBack: onBack!),
+            const SizedBox(width: 8),
+          ],
           Text(
             title.toUpperCase(),
             style: TextStyle(
@@ -4237,6 +4304,59 @@ class _SlideHeader extends StatelessWidget {
           const Spacer(),
           _PanelCloseButton(onClose: onClose),
         ],
+      ),
+    );
+  }
+}
+
+class _PanelBackButton extends StatefulWidget {
+  final VoidCallback onBack;
+  const _PanelBackButton({required this.onBack});
+
+  @override
+  State<_PanelBackButton> createState() => _PanelBackButtonState();
+}
+
+class _PanelBackButtonState extends State<_PanelBackButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final chrome = ghostButtonChrome(
+      t,
+      hovered: _hovered,
+      pressed: _pressed,
+      enabled: true,
+      baseBorderColor: t.secondaryBtnBorder,
+    );
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onBack,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTapUp: (_) => setState(() => _pressed = false),
+        child: AnimatedContainer(
+          duration: context.motion(const Duration(milliseconds: 80)),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: chrome.background,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: chrome.borderColor),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.arrow_back, size: 12, color: t.textMuted),
+              const SizedBox(width: 4),
+              Text('Back', style: TextStyle(color: t.textNormal, fontSize: 11)),
+            ],
+          ),
+        ),
       ),
     );
   }

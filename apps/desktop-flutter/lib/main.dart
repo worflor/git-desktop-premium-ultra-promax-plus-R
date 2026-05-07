@@ -22,6 +22,7 @@ import 'app/desk_issue_state.dart';
 import 'app/remote_issue_cache_state.dart';
 import 'app/external_tools_state.dart';
 import 'app/hyper_reactivity.dart';
+import 'features/palette/palette_state.dart';
 import 'app/brand_lockup.dart';
 import 'app/settings_navigation_state.dart';
 import 'app/sidebar_org_state.dart';
@@ -259,6 +260,7 @@ void main() async {
         ChangeNotifierProvider.value(value: appIdentityState),
         ChangeNotifierProvider.value(value: onboardingState),
         ChangeNotifierProvider(create: (_) => HyperReactivity()),
+        ChangeNotifierProvider(create: (_) => PaletteState()),
         ChangeNotifierProvider.value(value: undoCoordinator),
       ],
       child: const GitDesktopApp(),
@@ -531,13 +533,14 @@ class _AppFrameState extends State<_AppFrame> {
                 SizedBox(
                   width: 1,
                   child: OverflowBox(
-                    minWidth: 9,
-                    maxWidth: 9,
+                    minWidth: 8,
+                    maxWidth: 8,
                     alignment: Alignment.center,
                     child: MouseRegion(
                       cursor: SystemMouseCursors.resizeLeftRight,
+                      hitTestBehavior: HitTestBehavior.opaque,
                       child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
+                        behavior: HitTestBehavior.opaque,
                         onHorizontalDragStart: (d) {
                           _resizing = true;
                           _resizeStartX = d.globalPosition.dx;
@@ -556,12 +559,17 @@ class _AppFrameState extends State<_AppFrame> {
                           context.read<ThemeState>().setSidebarWidth(
                               _snapSidebarWidth(_sidebarWidth));
                         },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 80),
-                          width: 9,
-                          color: _resizing
-                              ? t.accentBright.withValues(alpha: 0.22)
-                              : t.accentBright.withValues(alpha: 0),
+                        child: SizedBox(
+                          width: 8,
+                          child: Center(
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 80),
+                              width: _resizing ? 2 : 1,
+                              color: _resizing
+                                  ? t.accentBright.withValues(alpha: 0.3)
+                                  : t.chromeBorder.withValues(alpha: 0.3),
+                            ),
+                          ),
                         ),
                       ),
                     ),

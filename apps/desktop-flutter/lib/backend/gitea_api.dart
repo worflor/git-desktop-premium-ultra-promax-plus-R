@@ -8,6 +8,20 @@ import 'remote_types.dart';
 import '../diagnostics/diagnostics_state.dart';
 import '../features/diff/diff_models.dart';
 
+String _sanitizeBody(String body) {
+  try {
+    final j = jsonDecode(body);
+    if (j is Map<String, dynamic>) {
+      final msg = j['message'] ?? j['error'] ?? j['errors'];
+      if (msg is String && msg.isNotEmpty) return msg;
+      if (msg != null) return msg.toString();
+    }
+  } catch (_) {}
+  final trimmed = body.trim();
+  if (trimmed.length > 120) return '${trimmed.substring(0, 120)}…';
+  return trimmed.isEmpty ? 'unknown error' : trimmed;
+}
+
 /// REST API client for Gitea / Forgejo / Codeberg instances.
 /// No CLI dependency — talks HTTP directly to the forge's `/api/v1/` surface.
 
@@ -148,7 +162,7 @@ Future<GitResult<List<PullRequestSummary>>> listGiteaPulls(
     );
     if (r.statusCode != 200) {
       return all.isEmpty
-          ? GitResult.err('API ${r.statusCode}: ${r.body}')
+          ? GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}')
           : GitResult.ok(all);
     }
     try {
@@ -165,6 +179,73 @@ Future<GitResult<List<PullRequestSummary>>> listGiteaPulls(
     }
   }
   return GitResult.ok(all.take(limit).toList());
+}
+
+Future<GitResult<int>> createGiteaPull(
+  String repoPath, {
+  required String title,
+  String body = '',
+  required String headRef,
+  required String baseRef,
+  bool draft = false,
+  List<String> labels = const [],
+  List<String> assignees = const [],
+  List<String> reviewers = const [],
+  String? token,
+}) async {
+  final coords = await resolveGiteaCoords(repoPath);
+  if (coords == null) return GitResult.err('Could not resolve Gitea remote');
+  token ??= resolveGiteaToken(coords.apiBase);
+  final labelIds = <int>[];
+  if (labels.isNotEmpty) {
+    final labelsRes = await giteaGet(
+      coords.apiBase, '/${coords.repoPath}/labels?limit=50', token: token);
+    if (labelsRes.statusCode == 200) {
+      final allLabels = jsonDecode(labelsRes.body) as List;
+      for (final name in labels) {
+        final match = allLabels
+            .whereType<Map<String, dynamic>>()
+            .where((l) => l['name'] == name)
+            .firstOrNull;
+        if (match != null) labelIds.add((match['id'] as num).toInt());
+      }
+    }
+  }
+  final r = await _post(
+    coords.apiBase,
+    '/${coords.repoPath}/pulls',
+    {
+      'title': title,
+      if (body.isNotEmpty) 'body': body,
+      'head': headRef,
+      'base': baseRef,
+      if (draft) 'draft': true,
+      if (assignees.isNotEmpty) 'assignees': assignees,
+      if (labelIds.isNotEmpty) 'labels': labelIds,
+    },
+    token: token,
+  );
+  if (r.statusCode != 201) return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
+  try {
+    final j = jsonDecode(r.body) as Map<String, dynamic>;
+    final number = (j['number'] as num).toInt();
+    if (reviewers.isNotEmpty) {
+      final rv = await _post(
+        coords.apiBase,
+        '/${coords.repoPath}/pulls/$number/requested_reviewers',
+        {'reviewers': reviewers},
+        token: token,
+      );
+      if (rv.statusCode != 201 && rv.statusCode != 200) {
+        return GitResult.err(
+            'PR #$number created but reviewer assignment failed: '
+            'Gitea ${rv.statusCode}: ${_sanitizeBody(rv.body)}');
+      }
+    }
+    return GitResult.ok(number);
+  } catch (e) {
+    return GitResult.err('Failed to parse created pull: $e');
+  }
 }
 
 Future<GitResult<PullRequestSummary>> getGiteaPull(
@@ -299,7 +380,7 @@ Future<GitResult<void>> giteaApprovePull(
     token: token,
   );
   if (r.statusCode != 200 && r.statusCode != 201) {
-    return GitResult.err('API ${r.statusCode}: ${r.body}');
+    return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
   }
   return const GitResult.ok(null);
 }
@@ -328,7 +409,7 @@ Future<GitResult<void>> giteaMergePull(
     token: token,
   );
   if (r.statusCode != 200) {
-    return GitResult.err('API ${r.statusCode}: ${r.body}');
+    return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
   }
   return const GitResult.ok(null);
 }
@@ -348,7 +429,7 @@ Future<GitResult<void>> giteaCommentOnIssue(
     token: token,
   );
   if (r.statusCode != 201) {
-    return GitResult.err('API ${r.statusCode}: ${r.body}');
+    return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
   }
   return const GitResult.ok(null);
 }
@@ -378,7 +459,7 @@ Future<GitResult<List<IssueSummary>>> listGiteaIssues(
     );
     if (r.statusCode != 200) {
       return all.isEmpty
-          ? GitResult.err('API ${r.statusCode}: ${r.body}')
+          ? GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}')
           : GitResult.ok(all);
     }
     try {
@@ -487,7 +568,7 @@ Future<GitResult<int>> createGiteaIssue(
     },
     token: token,
   );
-  if (r.statusCode != 201) return GitResult.err('API ${r.statusCode}: ${r.body}');
+  if (r.statusCode != 201) return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
   try {
     final j = jsonDecode(r.body) as Map<String, dynamic>;
     return GitResult.ok((j['number'] as num).toInt());
@@ -516,7 +597,7 @@ Future<GitResult<void>> editGiteaIssue(
     token: token,
   );
   if (r.statusCode != 201 && r.statusCode != 200) {
-    return GitResult.err('API ${r.statusCode}: ${r.body}');
+    return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
   }
   return const GitResult.ok(null);
 }
@@ -662,7 +743,7 @@ Future<GitResult<void>> closeGiteaPull(
     token: token,
   );
   if (r.statusCode != 200 && r.statusCode != 201) {
-    return GitResult.err('API ${r.statusCode}: ${r.body}');
+    return GitResult.err('Gitea ${r.statusCode}: ${_sanitizeBody(r.body)}');
   }
   return const GitResult.ok(null);
 }

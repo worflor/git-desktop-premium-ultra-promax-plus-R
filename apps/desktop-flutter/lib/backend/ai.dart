@@ -86,13 +86,10 @@ const _providerModelDiscoveryCacheTtl = Duration(minutes: 30);
 const _binaryHealthCheckTimeout = Duration(milliseconds: 1200);
 const _openCodeBinaryHealthCheckTimeout = Duration(seconds: 5);
 const _windowsScriptHealthCheckTimeout = Duration(seconds: 5);
-// Per-attempt deadline for a provider CLI call. Sonnet with extended
-// thinking on a 260K-char prompt regularly needs 5–8 minutes to land,
-// and the retry loop gets two attempts — so a 180 s ceiling kept
-// killing legitimate inference before it could finish. 10 min per
-// attempt (20 min total with retry) covers the slow-Sonnet p95 while
-// still bounding the wait when the CLI truly hangs.
-const _providerRuntimeTimeout = Duration(minutes: 10);
+// Per-attempt deadline for a provider CLI call. Opus with extended
+// thinking on large prompts can need 10–15 minutes. 20 min per
+// attempt covers the slow tail while still bounding hangs.
+const _providerRuntimeTimeout = Duration(minutes: 20);
 const _gitCommandTimeout = Duration(seconds: 30);
 const _modelDiscoveryTimeout = Duration(seconds: 8);
 const _openCodeVerboseDiscoveryTimeout = Duration(seconds: 15);
@@ -2121,12 +2118,25 @@ Future<({String text, LogosEmissionRecord? record})>
     // Attribution-aware diffusion. Temperature reacts to the kind
     // distribution — bugfix-heavy ideas get a tighter t, refactor /
     // risk-heavy ideas get a broader one.
-    final evidence = engine.gatherEvidence(
+    final recurrentBrainstorm = engine.gatherEvidenceRecurrent(
       focusWeights: seedMap,
       axisLabelByPath: axisLabel,
       t: _temperatureForIdeas(ideas),
       detailBudget: 24,
+      onIteration: (report) {
+        LogosVisBus.instance.emitInSession(
+          (sid) => LogosVisRecurrentStep(
+            sid,
+            iteration: report.iteration,
+            noveltyMass: report.noveltyMass,
+            promotedPaths: report.promotedPaths,
+            hfWeight: report.hfWeight,
+            tpWeight: report.tpWeight,
+          ),
+        );
+      },
     );
+    final evidence = recurrentBrainstorm.evidence;
     final attribution = evidence?.supportAttribution ??
         engine.diffuseWithAttribution(
           weightsByPath: seedMap,
@@ -5144,15 +5154,26 @@ Future<LogosDiffusionResult?> _runLogosDiffusion({
     // innovation-residual non-focus paths into the source set, so
     // the 2nd pass reaches 2 hops on the file graph, the 3rd reaches
     // 3, etc. Terminates when residual mass drops below threshold
-    // (distribution has become self-consistent) or after 4 iterations.
-    // Cheap diffs converge in 1-2; complex ones use the full budget.
+    // (distribution has become self-consistent).
+    // Cheap diffs converge in 1-2; complex ones take more passes.
     final recurrent = engine.gatherEvidenceRecurrent(
       focusWeights: probe.sourceWeights,
       axisLabelByPath: axisLabels,
       t: resolvedT,
       excludePaths: probe.primaryPaths,
       detailBudget: 32,
-      maxIterations: 4,
+      onIteration: (report) {
+        LogosVisBus.instance.emitInSession(
+          (sid) => LogosVisRecurrentStep(
+            sid,
+            iteration: report.iteration,
+            noveltyMass: report.noveltyMass,
+            promotedPaths: report.promotedPaths,
+            hfWeight: report.hfWeight,
+            tpWeight: report.tpWeight,
+          ),
+        );
+      },
     );
     final evidence = recurrent.evidence;
     final attribution = evidence?.supportAttribution;
@@ -5872,7 +5893,7 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
           symbolPaths: symbolPaths,
         ).name,
     };
-    final evidence = engine.gatherEvidence(
+    final recurrentMissing = engine.gatherEvidenceRecurrent(
       focusWeights: probe.sourceWeights,
       axisLabelByPath: axisLabels,
       t: t,
@@ -5880,6 +5901,7 @@ Future<LogosCommitShape?> _collectLogosCommitShape({
       topK: 5,
       detailBudget: 16,
     );
+    final evidence = recurrentMissing.evidence;
     final attr = evidence?.supportAttribution;
 
     List<RelevanceScore> missing;

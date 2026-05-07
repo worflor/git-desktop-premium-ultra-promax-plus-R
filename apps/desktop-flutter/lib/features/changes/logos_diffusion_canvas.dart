@@ -111,6 +111,13 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
   // is the neutral default while φ hasn't landed yet.
   double _attentionConcentration = 0.5;
 
+  // Per-iteration ripple births from the recurrent diffusion loop.
+  // Each entry records birth time and novelty mass; the first
+  // iteration's mass is the baseline — subsequent iterations' radii
+  // grow as novelty decays (cooling = diffusion reached further).
+  final List<({double birthMs, double noveltyMass})> _recurrentRipples = [];
+  double _recurrentNoveltyBaseline = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -200,6 +207,8 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       _wellLayout = const {};
       _attentionConcentration = 0.5;
       _hunkRankings = const [];
+      _recurrentRipples.clear();
+      _recurrentNoveltyBaseline = 0.0;
       // Starfield keeps its existing birth — no reason to re-fade it.
       for (final e in _Element.values) {
         if (e != _Element.starfield) _birth[e] = -1.0;
@@ -237,6 +246,15 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       _reseedWellExpansion = event.wellExpansionFiles;
       _birth[_Element.reseedWavefront] = now;
       _phase = _Phase.reseeded;
+      wantSetState = true;
+    } else if (event is LogosVisRecurrentStep) {
+      if (_recurrentRipples.isEmpty) {
+        _recurrentNoveltyBaseline = event.noveltyMass;
+      }
+      _recurrentRipples.add((
+        birthMs: now,
+        noveltyMass: event.noveltyMass,
+      ));
       wantSetState = true;
     } else if (event is LogosVisDiffusionComplete) {
       _phi = event.phi;
@@ -340,6 +358,9 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       final birth = entry.value;
       if (birth < 0) continue;
       if (nowMs - birth < _birthGrowWindowMs) return true;
+    }
+    for (final ripple in _recurrentRipples) {
+      if (nowMs - ripple.birthMs < 1300) return true;
     }
     return false;
   }
@@ -735,6 +756,8 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
                   hunksSkipped: _hunksSkipped,
                   budgetFraction: _budgetFraction,
                   phase: _phase,
+                  recurrentRipples: _recurrentRipples,
+                  recurrentNoveltyBaseline: _recurrentNoveltyBaseline,
                 ),
               ),
                 ),
@@ -877,6 +900,8 @@ class _LogosDiffusionPainter extends CustomPainter {
   /// pulled or springing back. Each spoke renders at its rest
   /// position + its entry here.
   final Map<String, Offset> spokeDrag;
+  final List<({double birthMs, double noveltyMass})> recurrentRipples;
+  final double recurrentNoveltyBaseline;
 
   _LogosDiffusionPainter({
     required this.tokens,
@@ -900,6 +925,8 @@ class _LogosDiffusionPainter extends CustomPainter {
     required this.hunksSkipped,
     required this.budgetFraction,
     required this.phase,
+    required this.recurrentRipples,
+    required this.recurrentNoveltyBaseline,
   });
 
   /// Smoothstep envelope since birth, clamped to [0, 1]. Holds at 1.
@@ -961,6 +988,8 @@ class _LogosDiffusionPainter extends CustomPainter {
       tipDragOffset: tipDragOffset,
       ropePoints: ropePoints,
       spokeDrag: spokeDrag,
+      recurrentRipples: recurrentRipples,
+      recurrentNoveltyBaseline: recurrentNoveltyBaseline,
     );
     p.paint();
   }
@@ -1028,6 +1057,8 @@ class _TopoPainter {
   final List<Offset>? ropePoints;
   /// Per-path spoke drag offsets. Empty = everything at rest.
   final Map<String, Offset> spokeDrag;
+  final List<({double birthMs, double noveltyMass})> recurrentRipples;
+  final double recurrentNoveltyBaseline;
 
   _TopoPainter({
     required this.canvas,
@@ -1051,6 +1082,8 @@ class _TopoPainter {
     required this.tipDragOffset,
     required this.ropePoints,
     required this.spokeDrag,
+    required this.recurrentRipples,
+    required this.recurrentNoveltyBaseline,
   });
 
   void paint() {
@@ -1060,6 +1093,7 @@ class _TopoPainter {
     _paintAttentionArcs();
     _paintNeighbourNodes();
     _paintHeatRings();
+    _paintRecurrentRipples();
     _paintIgnitionWavefront();
     _paintReseedWavefront();
     _paintSourceFiles();
@@ -1112,6 +1146,35 @@ class _TopoPainter {
       final alpha = (0.10 + 0.28 * phiNorm) * _smoothstep(rankT);
       paint.color = baseColour.withValues(alpha: alpha);
       canvas.drawLine(Offset(sx, sy), Offset(tx, ty), paint);
+    }
+  }
+
+  // One subtle ring per recurrent diffusion iteration. Radius grows
+  // as novelty mass decays — the system cooling means diffusion has
+  // reached further, so later iterations paint wider rings. Same
+  // impulse-response envelope as the ignition wavefront but dimmer
+  // and thinner — they read as echoes, not new events.
+  void _paintRecurrentRipples() {
+    if (recurrentRipples.isEmpty || recurrentNoveltyBaseline <= 0) return;
+    const durationMs = 1300.0;
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.9
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.8);
+    for (final ripple in recurrentRipples) {
+      final t = ((nowMs - ripple.birthMs) / durationMs).clamp(0.0, 1.0);
+      if (t >= 1.0) continue;
+      final eased = _smoothstep(t);
+      // cooled ∈ [0,1]: 0 = first iteration (hot), 1 = fully cooled.
+      final cooled =
+          (1.0 - ripple.noveltyMass / recurrentNoveltyBaseline).clamp(0.0, 1.0);
+      final rMax = maxRadius * (0.40 + 0.55 * cooled);
+      final r = rMax * eased;
+      if (r <= 0) continue;
+      final alpha = (1.0 - t) * 0.25 * math.sin(math.pi * math.min(1, t * 1.5));
+      if (alpha <= 0) continue;
+      paint.color = tokens.accentBright.withValues(alpha: alpha.clamp(0, 1));
+      canvas.drawCircle(center, r, paint);
     }
   }
 

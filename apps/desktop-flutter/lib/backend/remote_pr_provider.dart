@@ -66,6 +66,18 @@ abstract class RemotePrProvider {
   Future<GitResult<void>> close(String repoPath, int number);
   Future<GitResult<void>> comment(String repoPath, int number, String body);
 
+  Future<GitResult<int>> createPullRequest(
+    String repoPath, {
+    required String title,
+    String body = '',
+    required String headRef,
+    required String baseRef,
+    bool draft = false,
+    List<String> labels = const [],
+    List<String> assignees = const [],
+    List<String> reviewers = const [],
+  });
+
   /// Forge-specific refspec for fetching a remote PR/MR head.
   /// GitHub: `pull/<n>/head`, GitLab: `merge-requests/<n>/head`.
   String fetchRefspec(int number);
@@ -165,6 +177,22 @@ class GhPrProvider extends RemotePrProvider {
       _gh.commentOnPullRequest(repoPath, number, body);
 
   @override
+  Future<GitResult<int>> createPullRequest(
+    String repoPath, {
+    required String title,
+    String body = '',
+    required String headRef,
+    required String baseRef,
+    bool draft = false,
+    List<String> labels = const [],
+    List<String> assignees = const [],
+    List<String> reviewers = const [],
+  }) =>
+      _gh.createGhPr(repoPath,
+          title: title, body: body, headRef: headRef, baseRef: baseRef,
+          draft: draft, labels: labels, assignees: assignees, reviewers: reviewers);
+
+  @override
   String fetchRefspec(int number) => 'pull/$number/head';
 
   @override
@@ -251,6 +279,22 @@ class GlabPrProvider extends RemotePrProvider {
   Future<GitResult<void>> comment(
           String repoPath, int number, String body) =>
       _glab.commentOnMr(repoPath, number, body);
+
+  @override
+  Future<GitResult<int>> createPullRequest(
+    String repoPath, {
+    required String title,
+    String body = '',
+    required String headRef,
+    required String baseRef,
+    bool draft = false,
+    List<String> labels = const [],
+    List<String> assignees = const [],
+    List<String> reviewers = const [],
+  }) =>
+      _glab.createGlabMr(repoPath,
+          title: title, body: body, headRef: headRef, baseRef: baseRef,
+          draft: draft, labels: labels, assignees: assignees, reviewers: reviewers);
 
   @override
   String fetchRefspec(int number) => 'merge-requests/$number/head';
@@ -356,6 +400,23 @@ class GiteaPrProvider extends RemotePrProvider {
       _gitea.giteaCommentOnIssue(repoPath, number, body);
 
   @override
+  Future<GitResult<int>> createPullRequest(
+    String repoPath, {
+    required String title,
+    String body = '',
+    required String headRef,
+    required String baseRef,
+    bool draft = false,
+    List<String> labels = const [],
+    List<String> assignees = const [],
+    List<String> reviewers = const [],
+  }) =>
+      _gitea.createGiteaPull(repoPath,
+          title: title, body: body, headRef: headRef, baseRef: baseRef,
+          labels: labels, assignees: assignees, draft: draft,
+          reviewers: reviewers);
+
+  @override
   String fetchRefspec(int number) => 'pull/$number/head';
 
   @override
@@ -405,6 +466,7 @@ class _NullPrProvider extends RemotePrProvider {
   @override Future<GitResult<void>> checkout(_, __) async => _noRemote();
   @override Future<GitResult<void>> close(_, __) async => _noRemote();
   @override Future<GitResult<void>> comment(_, __, ___) async => _noRemote();
+  @override Future<GitResult<int>> createPullRequest(_, {required String title, String body = '', required String headRef, required String baseRef, bool draft = false, List<String> labels = const [], List<String> assignees = const [], List<String> reviewers = const []}) async => _noRemote();
   @override String fetchRefspec(int number) => '';
   @override Future<String> whoami() async => '';
 }

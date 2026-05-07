@@ -56,14 +56,25 @@ enum LogosRegime {
   /// Anything else — unclassified. Default priors.
   uncategorised;
 
+  /// Continuous focus score: high when the diff is small AND cohesive,
+  /// bottlenecked by whichever dimension is weaker (fuzzy AND = min).
+  static double focusScore({
+    required int fileCount,
+    required double coherence,
+  }) =>
+      math.min(
+        (1.0 - (fileCount - 1) / 14.0).clamp(0.0, 1.0),
+        coherence.clamp(0.0, 1.0),
+      );
+
   static LogosRegime classify({
     required int fileCount,
     required double coherence,
   }) {
-    if (fileCount <= 3 && coherence >= 0.6) return LogosRegime.focused;
-    if (fileCount <= 12 && coherence >= 0.35) return LogosRegime.scoped;
-    if (fileCount > 12 || coherence < 0.35) return LogosRegime.sweep;
-    return LogosRegime.uncategorised;
+    final s = focusScore(fileCount: fileCount, coherence: coherence);
+    if (s >= 0.55) return LogosRegime.focused;
+    if (s >= 0.20) return LogosRegime.scoped;
+    return LogosRegime.sweep;
   }
 }
 

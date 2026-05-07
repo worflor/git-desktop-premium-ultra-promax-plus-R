@@ -57,6 +57,8 @@ class DeskThreadEntry {
       );
 }
 
+const Object _sentinel = Object();
+
 class DeskPr {
   /// Locally-allocated sequential ID. Plays the role of a remote PR
   /// number for adapter purposes.
@@ -90,10 +92,11 @@ class DeskPr {
   final int additions;
   final int deletions;
   final int changedFiles;
-  /// 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'. Computed via `git
-  /// merge-tree --write-tree` (no working-tree side effect). 'UNKNOWN'
-  /// when baseRef is unreachable or the probe hasn't run yet.
+  /// 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'.
   final String mergeable;
+  /// Remote PR/MR number this desk PR is linked to. Null = local-only.
+  /// Non-null = bidirectionally synced with the forge.
+  final int? remoteNumber;
 
   const DeskPr({
     required this.deskId,
@@ -116,6 +119,7 @@ class DeskPr {
     this.deletions = 0,
     this.changedFiles = 0,
     this.mergeable = 'UNKNOWN',
+    this.remoteNumber,
   });
 
   String _deriveReviewDecision() {
@@ -197,6 +201,7 @@ class DeskPr {
         'deletions': deletions,
         'changedFiles': changedFiles,
         'mergeable': mergeable,
+        if (remoteNumber != null) 'remoteNumber': remoteNumber,
       };
 
   factory DeskPr.fromJson(Map<String, dynamic> j) => DeskPr(
@@ -241,6 +246,7 @@ class DeskPr {
         deletions: (j['deletions'] as num? ?? 0).toInt(),
         changedFiles: (j['changedFiles'] as num? ?? 0).toInt(),
         mergeable: (j['mergeable'] as String? ?? 'UNKNOWN').toUpperCase(),
+        remoteNumber: (j['remoteNumber'] as num?)?.toInt(),
       );
 
   DeskPr copyWith({
@@ -259,6 +265,7 @@ class DeskPr {
     int? deletions,
     int? changedFiles,
     String? mergeable,
+    Object? remoteNumber = _sentinel,
   }) =>
       DeskPr(
         deskId: deskId,
@@ -281,6 +288,9 @@ class DeskPr {
         deletions: deletions ?? this.deletions,
         changedFiles: changedFiles ?? this.changedFiles,
         mergeable: mergeable ?? this.mergeable,
+        remoteNumber: remoteNumber == _sentinel
+            ? this.remoteNumber
+            : remoteNumber as int?,
       );
 
   /// Encode for `meta.json` blob with stable indentation so diffs

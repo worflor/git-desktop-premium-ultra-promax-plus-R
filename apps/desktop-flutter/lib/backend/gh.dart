@@ -123,6 +123,31 @@ Future<GitResult<List<IssueSummary>>> listIssues(
   }
 }
 
+Future<GitResult<int>> createGhPr(
+  String repoPath, {
+  required String title,
+  String body = '',
+  required String headRef,
+  required String baseRef,
+  bool draft = false,
+  List<String> labels = const [],
+  List<String> assignees = const [],
+  List<String> reviewers = const [],
+}) async {
+  final args = ['pr', 'create', '--title', title, '--body', body,
+      '--base', baseRef, '--head', headRef];
+  if (draft) args.add('--draft');
+  for (final l in labels) { args.addAll(['--label', l]); }
+  for (final a in assignees) { args.addAll(['--assignee', a]); }
+  for (final r in reviewers) { args.addAll(['--reviewer', r]); }
+  final r = await _gh(repoPath, args);
+  if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+  final out = r.stdout.toString().trim();
+  final match = RegExp(r'/pull/(\d+)').firstMatch(out);
+  if (match == null) return GitResult.err('unexpected output: $out');
+  return GitResult.ok(int.parse(match.group(1)!));
+}
+
 Future<GitResult<PullRequestSummary>> getPullRequestSummary(
   String repoPath,
   int number,

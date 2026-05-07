@@ -5132,11 +5132,27 @@ class _ChangesPageState extends State<ChangesPage> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           if (context.read<RepositoryState>().activePath != repoPath) return;
-          final drained = context
-              .read<AiActivityState>()
-              .consumePendingDrawerOpen(repoPath);
-          if (drained == null) return;
-          _openDrawerFor(drained);
+          final aiState = context.read<AiActivityState>();
+          final intent = aiState.consumePendingDrawerOpen(repoPath);
+          if (intent == null) return;
+
+          if (intent.kind == AiActivityKind.ask &&
+              intent.query != null &&
+              intent.query!.isNotEmpty) {
+            final status = context.read<RepositoryState>().status;
+            if (status != null) {
+              final aiSettings = context.read<AiSettingsState>();
+              _askInPanel(repoPath, status, intent.query!,
+                  aiSettings.commitMessageModelCategoryId);
+              return;
+            }
+            if (intent.retries < 3) {
+              aiState.requeueIntent(repoPath, intent.retry());
+              return;
+            }
+            // Exhausted retries — fall through to open drawer without query.
+          }
+          _openDrawerFor(intent.kind);
         });
       }
     }

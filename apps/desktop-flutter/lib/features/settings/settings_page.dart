@@ -50,13 +50,10 @@ const _guardrailStageColors = AppSeverityPalette.guardrailStages;
 enum _PromptSaveState { idle, typing, saving, saved, error }
 
 class SettingsPage extends StatefulWidget {
-  /// Optional section to scroll to + briefly highlight on mount. Set
-  /// by callers that deep-link into a specific section (e.g., the
-  /// project context menu's "Open with…" zero-state). Null = default
-  /// scroll position.
   final SettingsSection? focusSection;
+  final VoidCallback? onOpenReleaseNotes;
 
-  const SettingsPage({super.key, this.focusSection});
+  const SettingsPage({super.key, this.focusSection, this.onOpenReleaseNotes});
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -1502,8 +1499,17 @@ class _SettingsPageState extends State<SettingsPage>
           title: 'Release Deployment',
           summary: 'Update related settings.',
           wide: true,
-          action: _ReplayOnboardingButton(
-            onTap: () => context.read<OnboardingState>().replay(),
+          action: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.onOpenReleaseNotes != null)
+                _ReleaseNotesButton(onTap: widget.onOpenReleaseNotes!),
+              if (widget.onOpenReleaseNotes != null)
+                const SizedBox(width: 6),
+              _ReplayOnboardingButton(
+                onTap: () => context.read<OnboardingState>().replay(),
+              ),
+            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1903,6 +1909,64 @@ class _StateCard extends StatelessWidget {
 /// Small icon button living in the top-right of the Release Deployment
 /// card. Re-opens the first-run onboarding flow — handy for debugging
 /// and a quiet "hello again" for anyone who pokes around.
+class _ReleaseNotesButton extends StatefulWidget {
+  final VoidCallback onTap;
+  const _ReleaseNotesButton({required this.onTap});
+
+  @override
+  State<_ReleaseNotesButton> createState() => _ReleaseNotesButtonState();
+}
+
+class _ReleaseNotesButtonState extends State<_ReleaseNotesButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Tooltip(
+      message: 'Release notes',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
+            duration: AppMotion.snap,
+            width: 28,
+            height: 28,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _hover
+                  ? t.accentBright.withValues(alpha: 0.14)
+                  : t.accentBright.withValues(alpha: 0),
+              border: Border.all(
+                color: _hover
+                    ? t.accentBright.withValues(alpha: 0.5)
+                    : t.chromeBorder.withValues(alpha: 0.5),
+              ),
+              borderRadius: BorderRadius.circular(
+                themeDefinitionFor(t.id)
+                    .shader
+                    .geometry
+                    .radius
+                    .clamp(4.0, 8.0)
+                    .toDouble(),
+              ),
+            ),
+            child: Icon(
+              Icons.article_outlined,
+              size: 14,
+              color: _hover ? t.accentBright : t.textFaint,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ReplayOnboardingButton extends StatefulWidget {
   final VoidCallback onTap;
   const _ReplayOnboardingButton({required this.onTap});

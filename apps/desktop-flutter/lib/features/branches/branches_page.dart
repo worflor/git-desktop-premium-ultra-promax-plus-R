@@ -995,6 +995,8 @@ class _BranchesPageState extends State<BranchesPage> {
         _prs ??= const [];
       }
     });
+    // Silently sync promoted desk PRs with their remote state.
+    unawaited(context.read<DeskPrState>().reconcileRemoteState(repoPath));
   }
 
   Future<void> _fetchIssues(String repoPath) async {
@@ -1133,6 +1135,12 @@ class _BranchesPageState extends State<BranchesPage> {
             label: 'Merge into new desk…',
             onTap: () => _openPrAsDesk(repoPath, pr),
           ),
+        if (isLocal && _forge != RemoteForge.unknown)
+          AppContextMenuItem(
+            icon: Icons.cloud_upload_outlined,
+            label: 'Push to forge',
+            onTap: () => _promoteToForge(repoPath, pr.headRef),
+          ),
       ]),
       ListMenuSection([
         AppContextMenuItem(
@@ -1144,7 +1152,7 @@ class _BranchesPageState extends State<BranchesPage> {
       ListMenuSection([
         AppContextMenuItem(
           icon: Icons.file_download_outlined,
-          label: 'Download as .patch',
+          label: '↓ git patch',
           onTap: () async {
             var detail = _prDetails[pr.number];
             if (detail == null || detail.diff.isEmpty) {
@@ -2609,6 +2617,23 @@ class _BranchesPageState extends State<BranchesPage> {
     setState(() {
       _issues![i] = updated;
     });
+  }
+
+  Future<void> _promoteToForge(String repoPath, String branch) async {
+    final deskPrState = context.read<DeskPrState>();
+    final err = await deskPrState.promoteToRemote(
+        repoPath: repoPath, branch: branch);
+    if (!mounted) return;
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err)),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('PR pushed to forge.')),
+    );
+    await _fetchPullRequests(repoPath);
   }
 
   Future<void> _checkoutPr(String repoPath, int number) async {
@@ -4558,7 +4583,7 @@ class _LensRibbon extends StatelessWidget {
                   child: Padding(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    child: Text('+ patch',
+                    child: Text('↑ patch',
                         style: TextStyle(
                           color: t.textMuted,
                           fontSize: 11,
@@ -5047,17 +5072,26 @@ class _RefreshGlyphState extends State<_RefreshGlyph>
       onTap: widget.onTap,
       builder: (context, hovered) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        child: RotationTransition(
-          turns: _spin,
-          child: AnimatedDefaultTextStyle(
-            duration: AppMotion.snap,
-            curve: AppMotion.snapCurve,
-            style: TextStyle(
-              color: hovered ? t.textStrong : t.textMuted,
-              fontSize: 14,
-              fontWeight: FontWeight.w400,
+        child: AnimatedScale(
+          scale: widget.active ? 1.15 : 1.0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          child: RotationTransition(
+            turns: _spin,
+            child: AnimatedDefaultTextStyle(
+              duration: AppMotion.snap,
+              curve: AppMotion.snapCurve,
+              style: TextStyle(
+                color: widget.active
+                    ? t.accentBright
+                    : hovered
+                        ? t.textStrong
+                        : t.textMuted,
+                fontSize: 14,
+                fontWeight: FontWeight.w400,
+              ),
+              child: const Text('✦'),
             ),
-            child: const Text('✦'),
           ),
         ),
       ),

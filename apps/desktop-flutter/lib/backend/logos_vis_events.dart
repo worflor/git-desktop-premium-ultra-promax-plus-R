@@ -185,6 +185,27 @@ class LogosVisHunksRanked extends LogosVisEvent {
   final double budgetFraction;
 }
 
+/// One iteration of the recurrent diffusion loop completed. Fires
+/// between DiffSources and DiffusionComplete, once per pass. The
+/// canvas pulses a heat ring per iteration so the user sees the
+/// diffusion expanding outward in waves as it cools.
+class LogosVisRecurrentStep extends LogosVisEvent {
+  const LogosVisRecurrentStep(
+    super.sessionId, {
+    required this.iteration,
+    required this.noveltyMass,
+    required this.promotedPaths,
+    required this.hfWeight,
+    required this.tpWeight,
+  });
+
+  final int iteration;
+  final double noveltyMass;
+  final int promotedPaths;
+  final double hfWeight;
+  final double tpWeight;
+}
+
 /// Context sealed and sent to the model. Canvas renders the beam.
 class LogosVisTransmit extends LogosVisEvent {
   const LogosVisTransmit(super.sessionId);
