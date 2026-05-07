@@ -142,6 +142,8 @@ const Map<String, String> _prettyHostLabels = {
   'github.com': 'GitHub',
   'gitlab.com': 'GitLab',
   'bitbucket.org': 'Bitbucket',
+  'codeberg.org': 'Codeberg',
+  'gitea.com': 'Gitea',
 };
 
 String _prettyHostLabel(String host) =>

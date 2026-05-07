@@ -85,6 +85,11 @@ class FileConstellation extends StatefulWidget {
   final Map<String, FileChangeWeight> changeWeights;
   final Set<String> includedPaths;
   final AppTokens tokens;
+  /// Per-path reviewer count from the forge constellation. Null or
+  /// absent = no observation data available. 0 = file exists in the
+  /// engine but has never been reviewed. >0 = number of distinct
+  /// reviewers who have observed this path through forge reviews.
+  final Map<String, int> observerCounts;
 
   /// Toggle a single file in or out of the current selection.
   final void Function(String path, bool value) onToggleIncluded;
@@ -108,6 +113,7 @@ class FileConstellation extends StatefulWidget {
     this.changeWeights = const {},
     required this.includedPaths,
     required this.tokens,
+    this.observerCounts = const {},
     required this.onToggleIncluded,
     required this.onCarve,
     required this.onSelectDiff,
@@ -233,6 +239,7 @@ class _FileConstellationState extends State<FileConstellation> {
               matrix: widget.matrix,
               changeWeights: widget.changeWeights,
               includedPaths: widget.includedPaths,
+              observerCounts: widget.observerCounts,
               dimmed: hasHover && _hoveredCandidateId != c.id,
               onHoverChanged: (hovered) {
                 if (!mounted) return;
@@ -380,6 +387,7 @@ class _CandidateCard extends StatefulWidget {
   final FileCouplingMatrix? matrix;
   final Map<String, FileChangeWeight> changeWeights;
   final Set<String> includedPaths;
+  final Map<String, int> observerCounts;
   final bool dimmed;
   final void Function(bool hovered) onHoverChanged;
   final VoidCallback onCarve;
@@ -395,6 +403,7 @@ class _CandidateCard extends StatefulWidget {
     required this.matrix,
     required this.changeWeights,
     required this.includedPaths,
+    this.observerCounts = const {},
     required this.dimmed,
     required this.onHoverChanged,
     required this.onCarve,
@@ -554,6 +563,7 @@ class _CandidateCardState extends State<_CandidateCard>
                               clusterId: c.id,
                               includedPaths: widget.includedPaths,
                               accent: accent,
+                              observerCounts: widget.observerCounts,
                             ),
                           ),
                         ),
@@ -1002,6 +1012,7 @@ class _CandidateGlyph extends StatelessWidget {
   final int clusterId;
   final Set<String> includedPaths;
   final Color accent;
+  final Map<String, int> observerCounts;
 
   const _CandidateGlyph({
     required this.tokens,
@@ -1011,6 +1022,7 @@ class _CandidateGlyph extends StatelessWidget {
     required this.clusterId,
     required this.includedPaths,
     required this.accent,
+    this.observerCounts = const {},
   });
 
   @override
@@ -1027,6 +1039,7 @@ class _CandidateGlyph extends StatelessWidget {
           includedPaths: includedPaths,
           accent: accent,
           faint: tokens.chromeBorder.withValues(alpha: 0.35),
+          observerCounts: observerCounts,
         ),
       ),
     );
@@ -1042,6 +1055,8 @@ class _GlyphPainter extends CustomPainter {
   final Color accent;
   final Color faint;
 
+  final Map<String, int> observerCounts;
+
   _GlyphPainter({
     required this.paths,
     required this.matrix,
@@ -1050,6 +1065,7 @@ class _GlyphPainter extends CustomPainter {
     required this.includedPaths,
     required this.accent,
     required this.faint,
+    this.observerCounts = const {},
   });
 
   // Mean coupling of [path] to the rest of the cluster. 1.0 = twin of
@@ -1129,23 +1145,33 @@ class _GlyphPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     canvas.drawCircle(Offset(cx, cy), 2.4, hubRing);
 
-    // Tip nodes: size + alpha scale with diff impact.
+    // Tip nodes: size + alpha scale with diff impact, modulated by
+    // observation coverage. Unobserved files are less certain — their
+    // tips are dimmer and halos are smaller, expressing "we know it
+    // changed, but no human has reviewed it through the forge."
+    final hasObsData = observerCounts.isNotEmpty;
     for (final (path, tip, _, impact) in tips) {
       final included = includedPaths.contains(path);
-      final radius = 1.4 + impact * 1.8; // 1.4..3.2 px
-      final alpha = 0.55 + impact * 0.45; // 0.55..1.0
+      final radius = 1.4 + impact * 1.8;
+      final baseAlpha = 0.55 + impact * 0.45;
+      final coverageFactor = hasObsData
+          ? ((observerCounts[path] ?? 0) > 0 ? 1.0 : 0.6)
+          : 1.0;
+      final alpha = baseAlpha * coverageFactor;
+      final haloScale = coverageFactor;
 
-      if (included) {
+      if (included && haloScale > 0.5) {
+        final haloR = (radius + 3.5) * haloScale;
         final halo = Paint()
           ..shader = ui.Gradient.radial(
             tip,
-            radius + 3.5,
+            haloR,
             [
               accent.withValues(alpha: 0.35 * alpha),
               accent.withValues(alpha: 0),
             ],
           );
-        canvas.drawCircle(tip, radius + 3.5, halo);
+        canvas.drawCircle(tip, haloR, halo);
       }
 
       final body = Paint()
@@ -1172,7 +1198,8 @@ class _GlyphPainter extends CustomPainter {
       old.changeWeights != changeWeights ||
       old.includedPaths != includedPaths ||
       old.clusterId != clusterId ||
-      old.accent != accent;
+      old.accent != accent ||
+      old.observerCounts != observerCounts;
 }
 
 // Leftovers bench, isolated files, displayed quietly

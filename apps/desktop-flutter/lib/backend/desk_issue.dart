@@ -49,7 +49,7 @@ class DeskIssueComment {
 }
 
 class DeskIssue {
-  /// Locally-allocated sequential ID. Plays the role of GitHub's
+  /// Locally-allocated sequential ID. Plays the role of a remote
   /// issue number for adapter purposes.
   final int issueId;
   final String title;
@@ -65,9 +65,9 @@ class DeskIssue {
   /// `DeskPr.linkedIssues: [issueId, ...]`.
   final List<String> addressedBy;
   final List<DeskIssueComment> comments;
-  /// GitHub issue number this local issue is linked to.
+  /// Remote issue number this local issue is linked to.
   /// null  = never promoted / never imported from remote.
-  /// non-null = bidirectionally synced with GitHub issue #[remoteNumber].
+  /// non-null = bidirectionally synced with remote issue #[remoteNumber].
   final int? remoteNumber;
 
   const DeskIssue({

@@ -119,7 +119,7 @@ void main() {
       );
       expect(
         classifyRemote('git@codeberg.org:o/r.git')!.label,
-        'codeberg.org',
+        'Codeberg',
       );
     });
 

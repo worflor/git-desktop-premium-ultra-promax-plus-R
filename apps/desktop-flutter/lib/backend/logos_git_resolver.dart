@@ -29,7 +29,9 @@ import 'file_coupling.dart';
 import 'git.dart';
 import 'logos_git.dart';
 import 'logos_git_diagnostics.dart';
+import 'git_result.dart';
 import 'logos_git_stats.dart';
+import 'remote_types.dart' show RemoteForge, ForgeTopology, detectForge, detectAllForges;
 import 'perf_span.dart' show perfSpan;
 import 'logos_vis_events.dart';
 import 'lru_cache.dart';
@@ -444,8 +446,21 @@ Future<LogosGit?> _resolveImpl(
       return cached.engine;
     }
 
-    final statsResult =
-        await collectLogosGitStats(repoPath, coupling: coupling);
+    final topology = await detectAllForges(repoPath);
+    final forge = topology.primary;
+    // Both calls are I/O-bound (git subprocesses + optional network).
+    // Start both before awaiting either so they run concurrently.
+    final reviewFut = collectReviewedCommitsAllForges(repoPath, topology);
+    final statsFut = collectLogosGitStats(repoPath, coupling: coupling,
+        forge: forge.name);
+    final results = await Future.wait([reviewFut, statsFut]);
+    final reviewedCommits = results[0] as Map<String, Set<String>>;
+    final statsResultRaw = results[1] as GitResult<LogosGitStats>;
+    // Merge review data into the stats post-hoc — tag hyperedges with
+    // reviewer identities now that both results are available.
+    final statsResult = statsResultRaw.ok && statsResultRaw.data != null
+        ? GitResult.ok(_mergeReviewData(statsResultRaw.data!, reviewedCommits))
+        : statsResultRaw;
     if (!statsResult.ok || statsResult.data == null) {
       log.recordFailure(
         repoPath,
@@ -547,4 +562,61 @@ Future<LogosGit?> _resolveImpl(
     log.recordFailure(repoPath, 'build threw: $e', sw.elapsed, st);
     return null;
   }
+}
+
+LogosGitStats _mergeReviewData(
+  LogosGitStats stats,
+  Map<String, Set<String>> reviewedCommits,
+) {
+  if (reviewedCommits.isEmpty) return stats;
+  final taggedHyperedges = <String, List<LogosCommitHyperedge>>{};
+  final reviewersByPath = <String, Set<String>>{};
+  for (final entry in stats.hyperedgesByPath.entries) {
+    final tagged = <LogosCommitHyperedge>[];
+    for (final edge in entry.value) {
+      final hash = edge.commitHash;
+      if (edge.observers.isEmpty && hash != null && reviewedCommits.containsKey(hash)) {
+        final observers = reviewedCommits[hash]!;
+        tagged.add(LogosCommitHyperedge(
+          paths: edge.paths,
+          weight: edge.weight,
+          summary: edge.summary,
+          commitHash: hash,
+          observers: observers,
+        ));
+        for (final path in edge.paths) {
+          (reviewersByPath[path] ??= <String>{}).addAll(observers);
+        }
+      } else {
+        tagged.add(edge);
+        if (edge.observers.isNotEmpty) {
+          for (final path in edge.paths) {
+            (reviewersByPath[path] ??= <String>{}).addAll(edge.observers);
+          }
+        }
+      }
+    }
+    taggedHyperedges[entry.key] = tagged;
+  }
+  return LogosGitStats(
+    touches: stats.touches,
+    totalCommits: stats.totalCommits,
+    rawTouches: stats.rawTouches,
+    rawTotalCommits: stats.rawTotalCommits,
+    touchMass: stats.touchMass,
+    semanticCommitMass: stats.semanticCommitMass,
+    volatility: stats.volatility,
+    volMean: stats.volMean,
+    volStddev: stats.volStddev,
+    coupling: stats.coupling,
+    perFileCommitIndices: stats.perFileCommitIndices,
+    perFileCommitClock: stats.perFileCommitClock,
+    ritualnessByPath: stats.ritualnessByPath,
+    integrityByPath: stats.integrityByPath,
+    integrityReasonsByPath: stats.integrityReasonsByPath,
+    hyperedgesByPath: taggedHyperedges,
+    forge: stats.forge,
+    reviewedCommits: reviewedCommits,
+    reviewersByPath: reviewersByPath,
+  );
 }

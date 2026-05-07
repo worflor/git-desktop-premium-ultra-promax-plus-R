@@ -280,17 +280,89 @@ class RemoteProviderStatus {
   static const yes = RemoteProviderStatus(available: true);
 }
 
+/// Format a PR/MR as a `git format-patch`-style `.patch` string.
+String formatPrAsPatch(PullRequestSummary pr, PullRequestDetail detail) {
+  final author = pr.authorLogin.isNotEmpty ? pr.authorLogin : 'unknown';
+  final dateStr = pr.updatedAt.toUtc().toIso8601String();
+  final body = detail.body.trim();
+  return [
+    'From: $author <$author@noreply.local>',
+    'Date: $dateStr',
+    'Subject: [PATCH] ${pr.title}',
+    '',
+    if (body.isNotEmpty) ...[body, ''],
+    '---',
+    '',
+    detail.diff,
+  ].join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Forge detection — single-sourced so adding a new forge (Gitea,
 // Bitbucket, Forgejo, …) requires one change here, not one per
 // provider file.
 // ---------------------------------------------------------------------------
 
-enum RemoteForge { github, gitlab, unknown }
+enum RemoteForge { github, gitlab, gitea, unknown }
+
+/// Detected forge per remote — keyed by remote name (e.g. 'origin',
+/// 'upstream', 'mirror'). Enables cross-forge constellation merging.
+class ForgeTopology {
+  final Map<String, RemoteForge> byRemote;
+  const ForgeTopology(this.byRemote);
+
+  RemoteForge get primary => byRemote['origin'] ?? byRemote.values.firstOrNull ?? RemoteForge.unknown;
+  Iterable<MapEntry<String, RemoteForge>> get known =>
+      byRemote.entries.where((e) => e.value != RemoteForge.unknown);
+}
+
+/// Detect the forge for every configured remote in [repoPath].
+/// Single `git remote -v` call → parse all remote URLs at once.
+Future<ForgeTopology> detectAllForges(String repoPath) async {
+  try {
+    final r = await Process.run(
+      'git', ['remote', '-v'],
+      workingDirectory: repoPath,
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    if (r.exitCode != 0) return const ForgeTopology({});
+    // Parse "name\turl (fetch|push)" lines — deduplicate by name,
+    // prefer fetch URL.
+    final urls = <String, String>{};
+    for (final line in (r.stdout as String).split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      final parts = trimmed.split(RegExp(r'\s+'));
+      if (parts.length < 2) continue;
+      final name = parts[0];
+      final url = parts[1];
+      if (!urls.containsKey(name)) urls[name] = url;
+    }
+    final results = <String, RemoteForge>{};
+    final probeFuts = <String, Future<RemoteForge>>{};
+    for (final entry in urls.entries) {
+      final byName = forgeFromUrl(entry.value);
+      if (byName != RemoteForge.unknown) {
+        results[entry.key] = byName;
+      } else {
+        probeFuts[entry.key] = _probeForGitea(entry.value);
+      }
+    }
+    if (probeFuts.isNotEmpty) {
+      final probed = await Future.wait(probeFuts.values.toList());
+      var i = 0;
+      for (final name in probeFuts.keys) {
+        results[name] = probed[i++];
+      }
+    }
+    return ForgeTopology(results);
+  } catch (_) {
+    return const ForgeTopology({});
+  }
+}
 
 /// Resolve the forge hosting [repoPath] by reading `origin`.
-/// Single `git remote get-url origin` spawn — cheap enough to run
-/// per refresh without caching.
 Future<RemoteForge> detectForge(String repoPath) async {
   try {
     final r = await Process.run(
@@ -301,10 +373,52 @@ Future<RemoteForge> detectForge(String repoPath) async {
       stderrEncoding: utf8,
     );
     if (r.exitCode != 0) return RemoteForge.unknown;
-    return forgeFromUrl((r.stdout as String).trim());
+    final url = (r.stdout as String).trim();
+    final byName = forgeFromUrl(url);
+    if (byName != RemoteForge.unknown) return byName;
+    // Unknown host — probe for Gitea/Forgejo API. Self-hosted instances
+    // (git.mycompany.com) won't match by hostname, but Gitea/Forgejo
+    // always responds at /api/v1/version with {"version": "..."}.
+    return await _probeForGitea(url);
   } catch (_) {
     return RemoteForge.unknown;
   }
+}
+
+final Map<String, RemoteForge> _forgeProbeCache = {};
+
+void clearForgeProbeCache() => _forgeProbeCache.clear();
+
+Future<RemoteForge> _probeForGitea(String remoteUrl) async {
+  final cached = _forgeProbeCache[remoteUrl];
+  if (cached != null) return cached;
+  final host = hostOfRemote(remoteUrl);
+  if (host.isEmpty) return RemoteForge.unknown;
+  const scheme = 'https';
+  try {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+    try {
+      final request = await client.getUrl(
+          Uri.parse('$scheme://$host/api/v1/version'));
+      request.headers.set('Accept', 'application/json');
+      final response = await request.close()
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        _forgeProbeCache[remoteUrl] = RemoteForge.unknown;
+        return RemoteForge.unknown;
+      }
+      final body = await response.transform(utf8.decoder).join();
+      final j = jsonDecode(body) as Map<String, dynamic>;
+      if (j.containsKey('version')) {
+        _forgeProbeCache[remoteUrl] = RemoteForge.gitea;
+        return RemoteForge.gitea;
+      }
+    } finally {
+      client.close();
+    }
+  } catch (_) {}
+  _forgeProbeCache[remoteUrl] = RemoteForge.unknown;
+  return RemoteForge.unknown;
 }
 
 /// Pure classification — no I/O.
@@ -312,6 +426,11 @@ RemoteForge forgeFromUrl(String url) {
   final host = hostOfRemote(url.toLowerCase());
   if (host.contains('github')) return RemoteForge.github;
   if (host.contains('gitlab')) return RemoteForge.gitlab;
+  if (host.contains('gitea') ||
+      host.contains('forgejo') ||
+      host == 'codeberg.org') {
+    return RemoteForge.gitea;
+  }
   return RemoteForge.unknown;
 }
 

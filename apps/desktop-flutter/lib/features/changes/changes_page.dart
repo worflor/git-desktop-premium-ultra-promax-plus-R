@@ -5731,6 +5731,13 @@ class _ChangesPageState extends State<ChangesPage> {
                                     }
                                     if (_constellationOpen &&
                                         status.files.length >= 2) {
+                                      final obsEngine = context.read<LogosGitState>().engineFor(repoPath);
+                                      final obsCounts = <String, int>{};
+                                      if (obsEngine != null) {
+                                        for (final entry in obsEngine.stats.reviewersByPath.entries) {
+                                          obsCounts[entry.key] = entry.value.length;
+                                        }
+                                      }
                                       return FileConstellation(
                                         files: ordered,
                                         clusters: clusters,
@@ -5738,6 +5745,7 @@ class _ChangesPageState extends State<ChangesPage> {
                                         changeWeights: _changeWeights,
                                         includedPaths: _includedPaths,
                                         tokens: t,
+                                        observerCounts: obsCounts,
                                         onToggleIncluded: (path, value) =>
                                             _toggleIncluded(path, value),
                                         onCarve: (paths) {

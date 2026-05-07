@@ -213,7 +213,7 @@ class DeskIssueStore {
     return refs.deleteRef(refFor(id));
   }
 
-  /// Set (or clear) the GitHub issue number this local issue is linked to.
+  /// Set (or clear) the remote issue number this local issue is linked to.
   /// Calling with null unlinks the remote association.
   Future<GitResult<DeskIssue>> setRemoteNumber(
     int id,

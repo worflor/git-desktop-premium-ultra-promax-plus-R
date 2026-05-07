@@ -58,14 +58,14 @@ class DeskThreadEntry {
 }
 
 class DeskPr {
-  /// Locally-allocated sequential ID. Plays the role of GitHub's PR
+  /// Locally-allocated sequential ID. Plays the role of a remote PR
   /// number for adapter purposes.
   final int deskId;
   final String title;
   final String body;
   final String headRef;
   final String baseRef;
-  /// 'OPEN' | 'CLOSED' | 'MERGED' — same vocab as GitHub PRs.
+  /// 'OPEN' | 'CLOSED' | 'MERGED'.
   final String state;
   final bool isDraft;
   final String authorIdentity;

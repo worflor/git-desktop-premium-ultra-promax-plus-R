@@ -571,6 +571,14 @@ class LogosGitStats {
   final Map<String, double> integrityByPath;
   final Map<String, List<String>> integrityReasonsByPath;
   final Map<String, List<LogosCommitHyperedge>> hyperedgesByPath;
+  final String forge;
+  /// Merge-commit SHAs that arrived through reviewed PRs/MRs,
+  /// mapped to the set of reviewer logins who observed the change.
+  final Map<String, Set<String>> reviewedCommits;
+  /// Per-path union of all reviewer logins across all reviewed
+  /// commits that touched the path. The reviewer constellation —
+  /// which humans have observed which parts of the codebase.
+  final Map<String, Set<String>> reviewersByPath;
 
   const LogosGitStats({
     required this.touches,
@@ -589,6 +597,9 @@ class LogosGitStats {
     this.integrityByPath = const {},
     this.integrityReasonsByPath = const {},
     this.hyperedgesByPath = const {},
+    this.forge = 'unknown',
+    this.reviewedCommits = const {},
+    this.reviewersByPath = const {},
   });
 }
 
@@ -635,6 +646,8 @@ class LogosEvidenceWitness {
   final String? sourceRole;
   final String? targetRole;
   final bool directional;
+  /// Named human observers on this witness (for hyperedge kind).
+  final Set<String> observers;
 
   const LogosEvidenceWitness({
     required this.kind,
@@ -647,6 +660,7 @@ class LogosEvidenceWitness {
     this.sourceRole,
     this.targetRole,
     this.directional = false,
+    this.observers = const {},
   });
 }
 
@@ -714,12 +728,19 @@ class LogosCommitHyperedge {
   final List<String> paths;
   final double weight;
   final String? summary;
+  final String? commitHash;
+  /// Named human observers who reviewed this change.
+  final Set<String> observers;
 
   const LogosCommitHyperedge({
     required this.paths,
     required this.weight,
     this.summary,
+    this.commitHash,
+    this.observers = const {},
   });
+
+  int get observerCount => observers.length + 1;
 }
 
 class LogosEvidenceScore {
@@ -3990,7 +4011,11 @@ class LogosGit {
           : (overlap / neighbourSpan).clamp(0.0, 1.0).toDouble();
       final supportFactor =
           (0.35 + 0.65 * support.clamp(0.0, 1.0)).clamp(0.35, 1.0).toDouble();
-      final lift = edge.weight * overlapRatio * supportFactor;
+      // observerCount > 1 means this commit was reviewed by independent
+      // humans — the co-occurrence is more likely deliberate. Log-scaled
+      // so 2 reviewers ≈ 1.10x, 4 ≈ 1.20x — gentle, never penalizes.
+      final observerLift = 1.0 + 0.14 * math.log(edge.observerCount);
+      final lift = edge.weight * overlapRatio * supportFactor * observerLift;
       var pairwise = 0.0;
       var pairwiseN = 0;
       for (final source in supportingFocusPaths) {
@@ -4136,6 +4161,7 @@ class LogosGit {
         strength: higherOrderLift,
         sourcePaths: overlapSources,
         note: hyperedge.summary,
+        observers: hyperedge.observers,
       ));
     }
 

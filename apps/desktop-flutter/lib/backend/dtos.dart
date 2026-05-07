@@ -789,6 +789,60 @@ class RepositoryXrayFlowData {
   );
 }
 
+/// One reviewer's observation footprint across the codebase.
+class ReviewerConstellationEntry {
+  final String login;
+  final int observedPathCount;
+  final int observedCommitCount;
+  final List<String> topPaths;
+  const ReviewerConstellationEntry({
+    required this.login,
+    required this.observedPathCount,
+    required this.observedCommitCount,
+    this.topPaths = const [],
+  });
+}
+
+/// Per-path observation coverage — which reviewers have seen this region.
+class PathObservationData {
+  final String path;
+  final Set<String> observers;
+  final int observedCommitCount;
+  const PathObservationData({
+    required this.path,
+    required this.observers,
+    required this.observedCommitCount,
+  });
+}
+
+/// Orbital decay event — a reviewer's attention withdrew from a region.
+class OrbitalDecayEvent {
+  final String reviewerLogin;
+  final String pathPrefix;
+  final double decayMagnitude;
+  const OrbitalDecayEvent({
+    required this.reviewerLogin,
+    required this.pathPrefix,
+    required this.decayMagnitude,
+  });
+}
+
+/// Reviewer constellation data for the xray surface.
+class ReviewerConstellationData {
+  final List<ReviewerConstellationEntry> reviewers;
+  final List<PathObservationData> blindSpots;
+  final List<OrbitalDecayEvent> decayEvents;
+  final int totalObservedPaths;
+  final int totalUnobservedPaths;
+  const ReviewerConstellationData({
+    this.reviewers = const [],
+    this.blindSpots = const [],
+    this.decayEvents = const [],
+    this.totalObservedPaths = 0,
+    this.totalUnobservedPaths = 0,
+  });
+}
+
 class RepositoryXraySnapshotData {
   final RepositoryXrayHeaderData header;
   final RepositoryXraySignalIntegrityData signalIntegrity;
@@ -804,6 +858,7 @@ class RepositoryXraySnapshotData {
   final List<RepositoryXrayPivotCommitData> rawPivots;
   final RepositoryXrayMetabolismData metabolism;
   final RepositoryXrayFlowData flow;
+  final ReviewerConstellationData? reviewerConstellations;
 
   const RepositoryXraySnapshotData({
     required this.header,
@@ -820,6 +875,7 @@ class RepositoryXraySnapshotData {
     required this.rawPivots,
     this.metabolism = RepositoryXrayMetabolismData.empty,
     this.flow = RepositoryXrayFlowData.empty,
+    this.reviewerConstellations,
   });
 }
 

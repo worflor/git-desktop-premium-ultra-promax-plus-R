@@ -260,7 +260,7 @@ class DeskIssueState extends ChangeNotifier {
 
   //
   // All methods resolve the forge via detectIssueProvider() and use the
-  // RemoteIssueProvider interface — no GitHub-specific calls here.
+  // RemoteIssueProvider interface — no forge-specific calls here.
   // Local issues (DeskIssue git refs) are unaffected and always work.
 
   /// Promote a local issue to the remote forge, linking them via

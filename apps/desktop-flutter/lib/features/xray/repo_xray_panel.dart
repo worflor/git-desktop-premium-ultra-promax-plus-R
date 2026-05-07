@@ -751,6 +751,15 @@ class _MapView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final obsMap = <String, int>{};
+    final rc = snapshot.reviewerConstellations;
+    if (rc != null) {
+      for (final r in rc.reviewers) {
+        for (final p in r.topPaths) {
+          obsMap[p] = (obsMap[p] ?? 0) + 1;
+        }
+      }
+    }
     return _TerritoryBoard(
       strata: snapshot.strata,
       hotspots: hotspots,
@@ -759,6 +768,7 @@ class _MapView extends StatelessWidget {
       onStratumSelected: onStratumSelected,
       onHotspotSelected: onHotspotSelected,
       obstacle: obstacle,
+      observerCountByPath: obsMap,
     );
   }
 }
@@ -1866,9 +1876,12 @@ class _Parcel {
   final bool isKeystone;
 
   /// Bus-factor signal — true when only one author has touched this
-  /// path in the snapshot's window. Renders as a faint left-edge
-  /// hatch so single-owner risk is visible at a glance.
+  /// path in the snapshot's window.
   final bool soloOwner;
+
+  /// Number of distinct reviewers who have observed this path through
+  /// forge reviews. Null = no observation data. 0 = unobserved.
+  final int? observerCount;
 
   /// Compact human label for the parcel's last-touched age, or null
   /// when none is available. Shown inline on big tiles only.
@@ -1892,6 +1905,7 @@ class _Parcel {
     required this.children,
     this.isKeystone = false,
     this.soloOwner = false,
+    this.observerCount,
     this.recencyLabel,
     this.coupledTo = const [],
   });
@@ -2132,6 +2146,7 @@ class _TerritoryBoard extends StatelessWidget {
   final String? selectedHotspotPath;
   final ValueChanged<String> onStratumSelected;
   final ValueChanged<String> onHotspotSelected;
+  final Map<String, int> observerCountByPath;
 
   /// Treemap-interior rect (i.e. relative to the LayoutBuilder area below
   /// the header) to avoid placing tiles in. When set, the treemap renders
@@ -2148,6 +2163,7 @@ class _TerritoryBoard extends StatelessWidget {
     required this.onStratumSelected,
     required this.onHotspotSelected,
     this.obstacle,
+    this.observerCountByPath = const {},
   });
 
   @override
@@ -2227,6 +2243,9 @@ class _TerritoryBoard extends StatelessWidget {
         children: const [],
         isKeystone: h.isKeystone,
         soloOwner: h.ownerCount == 1,
+        observerCount: observerCountByPath.isNotEmpty
+            ? (observerCountByPath[h.path] ?? 0)
+            : null,
         recencyLabel: recencyLabelOf(h.lastTouchedAt),
         coupledTo: h.coupledTo,
       );
@@ -2441,7 +2460,8 @@ class _TerritoryCell extends StatelessWidget {
         child: GestureDetector(
           onTap: parcel.onTap,
           child: Tooltip(
-            message: '${parcel.label}  ·  ${parcel.count}×',
+            message: '${parcel.label}  ·  ${parcel.count}×'
+                '${parcel.observerCount != null ? (parcel.observerCount! > 0 ? '  ·  ${parcel.observerCount} reviewer${parcel.observerCount == 1 ? '' : 's'}' : '  ·  unreviewed') : ''}',
             waitDuration: const Duration(milliseconds: 400),
             child: AnimatedContainer(
               duration: context.motion(context.surfaceShader.duration),
@@ -2462,9 +2482,13 @@ class _TerritoryCell extends StatelessWidget {
                       alpha: bgAlpha *
                           (parcel.isKeystone
                               ? _keystoneGradientAlphaMul
-                              : _parcelGradientAlphaMul),
+                              : _parcelGradientAlphaMul) *
+                          (parcel.observerCount == 0 ? 0.55 : 1.0),
                     ),
-                    accent.withValues(alpha: bgAlpha * _parcelCoolCornerAlphaMul),
+                    accent.withValues(
+                      alpha: bgAlpha * _parcelCoolCornerAlphaMul *
+                          (parcel.observerCount == 0 ? 0.55 : 1.0),
+                    ),
                   ],
                 ),
                 borderRadius: BorderRadius.circular(radius),

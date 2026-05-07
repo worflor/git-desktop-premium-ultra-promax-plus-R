@@ -123,22 +123,6 @@ Future<GitResult<List<IssueSummary>>> listIssues(
   }
 }
 
-String formatPrAsPatch(PullRequestSummary pr, PullRequestDetail detail) {
-  final author = pr.authorLogin.isNotEmpty ? pr.authorLogin : 'unknown';
-  final dateStr = pr.updatedAt.toUtc().toIso8601String();
-  final body = detail.body.trim();
-  return [
-    'From: $author <$author@users.noreply.github.com>',
-    'Date: $dateStr',
-    'Subject: [PATCH] ${pr.title}',
-    '',
-    if (body.isNotEmpty) ...[body, ''],
-    '---',
-    '',
-    detail.diff,
-  ].join('\n');
-}
-
 Future<GitResult<PullRequestSummary>> getPullRequestSummary(
   String repoPath,
   int number,
@@ -186,7 +170,7 @@ Future<String> whoami() async {
     final r = await Process.run(
       'gh',
       ['api', 'user', '--jq', '.login'],
-      runInShell: true,
+      runInShell: false,
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     );
@@ -487,7 +471,7 @@ Future<ProcessResult> _gh(String repo, List<String> args) async {
       'gh',
       args,
       workingDirectory: repo,
-      runInShell: true,
+      runInShell: false,
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
     );

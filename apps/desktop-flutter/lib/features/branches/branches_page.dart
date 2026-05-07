@@ -23,7 +23,6 @@ import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../backend/git.dart';
 import '../../backend/ai.dart';
-import '../../backend/gh.dart' show formatPrAsPatch;
 import '../../backend/git_result.dart';
 import '../../backend/remote_types.dart';
 import '../../backend/remote_pr_provider.dart';
@@ -312,6 +311,7 @@ class _BranchesPageState extends State<BranchesPage> {
   RemotePrProvider? _prProvider;
   RemoteIssueProvider? _issueProvider;
   RemoteProviderStatus? _remoteStatus;
+  RemoteForge _forge = RemoteForge.unknown;
   String _viewerLogin = '';
 
   // Filter state per lens. Empty = no filter; presence of a name = active.
@@ -415,7 +415,7 @@ class _BranchesPageState extends State<BranchesPage> {
   final Set<String> _localDeskDiffsLoading = <String>{};
 
   /// Numbers of PRs surfaced from local desk metadata (DeskPrState),
-  /// not GitHub. Drives the "local" sigil on the row + routes detail
+  /// not remote. Drives the "local" sigil on the row + routes detail
   /// fetch through the local-diff path instead of `gh pr view`.
   /// Derived on access from [DeskPrState.all] plus the current remote
   /// PR list. Previously cached as an instance field and assigned
@@ -440,7 +440,7 @@ class _BranchesPageState extends State<BranchesPage> {
   }
 
   /// Numbers of issues surfaced from local desk metadata
-  /// (DeskIssueState), not GitHub. Issues have no branch join so
+  /// (DeskIssueState), not the remote forge. Issues have no branch join so
   /// there's no remote-vs-local dedupe — the full desk issue set maps
   /// straight through. Derived on access for the same reason as
   /// [_localPrNumbers].
@@ -682,9 +682,10 @@ class _BranchesPageState extends State<BranchesPage> {
 
   Future<void> _ensureProviders(String repoPath) async {
     if (_prProvider != null) return;
+    _forge = await detectForge(repoPath);
     final results = await Future.wait([
-      detectPrProvider(repoPath),
-      detectIssueProvider(repoPath),
+      detectPrProvider(repoPath, forge: _forge),
+      detectIssueProvider(repoPath, forge: _forge),
     ]);
     _prProvider = results[0] as RemotePrProvider;
     _issueProvider = results[1] as RemoteIssueProvider;
@@ -1245,7 +1246,7 @@ class _BranchesPageState extends State<BranchesPage> {
         builder: (ctx) => AlertDialog(
               content: Text(
             '$localRef already exists locally. Updating it will replace any '
-            'local commits on that branch with the latest from GitHub.',
+            'local commits on that branch with the latest from the remote.',
             style: TextStyle(color: t.textNormal, fontSize: 12),
           ),
           actions: [
@@ -1267,7 +1268,7 @@ class _BranchesPageState extends State<BranchesPage> {
       'git',
       // '+' forces the local ref to update even if non-fast-forward
       // (force-pushed PR or ref exists from a previously closed desk).
-      ['fetch', remote, '+pull/${pr.number}/head:$localRef'],
+      ['fetch', remote, '+${_prProvider!.fetchRefspec(pr.number)}:$localRef'],
       workingDirectory: repoPath,
     );
     if (fetchRes.exitCode != 0) {
@@ -2828,6 +2829,9 @@ class _BranchesPageState extends State<BranchesPage> {
       _prProvider = null;
       _issueProvider = null;
       _remoteStatus = null;
+      _forge = RemoteForge.unknown;
+      clearForgeProbeCache();
+      GiteaPrProvider.clearCachedLogin();
       _viewerLogin = '';
       _prsError = null;
       _issuesError = null;
@@ -3616,6 +3620,7 @@ class _BranchesPageState extends State<BranchesPage> {
       shape: _prShapes[pr.number],
       cosines: _prOrbits().rowOf(pr.number),
       isLocal: isLocalPr,
+      forge: isLocalPr ? RemoteForge.unknown : _forge,
       isUnread: _isUnread(pr),
       filePillsWrap: _filePillsWrap,
       onToggleFilePillsWrap: _toggleFilePillsWrap,
@@ -4380,7 +4385,7 @@ class _BranchesPageState extends State<BranchesPage> {
         }
       },
       onAssignSelf: isLocal
-          // Local issues don't carry GitHub assignee semantics; the
+          // Local issues don't carry remote assignee semantics; the
           // app's identity is implicitly "self" by being the only
           // identity in the system. No-op rather than error.
           ? () {}
@@ -5154,9 +5159,10 @@ class _PullRequestRow extends StatefulWidget {
 
   /// True when this PR was surfaced from local desk metadata
   /// (refs/manifold/desks/*) rather than fetched from a remote forge.
-  /// Drives the small "local" sigil on the row header so the user
-  /// can tell which is which without changing any other chrome.
   final bool isLocal;
+
+  /// Which forge this PR lives on. Drives the forge sigil glyph.
+  final RemoteForge forge;
 
   /// Geometric / magnetic signature of this PR. Null while the engine
   /// is cold or the PR's files don't land in-graph. When present,
@@ -5223,6 +5229,7 @@ class _PullRequestRow extends StatefulWidget {
     required this.fileSignals,
     required this.fileSignalsLoading,
     this.isLocal = false,
+    this.forge = RemoteForge.unknown,
     this.shape,
     this.cosines,
     required this.isUnread,
@@ -5471,6 +5478,7 @@ class _PullRequestRowState extends State<_PullRequestRow> {
                             isCheckedOut: widget.isCheckedOut,
                             isUnread: widget.isUnread,
                             isLocal: widget.isLocal,
+                            forge: widget.forge,
                             reviewerQueueDepth: widget.reviewerQueueDepth,
                           ),
                           const SizedBox(height: 4),
@@ -5661,15 +5669,9 @@ class _PrHeader extends StatelessWidget {
   /// activity since the viewer last expanded its detail.
   final bool isUnread;
 
-  /// Renders a small `LOCAL` chip next to the state pill when this PR
-  /// came from refs/manifold/desks/* rather than a remote forge.
   final bool isLocal;
+  final RemoteForge forge;
 
-  /// Per-reviewer queue depth across all open PRs. Used to surface
-  /// "your reviewer is buried" — when the most-loaded PENDING
-  /// reviewer assigned here has ≥ 3 other open requests, append
-  /// `← @bob (5)` after the author/queue line. Mirror of the
-  /// existing author-queue badge.
   final Map<String, int> reviewerQueueDepth;
   const _PrHeader({
     required this.pr,
@@ -5680,6 +5682,7 @@ class _PrHeader extends StatelessWidget {
     required this.isUnread,
     required this.reviewerQueueDepth,
     this.isLocal = false,
+    this.forge = RemoteForge.unknown,
   });
 
   @override
@@ -5716,6 +5719,18 @@ class _PrHeader extends StatelessWidget {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: t.accentBright,
+                    ),
+                  ),
+                ),
+              if (!isLocal && forge != RemoteForge.unknown)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: Text(
+                    _forgeSigil(forge),
+                    style: TextStyle(
+                      color: t.textFaint,
+                      fontSize: 10,
+                      height: 1,
                     ),
                   ),
                 ),
@@ -9689,6 +9704,13 @@ class _RemoteMissingNotice extends StatelessWidget {
 }
 
 // Helpers
+
+String _forgeSigil(RemoteForge forge) => switch (forge) {
+  RemoteForge.github => '●',
+  RemoteForge.gitlab => '◆',
+  RemoteForge.gitea  => '⬡',
+  RemoteForge.unknown => '',
+};
 
 String _relativeTime(DateTime t) {
   final delta = DateTime.now().difference(t);

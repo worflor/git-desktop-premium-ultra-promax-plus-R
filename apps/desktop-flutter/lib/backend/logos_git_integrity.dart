@@ -460,6 +460,7 @@ class TransportRoles {
     this.isMigration,
     this.isGenerated,
     this.isFixture,
+    this.isCiConfig,
   );
 
   factory TransportRoles.of(String path) {
@@ -475,6 +476,7 @@ class TransportRoles {
       _looksMigrationLike(n),
       _looksGenerated(n),
       _looksFixtureLike(n),
+      _looksCiConfig(n),
     );
   }
 
@@ -488,6 +490,7 @@ class TransportRoles {
   final bool isMigration;
   final bool isGenerated;
   final bool isFixture;
+  final bool isCiConfig;
 
   bool _sharesManifestRoot(TransportRoles other) =>
       seedKey != null &&
@@ -621,6 +624,24 @@ LogosTransportLane? logosTransportLaneOfRoles(
       note: 'fixture witness',
       sourceRole: 'source',
       targetRole: 'fixture',
+    );
+  }
+  if (src.isSource && cand.isCiConfig) {
+    return const LogosTransportLane(
+      label: 'source->ci-config',
+      strength: 0.14,
+      note: 'CI configuration witness',
+      sourceRole: 'source',
+      targetRole: 'ci-config',
+    );
+  }
+  if (src.isCiConfig && cand.isSource) {
+    return const LogosTransportLane(
+      label: 'ci-config->source',
+      strength: 0.22,
+      note: 'CI-driven source witness',
+      sourceRole: 'ci-config',
+      targetRole: 'source',
     );
   }
   return null;
@@ -851,6 +872,15 @@ bool _looksFixtureLike(String path) =>
     path.contains('/example/') ||
     path.contains('/snapshots/') ||
     path.contains('/snapshot/');
+
+bool _looksCiConfig(String path) =>
+    path.contains('/.github/workflows/') ||
+    path.endsWith('.gitlab-ci.yml') ||
+    path.contains('/.gitlab/ci/') ||
+    path.endsWith('.woodpecker.yml') ||
+    path.contains('/.woodpecker/') ||
+    path.endsWith('.drone.yml') ||
+    path.contains('/.forgejo/workflows/');
 
 double _pathCueIntegrity(String path, List<String> reasons) {
   final lower = path.toLowerCase();

@@ -33,6 +33,7 @@ import '../ui/tokens.dart';
 import '../diagnostics/diagnostics_state.dart';
 import '../backend/desk_issue.dart';
 import '../backend/remote_issue_provider.dart' show IssueSummary;
+import '../backend/remote_pr_provider.dart' show detectPrProvider;
 import 'desk_drop_payload.dart';
 import 'desk_issue_state.dart';
 import 'desk_pr_state.dart';
@@ -1311,7 +1312,7 @@ class _DeskRow extends StatelessWidget {
           context: context,
           builder: (ctx) => AlertDialog(
             content: Text(
-              'Overwrite $localRef with the latest from GitHub?',
+              'Overwrite $localRef with the latest from the remote?',
               style: TextStyle(color: t.textNormal, fontSize: 12),
             ),
             actions: [
@@ -1330,11 +1331,29 @@ class _DeskRow extends StatelessWidget {
         if (ok != true) return;
       }
       if (!context.mounted) return;
+      late final String refspec;
+      try {
+        final prProvider = await detectPrProvider(activeRepoPath!);
+        refspec = prProvider.fetchRefspec(prN);
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not detect forge: $e')),
+          );
+        }
+        return;
+      }
+      if (refspec.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cannot fetch PR: forge not detected for this repo.')),
+          );
+        }
+        return;
+      }
       final fetchRes = await Process.run(
         'git',
-        // '+' forces the local ref to update even if non-fast-forward
-        // (force-pushed PR or ref exists from a previously closed desk).
-        ['fetch', remote, '+pull/$prN/head:$localRef'],
+        ['fetch', remote, '+$refspec:$localRef'],
         workingDirectory: activeRepoPath!,
       );
       if (fetchRes.exitCode != 0) {
@@ -1485,7 +1504,7 @@ class _DeskRow extends StatelessWidget {
   ///   2. Auto-promote the desk to a PR if it isn't one yet, so the
   ///      MERGED state has a record to land on.
   ///   3. Run the shared `applyBranchToBase` engine (rebase strategy by
-  ///      default — linear history, matches GitHub's "Rebase and merge"
+  ///      default — linear history, matches the "Rebase and merge"
   ///      button) against the *main* worktree, which is found via the
   ///      WorktreeState's known desks.
   ///   4. Mark the PR as MERGED via DeskPrState (the existing audit
@@ -3421,7 +3440,7 @@ class _SidePanelIssue {
   /// True when backed by a local DeskIssue (has git storage).
   final bool isLocal;
 
-  /// True when the issue exists on GitHub (local+promoted counts here too).
+  /// True when the issue exists on the remote forge (local+promoted counts here too).
   final bool isRemote;
 
   const _SidePanelIssue({
@@ -3437,7 +3456,7 @@ class _SidePanelIssue {
 
 /// Side panel attached to the branch picker overlay.
 /// Shows a deduplicated list of open issues from both local storage
-/// ([localIssues]) and the GitHub cache ([remoteIssues]). A local issue
+/// ([localIssues]) and the remote cache ([remoteIssues]). A local issue
 /// with [DeskIssue.remoteNumber] set is considered the canonical record and
 /// suppresses the matching remote entry.
 /// Hover filter:

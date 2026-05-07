@@ -497,6 +497,10 @@ Future<GitResult<RepositoryXraySnapshotData>> buildRepositoryXraySnapshot(
       // truth for repo time-constants).
       metabolism: metabolism,
       flow: flow,
+      reviewerConstellations: _buildReviewerConstellations(
+        engine,
+        rawHotspots.map((h) => h.path).toSet(),
+      ),
     );
 
     stopwatch.stop();
@@ -553,6 +557,101 @@ class _SnapshotProbeCache {
 
 /// Hard ceiling on how long we'll wait for the Logos engine to resolve
 /// during an xray snapshot. Cache-hit resolution is a few ms; a cold
+ReviewerConstellationData? _buildReviewerConstellations(
+  LogosGit? engine,
+  Set<String> allPaths,
+) {
+  if (engine == null) return null;
+  final reviewersByPath = engine.stats.reviewersByPath;
+  if (reviewersByPath.isEmpty) return null;
+
+  // Per-reviewer aggregation: how many paths and commits each reviewer covers.
+  final perReviewer = <String, (int pathCount, Set<String> paths)>{};
+  for (final entry in reviewersByPath.entries) {
+    for (final login in entry.value) {
+      final existing = perReviewer[login];
+      if (existing == null) {
+        perReviewer[login] = (1, {entry.key});
+      } else {
+        existing.$2.add(entry.key);
+        perReviewer[login] = (existing.$1 + 1, existing.$2);
+      }
+    }
+  }
+
+  final reviewers = perReviewer.entries.map((e) {
+    final topPaths = e.value.$2.toList()..sort();
+    return ReviewerConstellationEntry(
+      login: e.key,
+      observedPathCount: e.value.$1,
+      observedCommitCount: 0,
+      topPaths: topPaths.take(10).toList(),
+    );
+  }).toList()
+    ..sort((a, b) => b.observedPathCount.compareTo(a.observedPathCount));
+
+  // Blind spots: paths with touches but zero reviewer coverage.
+  final observedPaths = reviewersByPath.keys.toSet();
+  final unobservedPaths = allPaths.difference(observedPaths);
+  final blindSpots = unobservedPaths
+      .map((p) => PathObservationData(
+            path: p,
+            observers: const {},
+            observedCommitCount: 0,
+          ))
+      .toList()
+    ..sort((a, b) => a.path.compareTo(b.path));
+
+  // Orbital decay: detect reviewers who reviewed a directory heavily
+  // but whose most recent observations are old (not in recent hyperedges).
+  final decayEvents = <OrbitalDecayEvent>[];
+  final hyperedges = engine.stats.hyperedgesByPath;
+  for (final reviewer in perReviewer.entries) {
+    final paths = reviewer.value.$2;
+    // Group by top-level directory.
+    final dirCounts = <String, int>{};
+    for (final p in paths) {
+      final dir = p.contains('/') ? p.substring(0, p.indexOf('/')) : '.';
+      dirCounts[dir] = (dirCounts[dir] ?? 0) + 1;
+    }
+    for (final dir in dirCounts.entries) {
+      if (dir.value < 3) continue;
+      // Check if any RECENT hyperedge in this dir has this reviewer.
+      var recentObservation = false;
+      for (final p in paths) {
+        if (!p.startsWith('${dir.key}/')) continue;
+        final edges = hyperedges[p];
+        if (edges == null) continue;
+        // Hyperedges are sorted by weight desc; top ones are most
+        // meaningful. If any of the top-3 has this reviewer, they're
+        // still active.
+        for (final e in edges.take(3)) {
+          if (e.observers.contains(reviewer.key)) {
+            recentObservation = true;
+            break;
+          }
+        }
+        if (recentObservation) break;
+      }
+      if (!recentObservation) {
+        decayEvents.add(OrbitalDecayEvent(
+          reviewerLogin: reviewer.key,
+          pathPrefix: dir.key,
+          decayMagnitude: dir.value.toDouble(),
+        ));
+      }
+    }
+  }
+
+  return ReviewerConstellationData(
+    reviewers: reviewers,
+    blindSpots: blindSpots.take(50).toList(),
+    decayEvents: decayEvents,
+    totalObservedPaths: observedPaths.length,
+    totalUnobservedPaths: unobservedPaths.length,
+  );
+}
+
 /// build is hundreds of ms and runs on a background isolate. Past
 /// this budget we give up and let the snapshot finish on the classical
 /// (non-spectral) path — x-ray is a diagnostic that should never block

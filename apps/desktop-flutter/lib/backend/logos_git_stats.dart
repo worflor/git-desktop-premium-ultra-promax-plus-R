@@ -10,13 +10,20 @@
 // replace this file without touching the numerics.
 
 import 'dart:io';
+import '../diagnostics/diagnostics_state.dart';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'dart:convert';
+
 import 'file_coupling.dart';
+import 'gh.dart' as gh;
+import 'gitea_api.dart' as gitea;
+import 'glab.dart' as glab;
 import 'git_result.dart';
 import 'logos_git.dart';
 import 'logos_git_integrity.dart';
+import 'remote_types.dart';
 
 /// Window of history, in commits, used to build F0 + volatility stats.
 /// Same order of magnitude as the coupling matrix's `commitLimit` so
@@ -43,6 +50,8 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   String repoPath, {
   FileCouplingMatrix? coupling,
   int commitWindow = _statsCommitWindow,
+  String forge = 'unknown',
+  Map<String, Set<String>> reviewedCommits = const {},
 }) async {
   // --no-merges: merges dominate the pair counts spuriously.
   // --numstat:   per-file +/- counts; binaries show "-\t-" (handled).
@@ -91,6 +100,7 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   final perFileCommitClock = <String, List<double>>{};
   final ritualMassByPath = <String, double>{};
   final hyperedgesByPath = <String, List<LogosCommitHyperedge>>{};
+  final reviewersByPath = <String, Set<String>>{};
   var totalCommits = 0;
   var semanticCommitMass = 0.0;
 
@@ -129,13 +139,21 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     final step = meaningfulness.weight.clamp(0.0, 1.0);
     if (step > 0 && paths.length >= 3 && paths.length <= 8) {
       final ordered = paths.toList()..sort();
+      final observers = reviewedCommits[b.hash] ?? const <String>{};
       final edge = LogosCommitHyperedge(
         paths: ordered,
         weight: step,
         summary: b.subject.isEmpty ? null : b.subject,
+        commitHash: b.hash,
+        observers: observers,
       );
       for (final path in ordered) {
         (hyperedgesByPath[path] ??= <LogosCommitHyperedge>[]).add(edge);
+      }
+      if (observers.isNotEmpty) {
+        for (final path in ordered) {
+          (reviewersByPath[path] ??= <String>{}).addAll(observers);
+        }
       }
     }
     semanticClock += step;
@@ -234,7 +252,173 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     integrityByPath: integrityProfile.integrityByPath,
     integrityReasonsByPath: integrityProfile.reasonsByPath,
     hyperedgesByPath: compactedHyperedges,
+    forge: forge,
+    reviewedCommits: reviewedCommits,
+    reviewersByPath: reviewersByPath,
   ));
+}
+
+/// Collect merge-commit SHAs from the forge's merged PR history.
+/// Returns a map from merge-commit SHA → set of reviewer logins who
+/// observed the change. The author is implicit (+1 in observer count).
+Future<Map<String, Set<String>>> collectReviewedCommits(
+  String repoPath,
+  RemoteForge forge, {
+  int limit = 200,
+}) async {
+  final reviewed = <String, Set<String>>{};
+  try {
+    switch (forge) {
+      case RemoteForge.github:
+        final r = await Process.run('gh', [
+          'pr', 'list', '--repo', '.', '--state', 'merged',
+          '--limit', '$limit',
+          '--json', 'mergeCommit,headRefOid,reviews,reviewRequests',
+        ], workingDirectory: repoPath, runInShell: false,
+            stdoutEncoding: utf8, stderrEncoding: utf8);
+        if (r.exitCode != 0) return reviewed;
+        final parsed = jsonDecode(r.stdout.toString()) as List;
+        for (final pr in parsed.whereType<Map<String, dynamic>>()) {
+          final reviews = pr['reviews'] as List? ?? const [];
+          final requests = pr['reviewRequests'] as List? ?? const [];
+          final logins = <String>{};
+          for (final r in reviews.whereType<Map<String, dynamic>>()) {
+            final author = r['author'] as Map<String, dynamic>?;
+            final login = (author?['login'] as String? ?? '').trim();
+            if (login.isNotEmpty) logins.add(login);
+          }
+          for (final r in requests.whereType<Map<String, dynamic>>()) {
+            final login = (r['login'] as String? ?? '').trim();
+            if (login.isNotEmpty) logins.add(login);
+          }
+          if (logins.isEmpty) continue;
+          final mc = pr['mergeCommit'] as Map<String, dynamic>?;
+          final mergeSha = mc?['oid'] as String? ?? '';
+          final headSha = pr['headRefOid'] as String? ?? '';
+          if (mergeSha.isNotEmpty) reviewed[mergeSha] = logins;
+          if (headSha.isNotEmpty) reviewed[headSha] = logins;
+        }
+      case RemoteForge.gitlab:
+        final r = await Process.run('glab', [
+          'mr', 'list', '--state', 'merged',
+          '--per-page', '$limit', '-F', 'json',
+        ], workingDirectory: repoPath, runInShell: false,
+            stdoutEncoding: utf8, stderrEncoding: utf8);
+        if (r.exitCode != 0) return reviewed;
+        final parsed = jsonDecode(r.stdout.toString()) as List;
+        for (final mr in parsed.whereType<Map<String, dynamic>>()) {
+          final reviewers = mr['reviewers'] as List? ?? const [];
+          final approvedBy = mr['approved_by'] as List? ?? const [];
+          final logins = <String>{};
+          for (final r in reviewers.whereType<Map<String, dynamic>>()) {
+            final u = (r['username'] as String? ?? '').trim();
+            if (u.isNotEmpty) logins.add(u);
+          }
+          for (final a in approvedBy.whereType<Map<String, dynamic>>()) {
+            final u = (a['username'] as String? ??
+                (a['user'] as Map<String, dynamic>?)?['username'] as String? ?? '').trim();
+            if (u.isNotEmpty) logins.add(u);
+          }
+          if (logins.isEmpty) continue;
+          final mergeSha = mr['merge_commit_sha'] as String? ?? '';
+          final headSha = mr['sha'] as String? ?? '';
+          if (mergeSha.isNotEmpty) reviewed[mergeSha] = logins;
+          if (headSha.isNotEmpty) reviewed[headSha] = logins;
+        }
+      case RemoteForge.gitea:
+        final coords = await gitea.resolveGiteaCoords(repoPath);
+        if (coords == null) return reviewed;
+        final token = gitea.resolveGiteaToken(coords.apiBase);
+        var page = 1;
+        const maxPages = 20;
+        while (reviewed.length < limit && page <= maxPages) {
+          final r = await gitea.giteaGet(
+            coords.apiBase,
+            '/${coords.repoPath}/pulls?state=closed&limit=50&page=$page',
+            token: token,
+          );
+          if (r.statusCode != 200) break;
+          final parsed = jsonDecode(r.body) as List;
+          final batch = parsed.whereType<Map<String, dynamic>>().toList();
+          final mergedPrs = batch
+              .whereType<Map<String, dynamic>>()
+              .where((pr) => pr['merged'] == true)
+              .toList();
+          // Fetch reviews for up to 8 PRs concurrently to avoid
+          // sequential round-trips while respecting rate limits.
+          for (var i = 0; i < mergedPrs.length; i += 8) {
+            final chunk = mergedPrs.skip(i).take(8);
+            final futures = chunk.map((pr) async {
+              final prNumber = (pr['number'] as num?)?.toInt();
+              final logins = <String>{};
+              final requestedReviewers = pr['requested_reviewers'] as List? ?? const [];
+              for (final rv in requestedReviewers.whereType<Map<String, dynamic>>()) {
+                final login = (rv['login'] as String? ?? '').trim();
+                if (login.isNotEmpty) logins.add(login);
+              }
+              if (prNumber != null) {
+                try {
+                  final reviewsRes = await gitea.giteaGet(
+                    coords.apiBase,
+                    '/${coords.repoPath}/pulls/$prNumber/reviews',
+                    token: token,
+                  );
+                  if (reviewsRes.statusCode == 200) {
+                    final reviews = jsonDecode(reviewsRes.body) as List;
+                    for (final rv in reviews.whereType<Map<String, dynamic>>()) {
+                      final user = rv['user'] as Map<String, dynamic>?;
+                      final login = (user?['login'] as String? ?? '').trim();
+                      if (login.isNotEmpty) logins.add(login);
+                    }
+                  }
+                } catch (_) {}
+              }
+              if (logins.isEmpty) return;
+              final mergeSha = pr['merge_commit_sha'] as String? ?? '';
+              final head = pr['head'] as Map<String, dynamic>?;
+              final headSha = head?['sha'] as String? ?? '';
+              if (mergeSha.isNotEmpty) reviewed[mergeSha] = logins;
+              if (headSha.isNotEmpty) reviewed[headSha] = logins;
+            });
+            await Future.wait(futures);
+          }
+          if (batch.length < 50) break;
+          page++;
+        }
+      case RemoteForge.unknown:
+        break;
+    }
+  } catch (e) {
+    DiagnosticsState.instance.recordCommandLifecycleEvent(
+      type: 'end',
+      command: 'logos.collectReviewedCommits',
+      errorCode: 'review-fetch-failed: $e',
+    );
+  }
+  return reviewed;
+}
+
+/// Collect reviewed commits across ALL configured forge remotes, merging
+/// reviewer sets. A repo mirrored to GitHub + GitLab + Codeberg produces
+/// one unified reviewer map — who observed what, regardless of forge.
+Future<Map<String, Set<String>>> collectReviewedCommitsAllForges(
+  String repoPath,
+  ForgeTopology topology, {
+  int limitPerForge = 200,
+}) async {
+  final merged = <String, Set<String>>{};
+  final futs = <Future<Map<String, Set<String>>>>[];
+  for (final entry in topology.known) {
+    futs.add(collectReviewedCommits(repoPath, entry.value,
+        limit: limitPerForge));
+  }
+  final results = await Future.wait(futs);
+  for (final result in results) {
+    for (final entry in result.entries) {
+      (merged[entry.key] ??= <String>{}).addAll(entry.value);
+    }
+  }
+  return merged;
 }
 
 /// Tagged-union surrogate for the parallel coupling-walk branch — lets

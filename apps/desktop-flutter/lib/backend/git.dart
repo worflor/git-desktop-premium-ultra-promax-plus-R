@@ -956,8 +956,8 @@ Future<GitResult<String>> getFileDiffAtRevision(
 }
 
 /// Full multi-file diff for a commit. Same fallback as the per-file
-/// Method picker for [applyBranchToBase]. Mirrors GitHub's three
-/// well-known PR-merge strategies; each maps to a different `git`
+/// Method picker for [applyBranchToBase]. The three standard
+/// PR-merge strategies; each maps to a different `git`
 /// command sequence inside the function.
 enum BranchMergeMethod {
   /// `git merge --no-ff <branch>` — preserves both histories with an
