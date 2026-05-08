@@ -94,14 +94,14 @@ void _cacheBranchOrbit(
   );
 }
 
+// Orbit is a weak trend signal — cap its influence at ±25% of base
+// temperature so the probe's direct coherence measurement dominates.
+const double _kMaxOrbitInfluence = 0.25;
+
 double logosTemperatureMultiplierFromOrbit(BranchOrbit? orbit) {
   if (orbit == null || !orbit.hasSignal) return 1.0;
-  final magnitude = orbit.trendSlope.abs().clamp(0.0, 0.25);
-  if (orbit.isConverging) {
-    return (1.0 - magnitude).clamp(0.75, 1.0);
-  }
-  if (orbit.isDiverging) {
-    return (1.0 + magnitude).clamp(1.0, 1.25);
-  }
+  final magnitude = orbit.trendSlope.abs().clamp(0.0, _kMaxOrbitInfluence);
+  if (orbit.isConverging) return 1.0 - magnitude;
+  if (orbit.isDiverging) return 1.0 + magnitude;
   return 1.0;
 }

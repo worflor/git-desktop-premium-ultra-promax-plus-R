@@ -328,16 +328,15 @@ class LogosGitProbeBuilder {
     required double coherence,
   }) {
     // Size component: few files → default; many files → widen.
-    // Linear ramp from 0 at ≤3 files to 0.8 at ~15 files.
+    // Linear ramp from 0 at ≤3 files to 0.8 at kFileCountSaturation.
     final sizeScale =
-        (0.8 * (primaryPaths.length - 3) / 12.0).clamp(0.0, 0.8);
+        (0.8 * (primaryPaths.length - 3) / (kFileCountSaturation - 3))
+            .clamp(0.0, 0.8);
 
     // Coherence component: tight cluster → tighten; scattered → widen.
     // Coherence is in [0, 1]; we map to a [-0.4, 0.6] shift.
-    final cohShift = (1.0 - coherence) * 1.0 - 0.4;
+    final cohShift = (1.0 - coherence) - 0.4;
 
-    // Base t=1.0 plus components. Clamp to a reasonable band so the
-    // Chebyshev approximation stays accurate.
     return (1.0 + sizeScale + cohShift).clamp(0.3, 3.0);
   }
 

@@ -527,6 +527,11 @@ const double _kSignalFloor = 0.02;
 /// magnitude is inherently smaller for legitimate connections.
 const double _kTransportFloor = _kSignalFloor * 0.5;
 
+/// Integrity floor for transport edge weighting. Files with integrity
+/// below this still contribute transport signal at this minimum level
+/// so that newly-appeared files aren't invisible to transport lanes.
+const double _kTransportIntegrityFloor = 0.35;
+
 /// Additive boost applied to a file's utility score for its
 /// high-frequency-spectral "surprise" signal — the portion of a
 /// file's diffused mass that lives in modes above the Fiedler scale.
@@ -1216,15 +1221,23 @@ LogosFlowDiagnostics computeLogosFlowDiagnostics({
   final curlMass = (((1.0 - stab) + (1.0 - coh) + hf + witnessEntropy) / 4.0)
       .clamp(0.0, 1.0)
       .toDouble();
+  // LF support and reducibility gap are symmetric axes of spectral
+  // smoothness — one boosts, one attenuates, same depth.
+  const spectralDepth = 0.6;
+  const hfDepth = 0.35;
+  const hoLift = 0.1;
   final harmonicMass = ((((coh + stab) / 2.0) *
-              (0.4 + 0.6 * lf) *
-              (1.0 - 0.6 * rg) *
-              (1.0 - 0.35 * hf)) +
-          (0.1 * ho))
+              (1.0 - spectralDepth * (1.0 - lf)) *
+              (1.0 - spectralDepth * rg) *
+              (1.0 - hfDepth * hf)) +
+          (hoLift * ho))
       .clamp(0.0, 1.0)
       .toDouble();
+  // Weighted mean of disorder indicators. ho is half-weight (indirect).
+  const hoStressWeight = 0.5;
   final structuralStress =
-      ((curlMass + (1.0 - harmonicMass) + hf + rg + (0.5 * ho)) / 4.5)
+      ((curlMass + (1.0 - harmonicMass) + hf + rg + hoStressWeight * ho) /
+              (4.0 + hoStressWeight))
           .clamp(0.0, 1.0)
           .toDouble();
   final observed = (sa != null ? 1.0 : 0.0) + (fa != null ? 1.0 : 0.0);
@@ -1451,6 +1464,7 @@ class LogosGit {
   /// log-walk in features that need both.
   final LogosGitStats stats;
   final Map<String, double> integrityByPath;
+  final CouplingConstants couplingConstants;
 
   /// Symbol-overlap edges for the current change set. Injected per
   /// change-set via [withSymbolEdges]; absent from the base engine built
@@ -1516,6 +1530,7 @@ class LogosGit {
     required this.perFileMetrics,
     required this.stats,
     required this.integrityByPath,
+    this.couplingConstants = CouplingConstants.prior,
     this.symbolEdges = const {},
     EngramFileKTable? perFileKVectors,
     int? manifoldRevision,
@@ -1565,11 +1580,9 @@ class LogosGit {
       perFileMetrics: perFileMetrics,
       stats: stats,
       integrityByPath: integrityByPath,
+      couplingConstants: couplingConstants,
       symbolEdges: expanded,
       perFileKVectors: perFileKVectors,
-      // Overlay shares revision + cache: symbol edges are a read-only
-      // sidecar, so every basis entry built against the base graph stays
-      // valid for the overlay.
       manifoldRevision: manifoldRevision,
       basisCache: _basisCache,
       spectralCache: _spectralCache,
@@ -2160,6 +2173,13 @@ class LogosGit {
     }
     tick('indexes');
 
+    final couplingConstants = calibrateCouplingConstants(
+      nodePaths,
+      (a, b) => stats.coupling.jaccardScoreOf(a, b),
+      jaccardEdges: (p) => stats.coupling.jaccardEntriesOf(p),
+    );
+    tick('coupling-calibration');
+
     // Pass 1: collect raw (neighbour, p_mix) pairs per row. Pass 2:
     // normalise by D^(-1/2) and write CSR.
     final degree = Float64List(n);
@@ -2333,10 +2353,10 @@ class LogosGit {
         if (probeActive) probeTransportCalls += 2;
         final rolesA = transportRoles[i];
         final rolesB = transportRoles[j];
-        final lane = logosTransportLaneOfRoles(rolesA, rolesB);
+        final lane = logosTransportLaneOfRoles(rolesA, rolesB, couplingConstants);
         if (lane != null && lane.strength > 0) {
           final transportWeight = (lane.strength *
-                  math.max(integrityA, 0.35) *
+                  math.max(integrityA, _kTransportIntegrityFloor) *
                   math.sqrt(integrityB))
               .clamp(0.0, 1.0)
               .toDouble();
@@ -2348,10 +2368,10 @@ class LogosGit {
             }
           }
         }
-        final reverseLane = logosTransportLaneOfRoles(rolesB, rolesA);
+        final reverseLane = logosTransportLaneOfRoles(rolesB, rolesA, couplingConstants);
         if (reverseLane != null && reverseLane.strength > 0) {
           final reverseWeight = (reverseLane.strength *
-                  math.max(integrityB, 0.35) *
+                  math.max(integrityB, _kTransportIntegrityFloor) *
                   math.sqrt(integrityA))
               .clamp(0.0, 1.0)
               .toDouble();
@@ -2378,10 +2398,10 @@ class LogosGit {
         final integrityB = stats.integrityByPath[b] ?? 1.0;
         final rolesA = transportRoles[i];
         final rolesB = transportRoles[j];
-        final lane = logosTransportLaneOfRoles(rolesA, rolesB);
+        final lane = logosTransportLaneOfRoles(rolesA, rolesB, couplingConstants);
         if (lane != null && lane.strength > 0) {
           final transportWeight = (lane.strength *
-                  math.max(integrityA, 0.35) *
+                  math.max(integrityA, _kTransportIntegrityFloor) *
                   math.sqrt(integrityB))
               .clamp(0.0, 1.0)
               .toDouble();
@@ -2393,10 +2413,10 @@ class LogosGit {
             }
           }
         }
-        final reverseLane = logosTransportLaneOfRoles(rolesB, rolesA);
+        final reverseLane = logosTransportLaneOfRoles(rolesB, rolesA, couplingConstants);
         if (reverseLane != null && reverseLane.strength > 0) {
           final reverseWeight = (reverseLane.strength *
-                  math.max(integrityB, 0.35) *
+                  math.max(integrityB, _kTransportIntegrityFloor) *
                   math.sqrt(integrityA))
               .clamp(0.0, 1.0)
               .toDouble();
@@ -2541,6 +2561,7 @@ class LogosGit {
       perFileMetrics: perFileMetrics,
       stats: stats,
       integrityByPath: stats.integrityByPath,
+      couplingConstants: couplingConstants,
       perFileKVectors: useEngram ? perFileKVectors : null,
     );
   }
@@ -4124,7 +4145,7 @@ class LogosGit {
           note: relation.note,
         ));
       }
-      final lane = logosTransportLane(source, path);
+      final lane = logosTransportLane(source, path, couplingConstants);
       if (lane != null) {
         transportWitnesses.add(LogosEvidenceWitness(
           kind: LogosWitnessKind.transport,
@@ -4281,7 +4302,7 @@ class LogosGit {
     for (final source in focusPaths) {
       if (source == path) continue;
       final relation = logosRelationDescriptor(source, path);
-      final lane = logosTransportLane(source, path);
+      final lane = logosTransportLane(source, path, couplingConstants);
       final relationLabel = relation?.label;
       final laneLabel = lane?.label;
       if (relationLabel == 'source-generated' ||
@@ -4650,7 +4671,7 @@ class LogosGit {
         final pull = sourceMass * transportGraph.values[k];
         if (pull <= _kTransportFloor && targetSignal <= _kSignalFloor) continue;
         final targetPath = nodePaths[targetId];
-        final lane = logosTransportLane(sourcePath, targetPath);
+        final lane = logosTransportLane(sourcePath, targetPath, couplingConstants);
         final candidate = LogosTransportFlowEdge(
           sourcePath: sourcePath,
           targetPath: targetPath,
@@ -4694,7 +4715,7 @@ class LogosGit {
   ) {
     for (final entry in focusRoles) {
       if (entry.path == path) continue;
-      if (logosTransportLaneOfRoles(entry.roles, candRoles) != null) {
+      if (logosTransportLaneOfRoles(entry.roles, candRoles, couplingConstants) != null) {
         return true;
       }
     }
@@ -4824,7 +4845,7 @@ class LogosGit {
     required double transportPull,
   }) {
     if (support <= 0 || transportPull <= 0) return 0.0;
-    return support * transportPull * math.max(integrity, 0.35);
+    return support * transportPull * math.max(integrity, _kTransportIntegrityFloor);
   }
 
   /// **Stability of a diffusion query** - returns a [0, 1] score where

@@ -37,6 +37,10 @@ import 'package:meta/meta.dart';
 
 import 'package:path/path.dart' as p;
 
+/// File count at which a diff is considered fully scattered (scatter = 1.0).
+/// Both the regime focus score and the temperature size ramp saturate here.
+const double kFileCountSaturation = 15.0;
+
 /// A regime label — the "macrostate" of a commit. Derived from probe
 /// shape: file count × coherence × symbol density. Four canonical
 /// regimes cover every diff an engineer produces.
@@ -63,17 +67,20 @@ enum LogosRegime {
     required double coherence,
   }) =>
       math.min(
-        (1.0 - (fileCount - 1) / 14.0).clamp(0.0, 1.0),
+        (1.0 - (fileCount - 1) / (kFileCountSaturation - 1)).clamp(0.0, 1.0),
         coherence.clamp(0.0, 1.0),
       );
+
+  static const double focusedThreshold = 0.55;
+  static const double scopedThreshold = 0.20;
 
   static LogosRegime classify({
     required int fileCount,
     required double coherence,
   }) {
     final s = focusScore(fileCount: fileCount, coherence: coherence);
-    if (s >= 0.55) return LogosRegime.focused;
-    if (s >= 0.20) return LogosRegime.scoped;
+    if (s >= focusedThreshold) return LogosRegime.focused;
+    if (s >= scopedThreshold) return LogosRegime.scoped;
     return LogosRegime.sweep;
   }
 }
@@ -526,9 +533,8 @@ class LogosSseStore {
     final row = data[regime];
     if (row == null) return const {};
     return {
-      for (final entry in row.entries) entry.key: entry.value.utility * 2,
-      // ×2 because `utility` is in [0, 1] centred at 0.5; we want a
-      // multiplier centred at 1.0.
+      for (final entry in row.entries)
+        entry.key: entry.value.utility / LogosSseCell._utilityPrior,
     };
   }
 
@@ -557,11 +563,8 @@ class LogosSseStore {
       for (final entry in row.entries)
         entry.key:
             (entry.value.utility + entry.value.utilityVelocityPerDay * lookahead)
-                .clamp(0.0, 1.0) *
-                2,
-      // Clamp inside [0, 1] before the ×2 centering so the result
-      // can't exceed [0, 2]. The probe still applies its own
-      // _sseUtilityScaleMin/Max bound on top.
+                .clamp(0.0, 1.0) /
+                LogosSseCell._utilityPrior,
     };
   }
 

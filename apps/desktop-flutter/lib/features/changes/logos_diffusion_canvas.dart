@@ -244,6 +244,7 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
       _reseedIdeaCount = event.brainstormIdeas;
       _reseedSemanticHits = event.semanticHits;
       _reseedWellExpansion = event.wellExpansionFiles;
+      _birth[_Element.sourceIgnition] = now;
       _birth[_Element.reseedWavefront] = now;
       _phase = _Phase.reseeded;
       wantSetState = true;
@@ -362,6 +363,10 @@ class _LogosDiffusionCanvasState extends State<LogosDiffusionCanvas>
     for (final ripple in _recurrentRipples) {
       if (nowMs - ripple.birthMs < 1300) return true;
     }
+    // Muse dreaming: source ignition fired but no subsequent event has
+    // arrived (brainstorm LLM call in flight). Keep the ticker alive so
+    // the breathing pulse renders rather than freezing the canvas.
+    if (_phase == _Phase.ignited && _recurrentRipples.isEmpty) return true;
     return false;
   }
 
@@ -988,6 +993,7 @@ class _LogosDiffusionPainter extends CustomPainter {
       tipDragOffset: tipDragOffset,
       ropePoints: ropePoints,
       spokeDrag: spokeDrag,
+      phase: phase,
       recurrentRipples: recurrentRipples,
       recurrentNoveltyBaseline: recurrentNoveltyBaseline,
     );
@@ -1057,6 +1063,7 @@ class _TopoPainter {
   final List<Offset>? ropePoints;
   /// Per-path spoke drag offsets. Empty = everything at rest.
   final Map<String, Offset> spokeDrag;
+  final _Phase phase;
   final List<({double birthMs, double noveltyMass})> recurrentRipples;
   final double recurrentNoveltyBaseline;
 
@@ -1082,6 +1089,7 @@ class _TopoPainter {
     required this.tipDragOffset,
     required this.ropePoints,
     required this.spokeDrag,
+    required this.phase,
     required this.recurrentRipples,
     required this.recurrentNoveltyBaseline,
   });
@@ -1089,6 +1097,7 @@ class _TopoPainter {
   void paint() {
     // Back-to-front so brighter elements sit on top.
     _paintStarfield();
+    _paintDreamingPulse();
     _paintWellSectors();
     _paintAttentionArcs();
     _paintNeighbourNodes();
@@ -1098,6 +1107,27 @@ class _TopoPainter {
     _paintReseedWavefront();
     _paintSourceFiles();
     _paintTransmitBeam();
+  }
+
+  // Slow breathing aura while the muse brainstorm is in flight. Keeps
+  // the canvas visually alive between ignition and reseed — without it
+  // the scene freezes for 10-30s and feels broken. Fades out the
+  // instant any subsequent event arrives (reseed, recurrent step, etc).
+  void _paintDreamingPulse() {
+    if (phase != _Phase.ignited || recurrentRipples.isNotEmpty) return;
+    final ignBirth = birth[_Element.sourceIgnition]!;
+    if (ignBirth < 0) return;
+    final age = nowMs - ignBirth;
+    // Let the normal ignition sequence finish before the pulse starts.
+    if (age < 1800) return;
+    // Slow sine breath — one cycle every ~3.2s.
+    final breath = (math.sin(age / 510.0) + 1.0) * 0.5;
+    final alpha = 0.08 + 0.12 * breath;
+    final r = maxRadius * (0.09 + 0.025 * breath);
+    final paint = Paint()
+      ..color = tokens.accentBright.withValues(alpha: alpha)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.7);
+    canvas.drawCircle(center, r, paint);
   }
 
   // Thin line from anchor to each of the top-K φ neighbours. Alpha

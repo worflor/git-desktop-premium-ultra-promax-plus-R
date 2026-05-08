@@ -1251,6 +1251,7 @@ FileClusters clusterFiles(
   List<String> currentPaths,
   FileCouplingMatrix matrix, {
   double? threshold,
+  CouplingConstants couplingConstants = CouplingConstants.prior,
   FileSortGuide sortGuide = FileSortGuide.relatedProximity,
   // Per-path diff signal used by [FileSortGuide.impact]. The sort
   // computes effective impact from these AND the coupling matrix —
@@ -1397,8 +1398,8 @@ FileClusters clusterFiles(
     final ri = transportRoles[i];
     for (var j = i + 1; j < n; j++) {
       final rj = transportRoles[j];
-      final forward = logosTransportLaneOfRoles(ri, rj);
-      final backward = logosTransportLaneOfRoles(rj, ri);
+      final forward = logosTransportLaneOfRoles(ri, rj, couplingConstants);
+      final backward = logosTransportLaneOfRoles(rj, ri, couplingConstants);
       final strength = math.max(
         forward?.strength ?? 0.0,
         backward?.strength ?? 0.0,

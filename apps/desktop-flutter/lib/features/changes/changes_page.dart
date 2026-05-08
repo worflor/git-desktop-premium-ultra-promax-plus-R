@@ -36,6 +36,7 @@ import '../../backend/file_layout.dart';
 import 'logos_diffusion_canvas.dart';
 import '../../backend/stash_shape.dart';
 import '../../backend/logos_git.dart';
+import '../../backend/logos_git_integrity.dart' show CouplingConstants;
 import '../../backend/logos_dream.dart';
 import '../../backend/logos_field.dart';
 import '../../backend/logos_refactor.dart';
@@ -1503,6 +1504,7 @@ class _ChangesPageState extends State<ChangesPage> {
     required Set<String> conflictedPaths,
     required bool inverted,
     CorrelatednessContext? correlatednessContext,
+    CouplingConstants couplingConstants = CouplingConstants.prior,
   }) {
     if (effectiveMatrix == null || currentPaths.isEmpty) {
       // Empty-case short-circuit; no point caching a zero-cost answer.
@@ -1531,6 +1533,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final result = clusterFiles(
       currentPaths,
       effectiveMatrix,
+      couplingConstants: couplingConstants,
       sortGuide: sortGuide,
       impactSignals: impactSignals,
       conflictedPaths: conflictedPaths,
@@ -5506,6 +5509,8 @@ class _ChangesPageState extends State<ChangesPage> {
       conflictedPaths: conflictedPaths,
       inverted: preferences.fileSortInverted,
       correlatednessContext: correlatednessContext,
+      couplingConstants:
+          logosEngine?.couplingConstants ?? CouplingConstants.prior,
     );
     // Map the Logos XY pad to diffusion controls:
     //   padY (NEAR=0 ↔ FAR=1) → temperature t = 0.5 × 4^padY ∈ [0.5, 2.0]

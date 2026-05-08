@@ -27,6 +27,14 @@ class LogosCommitMeaningfulness {
 
 const double kNeutralIntegrity = 0.85;
 
+// -ln(0.2) / 0.6 — the decay rate that maps [threshold, threshold+0.6] → [1.0, 0.2].
+// Used for ritual mass and raw-semantic disparity exponential pull-downs.
+const double _kRitualDecayRate = 2.6823623981;
+
+// Knee below which ritual/disparity mass doesn't trigger exponential decay.
+// Shared between commit-level ritual cap and file-level disparity pulldown.
+const double _kRitualDecayKnee = 0.4;
+
 LogosCommitMeaningfulness inferCommitMeaningfulness({
   required String author,
   required String subject,
@@ -84,10 +92,8 @@ LogosCommitMeaningfulness inferCommitMeaningfulness({
     if (_looksRitualPath(path)) ritualPaths++;
   }
   final ritualShare = ritualPaths / pathList.length;
-  // Smooth exponential decay: 1.0 at ritualShare ≤ 0.4, 0.2 at 1.0.
-  // -ln(0.2) / 0.6 ≈ 2.682 — derived, not tuned.
   final ritualMul =
-      math.exp(-2.6823623981 * math.max(0.0, ritualShare - 0.4));
+      math.exp(-_kRitualDecayRate * math.max(0.0, ritualShare - _kRitualDecayKnee));
   weight *= ritualMul;
   if (ritualMul < 0.35) {
     reasons.add('ritual-path-sweep');
@@ -139,7 +145,7 @@ LogosIntegrityProfile buildLogosIntegrityProfile({
     // History-based ritualness pull-down: same exponential form as the
     // commit-level ritual decay, reusing its threshold (0.4) and target
     // (0.2) so the two levels share one thermodynamic rule.
-    final ritualCap = math.exp(-2.6823623981 * math.max(0.0, ratio - 0.4));
+    final ritualCap = math.exp(-_kRitualDecayRate * math.max(0.0, ratio - _kRitualDecayKnee));
     estimate = math.min(estimate, ritualCap);
 
     // Raw-semantic disparity: smooth decay starting at 40% disparity,
@@ -147,7 +153,7 @@ LogosIntegrityProfile buildLogosIntegrityProfile({
     final disparity = raw <= 0 ? 0.0 : ((raw - semantic).clamp(0.0, raw)) / raw;
     if (disparity > 0.4) {
       final disparityMul =
-          0.35 + 0.65 * math.exp(-2.6823623981 * (disparity - 0.4));
+          0.35 + 0.65 * math.exp(-_kRitualDecayRate * (disparity - 0.4));
       estimate = math.min(estimate, disparityMul);
       pathReasons.add('raw-semantic-disparity');
     }
@@ -218,7 +224,8 @@ double _roleTransmissivity(TransportRoles r) {
   if (r.isTest) return 0.38;
   if (r.isDoc) return 0.55;
   if (r.isManifest) return 0.68;
-  return 1.0; // source, ci-config, unknown
+  if (r.isCiConfig) return 0.26;
+  return 1.0; // source, unknown
 }
 
 /// Fast variant of [logosPairPenalty] on precomputed roles. The pair
@@ -244,42 +251,6 @@ double logosPairPenalty(String a, String b) {
   return logosPairPenaltyOfRoles(TransportRoles.of(a), TransportRoles.of(b));
 }
 
-double logosWitnessPrivilege(String a, String b) {
-  final an = a.replaceAll('\\', '/').toLowerCase();
-  final bn = b.replaceAll('\\', '/').toLowerCase();
-  if (_sharesManifestRoot(an, bn) &&
-      ((_isManifestLike(an) && _isLockfileLike(bn)) ||
-          (_isManifestLike(bn) && _isLockfileLike(an)))) {
-    return 0.35;
-  }
-  if (_sharesTransportConcept(an, bn) &&
-      ((_looksGenerated(an) && _looksSourceLike(bn)) ||
-          (_looksGenerated(bn) && _looksSourceLike(an)))) {
-    return 0.30;
-  }
-  if (_sharesTransportConcept(an, bn) &&
-      (((!_looksTestLike(an) && _looksSourceLike(an) && _looksTestLike(bn))) ||
-          ((!_looksTestLike(bn) &&
-              _looksSourceLike(bn) &&
-              _looksTestLike(an))))) {
-    return 0.28;
-  }
-  if (_sharesTransportConcept(an, bn) &&
-      (((!_looksDocLike(an) && _looksSourceLike(an) && _looksDocLike(bn))) ||
-          ((!_looksDocLike(bn) && _looksSourceLike(bn) && _looksDocLike(an))))) {
-    return 0.16;
-  }
-  if (_sharesTransportConcept(an, bn) &&
-      (((!_looksMigrationLike(an) &&
-                  _looksSourceLike(an) &&
-                  _looksMigrationLike(bn))) ||
-              ((!_looksMigrationLike(bn) &&
-                  _looksSourceLike(bn) &&
-                  _looksMigrationLike(an))))) {
-    return 0.24;
-  }
-  return 0.0;
-}
 
 double logosRelationStrength(String a, String b) {
   return logosRelationDescriptor(a, b)?.strength ?? 0.0;
@@ -292,10 +263,8 @@ String? logosRelationLabel(String a, String b) {
 LogosRelationDescriptor? logosRelationDescriptor(String source, String candidate) {
   final an = source.replaceAll('\\', '/').toLowerCase();
   final bn = candidate.replaceAll('\\', '/').toLowerCase();
-  final strength = math.max(
-    logosWitnessPrivilege(source, candidate),
-    1.0 - logosPairPenalty(source, candidate),
-  ).clamp(0.0, 1.0).toDouble();
+  final strength =
+      (1.0 - logosPairPenalty(source, candidate)).clamp(0.0, 1.0);
   if (_sharesManifestRoot(an, bn) &&
       ((_isManifestLike(an) && _isLockfileLike(bn)) ||
           (_isManifestLike(bn) && _isLockfileLike(an)))) {
@@ -466,27 +435,168 @@ class TransportRoles {
       seedKey!.startsWith('concept:');
 }
 
+const double _kDirectionalBias = 0.15;
+
+// Prior coupling constants — cold-start defaults that get blended
+// out as the repo's own co-change fossil record accumulates evidence.
+// Shrinkage strength _kPriorWeight controls how many empirical samples
+// it takes before the prior loses majority influence: at n=_kPriorWeight
+// the calibrated value is 50/50 prior/empirical.
+const double _kPriorWeight = 20.0;
+const double _kPriorManifestLockfile = 0.80;
+const double _kPriorSourceGenerated = 0.72;
+const double _kPriorSourceMigration = 0.48;
+const double _kPriorSourceTest = 0.42;
+const double _kPriorFixture = 0.36;
+const double _kPriorCiConfig = 0.36;
+const double _kPriorSourceDoc = 0.30;
+
+class CouplingConstants {
+  final double manifestLockfile;
+  final double sourceGenerated;
+  final double sourceMigration;
+  final double sourceTest;
+  final double fixture;
+  final double ciConfig;
+  final double sourceDoc;
+
+  const CouplingConstants({
+    this.manifestLockfile = _kPriorManifestLockfile,
+    this.sourceGenerated = _kPriorSourceGenerated,
+    this.sourceMigration = _kPriorSourceMigration,
+    this.sourceTest = _kPriorSourceTest,
+    this.fixture = _kPriorFixture,
+    this.ciConfig = _kPriorCiConfig,
+    this.sourceDoc = _kPriorSourceDoc,
+  });
+
+  static const prior = CouplingConstants();
+}
+
+CouplingConstants calibrateCouplingConstants(
+  List<String> paths,
+  double Function(String a, String b) jaccardScore, {
+  Iterable<MapEntry<String, double>> Function(String path)? jaccardEdges,
+}) {
+  final roles = <String, TransportRoles>{};
+  for (final p in paths) {
+    roles[p] = TransportRoles.of(p);
+  }
+
+  final sums = <String, double>{};
+  final counts = <String, int>{};
+
+  if (jaccardEdges != null) {
+    for (final a in paths) {
+      final ra = roles[a]!;
+      for (final entry in jaccardEdges(a)) {
+        final b = entry.key;
+        final rb = roles[b];
+        if (rb == null) continue;
+        final bucket = _classifyRolePair(ra, rb);
+        if (bucket == null) continue;
+        final score = entry.value;
+        if (score <= 0) continue;
+        sums[bucket] = (sums[bucket] ?? 0) + score;
+        counts[bucket] = (counts[bucket] ?? 0) + 1;
+      }
+    }
+  } else {
+    for (var i = 0; i < paths.length; i++) {
+      final a = paths[i];
+      final ra = roles[a]!;
+      for (var j = i + 1; j < paths.length; j++) {
+        final b = paths[j];
+        final rb = roles[b]!;
+        final bucket = _classifyRolePair(ra, rb);
+        if (bucket == null) continue;
+        final score = jaccardScore(a, b);
+        if (score <= 0) continue;
+        sums[bucket] = (sums[bucket] ?? 0) + score;
+        counts[bucket] = (counts[bucket] ?? 0) + 1;
+      }
+    }
+  }
+
+  double shrink(String key, double prior) {
+    final n = counts[key] ?? 0;
+    if (n == 0) return prior;
+    final empirical = sums[key]! / n;
+    return (prior * _kPriorWeight + empirical * n) / (_kPriorWeight + n);
+  }
+
+  return CouplingConstants(
+    manifestLockfile: shrink('manifest_lockfile', _kPriorManifestLockfile),
+    sourceGenerated: shrink('source_generated', _kPriorSourceGenerated),
+    sourceMigration: shrink('source_migration', _kPriorSourceMigration),
+    sourceTest: shrink('source_test', _kPriorSourceTest),
+    fixture: shrink('fixture', _kPriorFixture),
+    ciConfig: shrink('ci_config', _kPriorCiConfig),
+    sourceDoc: shrink('source_doc', _kPriorSourceDoc),
+  );
+}
+
+String? _classifyRolePair(TransportRoles a, TransportRoles b) {
+  if ((a.isManifest && b.isLockfile) || (b.isManifest && a.isLockfile)) {
+    if (a._sharesManifestRoot(b)) return 'manifest_lockfile';
+  }
+  // Concept-sharing gate: lanes for these role pairs only fire when both
+  // paths share a transport concept, so the calibration must match.
+  final sharesConcept = a._sharesTransportConcept(b);
+  if (sharesConcept &&
+      ((a.isSource && b.isTest) || (b.isSource && a.isTest))) {
+    return 'source_test';
+  }
+  if (sharesConcept &&
+      ((a.isSource && b.isGenerated) || (b.isSource && a.isGenerated))) {
+    return 'source_generated';
+  }
+  if (sharesConcept &&
+      ((a.isSource && b.isDoc) || (b.isSource && a.isDoc))) {
+    return 'source_doc';
+  }
+  if (sharesConcept &&
+      ((a.isSource && b.isMigration) || (b.isSource && a.isMigration))) {
+    return 'source_migration';
+  }
+  if ((a.isFixture && b.isSource) || (b.isFixture && a.isSource)) {
+    return 'fixture';
+  }
+  if ((a.isCiConfig && b.isSource) || (b.isCiConfig && a.isSource)) {
+    return 'ci_config';
+  }
+  return null;
+}
+
+double _laneStrength(double tSrc, double tCand, double totalCoupling) =>
+    totalCoupling * (0.5 + _kDirectionalBias * (tCand - tSrc));
+
 /// Fast transport-lane lookup on pre-computed roles. Intended for hot
 /// loops that make N×M lookups across two path sets — build one
 /// [TransportRoles] per unique path once, reuse here. The returned
 /// value is byte-identical to [logosTransportLane] called with the
 /// same raw strings.
 LogosTransportLane? logosTransportLaneOfRoles(
-    TransportRoles src, TransportRoles cand) {
+    TransportRoles src, TransportRoles cand,
+    [CouplingConstants cc = CouplingConstants.prior]) {
   final sharesManifest = src._sharesManifestRoot(cand);
   if (sharesManifest && src.isManifest && cand.isLockfile) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'manifest->lockfile',
-      strength: 0.34,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.manifestLockfile),
       note: 'receive-heavy witness',
       sourceRole: 'manifest',
       targetRole: 'lockfile',
     );
   }
   if (sharesManifest && src.isLockfile && cand.isManifest) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'lockfile->manifest',
-      strength: 0.46,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.manifestLockfile),
       note: 'receive-heavy witness',
       sourceRole: 'lockfile',
       targetRole: 'manifest',
@@ -494,54 +604,66 @@ LogosTransportLane? logosTransportLaneOfRoles(
   }
   final sharesConcept = src._sharesTransportConcept(cand);
   if (sharesConcept && src.isSource && cand.isGenerated) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'source->generated',
-      strength: 0.28,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.sourceGenerated),
       note: 'generated companion witness',
       sourceRole: 'source',
       targetRole: 'generated',
     );
   }
   if (sharesConcept && src.isGenerated && cand.isSource) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'generated->source',
-      strength: 0.44,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.sourceGenerated),
       note: 'source-of-truth witness',
       sourceRole: 'generated',
       targetRole: 'source',
     );
   }
   if (sharesConcept && !src.isTest && src.isSource && cand.isTest) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'source->test',
-      strength: 0.18,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.sourceTest),
       note: 'test witness',
       sourceRole: 'source',
       targetRole: 'test',
     );
   }
   if (sharesConcept && src.isTest && cand.isSource && !cand.isTest) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'test->source',
-      strength: 0.24,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.sourceTest),
       note: 'behavior/source witness',
       sourceRole: 'test',
       targetRole: 'source',
     );
   }
   if (sharesConcept && !src.isDoc && src.isSource && cand.isDoc) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'source->doc',
-      strength: 0.12,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.sourceDoc),
       note: 'documentation witness',
       sourceRole: 'source',
       targetRole: 'doc',
     );
   }
   if (sharesConcept && src.isDoc && cand.isSource && !cand.isDoc) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'doc->source',
-      strength: 0.18,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.sourceDoc),
       note: 'behavior/source witness',
       sourceRole: 'doc',
       targetRole: 'source',
@@ -551,9 +673,11 @@ LogosTransportLane? logosTransportLaneOfRoles(
       !src.isMigration &&
       src.isSource &&
       cand.isMigration) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'source->migration',
-      strength: 0.20,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.sourceMigration),
       note: 'migration witness',
       sourceRole: 'source',
       targetRole: 'migration',
@@ -563,45 +687,55 @@ LogosTransportLane? logosTransportLaneOfRoles(
       src.isMigration &&
       cand.isSource &&
       !cand.isMigration) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'migration->source',
-      strength: 0.28,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.sourceMigration),
       note: 'source-of-truth witness',
       sourceRole: 'migration',
       targetRole: 'source',
     );
   }
   if (src.isFixture && !cand.isFixture) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'fixture->source',
-      strength: 0.20,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.fixture),
       note: 'test witness',
       sourceRole: 'fixture',
       targetRole: 'source',
     );
   }
   if (!src.isFixture && cand.isFixture) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'source->fixture',
-      strength: 0.16,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.fixture),
       note: 'fixture witness',
       sourceRole: 'source',
       targetRole: 'fixture',
     );
   }
   if (src.isSource && cand.isCiConfig) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'source->ci-config',
-      strength: 0.14,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.ciConfig),
       note: 'CI configuration witness',
       sourceRole: 'source',
       targetRole: 'ci-config',
     );
   }
   if (src.isCiConfig && cand.isSource) {
-    return const LogosTransportLane(
+    return LogosTransportLane(
       label: 'ci-config->source',
-      strength: 0.22,
+      strength: _laneStrength(
+          _roleTransmissivity(src), _roleTransmissivity(cand),
+          cc.ciConfig),
       note: 'CI-driven source witness',
       sourceRole: 'ci-config',
       targetRole: 'source',
@@ -610,10 +744,11 @@ LogosTransportLane? logosTransportLaneOfRoles(
   return null;
 }
 
-LogosTransportLane? logosTransportLane(String source, String candidate) {
+LogosTransportLane? logosTransportLane(String source, String candidate,
+    [CouplingConstants cc = CouplingConstants.prior]) {
   final src = TransportRoles.of(source);
   final cand = TransportRoles.of(candidate);
-  return logosTransportLaneOfRoles(src, cand);
+  return logosTransportLaneOfRoles(src, cand, cc);
 }
 
 String? logosTransportSeedKey(String path) {

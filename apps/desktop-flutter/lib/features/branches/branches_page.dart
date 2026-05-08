@@ -31,6 +31,7 @@ import '../../backend/dtos.dart';
 import '../../backend/file_coupling.dart';
 import '../../backend/logos_dream.dart';
 import '../../backend/logos_git.dart';
+import '../../backend/logos_git_integrity.dart' show CouplingConstants;
 import '../../backend/logos_git_diagnostics.dart';
 import '../../backend/pr_shape.dart';
 import '../../backend/desk_pr.dart';
@@ -7659,11 +7660,13 @@ class _SectionLabel extends StatelessWidget {
 /// graceful degradation, same pattern as the changes-panel rail).
 Map<String, int> _computeClusters(
   List<PrFile> files,
-  FileCouplingMatrix? matrix,
-) {
+  FileCouplingMatrix? matrix, {
+  CouplingConstants couplingConstants = CouplingConstants.prior,
+}) {
   if (matrix == null || files.length < 2) return const {};
   final paths = files.map((f) => f.path).toList();
-  final clusters = clusterFiles(paths, matrix);
+  final clusters = clusterFiles(paths, matrix,
+      couplingConstants: couplingConstants);
   return clusters.byPath;
 }
 
