@@ -96,7 +96,8 @@ LogosCommitMeaningfulness inferCommitMeaningfulness({
   }
 
   if (sourceLikePaths > 0 && ritualShare < 1.0) {
-    weight = math.max(weight, 0.55);
+    // Source content guarantees at least neutral-minus-epsilon signal.
+    weight = math.max(weight, kNeutralIntegrity - 0.30);
   }
 
   if (!weight.isFinite) weight = 1.0;
@@ -135,13 +136,19 @@ LogosIntegrityProfile buildLogosIntegrityProfile({
     final cue = _pathCueIntegrity(path, pathReasons);
     estimate = math.min(estimate, cue);
 
-    // History-based ritualness pull-down. Keep conservative; this is a
-    // transmissibility estimate, not an exclusion oracle.
-    estimate = math.min(estimate, 1.0 - 0.65 * ratio);
+    // History-based ritualness pull-down: same exponential form as the
+    // commit-level ritual decay, reusing its threshold (0.4) and target
+    // (0.2) so the two levels share one thermodynamic rule.
+    final ritualCap = math.exp(-2.6823623981 * math.max(0.0, ratio - 0.4));
+    estimate = math.min(estimate, ritualCap);
 
+    // Raw-semantic disparity: smooth decay starting at 40% disparity,
+    // reaching floor (0.35) at 100%. Same exponential family.
     final disparity = raw <= 0 ? 0.0 : ((raw - semantic).clamp(0.0, raw)) / raw;
-    if (disparity >= 0.6) {
-      estimate = math.min(estimate, 0.45);
+    if (disparity > 0.4) {
+      final disparityMul =
+          0.35 + 0.65 * math.exp(-2.6823623981 * (disparity - 0.4));
+      estimate = math.min(estimate, disparityMul);
       pathReasons.add('raw-semantic-disparity');
     }
 
@@ -197,91 +204,44 @@ class LogosRelationDescriptor {
   });
 }
 
-/// Fast variant of [logosPairPenalty] on precomputed roles. Callers
-/// building an n² candidate loop should build one [TransportRoles] per
-/// unique path once and reuse across every pairing — otherwise the
-/// string normalisation + seed-key + 8 pattern-match sweep fires 2×
-/// per pair inside every call below. Byte-identical to the raw-string
-/// variant for the same inputs.
+/// Per-role signal transmissivity: how much structural information a
+/// file of this role carries. Source code = 1.0 (pure signal); vendor
+/// = near-zero (noise). The pair penalty between two files is the
+/// geometric mean of their transmissivities — one number per role
+/// replaces 9 scattered per-pair magic numbers.
+double _roleTransmissivity(TransportRoles r) {
+  if (r.isGenerated) return 0.30;
+  if (_looksVendor(r.normalized)) return 0.20;
+  if (r.isLockfile) return 0.20;
+  if (r.isFixture) return 0.60;
+  if (r.isMigration) return 0.36;
+  if (r.isTest) return 0.38;
+  if (r.isDoc) return 0.55;
+  if (r.isManifest) return 0.68;
+  return 1.0; // source, ci-config, unknown
+}
+
+/// Fast variant of [logosPairPenalty] on precomputed roles. The pair
+/// penalty is the geometric mean of the two roles' transmissivities
+/// when a transport concept or manifest root links them. Without a
+/// structural link, co-occurrence is taken at face value (1.0).
 double logosPairPenaltyOfRoles(TransportRoles a, TransportRoles b) {
-  if (a._sharesManifestRoot(b) &&
-      ((a.isManifest && b.isLockfile) ||
-          (b.isManifest && a.isLockfile))) {
-    return 0.45;
+  final linked = a._sharesManifestRoot(b) || a._sharesTransportConcept(b);
+  if (!linked) {
+    // Unlinked roles: only penalise if one endpoint is inherently low-
+    // signal (vendor, generated×generated). Geometric mean still
+    // applies — it just uses both roles raw.
+    final ta = _roleTransmissivity(a);
+    final tb = _roleTransmissivity(b);
+    final lower = math.min(ta, tb);
+    if (lower >= 0.9) return 1.0;
+    return math.sqrt(ta * tb);
   }
-  final sharesConcept = a._sharesTransportConcept(b);
-  if (sharesConcept &&
-      ((a.isGenerated && b.isSource) || (b.isGenerated && a.isSource))) {
-    return 0.55;
-  }
-  if (sharesConcept &&
-      ((!a.isTest && a.isSource && b.isTest) ||
-          (!b.isTest && b.isSource && a.isTest))) {
-    return 0.62;
-  }
-  if (sharesConcept &&
-      ((!a.isDoc && a.isSource && b.isDoc) ||
-          (!b.isDoc && b.isSource && a.isDoc))) {
-    return 0.74;
-  }
-  if (sharesConcept &&
-      ((!a.isMigration && a.isSource && b.isMigration) ||
-          (!b.isMigration && b.isSource && a.isMigration))) {
-    return 0.60;
-  }
-  if (a.isGenerated && b.isGenerated) return 0.35;
-  if (a.isFixture && b.isFixture) return 0.6;
-  if ((a.isFixture && !b.isFixture) || (b.isFixture && !a.isFixture)) {
-    return 0.82;
-  }
-  // Vendor check isn't cached on TransportRoles yet — fall back to the
-  // raw-path predicate on the already-normalised string field.
-  if (_looksVendor(a.normalized) || _looksVendor(b.normalized)) return 0.9;
-  return 1.0;
+  return math.sqrt(_roleTransmissivity(a) * _roleTransmissivity(b));
 }
 
 double logosPairPenalty(String a, String b) {
-  final an = a.replaceAll('\\', '/').toLowerCase();
-  final bn = b.replaceAll('\\', '/').toLowerCase();
-  if (_sharesManifestRoot(an, bn) &&
-      ((_isManifestLike(an) && _isLockfileLike(bn)) ||
-          (_isManifestLike(bn) && _isLockfileLike(an)))) {
-    return 0.45;
-  }
-  if (_sharesTransportConcept(an, bn) &&
-      ((_looksGenerated(an) && _looksSourceLike(bn)) ||
-          (_looksGenerated(bn) && _looksSourceLike(an)))) {
-    return 0.55;
-  }
-  if (_sharesTransportConcept(an, bn) &&
-      (((!_looksTestLike(an) && _looksSourceLike(an) && _looksTestLike(bn))) ||
-          ((!_looksTestLike(bn) &&
-              _looksSourceLike(bn) &&
-              _looksTestLike(an))))) {
-    return 0.62;
-  }
-  if (_sharesTransportConcept(an, bn) &&
-      (((!_looksDocLike(an) && _looksSourceLike(an) && _looksDocLike(bn))) ||
-          ((!_looksDocLike(bn) && _looksSourceLike(bn) && _looksDocLike(an))))) {
-    return 0.74;
-  }
-  if (_sharesTransportConcept(an, bn) &&
-      (((!_looksMigrationLike(an) &&
-                  _looksSourceLike(an) &&
-                  _looksMigrationLike(bn))) ||
-              ((!_looksMigrationLike(bn) &&
-                  _looksSourceLike(bn) &&
-                  _looksMigrationLike(an))))) {
-    return 0.60;
-  }
-  if (_looksGenerated(an) && _looksGenerated(bn)) return 0.35;
-  if (_looksFixtureLike(an) && _looksFixtureLike(bn)) return 0.6;
-  if ((_looksFixtureLike(an) && !_looksFixtureLike(bn)) ||
-      (_looksFixtureLike(bn) && !_looksFixtureLike(an))) {
-    return 0.82;
-  }
-  if (_looksVendor(an) || _looksVendor(bn)) return 0.9;
-  return 1.0;
+  return logosPairPenaltyOfRoles(TransportRoles.of(a), TransportRoles.of(b));
 }
 
 double logosWitnessPrivilege(String a, String b) {
@@ -886,26 +846,30 @@ bool _looksCiConfig(String path) =>
     path.contains('/.forgejo/workflows/');
 
 double _pathCueIntegrity(String path, List<String> reasons) {
-  final lower = path.toLowerCase();
-  if (_looksGenerated(lower)) {
-    reasons.add('generated');
-    return 0.22;
+  final lower = path.replaceAll('\\', '/').toLowerCase();
+  final roles = TransportRoles.of(path);
+  final t = _roleTransmissivity(roles);
+  if (t < 1.0) {
+    if (roles.isGenerated) {
+      reasons.add('generated');
+    } else if (_looksVendor(lower)) {
+      reasons.add('vendor');
+    } else if (roles.isLockfile) {
+      reasons.add('lockfile');
+    } else if (roles.isFixture) {
+      reasons.add('fixture-like');
+    } else if (roles.isMigration) {
+      reasons.add('migration');
+    } else if (roles.isTest) {
+      reasons.add('test');
+    } else if (roles.isDoc) {
+      reasons.add('doc');
+    }
   }
-  if (_looksVendor(lower)) {
-    reasons.add('vendor');
-    return 0.18;
-  }
-  if (_isLockfileLike(lower)) {
-    reasons.add('lockfile');
-    return 0.18;
-  }
-  if (_looksFixtureLike(lower)) {
-    reasons.add('fixture-like');
-    return 0.58;
-  }
+  // Build-output and legacy paths don't have roles yet — detect inline.
   if (lower.contains('/deprecated/') || lower.contains('/legacy/')) {
     reasons.add('legacy');
-    return 0.72;
+    return math.min(t, 0.72);
   }
   if (lower.contains('/build/') ||
       lower.contains('/dist/') ||
@@ -913,7 +877,7 @@ double _pathCueIntegrity(String path, List<String> reasons) {
       lower.contains('/.dart_tool/') ||
       lower.contains('/target/')) {
     reasons.add('build-output');
-    return 0.2;
+    return math.min(t, 0.20);
   }
-  return 1.0;
+  return t;
 }

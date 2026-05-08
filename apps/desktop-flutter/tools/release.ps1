@@ -20,6 +20,8 @@ $ErrorActionPreference = 'Stop'
 $flutterDir = Split-Path -Parent $PSScriptRoot
 $installDir = Join-Path $env:USERPROFILE 'Manifold'
 $exeName    = 'git_desktop.exe'
+$buildDir   = Join-Path $flutterDir 'build\windows\x64'
+$cores      = [Environment]::ProcessorCount
 
 function Get-PubspecVersion {
     $pubspec = Join-Path $flutterDir 'pubspec.yaml'
@@ -61,11 +63,13 @@ try {
     if ($sha)     { $defines += "--dart-define=MANIFOLD_GIT_SHA=$sha" }
     if ($BaseUrl) { $defines += "--dart-define=MANIFOLD_UPDATE_BASE_URL=$BaseUrl" }
 
-    Write-Host "==> flutter build windows --release $($defines -join ' ')" -ForegroundColor Cyan
+    # Step 1: Dart AOT + CMake configure (flutter assemble runs here).
+    Write-Host "==> flutter build windows --release (dart AOT + cmake configure)" -ForegroundColor Cyan
+    $env:CMAKE_BUILD_PARALLEL_LEVEL = "$cores"
     & flutter build windows --release @defines
     if ($LASTEXITCODE -ne 0) { throw "flutter build failed ($LASTEXITCODE)" }
 
-    $releaseDir = Join-Path $flutterDir 'build\windows\x64\runner\Release'
+    $releaseDir = Join-Path $buildDir 'runner\Release'
     if (-not (Test-Path $releaseDir)) { throw "Release output missing: $releaseDir" }
 
     Write-Host "==> staging $installDir" -ForegroundColor Cyan
@@ -92,6 +96,7 @@ try {
     Write-Host "    channel : $Channel"
     Write-Host "    version : $version"
     if ($sha) { Write-Host "    sha     : $sha" }
+    Write-Host "    cores   : $cores"
     Write-Host "    exe     : $exePath"
     Write-Host "    lnk     : $lnkPath"
 }

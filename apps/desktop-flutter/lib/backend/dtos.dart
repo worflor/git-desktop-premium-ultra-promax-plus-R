@@ -926,6 +926,8 @@ class AiModelOptionData {
   final String? planName;
   final String label;
   final String description;
+  final double? promptPricePer1m;
+  final double? completionPricePer1m;
 
   const AiModelOptionData({
     required this.value,
@@ -935,7 +937,12 @@ class AiModelOptionData {
     this.planName,
     required this.label,
     required this.description,
+    this.promptPricePer1m,
+    this.completionPricePer1m,
   });
+
+  bool get hasPricing =>
+      promptPricePer1m != null || completionPricePer1m != null;
 
   factory AiModelOptionData.fromJson(Map<String, dynamic> j) =>
       AiModelOptionData(
@@ -946,6 +953,9 @@ class AiModelOptionData {
         planName: j['plan_name'] ?? j['planName'],
         label: j['label'] ?? '',
         description: j['description'] ?? '',
+        promptPricePer1m: (j['prompt_price_per_1m'] as num?)?.toDouble(),
+        completionPricePer1m:
+            (j['completion_price_per_1m'] as num?)?.toDouble(),
       );
 }
 

@@ -402,7 +402,9 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
 
     // Ctrl/Cmd shortcuts work even when a text field is focused.
     if (ctrl) {
-      if (key == LogicalKeyboardKey.slash) {
+      if (key == LogicalKeyboardKey.slash ||
+          key == LogicalKeyboardKey.numpadDivide ||
+          event.character == '/') {
         setState(() {
           _paletteElevated = true;
           _awaitingGPrefix = false;
@@ -456,7 +458,9 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
       return KeyEventResult.ignored;
     }
 
-    if (key == LogicalKeyboardKey.slash) {
+    if (key == LogicalKeyboardKey.slash ||
+        key == LogicalKeyboardKey.numpadDivide ||
+        event.character == '/') {
       setState(() {
         _paletteElevated = false;
         _awaitingGPrefix = false;

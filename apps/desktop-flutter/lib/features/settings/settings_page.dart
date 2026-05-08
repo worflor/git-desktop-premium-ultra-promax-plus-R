@@ -10,7 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:meta/meta.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../backend/ai.dart';
+import '../../backend/ai.dart' show cliProviderIds;
+import '../../backend/ai_api_provider.dart';
 import '../../backend/ai_audit_store.dart';
 import '../../backend/command_telemetry_store.dart';
 import '../../backend/dtos.dart';
@@ -132,6 +133,23 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final aiSettings = context.read<AiSettingsState>();
+    if (!identical(aiSettings.runtimeProviders, _aiProviders) &&
+        aiSettings.runtimeProviders.isNotEmpty) {
+      _aiProviders = aiSettings.runtimeProviders;
+      _aiProvidersError = aiSettings.runtimeProvidersError;
+    }
+    if (!identical(aiSettings.runtimeModelCategories, _aiModelCategories) &&
+        aiSettings.runtimeModelCategories.isNotEmpty) {
+      _aiModelCategories = aiSettings.runtimeModelCategories;
+      _aiModelOptionsError = aiSettings.runtimeModelCategoriesError;
+      _syncCategoryControllers();
+    }
+  }
+
+  @override
   void didUpdateWidget(covariant SettingsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Re-fire the focus pulse when the deep-link target changes
@@ -201,9 +219,7 @@ class _SettingsPageState extends State<SettingsPage>
       aiSettings.refreshProviders(forceRefresh: forceRefresh),
       aiSettings.refreshModelCategories(forceRefresh: forceRefresh),
     ]);
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
     setState(() {
       _aiProvidersLoading = false;
@@ -216,6 +232,21 @@ class _SettingsPageState extends State<SettingsPage>
         _syncCategoryControllers();
       }
     });
+
+    // If API providers have keys but their models didn't land (network
+    // timing on startup, cache miss, etc.), retry once more. The guard
+    // in refreshModelCategories detects this via hasApiProvidersWithoutModels.
+    if (mounted && aiSettings.hasApiProvidersWithoutModels) {
+      await aiSettings.refreshModelCategories(forceRefresh: true);
+      if (!mounted) return;
+      setState(() {
+        _aiModelCategories = aiSettings.runtimeModelCategories;
+        _aiModelOptionsError = aiSettings.runtimeModelCategoriesError;
+        if (_aiModelCategories.isNotEmpty) {
+          _syncCategoryControllers();
+        }
+      });
+    }
   }
 
   void _syncCategoryControllers() {
@@ -740,8 +771,15 @@ class _SettingsPageState extends State<SettingsPage>
   }
 
   List<_ProviderCard> _buildProviderCards() {
+    final aiSettings = context.read<AiSettingsState>();
+    final apiKeys = aiSettings.apiKeys;
+    // Derived from ai.dart's _cliProviderSpecs — no hardcoded set.
+    final cliIds = cliProviderIds;
+
+    final cards = <_ProviderCard>[];
+
     if (_aiProviders.isEmpty) {
-      return const [
+      cards.addAll(const [
         _ProviderCard(
           id: 'codex',
           binaryLabel: 'codex',
@@ -766,12 +804,11 @@ class _SettingsPageState extends State<SettingsPage>
           status: 'Detecting...',
           placeholder: true,
         ),
-      ];
-    }
-
-    return _aiProviders
-        .map(
-          (provider) => _ProviderCard(
+      ]);
+    } else {
+      for (final provider in _aiProviders) {
+        if (cliIds.contains(provider.id)) {
+          cards.add(_ProviderCard(
             id: provider.id,
             binaryLabel: provider.resolvedBinary ?? provider.binary,
             status: provider.available
@@ -779,9 +816,26 @@ class _SettingsPageState extends State<SettingsPage>
                 : 'Not detected',
             detail: provider.healthCheck,
             ready: provider.available,
-          ),
-        )
-        .toList();
+          ));
+        }
+      }
+    }
+
+    final configuredApiCount = aiApiProviderRegistry
+        .where((p) => (apiKeys[p.id]?.apiKey.trim().isNotEmpty ?? false))
+        .length;
+    cards.add(_ProviderCard(
+      id: 'api',
+      binaryLabel: 'http',
+      status: configuredApiCount > 0
+          ? '$configuredApiCount configured'
+          : 'Not configured',
+      ready: configuredApiCount > 0,
+      isApiProvider: true,
+      apiProviderId: 'api',
+    ));
+
+    return cards;
   }
 
   String _formatSampleTime(String value) {
@@ -900,6 +954,7 @@ class _SettingsPageState extends State<SettingsPage>
     final aiSettings = context.watch<AiSettingsState>();
     final preferences = context.watch<PreferencesState>();
     final diagnostics = context.watch<DiagnosticsState>();
+
     final commandReport = diagnostics.commandLatencyReport;
     final backendCommandReport = diagnostics.backendCommandTelemetrySnapshot;
     final diffReport = diagnostics.diffRenderMetricsReport;
@@ -907,11 +962,6 @@ class _SettingsPageState extends State<SettingsPage>
     final topOffenders =
         _buildTopOffenders(commandReport, diffReport, uiReport);
     final providerCards = _buildProviderCards();
-    // Don't force-sync prompt controllers here — setting controller.text
-    // resets cursor position mid-typing. The controllers are initialized
-    // in initState and updated by the user's keystrokes. The debounced
-    // save writes the value to AiSettingsState, not back to the controller.
-    _syncCategoryControllers();
 
     return ListView(
       // Settings is the other place users frequently switch themes —
@@ -1267,7 +1317,13 @@ class _SettingsPageState extends State<SettingsPage>
                 ),
               ],
               const SizedBox(height: 10),
-              _ProviderGrid(providers: providerCards),
+              _ProviderGrid(
+                providers: providerCards,
+                aiSettings: aiSettings,
+                onApiKeyChanged: () {
+                  _refreshAiDiagnostics(forceRefresh: true);
+                },
+              ),
               const _SettingsGap(),
               const _SettingsSubtitle('Model Slots'),
               const SizedBox(height: 8),
@@ -2995,6 +3051,9 @@ class _ProviderNode extends StatelessWidget {
   final String? detail;
   final bool ready;
   final bool placeholder;
+  final bool isApiProvider;
+  final bool expanded;
+  final VoidCallback? onTap;
 
   const _ProviderNode({
     required this.id,
@@ -3003,6 +3062,9 @@ class _ProviderNode extends StatelessWidget {
     this.detail,
     this.ready = false,
     this.placeholder = false,
+    this.isApiProvider = false,
+    this.expanded = false,
+    this.onTap,
   });
 
   @override
@@ -3013,12 +3075,16 @@ class _ProviderNode extends StatelessWidget {
         : ready
             ? t.stateAdded
             : t.stateConflicted;
-    return Container(
+    final node = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: t.rowBg,
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.12)),
+        border: Border.all(
+          color: expanded
+              ? t.chromeAccent.withValues(alpha: 0.35)
+              : t.chromeBorder.withValues(alpha: 0.12),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3082,6 +3148,13 @@ class _ProviderNode extends StatelessWidget {
         ],
       ),
     );
+    if (isApiProvider) {
+      return MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(onTap: onTap, child: node),
+      );
+    }
+    return node;
   }
 }
 
@@ -3092,6 +3165,8 @@ class _ProviderCard {
   final String? detail;
   final bool ready;
   final bool placeholder;
+  final bool isApiProvider;
+  final String? apiProviderId;
 
   const _ProviderCard({
     required this.id,
@@ -3100,13 +3175,141 @@ class _ProviderCard {
     this.detail,
     this.ready = false,
     this.placeholder = false,
+    this.isApiProvider = false,
+    this.apiProviderId,
   });
 }
 
-class _ProviderGrid extends StatelessWidget {
+class _ProviderGrid extends StatefulWidget {
   final List<_ProviderCard> providers;
+  final AiSettingsState aiSettings;
+  final VoidCallback onApiKeyChanged;
 
-  const _ProviderGrid({required this.providers});
+  const _ProviderGrid({
+    required this.providers,
+    required this.aiSettings,
+    required this.onApiKeyChanged,
+  });
+
+  @override
+  State<_ProviderGrid> createState() => _ProviderGridState();
+}
+
+class _ProviderGridState extends State<_ProviderGrid>
+    with SingleTickerProviderStateMixin {
+  bool _apiExpanded = false;
+  late final AnimationController _expandCtrl;
+  late final Animation<double> _expandCurve;
+  final _keyControllers = <String, TextEditingController>{};
+  final _baseUrlControllers = <String, TextEditingController>{};
+  final _testing = <String>{};
+  final _testResults = <String, bool>{};
+
+  TextEditingController _keyController(String providerId) {
+    return _keyControllers.putIfAbsent(providerId, () {
+      final entry = widget.aiSettings.apiKeyFor(providerId);
+      return TextEditingController(text: entry?.apiKey ?? '');
+    });
+  }
+
+  TextEditingController _baseUrlController(String providerId) {
+    return _baseUrlControllers.putIfAbsent(providerId, () {
+      final entry = widget.aiSettings.apiKeyFor(providerId);
+      final saved = entry?.baseUrl ?? '';
+      if (saved.isNotEmpty) return TextEditingController(text: saved);
+      final provider = aiApiProviderById(providerId);
+      return TextEditingController(text: provider?.defaultBaseUrl ?? '');
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _expandCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+    _expandCurve = CurvedAnimation(
+      parent: _expandCtrl,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+  }
+
+  @override
+  void dispose() {
+    _expandCtrl.dispose();
+    for (final c in _keyControllers.values) {
+      c.dispose();
+    }
+    for (final c in _baseUrlControllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void _toggleApi() {
+    final dur = context.motionRead(const Duration(milliseconds: 220));
+    _expandCtrl.duration = dur;
+    setState(() => _apiExpanded = !_apiExpanded);
+    if (_apiExpanded) {
+      _expandCtrl.forward();
+    } else {
+      _expandCtrl.reverse();
+    }
+  }
+
+  Future<void> _saveKey(String providerId) async {
+    final key = _keyController(providerId).text.trim();
+    final baseUrl = _baseUrlController(providerId).text.trim();
+    if (key.isEmpty) {
+      await widget.aiSettings.clearApiKey(providerId);
+    } else {
+      await widget.aiSettings.setApiKey(
+        providerId,
+        key,
+        baseUrl: baseUrl.isEmpty ? null : baseUrl,
+      );
+    }
+    setState(() => _testResults.remove(providerId));
+    widget.onApiKeyChanged();
+  }
+
+  Future<void> _testKey(String providerId) async {
+    final key = _keyController(providerId).text.trim();
+    if (key.isEmpty) return;
+    setState(() {
+      _testing.add(providerId);
+      _testResults.remove(providerId);
+    });
+    final provider = aiApiProviderById(providerId);
+    if (provider == null) {
+      setState(() {
+        _testing.remove(providerId);
+        _testResults[providerId] = false;
+      });
+      return;
+    }
+    final baseUrl = _baseUrlController(providerId).text.trim();
+    final creds = AiApiCredentials(
+      apiKey: key,
+      baseUrl: baseUrl.isEmpty ? null : baseUrl,
+    );
+    try {
+      final models = await provider.listModels(creds);
+      if (!mounted) return;
+      setState(() {
+        _testing.remove(providerId);
+        _testResults[providerId] = models.isNotEmpty;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _testing.remove(providerId);
+        _testResults[providerId] = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3117,29 +3320,382 @@ class _ProviderGrid extends StatelessWidget {
             : constraints.maxWidth < 800
                 ? 2
                 : 3;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: providers.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisExtent: 64,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-          ),
-          itemBuilder: (context, index) {
-            final p = providers[index];
-            return _ProviderNode(
-              id: p.id,
-              binaryLabel: p.binaryLabel,
-              status: p.status,
-              detail: p.detail,
-              ready: p.ready,
-              placeholder: p.placeholder,
-            );
-          },
+        final apiIndex = widget.providers.indexWhere((p) => p.isApiProvider);
+
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (var i = 0; i < widget.providers.length; i++)
+              if (i == apiIndex)
+                _buildApiTile(context, constraints, columns)
+              else
+                SizedBox(
+                  width: _tileWidth(constraints.maxWidth, columns),
+                  height: 64,
+                  child: _buildNode(widget.providers[i]),
+                ),
+          ],
         );
       },
+    );
+  }
+
+  double _tileWidth(double total, int columns) {
+    final gaps = (columns - 1) * 8.0;
+    return (total - gaps) / columns;
+  }
+
+  Widget _buildNode(_ProviderCard p) {
+    return _ProviderNode(
+      id: p.id,
+      binaryLabel: p.binaryLabel,
+      status: p.status,
+      detail: p.detail,
+      ready: p.ready,
+      placeholder: p.placeholder,
+      isApiProvider: p.isApiProvider,
+      expanded: p.isApiProvider && _apiExpanded,
+      onTap: p.isApiProvider ? _toggleApi : null,
+    );
+  }
+
+  Widget _buildApiTile(
+      BuildContext context, BoxConstraints constraints, int columns) {
+    final t = context.tokens;
+    final p = widget.providers.firstWhere((p) => p.isApiProvider);
+    final tileW = _tileWidth(constraints.maxWidth, columns);
+
+    return AnimatedBuilder(
+      animation: _expandCurve,
+      builder: (context, child) {
+        final progress = _expandCurve.value;
+        final width = tileW + (constraints.maxWidth - tileW) * progress;
+        final borderColor = Color.lerp(
+          t.chromeBorder.withValues(alpha: 0.12),
+          t.chromeAccent.withValues(alpha: 0.35),
+          progress,
+        )!;
+
+        return SizedBox(
+          width: width,
+          child: Container(
+            decoration: BoxDecoration(
+              color: t.rowBg,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: borderColor),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  onTap: _toggleApi,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: Container(
+                      height: 64,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  p.id,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: t.textStrong,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                p.status.toUpperCase(),
+                                style: TextStyle(
+                                  color: p.ready
+                                      ? t.stateAdded
+                                      : t.stateConflicted,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            p.binaryLabel,
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 10,
+                              fontFamily: AppFonts.mono,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                ClipRect(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    heightFactor: progress,
+                    child: Opacity(
+                      opacity: progress,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                        child: Column(
+                          children: [
+                            for (final provider in aiApiProviderRegistry)
+                              _buildProviderRow(t, provider),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static String _keyHint(String id) => switch (id) {
+        'openrouter' => 'sk-or-...',
+        'openai' => 'sk-...',
+        'anthropic' => 'sk-ant-...',
+        'xai' => 'xai-...',
+        _ => 'api key',
+      };
+
+  Widget _buildProviderRow(AppTokens t, AiApiProvider provider) {
+    final keyCtrl = _keyController(provider.id);
+    final urlCtrl = _baseUrlController(provider.id);
+    final hasKey = keyCtrl.text.trim().isNotEmpty;
+    final isTesting = _testing.contains(provider.id);
+    final testResult = _testResults[provider.id];
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 80,
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    provider.displayName,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: hasKey ? t.textNormal : t.textMuted,
+                      fontSize: 10,
+                      fontFamily: AppFonts.mono,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (isTesting) ...[
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    width: 8,
+                    height: 8,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1,
+                      color: t.textMuted,
+                    ),
+                  ),
+                ] else if (testResult != null) ...[
+                  const SizedBox(width: 4),
+                  Container(
+                    width: 5,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: testResult
+                          ? t.stateAdded
+                          : t.stateConflicted,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _ApiTextField(
+              controller: keyCtrl,
+              tokens: t,
+              hint: _keyHint(provider.id),
+              obscure: true,
+              fontSize: 10,
+              onSubmitted: () => _saveKey(provider.id),
+            ),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 100,
+            child: _ApiTextField(
+              controller: urlCtrl,
+              tokens: t,
+              hint: 'endpoint',
+              fontSize: 9,
+              onSubmitted: () => _saveKey(provider.id),
+            ),
+          ),
+          const SizedBox(width: 4),
+          _MicroButton(
+            label: 'Save',
+            tokens: t,
+            onTap: () => _saveKey(provider.id),
+          ),
+          const SizedBox(width: 3),
+          _MicroButton(
+            label: 'Test',
+            tokens: t,
+            onTap: hasKey ? () => _testKey(provider.id) : null,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ApiTextField extends StatefulWidget {
+  final TextEditingController controller;
+  final AppTokens tokens;
+  final String hint;
+  final bool obscure;
+  final double fontSize;
+  final VoidCallback? onSubmitted;
+
+  const _ApiTextField({
+    required this.controller,
+    required this.tokens,
+    required this.hint,
+    this.obscure = false,
+    this.fontSize = 11,
+    this.onSubmitted,
+  });
+
+  @override
+  State<_ApiTextField> createState() => _ApiTextFieldState();
+}
+
+class _ApiTextFieldState extends State<_ApiTextField> {
+  bool _revealed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final isObscured = widget.obscure && !_revealed;
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: widget.controller,
+            obscureText: isObscured,
+            style: TextStyle(
+              color: t.textNormal,
+              fontSize: widget.fontSize,
+              fontFamily: AppFonts.mono,
+            ),
+            cursorColor: t.accentBright,
+            decoration: InputDecoration(
+              isCollapsed: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              hintText: widget.hint,
+              hintStyle: TextStyle(
+                color: t.textFaint.withValues(alpha: 0.5),
+                fontSize: widget.fontSize,
+                fontFamily: AppFonts.mono,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide: BorderSide(
+                  color: t.textFaint.withValues(alpha: 0.2),
+                ),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide: BorderSide(
+                  color: t.textFaint.withValues(alpha: 0.2),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide: BorderSide(color: t.chromeAccent),
+              ),
+            ),
+            onSubmitted: widget.onSubmitted != null
+                ? (_) => widget.onSubmitted!()
+                : null,
+          ),
+        ),
+        if (widget.obscure) ...[
+          const SizedBox(width: 6),
+          _MicroButton(
+            label: _revealed ? 'Hide' : 'Show',
+            tokens: t,
+            onTap: () => setState(() => _revealed = !_revealed),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _MicroButton extends StatelessWidget {
+  final String label;
+  final AppTokens tokens;
+  final VoidCallback? onTap;
+
+  const _MicroButton({
+    required this.label,
+    required this.tokens,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    return MouseRegion(
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: enabled
+                ? tokens.chromeAccent.withValues(alpha: 0.08)
+                : Colors.transparent,
+            border: Border.all(
+              color: enabled
+                  ? tokens.chromeAccent.withValues(alpha: 0.25)
+                  : tokens.textFaint.withValues(alpha: 0.15),
+            ),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: enabled ? tokens.textNormal : tokens.textFaint,
+              fontSize: 10,
+              fontFamily: AppFonts.mono,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -3547,6 +4103,136 @@ class _CustomModelRow extends StatelessWidget {
   }
 }
 
+class _CustomModelChin extends StatefulWidget {
+  final List<({String providerId, String providerLabel})> providers;
+  final Map<String, TextEditingController> customControllers;
+  final void Function(String providerId) onCustomSubmit;
+
+  const _CustomModelChin({
+    required this.providers,
+    required this.customControllers,
+    required this.onCustomSubmit,
+  });
+
+  @override
+  State<_CustomModelChin> createState() => _CustomModelChinState();
+}
+
+class _CustomModelChinState extends State<_CustomModelChin>
+    with SingleTickerProviderStateMixin {
+  bool _open = false;
+  late final AnimationController _ctrl;
+  late final Animation<double> _curve;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
+    _curve = CurvedAnimation(
+      parent: _ctrl,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _toggle() {
+    final dur = context.motionRead(const Duration(milliseconds: 180));
+    _ctrl.duration = dur;
+    setState(() => _open = !_open);
+    if (_open) {
+      _ctrl.forward();
+    } else {
+      _ctrl.reverse();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return AnimatedBuilder(
+      animation: _curve,
+      builder: (context, _) {
+        final progress = _curve.value;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: _toggle,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  child: Row(
+                    children: [
+                      Text(
+                        'custom model id',
+                        style: TextStyle(
+                          color: t.textMuted.withValues(alpha: 0.45),
+                          fontSize: 10,
+                          fontFamily: AppFonts.mono,
+                        ),
+                      ),
+                      const Spacer(),
+                      Transform.rotate(
+                        angle: progress * 3.14159 * 0.5,
+                        child: Icon(
+                          Icons.chevron_right,
+                          size: 12,
+                          color: t.textMuted.withValues(alpha: 0.35),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            ClipRect(
+              child: Align(
+                alignment: Alignment.topCenter,
+                heightFactor: progress,
+                child: Opacity(
+                  opacity: progress,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+                    child: Column(
+                      children: [
+                        for (var i = 0;
+                            i < widget.providers.length;
+                            i++) ...[
+                          _CustomModelRow(
+                            providerLabel:
+                                widget.providers[i].providerLabel,
+                            controller: widget.customControllers[
+                                widget.providers[i].providerId]!,
+                            onSubmit: () => widget.onCustomSubmit(
+                                widget.providers[i].providerId),
+                          ),
+                          if (i < widget.providers.length - 1)
+                            const SizedBox(height: 4),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 /// Small rounded pill showing a provider name.
 class _ProviderPill extends StatelessWidget {
   final String label;
@@ -3719,7 +4405,7 @@ class _ModelPickerFieldState extends State<_ModelPickerField> {
   }
 }
 
-class _ModelPickerOverlay extends StatelessWidget {
+class _ModelPickerOverlay extends StatefulWidget {
   final List<AiModelOptionData> models;
   final String selectedValue;
   final List<({String providerId, String providerLabel})> providers;
@@ -3737,14 +4423,70 @@ class _ModelPickerOverlay extends StatelessWidget {
   });
 
   @override
+  State<_ModelPickerOverlay> createState() => _ModelPickerOverlayState();
+}
+
+class _ModelPickerOverlayState extends State<_ModelPickerOverlay> {
+  final _filterCtrl = TextEditingController();
+  final _filterFocus = FocusNode();
+  String _query = '';
+  String? _providerFilter;
+
+  @override
+  void initState() {
+    super.initState();
+    _filterCtrl.addListener(_onQueryChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _filterFocus.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _filterCtrl.removeListener(_onQueryChanged);
+    _filterCtrl.dispose();
+    _filterFocus.dispose();
+    super.dispose();
+  }
+
+  void _onQueryChanged() {
+    final next = _filterCtrl.text.trim().toLowerCase();
+    if (next != _query) setState(() => _query = next);
+  }
+
+  List<AiModelOptionData> get _filtered {
+    var list = widget.models;
+    if (_providerFilter != null) {
+      list = list
+          .where((m) => m.providerId == _providerFilter)
+          .toList();
+    }
+    if (_query.isEmpty) return list;
+    final terms = _query.split(RegExp(r'\s+'));
+    return list.where((m) {
+      final haystack = '${m.modelId} ${m.providerId} ${m.label} '
+              '${m.description} ${m.providerLabel}'
+          .toLowerCase();
+      return terms.every((t) => haystack.contains(t));
+    }).toList();
+  }
+
+  Set<String> get _activeProviderIds {
+    final ids = <String>{};
+    for (final m in widget.models) {
+      ids.add(m.providerId);
+    }
+    return ids;
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final radius =
         themeDefinitionFor(t.id).shader.geometry.radius.clamp(0, 18).toDouble();
-    // Match the canonical floating-surface chrome: surface1 fill,
-    // chromeBorder hairline, theme radius. Same vocabulary the
-    // popupMenuTheme, AppContextMenu, and dialogTheme already use —
-    // no more bespoke `bg1 + radius:6 + no border` outlier.
+    final filtered = _filtered;
+    final providerIds = _activeProviderIds;
+
     return Material(
       color: Colors.transparent,
       child: Container(
@@ -3763,48 +4505,191 @@ class _ModelPickerOverlay extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(radius),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 340),
+            constraints: const BoxConstraints(maxHeight: 380),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Flexible(
-                  child: ListView(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    shrinkWrap: true,
-                    children: [
-                      for (final model in models)
-                        _ModelPickerItem(
-                          model: model,
-                          selected: model.value == selectedValue,
-                          onTap: () => onSelect(model.value),
-                        ),
-                    ],
-                  ),
+                _buildFilterBar(t, providerIds, filtered.length),
+                Divider(
+                  height: 1,
+                  thickness: 1,
+                  color: t.chromeBorder.withValues(alpha: 0.10),
                 ),
-                if (providers.isNotEmpty) ...[
+                Flexible(
+                  child: filtered.isEmpty
+                      ? Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 14),
+                          child: Text(
+                            _query.isNotEmpty
+                                ? 'no models match "$_query"'
+                                : 'no models available',
+                            style: TextStyle(
+                              color: t.textMuted.withValues(alpha: 0.5),
+                              fontSize: 11,
+                              fontFamily: AppFonts.mono,
+                            ),
+                          ),
+                        )
+                      : ListView(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          shrinkWrap: true,
+                          children: [
+                            for (final model in filtered)
+                              _ModelPickerItem(
+                                model: model,
+                                selected:
+                                    model.value == widget.selectedValue,
+                                onTap: () =>
+                                    widget.onSelect(model.value),
+                              ),
+                          ],
+                        ),
+                ),
+                if (widget.providers.isNotEmpty) ...[
                   Divider(
                     height: 1,
                     thickness: 1,
                     color: t.chromeBorder.withValues(alpha: 0.12),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-                    child: Column(
-                      children: [
-                        for (var i = 0; i < providers.length; i++) ...[
-                          _CustomModelRow(
-                            providerLabel: providers[i].providerLabel,
-                            controller: customControllers[providers[i].providerId]!,
-                            onSubmit: () => onCustomSubmit(providers[i].providerId),
-                          ),
-                          if (i < providers.length - 1) const SizedBox(height: 4),
-                        ],
-                      ],
-                    ),
+                  _CustomModelChin(
+                    providers: widget.providers,
+                    customControllers: widget.customControllers,
+                    onCustomSubmit: widget.onCustomSubmit,
                   ),
                 ],
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterBar(
+      AppTokens t, Set<String> providerIds, int matchCount) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _filterCtrl,
+              focusNode: _filterFocus,
+              maxLines: 1,
+              style: TextStyle(
+                color: t.textNormal,
+                fontSize: 11,
+                fontFamily: AppFonts.mono,
+              ),
+              cursorColor: t.accentBright,
+              decoration: InputDecoration(
+                isCollapsed: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+                hintText: 'filter models...',
+                hintStyle: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.35),
+                  fontSize: 11,
+                  fontFamily: AppFonts.mono,
+                ),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+              ),
+            ),
+          ),
+          if (_query.isNotEmpty || _providerFilter != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(
+                '$matchCount',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.4),
+                  fontSize: 9,
+                  fontFamily: AppFonts.mono,
+                ),
+              ),
+            ),
+          if (providerIds.length > 1)
+            for (final pid in providerIds)
+              Padding(
+                padding: const EdgeInsets.only(left: 2),
+                child: _FilterChip(
+                  label: _providerShort(pid),
+                  active: _providerFilter == pid,
+                  tokens: t,
+                  onTap: () {
+                    setState(() {
+                      _providerFilter =
+                          _providerFilter == pid ? null : pid;
+                    });
+                  },
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  static String _providerShort(String id) {
+    const shorts = {
+      'codex': 'cdx',
+      'claude': 'cld',
+      'gemini': 'gem',
+      'opencode': 'oc',
+      'openrouter': 'or',
+      'openai': 'oai',
+      'anthropic': 'ant',
+      'xai': 'xai',
+    };
+    return shorts[id] ?? id.substring(0, id.length.clamp(0, 3));
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool active;
+  final AppTokens tokens;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.label,
+    required this.active,
+    required this.tokens,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          decoration: BoxDecoration(
+            color: active
+                ? tokens.accentBright.withValues(alpha: 0.15)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(3),
+            border: Border.all(
+              color: active
+                  ? tokens.accentBright.withValues(alpha: 0.4)
+                  : tokens.textFaint.withValues(alpha: 0.18),
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active
+                  ? tokens.accentBright
+                  : tokens.textMuted.withValues(alpha: 0.5),
+              fontSize: 8,
+              fontFamily: AppFonts.mono,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
             ),
           ),
         ),
@@ -3824,20 +4709,82 @@ class _ModelPickerItem extends StatelessWidget {
     required this.onTap,
   });
 
+  static String? _formatPrice(AiModelOptionData m) {
+    if (!m.hasPricing) return null;
+    final i = m.promptPricePer1m;
+    final o = m.completionPricePer1m;
+    if ((i == null || i == 0) && (o == null || o == 0)) return 'free';
+    final iStr = i != null ? '\$${_compact(i)}' : '?';
+    final oStr = o != null ? '\$${_compact(o)}' : '?';
+    return '$iStr/$oStr';
+  }
+
+  static String _compact(double v) {
+    if (v >= 100) return v.toStringAsFixed(0);
+    if (v >= 10) return v.toStringAsFixed(1);
+    if (v >= 1) return v.toStringAsFixed(2);
+    if (v >= 0.01) return v.toStringAsFixed(3);
+    return v.toStringAsFixed(4);
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final price = _formatPrice(model);
     return InkWell(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         color: selected ? t.accentBright.withValues(alpha: 0.08) : null,
-        child: Text(
-          model.label,
-          style: TextStyle(
-            color: selected ? t.accentBright : t.textNormal,
-            fontSize: 12,
-          ),
+        child: Stack(
+          children: [
+            Padding(
+              padding: EdgeInsets.only(right: price != null ? 0 : 0),
+              child: Text(
+                model.label,
+                style: TextStyle(
+                  color: selected ? t.accentBright : t.textNormal,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            if (price != null)
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          (selected
+                                  ? t.accentBright.withValues(alpha: 0.08)
+                                  : t.surface1)
+                              .withValues(alpha: 0.0),
+                          selected
+                              ? t.accentBright.withValues(alpha: 0.08)
+                              : t.surface1,
+                        ],
+                        stops: const [0.0, 0.25],
+                      ),
+                    ),
+                    child: Text(
+                      price,
+                      style: TextStyle(
+                        color: t.textFaint.withValues(alpha: 0.45),
+                        fontSize: 9,
+                        fontFamily: AppFonts.mono,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );

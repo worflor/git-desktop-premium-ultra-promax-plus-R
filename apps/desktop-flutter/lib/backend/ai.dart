@@ -6,7 +6,10 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import 'ai_api_keys_store.dart';
+import 'ai_api_provider.dart';
 import 'ai_audit_store.dart';
+import 'storage_paths.dart';
 import '../diagnostics/diagnostics_state.dart';
 import 'commit_format.dart';
 import 'dtos.dart';
@@ -36,7 +39,7 @@ import 'logos_diff_attention.dart' as diff_attention;
 import 'logos_hunks.dart' as hunks;
 import 'semantic_manifest.dart' show buildSemanticManifest;
 
-const _providerSpecs = <_ProviderSpec>[
+const _cliProviderSpecs = <_ProviderSpec>[
   _ProviderSpec(id: 'codex', binary: 'codex', kind: _ProviderKind.codex),
   _ProviderSpec(id: 'claude', binary: 'claude', kind: _ProviderKind.claude),
   _ProviderSpec(id: 'gemini', binary: '', kind: _ProviderKind.geminiApi),
@@ -46,6 +49,70 @@ const _providerSpecs = <_ProviderSpec>[
     kind: _ProviderKind.openCode,
   ),
 ];
+
+final Set<String> cliProviderIds =
+    Set.unmodifiable(_cliProviderSpecs.map((s) => s.id));
+
+List<_ProviderSpec> _apiProviderSpecs = const [];
+List<_ProviderSpec> _allProviderSpecs = List.unmodifiable(_cliProviderSpecs);
+AiApiKeysSnapshot _apiKeysSnapshot = AiApiKeysSnapshot.empty();
+
+List<_ProviderSpec> get _providerSpecs => _allProviderSpecs;
+
+Future<void> loadApiProviderKeys() async {
+  _apiKeysSnapshot = await AiApiKeysStore.load();
+  _rebuildApiProviderSpecs();
+}
+
+Future<void> updateApiProviderKey(
+  String providerId,
+  AiApiKeyEntry entry,
+) async {
+  _apiKeysSnapshot = _apiKeysSnapshot.withEntry(providerId, entry);
+  await AiApiKeysStore.persist(_apiKeysSnapshot);
+  _rebuildApiProviderSpecs();
+  _providerAvailabilityCache.remove(providerId);
+  _providerModelDiscoveryCache.remove(providerId);
+  _deleteApiModelCacheFromDisk(providerId);
+}
+
+Future<void> removeApiProviderKey(String providerId) async {
+  _apiKeysSnapshot = _apiKeysSnapshot.withoutEntry(providerId);
+  await AiApiKeysStore.persist(_apiKeysSnapshot);
+  _rebuildApiProviderSpecs();
+  _providerAvailabilityCache.remove(providerId);
+  _providerModelDiscoveryCache.remove(providerId);
+  _deleteApiModelCacheFromDisk(providerId);
+}
+
+void _deleteApiModelCacheFromDisk(String providerId) {
+  Future(() async {
+    try {
+      final dir = await _apiModelCacheDir();
+      final file = File(p.join(dir.path, '$providerId.json'));
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  });
+}
+
+AiApiKeysSnapshot get currentApiKeys => _apiKeysSnapshot;
+
+void _rebuildApiProviderSpecs() {
+  final specs = <_ProviderSpec>[];
+  for (final provider in aiApiProviderRegistry) {
+    final entry = _apiKeysSnapshot[provider.id];
+    if (entry != null && entry.apiKey.trim().isNotEmpty) {
+      specs.add(_ProviderSpec(
+        id: provider.id,
+        binary: '',
+        kind: _ProviderKind.apiProvider,
+        apiProvider: provider,
+      ));
+    }
+  }
+  _apiProviderSpecs = specs;
+  _allProviderSpecs = List.unmodifiable([..._cliProviderSpecs, ...specs]);
+}
 
 const _defaultModelCategories = <_ModelCategoryTemplate>[
   _ModelCategoryTemplate(
@@ -240,6 +307,7 @@ Future<GitResult<AiModelOptionListData>> listAiModelOptions({
           planName: availability.auth.planName,
           models: discovery.models,
           modelDetails: discovery.modelDetails,
+          modelPricing: discovery.modelPricing,
         );
       }),
     );
@@ -247,9 +315,11 @@ Future<GitResult<AiModelOptionListData>> listAiModelOptions({
         providerResults.whereType<_ProviderModelCollection>().toList();
 
     final modelDetailsByKey = <String, String>{};
+    final modelPricingByKey = <String, (double?, double?)>{};
     final directProviderModelKeys = <String>{};
     for (final provider in readyProviders) {
       modelDetailsByKey.addAll(provider.modelDetails);
+      modelPricingByKey.addAll(provider.modelPricing);
       if (provider.kind == _ProviderKind.openCode) {
         continue;
       }
@@ -280,6 +350,10 @@ Future<GitResult<AiModelOptionListData>> listAiModelOptions({
             continue;
           }
 
+          final isApiProvider = provider.kind == _ProviderKind.apiProvider;
+          final price = isApiProvider
+              ? (provider.modelPricing[key] ?? modelPricingByKey[key])
+              : null;
           models.add(
             AiModelOptionData(
               value: '${provider.providerId}:$modelId',
@@ -293,6 +367,8 @@ Future<GitResult<AiModelOptionListData>> listAiModelOptions({
                 planName: provider.planName,
                 detail: provider.modelDetails[key] ?? modelDetailsByKey[key],
               ),
+              promptPricePer1m: price?.$1,
+              completionPricePer1m: price?.$2,
             ),
           );
         }
@@ -2955,6 +3031,25 @@ Future<_ProviderAvailability> _inspectProviderCached(
 }
 
 Future<_ProviderAvailability> _inspectProvider(_ProviderSpec provider) async {
+  if (provider.kind == _ProviderKind.apiProvider) {
+    final entry = _apiKeysSnapshot[provider.id];
+    final hasKey = entry != null && entry.apiKey.trim().isNotEmpty;
+    return _ProviderAvailability(
+      ready: hasKey,
+      resolution: hasKey
+          ? _ProviderResolution(
+              command: 'http-api',
+              source: '${provider.id}-api-direct',
+              healthCheck: 'api-key',
+            )
+          : null,
+      auth: _ProviderAuthStatus(
+        ok: hasKey,
+        detail: hasKey ? 'api key configured' : 'no api key',
+      ),
+    );
+  }
+
   // Gemini API: no binary needed, just check for oauth creds.
   if (provider.kind == _ProviderKind.geminiApi) {
     final hasRefresh = _geminiApiRefreshToken() != null;
@@ -3006,12 +3101,130 @@ Future<_ProviderModelDiscovery?> _discoverProviderModelsCached(
     return cached.value;
   }
 
+  // API providers: try disk cache before hitting the network.
+  if (!forceRefresh &&
+      cached == null &&
+      provider.kind == _ProviderKind.apiProvider) {
+    final disk = await _loadApiModelCacheFromDisk(cacheKey);
+    if (disk != null) {
+      _providerModelDiscoveryCache[cacheKey] = _TimedValue(
+        checkedAt: DateTime.now(),
+        value: disk,
+      );
+      // Refresh in background so next access has fresh data.
+      _refreshApiModelCacheInBackground(provider, resolution, cacheKey);
+      return disk;
+    }
+  }
+
   final discovery = await _discoverProviderModels(provider, resolution);
-  _providerModelDiscoveryCache[cacheKey] = _TimedValue(
-    checkedAt: DateTime.now(),
-    value: discovery,
-  );
+  // Only cache successful discoveries for API providers. A null result
+  // (network failure, timeout, etc.) must NOT be cached — otherwise the
+  // 30-minute TTL prevents retries and the isNotEmpty guard in
+  // refreshModelCategories blocks re-discovery for the entire session.
+  if (discovery != null || provider.kind != _ProviderKind.apiProvider) {
+    _providerModelDiscoveryCache[cacheKey] = _TimedValue(
+      checkedAt: DateTime.now(),
+      value: discovery,
+    );
+  }
+  if (provider.kind == _ProviderKind.apiProvider && discovery != null) {
+    _saveApiModelCacheToDisk(cacheKey, discovery);
+  }
   return discovery;
+}
+
+void _refreshApiModelCacheInBackground(
+  _ProviderSpec provider,
+  _ProviderResolution? resolution,
+  String cacheKey,
+) {
+  Future(() async {
+    final discovery = await _discoverProviderModels(provider, resolution);
+    if (discovery != null) {
+      _providerModelDiscoveryCache[cacheKey] = _TimedValue(
+        checkedAt: DateTime.now(),
+        value: discovery,
+      );
+      _saveApiModelCacheToDisk(cacheKey, discovery);
+    }
+  });
+}
+
+Future<void> _saveApiModelCacheToDisk(
+  String providerId,
+  _ProviderModelDiscovery discovery,
+) async {
+  try {
+    final dir = await _apiModelCacheDir();
+    await dir.create(recursive: true);
+    final file = File(p.join(dir.path, '$providerId.json'));
+    final json = jsonEncode({
+      'ts': DateTime.now().toIso8601String(),
+      'models': discovery.models,
+      'details': discovery.modelDetails,
+      'pricing': {
+        for (final e in discovery.modelPricing.entries)
+          e.key: [e.value.$1, e.value.$2],
+      },
+    });
+    await file.writeAsString(json, flush: true);
+  } catch (_) {}
+}
+
+Future<_ProviderModelDiscovery?> _loadApiModelCacheFromDisk(
+  String providerId,
+) async {
+  try {
+    final dir = await _apiModelCacheDir();
+    final file = File(p.join(dir.path, '$providerId.json'));
+    if (!await file.exists()) return null;
+    final raw = await file.readAsString();
+    final json = jsonDecode(raw);
+    if (json is! Map) return null;
+
+    // Expire disk cache after 24 hours.
+    final ts = DateTime.tryParse(json['ts'] as String? ?? '');
+    if (ts != null && DateTime.now().difference(ts).inHours > 24) return null;
+
+    final models = (json['models'] as List?)?.cast<String>() ?? [];
+    if (models.isEmpty) return null;
+    final details = <String, String>{};
+    final rawDetails = json['details'];
+    if (rawDetails is Map) {
+      for (final e in rawDetails.entries) {
+        if (e.key is String && e.value is String) {
+          details[e.key as String] = e.value as String;
+        }
+      }
+    }
+    final pricing = <String, (double?, double?)>{};
+    final rawPricing = json['pricing'];
+    if (rawPricing is Map) {
+      for (final e in rawPricing.entries) {
+        if (e.key is String && e.value is List && e.value.length == 2) {
+          pricing[e.key as String] = (
+            (e.value[0] as num?)?.toDouble(),
+            (e.value[1] as num?)?.toDouble(),
+          );
+        }
+      }
+    }
+    return _ProviderModelDiscovery(
+      models: models,
+      modelDetails: details,
+      modelPricing: pricing,
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<Directory> _apiModelCacheDir() async {
+  final dataDir = await StoragePaths.gdpuDataDir();
+  return Directory(
+    '${dataDir.path}${Platform.pathSeparator}ai${Platform.pathSeparator}model_cache',
+  );
 }
 
 Future<_ProviderModelDiscovery?> _discoverProviderModels(
@@ -3027,6 +3240,8 @@ Future<_ProviderModelDiscovery?> _discoverProviderModels(
       return _discoverGeminiModels(resolution);
     case _ProviderKind.openCode:
       return _discoverOpenCodeModels(resolution);
+    case _ProviderKind.apiProvider:
+      return _discoverApiProviderModels(provider);
   }
 }
 
@@ -3465,6 +3680,48 @@ String? _extractGeminiModelFromJson(dynamic value) {
     return modelField.trim();
   }
   return null;
+}
+
+Future<_ProviderModelDiscovery?> _discoverApiProviderModels(
+  _ProviderSpec spec,
+) async {
+  final provider = spec.apiProvider;
+  if (provider == null) return null;
+  final entry = _apiKeysSnapshot[provider.id];
+  if (entry == null || entry.apiKey.trim().isEmpty) return null;
+  final creds = AiApiCredentials(
+    apiKey: entry.apiKey,
+    baseUrl: entry.baseUrl,
+  );
+  try {
+    final models = await provider.listModels(creds);
+    if (models.isEmpty) return null;
+    final pricing = <String, (double?, double?)>{};
+    for (final m in models) {
+      if (m.promptPricePerToken != null || m.completionPricePerToken != null) {
+        pricing[_normalizeModelKey(m.id)] = (
+          m.promptPricePerToken != null ? m.promptPricePerToken! * 1e6 : null,
+          m.completionPricePerToken != null
+              ? m.completionPricePerToken! * 1e6
+              : null,
+        );
+      }
+    }
+    return _ProviderModelDiscovery(
+      models: models.map((m) => m.id).toList(),
+      modelDetails: {
+        for (final m in models)
+          if (m.displayName != null || m.description != null)
+            _normalizeModelKey(m.id): [
+              if (m.displayName != null) m.displayName!,
+              if (m.description != null) m.description!,
+            ].join(' — '),
+      },
+      modelPricing: pricing,
+    );
+  } catch (_) {
+    return null;
+  }
 }
 
 Future<_ProviderModelDiscovery?> _discoverOpenCodeModels(
@@ -7540,6 +7797,42 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   required String repositoryPath,
   bool readOnly = true,
 }) async {
+  if (provider.kind == _ProviderKind.apiProvider && provider.apiProvider != null) {
+    final entry = _apiKeysSnapshot[provider.id];
+    if (entry == null || entry.apiKey.trim().isEmpty) {
+      return _ProviderPromptResult(
+        ok: false,
+        error: '${provider.apiProvider!.displayName}: no API key configured.',
+        outputPreview: '',
+      );
+    }
+    final creds = AiApiCredentials(
+      apiKey: entry.apiKey,
+      baseUrl: entry.baseUrl,
+    );
+    final apiResult = await provider.apiProvider!.complete(AiApiRequest(
+      prompt: prompt,
+      model: modelId,
+      credentials: creds,
+    ));
+    if (apiResult.text == null) {
+      return _ProviderPromptResult(
+        ok: false,
+        error: _scrubSecrets(
+          apiResult.error ?? '${provider.apiProvider!.displayName} returned no response.',
+        ),
+        outputPreview: _scrubSecrets(apiResult.error ?? ''),
+      );
+    }
+    return _ProviderPromptResult(
+      ok: true,
+      output: apiResult.text,
+      outputPreview: apiResult.text!.length > 200
+          ? '${apiResult.text!.substring(0, 200)}...'
+          : apiResult.text!,
+    );
+  }
+
   if (provider.kind == _ProviderKind.geminiApi) {
     final geminiModel = modelId.startsWith('gemini ')
         ? modelId.substring('gemini '.length)
@@ -7549,7 +7842,7 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       return _ProviderPromptResult(
         ok: false,
         error: apiResult.error ?? 'Gemini API returned no response.',
-        outputPreview: apiResult.error ?? '',
+        outputPreview: _scrubSecrets(apiResult.error ?? ''),
       );
     }
     return _ProviderPromptResult(
@@ -8038,7 +8331,8 @@ List<_ProviderAttempt> _buildProviderAttempts(
         ),
       ];
     case _ProviderKind.geminiApi:
-      // API provider — no CLI attempts. Handled via _runGeminiApiRequest.
+    case _ProviderKind.apiProvider:
+      // API providers — no CLI attempts.
       return [];
     case _ProviderKind.openCode:
       // OpenCode's native binary (Go) reads the message from stdin when no
@@ -8066,7 +8360,8 @@ Map<String, String> _providerEnvironment(_ProviderKind kind) {
     case _ProviderKind.claude:
       return const {'CLAUDE_CODE_ENTRYPOINT': 'cli'};
     case _ProviderKind.geminiApi:
-      return const {}; // API provider — no process environment needed.
+    case _ProviderKind.apiProvider:
+      return const {};
     case _ProviderKind.codex:
     case _ProviderKind.openCode:
       return const {};
@@ -8325,6 +8620,15 @@ bool _looksLikeProviderError(_ProviderKind kind, String raw) {
       return lower.startsWith('claude error:');
     case _ProviderKind.geminiApi:
       return lower.startsWith('gemini error:');
+    case _ProviderKind.apiProvider:
+      // Dead path — API providers return structured AiApiResponse before
+      // reaching the CLI output classifier. Kept narrow to avoid false
+      // positives if a future refactor routes output through here.
+      return lower.startsWith('openrouter: ') ||
+          lower.startsWith('openai: ') ||
+          lower.startsWith('anthropic: ') ||
+          lower.startsWith('x-ai (grok): ') ||
+          lower.startsWith('connection failed');
   }
 }
 
@@ -8339,6 +8643,7 @@ String _normalizeProviderError(_ProviderKind kind, String raw) {
     _ProviderKind.codex => _normalizeCodexError(normalized),
     _ProviderKind.claude => normalized,
     _ProviderKind.geminiApi => _normalizeGeminiError(normalized),
+    _ProviderKind.apiProvider => normalized,
   };
   // Never let a provider echo a bearer token, API key, or session cred
   // into a snackbar, log, or DiagnosticsState record. Providers ARE
@@ -8364,9 +8669,12 @@ String _scrubSecrets(String input) {
   // GitHub personal access tokens, app tokens, etc.
   s = s.replaceAll(
       RegExp(r'gh[pousr]_[A-Za-z0-9]{30,}'), '[redacted:gh-token]');
-  // OpenAI / Anthropic / generic sk- tokens
+  // OpenAI / Anthropic / OpenRouter / generic sk- tokens
   s = s.replaceAll(
-      RegExp(r'sk-(?:ant-)?[A-Za-z0-9_\-]{20,}'), '[redacted:sk-token]');
+      RegExp(r'sk-(?:ant-|or-)?[A-Za-z0-9_\-]{20,}'), '[redacted:sk-token]');
+  // X-AI (Grok) API keys
+  s = s.replaceAll(
+      RegExp(r'xai-[A-Za-z0-9_\-]{20,}'), '[redacted:xai-token]');
   // AWS access keys
   s = s.replaceAll(RegExp(r'AKIA[0-9A-Z]{16}'), '[redacted:aws-akid]');
   // JWT-ish triplets (base64.base64.base64)
@@ -9303,6 +9611,13 @@ _ProviderAuthStatus _providerAuthStatus(_ProviderKind kind) {
       return _geminiAuthStatus();
     case _ProviderKind.openCode:
       return _openCodeAuthStatus();
+    case _ProviderKind.apiProvider:
+      // API providers are checked in _inspectProvider before this is
+      // reached. Fail closed if a future path bypasses that.
+      return const _ProviderAuthStatus(
+        ok: false,
+        detail: 'api provider auth requires provider id',
+      );
   }
 }
 
@@ -9685,9 +10000,11 @@ class _ProviderAuthStatus {
 class _ProviderModelDiscovery {
   final List<String> models;
   final Map<String, String> modelDetails;
+  final Map<String, (double?, double?)> modelPricing;
   const _ProviderModelDiscovery({
     required this.models,
     required this.modelDetails,
+    this.modelPricing = const {},
   });
 }
 
@@ -9697,6 +10014,7 @@ class _ProviderModelCollection {
   final String? planName;
   final List<String> models;
   final Map<String, String> modelDetails;
+  final Map<String, (double?, double?)> modelPricing;
 
   const _ProviderModelCollection({
     required this.providerId,
@@ -9704,6 +10022,7 @@ class _ProviderModelCollection {
     required this.planName,
     required this.models,
     required this.modelDetails,
+    this.modelPricing = const {},
   });
 }
 
@@ -9742,10 +10061,12 @@ class _ProviderSpec {
   final String id;
   final String binary;
   final _ProviderKind kind;
+  final AiApiProvider? apiProvider;
   const _ProviderSpec({
     required this.id,
     required this.binary,
     required this.kind,
+    this.apiProvider,
   });
 }
 
@@ -9895,7 +10216,7 @@ class _MergedReviewResult {
   });
 }
 
-enum _ProviderKind { codex, claude, geminiApi, openCode }
+enum _ProviderKind { codex, claude, geminiApi, openCode, apiProvider }
 
 enum _ProviderOutputMode {
   plainText,

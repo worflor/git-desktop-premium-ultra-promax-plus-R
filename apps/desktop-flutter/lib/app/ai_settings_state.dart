@@ -1,11 +1,13 @@
 import 'package:flutter/foundation.dart';
 
 import '../backend/ai.dart';
+import '../backend/ai_api_keys_store.dart';
 import '../backend/ai_settings_store.dart';
 import '../backend/dtos.dart';
 
 class AiSettingsState extends ChangeNotifier {
   bool _loaded = false;
+  AiApiKeysSnapshot _apiKeys = AiApiKeysSnapshot.empty();
   Map<String, String> _modelSelections = {};
   // Cached unmodifiable views. Rebuilt only when the underlying map
   // changes; previously each getter call allocated a fresh
@@ -43,6 +45,7 @@ class AiSettingsState extends ChangeNotifier {
   Future<bool>? _modelCategoryRefreshFuture;
 
   bool get isLoaded => _loaded;
+  AiApiKeysSnapshot get apiKeys => _apiKeys;
   Map<String, String> get modelSelections => _modelSelectionsView;
   Map<String, String> get modelCategoryLabels => _modelCategoryLabelsView;
   String get commitMessageModelCategoryId => _commitMessageModelCategoryId;
@@ -63,6 +66,20 @@ class AiSettingsState extends ChangeNotifier {
       _runtimeModelCategoriesView;
   String? get runtimeModelCategoriesError => _runtimeModelCategoriesError;
   bool get runtimeModelCategoriesLoading => _runtimeModelCategoriesLoading;
+
+  bool get hasApiProvidersWithoutModels {
+    if (_apiKeys.entries.isEmpty) return false;
+    final providerIdsInCategories = <String>{};
+    for (final cat in _runtimeModelCategories) {
+      for (final m in cat.models) {
+        providerIdsInCategories.add(m.providerId);
+      }
+    }
+    for (final providerId in _apiKeys.entries.keys) {
+      if (!providerIdsInCategories.contains(providerId)) return true;
+    }
+    return false;
+  }
 
   Future<void> load() async {
     if (_loaded) {
@@ -101,8 +118,18 @@ class AiSettingsState extends ChangeNotifier {
     _reviewCommitPromptPath = await reviewPathFuture;
     _musePrompt = await musePromptFuture;
     _musePromptPath = await musePathFuture;
+    await loadApiProviderKeys();
+    _apiKeys = currentApiKeys;
     _loaded = true;
     notifyListeners();
+
+    // Force-refresh so that any prior CLI-only discovery gets replaced
+    // with a full pass that includes API providers. Without forceRefresh,
+    // the isNotEmpty guard would short-circuit if the settings page
+    // triggered a CLI-only discovery before load() finished.
+    final hasApiKeys = _apiKeys.entries.isNotEmpty;
+    refreshProviders(forceRefresh: hasApiKeys);
+    refreshModelCategories(forceRefresh: hasApiKeys);
   }
 
   void _rebuildModelViews() {
@@ -284,9 +311,7 @@ class AiSettingsState extends ChangeNotifier {
       return SynchronousFuture(true);
     }
     final inFlight = _providerRefreshFuture;
-    if (inFlight != null) {
-      return inFlight;
-    }
+    if (inFlight != null) return inFlight;
 
     _runtimeProvidersLoading = true;
     if (forceRefresh) {
@@ -319,13 +344,13 @@ class AiSettingsState extends ChangeNotifier {
   }
 
   Future<bool> refreshModelCategories({bool forceRefresh = false}) {
-    if (!forceRefresh && _runtimeModelCategories.isNotEmpty) {
+    if (!forceRefresh &&
+        _runtimeModelCategories.isNotEmpty &&
+        !hasApiProvidersWithoutModels) {
       return SynchronousFuture(true);
     }
     final inFlight = _modelCategoryRefreshFuture;
-    if (inFlight != null) {
-      return inFlight;
-    }
+    if (inFlight != null) return inFlight;
 
     _runtimeModelCategoriesLoading = true;
     if (forceRefresh) {
@@ -357,6 +382,27 @@ class AiSettingsState extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  Future<void> setApiKey(
+    String providerId,
+    String apiKey, {
+    String? baseUrl,
+  }) async {
+    await updateApiProviderKey(
+      providerId,
+      AiApiKeyEntry(apiKey: apiKey, baseUrl: baseUrl),
+    );
+    _apiKeys = currentApiKeys;
+    notifyListeners();
+  }
+
+  Future<void> clearApiKey(String providerId) async {
+    await removeApiProviderKey(providerId);
+    _apiKeys = currentApiKeys;
+    notifyListeners();
+  }
+
+  AiApiKeyEntry? apiKeyFor(String providerId) => _apiKeys[providerId];
 
   Future<void> _persistSnapshot() {
     return AiSettingsStore.persist(
