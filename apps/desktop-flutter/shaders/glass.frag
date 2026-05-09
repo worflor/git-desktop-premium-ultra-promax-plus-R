@@ -1,105 +1,83 @@
-// iOS-26-style Liquid Glass, real optical transmission.
+// Liquid Glass — thick, dense optical surface.
 //
-// This shader runs as an `ImageFilter.shader` on the BackdropFilter widget,
-// so the engine auto-binds the live backdrop (everything painted behind
-// the glass surface) to `uBackdrop` and writes the surface size into the
-// first vec2 uniform `uSize`. That gives us a genuine forward-render of
-// glass optics — not snapshot-based, not additive-only.
+// ImageFilter.shader on BackdropFilter. Impeller binds the live
+// backdrop to uBackdrop and writes surface size into uSize.
 //
-// Physical material parameters:
-//   uIOR        — refractive index n. Drives Schlick F0, Cauchy dispersion,
-//                 refractive displacement via Snell's law, and the
-//                 lensmaker focal length that positions the internal caustic.
-//   uRoughness  — GGX/Trowbridge-Reitz α. Drives microfacet specular
-//                 lobe shape, Smith masking-shadowing, micro-grain.
-//   uAbsorption — Beer-Lambert extinction per RGB channel. Applied along
-//                 the optical path through the glass (interior SDF depth).
+// Uniforms:
+//   uIOR        — refractive index. Fresnel, Cauchy, Snell, caustic.
+//   uRoughness  — GGX α. Specular lobe + transmission blur.
+//   uAbsorption — Beer-Lambert per-channel extinction along SDF depth.
 //
-// Everything else derives from geometry (SDF), light direction, time, tilt.
-//
-// References:
-//   Schlick (1994)          — Fresnel approximation
-//   Walter et al. (2007)    — GGX microfacet BRDF
-//   Cauchy (1836)           — n(λ) = A + B/λ²
-//   Bouguer (1729)/Beer     — exponential attenuation
-//   Snell (1621)            — refraction
-//   Quilez                  — rounded-rect 2D SDF
+// v2 over glass_v1_clear:
+//   parabolic thickness, center lensing, env reflection at rim,
+//   forward scatter, per-pixel Abbe from backdrop luminance,
+//   double refraction (front + back surface approx).
 
 #version 460 core
 #include <flutter/runtime_effect.glsl>
 
-// First uniform is vec2 by contract; Impeller's ImageFilter.shader writes
-// the bound texture size into it automatically.
 uniform vec2  uSize;
 
-uniform vec4  uAbsorption;    // rgb: 1/px extinction; a: master strength
-uniform vec4  uLightColor;    // light-source color (spec, rim, caustic)
-uniform vec2  uLightDir;      // 2D direction TO the light (unit not required)
-uniform vec2  uTilt;          // window-delta tilt, [-1..1]
+uniform vec4  uAbsorption;
+uniform vec4  uLightColor;
+uniform vec2  uLightDir;
+uniform vec2  uTilt;
 uniform float uTime;
-uniform float uIntensity;     // master output mix
-uniform float uCornerRadius;  // SDF footprint radius (pixels)
-uniform float uIOR;           // refractive index n
-uniform float uRoughness;     // GGX α
-uniform float uAnim;          // motion master (0..1)
+uniform float uIntensity;
+uniform float uCornerRadius;
+uniform float uIOR;
+uniform float uRoughness;
+uniform float uAnim;
 
-// First sampler: Impeller binds the live backdrop here.
 uniform sampler2D uBackdrop;
 
 out vec4 fragColor;
 
 const float PI       = 3.14159265358979;
 const float TWO_PI   = 6.28318530717959;
-const float TAP_STEP = 1.25663706;  // 2π / 5 — pentagonal angular step
+const float TAP_STEP = 1.25663706;
 
-// CIE standard-observer peak wavelengths (μm) — used by Cauchy dispersion.
 const float LAMBDA_R = 0.611;
 const float LAMBDA_G = 0.549;
 const float LAMBDA_B = 0.464;
-const float LAMBDA_D = 0.5876;  // Fraunhofer d-line reference
+const float LAMBDA_D = 0.5876;
 
-// Abbe number of BK7 crown glass. Anchors Cauchy B to n_d via
-//     B ≈ (n_d − 1) · λ_d² / V_d
-// so dispersion is a pure function of IOR.
-const float ABBE_V = 64.17;
+// Per-pixel Abbe. Dark backdrop → low (rainbow fringe has contrast).
+// Bright backdrop → high (fringe vanishes). Wrong physics, right feel.
+const float ABBE_LO = 20.0;
+const float ABBE_HI = 72.0;
 
-// ---- iq's rounded-rect SDF. ----
 float sdRoundedRect(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + vec2(r);
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
-// ---- Schlick Fresnel. ----
 float fresnelSchlick(float cosTheta, float F0) {
     float m = clamp(1.0 - cosTheta, 0.0, 1.0);
     float m2 = m * m;
     return F0 + (1.0 - F0) * m2 * m2 * m;
 }
 
-// ---- GGX (Trowbridge-Reitz) normal distribution. ----
 float ggxD(float NdotH, float alpha) {
     float a2 = alpha * alpha;
     float d  = NdotH * NdotH * (a2 - 1.0) + 1.0;
     return a2 / max(PI * d * d, 1e-8);
 }
 
-// ---- Schlick-GGX geometry term (k = α/2). ----
 float smithG1(float NdotX, float alpha) {
     float k = alpha * 0.5;
     return NdotX / max(NdotX * (1.0 - k) + k, 1e-8);
 }
 
-// ---- Cauchy dispersion: δn per channel relative to green. ----
-vec2 cauchyDeltaRB(float n) {
-    float B       = (n - 1.0) * LAMBDA_D * LAMBDA_D / ABBE_V;
-    float invLd2  = 1.0 / (LAMBDA_D * LAMBDA_D);
-    float dR      = B * (1.0 / (LAMBDA_R * LAMBDA_R) - invLd2);
-    float dG      = B * (1.0 / (LAMBDA_G * LAMBDA_G) - invLd2);
-    float dB      = B * (1.0 / (LAMBDA_B * LAMBDA_B) - invLd2);
+vec2 cauchyDeltaRB(float n, float abbeV) {
+    float B      = (n - 1.0) * LAMBDA_D * LAMBDA_D / max(abbeV, 1.0);
+    float invLd2 = 1.0 / (LAMBDA_D * LAMBDA_D);
+    float dR     = B * (1.0 / (LAMBDA_R * LAMBDA_R) - invLd2);
+    float dG     = B * (1.0 / (LAMBDA_G * LAMBDA_G) - invLd2);
+    float dB     = B * (1.0 / (LAMBDA_B * LAMBDA_B) - invLd2);
     return vec2(dR - dG, dB - dG);
 }
 
-// ---- Triangular-PDF hash noise. ----
 float hash21(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
@@ -113,14 +91,13 @@ void main() {
     vec2 cp  = p - hsz;
     vec2 uv  = p / uSize;
 
-    // ---- SDF and interior depth. ----
+    // SDF + depth.
     float rCorner = clamp(uCornerRadius, 0.0, min(hsz.x, hsz.y));
     float sd      = sdRoundedRect(cp, hsz, rCorner);
     if (sd > 0.5) { fragColor = vec4(0.0); return; }
     float dIn = max(-sd, 0.0);
 
-    // ---- Normal from SDF gradient (central differences). ----
-    // Unit-slope SDF ⇒ |grad| ≈ 1, direction points outward.
+    // Normal from SDF gradient.
     float e = 1.0;
     vec2 grad = vec2(
         sdRoundedRect(cp + vec2(e, 0.0), hsz, rCorner)
@@ -129,9 +106,7 @@ void main() {
             - sdRoundedRect(cp - vec2(0.0, e), hsz, rCorner)
     ) * 0.5;
 
-    // ---- Hemispherical cap geometry. ----
-    // R_dome = smallest footprint half-dim ⇒ sphere tangent at corners.
-    // On the cap, |Nxy| = sin(θ_polar) = 1 − dIn/R_dome.
+    // Hemisphere cap.
     float R_dome  = min(hsz.x, hsz.y);
     float rimFrac = 1.0 - clamp(dIn / R_dome, 0.0, 1.0);
     vec2  gradN   = grad / max(length(grad), 1e-4);
@@ -139,7 +114,11 @@ void main() {
     float nz      = sqrt(max(1.0 - dot(nxy, nxy), 0.0));
     vec3  N       = vec3(nxy, nz);
 
-    // ---- Light vector (3D), drift + tilt. ----
+    // Parabolic lens cross-section. exp < 1 = fat center, steep rim.
+    float t_norm = clamp(dIn / R_dome, 1e-4, 1.0);
+    float d_eff  = R_dome * 1.8 * pow(t_norm, 0.42);
+
+    // Light.
     vec2  drift = vec2(sin(uTime * 0.618), cos(uTime * 0.382)) * 0.18 * uAnim;
     vec2  L2    = normalize(uLightDir + drift + uTilt * 0.4 * uAnim);
     vec3  L     = normalize(vec3(L2, 0.8));
@@ -150,35 +129,37 @@ void main() {
     float NdotH = clamp(dot(N, H), 0.0, 1.0);
     float VdotH = clamp(dot(V, H), 0.0, 1.0);
 
-    // ---- Material constants from IOR / roughness. ----
     float n     = max(uIOR, 1.0);
     float F0    = (n - 1.0) / (n + 1.0);
     F0          = F0 * F0;
     float alpha = max(uRoughness, 0.002);
 
-    // ---- Refractive sampling of the live backdrop. ----
-    // Thin-lens small-angle approximation: the lateral shift of a ray
-    // refracting through glass of effective thickness d_eff is
-    //     Δr = (n − 1) · tan(θ_i) · d_eff
-    // tan(θ_i) = |Nxy| / Nz, direction = Nxy (outward-radial).
-    // Dispersion: sample each channel at its own n(λ), using Cauchy δn.
-    vec2  disp     = cauchyDeltaRB(n);
-    float d_eff    = R_dome * 0.45;            // effective glass thickness (px)
-    vec2  refrDir  = nxy / max(nz, 0.1);       // tan(θ_i) · direction
-    vec2  baseUv   = uv - refrDir * (n - 1.0) * d_eff / uSize;
-    vec2  uvR      = uv - refrDir * (n + disp.x - 1.0) * d_eff / uSize;
-    vec2  uvB      = uv - refrDir * (n + disp.y - 1.0) * d_eff / uSize;
+    // Lensing — thick convex glass magnifies at center.
+    float lensing = 0.08 * (n - 1.0) * t_norm;
+    vec2  lensUV  = uv + (vec2(0.5) - uv) * lensing;
 
-    // ---- Roughness-driven backdrop blur. ----
-    // GGX roughness α controls not just the specular lobe but the
-    // *transmission* lobe: polished glass passes sharp rays, rougher
-    // glass scatters them into a cone. Implementation: 5-tap circular
-    // kernel, per-pixel hash-rotated so neighbour averaging reads as
-    // true blur. Each tap still uses its own channel's Cauchy UV so
-    // dispersion and blur compose correctly. Polished glass (α→0) has
-    // blurUV → 0 and all taps collapse to a single point.
+    // Per-pixel Abbe from backdrop luminance.
+    vec3  bgSample  = texture(uBackdrop, lensUV).rgb;
+    float bgLum     = dot(bgSample, vec3(0.2126, 0.7152, 0.0722));
+    float localAbbe = mix(ABBE_LO, ABBE_HI, bgLum);
+
+    // Double refraction (front + back surface approx).
+    vec2  disp    = cauchyDeltaRB(n, localAbbe);
+    vec2  refrDir = nxy / max(nz, 0.1);
+
+    vec2 frontOff = refrDir * (n - 1.0) * d_eff / uSize;
+    vec2 backOff  = -refrDir * (n - 1.0) * d_eff * 0.30 / uSize;
+    vec2 totalOff = frontOff + backOff;
+
+    vec2 baseUv = lensUV - totalOff;
+    vec2 uvR    = lensUV - (refrDir * (n + disp.x - 1.0) * d_eff / uSize)
+                         - backOff;
+    vec2 uvB    = lensUV - (refrDir * (n + disp.y - 1.0) * d_eff / uSize)
+                         - backOff;
+
+    // 5-tap blur scaled by roughness.
     float rotAng = hash21(p) * TWO_PI;
-    float blurPx = alpha * R_dome * 0.12;
+    float blurPx = alpha * R_dome * 0.08;
     vec2  blurUV = vec2(blurPx) / uSize;
 
     vec3 refracted = vec3(0.0);
@@ -189,50 +170,52 @@ void main() {
         refracted.g += texture(uBackdrop, clamp(baseUv + o, vec2(0.0), vec2(1.0))).g;
         refracted.b += texture(uBackdrop, clamp(uvB    + o, vec2(0.0), vec2(1.0))).b;
     }
-    refracted *= 0.2;  // ÷ 5
+    refracted *= 0.2;
 
-    // ---- Beer-Lambert with path-length correction. ----
-    // Real optical path through the glass = geometric depth / cos(θ_t).
-    // Approximate cos(θ_t) with Nz (clamped to avoid divergence at
-    // grazing). Result: tinted glasses concentrate their tint toward the
-    // rim where rays traverse the most material — the "thick-edge"
-    // signature of real colored glass.
-    vec3 transmission = exp(-uAbsorption.rgb * dIn * uAbsorption.a / max(nz, 0.1));
+    // Beer-Lambert. 1.4× boost + low nz clamp = dark thick edges.
+    vec3 transmission = exp(-uAbsorption.rgb * dIn * uAbsorption.a * 1.4 / max(nz, 0.08));
     vec3 transmitted  = refracted * transmission;
 
-    // ---- GGX microfacet specular (reflective — no absorption). ----
+    // Forward scatter — internal glow from the volume.
+    float scatterDepth = 1.0 - exp(-dIn * uAbsorption.a * 0.6);
+    vec3  scatterTint  = vec3(1.0) - uAbsorption.rgb * 0.4;
+    vec3  scatter      = scatterTint * scatterDepth * 0.12 * uLightColor.rgb;
+
+    // GGX specular.
     float D    = ggxD(NdotH, alpha);
     float G    = smithG1(NdotV, alpha) * smithG1(NdotL, alpha);
     float F_h  = fresnelSchlick(VdotH, F0);
     float spec = (D * G * F_h) / max(4.0 * NdotV * NdotL + 1e-4, 1e-4);
     vec3  specRGB = uLightColor.rgb * spec * NdotL;
 
-    // ---- View-Fresnel rim (reflective — no absorption). ----
-    float F_v = fresnelSchlick(NdotV, F0);
-    vec3  rim = uLightColor.rgb * F_v;
+    // Rim — sample backdrop at reflected offset, not a flat color.
+    float F_v    = fresnelSchlick(NdotV, F0);
+    vec2  reflUV = uv + nxy * 0.20;
+    vec3  envRef = texture(uBackdrop, clamp(reflUV, vec2(0.0), vec2(1.0))).rgb;
+    vec3  rim    = envRef * uLightColor.rgb * 1.15;
 
-    // ---- Focal caustic (transmitted — absorption applies). ----
+    // Top-edge sheen (y-down screen space: N.y > 0 = top rim).
+    float topSheen = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+    topSheen *= rimFrac * rimFrac;
+    vec3  sheenRGB = uLightColor.rgb * topSheen * 0.25;
+
+    // Caustic.
     float f_focal    = R_dome / max(n - 1.0, 1e-3);
-    vec2  focalPos   = -L2 * min(f_focal * 0.35, R_dome * 0.50);
+    vec2  focalPos   = -L2 * min(f_focal * 0.35, R_dome * 0.45);
     vec2  toFocal    = cp - focalPos;
-    float focalSigma = R_dome * 0.28;
+    float focalSigma = R_dome * 0.20;
     float caustic    = exp(-dot(toFocal, toFocal) / (focalSigma * focalSigma))
-                     * F0 * 4.0 * (1.0 - rimFrac);
+                     * F0 * 6.0 * (1.0 - rimFrac);
     vec3  causticRGB = uLightColor.rgb * caustic * transmission;
 
-    // ---- Micro-grain. ----
+    // Grain.
     float grain    = triHash(p);
-    vec3  grainRGB = vec3(grain) * alpha * 0.12;
+    vec3  grainRGB = vec3(grain) * alpha * 0.08;
 
-    // ---- Composite with asymmetric tonemap. ----
-    // Base: transmitted backdrop, Fresnel-mixed with rim reflection. This
-    // stays in [0,1] because both ends are bounded.
-    vec3 base = mix(transmitted, rim, F_v);
+    // Composite.
+    vec3 base = mix(transmitted, rim, F_v * 0.75) + scatter + sheenRGB;
 
-    // HDR highlights (GGX D can spike >> 1 for small α). Pass through a
-    // Reinhard soft-clip so spec never hard-clips to white while midtones
-    // stay near-linear.
-    vec3 hdr        = specRGB * 1.20 + causticRGB * 0.80;
+    vec3 hdr        = specRGB * 1.40 + causticRGB * 1.0;
     vec3 highlights = hdr / (vec3(1.0) + hdr);
 
     vec3 col = base + highlights + grainRGB;
