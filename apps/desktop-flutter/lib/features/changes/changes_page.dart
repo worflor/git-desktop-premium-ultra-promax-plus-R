@@ -11923,42 +11923,63 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     ]);
   }
 
-  static final _editorTitles = <String>[
-    'your dreams, please',
-    'what did you just do',
-    'tell the future you',
-    'name this moment',
-    'leave a note',
-    'say something nice',
-    'for the record',
-    'posterity awaits',
-    'what changed and why',
-    'the short version',
-    'a few words',
+  static const _titlesAny = <String>[
     'dear git log',
-    'how it went',
-    'in your own words',
+    'for-git me heaven for i hath…',
+    'name this moment',
+    'yap away',
+    'speak!',
+  ];
+  static const _titlesShort = <String>[
     'oh?',
     'hello there',
-    'writing more makes your bugs disappear',
-    'for-git me heaven for i hath…',
+    'a few words',
+    'the short version',
+    'leave a note',
+    'you were saying…',
+    'oh yeah, get it out',
   ];
-  static int _lastTitleIndex = -1;
+  static const _titlesMid = <String>[
+    'for the record',
+    'tell the future you',
+    'what changed and why',
+    'how it went',
+    'in your own words',
+    'what did you just do',
+    'duly noted',
+    'you have my attention',
+  ];
+  static const _titlesLong = <String>[
+    'your dreams, please',
+    'say something nice',
+    'posterity awaits',
+    'writing more makes your bugs disappear',
+    'oh wow',
+    'the sacred texts',
+  ];
   static final _titleRng = math.Random();
+  static List<String> _titleHat = [];
+  static int _titleHatCursor = 0;
+  static List<String>? _titleHatSource;
 
-  static String _pickEditorTitle() {
-    var idx = _titleRng.nextInt(_editorTitles.length);
-    if (idx == _lastTitleIndex) {
-      idx = (idx + 1) % _editorTitles.length;
+  static String _pickEditorTitle(int charCount) {
+    final tier = charCount > 600
+        ? _titlesLong
+        : charCount > 300
+            ? _titlesMid
+            : _titlesShort;
+    if (!identical(tier, _titleHatSource) || _titleHatCursor >= _titleHat.length) {
+      _titleHatSource = tier;
+      _titleHat = [...tier, ..._titlesAny]..shuffle(_titleRng);
+      _titleHatCursor = 0;
     }
-    _lastTitleIndex = idx;
-    return _editorTitles[idx];
+    return _titleHat[_titleHatCursor++];
   }
 
   void _openExpandedEditor(BuildContext context, AppTokens tokens) {
     final expanded = TextEditingController(text: widget.controller.text);
     final focus = FocusNode();
-    final title = _pickEditorTitle();
+    final title = _pickEditorTitle(widget.controller.text.length);
     final shader = themeDefinitionFor(tokens.id).shader;
     final geo = shader.geometry;
     final dur = context.motion(AppMotion.fluid);

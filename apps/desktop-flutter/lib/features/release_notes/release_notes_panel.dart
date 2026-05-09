@@ -427,6 +427,18 @@ const _aboutDevelopment = <_AboutEntry>[
 
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
+    version: 'v0.1.1',
+    date: '2026-05-09',
+    bullets: [
+      'Started the v0.1.1 notes. This build went to someone today, so it counts enough to write down, even if I keep poking at the edges.',
+      'Command palette got another refinement pass: cleaner routing, better command coverage, and fewer little moments where it technically worked but felt rude about it.',
+      'OpenRouter API support is new in this build, with provider settings and model selection wired into the same AI setup as the other backends.',
+      'The commit message field still grows normally while you type, but once it starts needing real room, an expand button appears for opening a dedicated composer panel. For essays, yappers, and commit messages that refuse to stay tiny.',
+      'Claude model plumbing got some outside-the-app binary surgery to extract model lists. Not a visible app feature, but it helps keep the provider/model wiring honest.',
+      'glass.frag was upgraded to be gloopier, thiccer, and globier.',
+    ],
+  ),
+  _ReleaseNote(
     version: 'v0.1.0',
     date: '2026-05-08',
     bullets: [
