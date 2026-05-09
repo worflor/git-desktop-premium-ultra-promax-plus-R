@@ -9381,7 +9381,7 @@ class _CleanTreeDashboardState extends State<_CleanTreeDashboard> {
     if (_fetching) return;
     setState(() => _fetching = true);
     try {
-      await fetchRemote(widget.repoPath, prune: true);
+      await syncRemote(widget.repoPath, widget.status);
       await widget.onRefresh();
     } finally {
       if (mounted) setState(() => _fetching = false);
