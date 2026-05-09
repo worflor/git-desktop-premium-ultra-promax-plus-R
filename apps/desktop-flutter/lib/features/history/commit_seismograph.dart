@@ -1525,6 +1525,8 @@ class CommitSeismographRail extends StatefulWidget {
   final AppTokens tokens;
   final ValueChanged<String> onOpenFile;
   final double height;
+  final Color? addColor;
+  final Color? delColor;
 
   const CommitSeismographRail({
     super.key,
@@ -1533,6 +1535,8 @@ class CommitSeismographRail extends StatefulWidget {
     required this.tokens,
     required this.onOpenFile,
     this.height = 38,
+    this.addColor,
+    this.delColor,
   });
 
   @override
@@ -1649,6 +1653,8 @@ class _CommitSeismographRailState extends State<CommitSeismographRail>
                   isScrubTarget: _scrubIndex == i,
                   wake: _wake,
                   wakeOffset: files.isEmpty ? 0 : (i / files.length) * 0.5,
+                  addColor: widget.addColor,
+                  delColor: widget.delColor,
                   onTap: () =>
                       widget.onOpenFile(files[i].path.replaceAll('\\', '/')),
                 ),
@@ -1672,6 +1678,8 @@ class _RailBar extends StatefulWidget {
   final VoidCallback onTap;
   final Animation<double> wake;
   final double wakeOffset;
+  final Color? addColor;
+  final Color? delColor;
 
   const _RailBar({
     required this.file,
@@ -1682,6 +1690,8 @@ class _RailBar extends StatefulWidget {
     required this.wake,
     required this.wakeOffset,
     required this.onTap,
+    this.addColor,
+    this.delColor,
   });
 
   @override
@@ -1742,7 +1752,7 @@ class _RailBarState extends State<_RailBar> {
                   Positioned(
                     left: 0, right: 0, bottom: 0, height: delH,
                     child: ColoredBox(
-                      color: t.stateDeleted.withValues(
+                      color: (widget.delColor ?? t.stateDeleted).withValues(
                           alpha: isLive ? 0.95 : (_hovered ? 0.85 : 0.7)),
                     ),
                   ),
@@ -1750,7 +1760,7 @@ class _RailBarState extends State<_RailBar> {
                   Positioned(
                     left: 0, right: 0, bottom: delH, height: addH,
                     child: ColoredBox(
-                      color: t.stateAdded.withValues(
+                      color: (widget.addColor ?? t.stateAdded).withValues(
                           alpha: isLive ? 0.95 : (_hovered ? 0.85 : 0.7)),
                     ),
                   ),

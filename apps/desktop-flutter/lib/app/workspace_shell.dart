@@ -14,6 +14,7 @@ import '../backend/system_browser.dart';
 import '../components/icons/app_icons.dart';
 import '../features/branches/branches_page.dart';
 import '../features/changes/changes_page.dart';
+import '../features/history/commit_seismograph.dart';
 import '../features/history/history_page.dart';
 import '../features/palette/command_palette.dart';
 import '../features/release_notes/release_notes_panel.dart';
@@ -1966,22 +1967,45 @@ class _DeskRow extends StatelessWidget {
     WorktreeData desk,
     WorktreeState worktreeState,
   ) async {
-    if (desk.dirtyFileCount == 0) {
-      // Clean desk → silent close.
-      await worktreeState.closeDesk(desk.path);
-      return;
-    }
-    // Dirty desk → confirm with shelve option.
+    final activePath = context.read<RepositoryState>().activePath;
     final choice = await showDialog<_CloseDeskChoice>(
       context: context,
       builder: (ctx) => _CloseDeskDialog(desk: desk),
     );
     if (choice == null || choice == _CloseDeskChoice.cancel) return;
-    await worktreeState.closeDesk(
-      desk.path,
-      shelveFirst: choice == _CloseDeskChoice.shelve,
-      force: choice == _CloseDeskChoice.discard,
-    );
+    if (choice == _CloseDeskChoice.close) {
+      await worktreeState.closeDesk(desk.path);
+    } else if (choice == _CloseDeskChoice.shelve) {
+      final target = activePath != null && activePath != desk.path
+          ? activePath
+          : worktreeState.desks
+                .where((d) => d.isMain)
+                .map((d) => d.path)
+                .firstOrNull;
+      final err = await worktreeState.closeDesk(
+        desk.path,
+        shelveFirst: true,
+        shelveHere: target,
+      );
+      if (err == null && target == null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'Changes stashed — no other desk to apply them to. '
+                'Use git stash pop to recover.'),
+          ),
+        );
+      } else if (err != null && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(err)),
+        );
+      }
+    } else {
+      await worktreeState.closeDesk(
+        desk.path,
+        force: true,
+      );
+    }
   }
 }
 
@@ -2458,47 +2482,440 @@ class _DeskTrendGlyph extends StatelessWidget {
   }
 }
 
-enum _CloseDeskChoice { shelve, discard, cancel }
+enum _CloseDeskChoice { close, shelve, discard, cancel }
 
-class _CloseDeskDialog extends StatelessWidget {
+class _CloseDeskDialog extends StatefulWidget {
   final WorktreeData desk;
   const _CloseDeskDialog({required this.desk});
 
   @override
+  State<_CloseDeskDialog> createState() => _CloseDeskDialogState();
+}
+
+class _CloseDeskDialogState extends State<_CloseDeskDialog> {
+  CommitDetailData? _workingTreeDetail;
+  List<CommitHistoryEntry> _commits = const [];
+  Map<String, CommitDetailData> _commitDetails = const {};
+  String? _selectedHash;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    final desk = widget.desk;
+    final hasDirty = desk.dirtyFileCount > 0;
+    if (hasDirty) {
+      _loadWorkingTree();
+    }
+    _loadCommits();
+  }
+
+  Future<void> _loadWorkingTree() async {
+    final statusResult = await getRepositoryStatus(widget.desk.path);
+    if (!mounted || !statusResult.ok) return;
+    final weightsResult = await fileChangeWeights(widget.desk.path);
+    if (!mounted) return;
+    final files = statusResult.data!.files;
+    final weights = weightsResult.ok
+        ? weightsResult.data!
+        : <String, FileChangeWeight>{};
+    final statFiles = files.map((f) {
+      final w = weights[f.path];
+      final code = f.unstagedCode.isNotEmpty ? f.unstagedCode : f.stagedCode;
+      return CommitFileStatData(
+        path: f.path,
+        additions: w?.adds ?? 0,
+        deletions: w?.dels ?? 0,
+        changeType: code.isNotEmpty ? code : 'M',
+      );
+    }).toList();
+    final totalAdds = statFiles.fold<int>(0, (s, f) => s + f.additions);
+    final totalDels = statFiles.fold<int>(0, (s, f) => s + f.deletions);
+    setState(() {
+      _workingTreeDetail = CommitDetailData(
+        commitHash: 'working-tree',
+        shortHash: '',
+        subject: 'Uncommitted changes',
+        body: '',
+        authorName: '',
+        authorEmail: '',
+        authoredAt: DateTime.now().toIso8601String(),
+        filesChanged: statFiles.length,
+        additions: totalAdds,
+        deletions: totalDels,
+        files: statFiles,
+      );
+      _selectedHash ??= 'working-tree';
+    });
+  }
+
+  Future<void> _loadCommits() async {
+    final desk = widget.desk;
+    final branch = desk.branch;
+    if (branch == null) return;
+    final commitsResult = await listCommitsAhead(
+      desk.path,
+      branch: branch,
+      excluding: 'main',
+      limit: 40,
+    );
+    if (!mounted || !commitsResult.ok) return;
+    final commits = commitsResult.data!;
+    if (commits.isEmpty) return;
+    final detailsResult = await bulkGetCommitDetails(
+      desk.path,
+      commits,
+      branch: branch,
+      limit: 40,
+    );
+    if (!mounted) return;
+    setState(() {
+      _commits = commits;
+      if (detailsResult.ok) {
+        _commitDetails = detailsResult.data!;
+      }
+      _selectedHash ??= commits.first.commitHash;
+    });
+  }
+
+  CommitDetailData? get _activeDetail {
+    if (_selectedHash == 'working-tree') return _workingTreeDetail;
+    if (_selectedHash == null) return null;
+    return _commitDetails[_selectedHash];
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final geo = context.surfaceShader.geometry;
+    final hasDirty = widget.desk.dirtyFileCount > 0;
+    final count = widget.desk.dirtyFileCount;
+    final btnRadius = BorderRadius.circular(geo.pillRadius);
+    final btnDuration = context.motion(AppMotion.snap);
+    const btnPadding = EdgeInsets.symmetric(horizontal: 10, vertical: 5);
+    const btnFontSize = 12.0;
+    final hasTimeline = _commits.isNotEmpty || _workingTreeDetail != null;
+    final detail = _activeDetail;
     return AlertDialog(
       title: Text(
         'Close desk?',
         style: TextStyle(color: t.textStrong, fontSize: 14),
       ),
-      // Buttons carry the verbs; copy just states the situation. The
-      // user already knows what shelve/discard mean — explaining them
-      // turns the dialog into a tutorial.
-      content: Text(
-        '${desk.dirtyFileCount} uncommitted '
-        'file${desk.dirtyFileCount == 1 ? '' : 's'}.',
-        style: TextStyle(color: t.textNormal, fontSize: 12),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (hasDirty)
+            Text(
+              '$count uncommitted file${count == 1 ? '' : 's'}.',
+              style: TextStyle(color: t.textNormal, fontSize: 12),
+            ),
+          if (_commits.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.only(top: hasDirty ? 2 : 0),
+              child: Text(
+                '${_commits.length} commit${_commits.length == 1 ? '' : 's'} ahead of main.',
+                style: TextStyle(color: t.textNormal, fontSize: 12),
+              ),
+            ),
+          if (!hasDirty && _commits.isEmpty)
+            Text(
+              'This will remove the worktree directory.',
+              style: TextStyle(color: t.textNormal, fontSize: 12),
+            ),
+          if (hasTimeline) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: 320,
+              child: _CloseDeskTimeline(
+                commits: _commits,
+                detailCache: _commitDetails,
+                hasWorkingTree: _workingTreeDetail != null,
+                selectedHash: _selectedHash,
+                tokens: t,
+                onSelected: (hash) => setState(() => _selectedHash = hash),
+              ),
+            ),
+            if (detail != null) ...[
+              const SizedBox(height: 6),
+              SizedBox(
+                width: 320,
+                child: CommitSeismographRail(
+                  detail: detail,
+                  currentFile: '',
+                  tokens: t,
+                  addColor: t.hypercubePositive,
+                  delColor: t.hypercubeNegative,
+                  onOpenFile: (_) {},
+                ),
+              ),
+            ],
+            if (detail != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  _selectedHash == 'working-tree'
+                      ? '${detail.filesChanged} file${detail.filesChanged == 1 ? '' : 's'} changed'
+                      : detail.subject,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontSize: 10,
+                    fontFamily: AppFonts.mono,
+                  ),
+                ),
+              ),
+          ],
+        ],
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(_CloseDeskChoice.cancel),
-          child: Text('Cancel', style: TextStyle(color: t.textMuted)),
+        ChromeButton(
+          onTap: () => Navigator.of(context).pop(_CloseDeskChoice.cancel),
+          chromeBuilder: ({required hovered, required pressed}) =>
+              ghostButtonChrome(t,
+                  hovered: hovered,
+                  pressed: pressed,
+                  enabled: true,
+                  baseBorderColor: t.chromeBorder.withValues(alpha: 0)),
+          borderRadius: btnRadius,
+          animationDuration: btnDuration,
+          padding: btnPadding,
+          child: Text('Cancel',
+              style: TextStyle(color: t.textMuted, fontSize: btnFontSize)),
         ),
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(_CloseDeskChoice.discard),
-          child:
-              Text('Discard & close', style: TextStyle(color: t.stateDeleted)),
-        ),
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(_CloseDeskChoice.shelve),
-          child:
-              Text('Shelve & close', style: TextStyle(color: t.accentBright)),
+        if (hasDirty)
+          ChromeButton(
+            onTap: () => Navigator.of(context).pop(_CloseDeskChoice.shelve),
+            chromeBuilder: ({required hovered, required pressed}) =>
+                primaryButtonChrome(t,
+                    hovered: hovered, pressed: pressed, enabled: true),
+            borderRadius: btnRadius,
+            animationDuration: btnDuration,
+            padding: btnPadding,
+            child: Text('Shelve here',
+                style: TextStyle(color: t.btnText, fontSize: btnFontSize)),
+          ),
+        ChromeButton(
+          onTap: () => Navigator.of(context).pop(
+              hasDirty ? _CloseDeskChoice.discard : _CloseDeskChoice.close),
+          chromeBuilder: ({required hovered, required pressed}) =>
+              ghostButtonChrome(t,
+                  hovered: hovered,
+                  pressed: pressed,
+                  enabled: true,
+                  baseBorderColor: t.stateDeleted.withValues(alpha: 0.25)),
+          borderRadius: btnRadius,
+          animationDuration: btnDuration,
+          padding: btnPadding,
+          child: Text(hasDirty ? 'Discard & close' : 'Close',
+              style: TextStyle(
+                  color: t.stateDeleted, fontSize: btnFontSize)),
         ),
       ],
     );
   }
 }
+
+class _CloseDeskTimeline extends StatefulWidget {
+  final List<CommitHistoryEntry> commits;
+  final Map<String, CommitDetailData> detailCache;
+  final bool hasWorkingTree;
+  final String? selectedHash;
+  final AppTokens tokens;
+  final ValueChanged<String> onSelected;
+
+  const _CloseDeskTimeline({
+    required this.commits,
+    required this.detailCache,
+    required this.hasWorkingTree,
+    required this.selectedHash,
+    required this.tokens,
+    required this.onSelected,
+  });
+
+  @override
+  State<_CloseDeskTimeline> createState() => _CloseDeskTimelineState();
+}
+
+class _CloseDeskTimelineState extends State<_CloseDeskTimeline> {
+  int? _hoveredIndex;
+
+  List<String> get _hashes => [
+        if (widget.hasWorkingTree) 'working-tree',
+        ...widget.commits.map((c) => c.commitHash),
+      ];
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final hashes = _hashes;
+    if (hashes.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 24,
+      child: LayoutBuilder(builder: (context, cons) {
+        final w = cons.maxWidth;
+        final nodeCount = hashes.length;
+        final spacing = nodeCount > 1 ? (w - 12) / (nodeCount - 1) : w / 2;
+        return GestureDetector(
+          onTapDown: (d) {
+            final idx = _indexAt(d.localPosition.dx, spacing, nodeCount, w);
+            if (idx >= 0 && idx < hashes.length) {
+              widget.onSelected(hashes[idx]);
+            }
+          },
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            onHover: (e) {
+              final idx = _indexAt(e.localPosition.dx, spacing, nodeCount, w);
+              if (idx != _hoveredIndex) {
+                setState(() => _hoveredIndex = idx);
+              }
+            },
+            onExit: (_) => setState(() => _hoveredIndex = null),
+            child: CustomPaint(
+              size: Size(w, 24),
+              painter: _CloseDeskTimelinePainter(
+                hashes: hashes,
+                commits: widget.commits,
+                detailCache: widget.detailCache,
+                selectedHash: widget.selectedHash,
+                hoveredIndex: _hoveredIndex,
+                tokens: t,
+                spacing: spacing,
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  int _indexAt(double dx, double spacing, int count, double width) {
+    if (count <= 1) return 0;
+    const startX = 6.0;
+    final idx = ((dx - startX + spacing / 2) / spacing).floor();
+    return idx.clamp(0, count - 1);
+  }
+}
+
+class _CloseDeskTimelinePainter extends CustomPainter {
+  final List<String> hashes;
+  final List<CommitHistoryEntry> commits;
+  final Map<String, CommitDetailData> detailCache;
+  final String? selectedHash;
+  final int? hoveredIndex;
+  final AppTokens tokens;
+  final double spacing;
+
+  _CloseDeskTimelinePainter({
+    required this.hashes,
+    required this.commits,
+    required this.detailCache,
+    required this.selectedHash,
+    required this.hoveredIndex,
+    required this.tokens,
+    required this.spacing,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (hashes.isEmpty) return;
+    final t = tokens;
+    final midY = size.height / 2;
+    const nodeR = 3.5;
+    const startX = 6.0;
+
+    final xs = List.generate(hashes.length, (i) {
+      if (hashes.length == 1) return size.width / 2;
+      return startX + i * spacing;
+    });
+
+    // Rail line
+    final railPaint = Paint()
+      ..color = t.chromeAccent.withValues(alpha: 0.25)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(xs.first - nodeR, midY),
+      Offset(xs.last + nodeR, midY),
+      railPaint,
+    );
+
+    // Churn colors from detail cache
+    final churnTargets = <String, Color>{};
+    for (final hash in hashes) {
+      if (hash == 'working-tree') {
+        churnTargets[hash] = t.accentBright;
+        continue;
+      }
+      final d = detailCache[hash];
+      if (d == null) continue;
+      final total = d.additions + d.deletions;
+      final ratio = total == 0 ? 0.5 : d.additions / total;
+      churnTargets[hash] = Color.lerp(
+        t.hypercubeNegative.withValues(alpha: 0.85),
+        t.hypercubePositive.withValues(alpha: 0.85),
+        ratio,
+      )!;
+    }
+
+    final fillPaint = Paint()..style = PaintingStyle.fill;
+    final ringPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..color = t.accentBright.withValues(alpha: 0.4);
+    final fallback = t.chromeBorder.withValues(alpha: 0.7);
+
+    for (var i = 0; i < hashes.length; i++) {
+      final hash = hashes[i];
+      final x = xs[i];
+      final isSelected = hash == selectedHash;
+      final isHovered = i == hoveredIndex;
+      final isWt = hash == 'working-tree';
+
+      final scale = isSelected ? 1.4 : (isHovered ? 1.2 : 1.0);
+      final r = nodeR * scale;
+      final center = Offset(x, midY);
+
+      fillPaint.color = isSelected
+          ? t.accentBright
+          : (churnTargets[hash] ?? fallback);
+
+      if (isWt) {
+        // Working tree node: diamond shape
+        final path = Path()
+          ..moveTo(x, midY - r)
+          ..lineTo(x + r, midY)
+          ..lineTo(x, midY + r)
+          ..lineTo(x - r, midY)
+          ..close();
+        canvas.drawPath(path, fillPaint);
+        if (isSelected) {
+          ringPaint.color = t.accentBright.withValues(alpha: 0.4);
+          canvas.drawPath(path, ringPaint);
+        }
+      } else {
+        canvas.drawCircle(center, r, fillPaint);
+        if (isSelected) {
+          ringPaint.color = t.accentBright.withValues(alpha: 0.4);
+          canvas.drawCircle(center, r + 2, ringPaint);
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CloseDeskTimelinePainter old) =>
+      old.selectedHash != selectedHash ||
+      old.hoveredIndex != hoveredIndex ||
+      old.hashes.length != hashes.length ||
+      old.detailCache.length != detailCache.length;
+}
+
 
 class _BranchPill extends StatefulWidget {
   final String branch;

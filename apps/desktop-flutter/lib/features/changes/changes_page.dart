@@ -78,8 +78,7 @@ enum _CommitRunMode { commitOnly, commitAndSync }
 
 /// Result of a delayed commit flow. Carries either the success
 /// message + committed data (+ optional post-commit sync error) or
-/// the error string from the failing step. Used so the coordinator's
-/// `schedule<T>` can hand back a single typed outcome.
+/// the error string from the failing step.
 class _CommitOutcome {
   final bool ok;
   final CommitData? committed;
@@ -141,6 +140,8 @@ class _ChangesPageState extends State<ChangesPage> {
   final Set<String> _includedPaths = {};
   final _commitMsgCtrl = TextEditingController();
   final _commitMsgFocusNode = FocusNode();
+  final List<String> _commitTags = [];
+  List<String> _suggestedTags = const [];
 
   /// Engine-dreamed commit-composer hint. The controller owns the
   /// debounce, signature short-circuit, and in-flight cancellation;
@@ -318,7 +319,11 @@ class _ChangesPageState extends State<ChangesPage> {
   bool _museFlash = false;
   final Map<String, String> _snapshotReviewModelLabel = {};
   final Map<String, int> _snapshotReviewGuardrailStage = {};
+  final Map<String, String?> _snapshotReviewEffort = {};
+  final Map<String, bool> _snapshotReviewFast = {};
   final Map<String, int> _snapshotMuseGuardrailStage = {};
+  final Map<String, String?> _snapshotMuseSynthEffort = {};
+  final Map<String, bool> _snapshotMuseSynthFast = {};
   // Monotonic counter for commit-message generation requests, keyed
   // by repoPath so that a generate kicked off on repo B doesn't bump
   // the guard for an in-flight generate on repo A — that misfire used
@@ -419,6 +424,71 @@ class _ChangesPageState extends State<ChangesPage> {
     );
   }
 
+  List<String> _deriveTagSuggestions(
+    LogosGit engine,
+    Set<String> diffPaths,
+  ) {
+    if (diffPaths.isEmpty) return const [];
+    final seen = <String>{..._commitTags};
+    final scored = <String, double>{};
+
+    void register(String tag, double score) {
+      final t = tag.toLowerCase().trim();
+      if (t.isEmpty || t.length < 2 || seen.contains(t)) return;
+      scored[t] = math.max(scored[t] ?? 0, score);
+    }
+
+    // Diffuse heat from the diff's source files through the coupling
+    // graph. The top-phi neighbors reveal what structural region of the
+    // codebase this change lives in. Extract directory and file-stem
+    // tokens from those neighbors, weighted by phi, so the labels
+    // reflect the graph topology — not string-matching on messages.
+    final neighbors = engine.diffuse(
+      diffPaths,
+      t: 1.0,
+      topK: 20,
+      phiThreshold: 0.01,
+    );
+    if (neighbors.isNotEmpty) {
+      final maxPhi = neighbors.first.phi;
+      for (final r in neighbors) {
+        final w = r.phi / maxPhi;
+        final parts = p.split(r.path);
+        // Directory segments — the structural context.
+        for (var i = 0; i < parts.length - 1 && i < 3; i++) {
+          final d = parts[i];
+          if (d.length > 2 && d != 'lib' && d != 'src' && d != 'test') {
+            register(d, w);
+          }
+        }
+        // File stem — meaningful when it names a subsystem.
+        final stem = p.basenameWithoutExtension(r.path);
+        if (stem.length > 2 && stem.length < 20) {
+          register(stem, w * 0.6);
+        }
+      }
+    }
+
+    // The diff's own paths — direct scope signal, full weight.
+    for (final path in diffPaths) {
+      final parts = p.split(path);
+      for (var i = 0; i < parts.length - 1 && i < 3; i++) {
+        final d = parts[i];
+        if (d.length > 2 && d != 'lib' && d != 'src' && d != 'test') {
+          register(d, 1.0);
+        }
+      }
+      final stem = p.basenameWithoutExtension(path);
+      if (stem.length > 2 && stem.length < 20) {
+        register(stem, 0.8);
+      }
+    }
+
+    final ranked = scored.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return ranked.take(6).map((e) => e.key).toList();
+  }
+
   // Single-slot cluster cache. `clusterFiles()` is O(n²) in candidate
   // pair construction and runs inside the main state's build. Before
   // caching, every hover-triggered rebuild paid the full cluster
@@ -497,6 +567,10 @@ class _ChangesPageState extends State<ChangesPage> {
   List<StashEntryData> _stashes = const [];
   bool _stashesLoading = false;
   bool _stashesExpanded = false;
+  double _dejaVuScore = 0.0;
+  int _dejaVuGhostCount = 0;
+  Set<String>? _lastCouplingDiffPaths;
+  Object? _lastCouplingEngine;
   bool _stashExpandedInitialized = false;
   String? _stashPeekDiff;
   // Per-stash expanded state (keyed by stash.index) — the filing-cabinet
@@ -714,6 +788,8 @@ class _ChangesPageState extends State<ChangesPage> {
         unawaited(context.read<AiSettingsState>().refreshProviders());
       }
       _lastRememberWip = prefs.rememberWorkInProgress;
+      _leftPanelWidth = prefs.changesPanelWidthPx.toDouble().clamp(
+            _minLeftPanelWidth, _maxLeftPanelWidth);
       prefs.addListener(_onPreferencesChanged);
       _prefsSub = prefs;
     });
@@ -3867,10 +3943,18 @@ class _ChangesPageState extends State<ChangesPage> {
         );
         return;
       }
+      final askEffort = aiSettings.resolveEffort(categoryId, modelValue);
+      final askModel = aiSettings.runtimeModelCategories
+          .expand((c) => c.models)
+          .where((m) => m.value == modelValue)
+          .firstOrNull;
       final r = await runAsk(
         repositoryPath: repoPath,
         modelValue: modelValue,
         prompt: prompt,
+        reasoningEffort: askEffort.effort,
+        fastMode: askEffort.fast,
+        supportsReasoning: askModel?.supportsReasoning ?? true,
         commandLabelPrefix: 'ai.ask',
       );
       if (!mounted) return;
@@ -4239,6 +4323,8 @@ class _ChangesPageState extends State<ChangesPage> {
         context.read<FileCouplingState>().matrixFor(repoPath);
     final symbolIndex = context.read<SymbolFrequencyState>().indexFor(repoPath);
 
+    final genEffort =
+        aiSettings.resolveEffort(selectedCategory.id, selectedModel.value);
     final result = await generateCommitMessage(
       repositoryPath: repoPath,
       modelValue: selectedModel.value,
@@ -4247,6 +4333,9 @@ class _ChangesPageState extends State<ChangesPage> {
         selectedCategory.label,
       ),
       scopeLabel: scopeLabel,
+      reasoningEffort: genEffort.effort,
+      fastMode: genEffort.fast,
+      supportsReasoning: selectedModel.supportsReasoning,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
       scopedPaths: included.map((file) => file.path).toList(),
@@ -4410,6 +4499,10 @@ class _ChangesPageState extends State<ChangesPage> {
     final reviewSymbolIndex =
         context.read<SymbolFrequencyState>().indexFor(repoPath);
 
+    final revEffort =
+        aiSettings.resolveEffort(selectedCategory.id, selectedModel.value);
+    _snapshotReviewEffort[repoPath] = revEffort.effort;
+    _snapshotReviewFast[repoPath] = revEffort.fast;
     final result = await reviewCommit(
       repositoryPath: repoPath,
       modelValue: selectedModel.value,
@@ -4418,6 +4511,9 @@ class _ChangesPageState extends State<ChangesPage> {
         selectedCategory.label,
       ),
       scopeLabel: scopeLabel,
+      reasoningEffort: revEffort.effort,
+      fastMode: revEffort.fast,
+      supportsReasoning: selectedModel.supportsReasoning,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
       scopedPaths: included.map((file) => file.path).toList(),
@@ -4545,6 +4641,7 @@ class _ChangesPageState extends State<ChangesPage> {
     final aiSettings = context.read<AiSettingsState>();
     final preferences = context.read<PreferencesState>();
     _snapshotMuseGuardrailStage[repoPath] = preferences.guardrailStage;
+    // Muse synthesis effort is snapshotted after model resolution below.
 
     // Resolve two distinct slots for the muse:
     //   - brainstorm slot = "fast" if the user has a model assigned to
@@ -4605,11 +4702,23 @@ class _ChangesPageState extends State<ChangesPage> {
     final museSymbolIndex =
         context.read<SymbolFrequencyState>().indexFor(repoPath);
 
+    final brainEffort = aiSettings.resolveEffort(
+        brainstormCategory.id, brainstormModel.value);
+    final synthEffort = aiSettings.resolveEffort(
+        synthesisCategory.id, synthesisModel.value);
+    _snapshotMuseSynthEffort[repoPath] = synthEffort.effort;
+    _snapshotMuseSynthFast[repoPath] = synthEffort.fast;
     final result = await runMuse(
       repositoryPath: repoPath,
       brainstormModelValue: brainstormModel.value,
       synthesisModelValue: synthesisModel.value,
       scopeLabel: scopeLabel,
+      brainstormReasoningEffort: brainEffort.effort,
+      brainstormFastMode: brainEffort.fast,
+      brainstormSupportsReasoning: brainstormModel.supportsReasoning,
+      synthesisReasoningEffort: synthEffort.effort,
+      synthesisFastMode: synthEffort.fast,
+      synthesisSupportsReasoning: synthesisModel.supportsReasoning,
       includeStaged: includeStaged,
       includeUnstaged: includeUnstaged,
       scopedPaths: included.map((file) => file.path).toList(),
@@ -4822,7 +4931,7 @@ class _ChangesPageState extends State<ChangesPage> {
     required _CommitRunMode mode,
     bool amend = false,
   }) async {
-    final message = _commitMsgCtrl.text.trim();
+    var message = _commitMsgCtrl.text.trim();
     final included = status.files
         .where((file) => _includedPaths.contains(file.path))
         .map((file) => file.path)
@@ -4839,6 +4948,9 @@ class _ChangesPageState extends State<ChangesPage> {
     if (message.isEmpty && !amend) {
       setState(() => _actionError = 'Write a commit message first.');
       return;
+    }
+    if (_commitTags.isNotEmpty && message.isNotEmpty) {
+      message = '$message\n\nTags: ${_commitTags.join(', ')}';
     }
 
     setState(() {
@@ -4873,6 +4985,7 @@ class _ChangesPageState extends State<ChangesPage> {
       _actionRunning = false;
       if (outcome.ok) {
         _commitMsgCtrl.clear();
+        _commitTags.clear();
         unawaited(_clearCommitDraft());
         _actionError = outcome.syncError;
       } else {
@@ -5587,6 +5700,30 @@ class _ChangesPageState extends State<ChangesPage> {
     final engineReady = context.select<LogosGitState, bool>(
       (s) => s.engineFor(repoPath) != null,
     );
+    final diffPaths = status.files.map((f) => f.path).toSet();
+    if (engineReady && status.files.isNotEmpty) {
+      final engine =
+          context.read<LogosGitState>().engineFor(repoPath)!;
+      final sameInputs = identical(engine, _lastCouplingEngine) &&
+          _lastCouplingDiffPaths != null &&
+          _lastCouplingDiffPaths!.length == diffPaths.length &&
+          _lastCouplingDiffPaths!.containsAll(diffPaths);
+      if (!sameInputs) {
+        _lastCouplingEngine = engine;
+        _lastCouplingDiffPaths = diffPaths;
+        _dejaVuScore = engine.dejaVuScore(diffPaths);
+        _dejaVuGhostCount = _dejaVuScore > 0
+            ? engine.ghostsForDiff(diffPaths, limit: 5).length
+            : 0;
+        _suggestedTags = _deriveTagSuggestions(engine, diffPaths);
+      }
+    } else {
+      _lastCouplingEngine = null;
+      _lastCouplingDiffPaths = null;
+      _dejaVuScore = 0.0;
+      _dejaVuGhostCount = 0;
+      _suggestedTags = const [];
+    }
     final canCommit = !_actionRunning &&
         !_generateRunning &&
         !_reviewRunning &&
@@ -5669,29 +5806,43 @@ class _ChangesPageState extends State<ChangesPage> {
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             Expanded(
-                              child: Text(
-                                // Staged count moved up here from the old
-                                // commit-composer "forehead" — same info,
-                                // one row higher, so the strip below the
-                                // file list can disappear and the shelve
-                                // button can float on its own.
-                                (() {
-                                  final base = includedCount == 0
-                                      ? 'No files selected'
-                                      : includedCount == status.files.length
-                                          ? 'All ${status.files.length} file${status.files.length == 1 ? "" : "s"}'
-                                          : '$includedCount of ${status.files.length} files';
-                                  return stagedCount > 0
-                                      ? '$base · $stagedCount staged'
-                                      : base;
-                                })(),
-                                style: TextStyle(
-                                  color: includedCount == 0
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final color = includedCount == 0
                                       ? t.textMuted.withValues(alpha: 0.55)
-                                      : t.textMuted,
-                                  fontSize: 10.5,
-                                  fontWeight: FontWeight.w500,
-                                ),
+                                      : t.textMuted;
+                                  final style = TextStyle(
+                                    color: color,
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w500,
+                                  );
+                                  if (includedCount == 0) {
+                                    return Text('None', style: style,
+                                        maxLines: 1);
+                                  }
+                                  final n = status.files.length;
+                                  final staged = stagedCount > 0
+                                      ? ' · $stagedCount staged'
+                                      : '';
+                                  final full = includedCount == n
+                                      ? 'All $n file${n == 1 ? "" : "s"}$staged'
+                                      : '$includedCount of $n$staged';
+                                  final tp = TextPainter(
+                                    text: TextSpan(text: full, style: style),
+                                    maxLines: 1,
+                                    textDirection: TextDirection.ltr,
+                                  )..layout();
+                                  if (tp.width <= constraints.maxWidth) {
+                                    return Text(full, style: style,
+                                        maxLines: 1);
+                                  }
+                                  final short = includedCount == n
+                                      ? 'All $n$staged'
+                                      : '$includedCount of $n$staged';
+                                  return Text(short, style: style,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis);
+                                },
                               ),
                             ),
                             _ConstellationToggleBtn(
@@ -5947,6 +6098,16 @@ class _ChangesPageState extends State<ChangesPage> {
                                     );
                                   }),
                                 ),
+                                if (_dejaVuScore > 0)
+                                  Positioned(
+                                    right: 12,
+                                    top: 12,
+                                    child: _DejaVuGlyph(
+                                      tokens: t,
+                                      score: _dejaVuScore,
+                                      ghostCount: _dejaVuGhostCount,
+                                    ),
+                                  ),
                                 Positioned(
                                   right: 12,
                                   bottom: 12,
@@ -6288,6 +6449,15 @@ class _ChangesPageState extends State<ChangesPage> {
                                       ? null
                                       : _toggleShapeMode,
                                   hideAi: preferences.hideAiFeatures,
+                                  tags: _commitTags,
+                                  suggestedTags: _suggestedTags,
+                                  onTagAdded: (tag) {
+                                    if (!_commitTags.contains(tag)) {
+                                      setState(() => _commitTags.add(tag));
+                                    }
+                                  },
+                                  onTagRemoved: (tag) =>
+                                      setState(() => _commitTags.remove(tag)),
                                 );
                               }),
                             ),
@@ -6404,6 +6574,9 @@ class _ChangesPageState extends State<ChangesPage> {
                     _leftPanelWidth = (_leftPanelWidth + dx)
                         .clamp(_minLeftPanelWidth, _maxLeftPanelWidth);
                   }),
+                  onDragEnd: () => context
+                      .read<PreferencesState>()
+                      .setChangesPanelWidth(_leftPanelWidth.round()),
                 ),
                 Expanded(
                   child: Builder(
@@ -6472,6 +6645,10 @@ class _ChangesPageState extends State<ChangesPage> {
                             error: _museError,
                             result: _museResult,
                             staleScope: _isMuseScopeStale(),
+                            reasoningEffort:
+                                _snapshotMuseSynthEffort[repoPath],
+                            fastMode:
+                                _snapshotMuseSynthFast[repoPath] ?? false,
                             guardrailLabel: _guardrailLabelForStage(
                                 _snapshotMuseGuardrailStage[repoPath] ??
                                     preferences.guardrailStage),
@@ -6518,6 +6695,10 @@ class _ChangesPageState extends State<ChangesPage> {
                             guardrailStage:
                                 _snapshotReviewGuardrailStage[repoPath] ??
                                     preferences.guardrailStage,
+                            reasoningEffort:
+                                _snapshotReviewEffort[repoPath],
+                            fastMode:
+                                _snapshotReviewFast[repoPath] ?? false,
                             loading: _reviewRunning,
                             error: _reviewError,
                             result: _reviewResult,
@@ -7192,18 +7373,13 @@ class _MusePane extends StatefulWidget {
   final String? error;
   final AiMuseData? result;
   final String guardrailLabel;
+  final String? reasoningEffort;
+  final bool fastMode;
   final VoidCallback onBack;
   final VoidCallback onRerun;
 
-  /// True when the record's scope key no longer matches the current
-  /// file selection (the user toggled files in/out after the run).
-  /// The pane shows a thin banner at the top with a "rerun" link;
-  /// the result body still renders so the user can read it before
-  /// deciding to refresh.
   final bool staleScope;
 
-  /// Copy callback. `subset == null` means copy everything; a non-null
-  /// list copies only those proposals (selection-driven copy).
   final void Function(List<AiMuseProposal>? subset)? onCopy;
 
   const _MusePane({
@@ -7212,6 +7388,8 @@ class _MusePane extends StatefulWidget {
     required this.error,
     required this.result,
     required this.guardrailLabel,
+    this.reasoningEffort,
+    this.fastMode = false,
     required this.onBack,
     required this.onRerun,
     this.staleScope = false,
@@ -7311,6 +7489,16 @@ class _MusePaneState extends State<_MusePane> {
               const SizedBox(width: 8),
               Text('· ${widget.guardrailLabel.toLowerCase()}',
                   style: TextStyle(color: t.textFaint, fontSize: 11)),
+              if (widget.reasoningEffort != null || widget.fastMode)
+                Padding(
+                  padding: const EdgeInsets.only(left: 5),
+                  child: _ModelGlyphStrip(
+                    color: t.chromeAccent,
+                    accent: t.accentBright,
+                    effort: widget.reasoningEffort,
+                    fast: widget.fastMode,
+                  ),
+                ),
               if (keptLine.isNotEmpty) ...[
                 const SizedBox(width: 6),
                 // Flexible, not Expanded, so the text takes only what
@@ -7943,6 +8131,8 @@ class _CommitReviewPane extends StatelessWidget {
   final String modelLabel;
   final String guardrailLabel;
   final int guardrailStage;
+  final String? reasoningEffort;
+  final bool fastMode;
   final bool loading;
   final String? error;
   final AiCommitReviewData? result;
@@ -7956,10 +8146,6 @@ class _CommitReviewPane extends StatelessWidget {
   final VoidCallback? onCopy;
   final void Function(String path, String? hunkLabel) onOpenFinding;
 
-  /// True when the record's scope key no longer matches the current
-  /// file selection. Pane shows a banner at the top with a "rerun"
-  /// link; the body still renders so the user can read the existing
-  /// review before deciding to refresh.
   final bool staleScope;
 
   const _CommitReviewPane({
@@ -7971,6 +8157,8 @@ class _CommitReviewPane extends StatelessWidget {
     required this.modelLabel,
     required this.guardrailLabel,
     required this.guardrailStage,
+    this.reasoningEffort,
+    this.fastMode = false,
     required this.loading,
     required this.error,
     required this.result,
@@ -8006,7 +8194,7 @@ class _CommitReviewPane extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Review commit',
+                    'Code review',
                     style: TextStyle(
                       color: tokens.textStrong,
                       fontSize: 11.5,
@@ -8050,14 +8238,30 @@ class _CommitReviewPane extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    '$guardrailLabel | $modelLabel',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: tokens.textMuted,
-                      fontSize: 10.5,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          '$guardrailLabel | $modelLabel',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: tokens.textMuted,
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ),
+                      if (reasoningEffort != null || fastMode)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: _ModelGlyphStrip(
+                            color: tokens.chromeAccent,
+                            accent: tokens.accentBright,
+                            effort: reasoningEffort,
+                            fast: fastMode,
+                          ),
+                        ),
+                    ],
                   ),
                 ],
               ),
@@ -8155,7 +8359,7 @@ class _CommitReviewPane extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Review commit',
+                            'Code review',
                             style: TextStyle(
                               color: tokens.textStrong,
                               fontSize: 11.5,
@@ -9407,8 +9611,9 @@ List<_AskCitation> _extractAskCitations(String text) {
     // Guard: require the "path" to actually look like a file — contain
     // a slash, or be at least 4 chars with a dot before the extension.
     // Skips false positives like IP addresses with dotted decimals.
-    if (!path.contains('/') && !path.contains('\\') && path.length < 4)
+    if (!path.contains('/') && !path.contains('\\') && path.length < 4) {
       continue;
+    }
     final key = '$path:$line';
     if (!seen.add(key)) continue;
     out.add(_AskCitation(path, line));
@@ -9962,6 +10167,363 @@ class _ShapeAskButtonState extends State<_ShapeAskButton> {
 // buttons. When shelves exist the pill shows both segments — left toggles the
 // cabinet open/closed, right adds another shelf — with a hairline divider
 // between them so the two actions read as one artifact.
+
+class _DejaVuGlyph extends StatefulWidget {
+  final AppTokens tokens;
+  final double score;
+  final int ghostCount;
+
+  const _DejaVuGlyph({
+    required this.tokens,
+    required this.score,
+    required this.ghostCount,
+  });
+
+  @override
+  State<_DejaVuGlyph> createState() => _DejaVuGlyphState();
+}
+
+class _DejaVuGlyphState extends State<_DejaVuGlyph> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final pct = (widget.score * 100).round();
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: AnimatedOpacity(
+        opacity: _hovered ? 1.0 : 0.35,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOutCubic,
+        child: Tooltip(
+          message: '$pct% déjà vu — ${widget.ghostCount} ghost '
+              '${widget.ghostCount == 1 ? "edge" : "edges"} from '
+              'discarded timelines touch this diff',
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: _hovered
+                  ? t.bg1.withValues(alpha: 0.95)
+                  : t.bg1.withValues(alpha: 0.0),
+              border: Border.all(
+                color: t.chromeBorder
+                    .withValues(alpha: _hovered ? 0.35 : 0.15),
+              ),
+              borderRadius: BorderRadius.circular(4),
+              boxShadow: _hovered
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.auto_awesome,
+                  size: 12,
+                  color: t.textFaint.withValues(
+                      alpha: _hovered ? 0.8 : 0.5),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'déjà vu',
+                  style: TextStyle(
+                    color: t.textMuted.withValues(
+                        alpha: _hovered ? 0.9 : 0.6),
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelGlyphStrip extends StatefulWidget {
+  final Color color;
+  final Color accent;
+  final String? effort;
+  final bool fast;
+
+  const _ModelGlyphStrip({
+    required this.color,
+    required this.accent,
+    this.effort,
+    this.fast = false,
+  });
+
+  @override
+  State<_ModelGlyphStrip> createState() => _ModelGlyphStripState();
+}
+
+class _ModelGlyphStripState extends State<_ModelGlyphStrip>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 3000),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (widget.effort != null)
+          AnimatedBuilder(
+            animation: _ctrl,
+            builder: (_, __) => CustomPaint(
+              size: const Size(20, 16),
+              painter: _ReasoningGlyphPainter(
+                color: widget.color,
+                effort: widget.effort!,
+                t: _ctrl.value,
+              ),
+            ),
+          ),
+        if (widget.effort != null && widget.fast)
+          const SizedBox(width: 2),
+        if (widget.fast)
+          AnimatedBuilder(
+            animation: _ctrl,
+            builder: (_, __) => CustomPaint(
+              size: const Size(11, 14),
+              painter: _FastGlyphPainter(
+                color: widget.accent,
+                t: _ctrl.value,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ReasoningGlyphPainter extends CustomPainter {
+  final Color color;
+  final String effort;
+  final double t;
+
+  _ReasoningGlyphPainter({
+    required this.color,
+    required this.effort,
+    required this.t,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width * 0.25;
+    final cy = size.height * 0.5;
+    final center = Offset(cx, cy);
+    final int rings = switch (effort) {
+      'low' => 1,
+      'medium' => 2,
+      'high' => 3,
+      'xhigh' => 3,
+      'max' => 3,
+      _ => 2,
+    };
+    final intense = effort == 'xhigh' || effort == 'max';
+    final pulse = 0.5 + 0.5 * math.sin(t * math.pi * 2);
+
+    // Outer halo bloom for xhigh/max — a wide soft glow that frames
+    // the whole glyph and makes the intense levels pop at a glance.
+    if (intense) {
+      final haloR = 10.0 + 1.0 * pulse;
+      canvas.drawCircle(
+        center,
+        haloR,
+        Paint()
+          ..shader = RadialGradient(
+            colors: [
+              color.withValues(alpha: 0.12 + 0.06 * pulse),
+              color.withValues(alpha: 0.0),
+            ],
+          ).createShader(
+              Rect.fromCircle(center: center, radius: haloR)),
+      );
+    }
+
+    // Core glow — radial gradient fading outward. Bigger and warmer
+    // at higher levels so the nucleus reads as "hotter."
+    final coreRadius = switch (effort) {
+      'low' => 2.0,
+      'medium' => 2.5,
+      'high' => 3.0,
+      _ => 3.5 + 0.5 * pulse,
+    };
+    final coreAlpha = switch (effort) {
+      'low' => 0.30,
+      'medium' => 0.35,
+      'high' => 0.40,
+      _ => 0.50 + 0.18 * pulse,
+    };
+    canvas.drawCircle(
+      center,
+      coreRadius,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            color.withValues(alpha: coreAlpha),
+            color.withValues(alpha: 0.0),
+          ],
+        ).createShader(
+            Rect.fromCircle(center: center, radius: coreRadius)),
+    );
+
+    // Nucleus dot — scales with effort so each level has a distinct
+    // center weight even before you count the rings.
+    final nucR = switch (effort) {
+      'low' => 0.9,
+      'medium' => 1.1,
+      'high' => 1.3,
+      _ => 1.6 + 0.15 * pulse,
+    };
+    final nucAlpha = switch (effort) {
+      'low' => 0.50,
+      'medium' => 0.60,
+      'high' => 0.70,
+      _ => 0.80 + 0.12 * pulse,
+    };
+    canvas.drawCircle(
+      center,
+      nucR,
+      Paint()..color = color.withValues(alpha: nucAlpha),
+    );
+
+    // Ripple rings — clipped to the right hemisphere.
+    // Inner rings are more opaque, outer rings fade — creates depth
+    // and makes the count instantly readable.
+    canvas.save();
+    canvas.clipRect(
+        Rect.fromLTWH(cx - 1, 0, size.width - cx + 1, size.height));
+
+    for (var i = 0; i < rings; i++) {
+      final r = 3.6 + i * 2.8;
+      final isOuter = i == rings - 1;
+      final sweepAngle = math.pi * (0.72 + 0.06 * i);
+      final breatheR = isOuter ? r + 0.7 * pulse : r;
+
+      // Opacity: inner rings are solid anchors, outer ring breathes.
+      final depthFade = 1.0 - (i / (rings + 1)) * 0.35;
+      final baseAlpha = intense ? 0.55 * depthFade : 0.40 * depthFade;
+      final ringAlpha =
+          isOuter ? baseAlpha * (0.55 + 0.45 * pulse) : baseAlpha;
+
+      // Glow halo.
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: breatheR),
+        -sweepAngle * 0.5,
+        sweepAngle,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = intense ? 3.0 : 2.2
+          ..strokeCap = StrokeCap.round
+          ..color = color.withValues(alpha: ringAlpha * 0.3)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.8),
+      );
+
+      // Crisp stroke.
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: breatheR),
+        -sweepAngle * 0.5,
+        sweepAngle,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = intense ? 1.4 : 1.1
+          ..strokeCap = StrokeCap.round
+          ..color = color.withValues(alpha: ringAlpha),
+      );
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_ReasoningGlyphPainter old) =>
+      old.effort != effort ||
+      old.color != color ||
+      (old.t - t).abs() > 0.015;
+}
+
+class _FastGlyphPainter extends CustomPainter {
+  final Color color;
+  final double t;
+
+  _FastGlyphPainter({required this.color, required this.t});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final h = size.height;
+    final w = size.width;
+
+    final bolt = Path()
+      ..moveTo(w * 0.52, h * 0.0)
+      ..quadraticBezierTo(w * 0.35, h * 0.22, w * 0.15, h * 0.46)
+      ..lineTo(w * 0.48, h * 0.44)
+      ..quadraticBezierTo(w * 0.38, h * 0.62, w * 0.28, h * 1.0)
+      ..quadraticBezierTo(w * 0.65, h * 0.58, w * 0.88, h * 0.40)
+      ..lineTo(w * 0.52, h * 0.42)
+      ..quadraticBezierTo(w * 0.62, h * 0.22, w * 0.52, h * 0.0)
+      ..close();
+
+    // Sharper shimmer curve — spends more time bright, snaps dim.
+    final raw = math.sin(t * math.pi * 2);
+    final shimmer = 0.40 + 0.35 * (raw > 0 ? math.sqrt(raw) : -math.sqrt(-raw));
+
+    // Tight glow.
+    canvas.drawPath(
+      bolt,
+      Paint()
+        ..style = PaintingStyle.fill
+        ..color = color.withValues(alpha: shimmer * 0.3)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.5),
+    );
+
+    // Crisp fill with gradient top-to-bottom for taper feel.
+    canvas.drawPath(
+      bolt,
+      Paint()
+        ..style = PaintingStyle.fill
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            color.withValues(alpha: shimmer),
+            color.withValues(alpha: shimmer * 0.6),
+          ],
+        ).createShader(Rect.fromLTWH(0, 0, w, h)),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_FastGlyphPainter old) =>
+      old.color != color || (old.t - t).abs() > 0.015;
+}
 
 class _ShelfControl extends StatefulWidget {
   final AppTokens tokens;
@@ -11249,6 +11811,11 @@ class _CommitComposerField extends StatefulWidget {
   /// remain untouched.
   final bool hideAi;
 
+  final List<String> tags;
+  final List<String> suggestedTags;
+  final ValueChanged<String> onTagAdded;
+  final ValueChanged<String> onTagRemoved;
+
   const _CommitComposerField({
     required this.tokens,
     required this.controller,
@@ -11283,6 +11850,10 @@ class _CommitComposerField extends StatefulWidget {
     this.dreamHint,
     this.dreamThinking = false,
     this.hideAi = false,
+    this.tags = const [],
+    this.suggestedTags = const [],
+    required this.onTagAdded,
+    required this.onTagRemoved,
   });
 
   @override
@@ -11294,6 +11865,11 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
   late AnimationController _pulseCtrl;
   late AnimationController _doneCtrl;
   final ScrollController _scrollCtrl = ScrollController();
+  final TextEditingController _tagInputCtrl = TextEditingController();
+  final FocusNode _tagInputFocus = FocusNode();
+  final ScrollController _tagScrollCtrl = ScrollController();
+  bool _tagFieldOpen = false;
+  bool _tagTriggerHovered = false;
 
   /// Cached merged listenable for the AnimatedBuilder. Was being
   /// reallocated every build (string-keyed text input fires per
@@ -11314,6 +11890,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
       duration: const Duration(milliseconds: 800),
     );
     _rebuildComposerSignal();
+    _tagInputFocus.addListener(_onTagFocusChanged);
     // _pulseCtrl is gated via didChangeDependencies so Reduce Motion
     // silences the border pulse; _doneCtrl forwards only when motion is
     // allowed. Window-focus gate folds in via onWindowAwakeChanged →
@@ -11388,8 +11965,31 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     }
   }
 
+  void _onTagFocusChanged() {
+    if (!_tagInputFocus.hasFocus && _tagFieldOpen) {
+      final text = _tagInputCtrl.text.trim();
+      if (text.isNotEmpty) {
+        widget.onTagAdded(text.toLowerCase());
+        _tagInputCtrl.clear();
+      }
+      setState(() => _tagFieldOpen = false);
+    }
+  }
+
+  void _submitTag() {
+    final text = _tagInputCtrl.text.trim();
+    if (text.isNotEmpty) {
+      widget.onTagAdded(text.toLowerCase());
+      _tagInputCtrl.clear();
+    }
+  }
+
   @override
   void dispose() {
+    _tagInputFocus.removeListener(_onTagFocusChanged);
+    _tagInputCtrl.dispose();
+    _tagInputFocus.dispose();
+    _tagScrollCtrl.dispose();
     _pulseCtrl.dispose();
     _doneCtrl.dispose();
     _scrollCtrl.dispose();
@@ -11399,12 +11999,9 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
   @override
   Widget build(BuildContext context) {
     final tokens = widget.tokens;
-    final radius = themeDefinitionFor(tokens.id)
-        .shader
-        .geometry
-        .radius
-        .clamp(0, 18)
-        .toDouble();
+    final shader = themeDefinitionFor(tokens.id).shader;
+    final geo = shader.geometry;
+    final radius = geo.radius.clamp(0, 18).toDouble();
     final effectiveRadius = (radius * 0.75).clamp(0.0, 14.0);
 
     // Hoist the TextField subtree into `child:` — it depends only on
@@ -11529,80 +12126,295 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
               borderRadius: BorderRadius.circular(innerRadius),
               child: Stack(
                 children: [
-                  // TextField subtree hoisted via `child:`. See the
-                  // comment above the AnimatedBuilder for the rationale.
-                  // The dream phrase is routed through `hintText` directly
-                  // (see InputDecoration above), so there's no overlay
-                  // here — alignment with the cursor is pixel-perfect.
                   textField!,
+                  if (!widget.shapeMode &&
+                      widget.suggestedTags.isNotEmpty)
+                    Positioned(
+                      left: 7,
+                      right: 7,
+                      bottom: 30,
+                      child: IgnorePointer(
+                        ignoring: !_tagFieldOpen,
+                        child: AnimatedOpacity(
+                          opacity: _tagFieldOpen ? 1.0 : 0.0,
+                          duration: context.motion(AppMotion.fade),
+                          curve: shader.safeCurve,
+                          child: AnimatedSlide(
+                            offset: _tagFieldOpen
+                                ? Offset.zero
+                                : const Offset(0, 0.35),
+                            duration: context.motion(AppMotion.fade),
+                            curve: shader.curve,
+                            child: ConstrainedBox(
+                              constraints:
+                                  const BoxConstraints(maxHeight: 64),
+                              child: SingleChildScrollView(
+                                child: Wrap(
+                                  spacing: 4,
+                                  runSpacing: 4,
+                                  children: [
+                                    for (final tag
+                                        in widget.suggestedTags)
+                                      _CommitTagSuggestionChip(
+                                        label: tag,
+                                        tokens: tokens,
+                                        shader: shader,
+                                        onTap: () {
+                                          widget.onTagAdded(tag);
+                                          _tagInputCtrl.clear();
+                                        },
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   Positioned(
+                    left: 7,
                     right: 7,
                     bottom: 6,
                     child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        if (!widget.hideAi) ...[
-                          if (widget.onToggleShape != null) ...[
-                            // Plain mode-toggle button — was an OverlayPortal-
-                            // hosted popover; the inline shape-mode now
-                            // morphs the same TextField + bottom button in
-                            // place, so no overlay machinery needed.
-                            _CommitAiToolbarBtn(
-                              tokens: tokens,
-                              enabled: widget.shapeEnabled || widget.shapeMode,
-                              loading: widget.shapeLoading,
-                              // When already in shape mode, treat as the
-                              // active state so the button reads as armed
-                              // (the next tap exits).
-                              success: widget.shapeMode,
-                              tooltip: widget.shapeTooltip,
-                              hasText: hasText,
-                              fieldRadius: effectiveRadius,
-                              iconKind: _AiToolbarIconKind.shape,
-                              onTap: widget.onToggleShape!,
-                            ),
-                            const SizedBox(width: 4),
+                        if (!widget.shapeMode)
+                          Expanded(
+                            child: ConstrainedBox(
+                              constraints:
+                                  const BoxConstraints(maxHeight: 64),
+                              child: SingleChildScrollView(
+                                controller: _tagScrollCtrl,
+                                child: Wrap(
+                                  spacing: 4,
+                                  runSpacing: 4,
+                                  crossAxisAlignment:
+                                      WrapCrossAlignment.center,
+                                  children: [
+                                  MouseRegion(
+                                    onEnter: (_) => setState(
+                                        () => _tagTriggerHovered = true),
+                                    onExit: (_) => setState(
+                                        () => _tagTriggerHovered = false),
+                                    cursor: SystemMouseCursors.click,
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        setState(() =>
+                                            _tagFieldOpen = !_tagFieldOpen);
+                                        if (_tagFieldOpen) {
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                            _tagInputFocus.requestFocus();
+                                          });
+                                        }
+                                      },
+                                      child: AnimatedContainer(
+                                        duration: context
+                                            .motion(AppMotion.snap),
+                                        curve: shader.safeCurve,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 5, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: tokens.bg1.withValues(
+                                              alpha: _tagTriggerHovered ||
+                                                      _tagFieldOpen
+                                                  ? 0.95
+                                                  : 0.0),
+                                          borderRadius:
+                                              BorderRadius.circular(
+                                                  geo.pillRadius),
+                                          border: Border.all(
+                                            color:
+                                                tokens.chromeBorder.withValues(
+                                                    alpha: _tagTriggerHovered ||
+                                                            _tagFieldOpen
+                                                        ? 0.35
+                                                        : widget.tags.isNotEmpty
+                                                            ? 0.20
+                                                            : 0.0),
+                                            width: 0.8,
+                                          ),
+                                          boxShadow: _tagTriggerHovered
+                                              ? AppElev.row
+                                              : null,
+                                        ),
+                                        child: AnimatedOpacity(
+                                          opacity: _tagTriggerHovered ||
+                                                  _tagFieldOpen ||
+                                                  widget.tags.isNotEmpty
+                                              ? 1.0
+                                              : 0.35,
+                                          duration: context
+                                              .motion(AppMotion.snap),
+                                          curve: shader.safeCurve,
+                                          child: Text(
+                                            '#',
+                                            style: TextStyle(
+                                              color: _tagFieldOpen
+                                                  ? tokens.accentBright
+                                                  : tokens.textMuted,
+                                              fontSize: 10,
+                                              fontFamily: AppFonts.mono,
+                                              fontWeight: FontWeight.w700,
+                                              height: 1.2,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  for (final tag in widget.tags)
+                                    _CommitTagChip(
+                                      label: tag,
+                                      tokens: tokens,
+                                      shader: shader,
+                                      onRemove: () =>
+                                          widget.onTagRemoved(tag),
+                                    ),
+                                  AnimatedContainer(
+                                    duration:
+                                        context.motion(AppMotion.fade),
+                                    curve: shader.curve,
+                                    width: _tagFieldOpen ? 84 : 0,
+                                    clipBehavior: Clip.hardEdge,
+                                    decoration: const BoxDecoration(),
+                                    child: AnimatedOpacity(
+                                      opacity: _tagFieldOpen ? 1.0 : 0.0,
+                                      duration:
+                                          context.motion(AppMotion.snap),
+                                      curve: shader.safeCurve,
+                                      child: SizedBox(
+                                        width: 80,
+                                        child: TextField(
+                                          controller: _tagInputCtrl,
+                                          focusNode: _tagInputFocus,
+                                          style: TextStyle(
+                                            color: tokens.textStrong,
+                                            fontSize: 10,
+                                            fontFamily: AppFonts.mono,
+                                          ),
+                                          cursorColor: tokens.accentBright,
+                                          cursorHeight: 12,
+                                          decoration: InputDecoration(
+                                            isDense: true,
+                                            isCollapsed: true,
+                                            contentPadding:
+                                                const EdgeInsets.symmetric(
+                                                    horizontal: 4,
+                                                    vertical: 3),
+                                            hintText: 'tag...',
+                                            hintStyle: TextStyle(
+                                              color: tokens.textMuted
+                                                  .withValues(alpha: 0.45),
+                                              fontSize: 10,
+                                              fontFamily: AppFonts.mono,
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                            border: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                      geo.badgeRadius),
+                                              borderSide: BorderSide(
+                                                color: tokens.chromeBorder
+                                                    .withValues(alpha: 0.30),
+                                                width: 0.8,
+                                              ),
+                                            ),
+                                            enabledBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                      geo.badgeRadius),
+                                              borderSide: BorderSide(
+                                                color: tokens.chromeBorder
+                                                    .withValues(alpha: 0.30),
+                                                width: 0.8,
+                                              ),
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                      geo.badgeRadius),
+                                              borderSide: BorderSide(
+                                                color: tokens.accentBright
+                                                    .withValues(alpha: 0.50),
+                                                width: 0.8,
+                                              ),
+                                            ),
+                                          ),
+                                          onSubmitted: (_) => _submitTag(),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              ),
+                              ),
+                          )
+                        else
+                          const Spacer(),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (!widget.hideAi) ...[
+                              if (widget.onToggleShape != null) ...[
+                                _CommitAiToolbarBtn(
+                                  tokens: tokens,
+                                  enabled:
+                                      widget.shapeEnabled || widget.shapeMode,
+                                  loading: widget.shapeLoading,
+                                  success: widget.shapeMode,
+                                  tooltip: widget.shapeTooltip,
+                                  hasText: hasText,
+                                  fieldRadius: effectiveRadius,
+                                  iconKind: _AiToolbarIconKind.shape,
+                                  onTap: widget.onToggleShape!,
+                                ),
+                                const SizedBox(width: 4),
+                              ],
+                              _CommitAiToolbarBtn(
+                                tokens: tokens,
+                                enabled: widget.museEnabled,
+                                loading: widget.museLoading,
+                                success: widget.museSuccess,
+                                unread: widget.museUnread,
+                                tooltip: widget.museTooltip,
+                                hasText: hasText,
+                                fieldRadius: effectiveRadius,
+                                iconKind: _AiToolbarIconKind.oracle,
+                                onTap: widget.onMuse,
+                              ),
+                              const SizedBox(width: 4),
+                              _CommitAiToolbarBtn(
+                                tokens: tokens,
+                                enabled: widget.reviewEnabled,
+                                loading: widget.reviewLoading,
+                                success: widget.reviewSuccess,
+                                unread: widget.reviewUnread,
+                                verdict: widget.reviewVerdict,
+                                tooltip: widget.reviewTooltip,
+                                hasText: hasText,
+                                fieldRadius: effectiveRadius,
+                                iconKind: _AiToolbarIconKind.search,
+                                onTap: widget.onReview,
+                              ),
+                              const SizedBox(width: 4),
+                              _CommitAiToolbarBtn(
+                                tokens: tokens,
+                                enabled: widget.aiEnabled,
+                                loading: widget.aiLoading,
+                                success: widget.aiSuccess,
+                                unread: widget.aiUnread,
+                                tooltip: widget.aiTooltip,
+                                hasText: hasText,
+                                fieldRadius: effectiveRadius,
+                                iconKind: _AiToolbarIconKind.sparkle,
+                                onTap: widget.onGenerate,
+                              ),
+                            ],
                           ],
-                          _CommitAiToolbarBtn(
-                            tokens: tokens,
-                            enabled: widget.museEnabled,
-                            loading: widget.museLoading,
-                            success: widget.museSuccess,
-                            unread: widget.museUnread,
-                            tooltip: widget.museTooltip,
-                            hasText: hasText,
-                            fieldRadius: effectiveRadius,
-                            iconKind: _AiToolbarIconKind.oracle,
-                            onTap: widget.onMuse,
-                          ),
-                          const SizedBox(width: 4),
-                          _CommitAiToolbarBtn(
-                            tokens: tokens,
-                            enabled: widget.reviewEnabled,
-                            loading: widget.reviewLoading,
-                            success: widget.reviewSuccess,
-                            unread: widget.reviewUnread,
-                            verdict: widget.reviewVerdict,
-                            tooltip: widget.reviewTooltip,
-                            hasText: hasText,
-                            fieldRadius: effectiveRadius,
-                            iconKind: _AiToolbarIconKind.search,
-                            onTap: widget.onReview,
-                          ),
-                          const SizedBox(width: 4),
-                          _CommitAiToolbarBtn(
-                            tokens: tokens,
-                            enabled: widget.aiEnabled,
-                            loading: widget.aiLoading,
-                            success: widget.aiSuccess,
-                            unread: widget.aiUnread,
-                            tooltip: widget.aiTooltip,
-                            hasText: hasText,
-                            fieldRadius: effectiveRadius,
-                            iconKind: _AiToolbarIconKind.sparkle,
-                            onTap: widget.onGenerate,
-                          ),
-                        ],
+                        ),
                       ],
                     ),
                   ),
@@ -11614,6 +12426,187 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
       },
     );
   }
+}
+
+class _CommitTagChip extends StatefulWidget {
+  final String label;
+  final AppTokens tokens;
+  final SurfaceMaterialShader shader;
+  final VoidCallback onRemove;
+  const _CommitTagChip({
+    required this.label,
+    required this.tokens,
+    required this.shader,
+    required this.onRemove,
+  });
+  @override
+  State<_CommitTagChip> createState() => _CommitTagChipState();
+}
+
+class _CommitTagChipState extends State<_CommitTagChip> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final s = widget.shader;
+    final r = s.geometry.badgeRadius;
+    final hue = _commitTagHue(widget.label);
+    final hsl = HSLColor.fromColor(t.accentBright);
+    final pillColor = hsl
+        .withHue(hue)
+        .withSaturation((hsl.saturation * 0.85).clamp(0.0, 1.0))
+        .toColor();
+    final textColor = hsl
+        .withHue(hue)
+        .withSaturation((hsl.saturation * 0.8).clamp(0.0, 1.0))
+        .withLightness(hsl.lightness > 0.5 ? 0.25 : 0.80)
+        .toColor();
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onRemove,
+        child: AnimatedContainer(
+          duration: context.motion(AppMotion.snap),
+          curve: s.safeCurve,
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+          decoration: BoxDecoration(
+            color: pillColor.withValues(alpha: _hovered ? 0.18 : 0.10),
+            borderRadius: BorderRadius.circular(r),
+            border: Border.all(
+              color: pillColor.withValues(alpha: _hovered ? 0.50 : 0.30),
+              width: 0.8,
+            ),
+            boxShadow: _hovered ? AppElev.row : null,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedDefaultTextStyle(
+                duration: context.motion(AppMotion.snap),
+                curve: s.safeCurve,
+                style: TextStyle(
+                  color: _hovered ? textColor : textColor.withValues(alpha: 0.90),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: AppFonts.mono,
+                  letterSpacing: 0.2,
+                ),
+                child: Text(widget.label),
+              ),
+              const SizedBox(width: 2),
+              AnimatedOpacity(
+                opacity: _hovered ? 0.70 : 0.0,
+                duration: context.motion(AppMotion.snap),
+                curve: s.safeCurve,
+                child: AnimatedScale(
+                  scale: _hovered ? 1.0 : 0.5,
+                  duration: context.motion(AppMotion.snap),
+                  curve: s.curve,
+                  child: Text(
+                    '×',
+                    style: TextStyle(
+                      color: pillColor,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: AppFonts.mono,
+                      height: 1.0,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CommitTagSuggestionChip extends StatefulWidget {
+  final String label;
+  final AppTokens tokens;
+  final SurfaceMaterialShader shader;
+  final VoidCallback onTap;
+  const _CommitTagSuggestionChip({
+    required this.label,
+    required this.tokens,
+    required this.shader,
+    required this.onTap,
+  });
+  @override
+  State<_CommitTagSuggestionChip> createState() =>
+      _CommitTagSuggestionChipState();
+}
+
+class _CommitTagSuggestionChipState extends State<_CommitTagSuggestionChip> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final s = widget.shader;
+    final r = s.geometry.badgeRadius;
+    final hue = _commitTagHue(widget.label);
+    final hsl = HSLColor.fromColor(t.accentBright);
+    final pillColor = hsl
+        .withHue(hue)
+        .withSaturation((hsl.saturation * 0.6).clamp(0.0, 1.0))
+        .toColor();
+    final textColor = hsl
+        .withHue(hue)
+        .withSaturation((hsl.saturation * 0.7).clamp(0.0, 1.0))
+        .withLightness(hsl.lightness > 0.5 ? 0.30 : 0.75)
+        .toColor();
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: context.motion(AppMotion.snap),
+          curve: s.safeCurve,
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+          decoration: BoxDecoration(
+            color: pillColor.withValues(alpha: _hovered ? 0.38 : 0.12),
+            borderRadius: BorderRadius.circular(r),
+            border: Border.all(
+              color: pillColor.withValues(alpha: _hovered ? 0.70 : 0.28),
+              width: 0.6,
+            ),
+            boxShadow: _hovered ? AppElev.row : null,
+          ),
+          child: AnimatedDefaultTextStyle(
+            duration: context.motion(AppMotion.snap),
+            curve: s.safeCurve,
+            style: TextStyle(
+              color: _hovered ? textColor : textColor.withValues(alpha: 0.85),
+              fontSize: 9,
+              fontWeight: FontWeight.w500,
+              fontFamily: AppFonts.mono,
+              fontStyle: FontStyle.italic,
+              letterSpacing: 0.2,
+            ),
+            child: Text(widget.label),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+double _commitTagHue(String label) {
+  var hash = 0x811c9dc5;
+  for (final cu in label.toLowerCase().codeUnits) {
+    hash ^= cu;
+    hash = (hash * 0x01000193) & 0xffffffff;
+  }
+  return (hash % 360).toDouble();
 }
 
 enum _AiToolbarIconKind { search, sparkle, shape, oracle }
@@ -12312,8 +13305,13 @@ class _CouplingNudgeChipState extends State<_CouplingNudgeChip> {
 class _PanelDivider extends StatefulWidget {
   final AppTokens tokens;
   final ValueChanged<double> onDrag;
+  final VoidCallback? onDragEnd;
 
-  const _PanelDivider({required this.tokens, required this.onDrag});
+  const _PanelDivider({
+    required this.tokens,
+    required this.onDrag,
+    this.onDragEnd,
+  });
 
   @override
   State<_PanelDivider> createState() => _PanelDividerState();
@@ -12337,7 +13335,10 @@ class _PanelDividerState extends State<_PanelDivider> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanStart: (_) => setState(() => _dragging = true),
-        onPanEnd: (_) => setState(() => _dragging = false),
+        onPanEnd: (_) {
+          setState(() => _dragging = false);
+          widget.onDragEnd?.call();
+        },
         onPanCancel: () => setState(() => _dragging = false),
         onPanUpdate: (details) => widget.onDrag(details.delta.dx),
         child: SizedBox(

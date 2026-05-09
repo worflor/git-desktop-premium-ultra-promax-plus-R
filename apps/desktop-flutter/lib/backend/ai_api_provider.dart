@@ -22,12 +22,14 @@ class AiApiRequest {
   final AiApiCredentials credentials;
   final double temperature;
   final int? maxTokens;
+  final String? reasoningEffort;
   const AiApiRequest({
     required this.prompt,
     required this.model,
     required this.credentials,
     this.temperature = 0.3,
     this.maxTokens,
+    this.reasoningEffort,
   });
 }
 
@@ -50,19 +52,24 @@ class AiApiModel {
   final String? description;
   final double? promptPricePerToken;
   final double? completionPricePerToken;
+  final Set<String> supportedParameters;
   const AiApiModel({
     required this.id,
     this.displayName,
     this.description,
     this.promptPricePerToken,
     this.completionPricePerToken,
+    this.supportedParameters = const {},
   });
+
+  bool get supportsReasoning => supportedParameters.contains('reasoning');
 }
 
 abstract class AiApiProvider {
   String get id;
   String get displayName;
   String get defaultBaseUrl;
+  bool get allModelsSupportReasoning => false;
 
   Future<AiApiResponse> complete(AiApiRequest request);
   Future<List<AiApiModel>> listModels(AiApiCredentials creds);
@@ -96,6 +103,9 @@ abstract class OpenAiCompatibleApiProvider extends AiApiProvider {
       ],
       'temperature': request.temperature,
     };
+    if (request.reasoningEffort != null) {
+      body['reasoning_effort'] = request.reasoningEffort;
+    }
     if (request.maxTokens != null) {
       body['max_tokens'] = request.maxTokens;
     }
@@ -135,12 +145,17 @@ abstract class OpenAiCompatibleApiProvider extends AiApiProvider {
           promptPrice = _parsePrice(pricing['prompt']);
           completionPrice = _parsePrice(pricing['completion']);
         }
+        final rawParams = entry['supported_parameters'];
+        final params = rawParams is List
+            ? {for (final p in rawParams) if (p is String) p}
+            : const <String>{};
         models.add(AiApiModel(
           id: entryId,
           displayName: entry['name'] as String?,
           description: entry['description'] as String?,
           promptPricePerToken: promptPrice,
           completionPricePerToken: completionPrice,
+          supportedParameters: params,
         ));
       }
       return models;
@@ -307,6 +322,25 @@ class XaiApiProvider extends OpenAiCompatibleApiProvider {
 // Anthropic — different request/response format
 // ---------------------------------------------------------------------------
 
+const double _phi = 1.6180339887498949;
+
+/// Universal effort fraction: maps named effort levels to [0, 1]
+/// on the golden-ratio power scale. Every provider's reasoning
+/// mechanism maps through this — codex/claude use the string name,
+/// OpenAI-compatible uses the fraction as reasoning_effort, and
+/// Anthropic converts to thinking budget tokens.
+double? effortFraction(String? effort) => switch (effort) {
+      'low' => 1.0 / (_phi * _phi * _phi),  // ≈ 0.236
+      'medium' => 1.0 / (_phi * _phi),       // ≈ 0.382
+      'high' => 1.0 / _phi,                  // ≈ 0.618
+      'xhigh' || 'max' => 1.0,
+      _ => null,
+    };
+
+/// Canonical effort levels ordered low→max. The UI slider indexes
+/// into this list; the backend looks up the fraction via [effortFraction].
+const List<String> effortLevels = ['low', 'medium', 'high', 'xhigh', 'max'];
+
 class AnthropicApiProvider extends AiApiProvider {
   @override
   String get id => 'anthropic';
@@ -314,18 +348,31 @@ class AnthropicApiProvider extends AiApiProvider {
   String get displayName => 'Anthropic';
   @override
   String get defaultBaseUrl => 'https://api.anthropic.com';
+  @override
+  bool get allModelsSupportReasoning => true;
 
   @override
   Future<AiApiResponse> complete(AiApiRequest request) async {
     final base = effectiveBaseUrl(request.credentials);
     final url = Uri.parse('$base/v1/messages');
+    final baseMaxTokens = request.maxTokens ?? 16384;
+    final fraction = effortFraction(request.reasoningEffort);
+    final thinkingBudget =
+        fraction != null ? (fraction * baseMaxTokens).round() : null;
     final body = <String, dynamic>{
       'model': request.model,
       'messages': [
         {'role': 'user', 'content': request.prompt},
       ],
-      'temperature': request.temperature,
-      'max_tokens': request.maxTokens ?? 16384,
+      'temperature': thinkingBudget != null ? 1.0 : request.temperature,
+      'max_tokens': thinkingBudget != null
+          ? thinkingBudget + baseMaxTokens
+          : baseMaxTokens,
+      if (thinkingBudget != null)
+        'thinking': {
+          'type': 'enabled',
+          'budget_tokens': thinkingBudget,
+        },
     };
 
     final client = HttpClient()..idleTimeout = const Duration(seconds: 5);

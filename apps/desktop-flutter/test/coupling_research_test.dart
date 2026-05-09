@@ -10,6 +10,9 @@ import 'dart:math' as math;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:git_desktop/backend/file_coupling.dart';
 import 'package:git_desktop/backend/logos_git_integrity.dart';
+import 'package:git_desktop/backend/shadow_history.dart';
+import 'package:git_desktop/backend/shadow_coupling.dart';
+import 'package:git_desktop/backend/spectral_constants.dart' as sc;
 
 const _handAuthored = <String, double>{
   'manifest↔lockfile': 0.80,
@@ -148,20 +151,92 @@ void main() {
     print('  ci-config↔source   ${calibrated.ciConfig.toStringAsFixed(3)}  (prior: 0.36)');
     print('  source↔doc         ${calibrated.sourceDoc.toStringAsFixed(3)}  (prior: 0.30)');
 
-    // transmissivity distribution
-    print('\n--- transmissivity by role (from _roleTransmissivity) ---');
-    print('  source         1.00');
-    print('  manifest       0.68');
-    print('  fixture        0.60');
-    print('  doc            0.55');
-    print('  test           0.38');
-    print('  migration      0.36');
-    print('  generated      0.30');
-    print('  ci-config      0.26');
-    print('  lockfile       0.20');
+    // shadow history discovery
+    print('\n=== SHADOW HISTORY (counterfactual dreaming) ===');
+    final shadows = await discoverShadowHistory(effectivePath);
+    print('shadow commits: ${shadows.commits.length}');
+    final typeCounts = <String, int>{};
+    for (final c in shadows.commits) {
+      typeCounts[c.type.name] = (typeCounts[c.type.name] ?? 0) + 1;
+    }
+    for (final e in typeCounts.entries) {
+      print('  ${e.key.padRight(20)} ${e.value}');
+    }
 
-    // always pass — this is research output, not assertion
-    expect(true, isTrue);
+    if (shadows.commits.isNotEmpty) {
+      final shadowMatrix = computeShadowCoupling(shadows);
+      if (shadowMatrix != null) {
+        print('shadow coupling pairs: ${shadowMatrix.paths.length} files');
+
+        // ghost couplings: pairs with shadow co-change but no real co-change
+        final ghosts = <({String a, String b, double score})>[];
+        for (final a in shadowMatrix.paths) {
+          for (final entry in shadowMatrix.jaccardEntriesOf(a)) {
+            if (matrix.jaccardScoreOf(a, entry.key) > 0) continue;
+            ghosts.add((a: a, b: entry.key, score: entry.value));
+          }
+        }
+        ghosts.sort((x, y) => y.score.compareTo(x.score));
+        print('\ntop ghost couplings (shadow-only, no real co-change):');
+        for (final g in ghosts.take(15)) {
+          print('  ${g.score.toStringAsFixed(3)}  ${g.a} ↔ ${g.b}');
+        }
+
+        // blended calibration
+        final blended = calibrateCouplingConstants(
+          paths,
+          (a, b) => matrix.jaccardScoreOf(a, b),
+          jaccardEdges: (p) sync* {
+            final seen = <String>{};
+            for (final e in matrix.jaccardEntriesOf(p)) {
+              seen.add(e.key);
+              yield e;
+            }
+            for (final e in shadowMatrix.jaccardEntriesOf(p)) {
+              if (seen.contains(e.key)) continue;
+              yield MapEntry(e.key, e.value * sc.gasPhase);
+            }
+          },
+        );
+        print('\n=== BLENDED CALIBRATION (real + shadow) ===');
+        print('  manifest↔lockfile  ${blended.manifestLockfile.toStringAsFixed(3)}  (real-only: ${calibrated.manifestLockfile.toStringAsFixed(3)})');
+        print('  source↔generated   ${blended.sourceGenerated.toStringAsFixed(3)}  (real-only: ${calibrated.sourceGenerated.toStringAsFixed(3)})');
+        print('  source↔test        ${blended.sourceTest.toStringAsFixed(3)}  (real-only: ${calibrated.sourceTest.toStringAsFixed(3)})');
+        print('  source↔doc         ${blended.sourceDoc.toStringAsFixed(3)}  (real-only: ${calibrated.sourceDoc.toStringAsFixed(3)})');
+      }
+    }
+
+    // --- regression assertions: pin derived constants ---
+    // These verify the physics-derived constants haven't drifted.
+    expect(sc.phi, closeTo(1.618, 0.001));
+    expect(sc.gasPhase, closeTo(1.0 / 2.71828, 0.001));
+    expect(sc.phiDecay1, closeTo(0.618, 0.001));
+    expect(sc.phiDecay2, closeTo(0.382, 0.001));
+    expect(sc.phiDecay3, closeTo(0.236, 0.001));
+    expect(sc.kCcEvidenceSquare, equals(16.0));
+
+    // Pin integrity engine constants derived from spectral_constants.
+    // knee = phiDecay2 ≈ 0.382, rate = -ln(1-0.85)/(1-0.382) ≈ 3.069
+    expect(kNeutralIntegrity, equals(0.85));
+    final expectedKnee = sc.phiDecay2;
+    final expectedRate =
+        -math.log(1.0 - kNeutralIntegrity) / (1.0 - expectedKnee);
+    expect(expectedKnee, closeTo(0.382, 0.001));
+    expect(expectedRate, closeTo(3.069, 0.01));
+    // Full-disparity ritual cap: exp(-rate * (1 - knee)) ≈ 0.15
+    final fullDisparityCap =
+        math.exp(-expectedRate * (1.0 - expectedKnee));
+    expect(fullDisparityCap, closeTo(0.15, 0.01));
+    // Prior weight = kCcEvidenceSquare = 16 → 50/50 at 16 samples
+    expect(sc.kCcEvidenceSquare, equals(16.0));
+
+    // Pin calibrated constants: verify they're within [0, 1] and
+    // the prior-dominated values haven't collapsed to zero.
+    expect(calibrated.sourceTest, greaterThan(0.1));
+    expect(calibrated.sourceTest, lessThanOrEqualTo(1.0));
+    expect(calibrated.sourceDoc, greaterThan(0.1));
+    expect(calibrated.sourceDoc, lessThanOrEqualTo(1.0));
+    expect(calibrated.manifestLockfile, greaterThan(0.5));
   }, timeout: const Timeout(Duration(minutes: 2)));
 }
 

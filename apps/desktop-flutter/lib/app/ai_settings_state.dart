@@ -20,6 +20,7 @@ class AiSettingsState extends ChangeNotifier {
       const <AiProviderStatus>[];
   List<AiModelCategoryData> _runtimeModelCategoriesView =
       const <AiModelCategoryData>[];
+  Map<String, String> _reasoningEfforts = {};
   Map<String, String> _modelCategoryLabels = {
     'quality': 'Quality',
     'fast': 'Fast',
@@ -47,6 +48,7 @@ class AiSettingsState extends ChangeNotifier {
   bool get isLoaded => _loaded;
   AiApiKeysSnapshot get apiKeys => _apiKeys;
   Map<String, String> get modelSelections => _modelSelectionsView;
+  Map<String, String> get reasoningEfforts => _reasoningEfforts;
   Map<String, String> get modelCategoryLabels => _modelCategoryLabelsView;
   String get commitMessageModelCategoryId => _commitMessageModelCategoryId;
   String get commitMessagePrompt => _commitMessagePrompt;
@@ -100,6 +102,7 @@ class AiSettingsState extends ChangeNotifier {
 
     final snapshot = await snapshotFuture;
     _modelSelections = Map<String, String>.from(snapshot.modelSelections);
+    _reasoningEfforts = Map<String, String>.from(snapshot.reasoningEfforts);
     _modelCategoryLabels = {
       'quality': 'Quality',
       'fast': 'Fast',
@@ -383,6 +386,56 @@ class AiSettingsState extends ChangeNotifier {
     }
   }
 
+  String? reasoningEffortFor(String key) => _reasoningEfforts[key];
+
+  ({String? effort, bool fast}) resolveEffort(
+      String categoryId, String modelValue) {
+    final effort = _reasoningEfforts['$categoryId:$modelValue'];
+    final fast = _reasoningEfforts['fast:$categoryId:$modelValue'] == 'fast';
+    return (effort: effort, fast: fast);
+  }
+
+  Future<void> setReasoningEffort(String key, String? effort) async {
+    if (effort == null || effort.isEmpty) {
+      if (!_reasoningEfforts.containsKey(key)) return;
+      _reasoningEfforts = Map.of(_reasoningEfforts)..remove(key);
+    } else {
+      if (_reasoningEfforts[key] == effort) return;
+      _reasoningEfforts = {..._reasoningEfforts, key: effort};
+    }
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> setReasoningEffortForCategory(
+      String categoryId, String effort) async {
+    final modelValue = _modelSelections[categoryId] ?? '';
+    if (modelValue.isEmpty) return;
+    final key = '$categoryId:$modelValue';
+    if (_reasoningEfforts[key] == effort) return;
+    _reasoningEfforts = {..._reasoningEfforts, key: effort};
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
+  Future<void> setReasoningEffortGlobal(String effort) async {
+    var changed = false;
+    final next = Map.of(_reasoningEfforts);
+    for (final cat in _runtimeModelCategories) {
+      final modelValue = _modelSelections[cat.id] ?? '';
+      if (modelValue.isEmpty) continue;
+      final key = '${cat.id}:$modelValue';
+      if (next[key] != effort) {
+        next[key] = effort;
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    _reasoningEfforts = next;
+    await _persistSnapshot();
+    notifyListeners();
+  }
+
   Future<void> setApiKey(
     String providerId,
     String apiKey, {
@@ -409,6 +462,7 @@ class AiSettingsState extends ChangeNotifier {
       AiSettingsSnapshot(
         modelSelections: _modelSelections,
         modelCategoryLabels: _modelCategoryLabels,
+        reasoningEfforts: _reasoningEfforts,
         commitMessageModelCategoryId: _commitMessageModelCategoryId,
         reviewCommitModelCategoryId: _reviewCommitModelCategoryId,
         reviewCommitDoubleCheckEnabled: _reviewCommitDoubleCheckEnabled,

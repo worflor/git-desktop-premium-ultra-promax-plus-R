@@ -50,6 +50,7 @@ class PreferencesState extends ChangeNotifier {
   CommitCoverage _commitCoverage = kDefaultCommitCoverage;
   double _logosPadX = 0.5;
   double _logosPadY = 0.5;
+  int _changesPanelWidthPx = 320;
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
@@ -96,6 +97,7 @@ class PreferencesState extends ChangeNotifier {
   CommitCoverage get commitCoverage => _commitCoverage;
   double get logosPadX => _logosPadX;
   double get logosPadY => _logosPadY;
+  int get changesPanelWidthPx => _changesPanelWidthPx;
 
   Future<void> load() async {
     if (_loaded) {
@@ -133,6 +135,7 @@ class PreferencesState extends ChangeNotifier {
     _commitCoverage = commitCoverageFromKey(settings.commitCoverage);
     _logosPadX = settings.logosPadX;
     _logosPadY = settings.logosPadY;
+    _changesPanelWidthPx = settings.changesPanelWidthPx;
     _loaded = true;
     notifyListeners();
   }
@@ -165,6 +168,7 @@ class PreferencesState extends ChangeNotifier {
     String? commitCoverage,
     double? logosPadX,
     double? logosPadY,
+    int? changesPanelWidthPx,
   }) async {
     final s = await SettingsStore.load();
     await SettingsStore.persist(
@@ -193,8 +197,17 @@ class PreferencesState extends ChangeNotifier {
         commitCoverage: commitCoverage,
         logosPadX: logosPadX,
         logosPadY: logosPadY,
+        changesPanelWidthPx: changesPanelWidthPx,
       ),
     );
+  }
+
+  Future<void> setChangesPanelWidth(int px) async {
+    final clamped = px.clamp(220, 520);
+    if (_changesPanelWidthPx == clamped) return;
+    _changesPanelWidthPx = clamped;
+    notifyListeners();
+    await _persistWith(changesPanelWidthPx: clamped);
   }
 
   /// Write the pad's XY position. Drag updates can fire many times per

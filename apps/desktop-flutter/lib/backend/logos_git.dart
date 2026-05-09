@@ -87,6 +87,8 @@ import 'spectral_state.dart';
 import 'spectral_walks.dart';
 import 'logos_git_calibration.dart' show LogosAxis;
 import 'logos_git_integrity.dart';
+import 'shadow_history.dart' show ShadowType;
+import 'spectral_constants.dart' as sc;
 import 'lru_cache.dart';
 
 /// Internals re-exported for tests. Not stable API - the
@@ -530,7 +532,51 @@ const double _kTransportFloor = _kSignalFloor * 0.5;
 /// Integrity floor for transport edge weighting. Files with integrity
 /// below this still contribute transport signal at this minimum level
 /// so that newly-appeared files aren't invisible to transport lanes.
-const double _kTransportIntegrityFloor = 0.35;
+class GhostCoupling {
+  final String sourceFile;
+  final String targetFile;
+  final double ghostJaccard;
+  final double effectiveWeight;
+  const GhostCoupling({
+    required this.sourceFile,
+    required this.targetFile,
+    required this.ghostJaccard,
+    required this.effectiveWeight,
+  });
+}
+
+// Gas-phase evaporation (1/e) — the thermodynamic minimum for both
+// transport integrity and shadow evidence discount.
+final double _kTransportIntegrityFloor = sc.gasPhase;
+final double _kShadowDiscount = sc.gasPhase;
+
+// Corroboration bonus: when shadow evidence reinforces a real edge,
+// the real score gets a small additive lift scaled by the shadow's
+// discounted strength. Derived from the Born mixer's amplitude
+// addition: sqrt(p_real) + sqrt(p_shadow) → squared back.
+final double _kCorroborationLift = sc.gasPhase * sc.phiDecay3; // ≈ 0.087
+
+Iterable<MapEntry<String, double>> _blendedJaccardEdges(
+  FileCouplingMatrix real,
+  FileCouplingMatrix shadow,
+  String path,
+) sync* {
+  final seen = <String>{};
+  for (final entry in real.jaccardEntriesOf(path)) {
+    seen.add(entry.key);
+    final shadowScore = shadow.jaccardScoreOf(path, entry.key);
+    if (shadowScore > 0) {
+      final lift = shadowScore * _kCorroborationLift;
+      yield MapEntry(entry.key, (entry.value + lift).clamp(0.0, 1.0));
+    } else {
+      yield entry;
+    }
+  }
+  for (final entry in shadow.jaccardEntriesOf(path)) {
+    if (seen.contains(entry.key)) continue;
+    yield MapEntry(entry.key, entry.value * _kShadowDiscount);
+  }
+}
 
 /// Additive boost applied to a file's utility score for its
 /// high-frequency-spectral "surprise" signal — the portion of a
@@ -556,6 +602,8 @@ const double _utilityTransportPullWeight = 0.10;
 // THE ENGINE
 
 /// Raw per-file statistics the engine needs to construct its axes.
+const Object _sentinel = Object();
+
 class LogosGitStats {
   final Map<String, int> touches;
   final int totalCommits;
@@ -616,7 +664,58 @@ class LogosGitStats {
     this.forge = 'unknown',
     this.reviewedCommits = const {},
     this.reviewersByPath = const {},
+    this.shadowCoupling,
   });
+
+  final FileCouplingMatrix? shadowCoupling;
+
+  LogosGitStats copyWith({
+    Map<String, int>? touches,
+    int? totalCommits,
+    Map<String, double>? volatility,
+    double? volMean,
+    double? volStddev,
+    FileCouplingMatrix? coupling,
+    Map<String, List<int>>? perFileCommitIndices,
+    Map<String, int>? rawTouches,
+    int? rawTotalCommits,
+    Map<String, double>? touchMass,
+    double? semanticCommitMass,
+    Map<String, List<double>>? perFileCommitClock,
+    Map<String, double>? ritualnessByPath,
+    Map<String, double>? integrityByPath,
+    Map<String, List<String>>? integrityReasonsByPath,
+    Map<String, List<LogosCommitHyperedge>>? hyperedgesByPath,
+    String? forge,
+    Map<String, Set<String>>? reviewedCommits,
+    Map<String, Set<String>>? reviewersByPath,
+    Object? shadowCoupling = _sentinel,
+  }) =>
+      LogosGitStats(
+        touches: touches ?? this.touches,
+        totalCommits: totalCommits ?? this.totalCommits,
+        volatility: volatility ?? this.volatility,
+        volMean: volMean ?? this.volMean,
+        volStddev: volStddev ?? this.volStddev,
+        coupling: coupling ?? this.coupling,
+        perFileCommitIndices: perFileCommitIndices ?? this.perFileCommitIndices,
+        rawTouches: rawTouches ?? this.rawTouches,
+        rawTotalCommits: rawTotalCommits ?? this.rawTotalCommits,
+        touchMass: touchMass ?? this.touchMass,
+        semanticCommitMass: semanticCommitMass ?? this.semanticCommitMass,
+        perFileCommitClock: perFileCommitClock ?? this.perFileCommitClock,
+        ritualnessByPath: ritualnessByPath ?? this.ritualnessByPath,
+        integrityByPath: integrityByPath ?? this.integrityByPath,
+        integrityReasonsByPath:
+            integrityReasonsByPath ?? this.integrityReasonsByPath,
+        hyperedgesByPath: hyperedgesByPath ?? this.hyperedgesByPath,
+        forge: forge ?? this.forge,
+        reviewedCommits: reviewedCommits ?? this.reviewedCommits,
+        reviewersByPath: reviewersByPath ?? this.reviewersByPath,
+        shadowCoupling: identical(shadowCoupling, _sentinel)
+            ? this.shadowCoupling
+            : shadowCoupling as FileCouplingMatrix?,
+      );
 }
 
 /// Relevance score produced by diffusion. `phi` is the raw heat-kernel
@@ -2173,10 +2272,13 @@ class LogosGit {
     }
     tick('indexes');
 
+    final shadow = stats.shadowCoupling;
     final couplingConstants = calibrateCouplingConstants(
       nodePaths,
       (a, b) => stats.coupling.jaccardScoreOf(a, b),
-      jaccardEdges: (p) => stats.coupling.jaccardEntriesOf(p),
+      jaccardEdges: shadow == null
+          ? (p) => stats.coupling.jaccardEntriesOf(p)
+          : (p) => _blendedJaccardEdges(stats.coupling, shadow, p),
     );
     tick('coupling-calibration');
 
@@ -2573,6 +2675,76 @@ class LogosGit {
   /// function used inside [buildFromStats] so external callers (PR
   /// shape, X-ray, etc.) can interpret the same per-file rhythm
   /// signal without re-deriving it.
+  List<GhostCoupling> ghostCouplings({
+    double minScore = 0.05,
+    int limit = 50,
+  }) {
+    final shadow = stats.shadowCoupling;
+    if (shadow == null) return const [];
+    final results = <GhostCoupling>[];
+    for (final path in shadow.paths) {
+      for (final entry in shadow.jaccardEntriesOf(path)) {
+        if (entry.value < minScore) continue;
+        if (stats.coupling.jaccardScoreOf(path, entry.key) > 0) continue;
+        results.add(GhostCoupling(
+          sourceFile: path,
+          targetFile: entry.key,
+          ghostJaccard: entry.value,
+          effectiveWeight: entry.value * _kShadowDiscount,
+        ));
+      }
+    }
+    results.sort((a, b) => b.ghostJaccard.compareTo(a.ghostJaccard));
+    return results.length > limit ? results.sublist(0, limit) : results;
+  }
+
+  /// Déjà vu score: how much of the diff's coupling topology overlaps
+  /// with previously-rejected shadow topologies. Returns a value in
+  /// [0, 1] where 0 = no overlap with ghost history, 1 = perfect
+  /// reproduction of a discarded coupling pattern.
+  double dejaVuScore(Set<String> diffPaths) {
+    final shadow = stats.shadowCoupling;
+    if (shadow == null || diffPaths.length < 2) return 0.0;
+    var ghostHits = 0;
+    var possiblePairs = 0;
+    final paths = diffPaths.toList();
+    for (var i = 0; i < paths.length; i++) {
+      for (var j = i + 1; j < paths.length; j++) {
+        final ghostScore = shadow.jaccardScoreOf(paths[i], paths[j]);
+        if (ghostScore <= 0) continue;
+        possiblePairs++;
+        final realScore = stats.coupling.jaccardScoreOf(paths[i], paths[j]);
+        if (realScore <= 0) ghostHits++;
+      }
+    }
+    if (possiblePairs == 0) return 0.0;
+    return ghostHits / possiblePairs;
+  }
+
+  /// Ghost edges that touch the given diff paths — the subset of ghost
+  /// couplings relevant to a specific change, ranked by strength.
+  List<GhostCoupling> ghostsForDiff(Set<String> diffPaths, {int limit = 10}) {
+    final shadow = stats.shadowCoupling;
+    if (shadow == null) return const [];
+    final results = <GhostCoupling>[];
+    final paths = diffPaths.toList();
+    for (var i = 0; i < paths.length; i++) {
+      for (var j = i + 1; j < paths.length; j++) {
+        final score = shadow.jaccardScoreOf(paths[i], paths[j]);
+        if (score <= 0) continue;
+        if (stats.coupling.jaccardScoreOf(paths[i], paths[j]) > 0) continue;
+        results.add(GhostCoupling(
+          sourceFile: paths[i],
+          targetFile: paths[j],
+          ghostJaccard: score,
+          effectiveWeight: score * _kShadowDiscount,
+        ));
+      }
+    }
+    results.sort((a, b) => b.ghostJaccard.compareTo(a.ghostJaccard));
+    return results.length > limit ? results.sublist(0, limit) : results;
+  }
+
   double curvature(String path) {
     final fit = perFileMetrics[path];
     if (fit == null) return 1.0;
@@ -4185,6 +4357,28 @@ class LogosGit {
       if (!seenTransportKeys.add(key)) continue;
       witnesses.add(witness);
       if (seenTransportKeys.length >= 2) break;
+    }
+
+    final shadow = stats.shadowCoupling;
+    if (shadow != null) {
+      for (final source in focusPaths) {
+        if (source == path) continue;
+        final ghostScore = shadow.jaccardScoreOf(source, path);
+        if (ghostScore <= _kSignalFloor) continue;
+        final realScore = stats.coupling.jaccardScoreOf(source, path);
+        witnesses.add(LogosEvidenceWitness(
+          kind: LogosWitnessKind.ambient,
+          label: realScore > 0 ? 'shadow-corroboration' : 'déjà-vu',
+          strength: ghostScore * _kShadowDiscount,
+          sourcePaths: [source],
+          sourcePath: source,
+          targetPath: path,
+          note: realScore > 0
+              ? 'shadow evidence reinforces real co-change'
+              : 'this coupling existed in a discarded timeline',
+        ));
+        break;
+      }
     }
 
     if (hyperedge != null && higherOrderLift > 0.0) {

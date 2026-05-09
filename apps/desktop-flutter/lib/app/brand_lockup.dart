@@ -6,28 +6,26 @@ import 'window_activity.dart';
 import '../components/hypercube_logo.dart';
 import '../ui/tokens.dart';
 
-class BrandLockup extends StatelessWidget {
+class BrandLockup extends StatefulWidget {
   const BrandLockup({super.key});
+
+  @override
+  State<BrandLockup> createState() => _BrandLockupState();
+}
+
+class _BrandLockupState extends State<BrandLockup> with WindowAwakeMixin {
+  @override
+  void onWindowAwakeChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final identity = context.appIdentity;
-    // Escape hatch from the root TickerMode mute when the user has the
-    // "Logo animates when tabbed out" preference ON. The root gate is
-    // a blanket GPU saver for decorative animations; the hypercube is
-    // the one animation a user can explicitly opt to keep running while
-    // blurred. Nested TickerMode takes precedence for its subtree, so
-    // this flips the logo's ticker back on even if the outer mute is
-    // off. When the window is focused, both are on and this is a no-op.
     final animateUnfocused = context.select<PreferencesState, bool>(
       (p) => p.logoAnimatesWhenUnfocused,
     );
-    // Re-read awake only to decide whether we need the override at all.
-    // context.watch on WindowActivity would be ideal, but it's a
-    // ChangeNotifier singleton outside Provider; the root mute already
-    // subscribes and rebuilds its subtree, so our build runs when awake
-    // flips.
     final awake = WindowActivity.instance.awake;
     return TickerMode(
       enabled: awake || animateUnfocused,

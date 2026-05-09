@@ -928,6 +928,8 @@ class AiModelOptionData {
   final String description;
   final double? promptPricePer1m;
   final double? completionPricePer1m;
+  final bool supportsReasoning;
+  final bool hasFastTier;
 
   const AiModelOptionData({
     required this.value,
@@ -939,6 +941,8 @@ class AiModelOptionData {
     required this.description,
     this.promptPricePer1m,
     this.completionPricePer1m,
+    this.supportsReasoning = false,
+    this.hasFastTier = false,
   });
 
   bool get hasPricing =>
@@ -956,6 +960,8 @@ class AiModelOptionData {
         promptPricePer1m: (j['prompt_price_per_1m'] as num?)?.toDouble(),
         completionPricePer1m:
             (j['completion_price_per_1m'] as num?)?.toDouble(),
+        supportsReasoning: j['supports_reasoning'] == true,
+        hasFastTier: j['has_fast_tier'] == true,
       );
 }
 

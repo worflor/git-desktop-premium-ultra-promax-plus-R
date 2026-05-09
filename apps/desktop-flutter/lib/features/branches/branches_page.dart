@@ -3818,12 +3818,17 @@ class _BranchesPageState extends State<BranchesPage> {
       barrierDismissible: false,
       builder: (ctx) => const _AiReviewProgressDialog(),
     );
+    final prEffort =
+        aiSettings.resolveEffort(selectedCategory.id, selectedModel.value);
     final result = await reviewCommit(
       repositoryPath: repoPath,
       modelValue: selectedModel.value,
       modelCategoryLabel: aiSettings.labelForCategory(
           selectedCategory.id, selectedCategory.label),
       scopeLabel: 'PR #${pr.number}: ${pr.title}',
+      reasoningEffort: prEffort.effort,
+      fastMode: prEffort.fast,
+      supportsReasoning: selectedModel.supportsReasoning,
       includeStaged: false,
       includeUnstaged: false,
       scopedPaths: detail.files.map((f) => f.path).toList(),

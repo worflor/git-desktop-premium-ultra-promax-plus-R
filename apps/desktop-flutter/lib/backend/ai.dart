@@ -308,6 +308,8 @@ Future<GitResult<AiModelOptionListData>> listAiModelOptions({
           models: discovery.models,
           modelDetails: discovery.modelDetails,
           modelPricing: discovery.modelPricing,
+          reasoningModels: discovery.reasoningModels,
+          fastModels: discovery.fastModels,
         );
       }),
     );
@@ -369,6 +371,8 @@ Future<GitResult<AiModelOptionListData>> listAiModelOptions({
               ),
               promptPricePer1m: price?.$1,
               completionPricePer1m: price?.$2,
+              supportsReasoning: provider.reasoningModels.contains(key),
+              hasFastTier: provider.fastModels.contains(key),
             ),
           );
         }
@@ -395,6 +399,9 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
   required String modelValue,
   required String modelCategoryLabel,
   required String scopeLabel,
+  String? reasoningEffort,
+  bool fastMode = false,
+  bool supportsReasoning = true,
   required bool includeStaged,
   required bool includeUnstaged,
   List<String> scopedPaths = const [],
@@ -478,81 +485,23 @@ Future<GitResult<AiCommitMessageData>> generateCommitMessage({
       logosShape: commitShape,
     );
 
-    if (provider.kind == _ProviderKind.geminiApi) {
-      final geminiModel = modelId.startsWith('gemini ')
-          ? modelId.substring('gemini '.length)
-          : modelId;
-      final apiResult = await _runGeminiApiRequest(prompt, geminiModel);
-      if (apiResult.text == null) {
-        return GitResult.err(
-            apiResult.error ?? 'Gemini API returned no response.');
-      }
-      final message = _normalizeCommitMessage(apiResult.text!);
-      if (message.isEmpty) {
-        return GitResult.err('Gemini API returned an empty commit message.');
-      }
-      return GitResult.ok(
-        AiCommitMessageData(
-          providerId: provider.id,
-          modelId: modelId,
-          message: message,
-          scopeLabel: scopeLabel,
-          promptCharacters: prompt.length,
-          diffCharacters: bundle.diffBundle.originalDiffCharacters,
-        ),
-      );
-    }
-
-    final attempts = _buildProviderAttempts(provider.kind, modelId,
-        readOnly: readOnly, resolvedCommand: availability.resolution!.command);
-    String? providerOutput;
-    String? lastError;
-    for (final attempt in attempts) {
-      final effectiveArgs =
-          attempt.useStdinForPrompt ? attempt.args : [...attempt.args, prompt];
-      final effectiveStdin = attempt.useStdinForPrompt ? prompt : null;
-      final result = await _runObservedProcess(
-        commandLabel: 'ai.${provider.id}.${attempt.name}',
-        scope: 'ai',
-        command: availability.resolution!.command,
-        args: effectiveArgs,
-        timeout: _providerRuntimeTimeout,
-        workingDirectory: repositoryPath,
-        stdinPayload: effectiveStdin,
-        environment: _providerEnvironment(provider.kind),
-      );
-
-      if (result == null) {
-        lastError = 'Provider command timed out.';
-        continue;
-      }
-
-      final formatted = _formatProviderOutput(
-        attempt.outputMode,
-        result.stdout,
-        result.stderr,
-      );
-      if (result.exitCode == 0 &&
-          formatted != null &&
-          formatted.trim().isNotEmpty &&
-          !_looksLikeProviderError(provider.kind, formatted)) {
-        providerOutput = formatted;
-        break;
-      }
-
-      lastError = formatted?.trim().isNotEmpty == true
-          ? _normalizeProviderError(provider.kind, formatted!)
-          : result.stderr.trim().isNotEmpty
-              ? _normalizeProviderError(provider.kind, result.stderr.trim())
-              : 'Provider exited with code ${result.exitCode}.';
-    }
-
-    if (providerOutput == null) {
+    final providerResult = await _runProviderPrompt(
+      provider: provider,
+      resolution: availability.resolution!,
+      modelId: modelId,
+      prompt: prompt,
+      repositoryPath: repositoryPath,
+      readOnly: readOnly,
+      reasoningEffort: reasoningEffort,
+      fastMode: fastMode,
+      supportsReasoning: supportsReasoning,
+    );
+    if (!providerResult.ok || providerResult.output == null) {
       return GitResult.err(
-          lastError ?? 'Provider did not return a commit message.');
+          providerResult.error ?? 'Provider did not return a commit message.');
     }
 
-    final message = _normalizeCommitMessage(providerOutput);
+    final message = _normalizeCommitMessage(providerResult.output!);
     if (message.isEmpty) {
       return GitResult.err('Provider returned an empty commit message.');
     }
@@ -707,6 +656,9 @@ Future<GitResult<String>> runAsk({
   required String repositoryPath,
   required String modelValue,
   required String prompt,
+  String? reasoningEffort,
+  bool fastMode = false,
+  bool supportsReasoning = true,
   String commandLabelPrefix = 'ai.ask',
 }) async {
   try {
@@ -733,6 +685,9 @@ Future<GitResult<String>> runAsk({
       modelId: modelId,
       prompt: prompt,
       repositoryPath: repositoryPath,
+      reasoningEffort: reasoningEffort,
+      fastMode: fastMode,
+      supportsReasoning: supportsReasoning,
     );
     if (!result.ok || result.output == null) {
       return GitResult.err(result.error ?? 'Provider returned no answer.');
@@ -924,28 +879,20 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
   required String scopeLabel,
   required bool includeStaged,
   required bool includeUnstaged,
+  String? reasoningEffort,
+  bool fastMode = false,
+  bool supportsReasoning = true,
   List<String> scopedPaths = const [],
   String customPrompt = '',
   String commitDraft = '',
   required int guardrailStage,
   bool doubleCheckEnabled = false,
   bool readOnly = true,
-  // PR-review pass-through. When non-empty, the reviewer takes this
-  // raw unified-diff instead of deriving one from the working tree —
-  // lets the Branches page run a full AI review on a PR without
-  // checking it out. [diffBranchName] labels the prompt's branch
-  // header for the reviewer's sense of "which branch am I reading".
   String rawDiffOverride = '',
   String diffBranchName = '',
-  // Semantic priors for the manifest above the packed diff. Pass from
-  // the app layer's SymbolFrequencyState / FileCouplingState.
   SymbolFrequencyIndex? symbolIndex,
   FileCouplingMatrix? couplingMatrix,
 }) {
-  // Wrap the whole review pipeline in a LogosVis session so every
-  // downstream emitter (resolver, diffusion, hunk ranker) publishes
-  // events tagged with a session id the loading canvas subscribes to.
-  // Zone-based — no parameter threading required in the pipeline.
   return LogosVisBus.instance.runInSession<GitResult<AiCommitReviewData>>(
       (sessionId) => _reviewCommitImpl(
             repositoryPath: repositoryPath,
@@ -964,6 +911,9 @@ Future<GitResult<AiCommitReviewData>> reviewCommit({
             diffBranchName: diffBranchName,
             symbolIndex: symbolIndex,
             couplingMatrix: couplingMatrix,
+            reasoningEffort: reasoningEffort,
+            fastMode: fastMode,
+            supportsReasoning: supportsReasoning,
           ));
 }
 
@@ -984,6 +934,9 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
   required String diffBranchName,
   required SymbolFrequencyIndex? symbolIndex,
   required FileCouplingMatrix? couplingMatrix,
+  String? reasoningEffort,
+  bool fastMode = false,
+  bool supportsReasoning = true,
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
@@ -1058,11 +1011,10 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       prompt: draftPrompt,
       repositoryPath: repositoryPath,
       readOnly: readOnly,
+      reasoningEffort: reasoningEffort,
+      fastMode: fastMode,
+      supportsReasoning: supportsReasoning,
     );
-    // Completion (success or error). Canvas fades out; the review
-    // body takes over. Emitted here rather than at every return site
-    // so a parse failure (below) or a double-check pass still reports
-    // the first completion — the pipeline's pure-logos work is done.
     LogosVisBus.instance.emitInSession(
       (sid) => LogosVisComplete(sid),
     );
@@ -1141,6 +1093,9 @@ Future<GitResult<AiCommitReviewData>> _reviewCommitImpl({
       prompt: verifyPrompt,
       repositoryPath: repositoryPath,
       readOnly: readOnly,
+      reasoningEffort: reasoningEffort,
+      fastMode: fastMode,
+      supportsReasoning: supportsReasoning,
     );
     await _recordReviewAudit(
       event: 'review_commit_verify',
@@ -1632,6 +1587,9 @@ Future<List<_BrainstormIdea>> _runBrainstormPhase({
   required String branchName,
   required MuseGuardrailProfile profile,
   required bool readOnly,
+  String? reasoningEffort,
+  bool fastMode = false,
+  bool supportsReasoning = true,
 }) async {
   final buf = StringBuffer();
   buf.writeln('You take the first seat of the muse pipeline: the '
@@ -1724,6 +1682,9 @@ Future<List<_BrainstormIdea>> _runBrainstormPhase({
     prompt: buf.toString(),
     repositoryPath: repositoryPath,
     readOnly: readOnly,
+    reasoningEffort: reasoningEffort,
+    fastMode: fastMode,
+    supportsReasoning: supportsReasoning,
   );
   if (!result.ok || result.output == null) {
     return const [];
@@ -2698,20 +2659,20 @@ Future<GitResult<AiMuseData>> runMuse({
   required String scopeLabel,
   required bool includeStaged,
   required bool includeUnstaged,
+  String? brainstormReasoningEffort,
+  bool brainstormFastMode = false,
+  bool brainstormSupportsReasoning = true,
+  String? synthesisReasoningEffort,
+  bool synthesisFastMode = false,
+  bool synthesisSupportsReasoning = true,
   List<String> scopedPaths = const [],
   String customPrompt = '',
   String commitDraft = '',
   required int guardrailStage,
   bool readOnly = true,
-  // Semantic priors for the manifest above the packed diff. Pass from
-  // the app layer's SymbolFrequencyState / FileCouplingState.
   SymbolFrequencyIndex? symbolIndex,
   FileCouplingMatrix? couplingMatrix,
 }) {
-  // Same pattern as reviewCommit: wrap the pipeline in a LogosVis
-  // session so the muse loading canvas sees events from both phase-1
-  // (brainstorm) and phase-2 (reseed + diffuse) without threading a
-  // session id through every call site.
   return LogosVisBus.instance.runInSession<GitResult<AiMuseData>>(
     (sessionId) => _runMuseImpl(
       repositoryPath: repositoryPath,
@@ -2727,6 +2688,12 @@ Future<GitResult<AiMuseData>> runMuse({
       readOnly: readOnly,
       symbolIndex: symbolIndex,
       couplingMatrix: couplingMatrix,
+      brainstormReasoningEffort: brainstormReasoningEffort,
+      brainstormFastMode: brainstormFastMode,
+      brainstormSupportsReasoning: brainstormSupportsReasoning,
+      synthesisReasoningEffort: synthesisReasoningEffort,
+      synthesisFastMode: synthesisFastMode,
+      synthesisSupportsReasoning: synthesisSupportsReasoning,
     ),
   );
 }
@@ -2745,6 +2712,12 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
   bool readOnly = true,
   SymbolFrequencyIndex? symbolIndex,
   FileCouplingMatrix? couplingMatrix,
+  String? brainstormReasoningEffort,
+  bool brainstormFastMode = false,
+  bool brainstormSupportsReasoning = true,
+  String? synthesisReasoningEffort,
+  bool synthesisFastMode = false,
+  bool synthesisSupportsReasoning = true,
 }) async {
   try {
     if (repositoryPath.trim().isEmpty) {
@@ -2835,6 +2808,9 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       branchName: bundle.branchName,
       profile: profile,
       readOnly: readOnly,
+      reasoningEffort: brainstormReasoningEffort,
+      fastMode: brainstormFastMode,
+      supportsReasoning: brainstormSupportsReasoning,
     );
     if (ideas.isEmpty) {
       return GitResult.err(
@@ -2921,6 +2897,9 @@ Future<GitResult<AiMuseData>> _runMuseImpl({
       prompt: synthPrompt,
       repositoryPath: repositoryPath,
       readOnly: readOnly,
+      reasoningEffort: synthesisReasoningEffort,
+      fastMode: synthesisFastMode,
+      supportsReasoning: synthesisSupportsReasoning,
     );
     LogosVisBus.instance.emitInSession((sid) => LogosVisComplete(sid));
     await _recordReviewAudit(
@@ -3167,6 +3146,8 @@ Future<void> _saveApiModelCacheToDisk(
         for (final e in discovery.modelPricing.entries)
           e.key: [e.value.$1, e.value.$2],
       },
+      'reasoning': discovery.reasoningModels.toList(),
+      'fast': discovery.fastModels.toList(),
     });
     await file.writeAsString(json, flush: true);
   } catch (_) {}
@@ -3210,10 +3191,26 @@ Future<_ProviderModelDiscovery?> _loadApiModelCacheFromDisk(
         }
       }
     }
+    final reasoning = <String>{};
+    final rawReasoning = json['reasoning'];
+    if (rawReasoning is List) {
+      for (final r in rawReasoning) {
+        if (r is String) reasoning.add(r);
+      }
+    }
+    final fast = <String>{};
+    final rawFast = json['fast'];
+    if (rawFast is List) {
+      for (final f in rawFast) {
+        if (f is String) fast.add(f);
+      }
+    }
     return _ProviderModelDiscovery(
       models: models,
       modelDetails: details,
       modelPricing: pricing,
+      reasoningModels: reasoning,
+      fastModels: fast,
     );
   } catch (_) {
     return null;
@@ -3265,10 +3262,18 @@ _ProviderModelDiscovery _discoverCodexModels(
 ) {
   final models = <String>{};
   final details = <String, String>{};
+  final reasoning = <String>{};
+  final fast = <String>{};
   for (final entry in _discoverCodexCacheModels()) {
     models.add(entry.slug);
     if (entry.description.isNotEmpty) {
       details[_normalizeModelKey(entry.slug)] = entry.description;
+    }
+    if (entry.reasoningLevels.isNotEmpty) {
+      reasoning.add(_normalizeModelKey(entry.slug));
+    }
+    if (entry.hasFastTier) {
+      fast.add(_normalizeModelKey(entry.slug));
     }
   }
   for (final model in _discoverCodexConfigModels()) {
@@ -3280,6 +3285,8 @@ _ProviderModelDiscovery _discoverCodexModels(
   return _ProviderModelDiscovery(
     models: models.toList(),
     modelDetails: details,
+    reasoningModels: reasoning,
+    fastModels: fast,
   );
 }
 
@@ -3287,7 +3294,16 @@ _ProviderModelDiscovery _discoverCodexModels(
 class _CodexCacheEntry {
   final String slug;
   final String description;
-  const _CodexCacheEntry(this.slug, this.description);
+  final List<String> reasoningLevels;
+  final String? defaultReasoningLevel;
+  final bool hasFastTier;
+  const _CodexCacheEntry(
+    this.slug,
+    this.description, {
+    this.reasoningLevels = const [],
+    this.defaultReasoningLevel,
+    this.hasFastTier = false,
+  });
 }
 
 /// Parse `~/.codex/models_cache.json`. Uses structured JSON decoding
@@ -3314,9 +3330,25 @@ List<_CodexCacheEntry> _discoverCodexCacheModels() {
       final visibility = item['visibility'];
       if (visibility is String && visibility != 'list') continue;
       final description = item['description'];
+      final rawLevels = item['supported_reasoning_levels'];
+      final levels = <String>[];
+      if (rawLevels is List) {
+        for (final l in rawLevels) {
+          if (l is Map) {
+            final effort = l['effort'];
+            if (effort is String) levels.add(effort);
+          }
+        }
+      }
+      final defaultLevel = item['default_reasoning_level'] as String?;
+      final speedTiers = item['additional_speed_tiers'];
+      final hasFast = speedTiers is List && speedTiers.contains('fast');
       out.add(_CodexCacheEntry(
         slug.trim(),
         description is String ? description.trim() : '',
+        reasoningLevels: levels,
+        defaultReasoningLevel: defaultLevel,
+        hasFastTier: hasFast,
       ));
     }
     return out;
@@ -3433,6 +3465,21 @@ void _parseCodexToml(String payload, Set<String> models) {
 ///     background tasks, and fallback invocations. This is where
 ///     haiku/sonnet surface even when the user only runs opus — Claude
 ///     Code's internal agents use smaller models automatically.
+// Curated baseline — models baked into the Claude Code binary that
+// won't appear in session/telemetry files until the user touches them.
+// Updated by extracting model strings from the native binary:
+//   $bytes = [IO.File]::ReadAllBytes("<claude.exe path>")
+//   $text  = [Text.Encoding]::UTF8.GetString($bytes)
+//   [regex]::Matches($text, 'claude-(?:opus|sonnet|haiku)-[\w.\-]+(?:\[1m\])?')
+const _claudeBaselineModels = <String, String>{
+  'claude-opus-4-7': 'Opus 4.7',
+  'claude-opus-4-6[1m]': 'Opus 4.6 (1M context)',
+  'claude-opus-4-6': 'Opus 4.6',
+  'claude-sonnet-4-6': 'Sonnet 4.6',
+  'claude-sonnet-4-5': 'Sonnet 4.5',
+  'claude-haiku-4-5': 'Haiku 4.5',
+};
+
 Future<_ProviderModelDiscovery?> _discoverClaudeModels(
   _ProviderResolution? resolution,
 ) async {
@@ -3445,10 +3492,20 @@ Future<_ProviderModelDiscovery?> _discoverClaudeModels(
   for (final id in _discoverClaudeTelemetryModels()) {
     models.add(id);
   }
+  // Merge the curated baseline so current models always appear
+  // even if the user hasn't used them in a session yet.
+  for (final id in _claudeBaselineModels.keys) {
+    models.add(id);
+  }
   if (models.isEmpty) return null;
+  final details = <String, String>{
+    for (final e in _claudeBaselineModels.entries)
+      _normalizeModelKey(e.key): e.value,
+  };
   return _ProviderModelDiscovery(
     models: models.toList(),
-    modelDetails: const {},
+    modelDetails: details,
+    reasoningModels: models.map(_normalizeModelKey).toSet(),
   );
 }
 
@@ -3707,6 +3764,12 @@ Future<_ProviderModelDiscovery?> _discoverApiProviderModels(
         );
       }
     }
+    final reasoning = <String>{};
+    for (final m in models) {
+      if (m.supportsReasoning || provider.allModelsSupportReasoning) {
+        reasoning.add(_normalizeModelKey(m.id));
+      }
+    }
     return _ProviderModelDiscovery(
       models: models.map((m) => m.id).toList(),
       modelDetails: {
@@ -3718,6 +3781,7 @@ Future<_ProviderModelDiscovery?> _discoverApiProviderModels(
             ].join(' — '),
       },
       modelPricing: pricing,
+      reasoningModels: reasoning,
     );
   } catch (_) {
     return null;
@@ -7796,6 +7860,9 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   required String prompt,
   required String repositoryPath,
   bool readOnly = true,
+  String? reasoningEffort,
+  bool fastMode = false,
+  bool supportsReasoning = true,
 }) async {
   if (provider.kind == _ProviderKind.apiProvider && provider.apiProvider != null) {
     final entry = _apiKeysSnapshot[provider.id];
@@ -7810,10 +7877,13 @@ Future<_ProviderPromptResult> _runProviderPrompt({
       apiKey: entry.apiKey,
       baseUrl: entry.baseUrl,
     );
+    final effectiveEffort =
+        fastMode || !supportsReasoning ? null : reasoningEffort;
     final apiResult = await provider.apiProvider!.complete(AiApiRequest(
       prompt: prompt,
       model: modelId,
       credentials: creds,
+      reasoningEffort: effectiveEffort,
     ));
     if (apiResult.text == null) {
       return _ProviderPromptResult(
@@ -7855,7 +7925,10 @@ Future<_ProviderPromptResult> _runProviderPrompt({
   }
 
   final attempts = _buildProviderAttempts(provider.kind, modelId,
-      readOnly: readOnly, resolvedCommand: resolution.command);
+      readOnly: readOnly,
+      resolvedCommand: resolution.command,
+      reasoningEffort: reasoningEffort,
+      fastMode: fastMode);
   String? providerOutput;
   String? lastError;
   for (final attempt in attempts) {
@@ -8297,36 +8370,91 @@ String _previewText(String value, {int? maxLength}) {
   return '${normalized.substring(0, limit - _truncationSuffix.length)}$_truncationSuffix';
 }
 
+String? _codexEffort(String? effort) {
+  // Codex accepts: none, minimal, low, medium, high, xhigh.
+  // Map from our canonical levels via effortFraction → nearest codex level.
+  const codexLevels = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+  const codexThresholds = [0.0, 0.1, 0.236, 0.382, 0.618, 1.0];
+  if (effort == null) return null;
+  if (codexLevels.contains(effort)) return effort;
+  final f = effortFraction(effort);
+  if (f == null) return null;
+  var best = codexLevels.last;
+  for (var i = 0; i < codexThresholds.length; i++) {
+    if (f <= codexThresholds[i] + 0.01) {
+      best = codexLevels[i];
+      break;
+    }
+  }
+  return best;
+}
+
+String? _claudeEffort(String? effort) {
+  // Claude CLI accepts: low, medium, high.
+  const claudeLevels = ['low', 'medium', 'high'];
+  const claudeThresholds = [0.236, 0.382, 1.0];
+  if (effort == null) return null;
+  if (claudeLevels.contains(effort)) return effort;
+  final f = effortFraction(effort);
+  if (f == null) return null;
+  var best = claudeLevels.last;
+  for (var i = 0; i < claudeThresholds.length; i++) {
+    if (f <= claudeThresholds[i] + 0.01) {
+      best = claudeLevels[i];
+      break;
+    }
+  }
+  return best;
+}
+
 List<_ProviderAttempt> _buildProviderAttempts(
   _ProviderKind kind,
   String modelId, {
   bool readOnly = true,
   String resolvedCommand = '',
+  String? reasoningEffort,
+  bool fastMode = false,
 }) {
   switch (kind) {
     case _ProviderKind.codex:
+      final mapped = _codexEffort(reasoningEffort);
+      final configArgs = <String>[
+        if (mapped != null)
+          ...['-c', 'model_reasoning_effort="$mapped"'],
+        if (fastMode)
+          ...['-c', 'service_tier="fast"'],
+      ];
       return [
         _ProviderAttempt(
           name: 'exec-json',
-          args: ['exec', '--model', modelId, '--json', '-'],
+          args: [
+            'exec', '--model', modelId, ...configArgs, '--json', '-',
+          ],
           outputMode: _ProviderOutputMode.codexJsonl,
         ),
         _ProviderAttempt(
           name: 'exec',
-          args: ['exec', '--model', modelId, '-'],
+          args: ['exec', '--model', modelId, ...configArgs, '-'],
           outputMode: _ProviderOutputMode.plainText,
         ),
       ];
     case _ProviderKind.claude:
+      final mappedClaude = _claudeEffort(reasoningEffort);
+      final effortArgs = mappedClaude != null
+          ? ['--effort', mappedClaude]
+          : const <String>[];
       return [
         _ProviderAttempt(
           name: 'prompt-json',
-          args: ['-p', '--model', modelId, '--output-format', 'json'],
+          args: [
+            '-p', '--model', modelId, ...effortArgs,
+            '--output-format', 'json',
+          ],
           outputMode: _ProviderOutputMode.claudeJson,
         ),
         _ProviderAttempt(
           name: 'prompt',
-          args: ['-p', '--model', modelId],
+          args: ['-p', '--model', modelId, ...effortArgs],
           outputMode: _ProviderOutputMode.plainText,
         ),
       ];
@@ -8335,20 +8463,18 @@ List<_ProviderAttempt> _buildProviderAttempts(
       // API providers — no CLI attempts.
       return [];
     case _ProviderKind.openCode:
-      // OpenCode's native binary (Go) reads the message from stdin when no
-      // positional args are given. We prefer stdin over positional args
-      // because review prompts easily exceed Windows' 32767-char command
-      // line limit. The native binary is resolved by _tryResolveNativeBinary
-      // so there's no Node.js/libuv in the pipe chain — Dart→Go works fine.
+      final variantArgs = reasoningEffort != null
+          ? ['--variant', reasoningEffort]
+          : const <String>[];
       return [
         _ProviderAttempt(
           name: 'run-json',
-          args: ['run', '--format', 'json', '-m', modelId],
+          args: ['run', '--format', 'json', '-m', modelId, ...variantArgs],
           outputMode: _ProviderOutputMode.openCodeJsonl,
         ),
         _ProviderAttempt(
           name: 'run',
-          args: ['run', '-m', modelId],
+          args: ['run', '-m', modelId, ...variantArgs],
           outputMode: _ProviderOutputMode.plainText,
         ),
       ];
@@ -10001,10 +10127,14 @@ class _ProviderModelDiscovery {
   final List<String> models;
   final Map<String, String> modelDetails;
   final Map<String, (double?, double?)> modelPricing;
+  final Set<String> reasoningModels;
+  final Set<String> fastModels;
   const _ProviderModelDiscovery({
     required this.models,
     required this.modelDetails,
     this.modelPricing = const {},
+    this.reasoningModels = const {},
+    this.fastModels = const {},
   });
 }
 
@@ -10015,6 +10145,8 @@ class _ProviderModelCollection {
   final List<String> models;
   final Map<String, String> modelDetails;
   final Map<String, (double?, double?)> modelPricing;
+  final Set<String> reasoningModels;
+  final Set<String> fastModels;
 
   const _ProviderModelCollection({
     required this.providerId,
@@ -10023,6 +10155,8 @@ class _ProviderModelCollection {
     required this.models,
     required this.modelDetails,
     this.modelPricing = const {},
+    this.reasoningModels = const {},
+    this.fastModels = const {},
   });
 }
 

@@ -20,6 +20,9 @@ import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'engram_bootstrap.dart';
+import 'shadow_coupling.dart';
+import 'shadow_coupling_cache.dart';
+import 'shadow_history.dart';
 import 'engram_brain.dart';
 import 'engram_file_index.dart';
 import 'engram_file_index_cache.dart';
@@ -448,18 +451,26 @@ Future<LogosGit?> _resolveImpl(
 
     final topology = await detectAllForges(repoPath);
     final forge = topology.primary;
-    // Both calls are I/O-bound (git subprocesses + optional network).
-    // Start both before awaiting either so they run concurrently.
+    // All three calls are I/O-bound (git subprocesses + optional network).
+    // Start all before awaiting so they run concurrently.
     final reviewFut = collectReviewedCommitsAllForges(repoPath, topology);
     final statsFut = collectLogosGitStats(repoPath, coupling: coupling,
         forge: forge.name);
-    final results = await Future.wait([reviewFut, statsFut]);
+    final shadowFut = _resolveShadowCoupling(repoPath);
+    final results = await Future.wait([reviewFut, statsFut, shadowFut]);
     final reviewedCommits = results[0] as Map<String, Set<String>>;
     final statsResultRaw = results[1] as GitResult<LogosGitStats>;
+    final shadowCoupling = results[2] as FileCouplingMatrix?;
     // Merge review data into the stats post-hoc — tag hyperedges with
     // reviewer identities now that both results are available.
-    final statsResult = statsResultRaw.ok && statsResultRaw.data != null
-        ? GitResult.ok(_mergeReviewData(statsResultRaw.data!, reviewedCommits))
+    var mergedStats = statsResultRaw.ok && statsResultRaw.data != null
+        ? _mergeReviewData(statsResultRaw.data!, reviewedCommits)
+        : null;
+    if (mergedStats != null && shadowCoupling != null) {
+      mergedStats = mergedStats.copyWith(shadowCoupling: shadowCoupling);
+    }
+    final statsResult = mergedStats != null
+        ? GitResult.ok(mergedStats)
         : statsResultRaw;
     if (!statsResult.ok || statsResult.data == null) {
       log.recordFailure(
@@ -560,6 +571,87 @@ Future<LogosGit?> _resolveImpl(
     return engine;
   } catch (e, st) {
     log.recordFailure(repoPath, 'build threw: $e', sw.elapsed, st);
+    return null;
+  }
+}
+
+Future<FileCouplingMatrix?> _resolveShadowCoupling(String repoPath) async {
+  try {
+    final headResult = await Process.run(
+      'git', ['rev-parse', 'HEAD'],
+      workingDirectory: repoPath,
+    );
+    final currentHead = headResult.exitCode == 0
+        ? (headResult.stdout as String).trim()
+        : '';
+
+    final cached = await ShadowCouplingCache.load(repoPath);
+    final cacheValid = cached != null &&
+        cached.isFresh &&
+        cached.jaccardEdges.isNotEmpty &&
+        currentHead.isNotEmpty &&
+        cached.headHash == currentHead;
+    if (cacheValid) {
+      return FileCouplingMatrix(
+        jaccard: cached.jaccardEdges,
+        headHash: 'shadow:${cached.headHash}',
+        commitsAnalyzed: cached.shadowCommitCount,
+      );
+    }
+
+    final shadows = await discoverShadowHistory(repoPath)
+        .timeout(const Duration(seconds: 5), onTimeout: () {
+      return ShadowHistoryResult(
+        commits: const [],
+        discoveredAt: DateTime.now(),
+        headHash: '',
+      );
+    });
+    if (shadows.commits.isEmpty) {
+      // Only fall back to stale cache if HEAD still matches — prevents
+      // using coupling from a prior branch after checkout/reset.
+      if (cached != null &&
+          cached.jaccardEdges.isNotEmpty &&
+          (currentHead.isEmpty || cached.headHash == currentHead)) {
+        return FileCouplingMatrix(
+          jaccard: cached.jaccardEdges,
+          headHash: 'shadow:${cached.headHash}',
+          commitsAnalyzed: cached.shadowCommitCount,
+        );
+      }
+      return null;
+    }
+
+    final matrix = computeShadowCoupling(shadows);
+    if (matrix == null) return null;
+
+    final typeCounts = <String, int>{};
+    for (final c in shadows.commits) {
+      final key = c.type.name;
+      typeCounts[key] = (typeCounts[key] ?? 0) + 1;
+    }
+
+    final newData = ShadowCouplingCacheData(
+      headHash: shadows.headHash,
+      discoveredAt: shadows.discoveredAt,
+      shadowCommitCount: shadows.commits.length,
+      jaccardEdges: matrix.jaccard,
+      edgeTypeCounts: typeCounts,
+    );
+    final merged = cached != null ? cached.mergeWith(newData) : newData;
+    await ShadowCouplingCache.save(repoPath, merged);
+
+    return FileCouplingMatrix(
+      jaccard: merged.jaccardEdges,
+      headHash: 'shadow:${merged.headHash}',
+      commitsAnalyzed: merged.shadowCommitCount,
+    );
+  } catch (e) {
+    LogosGitDiagnostics.instance.recordFailure(
+      repoPath,
+      'shadow discovery: ${e.runtimeType}',
+      Duration.zero,
+    );
     return null;
   }
 }

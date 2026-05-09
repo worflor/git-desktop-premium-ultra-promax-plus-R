@@ -3856,6 +3856,179 @@ class _ModelSlotsGrid extends StatelessWidget {
 }
 
 /// Compact model slot tile — label editable inline, dropdown below, provider pill on the right.
+class _ReasoningEffortRow extends StatefulWidget {
+  final AppTokens tokens;
+  final String modelValue;
+  final String categoryId;
+  final bool showFastToggle;
+  final void Function(int direction)? onVerticalDetent;
+  final VoidCallback? onVerticalStart;
+  final VoidCallback? onVerticalEnd;
+
+  const _ReasoningEffortRow({
+    required this.tokens,
+    required this.modelValue,
+    required this.categoryId,
+    this.showFastToggle = false,
+    this.onVerticalDetent,
+    this.onVerticalStart,
+    this.onVerticalEnd,
+  });
+
+  @override
+  State<_ReasoningEffortRow> createState() => _ReasoningEffortRowState();
+}
+
+class _ReasoningEffortRowState extends State<_ReasoningEffortRow> {
+  static const double _verticalDetent = 28.0;
+  double _panAccumY = 0.0;
+
+  void _onVerticalDragStart(DragStartDetails _) {
+    _panAccumY = 0.0;
+    widget.onVerticalStart?.call();
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails d) {
+    if (widget.onVerticalDetent == null) return;
+    _panAccumY += d.delta.dy;
+    while (_panAccumY >= _verticalDetent) {
+      widget.onVerticalDetent!(1);
+      _panAccumY -= _verticalDetent;
+    }
+    while (_panAccumY <= -_verticalDetent) {
+      widget.onVerticalDetent!(-1);
+      _panAccumY += _verticalDetent;
+    }
+  }
+
+  void _onVerticalDragEnd(DragEndDetails _) {
+    widget.onVerticalEnd?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.tokens;
+    final aiSettings = context.watch<AiSettingsState>();
+    final effortKey = '${widget.categoryId}:${widget.modelValue}';
+    final fastKey = 'fast:${widget.categoryId}:${widget.modelValue}';
+    final current = aiSettings.reasoningEffortFor(effortKey);
+    final isFast = aiSettings.reasoningEffortFor(fastKey) == 'fast';
+    final currentIndex = current != null
+        ? effortLevels.indexOf(current)
+        : -1;
+    final trackColor = current != null
+        ? t.accentBright.withValues(alpha: 0.45)
+        : t.textFaint.withValues(alpha: 0.18);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragUpdate: (_) {},
+      onVerticalDragStart: _onVerticalDragStart,
+      onVerticalDragUpdate: _onVerticalDragUpdate,
+      onVerticalDragEnd: _onVerticalDragEnd,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            if (widget.showFastToggle) ...[
+              GestureDetector(
+                onTap: () => aiSettings.setReasoningEffort(
+                    fastKey, isFast ? null : 'fast'),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: isFast
+                          ? t.accentBright.withValues(alpha: 0.12)
+                          : Colors.transparent,
+                      border: Border.all(
+                        color: isFast
+                            ? t.accentBright.withValues(alpha: 0.35)
+                            : t.chromeBorder.withValues(alpha: 0.18),
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      'fast',
+                      style: TextStyle(
+                        color: isFast
+                            ? t.accentBright.withValues(alpha: 0.9)
+                            : t.textMuted.withValues(alpha: 0.4),
+                        fontSize: 9,
+                        fontFamily: AppFonts.mono,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  activeTrackColor: trackColor,
+                  inactiveTrackColor: t.chromeBorder.withValues(alpha: 0.14),
+                  overlayColor: t.accentBright.withValues(alpha: 0.10),
+                  tickMarkShape:
+                      const RoundSliderTickMarkShape(tickMarkRadius: 1.5),
+                  activeTickMarkColor:
+                      t.textMuted.withValues(alpha: 0.5),
+                  inactiveTickMarkColor:
+                      t.chromeBorder.withValues(alpha: 0.22),
+                ),
+                child: Slider(
+                  value: currentIndex >= 0
+                      ? currentIndex.toDouble()
+                      : effortLevels.indexOf('medium').toDouble(),
+                  min: 0,
+                  max: (effortLevels.length - 1).toDouble(),
+                  divisions: effortLevels.length - 1,
+                  onChanged: (v) {
+                    final level = effortLevels[v.round()];
+                    aiSettings.setReasoningEffort(effortKey, level);
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 42,
+              child: Text(
+                current ?? 'default',
+                style: TextStyle(
+                  color: current != null
+                      ? t.textMuted.withValues(alpha: 0.6)
+                      : t.textFaint.withValues(alpha: 0.3),
+                  fontSize: 8,
+                  fontFamily: AppFonts.mono,
+                ),
+              ),
+            ),
+            if (current != null)
+              GestureDetector(
+                onTap: () =>
+                    aiSettings.setReasoningEffort(effortKey, null),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: Icon(
+                    Icons.close,
+                    size: 10,
+                    color: t.textFaint.withValues(alpha: 0.35),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CompactModelSlot extends StatefulWidget {
   final AiModelCategoryData category;
   final TextEditingController controller;
@@ -3877,6 +4050,25 @@ class _CompactModelSlot extends StatefulWidget {
 
 class _CompactModelSlotState extends State<_CompactModelSlot> {
   final Map<String, TextEditingController> _customControllers = {};
+  double _borderGlow = 0.0;
+  int _detentCount = 0;
+
+  void _onPropagateDetent(int _) {
+    _detentCount++;
+    final aiSettings = context.read<AiSettingsState>();
+    final effortKey = '${widget.category.id}:${widget.selectedValue}';
+    final current =
+        aiSettings.reasoningEffortFor(effortKey) ?? 'medium';
+
+    if (_detentCount == 1) {
+      aiSettings.setReasoningEffortForCategory(
+          widget.category.id, current);
+      setState(() => _borderGlow = 0.5);
+    } else if (_detentCount == 2) {
+      aiSettings.setReasoningEffortGlobal(current);
+      setState(() => _borderGlow = 1.0);
+    }
+  }
 
   List<({String providerId, String providerLabel})> get _uniqueProviders {
     final seen = <String>{};
@@ -3972,12 +4164,30 @@ class _CompactModelSlotState extends State<_CompactModelSlot> {
       }
     }
 
-    return Container(
+    final glowColor = Color.lerp(
+      t.chromeBorder.withValues(alpha: 0.14),
+      t.accentBright.withValues(alpha: 0.6),
+      _borderGlow,
+    )!;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      curve: Curves.easeOutCubic,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: t.rowBg,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: t.chromeBorder.withValues(alpha: 0.14)),
+        border: Border.all(color: glowColor, width: 1.0 + _borderGlow),
+        boxShadow: _borderGlow > 0.3
+            ? [
+                BoxShadow(
+                  color: t.accentBright
+                      .withValues(alpha: (_borderGlow - 0.3) * 0.15),
+                  blurRadius: 8,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4023,6 +4233,20 @@ class _CompactModelSlotState extends State<_CompactModelSlot> {
               ),
             ),
           ],
+          if (selectedModel != null &&
+              (selectedModel.supportsReasoning || selectedModel.hasFastTier))
+            _ReasoningEffortRow(
+              tokens: t,
+              modelValue: widget.selectedValue,
+              categoryId: widget.category.id,
+              showFastToggle: selectedModel.hasFastTier,
+              onVerticalDetent: _onPropagateDetent,
+              onVerticalStart: () {
+                _detentCount = 0;
+              },
+              onVerticalEnd: () =>
+                  setState(() => _borderGlow = 0.0),
+            ),
         ],
       ),
     );
@@ -9286,9 +9510,9 @@ class _StepperRowState extends State<_StepperRow> {
           width: 10,
           height: 10,
           decoration: BoxDecoration(
-            color: t.accentBright,
+            color: t.sliderThumb,
             shape: BoxShape.circle,
-            border: Border.all(color: t.accentBright, width: 1),
+            border: Border.all(color: t.sliderThumbBorder, width: 1.5),
           ),
         ),
       ),
@@ -9320,20 +9544,16 @@ class _StepperRowState extends State<_StepperRow> {
     // user has landed between them.
     final isActive = widget.value == stopValue;
     final labelColor = isActive ? t.accentBright : t.textMuted;
-    final tickColor = isActive ? t.accentBright : t.inputBg;
+    final tickColor = isActive ? t.sliderThumb : t.inputBg;
     final tickBorder =
-        isActive ? t.accentBright : t.textMuted.withValues(alpha: 0.5);
-    // Circle + (label or editable field). Non-last stops share one
-    // tap-target for both. Last stop splits the tap target so tapping
-    // the label focuses the TextField (native behavior) while tapping
-    // the circle snaps to the baseline top stop.
+        isActive ? t.sliderThumbBorder : t.textMuted.withValues(alpha: 0.5);
     Widget circle = Container(
       width: 10,
       height: 10,
       decoration: BoxDecoration(
         color: tickColor,
         shape: BoxShape.circle,
-        border: Border.all(color: tickBorder, width: 1),
+        border: Border.all(color: tickBorder, width: 1.5),
       ),
     );
     if (isLast) {

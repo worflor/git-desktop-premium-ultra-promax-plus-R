@@ -116,16 +116,9 @@ class _HypercubeLogoState extends State<HypercubeLogo>
         _appLifecycleState ?? AppLifecycleState.resumed;
     final bool isFocused =
         lifecycleState == AppLifecycleState.resumed && _hasViewFocus;
-    // WindowActivity folds in the platform window-focus / minimize
-    // signal that AppLifecycleState misses on Windows (an unfocused but
-    // visible window stays `resumed`). Even when the user has opted
-    // into `animateWhenUnfocused`, pausing the ticker while the entire
-    // window is blurred / minimized is a pure CPU win: there's nothing
-    // on screen to see.
-    final bool windowAwake = WindowActivity.instance.awake;
+    final wa = WindowActivity.instance;
     final bool shouldRun = _isTickerModeVisible &&
-        windowAwake &&
-        (_animateWhenUnfocused || isFocused);
+        (_animateWhenUnfocused ? wa.visible : (wa.awake && isFocused));
     if (shouldRun) {
       if (!_ticker.isActive) {
         _lastElapsed = null;

@@ -6,6 +6,8 @@
 
 import 'dart:math' as math;
 
+import 'spectral_constants.dart' as sc;
+
 class LogosIntegrityProfile {
   final Map<String, double> integrityByPath;
   final Map<String, double> ritualnessByPath;
@@ -27,13 +29,12 @@ class LogosCommitMeaningfulness {
 
 const double kNeutralIntegrity = 0.85;
 
-// -ln(0.2) / 0.6 — the decay rate that maps [threshold, threshold+0.6] → [1.0, 0.2].
-// Used for ritual mass and raw-semantic disparity exponential pull-downs.
-const double _kRitualDecayRate = 2.6823623981;
+// Ritual decay knee: 1/φ² ≈ 0.382
+final double _kRitualDecayKnee = sc.phiDecay2;
 
-// Knee below which ritual/disparity mass doesn't trigger exponential decay.
-// Shared between commit-level ritual cap and file-level disparity pulldown.
-const double _kRitualDecayKnee = 0.4;
+// Decay rate: -ln(1 - kNeutralIntegrity) / (1 - knee).
+final double _kRitualDecayRate =
+    -math.log(1.0 - kNeutralIntegrity) / (1.0 - _kRitualDecayKnee);
 
 LogosCommitMeaningfulness inferCommitMeaningfulness({
   required String author,
@@ -143,17 +144,17 @@ LogosIntegrityProfile buildLogosIntegrityProfile({
     estimate = math.min(estimate, cue);
 
     // History-based ritualness pull-down: same exponential form as the
-    // commit-level ritual decay, reusing its threshold (0.4) and target
-    // (0.2) so the two levels share one thermodynamic rule.
+    // Commit-level ritual decay — same knee and rate as the disparity
+    // pulldown below. One thermodynamic rule, two applications.
     final ritualCap = math.exp(-_kRitualDecayRate * math.max(0.0, ratio - _kRitualDecayKnee));
     estimate = math.min(estimate, ritualCap);
 
-    // Raw-semantic disparity: smooth decay starting at 40% disparity,
-    // reaching floor (0.35) at 100%. Same exponential family.
+    // Raw-semantic disparity: same exponential family, same knee.
     final disparity = raw <= 0 ? 0.0 : ((raw - semantic).clamp(0.0, raw)) / raw;
-    if (disparity > 0.4) {
-      final disparityMul =
-          0.35 + 0.65 * math.exp(-_kRitualDecayRate * (disparity - 0.4));
+    if (disparity > _kRitualDecayKnee) {
+      final disparityMul = sc.gasPhase +
+          (1.0 - sc.gasPhase) *
+              math.exp(-_kRitualDecayRate * (disparity - _kRitualDecayKnee));
       estimate = math.min(estimate, disparityMul);
       pathReasons.add('raw-semantic-disparity');
     }
@@ -439,10 +440,12 @@ const double _kDirectionalBias = 0.15;
 
 // Prior coupling constants — cold-start defaults that get blended
 // out as the repo's own co-change fossil record accumulates evidence.
-// Shrinkage strength _kPriorWeight controls how many empirical samples
-// it takes before the prior loses majority influence: at n=_kPriorWeight
-// the calibrated value is 50/50 prior/empirical.
-const double _kPriorWeight = 20.0;
+// Shrinkage strength: the prior carries the weight of k² effective
+// samples, where k=4 is the number of distinguishable co-change regimes
+// on the CC axis (same information-theoretic basis as the Born mixer's
+// evidence cap ln(4) = 2·ln(2)). At n=16 empirical samples, the
+// calibrated value is 50/50 prior/empirical.
+const double _kPriorWeight = sc.kCcEvidenceSquare;
 const double _kPriorManifestLockfile = 0.80;
 const double _kPriorSourceGenerated = 0.72;
 const double _kPriorSourceMigration = 0.48;

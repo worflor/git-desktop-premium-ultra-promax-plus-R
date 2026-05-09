@@ -296,22 +296,29 @@ class WorktreeState extends ChangeNotifier {
   }
 
   /// Removes a desk. Optionally runs `git stash push` in that worktree first
-  /// to preserve uncommitted changes.
+  /// to preserve uncommitted changes. When [shelveHere] is provided, the
+  /// stash is applied to that path after the desk is removed — "bring the
+  /// changes to where I am."
   Future<String?> closeDesk(
     String worktreePath, {
     bool shelveFirst = false,
+    String? shelveHere,
     bool force = false,
   }) async {
     try {
-      if (shelveFirst) {
+      bool didStash = false;
+      if (shelveFirst || shelveHere != null) {
         final stash = await stashPush(
           worktreePath,
           message: 'Auto-shelved on desk close',
-          // Capture untracked too — closing a desk should preserve
-          // every uncommitted artifact, not just tracked changes.
           includeUntracked: true,
         );
         if (!stash.ok) return stash.error;
+        // git stash push exits 0 with "No local changes to save" when
+        // there's nothing to stash. Only proceed with apply/drop if a
+        // stash was actually created.
+        final out = stash.data ?? '';
+        didStash = !out.contains('No local changes to save');
       }
       final mainRepo = await _resolveMainRepoPath();
       if (mainRepo == null) {
@@ -320,9 +327,23 @@ class WorktreeState extends ChangeNotifier {
       final result =
           await removeWorktree(mainRepo, worktreePath, force: force);
       if (!result.ok) return result.error;
-      // If we just closed the active desk, switch back to the primary.
       if (_normalize(_repo.activePath ?? '') == _normalize(worktreePath)) {
         await _repo.setActivePath(mainRepo);
+      }
+      if (shelveHere != null && didStash) {
+        final apply = await stashApply(shelveHere);
+        if (apply.ok) {
+          final drop = await stashDrop(shelveHere);
+          if (!drop.ok) {
+            await refreshFor(mainRepo);
+            return 'Changes applied but the stash entry could not be '
+                'removed. Run git stash drop manually.';
+          }
+        } else {
+          await refreshFor(mainRepo);
+          return 'Desk closed but shelved changes could not be applied '
+              '(stash preserved). ${apply.error ?? ''}';
+        }
       }
       await refreshFor(mainRepo);
       return null;

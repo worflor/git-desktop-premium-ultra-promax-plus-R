@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../app/build_info.dart';
 import '../../ui/design_primitives.dart';
+import '../../ui/morph_text.dart';
 import '../../ui/tokens.dart';
 
 class ReleaseNotesPanel extends StatelessWidget {
@@ -95,7 +98,10 @@ class _VersionHeader extends StatelessWidget {
 class _ReleaseEntry extends StatelessWidget {
   final _ReleaseNote entry;
   final AppTokens tokens;
-  const _ReleaseEntry({required this.entry, required this.tokens});
+  const _ReleaseEntry({
+    required this.entry,
+    required this.tokens,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -145,13 +151,15 @@ class _ReleaseEntry extends StatelessWidget {
                   ),
                 ),
                 Expanded(
-                  child: Text(
-                    bullet,
+                  child: _ReactiveText(
+                    text: bullet,
                     style: TextStyle(
                       color: t.textMuted,
                       fontSize: 12,
                       height: 1.5,
                     ),
+                    accentColor: t.accentBright,
+                    bgColor: t.bg0,
                   ),
                 ),
               ],
@@ -178,7 +186,10 @@ class _SectionDivider extends StatelessWidget {
 class _AboutBlock extends StatelessWidget {
   final _AboutEntry entry;
   final AppTokens tokens;
-  const _AboutBlock({required this.entry, required this.tokens});
+  const _AboutBlock({
+    required this.entry,
+    required this.tokens,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -186,8 +197,8 @@ class _AboutBlock extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          entry.question,
+        _ReactiveText(
+          text: entry.question,
           style: TextStyle(
             color: t.textNormal,
             fontSize: 11,
@@ -195,17 +206,159 @@ class _AboutBlock extends StatelessWidget {
             fontWeight: FontWeight.w700,
             letterSpacing: 0.8,
           ),
+          accentColor: t.accentBright,
+          bgColor: t.bg0,
         ),
         const SizedBox(height: 8),
-        Text(
-          entry.body,
+        _ReactiveText(
+          text: entry.body,
           style: TextStyle(
             color: t.textMuted,
             fontSize: 12,
             height: 1.6,
           ),
+          accentColor: t.accentBright,
+          bgColor: t.bg0,
         ),
       ],
+    );
+  }
+}
+
+class _ReactiveText extends StatelessWidget {
+  final String text;
+  final TextStyle style;
+  final Color accentColor;
+  final Color bgColor;
+
+  const _ReactiveText({
+    required this.text,
+    required this.style,
+    required this.accentColor,
+    required this.bgColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final resolved = DefaultTextStyle.of(context).style.merge(style);
+    final spaceW = _measureSpace(resolved, context);
+    final paragraphs = text.split('\n\n');
+    if (paragraphs.length == 1) {
+      return _buildParagraph(paragraphs[0], resolved, spaceW);
+    }
+    final gap = (resolved.fontSize ?? 14) * (resolved.height ?? 1.5);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < paragraphs.length; i++) ...[
+          if (i > 0) SizedBox(height: gap),
+          _buildParagraph(paragraphs[i], resolved, spaceW),
+        ],
+      ],
+    );
+  }
+
+  static Widget _buildParagraph(
+      String para, TextStyle resolved, double spaceW) {
+    final words = para.split(' ').where((w) => w.isNotEmpty).toList();
+    return Wrap(
+      spacing: spaceW,
+      children: [
+        for (final word in words)
+          _ReactiveWord(word: word, style: resolved),
+      ],
+    );
+  }
+
+  static double _measureSpace(TextStyle style, BuildContext context) {
+    final tp = TextPainter(
+      text: TextSpan(text: ' ', style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final w = tp.width;
+    tp.dispose();
+    return w;
+  }
+}
+
+class _ReactiveWord extends StatefulWidget {
+  final String word;
+  final TextStyle style;
+
+  const _ReactiveWord({required this.word, required this.style});
+
+  @override
+  State<_ReactiveWord> createState() => _ReactiveWordState();
+}
+
+class _ReactiveWordState extends State<_ReactiveWord> {
+  String _display = '';
+  bool _inside = false;
+  bool _morphing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _display = widget.word;
+  }
+
+  @override
+  void didUpdateWidget(_ReactiveWord old) {
+    super.didUpdateWidget(old);
+    if (old.word != widget.word) {
+      _display = widget.word;
+      _inside = false;
+      _morphing = false;
+    }
+  }
+
+  void _onEnter() {
+    _inside = true;
+    _kick();
+  }
+
+  void _kick() {
+    if (!_inside || _morphing) return;
+    _morphing = true;
+    setState(() => _display = _perturb(widget.word));
+    Future.delayed(const Duration(milliseconds: 60), () {
+      if (!mounted) return;
+      setState(() => _display = widget.word);
+      final pause = 500 + _rng.nextInt(400);
+      Future.delayed(Duration(milliseconds: pause), () {
+        if (!mounted) return;
+        _morphing = false;
+        if (_inside) _kick();
+      });
+    });
+  }
+
+  void _onExit() {
+    _inside = false;
+  }
+
+  static final _rng = math.Random();
+
+  static String _perturb(String text) {
+    if (text.length < 3) return text;
+    final chars = text.split('');
+    final swaps = (chars.length / 6).ceil().clamp(1, 3);
+    for (var i = 0; i < swaps; i++) {
+      final idx = _rng.nextInt(chars.length - 1);
+      final tmp = chars[idx];
+      chars[idx] = chars[idx + 1];
+      chars[idx + 1] = tmp;
+    }
+    return chars.join();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => _onEnter(),
+      onExit: (_) => _onExit(),
+      child: ThemeMorphText(_display, style: widget.style),
     );
   }
 }
@@ -243,8 +396,7 @@ const _aboutDevelopment = <_AboutEntry>[
         'The math behind the spectral engine was prototyped in Rust first, '
         'so that work carried over.\n\n'
         'Flutter is cross-platform by default, which is great, but it\'s '
-        'Googley in nature so there are quirks. I don\'t care about platform '
-        'nativeness though. I\'ll work around whatever needs working around.',
+        'Googley in nature so there are quirks. I\'ll make do.',
   ),
   _AboutEntry(
     question: 'WHAT IS THE SPECTRAL ENGINE?',
@@ -279,17 +431,21 @@ const _changelog = <_ReleaseNote>[
     date: '2026-05-07',
     bullets: [
       'Built from scratch in Flutter over about five weeks. The whole git surface is here: staging, branches, history, stash, blame, file history, parallel worktrees, and sync.',
-      'PRs and issues work locally by default, stored as orphan git refs in the repo itself. No remote needed. When you do have a remote, they sync bidirectionally with GitHub, GitLab, or Gitea.',
-      'Patches are a first-class workflow. Import from file or clipboard, preview with conflict detection, apply with 3-way merge fallback or reverse. For when you\'re not down to big git.',
-      'A spectral analysis engine runs on your commit graph underneath all of this. It picks up file coupling, coherence, and structural patterns, and those signals drive the intelligent features and the general UI alike.',
-      'The interactive starfield you see during commit review and Muse is a live view of the engine working. It shows what the spectral analysis is doing while it processes your changes.',
-      'History renders each commit as a drillable seismograph. The painted bar under each subject encodes importance, add/del ratio, coherence, and working-tree overlap without labels.',
-      'Muse is a three-phase pipeline (diverge, reshape, synthesize) that brainstorms around what your staged changes could lead to. Results come back in four tiers: Spark, Current, Horizon, and Fever. You can drag file spokes while it runs to steer where it looks.',
-      'Commit review gives you grounded observations with four guardrail stages: Loose, Balanced, Strict, and Paranoid.',
-      'File Constellation (beta) groups staged files by correlatedness into candidate commits. Still early but the direction is there.',
-      'Repo X-Ray gives a structural snapshot across map, time, signals, and summary views.',
       'Command palette handles navigation, git commands, branch operations, stash actions, settings toggles, and search across repos, branches, commits, tags, and changed files.',
-      'Known issue: CPU usage on Windows runs hotter than expected. If your fans spin up, that\'s me. Linux AppImage ships but is untested as of this build.',
+      'PRs and issues work locally by default, stored as orphan git refs in the repo itself. No remote needed. When you do have a remote, they sync bidirectionally with GitHub, GitLab, or Gitea.',
+      'PR conflict hints go past plain file overlap. Each PR gets an orbital shape from Logos diffusion; WILL FIGHT combines shared files with cross-orbit similarity, so related branches can surface as merge-order risk even when they are not editing the exact same paths.',
+      'Patches are a first-class workflow. Import from file or clipboard, preview with conflict detection, apply with 3-way merge fallback or reverse. For when you\'re not down to big git.',
+      'A spectral analysis engine runs underneath the app. In plain terms: it turns your repo history into a weighted map of which files tend to matter together, then runs the current diff through that map.',
+      'The useful part is the receipts: when Logos surfaces a related file, it can point at the signal that pulled it in: co-change, path structure, transport lanes like source->test, integrity gates, residual surprise, or shadow history.',
+      'Practically, that means better review context, better commit grouping, better Muse suggestions, and UI that reacts to the actual shape of the change instead of just the file list.',
+      'Logos has counterfactual memory too. Reverts, reset-away commits, and abandoned branches are mined into a discounted shadow-coupling graph, so discarded timelines can corroborate real co-change signals or flag a current diff as deja-vu.',
+      'The interactive starfield during commit review and Muse is a live readout of that process: files, evidence, and diffusion energy moving around while the engine decides what matters.',
+      'History renders each commit as a drillable seismograph. The painted bar under each subject encodes importance, add/del ratio, coherence, and working-tree overlap without labels.',
+      'Commit review gives you grounded observations with four guardrail stages: Loose, Balanced, Strict, and Paranoid.',
+      'Muse is a three-phase pipeline (diverge, reshape, synthesize) that brainstorms around what your staged changes could lead to. Results come back in four tiers: Spark, Current, Horizon, and Fever. You can drag file spokes while it runs to steer where it looks.',
+      'Atlas, the File Constellation beta, groups staged files by correlatedness into candidate commits. Still early but the direction is there.',
+      'Repo X-Ray gives a structural snapshot across map, time, signals, and summary views.',
+      'Known rough edges: CPU usage on Windows runs hotter than expected, so if your fans spin up, that\'s me. The Linux AppImage ships but is untested as of this build. Most flows already surface diagnostics, and the heavier paths show profiling data, but a few very new commit-timeline anomaly paths may still be under-instrumented, so some niche failures there might not explain themselves properly yet. macOS is planned, but shipping it properly means dealing with the Apple developer license and signing/notarization ritual. I know. Extremely glamorous. Windows and Linux are more forgiving of lazily signed software, so they come first.',
     ],
   ),
 ];

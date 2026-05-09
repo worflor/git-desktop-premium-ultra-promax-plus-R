@@ -43,6 +43,11 @@ class WindowActivity extends ChangeNotifier
   bool get awake =>
       _windowFocused && !_windowMinimized && _lifecycleActive;
 
+  /// True when the window is on screen (not minimized). Does not require
+  /// focus or active lifecycle — use this to keep animations running when
+  /// the user can still see the window behind another app.
+  bool get visible => !_windowMinimized;
+
 
   @override
   void onWindowFocus() {

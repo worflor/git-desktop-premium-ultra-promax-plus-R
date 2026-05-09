@@ -107,6 +107,7 @@ class AppSettingsSnapshot {
   /// single "Open with…" item that deep-links into the settings page.
   /// See `external_tools.dart` for the model + preset starters.
   final List<ExternalTool> externalTools;
+  final int changesPanelWidthPx;
 
   const AppSettingsSnapshot({
     required this.guardrailValue,
@@ -146,6 +147,7 @@ class AppSettingsSnapshot {
     required this.bondExperimentEnabled,
     required this.bondDockOpenedOnce,
     required this.externalTools,
+    required this.changesPanelWidthPx,
   });
 
   Map<String, dynamic> toJson() => {
@@ -186,6 +188,7 @@ class AppSettingsSnapshot {
         'bondExperimentEnabled': bondExperimentEnabled,
         'bondDockOpenedOnce': bondDockOpenedOnce,
         'externalTools': [for (final t in externalTools) t.toJson()],
+        'changesPanelWidthPx': changesPanelWidthPx,
       };
 
   factory AppSettingsSnapshot.defaults() => AppSettingsSnapshot(
@@ -228,6 +231,7 @@ class AppSettingsSnapshot {
         bondExperimentEnabled: false,
         bondDockOpenedOnce: false,
         externalTools: const [],
+        changesPanelWidthPx: 320,
       );
 
   factory AppSettingsSnapshot.fromJson(Map<String, dynamic> json) {
@@ -406,6 +410,10 @@ class AppSettingsSnapshot {
         defaults.bondDockOpenedOnce,
       ),
       externalTools: SettingsStore._externalToolsOr(json['externalTools']),
+      changesPanelWidthPx: SettingsStore._intOr(
+        json['changesPanelWidthPx'],
+        defaults.changesPanelWidthPx,
+      ).clamp(220, 520),
     );
   }
 
@@ -447,6 +455,7 @@ class AppSettingsSnapshot {
     bool? bondExperimentEnabled,
     bool? bondDockOpenedOnce,
     List<ExternalTool>? externalTools,
+    int? changesPanelWidthPx,
   }) {
     return AppSettingsSnapshot(
       guardrailValue: guardrailValue ?? this.guardrailValue,
@@ -499,6 +508,7 @@ class AppSettingsSnapshot {
           bondExperimentEnabled ?? this.bondExperimentEnabled,
       bondDockOpenedOnce: bondDockOpenedOnce ?? this.bondDockOpenedOnce,
       externalTools: externalTools ?? this.externalTools,
+      changesPanelWidthPx: changesPanelWidthPx ?? this.changesPanelWidthPx,
     );
   }
 }

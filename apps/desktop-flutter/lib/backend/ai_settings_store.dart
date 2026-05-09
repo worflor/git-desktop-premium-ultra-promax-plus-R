@@ -6,6 +6,7 @@ import 'storage_paths.dart';
 class AiSettingsSnapshot {
   final Map<String, String> modelSelections;
   final Map<String, String> modelCategoryLabels;
+  final Map<String, String> reasoningEfforts;
   final String commitMessageModelCategoryId;
   final String reviewCommitModelCategoryId;
   final bool reviewCommitDoubleCheckEnabled;
@@ -15,6 +16,7 @@ class AiSettingsSnapshot {
   const AiSettingsSnapshot({
     required this.modelSelections,
     required this.modelCategoryLabels,
+    this.reasoningEfforts = const {},
     required this.commitMessageModelCategoryId,
     required this.reviewCommitModelCategoryId,
     required this.reviewCommitDoubleCheckEnabled,
@@ -38,6 +40,7 @@ class AiSettingsSnapshot {
   Map<String, dynamic> toJson() => {
         'modelSelections': modelSelections,
         'modelCategoryLabels': modelCategoryLabels,
+        'reasoningEfforts': reasoningEfforts,
         'commitMessageModelCategoryId': commitMessageModelCategoryId,
         'reviewCommitModelCategoryId': reviewCommitModelCategoryId,
         'reviewCommitDoubleCheckEnabled': reviewCommitDoubleCheckEnabled,
@@ -53,6 +56,7 @@ class AiSettingsSnapshot {
         ...defaults.modelCategoryLabels,
         ..._readStringMap(json['modelCategoryLabels']),
       },
+      reasoningEfforts: _readStringMap(json['reasoningEfforts']),
       commitMessageModelCategoryId: _stringOr(
         json['commitMessageModelCategoryId'],
         defaults.commitMessageModelCategoryId,
