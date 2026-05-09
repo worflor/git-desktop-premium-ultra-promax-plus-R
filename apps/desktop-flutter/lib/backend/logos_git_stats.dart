@@ -50,12 +50,10 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
   String repoPath, {
   FileCouplingMatrix? coupling,
   int commitWindow = _statsCommitWindow,
+  double? halfLifeCommits,
   String forge = 'unknown',
   Map<String, Set<String>> reviewedCommits = const {},
 }) async {
-  // --no-merges: merges dominate the pair counts spuriously.
-  // --numstat:   per-file +/- counts; binaries show "-\t-" (handled).
-  // --format=%H: commit-hash delimiters, easy to split on.
   final logFuture = Process.run(
     'git',
     [
@@ -69,11 +67,11 @@ Future<GitResult<LogosGitStats>> collectLogosGitStats(
     workingDirectory: repoPath,
     runInShell: false,
   );
-  // Coupling walk runs in parallel with the numstat walk above. Both
-  // git processes share the pack-file cache; the second one is fast.
   final couplingFuture = coupling != null
       ? Future.value(_CouplingResult.ok(coupling))
-      : computeFileCoupling(repoPath, commitLimit: commitWindow)
+      : computeFileCoupling(repoPath,
+              commitLimit: commitWindow,
+              halfLifeCommits: halfLifeCommits)
           .then((r) => r.ok && r.data != null
               ? _CouplingResult.ok(r.data!)
               : _CouplingResult.err(

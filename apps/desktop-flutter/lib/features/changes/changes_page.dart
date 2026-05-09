@@ -11923,6 +11923,163 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     ]);
   }
 
+  static final _editorTitles = <String>[
+    'your dreams, please',
+    'what did you just do',
+    'tell the future you',
+    'name this moment',
+    'leave a note',
+    'say something nice',
+    'the deed is done',
+    'for the record',
+    'posterity awaits',
+    'what changed and why',
+    'the short version',
+    'a few words',
+    'dear git log',
+    'how it went',
+    'in your own words',
+  ];
+  static int _lastTitleIndex = -1;
+  static final _titleRng = math.Random();
+
+  static String _pickEditorTitle() {
+    var idx = _titleRng.nextInt(_editorTitles.length);
+    if (idx == _lastTitleIndex) {
+      idx = (idx + 1) % _editorTitles.length;
+    }
+    _lastTitleIndex = idx;
+    return _editorTitles[idx];
+  }
+
+  void _openExpandedEditor(BuildContext context, AppTokens tokens) {
+    final expanded = TextEditingController(text: widget.controller.text);
+    final focus = FocusNode();
+    final title = _pickEditorTitle();
+    final shader = themeDefinitionFor(tokens.id).shader;
+    final geo = shader.geometry;
+    final dur = context.motion(AppMotion.fluid);
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close editor',
+      barrierColor: Colors.black54,
+      transitionDuration: dur,
+      transitionBuilder: (ctx, anim, secondAnim, child) {
+        final curved = CurvedAnimation(
+          parent: anim,
+          curve: shader.curve,
+          reverseCurve: AppMotion.fadeCurve,
+        );
+        return FadeTransition(
+          opacity: curved,
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.92, end: 1.0)
+                .animate(curved),
+            alignment: Alignment.center,
+            child: child,
+          ),
+        );
+      },
+      pageBuilder: (ctx, anim, secondAnim) => Center(
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            constraints: const BoxConstraints(
+                maxWidth: 600, maxHeight: 500),
+            margin: const EdgeInsets.symmetric(
+                horizontal: 60, vertical: 40),
+            decoration: BoxDecoration(
+              color: tokens.surface1,
+              borderRadius: BorderRadius.circular(geo.cardRadius),
+              border: Border.all(
+                color: tokens.chromeBorder.withValues(alpha: 0.5),
+              ),
+              boxShadow: AppElev.modal,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: tokens.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => Navigator.of(ctx).pop(),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: Icon(
+                            Icons.close_fullscreen,
+                            size: 12,
+                            color: tokens.textMuted,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: tokens.inputBg,
+                        borderRadius: BorderRadius.circular(
+                            geo.pillRadius),
+                        border: Border.all(
+                          color: tokens.inputBorder,
+                        ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(
+                            math.max(0, geo.pillRadius - 1)),
+                        child: TextField(
+                          controller: expanded,
+                          focusNode: focus,
+                          maxLines: null,
+                          expands: true,
+                          autofocus: true,
+                          textAlignVertical: TextAlignVertical.top,
+                          cursorColor: tokens.accentBright,
+                          style: TextStyle(
+                            color: tokens.textStrong,
+                            fontSize: 13,
+                          ),
+                          decoration: const InputDecoration(
+                            isCollapsed: true,
+                            contentPadding: EdgeInsets.all(10),
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ).then((_) {
+      if (mounted) {
+        widget.controller.text = expanded.text;
+        widget.onChanged?.call(expanded.text);
+      }
+      expanded.dispose();
+      focus.dispose();
+    });
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -11983,6 +12140,8 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
       _tagInputCtrl.clear();
     }
   }
+
+
 
   @override
   void dispose() {
@@ -12045,7 +12204,7 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
             ),
             decoration: InputDecoration(
               isCollapsed: true,
-              contentPadding: const EdgeInsets.fromLTRB(10, 6, 16, 6),
+              contentPadding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
@@ -12127,6 +12286,30 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
               child: Stack(
                 children: [
                   textField!,
+                  if (widget.controller.text.split('\n').length > 4 ||
+                      widget.controller.text.length > 150)
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: GestureDetector(
+                        onTap: () => _openExpandedEditor(context, tokens),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: tokens.bg1.withValues(alpha: 0.85),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Icon(
+                              Icons.open_in_full,
+                              size: 11,
+                              color: tokens.textMuted.withValues(alpha: 0.6),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   if (!widget.shapeMode &&
                       widget.suggestedTags.isNotEmpty)
                     Positioned(
@@ -12461,10 +12644,12 @@ class _CommitTagChipState extends State<_CommitTagChip> {
         .withHue(hue)
         .withSaturation((hsl.saturation * 0.85).clamp(0.0, 1.0))
         .toColor();
+    final bgLum = t.bg0.computeLuminance();
+    final textL = bgLum > 0.4 ? 0.22 : 0.82;
     final textColor = hsl
         .withHue(hue)
         .withSaturation((hsl.saturation * 0.8).clamp(0.0, 1.0))
-        .withLightness(hsl.lightness > 0.5 ? 0.25 : 0.80)
+        .withLightness(textL)
         .toColor();
 
     return MouseRegion(
@@ -12478,13 +12663,24 @@ class _CommitTagChipState extends State<_CommitTagChip> {
           curve: s.safeCurve,
           padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
           decoration: BoxDecoration(
-            color: pillColor.withValues(alpha: _hovered ? 0.18 : 0.10),
+            color: _hovered
+                ? Color.alphaBlend(
+                    pillColor.withValues(alpha: 0.15),
+                    t.bg1.withValues(alpha: 0.95))
+                : pillColor.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(r),
             border: Border.all(
-              color: pillColor.withValues(alpha: _hovered ? 0.50 : 0.30),
+              color: _hovered
+                  ? pillColor.withValues(alpha: 0.50)
+                  : pillColor.withValues(alpha: 0.30),
               width: 0.8,
             ),
-            boxShadow: _hovered ? AppElev.row : null,
+            boxShadow: _hovered
+                ? [BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2))]
+                : null,
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -12560,10 +12756,12 @@ class _CommitTagSuggestionChipState extends State<_CommitTagSuggestionChip> {
         .withHue(hue)
         .withSaturation((hsl.saturation * 0.6).clamp(0.0, 1.0))
         .toColor();
+    final bgLum = t.bg0.computeLuminance();
+    final textL = bgLum > 0.4 ? 0.28 : 0.78;
     final textColor = hsl
         .withHue(hue)
         .withSaturation((hsl.saturation * 0.7).clamp(0.0, 1.0))
-        .withLightness(hsl.lightness > 0.5 ? 0.30 : 0.75)
+        .withLightness(textL)
         .toColor();
 
     return MouseRegion(
@@ -12577,13 +12775,24 @@ class _CommitTagSuggestionChipState extends State<_CommitTagSuggestionChip> {
           curve: s.safeCurve,
           padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
           decoration: BoxDecoration(
-            color: pillColor.withValues(alpha: _hovered ? 0.38 : 0.12),
+            color: _hovered
+                ? Color.alphaBlend(
+                    pillColor.withValues(alpha: 0.18),
+                    t.bg1.withValues(alpha: 0.95))
+                : pillColor.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(r),
             border: Border.all(
-              color: pillColor.withValues(alpha: _hovered ? 0.70 : 0.28),
+              color: _hovered
+                  ? pillColor.withValues(alpha: 0.70)
+                  : pillColor.withValues(alpha: 0.28),
               width: 0.6,
             ),
-            boxShadow: _hovered ? AppElev.row : null,
+            boxShadow: _hovered
+                ? [BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2))]
+                : null,
           ),
           child: AnimatedDefaultTextStyle(
             duration: context.motion(AppMotion.snap),

@@ -534,8 +534,8 @@ class _IsolateSampleResult {
 /// or geometry couldn't be computed (tiny truncated history, etc.).
 Future<_IsolateSampleResult?> _sampleInIsolate(
     String repoPath, int window) async {
-  final statsResult =
-      await collectLogosGitStats(repoPath, commitWindow: window);
+  final statsResult = await collectLogosGitStats(repoPath,
+      commitWindow: window, halfLifeCommits: window / 4.0);
   if (!statsResult.ok) return null;
   final stats = statsResult.data!;
   final engine = LogosGit.buildFromStats(stats);

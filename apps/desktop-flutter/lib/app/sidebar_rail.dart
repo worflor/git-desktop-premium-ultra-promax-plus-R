@@ -2063,17 +2063,20 @@ class _ProjectStatusStrip extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    final color = tokens.textFaint.withValues(alpha: 0.55);
-    final style = TextStyle(
-      color: color,
+    final numStyle = TextStyle(
+      color: tokens.accentBright.withValues(alpha: 0.85),
       fontSize: 9.5,
       letterSpacing: 0.6,
+      fontWeight: FontWeight.w500,
+    );
+    final labelStyle = numStyle.copyWith(
+      color: tokens.textFaint,
       fontWeight: FontWeight.w400,
     );
     final dot = TextSpan(
       text: '   ·   ',
-      style: style.copyWith(
-        color: tokens.chromeBorder.withValues(alpha: 0.30),
+      style: labelStyle.copyWith(
+        color: tokens.textFaint.withValues(alpha: 0.5),
       ),
     );
 
@@ -2081,23 +2084,13 @@ class _ProjectStatusStrip extends StatelessWidget {
     final cc = commitCount;
     final spans = <InlineSpan>[];
     if (fc != null && fc > 0) {
-      spans.add(TextSpan(text: _compact(fc), style: style));
-      spans.add(TextSpan(
-        text: ' files',
-        style: style.copyWith(
-          color: tokens.chromeBorder.withValues(alpha: 0.40),
-        ),
-      ));
+      spans.add(TextSpan(text: _compact(fc), style: numStyle));
+      spans.add(TextSpan(text: ' files', style: labelStyle));
     }
     if (cc != null && cc > 0) {
       if (spans.isNotEmpty) spans.add(dot);
-      spans.add(TextSpan(text: _compact(cc), style: style));
-      spans.add(TextSpan(
-        text: ' commits',
-        style: style.copyWith(
-          color: tokens.chromeBorder.withValues(alpha: 0.40),
-        ),
-      ));
+      spans.add(TextSpan(text: _compact(cc), style: numStyle));
+      spans.add(TextSpan(text: ' commits', style: labelStyle));
     }
     if (spans.isEmpty) return const SizedBox.shrink();
 
