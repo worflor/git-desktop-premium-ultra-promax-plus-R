@@ -6509,7 +6509,7 @@ class _ChangesPageState extends State<ChangesPage> {
                               // path: standard "more options" mental
                               // model on a primary action button.
                               GestureDetector(
-                                behavior: HitTestBehavior.opaque,
+                                behavior: HitTestBehavior.translucent,
                                 onSecondaryTapDown: (d) =>
                                     _showCommitContextMenu(
                                   d.globalPosition,
