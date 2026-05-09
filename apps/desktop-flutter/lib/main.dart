@@ -326,16 +326,15 @@ class _GitDesktopAppState extends State<GitDesktopApp> {
   }
 }
 
-/// Root-level [TickerMode] wrapper driven by [WindowActivity]. Flips
-/// `enabled: false` the instant the window loses focus, which mutes
-/// every `TickerProviderStateMixin`-backed animation in the subtree —
-/// catching the long tail of idle repaints that individual `awake`
-/// gates missed (unfound tickers, third-party widgets, AnimatedXxx
-/// implicit animations that may still drive frames even at rest).
-///
-/// Tickers in the subtree stay subscribed; they simply don't fire
-/// their callbacks while muted. On re-focus, the next `didChangeDeps`
-/// flows through normally and animations resume where they left off.
+/// Root-level [TickerMode] wrapper driven by [WindowActivity]. Mutes
+/// all tickers when the window is minimized (not visible). Focus-loss
+/// alone does NOT mute — individual widgets that want to pause on
+/// blur do so via their own [WindowActivity.awake] checks. This lets
+/// opt-in animations (e.g. hypercube logo with "animate when
+/// unfocused") keep running while the window is visible but
+/// unfocused, without being killed by an ancestor TickerMode gate
+/// (nested TickerMode(enabled: true) cannot override a disabled
+/// parent).
 class _RootTickerMute extends StatefulWidget {
   final Widget child;
   const _RootTickerMute({required this.child});
@@ -354,7 +353,7 @@ class _RootTickerMuteState extends State<_RootTickerMute>
   @override
   Widget build(BuildContext context) {
     return TickerMode(
-      enabled: WindowActivity.instance.awake,
+      enabled: WindowActivity.instance.visible,
       child: widget.child,
     );
   }

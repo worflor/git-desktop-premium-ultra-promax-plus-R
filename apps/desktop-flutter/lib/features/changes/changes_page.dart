@@ -12180,6 +12180,82 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         if (!widget.shapeMode)
+                          MouseRegion(
+                            onEnter: (_) => setState(
+                                () => _tagTriggerHovered = true),
+                            onExit: (_) => setState(
+                                () => _tagTriggerHovered = false),
+                            cursor: SystemMouseCursors.click,
+                            child: GestureDetector(
+                              onTap: () {
+                                setState(() =>
+                                    _tagFieldOpen = !_tagFieldOpen);
+                                if (_tagFieldOpen) {
+                                  WidgetsBinding.instance
+                                      .addPostFrameCallback((_) {
+                                    _tagInputFocus.requestFocus();
+                                  });
+                                }
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: AnimatedContainer(
+                                  duration: context
+                                      .motion(AppMotion.snap),
+                                  curve: shader.safeCurve,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 5, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: tokens.bg1.withValues(
+                                        alpha: _tagTriggerHovered ||
+                                                _tagFieldOpen
+                                            ? 0.95
+                                            : 0.0),
+                                    borderRadius:
+                                        BorderRadius.circular(
+                                            geo.pillRadius),
+                                    border: Border.all(
+                                      color:
+                                          tokens.chromeBorder.withValues(
+                                              alpha: _tagTriggerHovered ||
+                                                      _tagFieldOpen
+                                                  ? 0.35
+                                                  : widget.tags.isNotEmpty
+                                                      ? 0.20
+                                                      : 0.0),
+                                      width: 0.8,
+                                    ),
+                                    boxShadow: _tagTriggerHovered
+                                        ? AppElev.row
+                                        : null,
+                                  ),
+                                  child: AnimatedOpacity(
+                                    opacity: _tagTriggerHovered ||
+                                            _tagFieldOpen ||
+                                            widget.tags.isNotEmpty
+                                        ? 1.0
+                                        : 0.35,
+                                    duration: context
+                                        .motion(AppMotion.snap),
+                                    curve: shader.safeCurve,
+                                    child: Text(
+                                      '#',
+                                      style: TextStyle(
+                                        color: _tagFieldOpen
+                                            ? tokens.accentBright
+                                            : tokens.textMuted,
+                                        fontSize: 10,
+                                        fontFamily: AppFonts.mono,
+                                        fontWeight: FontWeight.w700,
+                                        height: 1.2,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (!widget.shapeMode)
                           Expanded(
                             child: ConstrainedBox(
                               constraints:
@@ -12192,78 +12268,6 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
                                   crossAxisAlignment:
                                       WrapCrossAlignment.center,
                                   children: [
-                                  MouseRegion(
-                                    onEnter: (_) => setState(
-                                        () => _tagTriggerHovered = true),
-                                    onExit: (_) => setState(
-                                        () => _tagTriggerHovered = false),
-                                    cursor: SystemMouseCursors.click,
-                                    child: GestureDetector(
-                                      onTap: () {
-                                        setState(() =>
-                                            _tagFieldOpen = !_tagFieldOpen);
-                                        if (_tagFieldOpen) {
-                                          WidgetsBinding.instance
-                                              .addPostFrameCallback((_) {
-                                            _tagInputFocus.requestFocus();
-                                          });
-                                        }
-                                      },
-                                      child: AnimatedContainer(
-                                        duration: context
-                                            .motion(AppMotion.snap),
-                                        curve: shader.safeCurve,
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 5, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: tokens.bg1.withValues(
-                                              alpha: _tagTriggerHovered ||
-                                                      _tagFieldOpen
-                                                  ? 0.95
-                                                  : 0.0),
-                                          borderRadius:
-                                              BorderRadius.circular(
-                                                  geo.pillRadius),
-                                          border: Border.all(
-                                            color:
-                                                tokens.chromeBorder.withValues(
-                                                    alpha: _tagTriggerHovered ||
-                                                            _tagFieldOpen
-                                                        ? 0.35
-                                                        : widget.tags.isNotEmpty
-                                                            ? 0.20
-                                                            : 0.0),
-                                            width: 0.8,
-                                          ),
-                                          boxShadow: _tagTriggerHovered
-                                              ? AppElev.row
-                                              : null,
-                                        ),
-                                        child: AnimatedOpacity(
-                                          opacity: _tagTriggerHovered ||
-                                                  _tagFieldOpen ||
-                                                  widget.tags.isNotEmpty
-                                              ? 1.0
-                                              : 0.35,
-                                          duration: context
-                                              .motion(AppMotion.snap),
-                                          curve: shader.safeCurve,
-                                          child: Text(
-                                            '#',
-                                            style: TextStyle(
-                                              color: _tagFieldOpen
-                                                  ? tokens.accentBright
-                                                  : tokens.textMuted,
-                                              fontSize: 10,
-                                              fontFamily: AppFonts.mono,
-                                              fontWeight: FontWeight.w700,
-                                              height: 1.2,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
                                   for (final tag in widget.tags)
                                     _CommitTagChip(
                                       label: tag,
