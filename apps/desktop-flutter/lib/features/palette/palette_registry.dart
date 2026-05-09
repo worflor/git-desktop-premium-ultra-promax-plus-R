@@ -20,6 +20,7 @@ import '../../backend/dtos.dart';
 import '../../backend/external_tools.dart';
 import '../../backend/git.dart' as git;
 import '../../backend/logos_git.dart';
+import '../../backend/repo_web_url.dart';
 import '../../backend/system_paths.dart';
 import '../../backend/undo_controller.dart';
 import '../../ui/tokens.dart';
@@ -309,7 +310,7 @@ List<PaletteEntry> _repoSubEntries(
       if (!hideAi) ...[
         PaletteEntry(
           id: 'repo.sub.generate.$path',
-          label: 'Generate Commit in $name',
+          label: 'Generate Commit · $name',
           subtitle: path,
           category: PaletteCategory.action,
           actionType: PaletteActionType.execute,
@@ -415,14 +416,28 @@ List<PaletteEntry> _actionEntries(
     PaletteEntry(
       id: 'act.open-browser',
       label: 'Open in Browser',
+      keywords: const ['github', 'gitlab', 'web', 'remote'],
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
       chipLabel: 'WEB',
       chipTone: ChipTone.chromatic2,
+      onExecute: () async {
+        try {
+          final info = await resolveRepoWebInfo(repoPath);
+          if (info != null) {
+            cb.onOpenBrowser(info.webUrl);
+          } else {
+            revealInFileManager(repoPath);
+          }
+        } catch (_) {
+          revealInFileManager(repoPath);
+        }
+      },
     ),
     PaletteEntry(
       id: 'act.terminal',
-      label: 'Open Terminal Here',
+      label: 'Terminal',
+      keywords: const ['shell', 'console', 'cmd', 'bash', 'powershell'],
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
       chipLabel: 'SYS',
@@ -430,7 +445,8 @@ List<PaletteEntry> _actionEntries(
     ),
     PaletteEntry(
       id: 'act.reveal',
-      label: 'Reveal in File Manager',
+      label: 'Reveal in Files',
+      keywords: const ['explorer', 'finder', 'folder', 'open'],
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
       chipLabel: 'SYS',
@@ -438,8 +454,9 @@ List<PaletteEntry> _actionEntries(
     ),
     PaletteEntry(
       id: 'act.copy-path',
-      label: 'Copy Repo Path',
+      label: 'Copy Path',
       subtitle: repoPath,
+      keywords: const ['clipboard', 'repo'],
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
       chipLabel: 'CLIP',
@@ -449,8 +466,9 @@ List<PaletteEntry> _actionEntries(
     if (branch.isNotEmpty)
       PaletteEntry(
         id: 'act.copy-branch',
-        label: 'Copy Current Branch',
+        label: 'Copy Branch',
         subtitle: branch,
+        keywords: const ['clipboard', 'ref'],
         category: PaletteCategory.action,
         actionType: PaletteActionType.execute,
         chipLabel: 'CLIP',
@@ -518,6 +536,7 @@ List<PaletteEntry> _gitCommandEntries(
     PaletteEntry(
       id: 'cmd.fetch',
       label: 'Fetch',
+      keywords: const ['sync', 'download', 'update'],
       chipLabel: 'SYNC',
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -530,6 +549,7 @@ List<PaletteEntry> _gitCommandEntries(
       subtitle: behind > 0
           ? '$behind behind${upstream != null ? ' $upstream' : ''}'
           : null,
+      keywords: const ['sync', 'download', 'merge', 'update'],
       chipLabel: behind > 0 ? '${behind}↓' : null,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -542,6 +562,7 @@ List<PaletteEntry> _gitCommandEntries(
       subtitle: ahead > 0
           ? '$ahead commit${ahead > 1 ? 's' : ''}${upstream != null ? ' to $upstream' : ''}'
           : null,
+      keywords: const ['sync', 'upload', 'publish'],
       chipLabel: ahead > 0 ? '${ahead}↑' : null,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
@@ -550,8 +571,10 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.force-push',
-      label: 'Force Push with Lease',
+      label: 'Force Push',
+      keywords: const ['overwrite', 'push force'],
       chipLabel: 'FORCE',
+      chipTone: ChipTone.negative,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.syncForcePush},
@@ -560,6 +583,7 @@ List<PaletteEntry> _gitCommandEntries(
     PaletteEntry(
       id: 'cmd.commit',
       label: 'Commit',
+      keywords: const ['save', 'snapshot'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.doCommit},
@@ -569,6 +593,7 @@ List<PaletteEntry> _gitCommandEntries(
     PaletteEntry(
       id: 'cmd.stage-all',
       label: 'Stage All',
+      keywords: const ['add all', 'track'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stageAll},
@@ -577,6 +602,7 @@ List<PaletteEntry> _gitCommandEntries(
     PaletteEntry(
       id: 'cmd.unstage-all',
       label: 'Unstage All',
+      keywords: const ['reset', 'remove staged'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.unstageAll},
@@ -584,7 +610,9 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.discard-all',
-      label: 'Discard All Changes',
+      label: 'Discard All',
+      keywords: const ['clean', 'reset', 'undo changes'],
+      chipTone: ChipTone.negative,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.discardAll},
@@ -601,6 +629,7 @@ List<PaletteEntry> _gitCommandEntries(
     PaletteEntry(
       id: 'cmd.delete-branch',
       label: 'Delete Branch',
+      chipTone: ChipTone.negative,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.branchDelete},
@@ -616,7 +645,8 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.stash-push',
-      label: 'Stash Changes',
+      label: 'Stash',
+      keywords: const ['shelve', 'park', 'save state'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stashPush},
@@ -625,6 +655,7 @@ List<PaletteEntry> _gitCommandEntries(
     PaletteEntry(
       id: 'cmd.stash-pop',
       label: 'Stash Pop',
+      keywords: const ['unshelve', 'restore'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stashPop},
@@ -633,6 +664,7 @@ List<PaletteEntry> _gitCommandEntries(
     PaletteEntry(
       id: 'cmd.stash-apply',
       label: 'Stash Apply',
+      keywords: const ['restore', 'unshelve'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stashApply},
@@ -641,6 +673,8 @@ List<PaletteEntry> _gitCommandEntries(
     PaletteEntry(
       id: 'cmd.stash-drop',
       label: 'Stash Drop',
+      keywords: const ['delete stash', 'remove stash'],
+      chipTone: ChipTone.negative,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.stashDrop},
@@ -657,6 +691,7 @@ List<PaletteEntry> _gitCommandEntries(
     PaletteEntry(
       id: 'cmd.cherry-pick',
       label: 'Cherry-pick',
+      keywords: const ['pick commit', 'graft'],
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.cherryPick},
@@ -664,7 +699,9 @@ List<PaletteEntry> _gitCommandEntries(
     ),
     PaletteEntry(
       id: 'cmd.revert',
-      label: 'Revert Commit',
+      label: 'Revert',
+      keywords: const ['undo commit', 'rollback'],
+      chipTone: ChipTone.negative,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       tags: const {EntryTag.revertCommit},
@@ -686,7 +723,8 @@ List<PaletteEntry> _prEntries(
     return [
       PaletteEntry(
         id: 'pr.create',
-        label: 'Create PR for $branch',
+        label: 'Create PR',
+        subtitle: branch,
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
         chipLabel: 'PR',
@@ -699,7 +737,8 @@ List<PaletteEntry> _prEntries(
   if (pr.state == 'OPEN') {
     entries.add(PaletteEntry(
       id: 'pr.merge',
-      label: 'Merge PR: ${pr.title}',
+      label: 'Merge PR',
+      subtitle: pr.title,
       category: PaletteCategory.command,
       actionType: PaletteActionType.execute,
       chipLabel: 'PR',
@@ -709,7 +748,7 @@ List<PaletteEntry> _prEntries(
     if (pr.isDraft) {
       entries.add(PaletteEntry(
         id: 'pr.ready',
-        label: 'Mark PR Ready for Review',
+        label: 'Mark PR Ready',
         category: PaletteCategory.command,
         actionType: PaletteActionType.execute,
         chipLabel: 'DRAFT',
@@ -737,7 +776,7 @@ List<PaletteEntry> _aiEntries(
   entries.addAll([
     PaletteEntry(
       id: 'ai.trigger.generate',
-      label: 'Generate Commit Message',
+      label: 'Generate Commit',
       category: PaletteCategory.action,
       actionType: PaletteActionType.execute,
       chipLabel: 'AI',
@@ -845,7 +884,8 @@ List<PaletteEntry> _undoEntry(UndoCoordinator undo, PaletteCallbacks cb) {
 List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       PaletteEntry(
         id: 'nav.changes',
-        label: 'Go to Changes',
+        label: 'Changes',
+        keywords: const ['diff', 'modified', 'staged', 'status'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
         tags: const {EntryTag.navWithShortcut},
@@ -854,7 +894,8 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       ),
       PaletteEntry(
         id: 'nav.history',
-        label: 'Go to History',
+        label: 'History',
+        keywords: const ['log', 'commits', 'timeline'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
         tags: const {EntryTag.navWithShortcut},
@@ -863,7 +904,8 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       ),
       PaletteEntry(
         id: 'nav.branches',
-        label: 'Go to Branches',
+        label: 'Branches',
+        keywords: const ['refs', 'checkout', 'switch'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
         tags: const {EntryTag.navWithShortcut},
@@ -872,14 +914,16 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       ),
       PaletteEntry(
         id: 'nav.xray',
-        label: 'Open X-Ray',
+        label: 'X-Ray',
+        keywords: const ['analysis', 'hotspots', 'insights'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
         onExecute: cb.onOpenXray,
       ),
       PaletteEntry(
         id: 'nav.settings',
-        label: 'Open Settings',
+        label: 'Settings',
+        keywords: const ['preferences', 'config', 'options'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
         onExecute: cb.onOpenSettings,
@@ -887,6 +931,7 @@ List<PaletteEntry> _navigationEntries(PaletteCallbacks cb) => [
       PaletteEntry(
         id: 'nav.refresh',
         label: 'Refresh',
+        keywords: const ['reload', 'rescan'],
         category: PaletteCategory.navigation,
         actionType: PaletteActionType.execute,
         shortcutLabel: 'F5',
@@ -900,6 +945,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       PaletteEntry(
         id: 'setting.reduce-motion',
         label: 'Reduce Motion',
+        keywords: const ['animation', 'accessibility'],
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.reduceMotion,
@@ -907,7 +953,8 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.logo-animates-unfocused',
-        label: 'Logo Animates When Unfocused',
+        label: 'Animate Logo Unfocused',
+        keywords: const ['background', 'idle'],
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.logoAnimatesWhenUnfocused,
@@ -923,7 +970,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.auto-select-changes',
-        label: 'Auto-select New Changes',
+        label: 'Auto-select Changes',
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.autoSelectNewChanges,
@@ -931,7 +978,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       ),
       PaletteEntry(
         id: 'setting.fetch-online-issues',
-        label: 'Fetch Online Issues on Branch Load',
+        label: 'Fetch Online Issues',
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.fetchOnlineIssuesOnBranchLoad,
@@ -964,7 +1011,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
       if (!prefs.hideAiFeatures)
         PaletteEntry(
           id: 'setting.ai-read-only',
-          label: 'AI Read-only by Default',
+          label: 'AI Read-only',
           category: PaletteCategory.setting,
           actionType: PaletteActionType.toggle,
           readBool: () => prefs.aiReadOnlyDefault,
@@ -972,7 +1019,7 @@ List<PaletteEntry> _settingToggleEntries(PreferencesState prefs) => [
         ),
       PaletteEntry(
         id: 'setting.stash-cabinet',
-        label: 'Stash Cabinet Default Expanded',
+        label: 'Stash Cabinet Expanded',
         category: PaletteCategory.setting,
         actionType: PaletteActionType.toggle,
         readBool: () => prefs.stashCabinetDefaultExpanded,
@@ -995,8 +1042,9 @@ List<PaletteEntry> _themeEntries(ThemeState theme) => AppThemeId.values.map(
         final current = theme.themeId == id;
         return PaletteEntry(
           id: 'theme.${id.name}',
-          label: 'Theme: ${_themeLabel(id)}',
+          label: _themeLabel(id),
           subtitle: current ? 'active' : null,
+          keywords: const ['theme'],
           category: PaletteCategory.setting,
           actionType: PaletteActionType.execute,
           chipLabel: 'THM',
@@ -1010,19 +1058,11 @@ List<PaletteEntry> _themeEntries(ThemeState theme) => AppThemeId.values.map(
 List<PaletteEntry> _infoEntries() => [
       PaletteEntry(
         id: 'info.version',
-        label: 'About Manifold',
-        subtitle: BuildInfo.versionDisplay,
+        label: 'Manifold ${BuildInfo.versionDisplay}',
+        keywords: const ['version', 'about'],
         category: PaletteCategory.action,
         actionType: PaletteActionType.execute,
         chipLabel: 'VER',
-      ),
-      PaletteEntry(
-        id: 'info.copy-version',
-        label: 'Copy Version',
-        subtitle: BuildInfo.versionDisplay,
-        category: PaletteCategory.action,
-        actionType: PaletteActionType.execute,
-        chipLabel: 'CLIP',
         onExecute: () => Clipboard.setData(
           ClipboardData(text: BuildInfo.versionDisplay),
         ),
