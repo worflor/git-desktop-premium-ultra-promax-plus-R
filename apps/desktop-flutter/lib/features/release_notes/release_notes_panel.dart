@@ -428,7 +428,7 @@ const _aboutDevelopment = <_AboutEntry>[
 const _changelog = <_ReleaseNote>[
   _ReleaseNote(
     version: 'v0.1.0',
-    date: '2026-05-07',
+    date: '2026-05-08',
     bullets: [
       'Built from scratch in Flutter over about five weeks. The whole git surface is here: staging, branches, history, stash, blame, file history, parallel worktrees, and sync.',
       'Command palette handles navigation, git commands, branch operations, stash actions, settings toggles, and search across repos, branches, commits, tags, and changed files.',
