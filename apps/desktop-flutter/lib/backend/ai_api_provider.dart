@@ -65,6 +65,21 @@ class AiApiModel {
   bool get supportsReasoning => supportedParameters.contains('reasoning');
 }
 
+class AiApiKeyInfo {
+  final double? limit;
+  final double? used;
+  final double? remaining;
+  final bool isFreeTier;
+  const AiApiKeyInfo({
+    this.limit,
+    this.used,
+    this.remaining,
+    this.isFreeTier = false,
+  });
+  double? get fraction =>
+      limit != null && limit! > 0 && used != null ? (used! / limit!).clamp(0.0, 1.0) : null;
+}
+
 abstract class AiApiProvider {
   String get id;
   String get displayName;
@@ -73,6 +88,7 @@ abstract class AiApiProvider {
 
   Future<AiApiResponse> complete(AiApiRequest request);
   Future<List<AiApiModel>> listModels(AiApiCredentials creds);
+  Future<AiApiKeyInfo?> fetchKeyInfo(AiApiCredentials creds) async => null;
   bool isReady(AiApiCredentials creds) => creds.apiKey.trim().isNotEmpty;
 
   String effectiveBaseUrl(AiApiCredentials creds) {
@@ -290,6 +306,40 @@ class OpenRouterApiProvider extends OpenAiCompatibleApiProvider {
         'HTTP-Referer': 'https://github.com/gdpu-app/gdpu',
         'X-Title': 'GDPU',
       };
+
+  @override
+  Future<AiApiKeyInfo?> fetchKeyInfo(AiApiCredentials creds) async {
+    final base = effectiveBaseUrl(creds);
+    final url = Uri.parse('$base/auth/key');
+    final client = HttpClient()
+      ..idleTimeout = const Duration(seconds: 5)
+      ..connectionTimeout = const Duration(seconds: 10);
+    try {
+      final request = await client.getUrl(url)
+          .timeout(const Duration(seconds: 10));
+      request.headers.set('Authorization', 'Bearer ${creds.apiKey}');
+      final response = await request.close().timeout(
+            const Duration(seconds: 10),
+          );
+      final raw = await response.transform(utf8.decoder).join()
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+      final json = jsonDecode(raw);
+      if (json is! Map) return null;
+      final data = json['data'];
+      if (data is! Map) return null;
+      return AiApiKeyInfo(
+        limit: (data['limit'] as num?)?.toDouble(),
+        used: (data['usage_monthly'] as num?)?.toDouble(),
+        remaining: (data['limit_remaining'] as num?)?.toDouble(),
+        isFreeTier: data['is_free_tier'] == true,
+      );
+    } catch (_) {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

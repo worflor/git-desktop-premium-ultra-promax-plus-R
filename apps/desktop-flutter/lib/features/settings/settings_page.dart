@@ -3158,6 +3158,101 @@ class _ProviderNode extends StatelessWidget {
   }
 }
 
+class _ApiUsageBar extends StatelessWidget {
+  final AppTokens tokens;
+  final AiApiKeyInfo? info;
+
+  const _ApiUsageBar({required this.tokens, this.info});
+
+  @override
+  Widget build(BuildContext context) {
+    if (info == null || info!.fraction == null) return const SizedBox.shrink();
+    final frac = info!.fraction!;
+    final t = tokens;
+    final barColor = frac > 0.85
+        ? t.stateConflicted
+        : frac > 0.6
+            ? t.stateModified
+            : t.chromeAccent;
+    final usedLabel = info!.used != null
+        ? '\$${info!.used!.toStringAsFixed(2)}'
+        : '';
+    final limitLabel = info!.limit != null
+        ? ' / \$${info!.limit!.toStringAsFixed(2)}'
+        : '';
+
+    return Tooltip(
+      message: '$usedLabel$limitLabel this month',
+      child: SizedBox(
+        height: 12,
+        child: Row(
+          children: [
+            Expanded(
+              child: Center(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(1.5),
+                  child: SizedBox(
+                    height: 3,
+                    child: CustomPaint(
+                      size: const Size(double.infinity, 3),
+                      painter: _UsageTrackPainter(
+                        fraction: frac,
+                        trackColor: t.chromeBorder.withValues(alpha: 0.15),
+                        fillColor: barColor.withValues(alpha: 0.55),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              usedLabel,
+              style: TextStyle(
+                color: t.textMuted.withValues(alpha: 0.6),
+                fontSize: 8,
+                fontFamily: AppFonts.mono,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _UsageTrackPainter extends CustomPainter {
+  final double fraction;
+  final Color trackColor;
+  final Color fillColor;
+
+  _UsageTrackPainter({
+    required this.fraction,
+    required this.trackColor,
+    required this.fillColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      const Radius.circular(2),
+    );
+    canvas.drawRRect(r, Paint()..color = trackColor);
+    final fillRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, 0, size.width * fraction, size.height),
+      const Radius.circular(2),
+    );
+    canvas.drawRRect(fillRect, Paint()..color = fillColor);
+  }
+
+  @override
+  bool shouldRepaint(_UsageTrackPainter old) =>
+      old.fraction != fraction ||
+      old.trackColor != trackColor ||
+      old.fillColor != fillColor;
+}
+
 class _ProviderCard {
   final String id;
   final String binaryLabel;
@@ -3204,6 +3299,8 @@ class _ProviderGridState extends State<_ProviderGrid>
   final _baseUrlControllers = <String, TextEditingController>{};
   final _testing = <String>{};
   final _testResults = <String, bool>{};
+  final _keyInfo = <String, AiApiKeyInfo>{};
+  final Set<String> _fetchedKeyFingerprints = {};
 
   TextEditingController _keyController(String providerId) {
     return _keyControllers.putIfAbsent(providerId, () {
@@ -3234,6 +3331,13 @@ class _ProviderGridState extends State<_ProviderGrid>
       curve: Curves.easeOutCubic,
       reverseCurve: Curves.easeInCubic,
     );
+    _fetchKeyInfo();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProviderGrid old) {
+    super.didUpdateWidget(old);
+    if (widget.aiSettings != old.aiSettings) _fetchKeyInfo();
   }
 
   @override
@@ -3246,6 +3350,31 @@ class _ProviderGridState extends State<_ProviderGrid>
       c.dispose();
     }
     super.dispose();
+  }
+
+  void _fetchKeyInfo() {
+    final activeIds = <String>{};
+    for (final provider in aiApiProviderRegistry) {
+      final entry = widget.aiSettings.apiKeyFor(provider.id);
+      if (entry == null || entry.apiKey.trim().isEmpty) {
+        _keyInfo.remove(provider.id);
+        _fetchedKeyFingerprints.remove(provider.id);
+        continue;
+      }
+      activeIds.add(provider.id);
+      final fp = '${provider.id}:${entry.apiKey}';
+      if (_fetchedKeyFingerprints.contains(fp)) continue;
+      final creds = AiApiCredentials(
+          apiKey: entry.apiKey, baseUrl: entry.baseUrl);
+      provider.fetchKeyInfo(creds).then((info) {
+        if (!mounted) return;
+        if (info != null) {
+          _fetchedKeyFingerprints.add(fp);
+          setState(() => _keyInfo[provider.id] = info);
+        }
+      });
+    }
+    _keyInfo.removeWhere((id, _) => !activeIds.contains(id));
   }
 
   void _toggleApi() {
@@ -3273,6 +3402,7 @@ class _ProviderGridState extends State<_ProviderGrid>
     }
     setState(() => _testResults.remove(providerId));
     widget.onApiKeyChanged();
+    _fetchKeyInfo();
   }
 
   Future<void> _testKey(String providerId) async {
@@ -3429,13 +3559,28 @@ class _ProviderGridState extends State<_ProviderGrid>
                             ],
                           ),
                           const SizedBox(height: 4),
-                          Text(
-                            p.binaryLabel,
-                            style: TextStyle(
-                              color: t.textMuted,
-                              fontSize: 10,
-                              fontFamily: AppFonts.mono,
-                            ),
+                          Row(
+                            children: [
+                              Text(
+                                p.binaryLabel,
+                                style: TextStyle(
+                                  color: t.textMuted,
+                                  fontSize: 10,
+                                  fontFamily: AppFonts.mono,
+                                ),
+                              ),
+                              if (_keyInfo.isNotEmpty) ...[
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: _ApiUsageBar(
+                                    tokens: t,
+                                    info: _keyInfo.values
+                                        .where((i) => i.fraction != null)
+                                        .firstOrNull,
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ],
                       ),

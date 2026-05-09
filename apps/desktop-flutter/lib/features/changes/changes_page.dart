@@ -11930,7 +11930,6 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     'name this moment',
     'leave a note',
     'say something nice',
-    'the deed is done',
     'for the record',
     'posterity awaits',
     'what changed and why',
@@ -11939,6 +11938,10 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     'dear git log',
     'how it went',
     'in your own words',
+    'oh?',
+    'hello there',
+    'writing more makes your bugs disappear',
+    'for-git me heaven for i hath…',
   ];
   static int _lastTitleIndex = -1;
   static final _titleRng = math.Random();
