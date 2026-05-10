@@ -441,13 +441,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
       return KeyEventResult.handled;
     }
 
-    if (_isEditableTargetFocused()) {
-      return KeyEventResult.ignored;
-    }
-    if (HardwareKeyboard.instance.isAltPressed) {
-      return KeyEventResult.ignored;
-    }
-
     if (key == LogicalKeyboardKey.escape) {
       if (_panel != _Panel.none || _awaitingGPrefix) {
         _setPanel(_Panel.none);
@@ -456,6 +449,13 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
         });
         return KeyEventResult.handled;
       }
+      return KeyEventResult.ignored;
+    }
+
+    if (_isEditableTargetFocused()) {
+      return KeyEventResult.ignored;
+    }
+    if (HardwareKeyboard.instance.isAltPressed) {
       return KeyEventResult.ignored;
     }
 

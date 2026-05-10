@@ -113,7 +113,7 @@ cp "$APPDIR/manifold.desktop" "$APPDIR/usr/share/applications/"
 
 # Icon — place at AppDir root (required by appimagetool) AND in the
 # hicolor icon theme hierarchy for proper desktop integration.
-ICON_SRC="$RELEASE_DIR/data/flutter_assets/assets/icon.png"
+ICON_SRC="$FLUTTER_DIR/macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_256.png"
 if [[ -f "$ICON_SRC" ]]; then
   cp "$ICON_SRC" "$APPDIR/manifold.png"
   cp "$ICON_SRC" "$APPDIR/usr/share/icons/hicolor/256x256/apps/manifold.png"

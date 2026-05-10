@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'ai_activity_state.dart';
 import 'logos_git_state.dart';
 import 'sidebar_org_state.dart';
@@ -1242,6 +1243,9 @@ class _ProjectItemState extends State<_ProjectItem>
   // the active one.
   int? _cachedFileCount;
   int? _cachedCommitCount;
+  int? _cachedContributorCount;
+  String? _cachedRepoSize;
+  String? _cachedLastActive;
 
   @override
   void initState() {
@@ -1260,6 +1264,9 @@ class _ProjectItemState extends State<_ProjectItem>
       _readmePath = null;
       _cachedFileCount = null;
       _cachedCommitCount = null;
+      _cachedContributorCount = null;
+      _cachedRepoSize = null;
+      _cachedLastActive = null;
       _detectReadmeAsync();
       _resolveRemoteAndWeb();
       _probeRepoStats();
@@ -1332,6 +1339,9 @@ class _ProjectItemState extends State<_ProjectItem>
       final results = await Future.wait([
         runGitProbe(pathAtCallTime, ['rev-list', '--count', 'HEAD']),
         runGitProbe(pathAtCallTime, ['ls-files']),
+        runGitProbe(pathAtCallTime, ['shortlog', '-sn', '--all', '--no-merges']),
+        runGitProbe(pathAtCallTime, ['count-objects', '-vH']),
+        runGitProbe(pathAtCallTime, ['log', '-1', '--format=%cr']),
       ]);
       if (!mounted || pathAtCallTime != widget.path) return;
       final commitCount = results[0].exitCode == 0
@@ -1340,9 +1350,28 @@ class _ProjectItemState extends State<_ProjectItem>
       final fileCount = results[1].exitCode == 0
           ? results[1].stdout.toString().trim().split('\n').where((l) => l.isNotEmpty).length
           : null;
+      int? contribCount;
+      if (results[2].exitCode == 0) {
+        contribCount = results[2].stdout.toString().trim()
+            .split('\n').where((l) => l.isNotEmpty).length;
+      }
+      String? repoSize;
+      if (results[3].exitCode == 0) {
+        final sizeMatch = RegExp(r'size-pack:\s*(.+)')
+            .firstMatch(results[3].stdout.toString());
+        if (sizeMatch != null) repoSize = sizeMatch.group(1)!.trim();
+      }
+      String? lastActive;
+      if (results[4].exitCode == 0) {
+        final raw = results[4].stdout.toString().trim();
+        if (raw.isNotEmpty) lastActive = raw;
+      }
       setState(() {
         _cachedCommitCount = commitCount;
         _cachedFileCount = fileCount;
+        _cachedContributorCount = contribCount;
+        _cachedRepoSize = repoSize;
+        _cachedLastActive = lastActive;
       });
     } catch (_) {/* silent — broken repo */}
   }
@@ -1599,6 +1628,9 @@ class _ProjectItemState extends State<_ProjectItem>
             aiRecords: aiRecords,
             fileCount: stripFileCount,
             commitCount: stripCommitCount,
+            contributorCount: _cachedContributorCount,
+            repoSize: _cachedRepoSize,
+            lastActive: _cachedLastActive,
           ),
         ),
       if (widget.onForget != null)
@@ -2042,12 +2074,15 @@ class _PulsingDotState extends State<_PulsingDot>
 /// Ultra-dim opacity + tiny icon size signals "dashboard readout,
 /// not a button." AI activity icons reuse the toolbar's animated
 /// icon set (sparkle / search / bubble) at miniature scale. — calm green for clean/synced, amber for dirty,
-class _ProjectStatusStrip extends StatelessWidget {
+class _ProjectStatusStrip extends StatefulWidget {
   final AppTokens tokens;
   final int dirtyCount;
   final List<AiActivityRecord> aiRecords;
   final int? fileCount;
   final int? commitCount;
+  final int? contributorCount;
+  final String? repoSize;
+  final String? lastActive;
 
   const _ProjectStatusStrip({
     required this.tokens,
@@ -2055,52 +2090,118 @@ class _ProjectStatusStrip extends StatelessWidget {
     required this.aiRecords,
     this.fileCount,
     this.commitCount,
+    this.contributorCount,
+    this.repoSize,
+    this.lastActive,
   });
 
   @override
+  State<_ProjectStatusStrip> createState() => _ProjectStatusStripState();
+}
+
+class _ProjectStatusStripState extends State<_ProjectStatusStrip> {
+  static const _prefsKey = 'status_strip_page';
+  static final ValueNotifier<bool> _page2 = ValueNotifier(false);
+  static bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _page2.addListener(_onPageChanged);
+    if (!_loaded) _loadPref();
+  }
+
+  @override
+  void dispose() {
+    _page2.removeListener(_onPageChanged);
+    super.dispose();
+  }
+
+  void _onPageChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadPref() async {
+    _loaded = true;
+    final prefs = await SharedPreferences.getInstance();
+    _page2.value = prefs.getBool(_prefsKey) ?? false;
+  }
+
+  void _toggle() {
+    _page2.value = !_page2.value;
+    SharedPreferences.getInstance()
+        .then((p) => p.setBool(_prefsKey, _page2.value));
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (fileCount == null && commitCount == null) {
+    final t = widget.tokens;
+    if (widget.fileCount == null && widget.commitCount == null) {
       return const SizedBox.shrink();
     }
 
     final numStyle = TextStyle(
-      color: tokens.accentBright.withValues(alpha: 0.85),
+      color: t.accentBright.withValues(alpha: 0.85),
       fontSize: 9.5,
       letterSpacing: 0.6,
       fontWeight: FontWeight.w500,
     );
     final labelStyle = numStyle.copyWith(
-      color: tokens.textFaint,
+      color: t.textFaint,
       fontWeight: FontWeight.w400,
     );
     final dot = TextSpan(
       text: '   ·   ',
       style: labelStyle.copyWith(
-        color: tokens.textFaint.withValues(alpha: 0.5),
+        color: t.textFaint.withValues(alpha: 0.5),
       ),
     );
 
-    final fc = fileCount;
-    final cc = commitCount;
     final spans = <InlineSpan>[];
+    final fc = widget.fileCount;
     if (fc != null && fc > 0) {
       spans.add(TextSpan(text: _compact(fc), style: numStyle));
       spans.add(TextSpan(text: ' files', style: labelStyle));
     }
-    if (cc != null && cc > 0) {
-      if (spans.isNotEmpty) spans.add(dot);
-      spans.add(TextSpan(text: _compact(cc), style: numStyle));
-      spans.add(TextSpan(text: ' commits', style: labelStyle));
+
+    if (_page2.value) {
+      final sz = widget.repoSize;
+      if (sz != null && spans.isNotEmpty) {
+        spans.add(dot);
+        spans.add(TextSpan(text: sz, style: numStyle));
+      }
+      final la = widget.lastActive;
+      if (la != null) {
+        if (spans.isNotEmpty) spans.add(dot);
+        spans.add(TextSpan(text: la, style: numStyle));
+      }
+    } else {
+      final cc = widget.commitCount;
+      if (cc != null && cc > 0) {
+        if (spans.isNotEmpty) spans.add(dot);
+        spans.add(TextSpan(text: _compact(cc), style: numStyle));
+        spans.add(TextSpan(text: ' commits', style: labelStyle));
+      }
+      final contrib = widget.contributorCount;
+      if (contrib != null && contrib > 0) {
+        if (spans.isNotEmpty) spans.add(dot);
+        spans.add(TextSpan(text: '$contrib \u{263A}', style: numStyle));
+      }
     }
+
     if (spans.isEmpty) return const SizedBox.shrink();
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: Center(
-        child: Text.rich(
-          TextSpan(children: spans),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+    return GestureDetector(
+      onTap: _toggle,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        child: Center(
+          child: Text.rich(
+            TextSpan(children: spans),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ),
     );

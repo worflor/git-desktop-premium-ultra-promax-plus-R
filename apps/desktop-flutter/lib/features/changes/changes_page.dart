@@ -4253,6 +4253,7 @@ class _ChangesPageState extends State<ChangesPage> {
       scopeKey: scopeKey,
     );
     setState(() {
+      _generateFlash = false;
       _actionError = null;
     });
 
@@ -4437,6 +4438,7 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     setState(() {
       _openDrawer = AiActivityKind.review;
+      _reviewFlash = false;
       _reviewTraceExpanded = false;
       _reviewReasoningExpanded = false;
       _actionError = null;
@@ -4623,6 +4625,7 @@ class _ChangesPageState extends State<ChangesPage> {
     );
     setState(() {
       _openDrawer = AiActivityKind.muse;
+      _museFlash = false;
       _actionError = null;
     });
 
@@ -11976,14 +11979,18 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
     return _titleHat[_titleHatCursor++];
   }
 
-  void _openExpandedEditor(BuildContext context, AppTokens tokens) {
-    final expanded = TextEditingController(text: widget.controller.text);
+  Future<void> _openExpandedEditor(
+      BuildContext context, AppTokens tokens) async {
+    final controller = widget.controller;
+    final onChanged = widget.onChanged;
+    final focusNode = widget.focusNode;
+    final expanded = TextEditingController(text: controller.text);
     final focus = FocusNode();
-    final title = _pickEditorTitle(widget.controller.text.length);
+    final title = _pickEditorTitle(controller.text.length);
     final shader = themeDefinitionFor(tokens.id).shader;
     final geo = shader.geometry;
     final dur = context.motion(AppMotion.fluid);
-    showGeneralDialog(
+    await showGeneralDialog(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'Close editor',
@@ -12094,14 +12101,14 @@ class _CommitComposerFieldState extends State<_CommitComposerField>
           ),
         ),
       ),
-    ).then((_) {
-      if (mounted) {
-        widget.controller.text = expanded.text;
-        widget.onChanged?.call(expanded.text);
-      }
-      expanded.dispose();
-      focus.dispose();
-    });
+    );
+    final editedText = expanded.text;
+    expanded.dispose();
+    focus.dispose();
+    if (!mounted) return;
+    controller.text = editedText;
+    onChanged?.call(editedText);
+    focusNode.requestFocus();
   }
 
   @override
@@ -13059,7 +13066,7 @@ class _CommitAiToolbarBtnState extends State<_CommitAiToolbarBtn> {
   bool _pressed = false;
 
   IconAnimState get _iconState {
-    if (widget.success) return IconAnimState.success;
+    if (widget.success && widget.enabled) return IconAnimState.success;
     if (widget.loading) return IconAnimState.loading;
     if (_hovered && widget.enabled) return IconAnimState.hovered;
     return IconAnimState.idle;

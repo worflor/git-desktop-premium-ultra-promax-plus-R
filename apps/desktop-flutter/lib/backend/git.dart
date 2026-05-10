@@ -2409,9 +2409,20 @@ String _gitStepError(String action, ProcessResult result) {
 
 Future<GitResult<String>> cloneRepository(String url, String targetPath) async {
   try {
-    final parent = p.dirname(targetPath);
-    final r = await _git(parent, ['clone', url, targetPath]);
-    if (r.exitCode != 0) return GitResult.err(r.stderr.toString().trim());
+    final parent = Directory(p.dirname(targetPath));
+    if (!await parent.exists()) await parent.create(recursive: true);
+    final r = await Process.run(
+      'git',
+      ['clone', url, targetPath],
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    if (r.exitCode != 0) {
+      return GitResult.err(
+          (r.stderr as String).trim().isNotEmpty
+              ? (r.stderr as String).trim()
+              : 'git clone exited with code ${r.exitCode}');
+    }
     return GitResult.ok(targetPath);
   } catch (error) {
     return GitResult.err(error.toString());
