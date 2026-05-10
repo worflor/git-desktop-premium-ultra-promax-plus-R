@@ -2168,12 +2168,24 @@ class _ProjectStatusStripState extends State<_ProjectStatusStrip> {
       final sz = widget.repoSize;
       if (sz != null && spans.isNotEmpty) {
         spans.add(dot);
-        spans.add(TextSpan(text: sz, style: numStyle));
+        final sizeMatch = RegExp(r'^([\d.]+)\s*(.+)$').firstMatch(sz);
+        if (sizeMatch != null) {
+          spans.add(TextSpan(text: sizeMatch.group(1)!, style: numStyle));
+          spans.add(TextSpan(text: ' ${sizeMatch.group(2)!}', style: labelStyle));
+        } else {
+          spans.add(TextSpan(text: sz, style: numStyle));
+        }
       }
       final la = widget.lastActive;
       if (la != null) {
         if (spans.isNotEmpty) spans.add(dot);
-        spans.add(TextSpan(text: la, style: numStyle));
+        final timeMatch = RegExp(r'^(\d+)\s+(.+)$').firstMatch(la);
+        if (timeMatch != null) {
+          spans.add(TextSpan(text: timeMatch.group(1)!, style: numStyle));
+          spans.add(TextSpan(text: ' ${timeMatch.group(2)!}', style: labelStyle));
+        } else {
+          spans.add(TextSpan(text: la, style: numStyle));
+        }
       }
     } else {
       final cc = widget.commitCount;

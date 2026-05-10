@@ -46,6 +46,7 @@ enum AppThemeId {
   blackboard,
   crafty,
   barbie,
+  entrapta,
 }
 
 enum SurfaceMaterialMode { solid, glass, phosphor }
@@ -70,6 +71,10 @@ enum ThemeParticles {
   /// sparkle — distinct from `ethereal`'s diffuse dots or `stardust`'s
   /// cosmic points.
   glitter,
+  /// Entrapta. Paired dot-eyes playing freeze tag — chasers (red)
+  /// hunt runners (magenta), tagged bots power down, nearby runners
+  /// can revive them. Wall-clock dt sim like whisps, not tiled.
+  botEyes,
 }
 
 enum ThemeInteraction {
@@ -119,6 +124,9 @@ enum ThemeTextEffect {
   shimmer,    // bibble: two-color gold→magenta band sweeps L→R across
               // changed chars, once per morph. not hue-cycling — that's
               // iridescent's job.
+  dataScrawl,  // entrapta: arriving chars land rotated + offset, then
+               // snap to grid. leaving chars jitter out. neighbors get
+               // a cyan→magenta tint pulse.
 }
 
 const defaultThemeId = AppThemeId.aether;
@@ -1531,6 +1539,76 @@ final _tokens = <AppThemeId, AppTokens>{
       Alignment.bottomRight,
     ],
   ),
+  AppThemeId.entrapta: AppTokens._(
+    id: AppThemeId.entrapta,
+    isDark: true,
+    colors: const [
+      0xFF0A0515, // 0  bg0           — near-black, deep purple void
+      0xFF0F081E, // 1  bg1
+      0xFF160C2A, // 2  bg2           — perceptible purple
+      0xFF1E1238, // 3  bg3           — Fright Zone wall glow
+      0xB30C0718, // 4  surface0      — translucent purple-black (glass)
+      0xC2110A22, // 5  surface1
+      0xD1180E2E, // 6  surface2
+      0xFFF0E8F8, // 7  textStrong    — near-white, faint lavender warmth
+      0xFFCCBEDE, // 8  textNormal    — soft lavender-grey
+      0xFF7E6E98, // 9  textMuted     — muted purple
+      0xFF00E5FF, // 10 stateAdded    — cyan (edge-light activation)
+      0xFFE040FB, // 11 stateModified — hot magenta (bot eyes shift)
+      0xFFFF1744, // 12 stateDeleted  — red (Entrapta's red-eyed bot)
+      0xFFFF9100, // 13 stateConflicted — amber (Fright Zone warning)
+      0xFF00E5FF, // 14 stateStaged   — cyan (ready, edge-lit)
+      0xFFE040FB, // 15 accentBright  — hot magenta (THE color)
+      0xFF3A2860, // 16 chromeBorder  — subtle purple hairline
+      0xFFE040FB, // 17 chromeAccent  — magenta
+      0xB30A0615, // 18 panelOverlay       — translucent deep purple
+      0xCC0E0A1C, // 19 panelOverlayStrong
+      0x0DE040FB, // 20 inputOverlay       — faint magenta tint
+      0x660A0615, // 21 diffOverlay        — purple veil
+      0xFF1A1238, // 22 btnBg         — dark indigo
+      0xFF24184A, // 23 btnHoverBg
+      0xFF3A2860, // 24 btnBorder     — purple
+      0xFFE040FB, // 25 btnText       — magenta on dark indigo
+      0xFF0E0820, // 26 inputBg       — dark input well
+      0x55E040FB, // 27 inputBorder   — translucent magenta
+      0x1AE040FB, // 28 itemHoverBg   — 10% magenta
+      0x33E040FB, // 29 itemActiveBg  — 20% magenta
+      0xFFE040FB, // 30 itemActiveBorder
+      0x443A2860, // 31 secondaryBtnBorder — translucent purple
+      0x1AE040FB, // 32 secondaryBtnHoverBg
+      0xFF0C0718, // 33 rowBg         — slightly off bg0
+      0xFF3A2860, // 34 scrollbarThumb — dim purple
+      0x99080414, // 35 shadowElev    — deep purple shadow
+      0xFF00E5FF, // 36 hyperChromatic1 — cyan
+      0xFFE040FB, // 37 hyperChromatic2 — magenta (the dual-channel)
+      0xFFFFFFFF, // 38 hyperCore
+      0xFF00E5FF, // 39 hypercubePositive — cyan
+      0xFFE040FB, // 40 hypercubeNegative — magenta
+      0xFF4E3E6A, // 41 textFaint     — ghosted purple
+      0xFF1A1238, // 42 sliderTrack   — dark indigo
+      0xFFE040FB, // 43 sliderThumb   — magenta
+      0xFF00E5FF, // 44 sliderThumbBorder — cyan rim on magenta thumb
+      0xCC120818, // 45 dangerOverlay — dark purple-red
+      0xFF00E5FF, // 46 eventStartTone — cyan
+    ],
+    focusRingOverride: 0xFFE040FB,
+    inputFocusBorderOverride: 0x80E040FB,
+    themeAmbient: const Color(0xFFE040FB),
+    themeSparkOpacity: 0.40,
+    themeSparkSpeed: const Duration(seconds: 12),
+    backdropBlur: 12,
+    backdropSaturate: 1.8,
+    appGradientColors: const [
+      Color(0xFF1A1028),
+      Color(0xFF0A0515),
+      Color(0xFF080412),
+    ],
+    appGradientAlignments: const [
+      Alignment.topLeft,
+      Alignment.center,
+      Alignment.bottomRight,
+    ],
+  ),
 };
 
 AppThemeId normalizeThemeId(String value) {
@@ -2019,6 +2097,41 @@ const themeDefinitions = <AppThemeDefinition>[
         typography: null,
         fontScale: 1.06,
         letterSpacingEm: 0.018,
+      ),
+    ),
+  ),
+  AppThemeDefinition(
+    ThemeOption(
+      AppThemeId.entrapta,
+      'Entrapta',
+      'i brought snacks to the end of the world. let\'s see what breaks.',
+    ),
+    SurfaceMaterialShader(
+      mode: SurfaceMaterialMode.glass,
+      blurPx: 12,
+      saturatePct: 180,
+      opacityScale: 0.78,
+      edgeIntensity: 1.4,
+      texture: ThemeTexture.scanlines,
+      textureOpacity: 0.08,
+      motion: ThemeMotion.snappy,
+      luminescence: 0.65,
+      particles: ThemeParticles.botEyes,
+      textEffect: ThemeTextEffect.dataScrawl,
+      parallaxStrength: 0.28,
+      interaction: ThemeInteraction.vibration,
+      outlineWidth: 0,
+      geometry: SurfaceMaterialGeometry(
+        radius: 3,
+        typography: 'JetBrains Mono',
+        fontScale: 0.93,
+        letterSpacingEm: 0.0,
+      ),
+      glassMaterial: GlassMaterial(
+        ior: 1.62,
+        roughness: 0.10,
+        absorption: Color.fromARGB(255, 0, 3, 1),
+        lightColor: Color(0xFFE080D0),
       ),
     ),
   ),

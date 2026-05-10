@@ -299,6 +299,12 @@ List<BoxShadow> _primaryButtonShadows(
             blurRadius: 6,
           ),
         ],
+      AppThemeId.entrapta => [
+          BoxShadow(
+            color: t.accentBright.withValues(alpha: 0.12),
+            blurRadius: 4,
+          ),
+        ],
       _ => [
           BoxShadow(
             color: base.withValues(alpha: t.isDark ? 0.22 : 0.10),
@@ -330,6 +336,12 @@ List<BoxShadow> _primaryButtonShadows(
           color: t.accentBright.withValues(alpha: 0.35),
           offset: const Offset(0, 3),
           blurRadius: 10,
+        ),
+      ],
+    AppThemeId.entrapta => [
+        BoxShadow(
+          color: t.accentBright.withValues(alpha: 0.30),
+          blurRadius: 8,
         ),
       ],
     _ => [

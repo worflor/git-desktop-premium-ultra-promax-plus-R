@@ -317,6 +317,8 @@ List<String>? _fontFallbackFor(AppThemeId id) {
     case AppThemeId.nacre:
     case AppThemeId.loverboy:
       return const ['Georgia', 'Times New Roman', 'serif'];
+    case AppThemeId.entrapta:
+      return const ['Consolas', 'Courier New', 'monospace'];
   }
 }
 
@@ -383,6 +385,12 @@ SliderComponentShape _sliderThumbShape(AppTokens t) => switch (t.id) {
           size: 18,
           fillColor: Colors.white,
           borderColor: t.accentBright,
+        ),
+      AppThemeId.entrapta => _BotEyeSliderThumbShape(
+          size: 20,
+          irisColor: t.accentBright,
+          glowColor: t.accentBright.withValues(alpha: 0.35),
+          rimColor: t.chromeAccent.withValues(alpha: 0.5),
         ),
     };
 
@@ -543,6 +551,19 @@ class _ThemedSliderTrackShape extends SliderTrackShape
           trackRRect,
           tokens.accentBright.withValues(alpha: 0.45),
           width: 0.9,
+        );
+      case AppThemeId.entrapta:
+        _drawTrackGlow(
+          canvas,
+          trackRRect,
+          tokens.accentBright.withValues(alpha: 0.18),
+          blur: 5,
+        );
+        _strokeTrack(
+          canvas,
+          trackRRect,
+          tokens.accentBright.withValues(alpha: 0.30),
+          width: 0.7,
         );
     }
   }
@@ -1019,5 +1040,76 @@ class _SquareSliderThumbShape extends SliderComponentShape {
         paint,
       );
     }
+  }
+}
+
+class _BotEyeSliderThumbShape extends SliderComponentShape {
+  final double size;
+  final Color irisColor;
+  final Color glowColor;
+  final Color rimColor;
+
+  const _BotEyeSliderThumbShape({
+    required this.size,
+    required this.irisColor,
+    required this.glowColor,
+    required this.rimColor,
+  });
+
+  @override
+  Size getPreferredSize(bool isEnabled, bool isDiscrete) =>
+      Size(size, size);
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset center, {
+    required Animation<double> activationAnimation,
+    required Animation<double> enableAnimation,
+    required bool isDiscrete,
+    required TextPainter labelPainter,
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required TextDirection textDirection,
+    required double value,
+    required double textScaleFactor,
+    required Size sizeWithOverflow,
+  }) {
+    final canvas = context.canvas;
+    final r = size / 2;
+    canvas.drawCircle(
+      center,
+      r + 3,
+      Paint()
+        ..color = glowColor
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
+    canvas.drawCircle(
+      center,
+      r,
+      Paint()
+        ..color = const Color(0xFF1A0E30)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawCircle(
+      center,
+      r,
+      Paint()
+        ..color = rimColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+    canvas.drawCircle(
+      center,
+      r * 0.55,
+      Paint()
+        ..color = irisColor
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2),
+    );
+    canvas.drawCircle(
+      center,
+      r * 0.22,
+      Paint()..color = Colors.white.withValues(alpha: 0.9),
+    );
   }
 }

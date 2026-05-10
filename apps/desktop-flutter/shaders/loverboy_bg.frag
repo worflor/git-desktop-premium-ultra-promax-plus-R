@@ -96,9 +96,9 @@ void main() {
     //
     // Rate modulated by a slow sine so perturbation density breathes
     // over ~78s cycles — Logos-flavoured rhythm.
-    float genClock     = floor(uTime / GEN_INTERVAL);
-    float seasonPhase  = sin(uTime * 0.08) * 0.004;  // ±0.4% drift
-    float blockThresh  = 0.994 - seasonPhase;
+    float genClock     = floor(uSnapshotTime / GEN_INTERVAL);
+    float seasonPhase  = sin(uSnapshotTime * 0.08) * 0.006;
+    float blockThresh  = 0.988 - seasonPhase;
     vec2  coarse       = floor(g * 0.5);
     float blockSeed    = h21(coarse + vec2(genClock * 0.31, genClock * 0.59));
     float blockFires   = step(blockThresh, blockSeed);
@@ -192,14 +192,14 @@ void main() {
     vec2  waveDir  = normalize(vec2(0.707, 0.707) + uTilt * 0.35);
     vec2  uvN      = FlutterFragCoord() / uSize;
     float waveAxis = dot(uvN, waveDir);
-    float wavePos  = fract(uTime * 0.058 - waveAxis);
-    float waveAmp  = exp(-pow(wavePos - 0.5, 2.0) * 22.0);
-    finalColPremul += cellCol * waveAmp * finalAlpha * 0.18;
+    float wavePos  = fract(uTime * 0.09 - waveAxis);
+    float waveAmp  = exp(-pow(wavePos - 0.5, 2.0) * 16.0);
+    finalColPremul += cellCol * waveAmp * finalAlpha * 0.28;
 
     // ---- Global breath. ----
     // Multiplies the premultiplied colour only — alpha is untouched so
     // compositing stays correct.
-    finalColPremul *= 1.0 + sin(uTime * 0.30) * 0.04;
+    finalColPremul *= 1.0 + sin(uTime * 0.40) * 0.07;
 
     fragColor = vec4(finalColPremul, finalAlpha);
 }

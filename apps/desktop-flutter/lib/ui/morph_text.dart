@@ -532,6 +532,25 @@ class _MorphPainter extends CustomPainter {
               scale, 0);
           continue;
         }
+        if (effect == ThemeTextEffect.dataScrawl) {
+          const scrawlStart = 0.15;
+          if (t < scrawlStart) continue;
+          final localT =
+              ((t - scrawlStart) / (1.0 - scrawlStart)).clamp(0.0, 1.0);
+          final settle = Curves.easeOutCubic.transform(localT);
+          final chirality = op.toIdx.isEven ? 1.0 : -1.0;
+          final rotation = chirality * 0.14 * (1.0 - settle);
+          final dy = -4.0 * (1.0 - settle);
+          final dx = chirality * 2.0 * (1.0 - settle);
+          final alpha = localT.clamp(0.0, 1.0);
+          final tint = localT < 0.4
+              ? accent.withValues(alpha: (1.0 - localT / 0.4) * 0.6)
+              : null;
+          final p = to.positions[op.toIdx] + Offset(dx, dy);
+          _paintGlyph(canvas, to.glyphs[op.toIdx], p, alpha, tint, 1.0,
+              0, rotation);
+          continue;
+        }
         if (effect == ThemeTextEffect.chalk) {
           // Chalk: progressively DRAW the glyph L→R with a bright
           // chalk-tip highlight at the reveal edge. The char isn't
@@ -601,6 +620,20 @@ class _MorphPainter extends CustomPainter {
           final p = from.positions[op.fromIdx] + Offset(0, dy);
           _paintGlyph(canvas, from.glyphs[op.fromIdx], p, alpha, tint,
               scale, 0);
+          continue;
+        }
+        if (effect == ThemeTextEffect.dataScrawl) {
+          const fadeEnd = 0.55;
+          if (t > fadeEnd) continue;
+          final localT = (t / fadeEnd).clamp(0.0, 1.0);
+          final chirality = op.fromIdx.isEven ? -1.0 : 1.0;
+          final rotation = chirality * 0.18 * localT;
+          final dy = 3.0 * localT * localT;
+          final dx = chirality * 1.5 * localT;
+          final alpha = 1.0 - localT;
+          final p = from.positions[op.fromIdx] + Offset(dx, dy);
+          _paintGlyph(canvas, from.glyphs[op.fromIdx], p, alpha, null,
+              1.0 - 0.05 * localT, 0, rotation);
           continue;
         }
         if (effect == ThemeTextEffect.chalk) {
@@ -889,6 +922,11 @@ class _MorphPainter extends CustomPainter {
           return 1.0 + _wavePulse(t, glyphX) * 0.05;
         }
         return 1.0;
+      case ThemeTextEffect.dataScrawl:
+        if (isKeep && falloff > 0) {
+          return 1.0 + _triangle(localT, peak: 0.3) * 0.02 * falloff;
+        }
+        return 1.0;
       case ThemeTextEffect.shimmer:
         // Each glyph bumps up in scale as the sweep passes over it.
         // Position-driven (same geometry as _tintFor) so lift + tint
@@ -1151,6 +1189,15 @@ class _MorphPainter extends CustomPainter {
         final isKeep = op.fromIdx >= 0 && op.toIdx >= 0;
         final strength = isKeep ? 0.55 : 0.9;
         return tinted.withValues(alpha: intensity * strength);
+      case ThemeTextEffect.dataScrawl:
+        if (isKeep && falloff > 0) {
+          final intensity = _triangle(localT, peak: 0.35) * falloff * 0.35;
+          const cyan = Color(0xFF00E5FF);
+          final mix = (glyphX / 200.0).clamp(0.0, 1.0);
+          final wire = Color.lerp(cyan, accent, mix)!;
+          return wire.withValues(alpha: intensity);
+        }
+        return null;
       case ThemeTextEffect.pop:
       case ThemeTextEffect.blockify:
       case ThemeTextEffect.emeraldStamp:

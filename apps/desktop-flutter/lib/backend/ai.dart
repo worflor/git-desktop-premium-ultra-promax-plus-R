@@ -9406,12 +9406,13 @@ Future<({String? text, String? error, int inputTokens, int outputTokens})>
     },
   });
 
-  // Retry once on stale keep-alive connections. Dart's HttpClient
+  // Retry twice on transient connection errors. Dart's HttpClient
   // can reuse a connection the server already closed, producing
-  // "Connection closed before full header was received."
+  // "Connection closed before full header was received." Also
+  // catches SocketException for network blips.
   HttpClientResponse? response;
   String? body;
-  for (var attempt = 0; attempt < 2; attempt++) {
+  for (var attempt = 0; attempt < 3; attempt++) {
     try {
       final request = await _geminiApiHttpClient.postUrl(
         Uri.parse('$_geminiApiEndpoint:generateContent'),
@@ -9424,7 +9425,13 @@ Future<({String? text, String? error, int inputTokens, int outputTokens})>
       body = await response.transform(utf8.decoder).join();
       break;
     } on HttpException {
-      if (attempt == 1) rethrow;
+      if (attempt == 2) rethrow;
+      await Future<void>.delayed(
+          Duration(milliseconds: 300 * (attempt + 1)));
+    } on SocketException {
+      if (attempt == 2) rethrow;
+      await Future<void>.delayed(
+          Duration(milliseconds: 300 * (attempt + 1)));
     }
   }
 

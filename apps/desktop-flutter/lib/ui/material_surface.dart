@@ -386,6 +386,7 @@ class MaterialRuntimeCache {
       // shader already paints rim + specular per surface; glaze on
       // top would fight the fresnel lip and flatten the read
       AppThemeId.barbie => 0.08,
+      AppThemeId.entrapta => 0.14,
       _ => 0.1,
     };
     return SurfaceMaterialRuntime(

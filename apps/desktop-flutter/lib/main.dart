@@ -645,6 +645,7 @@ double _rootTextureOpacity(AppTokens tokens) {
     // 0.45 keeps the root atmospheric; per-surface gloss still
     // renders at full strength on cards and buttons.
     AppThemeId.barbie => 0.45,
+    AppThemeId.entrapta => 0.85,
     _ => 1,
   };
 }
@@ -691,6 +692,10 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
   // controller's 0→1 cycle.
   final List<_Whisp> _whisps = [];
   final List<_Debris> _debris = [];
+  final List<_Bot> _bots = [];
+  bool _botsRoundEnding = false;
+  double _botEndTimer = 0;
+  double _botRespawnTimer = 0;
   // Time-seeded so each session reads as a fresh weather pattern instead
   // of the same three ribbons drifting the same paths every launch.
   final math.Random _simRng = math.Random();
@@ -754,13 +759,16 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
   }
 
   void _tickSim() {
-    if (widget.shader.particles != ThemeParticles.whisps) return;
+    final p = widget.shader.particles;
+    if (p != ThemeParticles.whisps && p != ThemeParticles.botEyes) return;
     final now = DateTime.now();
     final dt = _lastSimAt == null
         ? 0.016
         : now.difference(_lastSimAt!).inMicroseconds / 1e6;
     _lastSimAt = now;
-    _simulateWhisps(dt.clamp(0.0, 0.05));
+    final clampedDt = dt.clamp(0.0, 0.05);
+    if (p == ThemeParticles.whisps) _simulateWhisps(clampedDt);
+    if (p == ThemeParticles.botEyes) _simulateBots(clampedDt);
   }
 
   void _simulateWhisps(double dt) {
@@ -803,6 +811,312 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
     }
     _whisps.removeWhere((w) => !w.alive || w.offScreen);
     _debris.removeWhere((d) => d.dead);
+  }
+
+  void _simulateBots(double dt) {
+    if (_bots.isEmpty && !_botsRoundEnding) {
+      if (_botRespawnTimer > 0) {
+        _botRespawnTimer -= dt;
+        return;
+      }
+      _spawnBotRound();
+    }
+
+    for (final bot in _bots) {
+      bot.age += dt;
+      bot.fadeIn = (bot.fadeIn + dt * 0.7).clamp(0.0, 1.0);
+      bot.tagFlash = (bot.tagFlash - dt * 4.0).clamp(0.0, 1.0);
+    }
+
+    if (_botsRoundEnding) {
+      _botEndTimer += dt;
+      for (final bot in _bots) {
+        bot.powerDown = (bot.powerDown + dt * 0.5).clamp(0.0, 1.0);
+      }
+      if (_botEndTimer > 2.8) {
+        _bots.clear();
+        _botsRoundEnding = false;
+        _botRespawnTimer = 1.2;
+      }
+      return;
+    }
+
+    final allInPlay = _bots.every((b) => b.fadeIn > 0.75);
+    if (!allInPlay) {
+      for (final bot in _bots) {
+        if (bot.fadeIn < 0.75) continue;
+        bot.wanderPhase += dt * 0.5;
+        final wander = Offset(
+          math.sin(bot.wanderPhase) * 0.006,
+          math.cos(bot.wanderPhase * 1.3) * 0.004,
+        );
+        bot.pos = bot.pos + wander * dt * 8;
+      }
+      return;
+    }
+
+    final runners = <_Bot>[];
+    final chasers = <_Bot>[];
+    final frozen = <_Bot>[];
+    for (final bot in _bots) {
+      switch (bot.role) {
+        case _BotRole.chaser:
+          chasers.add(bot);
+        case _BotRole.runner:
+          runners.add(bot);
+        case _BotRole.frozen:
+          frozen.add(bot);
+      }
+    }
+
+    if (runners.isEmpty) {
+      _botsRoundEnding = true;
+      _botEndTimer = 0;
+      return;
+    }
+
+    final adrenaline = 1.0 + frozen.length * 0.06;
+
+    // ── Chaser AI ──────────────────────────────────────────────
+    for (final ch in chasers) {
+      if (ch.pauseTimer > 0) {
+        ch.pauseTimer -= dt;
+        // Post-tag: turn to face the nearest frozen bot.
+        _Bot? lastVictim;
+        double victimDist = double.infinity;
+        for (final f in frozen) {
+          final d = (ch.pos - f.pos).distance;
+          if (d < 0.12 && d < victimDist) {
+            victimDist = d;
+            lastVictim = f;
+          }
+        }
+        if (lastVictim != null) {
+          final look = (lastVictim.pos - ch.pos).direction;
+          var diff = look - ch.heading;
+          while (diff > math.pi) diff -= math.pi * 2;
+          while (diff < -math.pi) diff += math.pi * 2;
+          ch.heading += diff * (2.0 * dt).clamp(0.0, 1.0);
+        }
+        continue;
+      }
+
+      // Prefer runners mid-revive (stationary, high-value), then nearest.
+      _Bot? target;
+      double targetScore = double.infinity;
+      for (final r in runners) {
+        if (r.immuneTimer > 0) continue;
+        final d = (ch.pos - r.pos).distance;
+        double score = d;
+        // Halve score if runner is near a frozen bot (likely reviving).
+        for (final f in frozen) {
+          if ((r.pos - f.pos).distance < 0.08) {
+            score *= 0.5;
+            break;
+          }
+        }
+        if (score < targetScore) {
+          targetScore = score;
+          target = r;
+        }
+      }
+
+      if (target == null) {
+        // No taggable targets — patrol.
+        ch.wanderPhase += dt * 0.3;
+        final sweep = ch.heading + math.sin(ch.wanderPhase) * 1.2 * dt;
+        _steerBot(ch, sweep, dt, ch.baseSpeed * 0.5);
+        continue;
+      }
+
+      final d = (ch.pos - target.pos).distance;
+      if (d < 0.028) {
+        target.role = _BotRole.frozen;
+        target.tagFlash = 1.0;
+        target.reviveProgress = 0;
+        ch.pauseTimer = 0.5 + _simRng.nextDouble() * 0.3;
+        continue;
+      }
+
+      final toTarget = (target.pos - ch.pos).direction;
+      ch.wanderPhase += dt * 0.5;
+      final noise = math.sin(ch.wanderPhase) * (d < 0.10 ? 0.05 : 0.15);
+      final lunge = d < 0.10 ? 1.3 : 1.1;
+      _steerBot(ch, toTarget + noise, dt, ch.baseSpeed * lunge);
+    }
+
+    // ── Runner AI ──────────────────────────────────────────────
+    for (final r in runners) {
+      r.immuneTimer = (r.immuneTimer - dt).clamp(0.0, 2.0);
+      _Bot? threat;
+      double threatDist = double.infinity;
+      for (final ch in chasers) {
+        final d = (r.pos - ch.pos).distance;
+        if (d < 0.20 && d < threatDist) {
+          threatDist = d;
+          threat = ch;
+        }
+      }
+
+      if (threat != null) {
+        // Multi-frequency jitter so flee paths look jagged, not sinusoidal.
+        final away = (r.pos - threat.pos).direction;
+        r.wanderPhase += dt * 2.0;
+        final urgency = (1.0 - threatDist / 0.20).clamp(0.0, 1.0);
+        final jitter = (math.sin(r.wanderPhase * 3.1) * 0.2 +
+                math.cos(r.wanderPhase * 7.3) * 0.15) *
+            (0.5 + urgency);
+        final speed = r.baseSpeed * (1.2 + urgency * 0.4) * adrenaline;
+        _steerBot(r, away + jitter, dt, speed);
+      } else {
+        _Bot? rescue;
+        double rescueDist = double.infinity;
+        for (final f in frozen) {
+          if (!f.revivable) continue;
+          final d = (r.pos - f.pos).distance;
+          if (d < 0.28 && d < rescueDist) {
+            rescueDist = d;
+            rescue = f;
+          }
+        }
+        if (rescue != null) {
+          if (rescueDist < 0.06) {
+            // Close enough — hold position for revive channel.
+            _steerBot(r, r.heading, dt, r.baseSpeed * 0.1);
+          } else {
+            final toFriend = (rescue.pos - r.pos).direction;
+            _steerBot(r, toFriend, dt, r.baseSpeed * 0.75);
+          }
+        } else {
+          // Idle wander with loose flocking.
+          r.wanderPhase += dt * 0.4;
+          double flockH = 0;
+          int flockN = 0;
+          for (final other in runners) {
+            if (identical(other, r)) continue;
+            if ((other.pos - r.pos).distance < 0.15) {
+              flockH += other.heading;
+              flockN++;
+            }
+          }
+          double targetH = r.heading + math.sin(r.wanderPhase) * 0.6 * dt;
+          if (flockN > 0) {
+            final avgH = flockH / flockN;
+            var diff = avgH - targetH;
+            while (diff > math.pi) diff -= math.pi * 2;
+            while (diff < -math.pi) diff += math.pi * 2;
+            targetH += diff * 0.15;
+          }
+          _steerBot(r, targetH, dt, r.baseSpeed * 0.55);
+        }
+      }
+    }
+
+    // ── Revive check ───────────────────────────────────────────
+    for (final f in frozen) {
+      if (!f.revivable) continue;
+      bool rescuerNearby = false;
+      for (final r in runners) {
+        if ((r.pos - f.pos).distance < 0.08) {
+          rescuerNearby = true;
+          break;
+        }
+      }
+      if (rescuerNearby) {
+        f.reviveProgress = (f.reviveProgress + dt * 1.05).clamp(0.0, 1.0);
+        if (f.reviveProgress >= 1.0) {
+          f.role = _BotRole.runner;
+          f.tagFlash = 0.6;
+          f.reviveProgress = 0;
+          f.immuneTimer = 1.0;
+        }
+      } else {
+        f.reviveProgress = (f.reviveProgress - dt * 0.3).clamp(0.0, 1.0);
+      }
+    }
+
+    // ── Frozen power-down + heading drift ────────────────────
+    for (final f in frozen) {
+      f.powerDown = (f.powerDown + dt * 0.30).clamp(0.0, 1.0);
+      if (f.reviveProgress > 0) {
+        f.powerDown = (f.powerDown - dt * 0.6).clamp(0.0, 1.0);
+      }
+      f.wanderPhase += dt * 0.3;
+      f.heading += math.sin(f.wanderPhase) * 0.4 * dt;
+    }
+
+    // ── Revived runners decay powerDown back to 0 ───────────────
+    for (final r in runners) {
+      if (r.powerDown > 0) {
+        r.powerDown = (r.powerDown - dt * 2.5).clamp(0.0, 1.0);
+      }
+    }
+
+  }
+
+  void _steerBot(_Bot bot, double targetHeading, double dt, double speed) {
+    // Inward heading pull past 0.20 from center — curves bots back
+    // before they hit edges instead of bouncing off invisible walls.
+    const cx = 0.55;
+    const cy = 0.50;
+    final offX = bot.pos.dx - cx;
+    final offY = bot.pos.dy - cy;
+    final edgeDist = math.sqrt(offX * offX + offY * offY);
+    if (edgeDist > 0.20) {
+      final inward = math.atan2(cy - bot.pos.dy, cx - bot.pos.dx);
+      final pull = ((edgeDist - 0.20) / 0.25).clamp(0.0, 1.0);
+      var diff = inward - targetHeading;
+      while (diff > math.pi) diff -= math.pi * 2;
+      while (diff < -math.pi) diff += math.pi * 2;
+      targetHeading += diff * pull * 0.6;
+    }
+
+    var diff = targetHeading - bot.heading;
+    while (diff > math.pi) diff -= math.pi * 2;
+    while (diff < -math.pi) diff += math.pi * 2;
+    bot.heading += diff * (3.0 * dt).clamp(0.0, 1.0);
+    bot.pos = bot.pos +
+        Offset(math.cos(bot.heading), math.sin(bot.heading)) * speed * dt;
+
+    bot.pos = Offset(
+      bot.pos.dx.clamp(0.02, 0.98),
+      bot.pos.dy.clamp(0.02, 0.98),
+    );
+  }
+
+  void _spawnBotRound() {
+    const total = 7;
+    final chaserCount = _simRng.nextDouble() < 0.7 ? 1 : 2;
+    for (var i = 0; i < total; i++) {
+      final edge = _simRng.nextInt(4);
+      final cross = 0.1 + _simRng.nextDouble() * 0.8;
+      Offset pos;
+      switch (edge) {
+        case 0:
+          pos = Offset(cross, -0.08);
+        case 1:
+          pos = Offset(1.08, cross);
+        case 2:
+          pos = Offset(cross, 1.08);
+        default:
+          pos = Offset(-0.08, cross);
+      }
+      final isChaser = i < chaserCount;
+      final scale = 0.6 + _simRng.nextDouble() * 0.7;
+      _bots.add(_Bot(
+        pos: pos,
+        role: isChaser ? _BotRole.chaser : _BotRole.runner,
+        eyeRadius: isChaser ? 3.2 + scale * 1.0 : 2.0 + scale * 1.5,
+        spacing: isChaser ? 14.0 + scale * 4.0 : 8.0 + scale * 8.0,
+        depth: 0.4 + scale * 0.6,
+        wanderPhase: _simRng.nextDouble() * math.pi * 2,
+        blinkOffset: _simRng.nextDouble() * math.pi * 2,
+        baseSpeed: isChaser ? 0.030 + _simRng.nextDouble() * 0.008
+                            : 0.022 + _simRng.nextDouble() * 0.008,
+        heading: (Offset(0.5, 0.5) - pos).direction +
+            (_simRng.nextDouble() - 0.5) * 0.6,
+      ));
+    }
   }
 
   _Whisp _spawnWhisp() {
@@ -895,10 +1209,15 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
         _controller.stop();
         _controller.value = 0;
       }
-      // Particle-active state may have flipped; refresh the cached
-      // listenable so the AnimatedBuilder picks up the controller
-      // (or drops it when particles go quiet).
       _rebuildBackdropSignal();
+      // Flush sim entities so a theme switch starts clean.
+      _bots.clear();
+      _botsRoundEnding = false;
+      _botEndTimer = 0;
+      _botRespawnTimer = 0;
+      _whisps.clear();
+      _debris.clear();
+      _lastSimAt = null;
     }
   }
 
@@ -933,6 +1252,7 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
             windowDelta: _windowDelta.value,
             whisps: _whisps,
             debris: _debris,
+            bots: _bots,
           ),
         ),
       ),
@@ -949,6 +1269,7 @@ bool _particlesAnimate(SurfaceMaterialShader shader) {
     case ThemeParticles.whisps:
     case ThemeParticles.inkblots:
     case ThemeParticles.glitter:
+    case ThemeParticles.botEyes:
       return true;
     case ThemeParticles.none:
     case ThemeParticles.stardust:
@@ -979,6 +1300,8 @@ Duration _particleAnimationDuration(SurfaceMaterialShader shader) {
     case ThemeParticles.glitter:
       // matches themeSparkSpeed so logo + backdrop + particles share tempo
       return const Duration(seconds: 14);
+    case ThemeParticles.botEyes:
+      return const Duration(seconds: 10);
     case ThemeParticles.stardust:
     case ThemeParticles.quantum:
     case ThemeParticles.ethereal:
@@ -998,6 +1321,7 @@ class _ParticleBackdropPainter extends CustomPainter {
   final Offset windowDelta;
   final List<_Whisp> whisps;
   final List<_Debris> debris;
+  final List<_Bot> bots;
 
   const _ParticleBackdropPainter({
     required this.tokens,
@@ -1006,6 +1330,7 @@ class _ParticleBackdropPainter extends CustomPainter {
     this.windowDelta = Offset.zero,
     this.whisps = const [],
     this.debris = const [],
+    this.bots = const [],
   });
 
   /// World-space offset applied to every particle layer.
@@ -1057,6 +1382,8 @@ class _ParticleBackdropPainter extends CustomPainter {
         _drawInkblots(canvas, size);
       case ThemeParticles.glitter:
         _drawGlitterLayers(canvas, size);
+      case ThemeParticles.botEyes:
+        _drawBotEyes(canvas, size);
     }
   }
 
@@ -1510,6 +1837,139 @@ class _ParticleBackdropPainter extends CustomPainter {
     }
   }
 
+  static final Paint _botEyePaint = Paint()..style = PaintingStyle.fill;
+  static final Paint _botGlowPaint = Paint()
+    ..style = PaintingStyle.fill
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+  static final Paint _botLinkPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 0.5
+    ..strokeCap = StrokeCap.round;
+
+  void _drawBotEyes(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final parallax = _parallaxOffset;
+
+    Offset botCenter(_Bot b) => Offset(
+          b.pos.dx * w + parallax.dx * b.depth,
+          b.pos.dy * h + parallax.dy * b.depth,
+        );
+
+    for (var i = 0; i < bots.length; i++) {
+      final bot = bots[i];
+      final center = botCenter(bot);
+      final cx = center.dx;
+      final cy = center.dy;
+
+      double alpha;
+      if (bot.role == _BotRole.frozen) {
+        final reviving = bot.reviveProgress > 0;
+        final flicker = reviving
+            ? 0.15 + bot.reviveProgress * 0.5
+            : (math.sin(bot.age * 3.5) > 0.90 ? 0.30 : 0.10);
+        alpha = (1.0 - bot.powerDown) * bot.fadeIn * 0.7 + flicker * bot.fadeIn;
+        alpha = alpha.clamp(0.0, 1.0);
+      } else {
+        final blink = math.sin(bot.blinkOffset + bot.age * 0.7);
+        final blinkDim = blink > 0.92
+            ? (1.0 - ((blink - 0.92) / 0.08)).clamp(0.08, 1.0)
+            : 1.0;
+        alpha = blinkDim * bot.fadeIn;
+        if (bot.powerDown > 0) {
+          alpha *= (1.0 - bot.powerDown * 0.5);
+        }
+        if (bot.immuneTimer > 0) {
+          alpha = (alpha + 0.15).clamp(0.0, 1.0);
+        }
+      }
+
+      if (bot.tagFlash > 0) {
+        alpha = (alpha + bot.tagFlash).clamp(0.0, 1.0);
+      }
+
+      if (alpha < 0.01) continue;
+
+      final eyeR = bot.eyeRadius;
+      final halfSp = bot.spacing / 2;
+      final cosH = math.cos(bot.heading);
+      final sinH = math.sin(bot.heading);
+      final lx = cx - halfSp * cosH;
+      final ly = cy - halfSp * sinH;
+      final rx = cx + halfSp * cosH;
+      final ry = cy + halfSp * sinH;
+
+      final color = bot.tagFlash > 0.5
+          ? Colors.white
+          : bot.color;
+      final glowR = eyeR * (bot.role == _BotRole.chaser ? 3.5 : 2.8);
+
+      _botGlowPaint.color = color.withValues(alpha: alpha * 0.25);
+      canvas.drawCircle(Offset(lx, ly), glowR, _botGlowPaint);
+      canvas.drawCircle(Offset(rx, ry), glowR, _botGlowPaint);
+
+      _botEyePaint.color = color.withValues(alpha: alpha * 0.85);
+      canvas.drawCircle(Offset(lx, ly), eyeR, _botEyePaint);
+      canvas.drawCircle(Offset(rx, ry), eyeR, _botEyePaint);
+
+      _botEyePaint.color = Colors.white.withValues(alpha: alpha * 0.5);
+      canvas.drawCircle(Offset(lx, ly), eyeR * 0.28, _botEyePaint);
+      canvas.drawCircle(Offset(rx, ry), eyeR * 0.28, _botEyePaint);
+    }
+
+    // Chaser → quarry targeting line (one per chaser).
+    for (final ch in bots) {
+      if (ch.role != _BotRole.chaser || ch.fadeIn < 0.5) continue;
+      _Bot? nearest;
+      double nearestDist = double.infinity;
+      for (final r in bots) {
+        if (r.role != _BotRole.runner) continue;
+        final d = (ch.pos - r.pos).distance;
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearest = r;
+        }
+      }
+      if (nearest == null || nearestDist > 0.30) continue;
+      final lockAlpha =
+          ((0.30 - nearestDist) / 0.30).clamp(0.0, 1.0) * 0.14 *
+          ch.fadeIn * nearest.fadeIn;
+      if (lockAlpha < 0.01) continue;
+      _botLinkPaint.color =
+          const Color(0xFFFF1744).withValues(alpha: lockAlpha);
+      canvas.drawLine(botCenter(ch), botCenter(nearest), _botLinkPaint);
+    }
+
+    // Cyan proximity links between runners/frozen. Brightens during
+    // active revive; fades as powerDown drains.
+    for (var i = 0; i < bots.length; i++) {
+      final a = bots[i];
+      if (a.role == _BotRole.chaser) continue;
+      for (var j = i + 1; j < bots.length; j++) {
+        final b = bots[j];
+        if (b.role == _BotRole.chaser) continue;
+        final dist = (a.pos - b.pos).distance;
+        if (dist > 0.22) continue;
+        final strength = ((0.22 - dist) / 0.22).clamp(0.0, 1.0);
+        final aAlive = a.role == _BotRole.runner ? 1.0 : (1.0 - a.powerDown);
+        final bAlive = b.role == _BotRole.runner ? 1.0 : (1.0 - b.powerDown);
+        final isReviveLink =
+            (a.role == _BotRole.runner && b.revivable && b.reviveProgress > 0) ||
+            (b.role == _BotRole.runner && a.revivable && a.reviveProgress > 0);
+        final reviveBoost = isReviveLink
+            ? 0.15 + 0.25 * (a.reviveProgress + b.reviveProgress).clamp(0.0, 1.0)
+            : 0.0;
+        final lineAlpha =
+            strength * (0.12 + reviveBoost) * a.fadeIn * b.fadeIn *
+            aAlive.clamp(0.15, 1.0) * bAlive.clamp(0.15, 1.0);
+        if (lineAlpha < 0.01) continue;
+        _botLinkPaint.color =
+            const Color(0xFF00E5FF).withValues(alpha: lineAlpha);
+        canvas.drawLine(botCenter(a), botCenter(b), _botLinkPaint);
+      }
+    }
+  }
+
   void _drawEmberFieldTile(
     Canvas canvas, {
     required int seed,
@@ -1846,6 +2306,7 @@ class _ParticleBackdropPainter extends CustomPainter {
     switch (shader.particles) {
       case ThemeParticles.whisps:
       case ThemeParticles.voidRain:
+      case ThemeParticles.botEyes:
         return 0.0;
       case ThemeParticles.inkblots:
       case ThemeParticles.chalkdust:
@@ -1931,6 +2392,47 @@ class _Debris {
     velocity = velocity * dragFactor;
     life -= dt * 1.5;
   }
+}
+
+enum _BotRole { chaser, runner, frozen }
+
+class _Bot {
+  Offset pos;
+  _BotRole role;
+  final double eyeRadius;
+  final double spacing;
+  final double depth;
+  double wanderPhase;
+  final double blinkOffset;
+  final double baseSpeed;
+  double heading;
+  double age = 0;
+  double fadeIn = 0;
+  double powerDown = 0;
+  double tagFlash = 0;
+  double pauseTimer = 0;
+  double reviveProgress = 0;
+  double immuneTimer = 0;
+
+  _Bot({
+    required this.pos,
+    required this.role,
+    required this.eyeRadius,
+    required this.spacing,
+    required this.depth,
+    required this.wanderPhase,
+    required this.blinkOffset,
+    required this.baseSpeed,
+    required this.heading,
+  });
+
+  bool get revivable => role == _BotRole.frozen && powerDown < 0.85;
+
+  Color get color => switch (role) {
+        _BotRole.chaser => const Color(0xFFFF1744),
+        _BotRole.runner => const Color(0xFFE040FB),
+        _BotRole.frozen => const Color(0xFFE040FB),
+      };
 }
 
 /// Loverboy app-root cellular background, now a real Conway's Game of
