@@ -387,7 +387,7 @@ const _aboutDevelopment = <_AboutEntry>[
         'I already knew it felt slow. Caught a streamer saying the same '
         'thing on a live stream I don\'t usually watch, and that was '
         'finally enough to swap. He didn\'t suggest Flutter. I found Dart '
-        'on my own, threw together a prototype, and it went from about '
+        'on my own, threw together a prototype, and app startup went from about '
         '15 seconds to under a second. Night and day. That was the end '
         'of the Tauri era.\n\n'
         'Flutter\'s rendering pipeline is closer to a game engine than a '
@@ -420,7 +420,7 @@ const _aboutDevelopment = <_AboutEntry>[
         'us an advantage for operations that other clients make you think '
         'through manually.\n\n'
         'Past that, the goal is to surpass every other git client in '
-        'speed, feel, intelligence, and UX. There\'s more in the pipeline '
+        'speed, accessibility, intelligence, and overall UX. There\'s more in the pipeline '
         'than what\'s announced here.',
   ),
 ];
@@ -430,14 +430,15 @@ const _changelog = <_ReleaseNote>[
     version: 'v0.1.1',
     date: '2026-05-09',
     bullets: [
-      'First build handed to another human. v0.1.1 is still a small follow-up release, but the changes are real enough to write down.',
-      'Command palette got another refinement pass: cleaner routing, broader command coverage, and fewer edge cases where the right command existed but did not quite feel reachable.',
+      'Welcome to the first non-internal release. We have:',
+      'Command palette got smarter mostly by getting smaller. Some options were removed, some were merged, and the end result is fewer ways to ask for the same thing badly.',
       'OpenRouter API support is new in this build, with provider settings and model selection wired into the same AI setup as the other backends.',
+      'Settings got shorter to scroll through. The three AI feature blocks are collapsed into one stage, Diagnostics now defaults to the UI section because it is usually the least dramatic one, and the scrollbar has a little breadcrumb bubble that follows along so you know where you are.',
       'The commit message field still grows normally while you type, but once it starts needing real room, an expand button appears for opening a dedicated composer panel. Long commit messages get an actual writing surface now.',
       'Claude model-list extraction got some outside-the-app binary surgery. Not a visible app feature, but it keeps the provider/model wiring honest.',
       'glass.frag got another material pass: gloopier, thiccer, and globier.',
       'Adjusted Loverboy\'s background algorithm. I still can\'t tell if it\'s ugly good or ugly ugly; the line between "oh!" and "oh..." is thin.',
-      'Adjusted Petrichor to keep the same rainy shape, but with shaders and more vibes.',
+      'Adjusted Petrichor to keep the same rainy feel, but with shaders and more vibesss.',
       'New Lady Entropy theme with bot-eye freeze tag, per-surface tint variation, and dataScrawl text effect.',
       'Theme knobs now get tiny per-theme animations overall, giving each skin a little more motion language. The exact shapes may keep shifting, but the direction is there: Petrichor turns like a droplet, Aether/Nacre/Loverboy move their glass caustics, Helix turns like a valve, Quanta snaps orientation, Redshift tightens its sight, Halo/Bibble radiate, Nightwalker opens into a blurrier void, Crafty depresses, Blackboard tilts, Kirby pops, Phosphor blinks, and Lady Entropy\'s thumb looks where you drag: iris and pupil track the value, the highlight stays loyal to the light, the pupil dilates on press, and the iris boots open on theme switch.',
       'More of the motion system is being taught where things came from: etch, gloss, and vibration feedback can originate from the clicked pixel; text morphs ripple in reading direction so insertions push rightward and deletions close leftward; DataScrawl leans by spatial side instead of arbitrary character parity; and tiled particles scale density with the window across stardust, quantum, embers, glitter, voxels, void rain, chalk, and inkblots.',

@@ -7,7 +7,6 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
-import 'package:meta/meta.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../backend/ai.dart' show cliProviderIds;
@@ -81,7 +80,22 @@ class _SettingsPageState extends State<SettingsPage>
   final TextEditingController _commitPromptController = TextEditingController();
   final TextEditingController _reviewPromptController = TextEditingController();
   final TextEditingController _musePromptController = TextEditingController();
-  String _diagnosticsFocus = 'command';
+  String _diagnosticsFocus = 'ui';
+  String? _expandedAiFeature;
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _sectionKeyPreferences = GlobalKey();
+  final GlobalKey _sectionKeyShortcuts = GlobalKey();
+  final GlobalKey _sectionKeyBehaviour = GlobalKey();
+  final GlobalKey _sectionKeyProviders = GlobalKey();
+  final GlobalKey _sectionKeyModelSlots = GlobalKey();
+  final GlobalKey _sectionKeyTools = GlobalKey();
+  final GlobalKey _sectionKeyDiagnostics = GlobalKey();
+  final GlobalKey _sectionKeyOffenders = GlobalKey();
+  final GlobalKey _sectionKeyRelease = GlobalKey();
+  String _scrollSectionLabel = '';
+  bool _showScrollBubble = false;
+  double _scrollFraction = 0;
+  Timer? _scrollBubbleTimer;
   String? _actionError;
   bool _releaseChecking = false;
   ReleaseCheckResult? _releaseCheck;
@@ -102,6 +116,7 @@ class _SettingsPageState extends State<SettingsPage>
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
@@ -191,6 +206,9 @@ class _SettingsPageState extends State<SettingsPage>
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    _scrollBubbleTimer?.cancel();
     _commitPromptSaveDebounce?.cancel();
     _reviewPromptSaveDebounce?.cancel();
     _musePromptSaveDebounce?.cancel();
@@ -202,6 +220,45 @@ class _SettingsPageState extends State<SettingsPage>
       controller.dispose();
     }
     super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final pos = _scrollController.position;
+    final max = pos.maxScrollExtent;
+    final fraction = max > 0 ? (pos.pixels / max).clamp(0.0, 1.0) : 0.0;
+
+    final sections = [
+      (_sectionKeyPreferences, 'Preferences'),
+      (_sectionKeyShortcuts, 'Shortcuts'),
+      (_sectionKeyBehaviour, 'Behaviour'),
+      (_sectionKeyProviders, 'AI Providers'),
+      (_sectionKeyModelSlots, 'Model Slots'),
+      (_sectionKeyTools, 'Tools'),
+      (_sectionKeyDiagnostics, 'Diagnostics'),
+      (_sectionKeyOffenders, 'Offenders'),
+      (_sectionKeyRelease, 'Release'),
+    ];
+
+    String label = sections.first.$2;
+    for (final (key, name) in sections) {
+      final ctx = key.currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) continue;
+      if (box.localToGlobal(Offset.zero).dy <= 120) label = name;
+    }
+
+    setState(() {
+      _scrollFraction = fraction;
+      _scrollSectionLabel = label;
+      _showScrollBubble = true;
+    });
+
+    _scrollBubbleTimer?.cancel();
+    _scrollBubbleTimer = Timer(const Duration(milliseconds: 1400), () {
+      if (mounted) setState(() => _showScrollBubble = false);
+    });
   }
 
   Future<void> _refreshAiDiagnostics({bool forceRefresh = false}) async {
@@ -347,10 +404,6 @@ class _SettingsPageState extends State<SettingsPage>
       }
       setState(() => _actionError = 'Failed to save crash reporting policy.');
     }
-  }
-
-  Future<void> _setAiReadOnlyDefault(bool value) async {
-    await context.read<PreferencesState>().setAiReadOnlyDefault(value);
   }
 
   Future<void> _setLogoAnimatesWhenUnfocused(bool value) async {
@@ -663,7 +716,7 @@ class _SettingsPageState extends State<SettingsPage>
       _dataMaintenanceBusy = true;
       _actionError = null;
     });
-    final count = await AiAuditStore.clearEntries();
+    await AiAuditStore.clearEntries();
     if (!mounted) {
       return;
     }
@@ -685,7 +738,7 @@ class _SettingsPageState extends State<SettingsPage>
     });
     final diagnostics = DiagnosticsState.instance;
     await diagnostics.clearAllDiagnostics();
-    final count = await AiAuditStore.clearEntries();
+    await AiAuditStore.clearEntries();
     if (!mounted) {
       return;
     }
@@ -963,15 +1016,19 @@ class _SettingsPageState extends State<SettingsPage>
         _buildTopOffenders(commandReport, diffReport, uiReport);
     final providerCards = _buildProviderCards();
 
-    return ListView(
-      // Settings is the other place users frequently switch themes —
-      // PageStorageKey survives the widget-tree restructure (glass↔solid
-      // shape flip in MaterialSurface) so the scroll position doesn't
-      // snap to top each time the active theme changes.
-      key: const PageStorageKey('settings.scroll'),
-      padding: const EdgeInsets.all(12),
+    return Stack(
       children: [
-        const _FeatureHeader(),
+        Scrollbar(
+          controller: _scrollController,
+          child: ListView(
+            controller: _scrollController,
+            key: const PageStorageKey('settings.scroll'),
+            padding: const EdgeInsets.all(12),
+            children: [
+        KeyedSubtree(
+          key: _sectionKeyPreferences,
+          child: const _FeatureHeader(),
+        ),
         if (_actionError != null) ...[
           const SizedBox(height: 10),
           _SettingsNotice(
@@ -1035,7 +1092,9 @@ class _SettingsPageState extends State<SettingsPage>
             ),
             _StateCard(
               title: 'Local Data Retention',
-              summary: 'Diagnostic and AI audit retention policy.',
+              summary: preferences.hideAiFeatures
+                  ? 'Diagnostic retention policy.'
+                  : 'Diagnostic and AI audit retention policy.',
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1090,9 +1149,13 @@ class _SettingsPageState extends State<SettingsPage>
           ],
         ),
         const SizedBox(height: 10),
-        _StateCard(
+        KeyedSubtree(
+          key: _sectionKeyShortcuts,
+          child: _StateCard(
           title: 'Navigation and Dynamics',
-          summary: 'Shortcuts, interface behavior, and AI routing.',
+          summary: preferences.hideAiFeatures
+              ? 'Shortcuts and interface behavior.'
+              : 'Shortcuts, interface behavior, and AI routing.',
           wide: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1104,7 +1167,10 @@ class _SettingsPageState extends State<SettingsPage>
               const SizedBox(height: 12),
               _ShortcutsReference(profile: themeState.keybindingProfile),
               const _SettingsGap(),
-              const _SettingsSubtitle('Behavioural Dynamics'),
+              KeyedSubtree(
+                key: _sectionKeyBehaviour,
+                child: const _SettingsSubtitle('Behavioural Dynamics'),
+              ),
               const SizedBox(height: 12),
               _ReduceMotionToggle(
                 value: preferences.motionRate,
@@ -1265,7 +1331,9 @@ class _SettingsPageState extends State<SettingsPage>
               ),
               if (!preferences.hideAiFeatures) ...[
               const _SettingsGap(),
-              Row(
+              KeyedSubtree(
+                key: _sectionKeyProviders,
+                child: Row(
                 children: [
                   const _SettingsSubtitle('CLI Piggybacking'),
                   const Spacer(),
@@ -1278,6 +1346,7 @@ class _SettingsPageState extends State<SettingsPage>
                           },
                   ),
                 ],
+              ),
               ),
               const SizedBox(height: 8),
               const _SettingsBody(
@@ -1325,7 +1394,10 @@ class _SettingsPageState extends State<SettingsPage>
                 },
               ),
               const _SettingsGap(),
-              const _SettingsSubtitle('Model Slots'),
+              KeyedSubtree(
+                key: _sectionKeyModelSlots,
+                child: const _SettingsSubtitle('Model Slots'),
+              ),
               const SizedBox(height: 8),
               Text(
                 'Rename and route configurations to any detected provider model.',
@@ -1383,107 +1455,169 @@ class _SettingsPageState extends State<SettingsPage>
                   },
                 ),
               ],
-              const _SettingsGap(),
-              const _SettingsSubtitle('Commit Messages'),
-              const SizedBox(height: 8),
-              Text(
-                'Pick the model slot for commit messages and add optional style guidance.',
-                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
+              const SizedBox(height: 14),
+              _AiFeatureTabRow(
+                tabs: const ['Commit Messages', 'Code Review', 'Muse'],
+                active: _expandedAiFeature,
+                onTap: (tab) {
+                  setState(() {
+                    _expandedAiFeature =
+                        _expandedAiFeature == tab ? null : tab;
+                  });
+                },
               ),
-              const SizedBox(height: 10),
-              if (_aiModelCategories.isNotEmpty)
-                _AiCommitIntegrationEditor(
-                  categories: _aiModelCategories,
-                  aiSettings: aiSettings,
-                  promptController: _commitPromptController,
-                  promptStatusLabel: _commitPromptStatusLabel(),
-                  onCategoryChanged: (value) {
-                    if (value == null || value.isEmpty) {
-                      return;
-                    }
-                    _saveCommitMessageModelCategory(value);
-                  },
-                  onPromptChanged: _scheduleCommitPromptSave,
-                )
-              else
-                Text(
-                  'Model-slot settings will appear here once provider models are available.',
-                  style: TextStyle(color: t.textMuted, fontSize: 12),
-                ),
-              const _SettingsGap(),
-              const _SettingsSubtitle('Review Commit'),
-              const SizedBox(height: 8),
-              Text(
-                'Review the current commit scope before you commit.',
-                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
-              ),
-              const SizedBox(height: 10),
-              if (_aiModelCategories.isNotEmpty)
-                _AiReviewIntegrationEditor(
-                  categories: _aiModelCategories,
-                  aiSettings: aiSettings,
-                  guardrailStage: preferences.guardrailStage,
-                  promptController: _reviewPromptController,
-                  promptStatusLabel: _reviewPromptStatusLabel(),
-                  onCategoryChanged: (value) {
-                    if (value == null || value.isEmpty) {
-                      return;
-                    }
-                    _saveReviewCommitModelCategory(value);
-                  },
-                  onPromptChanged: _scheduleReviewPromptSave,
-                  onDoubleCheckChanged: _saveReviewDoubleCheck,
-                )
-              else
-                Text(
-                  'Model-slot settings will appear here once provider models are available.',
-                  style: TextStyle(color: t.textMuted, fontSize: 12),
-                ),
-              const _SettingsGap(),
-              const _SettingsSubtitle('Muse'),
-              const SizedBox(height: 8),
-              Text(
-                'Three-phase oracle that brainstorms then synthesizes a forward direction for the diff.',
-                style: TextStyle(color: t.textMuted, fontSize: 12, height: 1.4),
-              ),
-              const SizedBox(height: 10),
-              if (_aiModelCategories.isNotEmpty) ...[
-                _MuseStage(
-                  categories: _aiModelCategories,
-                  aiSettings: aiSettings,
-                  guardrailStage: preferences.guardrailStage,
-                  onBrainstormCategoryChanged: (id) {
-                    if (id == null || id.isEmpty) return;
-                    unawaited(aiSettings.setMuseBrainstormModelCategoryId(id));
-                  },
-                  onSynthesisCategoryChanged: (id) {
-                    if (id == null || id.isEmpty) return;
-                    unawaited(aiSettings.setMuseSynthesisModelCategoryId(id));
-                  },
-                ),
-                const SizedBox(height: 14),
-              ],
-              _AiMuseIntegrationEditor(
-                promptController: _musePromptController,
-                promptStatusLabel: _musePromptStatusLabel(),
-                guardrailStage: preferences.guardrailStage,
-                onPromptChanged: _scheduleMusePromptSave,
+              AnimatedSize(
+                duration: AppMotion.fade,
+                curve: AppMotion.fadeCurve,
+                alignment: Alignment.topCenter,
+                clipBehavior: Clip.hardEdge,
+                child: switch (_expandedAiFeature) {
+                  'Commit Messages' => Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Draft commit messages from staged changes using your structure, voice, and coverage preferences.',
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        if (_aiModelCategories.isNotEmpty)
+                          _AiCommitIntegrationEditor(
+                            categories: _aiModelCategories,
+                            aiSettings: aiSettings,
+                            promptController: _commitPromptController,
+                            promptStatusLabel: _commitPromptStatusLabel(),
+                            onCategoryChanged: (value) {
+                              if (value == null || value.isEmpty) return;
+                              _saveCommitMessageModelCategory(value);
+                            },
+                            onPromptChanged: _scheduleCommitPromptSave,
+                          )
+                        else
+                          Text(
+                            'Model-slot settings will appear here once provider models are available.',
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  'Code Review' => Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Review the current commit scope before you commit.',
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        if (_aiModelCategories.isNotEmpty)
+                          _AiReviewIntegrationEditor(
+                            categories: _aiModelCategories,
+                            aiSettings: aiSettings,
+                            guardrailStage: preferences.guardrailStage,
+                            promptController: _reviewPromptController,
+                            promptStatusLabel: _reviewPromptStatusLabel(),
+                            onCategoryChanged: (value) {
+                              if (value == null || value.isEmpty) return;
+                              _saveReviewCommitModelCategory(value);
+                            },
+                            onPromptChanged: _scheduleReviewPromptSave,
+                            onDoubleCheckChanged: _saveReviewDoubleCheck,
+                          )
+                        else
+                          Text(
+                            'Model-slot settings will appear here once provider models are available.',
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  'Muse' => Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Three-phase oracle that brainstorms then synthesizes a forward direction for the diff.',
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        if (_aiModelCategories.isNotEmpty) ...[
+                          _MuseStage(
+                            categories: _aiModelCategories,
+                            aiSettings: aiSettings,
+                            guardrailStage: preferences.guardrailStage,
+                            onBrainstormCategoryChanged: (id) {
+                              if (id == null || id.isEmpty) return;
+                              unawaited(
+                                aiSettings
+                                    .setMuseBrainstormModelCategoryId(id),
+                              );
+                            },
+                            onSynthesisCategoryChanged: (id) {
+                              if (id == null || id.isEmpty) return;
+                              unawaited(
+                                aiSettings
+                                    .setMuseSynthesisModelCategoryId(id),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 14),
+                        ],
+                        _AiMuseIntegrationEditor(
+                          promptController: _musePromptController,
+                          promptStatusLabel: _musePromptStatusLabel(),
+                          guardrailStage: preferences.guardrailStage,
+                          onPromptChanged: _scheduleMusePromptSave,
+                        ),
+                      ],
+                    ),
+                  ),
+                  _ => const SizedBox.shrink(),
+                },
               ),
               ], // end of `if (!preferences.hideAiFeatures) ...[` AI subtree
             ],
           ),
         ),
+        ),
         const SizedBox(height: 10),
-        _SectionFlashFrame(
+        KeyedSubtree(
+          key: _sectionKeyTools,
+          child: _SectionFlashFrame(
           key: _sectionKeys[SettingsSection.externalTools],
           flash: _flashingSection == SettingsSection.externalTools
               ? _focusFlash
               : null,
           child: const _ExternalToolsCard(),
         ),
+        ),
         const SizedBox(height: 10),
         const _SettingsGap(),
-        const _SettingsSubtitle('Performance Diagnostics'),
+        KeyedSubtree(
+          key: _sectionKeyDiagnostics,
+          child: const _SettingsSubtitle('Performance Diagnostics'),
+        ),
         const SizedBox(height: 10),
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -1505,7 +1639,9 @@ class _SettingsPageState extends State<SettingsPage>
           ],
         ),
         const SizedBox(height: 16),
-        Row(
+        KeyedSubtree(
+          key: _sectionKeyOffenders,
+          child: Row(
           children: [
             const _SettingsSubtitle('Offender Ranking'),
             const SizedBox(width: 8),
@@ -1514,6 +1650,7 @@ class _SettingsPageState extends State<SettingsPage>
               style: TextStyle(color: t.textMuted, fontSize: 10),
             ),
           ],
+        ),
         ),
         const SizedBox(height: 6),
         if (topOffenders.isEmpty)
@@ -1551,7 +1688,9 @@ class _SettingsPageState extends State<SettingsPage>
           formatSampleTime: _formatSampleTime,
         ),
         const SizedBox(height: 10),
-        _StateCard(
+        KeyedSubtree(
+          key: _sectionKeyRelease,
+          child: _StateCard(
           title: 'Release Deployment',
           summary: 'Update related settings.',
           wide: true,
@@ -1643,6 +1782,15 @@ class _SettingsPageState extends State<SettingsPage>
               ],
             ],
           ),
+        ),
+        ),
+      ],
+          ),
+        ),
+        _ScrollSectionBubble(
+          show: _showScrollBubble,
+          label: _scrollSectionLabel,
+          fraction: _scrollFraction,
         ),
       ],
     );
@@ -2420,15 +2568,15 @@ class _ChannelRibbon extends StatelessWidget {
 class _ChannelRibbonItem extends StatelessWidget {
   final String label;
   final bool active;
-  final bool enabled;
   final VoidCallback onTap;
 
   const _ChannelRibbonItem({
     required this.label,
     required this.active,
     required this.onTap,
-    this.enabled = true,
   });
+
+  bool get enabled => true;
 
   @override
   Widget build(BuildContext context) {
@@ -5193,7 +5341,6 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     final selectedCategoryId = categories.any(
       (category) => category.id == aiSettings.commitMessageModelCategoryId,
     )
@@ -5214,7 +5361,6 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Compact slot selector row
         _AiSlotSelectorRow(
           selectedCategoryId: selectedCategoryId,
           selectedModel: selectedModel,
@@ -5224,10 +5370,6 @@ class _AiCommitIntegrationEditor extends StatelessWidget {
           statusLabel: promptStatusLabel,
         ),
         const SizedBox(height: 12),
-        // Format stage — sets the default shape (structure/voice/
-        // coverage) of generated commit messages. AI generation and the
-        // manual composer both consult these prefs; the Style Guide
-        // below layers voice/tone notes on top.
         _CommitFormatStage(
           // Narrowed to a single record-select rather than three
           // whole-PreferencesState watches. Dart records use
@@ -5291,7 +5433,6 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     final selectedCategoryId = categories.any(
       (category) => category.id == aiSettings.reviewCommitModelCategoryId,
     )
@@ -5312,7 +5453,6 @@ class _AiReviewIntegrationEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Compact slot selector row
         _AiSlotSelectorRow(
           selectedCategoryId: selectedCategoryId,
           selectedModel: selectedModel,
@@ -6493,7 +6633,7 @@ class _LogosPadPainter extends CustomPainter {
     const glyphSize = 22.0;
     final active = _LogosQuadrant.nearest(x, y);
 
-    _drawFolderStack(canvas, Offset(inset + glyphSize / 2, inset + glyphSize / 2),
+    _drawFolderStack(canvas, const Offset(inset + glyphSize / 2, inset + glyphSize / 2),
         glyphSize, active == _LogosQuadrant.moduleMap);
     _drawHubSpoke(canvas,
         Offset(w - inset - glyphSize / 2, inset + glyphSize / 2),
@@ -7115,82 +7255,13 @@ class _GripStat extends StatelessWidget {
   }
 }
 
-class _AiMetaRow extends StatelessWidget {
-  final String left;
-  final String right;
-
-  const _AiMetaRow({
-    required this.left,
-    required this.right,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            left,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: t.textMuted.withValues(alpha: 0.82),
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.8,
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Flexible(
-          child: Text(
-            right,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.end,
-            style: TextStyle(
-              color: t.textMuted,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _AiSupportLine extends StatelessWidget {
-  final String text;
-  final bool strong;
-
-  const _AiSupportLine(this.text, {this.strong = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Text(
-      text,
-      style: TextStyle(
-        color: strong ? t.textNormal : t.textMuted,
-        fontSize: 10.5,
-        fontWeight: strong ? FontWeight.w600 : FontWeight.w500,
-        fontFamily: AppFonts.mono,
-      ),
-    );
-  }
-}
-
 class _GhostMiniButton extends StatefulWidget {
   final String label;
   final VoidCallback? onTap;
-  final bool dimmed;
 
   const _GhostMiniButton({
     required this.label,
     required this.onTap,
-    this.dimmed = false,
   });
 
   @override
@@ -7241,14 +7312,11 @@ class _GhostMiniButtonState extends State<_GhostMiniButton> {
             ),
             child: Transform.translate(
               offset: chrome.offset,
-              child: Opacity(
-                opacity: widget.dimmed ? 0.45 : 1.0,
-                child: Text(
-                  widget.label,
-                  style: TextStyle(
-                    color: widget.onTap != null ? t.textNormal : t.textMuted,
-                    fontSize: 10,
-                  ),
+              child: Text(
+                widget.label,
+                style: TextStyle(
+                  color: widget.onTap != null ? t.textNormal : t.textMuted,
+                  fontSize: 10,
                 ),
               ),
             ),
@@ -7340,17 +7408,12 @@ class _TelemetrySwitcherItem extends StatefulWidget {
 }
 
 class _TelemetrySwitcherItemState extends State<_TelemetrySwitcherItem> {
-  bool _hovered = false;
-
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final activeColor = t.accentBright;
-    final mutedColor = t.textMuted;
 
     return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         onTap: widget.onTap,
@@ -7696,7 +7759,6 @@ class _DiagnosticsActionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     return Row(
       children: [
         _DeckButton(
@@ -8367,7 +8429,7 @@ class _ChangeSortGuideState extends State<_ChangeSortGuide>
           LayoutBuilder(
             builder: (context, constraints) {
               const gap = 6.0;
-              final options = FileSortGuide.values;
+              const options = FileSortGuide.values;
               final count = options.length;
               final chipWidth =
                   (constraints.maxWidth - gap * (count - 1)) / count;
@@ -8468,7 +8530,6 @@ class _SortGuideBadge extends StatelessWidget {
   final bool inverted;
   final AppTokens tokens;
   const _SortGuideBadge({
-    super.key,
     required this.guide,
     required this.previewing,
     required this.inverted,
@@ -9392,27 +9453,15 @@ class _CheckboxRow extends StatelessWidget {
 /// semantics that keep the easter-egg playful rather than permanent.
 class _StepperRow extends StatefulWidget {
   final String label;
-  final String? description;
   final Widget? descriptionWidget;
   final int value;
   final ValueChanged<int> onChanged;
-  /// Fixed discrete stops displayed left-to-right (e.g. [0, 3, 6, 10]).
-  /// The top stop is rendered separately and is editable.
   final List<int> fixedStops;
-  /// Default value of the top stop. Also the minimum edited-value
-  /// ceiling — edits must be strictly greater than this.
   final int topStopBaseline;
-
-  /// Optional vertical-detent callback. Fires with +1 when the user
-  /// drags down past a detent threshold, -1 when up. Callers use this
-  /// to cycle an orthogonal dimension (e.g. the scope selector on the
-  /// undo-window control). When null, vertical drags on the stepper
-  /// do nothing and fall through to the enclosing scrollable.
   final void Function(int direction)? onVerticalDetent;
 
   const _StepperRow({
     required this.label,
-    this.description,
     this.descriptionWidget,
     required this.value,
     required this.onChanged,
@@ -9526,8 +9575,8 @@ class _StepperRowState extends State<_StepperRow> {
   /// custom ceiling; only label edits do.
   void _snapToPointer(double localX) {
     final stops = [...widget.fixedStops, _topStopValue];
-    final trackStart = _stepperHPad;
-    final trackEnd = _stepperWidth - _stepperHPad;
+    const trackStart = _stepperHPad;
+    const trackEnd = _stepperWidth - _stepperHPad;
     final clamped = localX.clamp(trackStart, trackEnd);
     final frac = (clamped - trackStart) / (trackEnd - trackStart);
     // Piecewise-linear: each [stop[i], stop[i+1]] pair fills one
@@ -9552,9 +9601,9 @@ class _StepperRowState extends State<_StepperRow> {
   /// 6s end up at pixel-identical positions.
   double _xForValue(int v) {
     final stops = [...widget.fixedStops, _topStopValue];
-    final trackStart = _stepperHPad;
-    final trackEnd = _stepperWidth - _stepperHPad;
-    final span = trackEnd - trackStart;
+    const trackStart = _stepperHPad;
+    const trackEnd = _stepperWidth - _stepperHPad;
+    const span = trackEnd - trackStart;
     if (v <= stops.first) return trackStart;
     if (v >= stops.last) return trackEnd;
     var i = 0;
@@ -9589,19 +9638,6 @@ class _StepperRowState extends State<_StepperRow> {
             padding: const EdgeInsets.only(left: 26),
             child: widget.descriptionWidget!,
           ),
-        ] else if (widget.description != null) ...[
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.only(left: 26),
-            child: Text(
-              widget.description!,
-              style: TextStyle(
-                color: t.textMuted.withValues(alpha: 0.65),
-                fontSize: 10.5,
-                height: 1.4,
-              ),
-            ),
-          ),
         ],
       ],
     );
@@ -9612,9 +9648,9 @@ class _StepperRowState extends State<_StepperRow> {
     // baseline (a custom-unlocked value), otherwise the baseline.
     // Mirrors `_topStopValue`, which drag snapping reads too.
     final stops = [...widget.fixedStops, _topStopValue];
-    final trackStart = _stepperHPad;
-    final trackEnd = _stepperWidth - _stepperHPad;
-    final trackSpan = trackEnd - trackStart;
+    const trackStart = _stepperHPad;
+    const trackEnd = _stepperWidth - _stepperHPad;
+    const trackSpan = trackEnd - trackStart;
     final isOnStop = stops.contains(widget.value);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -10845,14 +10881,14 @@ class _ChalkDiamondPainter extends CustomPainter {
 
 class _PrimaryButton extends StatefulWidget {
   final String label;
-  final bool enabled;
   final VoidCallback onTap;
 
   const _PrimaryButton({
     required this.label,
-    this.enabled = true,
     required this.onTap,
   });
+
+  bool get enabled => true;
 
   @override
   State<_PrimaryButton> createState() => _PrimaryButtonState();
@@ -12213,4 +12249,239 @@ List<String> parseArgsForRoundTrip(String raw) {
   }
   if (buf.isNotEmpty) out.add(buf.toString());
   return out;
+}
+
+/// Stacked full-width bars for the collapsed AI feature sections.
+/// Each bar enters with a staggered slide+fade to break the scroll
+/// pattern and signal interactivity. Collapsed by default; tapping
+/// a bar expands its panel, tapping again collapses it.
+class _AiFeatureTabRow extends StatelessWidget {
+  final List<String> tabs;
+  final String? active;
+  final ValueChanged<String> onTap;
+
+  const _AiFeatureTabRow({
+    required this.tabs,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        for (var i = 0; i < tabs.length; i++) ...[
+          _AiFeatureBar(
+            label: tabs[i],
+            isActive: active == tabs[i],
+            entranceDelay: Duration(milliseconds: 50 * i),
+            onTap: () => onTap(tabs[i]),
+          ),
+          if (i < tabs.length - 1) const SizedBox(height: 4),
+        ],
+      ],
+    );
+  }
+}
+
+class _AiFeatureBar extends StatefulWidget {
+  final String label;
+  final bool isActive;
+  final Duration entranceDelay;
+  final VoidCallback onTap;
+
+  const _AiFeatureBar({
+    required this.label,
+    required this.isActive,
+    required this.entranceDelay,
+    required this.onTap,
+  });
+
+  @override
+  State<_AiFeatureBar> createState() => _AiFeatureBarState();
+}
+
+class _AiFeatureBarState extends State<_AiFeatureBar>
+    with SingleTickerProviderStateMixin {
+  bool _hovered = false;
+  late final AnimationController _entrance;
+
+  @override
+  void initState() {
+    super.initState();
+    _entrance = AnimationController(
+      vsync: this,
+      duration: AppMotion.fade,
+    );
+    Future.delayed(widget.entranceDelay, () {
+      if (mounted) _entrance.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _entrance.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final active = widget.isActive;
+    return FadeTransition(
+      opacity: CurvedAnimation(
+        parent: _entrance,
+        curve: AppMotion.fadeCurve,
+      ),
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(-0.03, 0),
+          end: Offset.zero,
+        ).animate(CurvedAnimation(
+          parent: _entrance,
+          curve: AppMotion.fadeCurve,
+        )),
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: widget.onTap,
+            child: AnimatedContainer(
+              duration: AppMotion.snap,
+              curve: AppMotion.snapCurve,
+              height: 36,
+              decoration: BoxDecoration(
+                color: active
+                    ? t.accentBright.withValues(alpha: 0.08)
+                    : _hovered
+                        ? t.chromeBorder.withValues(alpha: 0.06)
+                        : t.chromeBorder.withValues(alpha: 0.025),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: active
+                      ? t.accentBright.withValues(alpha: 0.22)
+                      : _hovered
+                          ? t.chromeBorder.withValues(alpha: 0.14)
+                          : t.chromeBorder.withValues(alpha: 0.07),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 2),
+                  AnimatedContainer(
+                    duration: AppMotion.snap,
+                    width: 3,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: active
+                          ? t.accentBright
+                          : _hovered
+                              ? t.accentBright.withValues(alpha: 0.45)
+                              : t.accentBright.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      widget.label,
+                      style: TextStyle(
+                        color: active ? t.accentBright : t.textNormal,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ),
+                  AnimatedRotation(
+                    turns: active ? 0.25 : 0,
+                    duration: AppMotion.snap,
+                    curve: AppMotion.snapCurve,
+                    child: Icon(
+                      Icons.chevron_right_rounded,
+                      size: 16,
+                      color: active
+                          ? t.accentBright
+                          : _hovered
+                              ? t.textNormal
+                              : t.textMuted,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Floating section label that appears beside the scrollbar thumb when
+/// the user scrolls, showing which settings section is currently in view.
+class _ScrollSectionBubble extends StatelessWidget {
+  final bool show;
+  final String label;
+  final double fraction;
+
+  const _ScrollSectionBubble({
+    required this.show,
+    required this.label,
+    required this.fraction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const trackPadding = 20.0;
+        final trackHeight = constraints.maxHeight - trackPadding * 2;
+        final bubbleY = trackPadding + fraction * trackHeight;
+        return Stack(
+          children: [
+            AnimatedPositioned(
+              duration: AppMotion.snap,
+              curve: AppMotion.snapCurve,
+              right: 18,
+              top: bubbleY.clamp(trackPadding, constraints.maxHeight - 40),
+              child: AnimatedOpacity(
+                duration: AppMotion.fade,
+                curve: AppMotion.fadeCurve,
+                opacity: show && label.isNotEmpty ? 1.0 : 0.0,
+                child: IgnorePointer(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: t.bg1.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: t.accentBright.withValues(alpha: 0.25),
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: t.accentBright,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
