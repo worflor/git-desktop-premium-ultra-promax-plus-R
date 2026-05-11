@@ -526,6 +526,12 @@ class _AppFrameState extends State<_AppFrame> {
                   child: _LoveboyBackground(),
                 ),
               ),
+            if (t.id == AppThemeId.petrichor)
+              const Positioned.fill(
+                child: IgnorePointer(
+                  child: _PetrichorFog(),
+                ),
+              ),
             Row(
               children: [
                 SizedBox(width: _sidebarWidth, child: const SidebarRail()),
@@ -1055,8 +1061,7 @@ class _ParticleBackdropState extends State<_ParticleBackdrop>
   }
 
   void _steerBot(_Bot bot, double targetHeading, double dt, double speed) {
-    // Inward heading pull past 0.20 from center — curves bots back
-    // before they hit edges instead of bouncing off invisible walls.
+    // Inward pull past 0.20 from center so bots curve back naturally.
     const cx = 0.55;
     const cy = 0.50;
     final offX = bot.pos.dx - cx;
@@ -1586,6 +1591,8 @@ class _ParticleBackdropPainter extends CustomPainter {
     double? viewportPadding,
     required void Function(Canvas canvas, double scale) drawTile,
   }) {
+    final densityScale = (size.width / 1400).clamp(0.7, 1.6);
+    tileSize *= densityScale;
     final overscan =
         viewportPadding ?? (tileSize * 0.18).clamp(40.0, 240.0).toDouble();
     final wrapped = Offset(offset.dx % tileSize, offset.dy % tileSize);
@@ -2433,6 +2440,61 @@ class _Bot {
         _BotRole.runner => const Color(0xFFE040FB),
         _BotRole.frozen => const Color(0xFFE040FB),
       };
+}
+
+class _PetrichorFog extends StatelessWidget {
+  const _PetrichorFog();
+
+  @override
+  Widget build(BuildContext context) {
+    final pulse = LiquidGlassProvider.of(context);
+    return RepaintBoundary(
+      child: ValueListenableBuilder<LiquidGlassPulse>(
+        valueListenable: pulse,
+        builder: (_, value, __) => CustomPaint(
+          painter: _PetrichorFogPainter(
+            time: value.time,
+            tiltX: value.tilt.dx,
+            tiltY: value.tilt.dy,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PetrichorFogPainter extends CustomPainter {
+  final double time;
+  final double tiltX;
+  final double tiltY;
+  const _PetrichorFogPainter({
+    required this.time,
+    required this.tiltX,
+    required this.tiltY,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final shader = ThemeShaders.petrichorFogShader(
+      width: size.width,
+      height: size.height,
+      time: time,
+      tiltX: tiltX,
+      tiltY: tiltY,
+      intensity: 0.12,
+    );
+    if (shader == null) return;
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = shader
+        ..blendMode = BlendMode.srcOver,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_PetrichorFogPainter old) =>
+      old.time != time || old.tiltX != tiltX || old.tiltY != tiltY;
 }
 
 /// Loverboy app-root cellular background, now a real Conway's Game of

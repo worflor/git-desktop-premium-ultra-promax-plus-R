@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'tokens.dart';
 
@@ -351,22 +353,23 @@ SliderComponentShape _sliderThumbShape(AppTokens t) => switch (t.id) {
           size: 16,
           borderWidth: 3.5,
           insetShadow: true,
+          anim: _SquareThumbAnim.depress,
         ),
       AppThemeId.nightwalker => _RingSliderThumbShape(
           size: 22,
           ringColor: t.accentBright,
         ),
       AppThemeId.blackboard =>
-        const _SquareSliderThumbShape(size: 16, radius: 2, borderWidth: 2),
+        const _SquareSliderThumbShape(size: 16, radius: 2, borderWidth: 2,
+            anim: _SquareThumbAnim.tilt),
       AppThemeId.kirby =>
-        // Square inked thumb — chunky border matches the theme's ink line.
         const _SquareSliderThumbShape(
-            size: 18, radius: 4, borderWidth: 2.5, insetShadow: false),
+            size: 18, radius: 4, borderWidth: 2.5,
+            anim: _SquareThumbAnim.pop),
       AppThemeId.phosphor =>
-        // Square block thumb — like a CRT cursor. Sharp, no fill,
-        // monospaced-block aesthetic.
         const _SquareSliderThumbShape(
-            size: 14, radius: 0, borderWidth: 2, insetShadow: false),
+            size: 14, radius: 0, borderWidth: 2,
+            anim: _SquareThumbAnim.blink),
       AppThemeId.nacre => _GlassSliderThumbShape(
           size: 18,
           fillColor: Colors.white.withValues(alpha: 0.6),
@@ -644,11 +647,13 @@ class _GlassSliderThumbShape extends SliderComponentShape {
       ..strokeWidth = 1.2;
     canvas.drawCircle(center, size * 0.5 - 0.6, rimPaint);
 
+    final caustX = (value - 0.5) * size * 0.3;
     final innerPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.16)
+      ..color = Colors.white.withValues(alpha: 0.18)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
-    canvas.drawCircle(center.translate(0, -0.5), size * 0.28, innerPaint);
+    canvas.drawCircle(
+        center.translate(caustX, -0.5), size * 0.28, innerPaint);
   }
 }
 
@@ -684,12 +689,18 @@ class _DiamondSliderThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final canvas = context.canvas;
-    final rect = Rect.fromCenter(center: center, width: size, height: size);
+    final angle = value * 1.5708; // 0..90°, 4-fold symmetry
+
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(angle);
+
+    final rect = Rect.fromCenter(center: Offset.zero, width: size, height: size);
     final diamond = Path()
-      ..moveTo(center.dx, rect.top)
-      ..lineTo(rect.right, center.dy)
-      ..lineTo(center.dx, rect.bottom)
-      ..lineTo(rect.left, center.dy)
+      ..moveTo(0, rect.top)
+      ..lineTo(rect.right, 0)
+      ..lineTo(0, rect.bottom)
+      ..lineTo(rect.left, 0)
       ..close();
 
     final rimGlow = Paint()
@@ -707,6 +718,7 @@ class _DiamondSliderThumbShape extends SliderComponentShape {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawPath(diamond, borderPaint);
+    canvas.restore();
   }
 }
 
@@ -734,32 +746,37 @@ class _BrassSliderThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final canvas = context.canvas;
-    final rect = Rect.fromCenter(center: center, width: size, height: size);
+    final angle = value * 4.71; // 0..270°
+
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(angle);
+
+    final rect = Rect.fromCenter(center: Offset.zero, width: size, height: size);
     final gradient = const LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: [Color(0xFFE2D1B6), Color(0xFFCFB996)],
     );
     canvas.drawCircle(
-      center,
+      Offset.zero,
       size / 2,
       Paint()..shader = gradient.createShader(rect),
     );
     canvas.drawCircle(
-      center,
+      Offset.zero,
       size / 2 - 1,
       Paint()
         ..color = const Color(0xFF2F2519)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2,
     );
-    // Inner dot centered on the thumb — previously offset by (1, 1) for a
-    // 3D embossed look, which shifted the perceived center off the rail.
     canvas.drawCircle(
-      center,
-      size * 0.22,
-      Paint()..color = Colors.black.withValues(alpha: 0.12),
+      Offset(0, -size * 0.30),
+      size * 0.07,
+      Paint()..color = Colors.black.withValues(alpha: 0.18),
     );
+    canvas.restore();
   }
 }
 
@@ -787,21 +804,13 @@ class _DropletSliderThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final canvas = context.canvas;
-    // Petrichor's thumb is deliberately plain; quality lives in how
-    // it responds to interaction, not in idle decoration. While the
-    // user is dragging the thumb, [activationAnimation] runs from 0
-    // to 1 — flex the droplet horizontally and tighten its tail to
-    // read as a "squeezed" droplet. The visual budget is tiny (a few
-    // percent) so the still state stays calm.
     final press = activationAnimation.value;
-    final wScale = 1.0 + 0.12 * press; // squash horizontally
-    final hScale = 1.0 - 0.06 * press; // contract vertically
-    final tailRadius = 2.0 + 1.5 * press; // tail rounds out under press
+    final angle = 0.60 + value * 0.70;
+    final tailR = 2.0 + press * 3.0;
 
     canvas.save();
     canvas.translate(center.dx, center.dy);
-    canvas.rotate(0.78539816339);
-    canvas.scale(wScale, hScale);
+    canvas.rotate(angle);
     final rect =
         Rect.fromCenter(center: Offset.zero, width: size, height: size);
     final rrect = RRect.fromRectAndCorners(
@@ -809,7 +818,7 @@ class _DropletSliderThumbShape extends SliderComponentShape {
       topLeft: Radius.circular(size / 2),
       topRight: Radius.circular(size / 2),
       bottomLeft: Radius.circular(size / 2),
-      bottomRight: Radius.circular(tailRadius),
+      bottomRight: Radius.circular(tailR),
     );
     canvas.drawRRect(
       rrect,
@@ -856,11 +865,10 @@ class _SightSliderThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final canvas = context.canvas;
-    final rect = Rect.fromCenter(
-      center: center,
-      width: size.width,
-      height: size.height,
-    );
+    final squeeze = value * 0.18;
+    final w = size.width * (1.0 + squeeze);
+    final h = size.height * (1.0 - squeeze);
+    final rect = Rect.fromCenter(center: center, width: w, height: h);
     final path = Path()
       ..moveTo(rect.left, rect.top + rect.height * 0.15)
       ..lineTo(center.dx, rect.top)
@@ -912,8 +920,9 @@ class _HaloSliderThumbShape extends SliderComponentShape {
   }) {
     final canvas = context.canvas;
     canvas.drawCircle(center, size / 2, Paint()..color = fillColor);
+    final ringDx = (value - 0.5) * 2.0;
     canvas.drawCircle(
-      center,
+      center.translate(ringDx, 0),
       size / 2 - 1,
       Paint()
         ..color = borderColor
@@ -953,6 +962,7 @@ class _RingSliderThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final canvas = context.canvas;
+    final v = value;
     canvas.drawCircle(
       center,
       size / 2,
@@ -966,11 +976,11 @@ class _RingSliderThumbShape extends SliderComponentShape {
       Paint()
         ..color = ringColor
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 3,
+        ..strokeWidth = 3 - v * 1.2,
     );
     canvas.drawCircle(
       center,
-      size * 0.18,
+      size * (0.12 + v * 0.10),
       Paint()
         ..color = ringColor
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
@@ -978,17 +988,21 @@ class _RingSliderThumbShape extends SliderComponentShape {
   }
 }
 
+enum _SquareThumbAnim { none, depress, tilt, pop, blink }
+
 class _SquareSliderThumbShape extends SliderComponentShape {
   final double size;
   final double radius;
   final double borderWidth;
   final bool insetShadow;
+  final _SquareThumbAnim anim;
 
   const _SquareSliderThumbShape({
     required this.size,
     this.radius = 0,
     this.borderWidth = 1,
     this.insetShadow = false,
+    this.anim = _SquareThumbAnim.none,
   });
 
   @override
@@ -1010,12 +1024,28 @@ class _SquareSliderThumbShape extends SliderComponentShape {
     required Size sizeWithOverflow,
   }) {
     final canvas = context.canvas;
-    final rect = Rect.fromCenter(center: center, width: size, height: size);
-    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
     final fill = sliderTheme.thumbColor ?? Colors.white;
     final border = sliderTheme.valueIndicatorColor ??
         sliderTheme.activeTrackColor ??
         Colors.white;
+
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    switch (anim) {
+      case _SquareThumbAnim.depress:
+        canvas.scale(1.0 - value * 0.06);
+      case _SquareThumbAnim.tilt:
+        canvas.rotate((value - 0.5) * 0.20);
+      case _SquareThumbAnim.pop:
+        canvas.scale(1.0 + value * 0.08);
+      case _SquareThumbAnim.blink:
+        canvas.scale(1.0, 0.85 + value * 0.30);
+      case _SquareThumbAnim.none:
+        break;
+    }
+
+    final rect = Rect.fromCenter(center: Offset.zero, width: size, height: size);
+    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
     final paint = Paint()..style = PaintingStyle.fill;
     paint.color = fill;
     canvas.drawRRect(rrect, paint);
@@ -1028,7 +1058,7 @@ class _SquareSliderThumbShape extends SliderComponentShape {
       paint
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2
-        ..color = Colors.black.withValues(alpha: 0.4);
+        ..color = Colors.black.withValues(alpha: 0.4 + value * 0.15);
       canvas.drawLine(
         Offset(rect.right - 3, rect.top + 3),
         Offset(rect.right - 3, rect.bottom - 3),
@@ -1040,6 +1070,7 @@ class _SquareSliderThumbShape extends SliderComponentShape {
         paint,
       );
     }
+    canvas.restore();
   }
 }
 
@@ -1077,8 +1108,15 @@ class _BotEyeSliderThumbShape extends SliderComponentShape {
   }) {
     final canvas = context.canvas;
     final r = size / 2;
+    final a = activationAnimation.value;
+    final gaze = (value - 0.5) * r * 0.45;
+    final irisCenter = center.translate(gaze, 0);
+    final boot = enableAnimation.value;
+    final irisR = r * (0.38 + a * 0.20) * boot;
+    final pupilR = r * (0.16 + a * 0.08) * boot;
+
     canvas.drawCircle(
-      center,
+      center.translate(gaze * 0.3, 0),
       r + 3,
       Paint()
         ..color = glowColor
@@ -1100,16 +1138,22 @@ class _BotEyeSliderThumbShape extends SliderComponentShape {
         ..strokeWidth = 1.5,
     );
     canvas.drawCircle(
-      center,
-      r * 0.55,
+      irisCenter,
+      irisR,
       Paint()
         ..color = irisColor
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2),
     );
     canvas.drawCircle(
-      center,
-      r * 0.22,
-      Paint()..color = Colors.white.withValues(alpha: 0.9),
+      irisCenter,
+      pupilR,
+      Paint()..color = irisColor,
+    );
+    // Specular stays fixed to socket; shifts opposite to gaze.
+    canvas.drawCircle(
+      center.translate(-gaze * 0.25, -r * 0.15),
+      r * 0.14,
+      Paint()..color = Colors.white.withValues(alpha: 0.75),
     );
   }
 }

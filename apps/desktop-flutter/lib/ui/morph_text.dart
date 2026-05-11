@@ -284,7 +284,20 @@ List<_MorphOp> _computeOps(String from, String to) {
     j--;
     ops.add(_MorphOp(-1, j));
   }
-  return ops.reversed.toList();
+  final result = ops.reversed.toList();
+  // Split keeps where index displacement > maxDrift into
+  // remove + insert so distant matches fade instead of sliding.
+  const maxDrift = 4;
+  for (var k = 0; k < result.length; k++) {
+    final op = result[k];
+    if (op.fromIdx >= 0 && op.toIdx >= 0) {
+      if ((op.fromIdx - op.toIdx).abs() > maxDrift) {
+        result[k] = _MorphOp(op.fromIdx, -1);
+        result.insert(k + 1, _MorphOp(-1, op.toIdx));
+      }
+    }
+  }
+  return result;
 }
 
 
@@ -427,15 +440,11 @@ class _MorphPainter extends CustomPainter {
     // (insert/remove). Changes = distance 0. Each unit further away
     // gives that glyph a weaker, slightly delayed echo of the effect
     // — so the whole word "feels" each change ripple through it.
-    final distances = _distancesToChange();
-    // Compute bbox ONCE now so every _wavePulse() call is O(1) instead
-    // of re-walking every glyph each time. Big win on long strings.
+    final dtc = _distancesToChange();
+    final distances = dtc.dist;
+    final signs = dtc.sign;
     _cachedBbox = _computeBboxUncached();
 
-    // No particles, no external overlays. The text itself is the thing
-    // that changes color — each glyph picks up the theme-specific tint
-    // based on its role in the op (keep / insert / remove) and the
-    // progress `t`.
     for (var i = 0; i < ops.length; i++) {
       final op = ops[i];
       final dist = distances[i];
@@ -445,8 +454,8 @@ class _MorphPainter extends CustomPainter {
             op.toIdx >= to.glyphs.length) continue;
         final p = Offset.lerp(
             from.positions[op.fromIdx], to.positions[op.toIdx], t)!;
-        final tint = _tintFor(op, t, p.dx, dist);
-        final scale = _scaleFor(op, t, p.dx, dist);
+        final tint = _tintFor(op, t, p.dx, dist, signs[i]);
+        final scale = _scaleFor(op, t, p.dx, dist, signs[i]);
         final ab = _aberrationFor(op, t, dist);
         _paintGlyph(canvas, to.glyphs[op.toIdx], p, 1.0, tint, scale, ab);
       } else if (op.toIdx >= 0) {
@@ -538,7 +547,11 @@ class _MorphPainter extends CustomPainter {
           final localT =
               ((t - scrawlStart) / (1.0 - scrawlStart)).clamp(0.0, 1.0);
           final settle = Curves.easeOutCubic.transform(localT);
-          final chirality = op.toIdx.isEven ? 1.0 : -1.0;
+          final glyphX = to.positions[op.toIdx].dx;
+          final midX = ((_cachedBbox?.left ?? 0) +
+                  (_cachedBbox?.right ?? glyphX)) /
+              2;
+          final chirality = glyphX >= midX ? 1.0 : -1.0;
           final rotation = chirality * 0.14 * (1.0 - settle);
           final dy = -4.0 * (1.0 - settle);
           final dx = chirality * 2.0 * (1.0 - settle);
@@ -551,18 +564,20 @@ class _MorphPainter extends CustomPainter {
               0, rotation);
           continue;
         }
+        if (effect == ThemeTextEffect.settle) {
+          _paintGlyph(canvas, to.glyphs[op.toIdx],
+              to.positions[op.toIdx], t, null, 1.0, 0, 0);
+          continue;
+        }
         if (effect == ThemeTextEffect.chalk) {
-          // Chalk: progressively DRAW the glyph L→R with a bright
-          // chalk-tip highlight at the reveal edge. The char isn't
-          // fading in, it's being written.
           _paintChalkDraw(
               canvas, to.glyphs[op.toIdx], to.positions[op.toIdx], t,
               drawing: true);
           continue;
         }
         final p = to.positions[op.toIdx] + Offset(0, (1 - t) * 2);
-        final tint = _tintFor(op, t, p.dx, dist);
-        final scale = _scaleFor(op, t, p.dx, dist);
+        final tint = _tintFor(op, t, p.dx, dist, signs[i]);
+        final scale = _scaleFor(op, t, p.dx, dist, signs[i]);
         final ab = _aberrationFor(op, t, dist);
         // When the effect provides an insert tint, the tint IS the
         // transition — keep the glyph at full opacity so the color
@@ -626,7 +641,11 @@ class _MorphPainter extends CustomPainter {
           const fadeEnd = 0.55;
           if (t > fadeEnd) continue;
           final localT = (t / fadeEnd).clamp(0.0, 1.0);
-          final chirality = op.fromIdx.isEven ? -1.0 : 1.0;
+          final fX = from.positions[op.fromIdx].dx;
+          final fMid = ((_cachedBbox?.left ?? 0) +
+                  (_cachedBbox?.right ?? fX)) /
+              2;
+          final chirality = fX >= fMid ? 1.0 : -1.0;
           final rotation = chirality * 0.18 * localT;
           final dy = 3.0 * localT * localT;
           final dx = chirality * 1.5 * localT;
@@ -636,17 +655,20 @@ class _MorphPainter extends CustomPainter {
               1.0 - 0.05 * localT, 0, rotation);
           continue;
         }
+        if (effect == ThemeTextEffect.settle) {
+          _paintGlyph(canvas, from.glyphs[op.fromIdx],
+              from.positions[op.fromIdx], 1 - t, null, 1.0, 0, 0);
+          continue;
+        }
         if (effect == ThemeTextEffect.chalk) {
-          // Chalk remove: erase R→L with the same chalk-tip, but the
-          // tip trails a softer smudge behind it.
           _paintChalkDraw(
               canvas, from.glyphs[op.fromIdx], from.positions[op.fromIdx], t,
               drawing: false);
           continue;
         }
         final p = from.positions[op.fromIdx] + Offset(0, t * 2);
-        final tint = _tintFor(op, t, p.dx, dist);
-        final scale = _scaleFor(op, t, p.dx, dist);
+        final tint = _tintFor(op, t, p.dx, dist, signs[i]);
+        final scale = _scaleFor(op, t, p.dx, dist, signs[i]);
         final ab = _aberrationFor(op, t, dist);
         // Same story for removes: while the tint is active the glyph
         // stays fully visible; the last quarter of the transition is
@@ -833,12 +855,12 @@ class _MorphPainter extends CustomPainter {
   /// nearest changing op — keeps within the neighborhood get a subtle
   /// delayed scale pulse, so the change feels like a bump traveling
   /// through the word.
-  double _scaleFor(_MorphOp op, double t, double glyphX, int dist) {
+  double _scaleFor(_MorphOp op, double t, double glyphX, int dist, [int sign = 0]) {
     if (t <= 0 || t >= 1) return 1.0;
     final isKeep = op.fromIdx >= 0 && op.toIdx >= 0;
     final isInsert = op.fromIdx < 0 && op.toIdx >= 0;
     final isRemove = op.fromIdx >= 0 && op.toIdx < 0;
-    final localT = _neighborLocalT(t, dist);
+    final localT = _neighborLocalT(t, dist, sign);
     final falloff = _neighborFalloff(dist);
     switch (effect) {
       case ThemeTextEffect.stamp:
@@ -972,22 +994,27 @@ class _MorphPainter extends CustomPainter {
   /// (insert/remove). 0 = this op IS the change. Max distance is
   /// capped at [_neighborhoodRange] since glyphs further than that
   /// don't react.
-  List<int> _distancesToChange() {
+  ({List<int> dist, List<int> sign}) _distancesToChange() {
     final n = ops.length;
     final out = List<int>.filled(n, _neighborhoodRange + 1);
+    final sgn = List<int>.filled(n, 0);
     for (var i = 0; i < n; i++) {
       final op = ops[i];
       if (op.fromIdx < 0 || op.toIdx < 0) out[i] = 0;
     }
-    // Propagate left→right then right→left to compute nearest-change
-    // distance in linear time.
     for (var i = 1; i < n; i++) {
-      if (out[i - 1] + 1 < out[i]) out[i] = out[i - 1] + 1;
+      if (out[i - 1] + 1 < out[i]) {
+        out[i] = out[i - 1] + 1;
+        sgn[i] = 1;
+      }
     }
     for (var i = n - 2; i >= 0; i--) {
-      if (out[i + 1] + 1 < out[i]) out[i] = out[i + 1] + 1;
+      if (out[i + 1] + 1 < out[i]) {
+        out[i] = out[i + 1] + 1;
+        sgn[i] = -1;
+      }
     }
-    return out;
+    return (dist: out, sign: sgn);
   }
 
   /// Keep glyphs this many chars from a change still echo the effect
@@ -1008,9 +1035,10 @@ class _MorphPainter extends CustomPainter {
   /// Stagger delay applied to neighbor echoes: each char further from
   /// the change starts its echo slightly later in the transition, so
   /// the ripple visually propagates outward from the change point.
-  double _neighborLocalT(double t, int dist) {
+  double _neighborLocalT(double t, int dist, [int sign = 0]) {
     if (dist <= 0) return t;
-    final delay = (dist * 0.06).clamp(0.0, 0.3);
+    final dirBias = sign > 0 ? 0.018 : 0.0;
+    final delay = (dist * 0.06 + dirBias).clamp(0.0, 0.3);
     return ((t - delay) / (1 - delay)).clamp(0.0, 1.0);
   }
 
@@ -1019,7 +1047,7 @@ class _MorphPainter extends CustomPainter {
   /// tint peaks. Returning `null` (or a zero-alpha color) means the
   /// glyph paints untinted. [dist] is the char-distance to the nearest
   /// changing op; keeps near a change pick up a weaker, delayed echo.
-  Color? _tintFor(_MorphOp op, double t, double glyphX, int dist) {
+  Color? _tintFor(_MorphOp op, double t, double glyphX, int dist, [int sign = 0]) {
     if (t <= 0 || t >= 1) return null;
     final isKeep = op.fromIdx >= 0 && op.toIdx >= 0;
     final isInsert = op.fromIdx < 0 && op.toIdx >= 0;
@@ -1027,7 +1055,7 @@ class _MorphPainter extends CustomPainter {
     // Neighbor-echo helpers: for keeps within the echo range, we apply
     // a weaker, delayed version of the effect so the change ripples
     // outward from the changing glyph.
-    final localT = _neighborLocalT(t, dist);
+    final localT = _neighborLocalT(t, dist, sign);
     final falloff = _neighborFalloff(dist);
 
     switch (effect) {
@@ -1198,6 +1226,7 @@ class _MorphPainter extends CustomPainter {
           return wire.withValues(alpha: intensity);
         }
         return null;
+      case ThemeTextEffect.settle:
       case ThemeTextEffect.pop:
       case ThemeTextEffect.blockify:
       case ThemeTextEffect.emeraldStamp:

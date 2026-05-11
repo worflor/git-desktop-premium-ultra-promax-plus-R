@@ -23,6 +23,8 @@ class ThemeShaders {
   static Future<FragmentProgram>? _plasticFuture;
   static FragmentProgram? _phosphor;
   static Future<FragmentProgram>? _phosphorFuture;
+  static FragmentProgram? _petrichorFog;
+  static Future<FragmentProgram>? _petrichorFogFuture;
 
   /// Kicks off loading the kirby fragment program if it hasn't
   /// been loaded yet. Safe to call repeatedly — only the first call
@@ -437,6 +439,38 @@ class ThemeShaders {
       ..setFloat(9, beamSigma)
       ..setFloat(10, scanlineDepth)
       ..setFloat(11, barrelAmount);
+    return s;
+  }
+
+  static FragmentProgram? petrichorFog() {
+    if (_petrichorFog != null) return _petrichorFog;
+    _petrichorFogFuture ??=
+        FragmentProgram.fromAsset('shaders/petrichor_fog.frag').then((p) {
+      _petrichorFog = p;
+      return p;
+    });
+    return null;
+  }
+
+  /// Uniforms: 0..1 uSize, 2 uTime, 3..4 uTilt, 5 uIntensity
+  static ui.FragmentShader? petrichorFogShader({
+    required double width,
+    required double height,
+    double time = 0,
+    double tiltX = 0,
+    double tiltY = 0,
+    double intensity = 0.06,
+  }) {
+    final program = petrichorFog();
+    if (program == null) return null;
+    final s = program.fragmentShader();
+    s
+      ..setFloat(0, width)
+      ..setFloat(1, height)
+      ..setFloat(2, time)
+      ..setFloat(3, tiltX)
+      ..setFloat(4, tiltY)
+      ..setFloat(5, intensity);
     return s;
   }
 }

@@ -247,7 +247,7 @@ CustomPainter _feedbackPainter({
       return _CausticPainter(
           origin: origin, color: accent, t: progress, lum: luminescence);
     case ThemeInteraction.etch:
-      return _EtchPainter(color: accent, t: progress);
+      return _EtchPainter(origin: origin, color: accent, t: progress);
     case ThemeInteraction.warp:
       return _WarpPainter(origin: origin, color: accent, t: progress);
     case ThemeInteraction.vibration:
@@ -260,7 +260,8 @@ CustomPainter _feedbackPainter({
     case ThemeInteraction.blockBreak:
       return _BlockBreakPainter(origin: origin, accent: accent, t: progress);
     case ThemeInteraction.gloss:
-      return _GlossPainter(accent: accent, t: progress, lum: luminescence);
+      return _GlossPainter(
+          origin: origin, accent: accent, t: progress, lum: luminescence);
     case ThemeInteraction.none:
       return _NoopPainter();
   }
@@ -310,38 +311,43 @@ class _CausticPainter extends CustomPainter {
 }
 
 class _EtchPainter extends CustomPainter {
+  final Offset origin;
   final Color color;
   final double t;
-  _EtchPainter({required this.color, required this.t});
+  _EtchPainter({required this.origin, required this.color, required this.t});
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Sharp press: quick flash in, slower recede
     final pulse = t < 0.3
         ? t / 0.3
         : 1 - (t - 0.3) / 0.7;
     final a = (pulse * 0.65).clamp(0.0, 1.0);
 
-    // Inset stamp lines — top/left darker, bottom/right brighter
-    final dark = Paint()
-      ..color = Colors.black.withValues(alpha: a * 0.55)
-      ..strokeWidth = 1.2;
-    final light = Paint()
-      ..color = color.withValues(alpha: a * 0.35)
-      ..strokeWidth = 1.0;
+    final nx = (origin.dx / size.width).clamp(0.0, 1.0);
+    final ny = (origin.dy / size.height).clamp(0.0, 1.0);
+    final topW = 1.0 - ny;
+    final botW = ny;
+    final leftW = 1.0 - nx;
+    final rightW = nx;
 
-    // Top + left (pressed-in shadow)
+    final dark = Paint()..strokeWidth = 1.2;
+    final light = Paint()..strokeWidth = 1.0;
+
+    dark.color = Colors.black.withValues(alpha: a * 0.55 * topW);
     canvas.drawLine(Offset.zero, Offset(size.width, 0), dark);
+    dark.color = Colors.black.withValues(alpha: a * 0.55 * leftW);
     canvas.drawLine(Offset.zero, Offset(0, size.height), dark);
-    // Bottom + right (accent stamp highlight)
+    light.color = color.withValues(alpha: a * 0.35 * botW);
     canvas.drawLine(
         Offset(0, size.height), Offset(size.width, size.height), light);
+    light.color = color.withValues(alpha: a * 0.35 * rightW);
     canvas.drawLine(
         Offset(size.width, 0), Offset(size.width, size.height), light);
   }
 
   @override
-  bool shouldRepaint(_EtchPainter old) => old.t != t || old.color != color;
+  bool shouldRepaint(_EtchPainter old) =>
+      old.t != t || old.color != color || old.origin != origin;
 }
 
 class _WarpPainter extends CustomPainter {
@@ -397,11 +403,13 @@ class _VibrationPainter extends CustomPainter {
     final rng = math.Random(seed);
     // Paint hoisted: color is constant across all 6 specks this frame,
     // so we only allocate one Paint per paint() call instead of per-speck.
+    final biasX = -(origin.dx / size.width - 0.5) * 0.4;
+    final biasY = -(origin.dy / size.height - 0.5) * 0.4;
     final paint = Paint()
       ..color = color.withValues(alpha: (fade * 0.6).clamp(0.0, 1.0));
     for (var i = 0; i < specks; i++) {
-      final dx = (rng.nextDouble() - 0.5) * size.width * 0.6;
-      final dy = (rng.nextDouble() - 0.5) * size.height * 0.6;
+      final dx = (rng.nextDouble() - 0.5 + biasX) * size.width * 0.6;
+      final dy = (rng.nextDouble() - 0.5 + biasY) * size.height * 0.6;
       final jitter = math.sin(t * math.pi * 8 + i) * 1.8;
       final r = 1.5 + rng.nextDouble() * 1.5;
       canvas.drawCircle(origin.translate(dx + jitter, dy), r, paint);
@@ -536,10 +544,12 @@ class _NoopPainter extends CustomPainter {
 /// light along a line). Magenta leading edge, gold trailing tail,
 /// matching the surface shader's highlight/rim hues.
 class _GlossPainter extends CustomPainter {
+  final Offset origin;
   final Color accent;
   final double t;
   final double lum;
   _GlossPainter({
+    required this.origin,
     required this.accent,
     required this.t,
     required this.lum,
@@ -547,10 +557,9 @@ class _GlossPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // streak walks from off-left (-25%) to off-right (125%) so it
-    // fully enters and exits. easeOutCubic = fast arrive, slow leave.
     final travel = Curves.easeOutCubic.transform(t);
-    final cx = -size.width * 0.25 + size.width * 1.5 * travel;
+    final startX = origin.dx;
+    final cx = startX + (size.width * 1.25 - startX) * travel;
 
     // 22% of width — narrower reads as cyberpunk scan, wider as spotlight
     final halfWidth = size.width * 0.11;

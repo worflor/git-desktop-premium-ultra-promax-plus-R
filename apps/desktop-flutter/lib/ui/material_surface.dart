@@ -388,6 +388,7 @@ class MaterialRuntimeCache {
       // top would fight the fresnel lip and flatten the read
       AppThemeId.barbie => 0.08,
       AppThemeId.entropy => 0.14,
+      AppThemeId.petrichor => 0.04,
       _ => 0.1,
     };
     return SurfaceMaterialRuntime(

@@ -53,7 +53,7 @@ enum SurfaceMaterialMode { solid, glass, phosphor }
 
 enum ThemeTexture { none, grain, scanlines, pixels, halftone, iridescent, darkIridescent, gloss }
 
-enum ThemeMotion { snappy, fluid, elastic }
+enum ThemeMotion { snappy, fluid, elastic, still }
 
 enum ThemeParticles {
   none,
@@ -127,6 +127,7 @@ enum ThemeTextEffect {
   dataScrawl,  // lady entropy: arriving chars land rotated + offset, then
                // snap to grid. leaving chars jitter out. neighbors get
                // a cyan→magenta tint pulse.
+  settle,      // petrichor: pure opacity fade, zero spatial movement.
 }
 
 const defaultThemeId = AppThemeId.aether;
@@ -322,6 +323,8 @@ class SurfaceMaterialShader {
         return const Duration(milliseconds: 180);
       case ThemeMotion.elastic:
         return const Duration(milliseconds: 250);
+      case ThemeMotion.still:
+        return const Duration(milliseconds: 220);
     }
   }
 
@@ -333,16 +336,11 @@ class SurfaceMaterialShader {
         return Curves.easeInOutCubic;
       case ThemeMotion.elastic:
         return Curves.easeOutBack;
+      case ThemeMotion.still:
+        return Curves.easeOutSine;
     }
   }
 
-  /// Bounded counterpart to [curve] — never overshoots [0, 1]. Use this
-  /// when you're animating a value with asserted bounds (BoxShadow
-  /// blurRadius, Opacity, Color alpha) — extrapolation past 1.0 from
-  /// [Curves.easeOutBack] makes `BoxShadow.lerp` compute a negative
-  /// blurRadius, which trips a `Shadow` assertion in dart:ui/painting.dart
-  /// and breaks the paint tree. For pure translation or scale effects
-  /// where overshoot reads as character, keep using [curve].
   Curve get safeCurve {
     switch (motion) {
       case ThemeMotion.snappy:
@@ -351,6 +349,8 @@ class SurfaceMaterialShader {
         return Curves.easeInOutCubic;
       case ThemeMotion.elastic:
         return Curves.easeOutCubic;
+      case ThemeMotion.still:
+        return Curves.easeOutSine;
     }
   }
 }
@@ -665,11 +665,11 @@ final _tokens = <AppThemeId, AppTokens>{
       0xFF23323D,
       0xFF40515F,
       0xFF70818F,
-      0xFF289374,
-      0xFFA67F1B,
-      0xFFC25752,
-      0xFFD47A31,
-      0xFF37A987,
+      0xFF4A9680,
+      0xFF9E8A4A,
+      0xFFAD6B68,
+      0xFFBB8A5E,
+      0xFF5AA492,
       0xFF4B95AF,
       0xFF8199AA,
       0xFF5D98B2,
@@ -1700,14 +1700,20 @@ const themeDefinitions = <AppThemeDefinition>[
       'first light through fog before the sky remembers itself.',
     ),
     SurfaceMaterialShader(
-      mode: SurfaceMaterialMode.solid,
-      blurPx: 0,
-      saturatePct: 100,
-      opacityScale: 1.1,
-      edgeIntensity: 0,
-      motion: ThemeMotion.elastic,
-      luminescence: 0.1,
-      parallaxStrength: 0,
+      mode: SurfaceMaterialMode.glass,
+      blurPx: 12,
+      saturatePct: 105,
+      opacityScale: 0.82,
+      edgeIntensity: 0.12,
+      motion: ThemeMotion.still,
+      luminescence: 0.08,
+      textEffect: ThemeTextEffect.settle,
+      parallaxStrength: 0.15,
+      glassMaterial: GlassMaterial(
+        ior: 1.38,
+        roughness: 0.18,
+        lightColor: Color(0xFFD0DBE2),
+      ),
     ),
   ),
   AppThemeDefinition(

@@ -436,7 +436,10 @@ const _changelog = <_ReleaseNote>[
       'The commit message field still grows normally while you type, but once it starts needing real room, an expand button appears for opening a dedicated composer panel. Long commit messages get an actual writing surface now.',
       'Claude model-list extraction got some outside-the-app binary surgery. Not a visible app feature, but it keeps the provider/model wiring honest.',
       'glass.frag got another material pass: gloopier, thiccer, and globier.',
+      'Adjusted Loverboy\'s background algorithm. I still can\'t tell if it\'s ugly good or ugly ugly; the line between "oh!" and "oh..." is thin.',
       'New Lady Entropy theme with bot-eye freeze tag, per-surface tint variation, and dataScrawl text effect.',
+      'Theme knobs now get tiny per-theme animations overall, giving each skin a little more motion language. The exact shapes may keep shifting, but the direction is there: Petrichor turns like a droplet, Aether/Nacre/Loverboy move their glass caustics, Helix turns like a valve, Quanta snaps orientation, Redshift tightens its sight, Halo/Bibble radiate, Nightwalker opens into a blurrier void, Crafty depresses, Blackboard tilts, Kirby pops, Phosphor blinks, and Lady Entropy\'s thumb looks where you drag: iris and pupil track the value, the highlight stays loyal to the light, the pupil dilates on press, and the iris boots open on theme switch.',
+      'More of the motion system is being taught where things came from: etch, gloss, and vibration feedback can originate from the clicked pixel; text morphs ripple in reading direction so insertions push rightward and deletions close leftward; DataScrawl leans by spatial side instead of arbitrary character parity; and tiled particles scale density with the window across stardust, quantum, embers, glitter, voxels, void rain, chalk, and inkblots.',
     ],
   ),
   _ReleaseNote(
